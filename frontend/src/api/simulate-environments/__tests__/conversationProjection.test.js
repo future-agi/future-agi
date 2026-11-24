@@ -553,6 +553,36 @@ describe("projectConversation", () => {
   });
 });
 
+describe("projectConversation with older events loaded", () => {
+  it("marks where the held events start, after the messages before them", () => {
+    const turns = projectConversation({
+      messages: [msg({ message_id: "u1", role: "user" })],
+      events: [evt({ sequence: 201 })],
+      history: { events: { oldest_sequence: 201, has_older: true } },
+    });
+    expect(turns.map((turn) => turn.role)).toEqual([
+      "user",
+      "history",
+      "builder",
+    ]);
+  });
+
+  it("keeps the id of every later turn", () => {
+    const at = (s) => `2026-09-22T10:00:0${s}Z`;
+    const step = (sequence) =>
+      evt({ event_id: `e${sequence}`, sequence, emitted_at: at(sequence) });
+    const messages = [
+      msg({ message_id: "u1", role: "user", created_at: at(3) }),
+      msg({ message_id: "u2", role: "user", created_at: at(6) }),
+    ];
+    const recent = [step(4), step(7)];
+    const ids = (events) =>
+      projectConversation({ messages, events }).map((turn) => turn.id);
+    const before = ids(recent);
+    expect(ids([step(1), ...recent]).slice(-before.length)).toEqual(before);
+  });
+});
+
 describe("projectConversation nudge cards", () => {
   const card = (over = {}) =>
     msg({

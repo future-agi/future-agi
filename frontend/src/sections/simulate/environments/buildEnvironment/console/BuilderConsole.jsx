@@ -1,21 +1,26 @@
 import PropTypes from "prop-types";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import { visuallyHidden } from "@mui/utils";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
-import { CONSOLE_COPY } from "../build.constants";
+import { CONSOLE_COPY, LIST_PADDING } from "../build.constants";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ViewerLock from "../../components/ViewerLock";
 import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
+import KeepPlace from "./KeepPlace";
+import OlderChat from "./OlderChat";
+import SearchStatus from "./SearchStatus";
+import useOpenAtMessage from "./useOpenAtMessage";
+import useReaderScroll from "./useReaderScroll";
 import { JumpToLatestBar, StopOrbit } from "./BuilderProgress";
 import { Turn } from "./ConsoleTurn";
 // Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
 // with a server-side transcription path. Kept for that follow-up.
 // import VoiceInput from "./VoiceInput";
-import { subscribeBuilderChatFocus } from "./builderChatFocusBus";
 import { subscribeComposerScaffold } from "./composerScaffoldBus";
 
 const INITIAL = { draft: "", scaffolds: [] };
@@ -99,7 +104,16 @@ export default function BuilderConsole({
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
   const { canEdit } = useSimulationAccess();
   const { draft, scaffolds } = state;
+  const theme = useTheme();
   const listRef = useRef(null);
+  // Where the held messages and steps start.
+  const starts = (turns || []).filter((turn) => turn.role === "history");
+  // Messages and steps load one at a time, the one that starts lower first, so
+  // neither shows for long without the other it belongs with.
+  const loadsFirst = (turn) =>
+    starts
+      .slice(starts.indexOf(turn) + 1)
+      .every((lower) => !lower.hasOlder || lower.failed);
   const lastScrollRef = useRef({ top: 0, height: 0 });
   const [following, setFollowing] = useState(true);
   const messageCount = countMessages(turns);
@@ -110,57 +124,82 @@ export default function BuilderConsole({
       subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
     [],
   );
-  // Asked to show one of its messages: once open, scroll the list to it and stop following the latest. A message that
-  // isn't loaded leaves the list at the latest.
-  const [asked, setAsked] = useState(null);
-  useEffect(
-    () => subscribeBuilderChatFocus((messageId) => setAsked({ messageId })),
-    [],
-  );
-  useEffect(() => {
-    if (!active || !asked) return;
-    setAsked(null);
-    const list = listRef.current;
-    const id = asked.messageId && CSS.escape(asked.messageId);
-    const target =
-      id &&
-      list?.querySelector(
-        `[data-message-id="${id}"], [data-answer-id="${id}"]`,
-      );
-    if (!target) {
+  // Reading by hand ends a search for a message.
+  const reader = useReaderScroll(listRef, () => search.stop());
+  const search = useOpenAtMessage({
+    active,
+    listRef,
+    count: turns?.length ?? 0,
+    older: starts.find((turn) => turn.kind === "messages"),
+    onFound: (target) => {
+      const list = listRef.current;
+      setFollowing(false);
+      reader.startOwnScroll();
+      list.scrollTo?.({
+        top: target.offsetTop - list.offsetTop,
+        behavior: "smooth",
+      });
+    },
+    onLatest: () => {
       setFollowing(true);
-      return;
-    }
-    setFollowing(false);
-    list.scrollTo?.({
-      top: target.offsetTop - list.offsetTop,
-      behavior: "smooth",
-    });
-  }, [active, asked]);
+      scrollToLatest();
+    },
+  });
+  const { startOwnScroll } = reader;
+  const scrollToLatest = useCallback(() => {
+    startOwnScroll();
+    // Scroll only the message list. scrollIntoView would also scroll every
+    // ancestor, including the collapsing column's clip box mid-animation.
+    const list = listRef.current;
+    list?.scrollTo?.({ top: list.scrollHeight, behavior: "smooth" });
+  }, [startOwnScroll]);
 
   // Follow the transcript only as it grows, not when a card's state changes.
   const count = turns?.length ?? 0;
   const lastTurn = turns?.[count - 1];
   const lastId = lastTurn?.id;
   const lastSteps = lastTurn?.steps?.length;
+  const from = starts.map((turn) => `${turn.kind} ${turn.oldest}`).join();
+  const drawn = useRef({ from });
   useEffect(() => {
+    // Older ones loading above leave the list where it is (see KeepPlace).
+    const was = drawn.current;
+    drawn.current = { from, lastId, lastSteps };
+    if (
+      was.from !== from &&
+      was.lastId === lastId &&
+      was.lastSteps === lastSteps
+    )
+      return;
     if (!active || !following) return;
-    // Scroll only the message list. scrollIntoView would also scroll every
-    // ancestor, including the collapsing column's clip box mid-animation.
-    const list = listRef.current;
-    list?.scrollTo?.({ top: list.scrollHeight, behavior: "smooth" });
-  }, [count, lastId, lastSteps, running, canStop, active, following]);
+    scrollToLatest();
+  }, [
+    count,
+    from,
+    lastId,
+    lastSteps,
+    running,
+    canStop,
+    active,
+    following,
+    scrollToLatest,
+  ]);
 
   // Sending from any path (composer, a question card, Stop) and reopening the
   // console both return to the latest turn. Adjusted during render, so the next
   // paint already follows.
-  const [prev, setPrev] = useState({ running, active });
-  if (prev.running !== running || prev.active !== active) {
+  // Older messages and steps loaded above are not new ones, whatever they hold.
+  const [prev, setPrev] = useState({ running, active, from });
+  if (prev.from !== from) {
+    setSeenMessages(messageCount);
+    setPrev({ ...prev, from });
+  } else if (prev.running !== running || prev.active !== active) {
     // Reopened to show a message, it goes to that message instead.
     const reopened = active && !prev.active;
     if ((running && !prev.running) || reopened)
-      setFollowing(!(reopened && asked));
-    setPrev({ running, active });
+      setFollowing(!(reopened && search.asked));
+    if (running && !prev.running) search.stop();
+    setPrev({ running, active, from });
   }
 
   const handleScroll = () => {
@@ -179,6 +218,7 @@ export default function BuilderConsole({
       // changed height means text rewrapped and moved the list, not the user.
       setFollowing(false);
       setSeenMessages(messageCount);
+      reader.scrolledUp();
     }
     lastScrollRef.current = { top: scrollTop, height: scrollHeight };
   };
@@ -200,6 +240,7 @@ export default function BuilderConsole({
   // `working` narrows it when Stop also covers work that only waits.
   const busy = running || working;
   const hasNewMessage = !following && messageCount > seenMessages;
+  const showJump = !following && (hasNewMessage || busy);
   // One button: Stop while there's something to stop, Send as soon as the user types.
   const showStop = onStop && (canStop || running) && !locked && !hasContent;
 
@@ -282,6 +323,7 @@ export default function BuilderConsole({
         )}
       </Stack>
 
+      <SearchStatus looking={search.looking} />
       {/* overflow-wrap is inherited, so every message, note, error and tool row
           below breaks a long unbroken token (a URL, an id, pasted JSON) instead
           of pushing out of the chat column. */}
@@ -289,55 +331,86 @@ export default function BuilderConsole({
         ref={listRef}
         data-testid="builder-console-list"
         onScroll={handleScroll}
+        {...reader.listProps}
         sx={{
           flex: 1,
           minWidth: 0,
           overflowY: "auto",
           overflowWrap: "anywhere",
-          px: 3,
-          py: 3,
+          p: LIST_PADDING,
         }}
       >
-        <Stack spacing={3}>
-          {(turns || []).length === 0 && !busy ? (
-            <Stack alignItems="center" spacing={1} sx={{ py: 6, opacity: 0.7 }}>
-              <Box
-                sx={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: "50%",
-                  display: "grid",
-                  placeItems: "center",
-                  bgcolor: "action.selected",
-                  color: "text.secondary",
-                }}
+        <KeepPlace
+          listRef={listRef}
+          from={from}
+          following={following}
+          duration={theme.transitions.duration.standard}
+        >
+          <Stack spacing={3}>
+            {(turns || []).length === 0 && !busy ? (
+              <Stack
+                alignItems="center"
+                spacing={1}
+                sx={{ py: 6, opacity: 0.7 }}
               >
-                <Iconify icon="solar:chat-round-line-linear" width={17} />
-              </Box>
-              <Typography
-                sx={{
-                  typography: "s1",
-                  color: "text.secondary",
-                  textAlign: "center",
-                  maxWidth: 320,
-                }}
-              >
-                {CONSOLE_COPY.empty}
-              </Typography>
-            </Stack>
-          ) : (
-            (turns || []).map((turn) => <Turn key={turn.id} turn={turn} />)
-          )}
-        </Stack>
+                <Box
+                  sx={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    display: "grid",
+                    placeItems: "center",
+                    bgcolor: "action.selected",
+                    color: "text.secondary",
+                  }}
+                >
+                  <Iconify icon="solar:chat-round-line-linear" width={17} />
+                </Box>
+                <Typography
+                  sx={{
+                    typography: "s1",
+                    color: "text.secondary",
+                    textAlign: "center",
+                    maxWidth: 320,
+                  }}
+                >
+                  {CONSOLE_COPY.empty}
+                </Typography>
+              </Stack>
+            ) : (
+              (turns || []).map((turn) =>
+                turn.role === "history" ? (
+                  <OlderChat
+                    key={turn.id}
+                    turn={turn}
+                    listRef={listRef}
+                    aboveBar={showJump}
+                    auto={
+                      active &&
+                      reader.movedUp &&
+                      !search.asked &&
+                      loadsFirst(turn)
+                    }
+                  />
+                ) : (
+                  <Turn key={turn.id} turn={turn} />
+                ),
+              )
+            )}
+          </Stack>
+        </KeepPlace>
       </Box>
 
       <Box role="status" sx={visuallyHidden}>
         {hasNewMessage ? CONSOLE_COPY.newMessage : ""}
       </Box>
-      {!following && (hasNewMessage || busy) && (
+      {showJump && (
         <JumpToLatestBar
           hasNewMessage={hasNewMessage}
-          onClick={() => setFollowing(true)}
+          onClick={() => {
+            search.stop();
+            setFollowing(true);
+          }}
         />
       )}
 

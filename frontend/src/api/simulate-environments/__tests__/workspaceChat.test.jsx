@@ -10,12 +10,14 @@ import {
 
 vi.mock("src/api/harness/harness", () => ({
   getHarnessJob: vi.fn(),
+  listOlderHarnessChat: vi.fn(),
   sendHarnessConversationMessage: vi.fn(),
   harnessIdempotencyKey: vi.fn(() => "req-test"),
 }));
 
 import {
   getHarnessJob,
+  listOlderHarnessChat,
   sendHarnessConversationMessage,
   harnessIdempotencyKey,
 } from "src/api/harness/harness";
@@ -70,10 +72,172 @@ describe("useWorkspaceChat (real)", () => {
     clearScenarioSelection();
     sendHarnessConversationMessage.mockReset();
     getHarnessJob.mockReset();
+    listOlderHarnessChat.mockReset();
     harnessIdempotencyKey.mockReset();
     harnessIdempotencyKey.mockReturnValue("req-test");
   });
   afterEach(() => clearScenarioSelection());
+
+  it("keeps the events already held when a send answers with fewer", async () => {
+    const event = (sequence) => ({ event_id: `e${sequence}`, sequence });
+    const { result, client } = renderChat(
+      conversationWith({ events: [event(1), event(2)] }),
+    );
+    sendHarnessConversationMessage.mockResolvedValue(
+      conversationWith({ events: [event(2), event(3)] }),
+    );
+    await act(async () => result.current.send("hi"));
+    await waitFor(() =>
+      expect(
+        client
+          .getQueryData(["harness-job", "job-1"])
+          .conversation.events.map((one) => one.sequence),
+      ).toEqual([1, 2, 3]),
+    );
+  });
+
+  describe("with older steps left to load", () => {
+    const tool = (sequence) => ({
+      event_id: `e${sequence}`,
+      sequence,
+      kind: "tool_started",
+      function_call_id: `call-${sequence}`,
+      payload: { tool: `tool ${sequence}` },
+      emitted_at: `2026-09-22T10:00:0${sequence}Z`,
+    });
+    const starts = (oldest_sequence, has_older) => ({
+      events: { oldest_sequence, has_older },
+    });
+    const conversation = conversationWith({
+      events: [tool(3), tool(4)],
+      history: starts(3, true),
+    });
+    const start = (result) =>
+      result.current.turns.find((turn) => turn.role === "history");
+    const tools = (result) =>
+      result.current.turns
+        .flatMap((turn) => turn.steps ?? [])
+        .map((step) => step.label);
+
+    it("loads the page before the held ones, after a retry, and says where they start", async () => {
+      const { result } = renderChat(conversation);
+      expect(start(result)).toMatchObject({ oldest: 3, hasOlder: true });
+
+      listOlderHarnessChat.mockRejectedValueOnce(new Error("offline"));
+      act(() => {
+        start(result).onLoad();
+      });
+      await waitFor(() => expect(start(result).failed).toBe(true));
+      expect(tools(result)).toEqual(["tool 3", "tool 4"]);
+
+      listOlderHarnessChat.mockResolvedValueOnce({
+        events: [tool(1), tool(2)],
+        oldest_sequence: 1,
+        has_older: false,
+      });
+      act(() => {
+        start(result).onLoad();
+      });
+      await waitFor(() =>
+        expect(start(result)).toMatchObject({
+          oldest: 1,
+          hasOlder: false,
+          failed: false,
+        }),
+      );
+      expect(listOlderHarnessChat).toHaveBeenLastCalledWith("job-1", {
+        kind: "events",
+        before: 3,
+      });
+      expect(tools(result)).toEqual(["tool 1", "tool 2", "tool 3", "tool 4"]);
+    });
+
+    it("drops a page for events that started over while it loaded", async () => {
+      const { result, client } = renderChat(conversation);
+      let answer;
+      listOlderHarnessChat.mockReturnValueOnce(
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      );
+      act(() => {
+        start(result).onLoad();
+      });
+      await waitFor(() => expect(start(result).loading).toBe(true));
+      act(() => {
+        client.setQueryData(
+          ["harness-job", "job-1"],
+          jobWith(
+            conversationWith({
+              events: [tool(8), tool(9)],
+              history: starts(8, true),
+            }),
+          ),
+        );
+      });
+      await act(async () =>
+        answer({
+          events: [tool(1), tool(2)],
+          oldest_sequence: 1,
+          has_older: false,
+        }),
+      );
+      await waitFor(() => expect(start(result).loading).toBe(false));
+      expect(start(result)).toMatchObject({ oldest: 8, hasOlder: true });
+      expect(tools(result)).toEqual(["tool 8", "tool 9"]);
+    });
+  });
+
+  it("loads the messages before the held ones, without their old states stopping the chat", async () => {
+    const message = (sequence, over) => ({
+      message_id: `m${sequence}`,
+      sequence,
+      role: "user",
+      kind: "user_message",
+      state: "completed",
+      content: `message ${sequence}`,
+      created_at: `2026-09-22T10:00:0${sequence}Z`,
+      ...over,
+    });
+    const { result } = renderChat(
+      conversationWith({
+        messages: [message(4), message(5)],
+        history: { messages: { oldest_sequence: 4, has_older: true } },
+      }),
+    );
+    listOlderHarnessChat.mockResolvedValueOnce({
+      // A Stop the server never settled.
+      messages: [
+        message(2),
+        message(3, {
+          state: "delivered",
+          payload: { command_kind: "interrupt" },
+        }),
+      ],
+      events: [],
+      oldest_sequence: 2,
+      has_older: true,
+    });
+    const start = () =>
+      result.current.turns.find((turn) => turn.role === "history");
+    act(() => {
+      start().onLoad();
+    });
+    await waitFor(() =>
+      expect(result.current.turns.map((turn) => turn.text)).toEqual([
+        undefined,
+        "message 2",
+        "message 4",
+        "message 5",
+      ]),
+    );
+    expect(listOlderHarnessChat).toHaveBeenCalledWith("job-1", {
+      kind: "messages",
+      before: 4,
+    });
+    expect(start()).toMatchObject({ kind: "messages", hasOlder: true });
+    expect(result.current.stopping).toBe(false);
+  });
 
   it("projects turns from the polled conversation", () => {
     const { result } = renderChat(

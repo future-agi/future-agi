@@ -3,6 +3,7 @@ where each change came from."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -108,6 +109,11 @@ def name_saved(activated: Mapping[str, tuple[Any, bool]], *, name: str) -> None:
 SOURCES_PER_CHANGE = 20
 
 
+def _file_name(file_id: str) -> str:
+    """The last part of a file's path or address, without a query or fragment; the id itself when it has none."""
+    return re.split(r"[\\/]", re.split(r"[?#]", file_id, maxsplit=1)[0])[-1] or file_id
+
+
 def record_sources(
     provenance: dict[str, list[ChangeSource]] | None,
     before: Mapping[str, bytes],
@@ -123,7 +129,8 @@ def record_sources(
     """Where each change came from: every item this write moved gets one source (who, through what, at which draft
     revision), appended to the sources it already had. A retried write at the same revision adds nothing. A chat
     write names the person's message it answered (`message_id`); a file import names each file and row it read
-    (`used_files`, each `{"file_id", "row"}`, the row ``None`` for a whole file)."""
+    (`used_files`, each `{"file_id", "row", "name"}`, the row ``None`` for a whole file and the name, when not given,
+    the last part of the file's path)."""
     out = {key: list(value) for key, value in (provenance or {}).items()}
     whole = whole_documents(before, after)
     old, new = item_index(before, whole), item_index(after, whole)
@@ -148,7 +155,12 @@ def record_sources(
     used = [
         *used,
         *(
-            SourceUsed(kind="file", id=str(one["file_id"]), row=one.get("row"))
+            SourceUsed(
+                kind="file",
+                id=str(one["file_id"]),
+                row=one.get("row"),
+                name=str(one.get("name") or _file_name(str(one["file_id"]))),
+            )
             for one in used_files or []
             if one.get("file_id")
         ),

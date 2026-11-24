@@ -23288,7 +23288,7 @@ export interface HarnessReviewChangeApi {
   decision: HarnessReviewChangeApiDecision;
   /** Plain text string or array of content-part objects. */
   affects: HarnessReviewChangeApiAffects;
-  /** Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row). */
+  /** Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file with its name and row). */
   sources: HarnessReviewChangeApiSourcesItem[];
   /** Changes this one needs; accepting it means accepting them. */
   depends_on: string[];
@@ -25027,6 +25027,21 @@ export interface HarnessConversationEventReadApi {
   emitted_at: string;
 }
 
+export interface HarnessConversationWindowApi {
+  /** The oldest sequence in this read; read what came before it with `before` set to it. */
+  oldest_sequence: number;
+  /** Items before `oldest_sequence` this read leaves out. */
+  has_older: boolean;
+}
+
+/**
+ * Where `messages` and `events` start, and whether older ones can be read with the history read.
+ */
+export interface HarnessConversationHistoryApi {
+  messages: HarnessConversationWindowApi;
+  events?: HarnessConversationWindowApi;
+}
+
 export interface HarnessConversationRuntimeApi {
   /** @minLength 1 */
   state: string;
@@ -25049,6 +25064,9 @@ export interface HarnessConversationReadApi {
   events: HarnessConversationEventReadApi[];
   /** @minimum 0 */
   event_watermark: number;
+  history: HarnessConversationHistoryApi;
+  /** On a read with `events_after`, whether more events past the last one here are left to read. */
+  events_has_newer: boolean;
   runtime: HarnessConversationRuntimeApi;
 }
 
@@ -25531,6 +25549,24 @@ export const HarnessJobActionApiReason = {
 
 export interface HarnessJobActionApi {
   reason?: HarnessJobActionApiReason;
+}
+
+export type HarnessConversationHistoryPageApiKind =
+  (typeof HarnessConversationHistoryPageApiKind)[keyof typeof HarnessConversationHistoryPageApiKind];
+
+export const HarnessConversationHistoryPageApiKind = {
+  messages: "messages",
+  events: "events",
+} as const;
+
+export interface HarnessConversationHistoryPageApi {
+  kind: HarnessConversationHistoryPageApiKind;
+  /** Oldest first; empty for `kind` events. */
+  messages: HarnessConversationMessageApi[];
+  /** Oldest first; empty for `kind` messages. */
+  events: HarnessConversationEventReadApi[];
+  oldest_sequence: number;
+  has_older: boolean;
 }
 
 export type HarnessConversationMessageCreateApiKind =
@@ -48973,6 +49009,31 @@ export type SimulateApiHarnessJobsSourceUploadBody = {
   paths: string;
   name?: string;
 };
+
+export type SimulateApiHarnessJobsReadParams = {
+  /**
+   * Only the builder chat events past this sequence, oldest first, `events_has_newer` saying whether more are left; the newest ones when absent. Messages are always the newest ones whole.
+   * @minimum 0
+   */
+  events_after?: number;
+};
+
+export type SimulateApiHarnessJobsConversationConversationHistoryParams = {
+  kind: SimulateApiHarnessJobsConversationConversationHistoryKind;
+  /**
+   * Read the items just before this sequence.
+   * @minimum 1
+   */
+  before: number;
+};
+
+export type SimulateApiHarnessJobsConversationConversationHistoryKind =
+  (typeof SimulateApiHarnessJobsConversationConversationHistoryKind)[keyof typeof SimulateApiHarnessJobsConversationConversationHistoryKind];
+
+export const SimulateApiHarnessJobsConversationConversationHistoryKind = {
+  messages: "messages",
+  events: "events",
+} as const;
 
 export type SimulateApiHarnessConversationsCommandsParams = {
   /**

@@ -4,8 +4,7 @@
 // prototype's fixture timer-walk so those sources do not regress. Both paths keep
 // this hook's return shape so nothing downstream changes.
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { harnessJobQuery } from "src/api/simulate-environments/environment";
+import { useHarnessJob } from "src/api/simulate-environments/environment";
 import { jobToBuildProgress } from "src/sections/simulate/environments/buildEnvironment/buildPipeline.constants";
 import {
   ASK_FALLBACK,
@@ -45,7 +44,7 @@ function useConsoleReplies() {
 // ---- Real path: poll the live job -----------------------------------------
 
 function useRealBuildProgress({ envId, agentRef, enabled }) {
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled }));
+  const jobQuery = useHarnessJob(envId, { enabled });
   const job = jobQuery.data;
   const { done, running, failure } = useMemo(
     () => jobToBuildProgress(job),

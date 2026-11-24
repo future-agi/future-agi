@@ -88,11 +88,44 @@ class ConversationCapability:
     document: dict[str, Any]
 
 
+def _window(rows, *, before: int | None = None) -> tuple[list, bool]:
+    """The newest `EVENT_LIMIT` rows before `before` (all when None), oldest first, and whether older ones are left
+    out of it."""
+    if before is not None:
+        rows = rows.filter(sequence__lt=before)
+    page = list(rows.order_by("-sequence")[: EVENT_LIMIT + 1])
+    return list(reversed(page[:EVENT_LIMIT])), len(page) > EVENT_LIMIT
+
+
+def _after(rows, after: int) -> tuple[list, bool]:
+    """The oldest `EVENT_LIMIT` rows past `after`, oldest first, and whether newer ones are left for the next read."""
+    page = list(rows.filter(sequence__gt=after).order_by("sequence")[: EVENT_LIMIT + 1])
+    return page[:EVENT_LIMIT], len(page) > EVENT_LIMIT
+
+
+def _history(rows: list, older: bool) -> dict[str, Any]:
+    """Where a window of the newest items starts and whether items before it were left out."""
+    return {
+        "oldest_sequence": rows[0].sequence if rows else None,
+        "has_older": older,
+    }
+
+
 def serialize_conversation(
     conversation: HostedHarnessConversation,
+    *,
+    events_after: int | None = None,
 ) -> dict[str, Any]:
-    messages = list(reversed(conversation.messages.order_by("-sequence")[:EVENT_LIMIT]))
-    events = list(reversed(conversation.events.order_by("-sequence")[:EVENT_LIMIT]))
+    """The conversation with its newest messages and events. Messages change in place (a streamed reply, a state), so
+    every read carries the newest ones whole. Events never change, so `events_after` limits them to the ones past the
+    sequence the reader already has, oldest first, `events_has_newer` saying whether more are left to read.
+    """
+    messages, older_messages = _window(conversation.messages)
+    if events_after is None:
+        events, older_events = _window(conversation.events)
+        newer_events = False
+    else:
+        events, newer_events = _after(conversation.events, events_after)
     job_metadata = (conversation.job.payload or {}).get("metadata") or {}
     lease = HostedHarnessConversationLease.no_workspace_objects.filter(
         conversation=conversation
@@ -116,12 +149,41 @@ def serialize_conversation(
         "messages": [_serialize_message(message) for message in messages],
         "events": [_serialize_event(event) for event in events],
         "event_watermark": conversation.event_acked_through,
+        "history": {
+            "messages": _history(messages, older_messages),
+            **(
+                {"events": _history(events, older_events)}
+                if events_after is None
+                else {}
+            ),
+        },
+        "events_has_newer": newer_events,
         "runtime": {
             "state": lease.state if lease else "cold",
             "warm_until": lease.expires_at.isoformat() if lease else None,
             "degraded": conversation.state == HostedHarnessConversation.State.DEGRADED,
             "available": chat_available,
         },
+    }
+
+
+def conversation_history(
+    conversation: HostedHarnessConversation, *, kind: str, before: int
+) -> dict[str, Any]:
+    """The `EVENT_LIMIT` messages or events just before sequence `before`, oldest first, for reading back past the
+    window a conversation read carries."""
+    rows, older = _window(
+        conversation.messages if kind == "messages" else conversation.events,
+        before=before,
+    )
+    return {
+        "kind": kind,
+        "messages": (
+            [_serialize_message(row) for row in rows] if kind == "messages" else []
+        ),
+        "events": [_serialize_event(row) for row in rows] if kind == "events" else [],
+        "oldest_sequence": rows[0].sequence if rows else None,
+        "has_older": older,
     }
 
 

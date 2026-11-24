@@ -71,6 +71,8 @@ class SourceUsed(TypedDict):
     id: str
     # For an imported file, the row it read; None for the whole file.
     row: NotRequired[int | None]
+    # For an imported file, its name as a person reads it ("orders.csv").
+    name: NotRequired[str]
 
 
 class UsedFile(TypedDict):
@@ -78,6 +80,8 @@ class UsedFile(TypedDict):
 
     file_id: str
     row: NotRequired[int | None]
+    # The file's name; the last part of `file_id` (its path in the environment) when not given.
+    name: NotRequired[str]
 
 
 class ChangeSource(TypedDict):

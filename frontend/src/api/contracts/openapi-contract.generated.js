@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1221,
+  endpointCount: 1222,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -31132,10 +31132,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/api/harness-jobs/{id}/": {
       get: {
         operationId: "simulate_api_harness-jobs_read",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          events_after: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/HarnessJobRead",
@@ -31183,6 +31191,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           403: {
             $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-jobs/{id}/conversation/history/": {
+      get: {
+        operationId:
+          "simulate_api_harness-jobs_conversation_conversation_history",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          kind: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["messages", "events"],
+            },
+          },
+          before: {
+            required: true,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessConversationHistoryPage",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -72501,6 +72542,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessConversationHistoryPage: {
+      required: ["kind", "messages", "events", "oldest_sequence", "has_older"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["messages", "events"],
+        },
+        messages: {
+          description: "Oldest first; empty for `kind` events.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessConversationMessage",
+          },
+        },
+        events: {
+          description: "Oldest first; empty for `kind` messages.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessConversationEventRead",
+          },
+        },
+        oldest_sequence: {
+          title: "Oldest sequence",
+          type: "integer",
+          "x-nullable": true,
+        },
+        has_older: {
+          title: "Has older",
+          type: "boolean",
+        },
+      },
+    },
     HarnessConversationMessageCreate: {
       required: ["content", "client_request_id"],
       type: "object",
@@ -72663,6 +72738,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "messages",
         "events",
         "event_watermark",
+        "history",
+        "events_has_newer",
         "runtime",
       ],
       type: "object",
@@ -72712,6 +72789,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Event watermark",
           type: "integer",
           minimum: 0,
+        },
+        history: {
+          $ref: "#/definitions/HarnessConversationHistory",
+        },
+        events_has_newer: {
+          title: "Events has newer",
+          description:
+            "On a read with `events_after`, whether more events past the last one here are left to read.",
+          type: "boolean",
         },
         runtime: {
           $ref: "#/definitions/HarnessConversationRuntime",
@@ -115458,107 +115544,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessLifecycleCounts: {
-      description: "Present for a versioned environment.",
-      required: [
-        "draft",
-        "validated",
-        "active",
-        "kept_as_written",
-        "archived",
-        "proved",
-        "not_proved",
-        "legacy_without_control",
-      ],
-      type: "object",
-      properties: {
-        draft: {
-          title: "Draft",
-          type: "integer",
-        },
-        validated: {
-          title: "Validated",
-          type: "integer",
-        },
-        active: {
-          title: "Active",
-          type: "integer",
-        },
-        kept_as_written: {
-          title: "Kept as written",
-          type: "integer",
-        },
-        archived: {
-          title: "Archived",
-          type: "integer",
-        },
-        proved: {
-          title: "Proved",
-          type: "integer",
-        },
-        not_proved: {
-          title: "Not proved",
-          type: "integer",
-        },
-        legacy_without_control: {
-          title: "Legacy without control",
-          description:
-            "Legacy cases running kept as written with no negative control: Validate and rebuild keep them running as written, each with a warning that it has no negative control.",
-          type: "integer",
-        },
-      },
-    },
-    HarnessConversationFailedScenario: {
-      required: ["scenario_key"],
-      type: "object",
-      properties: {
-        scenario_key: {
-          title: "Scenario key",
-          type: "string",
-          maxLength: 255,
-          minLength: 1,
-        },
-        reason: {
-          title: "Reason",
-          type: "string",
-          maxLength: 2000,
-        },
-      },
-    },
-    HarnessConversationBlockingInput: {
-      required: ["message_id", "kind"],
-      type: "object",
-      properties: {
-        message_id: {
-          title: "Message id",
-          type: "string",
-          minLength: 1,
-        },
-        kind: {
-          title: "Kind",
-          description: "question_requested or confirmation_requested.",
-          type: "string",
-          minLength: 1,
-        },
-        prompt: {
-          title: "Prompt",
-          type: "string",
-        },
-        options: {
-          type: "array",
-          items: {
-            type: "object",
-          },
-        },
-        options_only: {
-          title: "Options only",
-          description:
-            "True when only one of its options answers it: free text is not an answer.",
-          type: "boolean",
-        },
-      },
-      "x-nullable": true,
-    },
     HarnessConversationEventRead: {
       required: [
         "event_id",
@@ -115691,6 +115676,121 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Created at",
           type: "string",
           format: "date-time",
+        },
+      },
+    },
+    HarnessLifecycleCounts: {
+      description: "Present for a versioned environment.",
+      required: [
+        "draft",
+        "validated",
+        "active",
+        "kept_as_written",
+        "archived",
+        "proved",
+        "not_proved",
+        "legacy_without_control",
+      ],
+      type: "object",
+      properties: {
+        draft: {
+          title: "Draft",
+          type: "integer",
+        },
+        validated: {
+          title: "Validated",
+          type: "integer",
+        },
+        active: {
+          title: "Active",
+          type: "integer",
+        },
+        kept_as_written: {
+          title: "Kept as written",
+          type: "integer",
+        },
+        archived: {
+          title: "Archived",
+          type: "integer",
+        },
+        proved: {
+          title: "Proved",
+          type: "integer",
+        },
+        not_proved: {
+          title: "Not proved",
+          type: "integer",
+        },
+        legacy_without_control: {
+          title: "Legacy without control",
+          description:
+            "Legacy cases running kept as written with no negative control: Validate and rebuild keep them running as written, each with a warning that it has no negative control.",
+          type: "integer",
+        },
+      },
+    },
+    HarnessConversationFailedScenario: {
+      required: ["scenario_key"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          maxLength: 2000,
+        },
+      },
+    },
+    HarnessConversationBlockingInput: {
+      required: ["message_id", "kind"],
+      type: "object",
+      properties: {
+        message_id: {
+          title: "Message id",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          description: "question_requested or confirmation_requested.",
+          type: "string",
+          minLength: 1,
+        },
+        prompt: {
+          title: "Prompt",
+          type: "string",
+        },
+        options: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        options_only: {
+          title: "Options only",
+          description:
+            "True when only one of its options answers it: free text is not an answer.",
+          type: "boolean",
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessConversationHistory: {
+      description:
+        "Where `messages` and `events` start, and whether older ones can be read with the history read.",
+      required: ["messages"],
+      type: "object",
+      properties: {
+        messages: {
+          $ref: "#/definitions/HarnessConversationWindow",
+        },
+        events: {
+          $ref: "#/definitions/HarnessConversationWindow",
         },
       },
     },
@@ -115831,7 +115931,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         sources: {
           description:
-            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file with its name and row).",
           type: "array",
           items: {
             type: "object",
@@ -141109,6 +141209,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    HarnessConversationWindow: {
+      required: ["oldest_sequence", "has_older"],
+      type: "object",
+      properties: {
+        oldest_sequence: {
+          title: "Oldest sequence",
+          description:
+            "The oldest sequence in this read; read what came before it with `before` set to it.",
+          type: "integer",
+          "x-nullable": true,
+        },
+        has_older: {
+          title: "Has older",
+          description: "Items before `oldest_sequence` this read leaves out.",
+          type: "boolean",
+        },
+      },
     },
     HarnessValidationError: {
       required: ["code", "message", "failed_actions"],

@@ -1,6 +1,21 @@
-import { useEffect } from "react";
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { useEffect, useState } from "react";
+import PropTypes from "prop-types";
+import {
+  afterEach,
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  vi,
+} from "vitest";
 import { act, render, screen, fireEvent } from "src/utils/test-utils";
+
+const { enqueueSnackbar } = vi.hoisted(() => ({ enqueueSnackbar: vi.fn() }));
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar,
+}));
 
 import ChatSplitPane from "../ChatSplitPane";
 import BuilderConsole from "../../buildEnvironment/console/BuilderConsole";
@@ -162,6 +177,81 @@ describe("ChatSplitPane with a long builder conversation", () => {
     },
   );
 
+  describe("keeps the reader's place when older ones load", () => {
+    const start = (oldest) => ({
+      id: "older-messages",
+      role: "history",
+      kind: "messages",
+      oldest,
+      hasOlder: true,
+    });
+    const step = (id) => ({
+      id: `t-${id}`,
+      role: "builder",
+      steps: [{ id, kind: "error", text: id }],
+    });
+    // Every row is 100px, in the order drawn, in a pane 300px high.
+    const layOut = (list) =>
+      vi
+        .spyOn(window.HTMLElement.prototype, "getBoundingClientRect")
+        .mockImplementation(function rect() {
+          if (this === list) return { top: 0, bottom: 300 };
+          const rows = [...list.querySelectorAll("[data-message-id]")];
+          const top = rows.indexOf(this) * 100 - list.scrollTop;
+          return { top, bottom: top + 100 };
+        });
+    const land = (before, after, scrollTop, following) => {
+      const { rerender } = render(renderSplit(before));
+      const list = screen.getByTestId("builder-console-list");
+      Object.defineProperty(list, "scrollHeight", {
+        configurable: true,
+        value: 9876,
+      });
+      const rect = layOut(list);
+      // Scrolled up by hand, the list no longer follows the latest.
+      if (!following) {
+        fireEvent.scroll(list, { target: { scrollTop: 500 } });
+        fireEvent.scroll(list, { target: { scrollTop } });
+      }
+      list.scrollTop = scrollTop;
+      rerender(renderSplit(after));
+      const at = list.scrollTop;
+      rect.mockRestore();
+      return at;
+    };
+    const held = ["a", "b", "c", "d"].map(step);
+
+    it("by the first row in view, when they land above it", () => {
+      const older = [step("x"), step("y")];
+      expect(
+        land([start(201), ...held], [start(1), ...older, ...held], 100),
+      ).toBe(300);
+    });
+
+    it("by the first row in view, when they land below it", () => {
+      const [a, b, ...rest] = held;
+      expect(
+        land(
+          [a, b, start(201), ...rest],
+          [a, start(1), b, step("x"), step("y"), ...rest],
+          100,
+        ),
+      ).toBe(100);
+    });
+
+    it("at the latest, for a reader who follows it", () => {
+      const [a, b, ...rest] = held;
+      expect(
+        land(
+          [a, b, start(201), ...rest],
+          [a, start(1), b, step("x"), step("y"), ...rest],
+          100,
+          true,
+        ),
+      ).toBe(300);
+    });
+  });
+
   it("receives turns while collapsed and scrolls to the newest on reopen", () => {
     const { rerender } = render(renderSplit(makeTurns(TURN_COUNT), true));
     collapse();
@@ -199,5 +289,269 @@ describe("ChatSplitPane with a long builder conversation", () => {
     expect(unmounts).toBe(0);
     // scrollIntoView would scroll the collapsing column too; the console never uses it.
     expect(window.HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+});
+
+describe("older messages", () => {
+  const PAGE = 200;
+  let observers = [];
+  let original;
+
+  // The marker is in view from the moment it is watched, until told otherwise.
+  let markerInView = true;
+  class FakeObserver {
+    constructor(callback) {
+      this.callback = callback;
+    }
+    observe() {
+      observers.push(this);
+    }
+    disconnect() {
+      observers = observers.filter((one) => one !== this);
+    }
+  }
+  const settle = async () => {
+    await act(async () => {
+      [...observers].forEach((one) =>
+        one.callback([{ isIntersecting: markerInView }]),
+      );
+    });
+  };
+
+  beforeEach(() => {
+    observers = [];
+    markerInView = true;
+    original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = FakeObserver;
+    enqueueSnackbar.mockReset();
+  });
+  afterEach(() => {
+    globalThis.IntersectionObserver = original;
+  });
+
+  // A chat with `pages` older pages, each answered when the test says so.
+  function Chat({ pages, answers, found, running = false }) {
+    const [held, setHeld] = useState({ pages: 0, loading: false });
+    const onLoad = () => {
+      setHeld((was) => ({ ...was, loading: true, failed: false }));
+      return new Promise((resolve, reject) => {
+        answers.push({
+          ok: () => {
+            setHeld((was) => ({ pages: was.pages + 1, loading: false }));
+            resolve();
+          },
+          fail: () => {
+            setHeld((was) => ({ ...was, loading: false, failed: true }));
+            reject(new Error("offline"));
+          },
+        });
+      });
+    };
+    const turns = [
+      {
+        id: "older-messages",
+        role: "history",
+        kind: "messages",
+        oldest: (pages - held.pages) * PAGE + 1,
+        hasOlder: held.pages < pages,
+        loading: held.loading,
+        failed: held.failed,
+        onLoad,
+      },
+      ...(found && held.pages >= found
+        ? [{ id: "wanted", role: "user", text: "the old message" }]
+        : []),
+      ...makeTurns(4),
+    ];
+    return (
+      <ChatSplitPane
+        chat={({ collapse, open }) => (
+          <BuilderConsole
+            turns={turns}
+            running={running}
+            onCollapse={collapse}
+            active={open}
+          />
+        )}
+      >
+        <div>right pane</div>
+      </ChatSplitPane>
+    );
+  }
+  Chat.propTypes = {
+    pages: PropTypes.number,
+    answers: PropTypes.array,
+    found: PropTypes.number,
+    running: PropTypes.bool,
+  };
+  const open = (props) => {
+    const answers = [];
+    const view = render(<Chat answers={answers} {...props} />);
+    return {
+      answers,
+      rerender: (more) =>
+        view.rerender(<Chat answers={answers} {...props} {...more} />),
+    };
+  };
+  const list = () => screen.getByTestId("builder-console-list");
+  const scrollUp = () => fireEvent.wheel(list(), { deltaY: -100 });
+  const answer = async (one, how = "ok") => {
+    await act(async () => one[how]());
+    await settle();
+  };
+
+  describe("load when the reader reaches where they start", () => {
+    it("one page per reach, and the next only while the start is still in view", async () => {
+      const { answers } = open({ pages: 4 });
+      await settle();
+      // Not on open, however short the chat is.
+      expect(answers).toHaveLength(0);
+
+      scrollUp();
+      await settle();
+      await settle();
+      expect(answers).toHaveLength(1);
+
+      // The page added too little to push the start out of view.
+      await answer(answers[0]);
+      expect(answers).toHaveLength(2);
+
+      markerInView = false;
+      await answer(answers[1]);
+      expect(answers).toHaveLength(2);
+    });
+
+    it("stops after a failure until Try again", async () => {
+      const { answers } = open({ pages: 4 });
+      scrollUp();
+      await settle();
+      await answer(answers[0], "fail");
+      scrollUp();
+      await settle();
+      expect(answers).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(answers).toHaveLength(2);
+    });
+
+    it("not when the chat scrolled itself there", async () => {
+      const { answers } = open({ pages: 4 });
+      scrollUp();
+      act(() => focusBuilderChat("u0"));
+      await settle();
+      expect(answers).toHaveLength(0);
+    });
+  });
+
+  describe("for a reader above where both start", () => {
+    const start = (kind, over) => ({
+      id: `older-${kind}`,
+      role: "history",
+      kind,
+      oldest: 201,
+      hasOlder: true,
+      onLoad: vi.fn(() => Promise.resolve()),
+      ...over,
+    });
+    const show = (events, messages) =>
+      render(
+        renderSplit([
+          events,
+          makeTurns(1)[0],
+          messages,
+          ...makeTurns(4).slice(1),
+        ]),
+      );
+
+    it("stays in sight at the bottom, so a jump past it still reaches it", () => {
+      show(start("events"), start("messages"));
+      ["older-events", "older-messages"].forEach((id) =>
+        expect(screen.getByTestId(id)).toHaveStyle({ position: "sticky" }),
+      );
+    });
+
+    it.each([
+      ["first the one that starts lower", {}, 0],
+      ["then the other, once that one ends", { hasOlder: false }, 1],
+      ["the other, when that one failed", { failed: true }, 1],
+    ])("loads %s", async (_, over, events) => {
+      const steps = start("events");
+      const messages = start("messages", over);
+      show(steps, messages);
+      fireEvent.keyDown(list(), { key: "Home" });
+      await settle();
+      expect(steps.onLoad).toHaveBeenCalledTimes(events);
+      expect(messages.onLoad).toHaveBeenCalledTimes(1 - events);
+    });
+  });
+
+  describe("read to open the chat at a message that isn't loaded", () => {
+    const looking = () => screen.queryByText("Looking for that message…");
+
+    it("loads pages until it is there, then shows it", async () => {
+      const { answers } = open({ pages: 9, found: 2 });
+      act(() => focusBuilderChat("wanted"));
+      expect(looking()).toBeInTheDocument();
+      await answer(answers[0]);
+      const { scrollTo } = window.HTMLElement.prototype;
+      scrollTo.mockClear();
+      await answer(answers[1]);
+      expect(answers).toHaveLength(2);
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(enqueueSnackbar).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        "too far back",
+        { pages: 9 },
+        5,
+        "That message is too far back to open here.",
+      ],
+      [
+        "not in the chat",
+        { pages: 2 },
+        2,
+        "That message isn't in this chat, so it can't be shown.",
+      ],
+    ])("gives up once when it is %s", async (_, props, asked, said) => {
+      const { answers } = open(props);
+      act(() => focusBuilderChat("wanted"));
+      Object.defineProperty(list(), "scrollHeight", {
+        configurable: true,
+        value: 9876,
+      });
+      for (let page = 0; page < asked; page += 1) await answer(answers[page]);
+      expect(answers).toHaveLength(asked);
+      // At the latest, also for a reader whose list had settled short of it.
+      expect(window.HTMLElement.prototype.scrollTo).toHaveBeenLastCalledWith({
+        top: 9876,
+        behavior: "smooth",
+      });
+      expect(enqueueSnackbar.mock.calls).toEqual([[said, { variant: "info" }]]);
+    });
+
+    it("gives up when a page fails, and looks again when asked again", async () => {
+      const { answers } = open({ pages: 9 });
+      act(() => focusBuilderChat("wanted"));
+      await answer(answers[0], "fail");
+      expect(answers).toHaveLength(1);
+      expect(enqueueSnackbar.mock.calls).toEqual([
+        ["Couldn't load the earlier messages. Try again.", { variant: "info" }],
+      ]);
+      act(() => focusBuilderChat("wanted"));
+      expect(answers).toHaveLength(2);
+    });
+
+    it.each([
+      ["scrolls by hand", () => fireEvent.wheel(list(), { deltaY: 100 })],
+      ["sends a message", (rerender) => rerender({ running: true })],
+    ])("stops looking when the reader %s", async (_, interrupt) => {
+      const { answers, rerender } = open({ pages: 9 });
+      act(() => focusBuilderChat("wanted"));
+      interrupt(rerender);
+      await answer(answers[0]);
+      expect(answers).toHaveLength(1);
+      expect(enqueueSnackbar).not.toHaveBeenCalled();
+    });
   });
 });

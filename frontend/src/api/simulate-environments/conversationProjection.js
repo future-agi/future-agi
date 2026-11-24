@@ -69,9 +69,11 @@ function finalizeRunningSteps(steps) {
 
 export function projectConversation(conversation) {
   if (!conversation) return [];
-  const messages = Array.isArray(conversation.messages)
-    ? conversation.messages
-    : [];
+  // The older ones are only for reading: the chat's state follows the newest.
+  const messages = [
+    ...(conversation.older_messages ?? []),
+    ...(conversation.messages ?? []),
+  ];
   const events = Array.isArray(conversation.events) ? conversation.events : [];
   const blocking = conversation.blocking_input || null;
 
@@ -124,6 +126,24 @@ export function projectConversation(conversation) {
     builder = null;
   };
 
+  // Where the held messages and steps start: the ones before are read on
+  // demand, and once read back, the line says so.
+  const starts = { msg: "messages", evt: "events" };
+  const markStart = ({ src, seq }) => {
+    const kind = starts[src];
+    delete starts[src];
+    const start = kind && conversation.history?.[kind];
+    if (!start?.has_older && !start?.read_back) return;
+    builder = null;
+    turns.push({
+      id: `older-${kind}`,
+      role: "history",
+      kind,
+      oldest: seq,
+      hasOlder: Boolean(start.has_older),
+    });
+  };
+
   const pushActivity = (line, seedId) => {
     if (!builder?.title) {
       builder = {
@@ -150,6 +170,7 @@ export function projectConversation(conversation) {
   };
 
   for (const item of timeline) {
+    markStart(item);
     if (item.src === "msg") {
       const m = item.data;
       if (m.role === "user") {
@@ -336,7 +357,8 @@ export function projectConversation(conversation) {
   }
 
   turns.forEach((t, ti) => {
-    if (!t.id) t.id = `turn-${ti}`;
+    // By its first step, not its place: older events add turns above it.
+    if (!t.id) t.id = `turn-${t.steps?.[0]?.id ?? ti}`;
     (t.steps || []).forEach((s, si) => {
       if (!s.id) s.id = `${t.id}-s${si}`;
     });

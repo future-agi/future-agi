@@ -38,6 +38,8 @@ const clock = (iso) =>
       })
     : "";
 
+const rowText = (row) => (Number.isInteger(row) ? COPY.fileRow(row) : null);
+
 const sourceText = (source) => {
   if (!source) return COPY.noSource;
   const line = sourceLine(source);
@@ -47,12 +49,15 @@ const sourceText = (source) => {
     hand: COPY.byHand,
     update: COPY.fromUpdate,
   }[line.kind];
-  return [from, line.where, clock(line.at)].filter(Boolean).join(" · ");
+  return [from, rowText(line.row), clock(line.at)].filter(Boolean).join(" · ");
 };
 
 const linkText = (link) => {
   if (link.kind === "chat") return COPY.openInChat;
-  return link.kind === "file" ? COPY.openFile(link.file) : COPY.open;
+  if (!link.file) return COPY.open;
+  return [COPY.openFile(link.file), rowText(link.row)]
+    .filter(Boolean)
+    .join(" · ");
 };
 
 function DiffLine({ line }) {

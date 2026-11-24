@@ -375,7 +375,11 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     return {k: v for k, v in metadata.items() if k != "observability_refusal"}
 
 
-def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
+def serialize_job(
+    job: HostedHarnessJob,
+    *,
+    events_after: int | None = None,
+) -> dict[str, Any]:
     from simulate.services.harness_cancel import cancel_status
     from simulate.services.harness_usage import harness_consumption
     from simulate.services.harness_versioning.read import versioning_flags
@@ -591,7 +595,9 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
         "platform": platform,
         "credentials": {"detected_connectors": detected_connectors},
         "conversation": (
-            serialize_conversation(conversation) if conversation is not None else None
+            serialize_conversation(conversation, events_after=events_after)
+            if conversation is not None
+            else None
         ),
         "versioning": versioning_flags(),
     }
@@ -1804,7 +1810,30 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness job not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(serialize_job(job))
+        query = getattr(request, "validated_query_data", None) or {}
+        return Response(serialize_job(job, events_after=query.get("events_after")))
+
+    def conversation_history(self, request, pk) -> Response:
+        """The builder chat's messages or events before a sequence, for reading back past a job read's window."""
+        from simulate.services.hosted_harness_conversation import conversation_history
+
+        job = self._job(request, pk)
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.filter(job=job).first()
+            if job is not None
+            else None
+        )
+        if conversation is None:
+            return Response(
+                {"detail": "Hosted harness conversation not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        query = request.validated_query_data
+        return Response(
+            conversation_history(
+                conversation, kind=query["kind"], before=query["before"]
+            )
+        )
 
     def run(self, request, pk) -> Response:
         """Create and dispatch one immutable selected-scenario simulation Run."""
@@ -3418,6 +3447,15 @@ class SandboxHarnessProvider:
             status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
+    def conversation_history(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "conversation_history_not_supported",
+                "message": "reading back the builder chat is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
     def scenario_coverage(self, request, pk) -> Response:
         return Response(
             {
@@ -3541,6 +3579,16 @@ class SandboxHarnessProvider:
         return Response(_sandbox_preflight_body(request.validated_data, report))
 
     def retrieve(self, request, pk) -> Response:
+        if (getattr(request, "validated_query_data", None) or {}).get(
+            "events_after"
+        ) is not None:
+            return Response(
+                {
+                    "error": "events_after_not_supported",
+                    "message": "reading only new builder chat events is only available on the hosted provider",
+                },
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
         from simulate.services.harness_sandbox import (
             HarnessSandboxRejected,
             HarnessSandboxUnavailable,

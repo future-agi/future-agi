@@ -153,7 +153,7 @@ export const pieceOf = (changes = []) =>
   changes.some((one) => one.piece === "environment") ? "environment" : "suite";
 
 const fileOf = (source) =>
-  (source?.used || []).find((one) => one.kind === "source");
+  (source?.used || []).find((one) => one.kind === "file");
 
 /** Where a change came from, to read. */
 export const sourceLine = (source = {}) => {
@@ -162,8 +162,8 @@ export const sourceLine = (source = {}) => {
   if (used) {
     return {
       kind: "file",
-      file: used.source_id,
-      where: used.locator || null,
+      file: used.name || null,
+      row: used.row ?? null,
       at,
     };
   }
@@ -173,12 +173,15 @@ export const sourceLine = (source = {}) => {
 
 /** Where a change came from, to go to. */
 export const sourceLink = (source = {}) => {
+  if (source.origin === "chat") {
+    // The person's message the change answered, when the server names it.
+    const message = (source.used || []).find((one) => one.kind === "message");
+    return { kind: "chat", messageId: message?.id };
+  }
   const used = fileOf(source);
-  if (used) return { kind: "file", file: used.source_id };
-  if (source.origin !== "chat") return { kind: "tab" };
-  // The person's message the change answered, when the server names it.
-  const message = (source.used || []).find((one) => one.kind === "message");
-  return { kind: "chat", messageId: message?.id };
+  return used
+    ? { kind: "file", file: used.name || null, row: used.row ?? null }
+    : { kind: "tab" };
 };
 
 const nextVersion = (version) => {

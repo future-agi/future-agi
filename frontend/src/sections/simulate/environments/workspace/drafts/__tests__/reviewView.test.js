@@ -187,17 +187,17 @@ describe("reviewCounts", () => {
 });
 
 describe("sources", () => {
-  it("tells a chat change, a file place and a direct edit apart", () => {
+  it("tells a chat change, a file row and a direct edit apart", () => {
     const chat = { origin: "chat", used: [{ kind: "message", id: "m1" }] };
     const file = {
       origin: "manual",
-      used: [{ kind: "source", source_id: "o.csv", locator: "O-104" }],
+      used: [{ kind: "file", id: "f-1", name: "o.csv", row: 7 }],
     };
     expect(sourceLine(chat).kind).toBe("chat");
     expect(sourceLine(file)).toMatchObject({
       kind: "file",
       file: "o.csv",
-      where: "O-104",
+      row: 7,
     });
     expect(sourceLine({ origin: "manual" }).kind).toBe("hand");
     expect(sourceLink(chat)).toMatchObject({ kind: "chat" });
@@ -205,8 +205,37 @@ describe("sources", () => {
     expect(
       sourceLink({ origin: "chat", used: [{ kind: "message", id: "m2" }] }),
     ).toEqual({ kind: "chat", messageId: "m2" });
-    expect(sourceLink(file)).toMatchObject({ kind: "file", file: "o.csv" });
+    expect(sourceLink(file)).toEqual({ kind: "file", file: "o.csv", row: 7 });
     expect(sourceLink({ origin: "manual" }).kind).toBe("tab");
+  });
+
+  it("reads a file with no name, and a whole file, without showing its id", () => {
+    const unnamed = {
+      origin: "manual",
+      used: [{ kind: "file", id: "f-1", row: null }],
+    };
+    expect(sourceLine(unnamed)).toMatchObject({
+      kind: "file",
+      file: null,
+      row: null,
+    });
+    expect(sourceLink(unnamed)).toEqual({
+      kind: "file",
+      file: null,
+      row: null,
+    });
+  });
+
+  it("names the file a chat change read and still links to its message", () => {
+    const both = {
+      origin: "chat",
+      used: [
+        { kind: "message", id: "m2" },
+        { kind: "file", id: "f-1", name: "o.csv", row: 7 },
+      ],
+    };
+    expect(sourceLine(both)).toMatchObject({ kind: "file", file: "o.csv" });
+    expect(sourceLink(both)).toEqual({ kind: "chat", messageId: "m2" });
   });
 });
 

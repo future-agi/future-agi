@@ -37,6 +37,10 @@ export const BUILDING_TABS = WORKSPACE_TABS.filter(
   (t) => !NOT_WHILE_BUILDING.has(t.id),
 );
 
+export const JUMP_BAR_HEIGHT = 32;
+// The chat list's padding, in theme spacing.
+export const LIST_PADDING = 3;
+
 export const CONSOLE_COPY = {
   answerWithOptions: "Answer with the options above",
   working: "Working on your last message…",
@@ -54,6 +58,27 @@ export const CONSOLE_COPY = {
   frozen: "Environment is still being built",
   stop: "Stop the current turn",
   collapse: "Collapse chat",
+  older: {
+    events: {
+      load: "Load earlier steps",
+      loading: "Loading earlier steps…",
+      failed: "Couldn't load the earlier steps.",
+      end: "Start of the builder's steps",
+    },
+    messages: {
+      load: "Load earlier messages",
+      loading: "Loading earlier messages…",
+      failed: "Couldn't load the earlier messages.",
+      end: "Start of the chat",
+    },
+    retry: "Try again",
+  },
+  search: {
+    looking: "Looking for that message…",
+    tooFar: "That message is too far back to open here.",
+    missing: "That message isn't in this chat, so it can't be shown.",
+    failed: "Couldn't load the earlier messages. Try again.",
+  },
 };
 
 export const PIPELINE_CHECKS_COPY = {

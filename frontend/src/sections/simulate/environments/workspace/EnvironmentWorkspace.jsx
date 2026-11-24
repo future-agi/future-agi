@@ -11,7 +11,7 @@ import {
   canRunHeader,
   stageOutputsToWorld,
   harnessEnvironmentQuery,
-  harnessJobQuery,
+  useHarnessJob,
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
@@ -260,7 +260,7 @@ export default function EnvironmentWorkspace() {
   // neutral skeleton before.
   const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
+  const jobQuery = useHarnessJob(envId, { enabled: backed });
   const usageLimit = jobQuery.data?.usage_limit;
   const hadRemoteUsageLimit = useRef(false);
   useEffect(() => {

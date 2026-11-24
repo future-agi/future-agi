@@ -1687,7 +1687,7 @@ class HarnessReviewChangeSerializer(serializers.Serializer):
         child=serializers.DictField(child=JsonValueField(allow_null=True)),
         help_text=(
             "Where the change came from, latest first: who, through what, when, and what it used (the person's"
-            " message, or a file and its row)."
+            " message, or a file with its name and row)."
         ),
     )
     depends_on = serializers.ListField(
