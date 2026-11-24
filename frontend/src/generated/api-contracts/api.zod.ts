@@ -62995,8 +62995,7 @@ export const SimulateTestExecutionsDeleteDeleteParams = zod.object({
 });
 
 /**
- * Fetch the evaluation explanation summary from the database.
-If not present, trigger async calculation and return empty response.
+ * Return the stored summary and its status; write and queue nothing.
  */
 export const SimulateTestExecutionsEvalExplanationSummaryListParams =
   zod.object({
