@@ -1815,7 +1815,10 @@ class HostedHarnessProvider:
 
     def conversation_history(self, request, pk) -> Response:
         """The builder chat's messages or events before a sequence, for reading back past a job read's window."""
-        from simulate.services.hosted_harness_conversation import conversation_history
+        from simulate.services.hosted_harness_conversation import (
+            MessageNotInConversation,
+            conversation_history,
+        )
 
         job = self._job(request, pk)
         conversation = (
@@ -1832,11 +1835,22 @@ class HostedHarnessProvider:
                 status=status.HTTP_404_NOT_FOUND,
             )
         query = request.validated_query_data
-        return Response(
-            conversation_history(
-                conversation, kind=query["kind"], before=query["before"]
+        try:
+            page = conversation_history(
+                conversation,
+                kind=query["kind"],
+                before=query.get("before"),
+                around=query.get("around"),
             )
-        )
+        except MessageNotInConversation:
+            return Response(
+                build_error_envelope(
+                    "Message not found in this builder chat",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(page)
 
     def run(self, request, pk) -> Response:
         """Create and dispatch one immutable selected-scenario simulation Run."""
