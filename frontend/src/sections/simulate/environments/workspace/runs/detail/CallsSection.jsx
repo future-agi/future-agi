@@ -37,7 +37,7 @@ export function CallsSection({ changes }) {
                 wordBreak: "break-word",
               }}
             >
-              {one.name}
+              {one.worker_id ? C.worker(one.name) : one.name}
             </Typography>,
             <Count key="a" value={one.attempted} />,
             <Count key="c" value={one.committed} tone="text.primary" />,

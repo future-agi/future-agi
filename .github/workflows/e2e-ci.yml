@@ -2,13 +2,21 @@ name: E2E CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    # Only these three activity types. A run started by any other one (a body
+    # or title edit, a label) becomes this workflow's newest suite for the
+    # head commit, and GitHub then ignores the older suite's required check,
+    # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
+    # the merge queue re-tests every dev merge, but a PR moved onto main is
+    # not re-tested until a push or reopen (see e2e/README.md).
+    types: [opened, synchronize, reopened]
     # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
   merge_group:
   # The Standalone leg (E2E_STACK=standalone): nightly, on demand, and next to
-  # the Distributed leg on a PR that carries the e2e-standalone label.
+  # the Distributed leg on a PR that carries the e2e-standalone label. Adding a
+  # label starts no run (see `types` above), so add e2e-standalone, then push or
+  # close and reopen the PR.
   schedule:
     - cron: "37 2 * * *"
   workflow_dispatch:
@@ -33,7 +41,7 @@ permissions:
 concurrency:
   # Every landing needs its own verdict, even if several arrive while one runs.
   # Only the independent cache publisher coalesces pending pushes.
-  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
+  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-candidate
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -52,7 +60,6 @@ env:
 
 jobs:
   changes:
-    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -104,7 +111,14 @@ jobs:
                 [[ $HEAD_SHA == "$GITHUB_SHA" ]]
                 git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
               else
-                [[ $(git show -s --format=%P HEAD) == "$BASE_SHA $HEAD_SHA" ]]
+                # The event's base.sha can predate the base tip GitHub built its
+                # test merge on: it is not refreshed until the head merges the
+                # base. Plan from the merge's own first parent, which must
+                # descend from the event base, with the head as second parent.
+                read -r first second extra <<< "$(git show -s --format=%P HEAD)"
+                [[ -z ${extra:-} && ${second:-} == "$HEAD_SHA" ]]
+                git merge-base --is-ancestor "$BASE_SHA" "$first"
+                BASE_SHA=$first
               fi
               policy=$BASE_SHA ;;
             *) policy=$GITHUB_SHA; export BASE_SHA=$policy HEAD_SHA=$policy ;;
@@ -142,8 +156,8 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           DISPATCHED: ${{ inputs.stack }}
-          # The labels the PR had when this run started: a re-run keeps them,
-          # so add the label, then push.
+          # The labels the PR had when this run started; a re-run keeps them.
+          # Adding a label starts no run, so add the label, then push or reopen.
           STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
         run: |
           case "$EVENT" in
@@ -712,6 +726,40 @@ jobs:
           overwrite: true
           if-no-files-found: warn
 
+      - name: Record the stack's pulled images
+        # The report combines shards from different attempts (a re-run of failed
+        # jobs) only when they ran the same pulled images: scripts/shard-report.mjs
+        # receipts compares these. Image references and digests only, never
+        # container env. The images this job built from the commit are marked
+        # `built` and never compared: their digests differ on every shard. The
+        # list follows the build steps above; a ref missing from it only makes
+        # a combined report fail, never pass.
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stack-images"
+          built=("futureagi/code-executor:$IMAGE_TAG")
+          if [[ $BUILD_BACKEND == true ]]; then built+=("futureagi/future-agi:$IMAGE_TAG" "futureagi/fi-collector:$IMAGE_TAG"); fi
+          if [[ $BUILD_FRONTEND == true ]]; then built+=("futureagi/frontend:$IMAGE_TAG"); fi
+          if [[ $BUILD_GATEWAY == true ]]; then built+=("futureagi/agentcc-gateway:$IMAGE_TAG"); fi
+          if [[ $E2E_STACK == standalone ]]; then built+=("futureagi/standalone:$IMAGE_TAG"); fi
+          built_json=$(printf '%s\n' "${built[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
+          bin/e2e compose ps --all --quiet | xargs -r docker inspect --format '{{.Config.Image}}' | sort -u |
+            while IFS= read -r ref; do
+              docker image inspect --format '{{json .RepoDigests}}' "$ref" |
+                jq -c --arg ref "$ref" --argjson built "$built_json" '{ref: $ref, built: ($built | index([$ref]) != null), digests: ((. // []) | sort)}'
+            done | jq -s 'sort_by(.ref)' > "$RUNNER_TEMP/stack-images/images.json"
+          jq -e 'length > 0' "$RUNNER_TEMP/stack-images/images.json" > /dev/null
+
+      - name: Upload the stack's pulled images
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-images-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/stack-images/images.json
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Upload blob report
         # The report job merges every shard's blob into one report and checks
         # that the shards ran the whole suite. A leg that never reached the
@@ -721,7 +769,11 @@ jobs:
         with:
           name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: e2e/blob-report
-          retention-days: 3
+          # A re-run of the report job alone reuses the blobs of the attempt
+          # that produced them (scripts/shard-report.mjs receipts). 14 days is
+          # the supported window for such a re-run; after that, re-run all
+          # jobs, because the report cannot be built from expired blobs.
+          retention-days: 14
           if-no-files-found: error
 
       - name: Upload report
@@ -862,7 +914,7 @@ jobs:
         with:
           name: once-per-stack-${{ matrix.stack }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/once-per-stack/record.json
-          retention-days: 3
+          retention-days: 14
           if-no-files-found: error
 
       - name: Capture backend lifecycle on failure
@@ -1617,9 +1669,9 @@ jobs:
           if-no-files-found: warn
 
   e2e-tests:
-    name: ${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && 'E2E metadata edit' || 'E2E Tests Pass' }}
+    name: E2E Tests Pass
     needs: [changes, e2e, report, skills-receipts]
-    if: ${{ always() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

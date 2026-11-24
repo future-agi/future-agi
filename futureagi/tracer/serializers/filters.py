@@ -1548,7 +1548,7 @@ class EvalTaskFiltersField(serializers.JSONField):
                 task_context = self.context.get("metric_filter_context", "task")
                 if not str(task_context).startswith("task"):
                     task_context = "task"
-                field._context = {
+                field._context = {  # type: ignore[attr-defined]  # Field.context reads root._context
                     **self.context,
                     "project_id": self.context.get("project_id"),
                     "metric_filter_context": task_context,
@@ -1589,7 +1589,7 @@ def validate_persisted_filter_list(value):
     definition and authorized scope again. List requests must not use this.
     """
     field = FilterListField()
-    field._context = {PERSISTED_METRIC_FILTER_CONTEXT_KEY: True}
+    field._context = {PERSISTED_METRIC_FILTER_CONTEXT_KEY: True}  # type: ignore[attr-defined]  # Field.context reads root._context
     return field.run_validation(value)
 
 

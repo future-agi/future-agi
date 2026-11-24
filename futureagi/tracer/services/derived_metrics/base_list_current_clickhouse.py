@@ -160,7 +160,7 @@ def freeze_changes(writer, attempt, head, *, keys, as_of, cutoff=None):
     from tracer.services.derived_metrics.refresh import payload_select
 
     for sql, params in pages:
-        member_payloads = []
+        member_payloads: list = []
         for table in (LIST_CURRENT_MEMBERS, LIST_CURRENT_ROOTS):
             previous, bound = committed_rows_select(
                 table,

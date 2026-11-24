@@ -16,6 +16,7 @@ from clickhouse_driver.util.escape import escape_params
 from django.conf import settings as django_settings
 from django.test import override_settings
 
+from conftest import _ch_test_native_client
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse.query_builders.user_list import (
     UnsupportedBoundedUserListQuery,
@@ -2133,25 +2134,13 @@ def test_session_page_enrichments_replay_tombstones_and_resolve_remaps():
         assert "(latest_parent_span_id IS NULL OR latest_parent_span_id = '')" in sql
 
 
-def _ch25_client():
-    host = os.getenv("CH25_HOST")
-    port = int(
-        os.getenv("CH25_NATIVE_PORT")
-        or os.getenv("CH25_TCP_PORT")
-        or os.getenv("CH_PORT")
-        or "9000"
-    )
+@pytest.fixture
+def ch25_client():
+    # Use the same verified native sidecar as the other live CH tests. Setting
+    # CH25_HOST globally would also opt unrelated tests into unguarded DDL.
     database = os.getenv("CH25_DATABASE") or os.getenv("CH_DATABASE") or "test_tfc"
-    if not host:
-        pytest.skip("CH25_HOST is not configured")
-    try:
-        from clickhouse_driver import Client
-
-        client = Client(host=host, port=port, database=database)
-        client.execute("SELECT 1")
-        return client
-    except Exception as exc:
-        pytest.skip(f"disposable ClickHouse 25 is unavailable: {type(exc).__name__}")
+    with _ch_test_native_client(database=database, allow_legacy_ch_port=True) as client:
+        yield client
 
 
 def _dict_rows(rows, columns):
@@ -2160,10 +2149,10 @@ def _dict_rows(rows, columns):
 
 
 @pytest.mark.integration
-def test_user_trace_and_session_candidates_execute_with_alias_remaps():
+def test_user_trace_and_session_candidates_execute_with_alias_remaps(ch25_client):
     """Execute exact CH25 user trace/session reads across both ID cutovers."""
 
-    client = _ch25_client()
+    client = ch25_client
     original_database = client.execute("SELECT currentDatabase()")[0][0]
     database = f"_test_user_candidates_{uuid.uuid4().hex}"
     project_id = str(uuid.uuid4())
@@ -2337,7 +2326,9 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
 
 
 @pytest.mark.integration
-def test_user_candidates_on_production_span_schema_keep_project_and_latest_state():
+def test_user_candidates_on_production_span_schema_keep_project_and_latest_state(
+    ch25_client,
+):
     """Run the user trace/session candidate reads on the deployed span schema.
 
     ``spans`` uses the deployed engine, ``ReplacingMergeTree(_version,
@@ -2348,7 +2339,7 @@ def test_user_candidates_on_production_span_schema_keep_project_and_latest_state
     not change the results, the one-row page, or the session start.
     """
 
-    client = _ch25_client()
+    client = ch25_client
     original_database = client.execute("SELECT currentDatabase()")[0][0]
     database = f"_test_user_candidates_{uuid.uuid4().hex}"
     project_id, other_project_id = str(uuid.uuid4()), str(uuid.uuid4())
@@ -2632,10 +2623,12 @@ def test_user_candidates_on_production_span_schema_keep_project_and_latest_state
 
 
 @pytest.mark.integration
-def test_user_pages_ignore_stale_rollup_tombstones_updates_and_reassignments():
+def test_user_pages_ignore_stale_rollup_tombstones_updates_and_reassignments(
+    ch25_client,
+):
     """Page membership/order comes from latest spans, never insert-only states."""
 
-    client = _ch25_client()
+    client = ch25_client
     project_id = str(uuid.uuid4())
     organization_id = str(uuid.uuid4())
     user_ids = {name: str(uuid.uuid4()) for name in ("a", "b", "c", "d", "e")}
@@ -2855,7 +2848,7 @@ def test_user_pages_ignore_stale_rollup_tombstones_updates_and_reassignments():
 
 
 @pytest.mark.integration
-def test_candidate_reads_on_ch25_preserve_remap_and_tombstone_semantics():
+def test_candidate_reads_on_ch25_preserve_remap_and_tombstone_semantics(ch25_client):
     """Execute every new query against the disposable CH25 schema.
 
     The old physical root is tombstoned after insert; the live root carries the
@@ -2863,7 +2856,7 @@ def test_candidate_reads_on_ch25_preserve_remap_and_tombstone_semantics():
     and deleted or out-of-window content/attributes must stay absent.
     """
 
-    client = _ch25_client()
+    client = ch25_client
     project_id = str(uuid.uuid4())
     organization_id = str(uuid.uuid4())
     old_user_id, new_user_id = str(uuid.uuid4()), str(uuid.uuid4())

@@ -1,0 +1,421 @@
+{
+  "source": "Backend merge queue run 45032967860 (a merge group, an oss run), artifact backend-runtime-skips, 22 Nov 2026",
+  "total": 1818,
+  "pairs": [
+    {
+      "file": "model_hub/tests/test_annotation_e2e_gaps.py",
+      "reason": "Skipped: NLTK punkt_tab tokenizer not available in this env",
+      "tests": 1
+    },
+    {
+      "file": "model_hub/tests/test_ch25_annotation_queue_session_validation_sliceE.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 5
+    },
+    {
+      "file": "model_hub/tests/test_dataset_huggingface_api.py",
+      "reason": "Skipped: API returned 400: {'status': False, 'type': 'validation_error', 'code': 'invalid', 'detail': '(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid', 'message': '(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid', 'error': '(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid', 'result': '(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid', 'details': {'non_field_errors': ['(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid']}}",
+      "tests": 1
+    },
+    {
+      "file": "simulate/tests/test_scenario_fault_rules.py",
+      "reason": "Skipped: could not import 'fi.alk.harness.actors': No module named 'fi'",
+      "tests": 1
+    },
+    {
+      "file": "tfc/tests/test_licensing_migration_boot.py",
+      "reason": "Skipped: Cloud control-plane not installed in this configuration",
+      "tests": 1
+    },
+    {
+      "file": "tfc/tests/test_temporal_billing_cancellation.py",
+      "reason": "Skipped: could not import 'ee.cloud.billing.invoice_generation': No module named 'ee.cloud'",
+      "tests": 5
+    },
+    {
+      "file": "tfc/tests/test_temporal_billing_imports.py",
+      "reason": "Skipped: could not import 'ee.cloud.billing.dunning': No module named 'ee.cloud'",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_analysis_retention.py",
+      "reason": "Skipped: the Cloud retention scheduler ships in the private ee/cloud tree",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_annotation_value_predicate_parity.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 108
+    },
+    {
+      "file": "tracer/tests/test_ch25_session_bulkselect_and_scorecol_sliceF.py",
+      "reason": "Skipped: no Organization in pg-test for the Site-2 fixture",
+      "tests": 3
+    },
+    {
+      "file": "tracer/tests/test_ch25_session_bulkselect_and_scorecol_sliceF.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 8
+    },
+    {
+      "file": "tracer/tests/test_ch25_session_eval_candidate_and_target_sliceC.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 9
+    },
+    {
+      "file": "tracer/tests/test_ch25_session_trace_ids_sliceD.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 13
+    },
+    {
+      "file": "tracer/tests/test_ch25_trace_session_fields_reader.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 7
+    },
+    {
+      "file": "tracer/tests/test_clickhouse_integration.py",
+      "reason": "Skipped: Dataset tables not in test schema: Received ClickHouse exception, code: 60, server response: Code: 60. DB::Exception: Unknown table expression identifier 'model_hub_cell' in scope SELECT toStartOfDay(c.created_at) AS time_bucket, count() AS value FROM model_hub_cell AS c FINAL WHERE (c._peerdb_is_deleted = 0) AND (c.created_at >= '2026-10-23 14:48:09') AND (c.created_at < '2026-11-22 14:48:09') AND (c.dataset_id IN (SELECT id FROM model_hub_dataset FINAL WHERE (_peerdb_is_deleted = 0) AND (deleted = 0) AND (workspace_id = toUUID('318e4ace-9fa5-44cd-91c2-17a74afd2024')))) GROUP BY time_bucket ORDER BY time_bucket ASC. (UNKNOWN_TABLE) (version 25.3.14.14 (official build)) (for url http://localhost:18123)",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_clickhouse_integration.py",
+      "reason": "Skipped: Simulation tables not in test schema: Received ClickHouse exception, code: 60, server response: Code: 60. DB::Exception: Unknown table expression identifier 'simulate_call_execution' in scope SELECT toStartOfDay(c.created_at) AS time_bucket, avg(duration_seconds) AS value FROM simulate_call_execution AS c FINAL WHERE (c._peerdb_is_deleted = 0) AND (c.deleted = 0) AND (c.created_at >= '2026-10-23 14:45:43') AND (c.created_at < '2026-11-22 14:45:43') AND (dictGetOrDefault('simulate_scenario_dict', 'workspace_id', c.scenario_id, NULL) = toUUID('0e6adfee-0f51-4c26-9fb9-63111f5aa4b9')) GROUP BY time_bucket ORDER BY time_bucket ASC. (UNKNOWN_TABLE) (version 25.3.14.14 (official build)) (for url http://localhost:18123)",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_clickhouse_integration.py",
+      "reason": "Skipped: Simulation tables not in test schema: Received ClickHouse exception, code: 60, server response: Code: 60. DB::Exception: Unknown table expression identifier 'simulate_call_execution' in scope SELECT toStartOfDay(c.created_at) AS time_bucket, avg(duration_seconds) AS value FROM simulate_call_execution AS c FINAL WHERE (c._peerdb_is_deleted = 0) AND (c.deleted = 0) AND (c.created_at >= '2026-10-23 14:45:43') AND (c.created_at < '2026-11-22 14:45:43') AND (dictGetOrDefault('simulate_scenario_dict', 'workspace_id', c.scenario_id, NULL) = toUUID('c5c5b27b-644c-4428-8035-a26b22bfa8fc')) AND (c.simulation_call_type = 'voice') GROUP BY time_bucket ORDER BY time_bucket ASC. (UNKNOWN_TABLE) (version 25.3.14.14 (official build)) (for url http://localhost:18123)",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_dashboard_exact_candidate_optimization.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 10
+    },
+    {
+      "file": "tracer/tests/test_dashboard_exact_candidate_optimization.py",
+      "reason": "Skipped: native dashboard parity requires local chdb",
+      "tests": 19
+    },
+    {
+      "file": "tracer/tests/test_dashboard_narrow_replay_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 6
+    },
+    {
+      "file": "tracer/tests/test_dashboard_replay_read_settings_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 3
+    },
+    {
+      "file": "tracer/tests/test_derived_metric_changes_clickhouse.py",
+      "reason": "Skipped: owned ClickHouse change-discovery sidecar not requested",
+      "tests": 24
+    },
+    {
+      "file": "tracer/tests/test_derived_metric_forward_history_clickhouse.py",
+      "reason": "Skipped: owned ClickHouse change-discovery sidecar not requested",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_derived_metric_user_rules_clickhouse.py",
+      "reason": "Skipped: requires explicit owned B20 native ClickHouse runtime",
+      "tests": 47
+    },
+    {
+      "file": "tracer/tests/test_end_user_uuid_equality_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 11
+    },
+    {
+      "file": "tracer/tests/test_exact_attribute_detail.py",
+      "reason": "Skipped: local ClickHouse is unavailable: NetworkError('Connection refused (127.0.0.1:9000)')",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_exact_graph_membership_latest.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 53
+    },
+    {
+      "file": "tracer/tests/test_filter_attribute_key_binding.py",
+      "reason": "Skipped: explicit offline chDB runtime required",
+      "tests": 58
+    },
+    {
+      "file": "tracer/tests/test_grouping_node_contract.py",
+      "reason": "Skipped: set OMEGA_GROUPING_WORKER_ROOT to the worker checkout",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_hourly_aggregate_state_route_live_ch.py",
+      "reason": "Skipped: test ClickHouse has no spans to plan against",
+      "tests": 2
+    },
+    {
+      "file": "tracer/tests/test_long_text_anchor_equality_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_metric_burst_owner_repair_clickhouse.py",
+      "reason": "Skipped: owned ClickHouse change-discovery sidecar not requested",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_metric_filter_family.py",
+      "reason": "Skipped: owned ClickHouse sidecar not requested",
+      "tests": 18
+    },
+    {
+      "file": "tracer/tests/test_metric_progress_closeout_clickhouse.py",
+      "reason": "Skipped: owned ClickHouse change-discovery sidecar not requested",
+      "tests": 3
+    },
+    {
+      "file": "tracer/tests/test_metric_schema_contract.py",
+      "reason": "Skipped: owned ClickHouse sidecar not requested",
+      "tests": 21
+    },
+    {
+      "file": "tracer/tests/test_native_id_source_contract.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 144
+    },
+    {
+      "file": "tracer/tests/test_negative_typed_presence_witness.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 6
+    },
+    {
+      "file": "tracer/tests/test_physical_span_detail_reference.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 21
+    },
+    {
+      "file": "tracer/tests/test_relational_filter_native.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 252
+    },
+    {
+      "file": "tracer/tests/test_resolved_score_candidate_guards.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 24
+    },
+    {
+      "file": "tracer/tests/test_session_analytics_v2.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 9
+    },
+    {
+      "file": "tracer/tests/test_session_annotation_graph_ch25.py",
+      "reason": "Skipped: requires the owned isolated session-annotation ClickHouse fixture",
+      "tests": 15
+    },
+    {
+      "file": "tracer/tests/test_session_annotation_membership_ch25.py",
+      "reason": "Skipped: requires the owned isolated session-annotation ClickHouse fixture",
+      "tests": 28
+    },
+    {
+      "file": "tracer/tests/test_session_complete_attribute_hydration.py",
+      "reason": "Skipped: explicit isolated native engine required",
+      "tests": 3
+    },
+    {
+      "file": "tracer/tests/test_session_detail_physical_latest.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 9
+    },
+    {
+      "file": "tracer/tests/test_session_exact_latest_cursor.py",
+      "reason": "Skipped: optional isolated ClickHouse execution engine",
+      "tests": 3
+    },
+    {
+      "file": "tracer/tests/test_session_numeric_graph_boundaries.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 15
+    },
+    {
+      "file": "tracer/tests/test_session_positive_witness_page.py",
+      "reason": "Skipped: explicit isolated native engine required",
+      "tests": 27
+    },
+    {
+      "file": "tracer/tests/test_session_relational_history.py",
+      "reason": "Skipped: explicit isolated native engine required",
+      "tests": 10
+    },
+    {
+      "file": "tracer/tests/test_session_rollup_projection_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 22
+    },
+    {
+      "file": "tracer/tests/test_session_user_candidate_reads.py",
+      "reason": "Skipped: CH25_HOST is not configured",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_session_user_candidate_reads.py",
+      "reason": "Skipped: isolated native fixture engine required",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_span_attribute_null_target_grain.py",
+      "reason": "Skipped: local ClickHouse is unavailable: NetworkError('Connection refused (127.0.0.1:29010)')",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_span_index_only_companion.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 15
+    },
+    {
+      "file": "tracer/tests/test_span_long_text_population_equality_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 2
+    },
+    {
+      "file": "tracer/tests/test_span_physical_identity_latest.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 17
+    },
+    {
+      "file": "tracer/tests/test_span_population_time_discovery.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 10
+    },
+    {
+      "file": "tracer/tests/test_span_post_final_scalar_seed.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 11
+    },
+    {
+      "file": "tracer/tests/test_span_primary_prefix.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 19
+    },
+    {
+      "file": "tracer/tests/test_span_score_physical_identity.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 74
+    },
+    {
+      "file": "tracer/tests/test_span_seed_population_prefix.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 36
+    },
+    {
+      "file": "tracer/tests/test_span_text_population_hours.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 12
+    },
+    {
+      "file": "tracer/tests/test_trace_attribute_physical_snapshot.py",
+      "reason": "Skipped: optional isolated ClickHouse engine",
+      "tests": 29
+    },
+    {
+      "file": "tracer/tests/test_trace_boolean_candidate_seed.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 63
+    },
+    {
+      "file": "tracer/tests/test_trace_graph_full_span_reference.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_trace_graph_numeric_witness.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 7
+    },
+    {
+      "file": "tracer/tests/test_trace_numeric_primary_seed.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 111
+    },
+    {
+      "file": "tracer/tests/test_trace_ordered_identity_refill.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 13
+    },
+    {
+      "file": "tracer/tests/test_trace_primary_prefix.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_trace_root_physical_replay.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 65
+    },
+    {
+      "file": "tracer/tests/test_trace_short_text_population_hours.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 2
+    },
+    {
+      "file": "tracer/tests/test_user_detail_physical_snapshot.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 21
+    },
+    {
+      "file": "tracer/tests/test_user_graph_final_time_fence.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 9
+    },
+    {
+      "file": "tracer/tests/test_user_graph_legacy_final_time_fence.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 12
+    },
+    {
+      "file": "tracer/tests/test_user_session_count_exact.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 5
+    },
+    {
+      "file": "tracer/tests/test_users_attribute_physical_replay.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 71
+    },
+    {
+      "file": "tracer/tests/test_users_canonical_text_walk.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 5
+    },
+    {
+      "file": "tracer/tests/test_users_native_conjunction_replay.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 9
+    },
+    {
+      "file": "tracer/tests/test_users_offset_attribute_aliases.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 2
+    },
+    {
+      "file": "tracer/tests/test_users_physical_latest_native.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 35
+    },
+    {
+      "file": "tracer/tests/test_users_text_candidate_witness.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 22
+    },
+    {
+      "file": "tracer/tests/test_users_unseeded_hour_replay.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 57
+    },
+    {
+      "file": "tracer/tests/test_voice_physical_replay.py",
+      "reason": "Skipped: could not import 'chdb': No module named 'chdb'",
+      "tests": 23
+    }
+  ]
+}

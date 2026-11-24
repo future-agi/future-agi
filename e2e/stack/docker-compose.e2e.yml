@@ -87,6 +87,9 @@ services:
       # Off, MetricsGate routes to /404 and the API 404s. The API and both workers
       # that run metric activities (tasks_s/tasks_l, exact_aggregation) need it.
       METRICS_ENABLED: "1"
+      # Ask's cost confirm appears above this many rows (5,000 in production,
+      # tfc/settings/settings.py); OBS-E2E-064 reaches it with four traces.
+      INSTANT_EVAL_CONFIRM_ROWS: "3"
   worker:
     # Async code evals use the same isolated executor as the playground.
     networks: [default, link-public]
@@ -366,7 +369,13 @@ services:
     ports:
       - "127.0.0.1:28443:28443"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; import ssl; urllib.request.urlopen('https://localhost:28443/health', context=ssl.create_default_context(cafile='/tls/ca.pem'))"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; import ssl; urllib.request.urlopen('https://localhost:28443/health', context=ssl.create_default_context(cafile='/tls/ca.pem'))",
+        ]
       interval: 2s
       timeout: 3s
       retries: 30

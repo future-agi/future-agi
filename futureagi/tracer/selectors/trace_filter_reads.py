@@ -3929,7 +3929,14 @@ def read_bounded_filter_page(
             seed_rows = sorted(seed_result.data, key=seed_row_key, reverse=True)
             if (
                 population_discovery
-                or (deferred_root_discovery and initial_identity_flush_pending)
+                # A partial Boolean prefix can remain buffered across slices.
+                # A later gap is not an empty initial seed, even if the first
+                # classifier flush has not run yet.
+                or (
+                    deferred_root_discovery
+                    and initial_identity_flush_pending
+                    and not seen_seed_ids
+                )
                 or empty_seed_root_discovery
             ) and not seed_rows:
                 discovery_ready = True

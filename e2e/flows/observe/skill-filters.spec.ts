@@ -20,8 +20,8 @@ async function list(page: Page, project:string, filters: ReturnType<typeof item>
   return (await res.json()).result.table.map((row: { trace_id: string }) => row.trace_id);
 }
 
-test('OBS-E2E-063: F2 correlate the skill and agent within one load', { tag:['@flow'], annotation:flowAnnotation({
-  id:'OBS-E2E-063', area:'observe', userGoal:'Find traces where the chosen agent loaded the chosen skill',
+test('OBS-E2E-069: F2 correlate the skill and agent within one load', { tag:['@flow'], annotation:flowAnnotation({
+  id:'OBS-E2E-069', area:'observe', userGoal:'Find traces where the chosen agent loaded the chosen skill',
   steps:['Serve one trace with independent agent scopes A and B', 'Filter first for A, then B, then a separate also-loaded group'],
   backendChecks:['The two SDK loads belong to different agents', 'The real list response rejects a cross-agent match but accepts the separate load group'],
 }) }, async ({ scenario:s, probe, page }) => {
@@ -35,8 +35,8 @@ test('OBS-E2E-063: F2 correlate the skill and agent within one load', { tag:['@f
   expect(await list(page,p,[item('version_id',s.refund.version.id),item('version_id',s.tone.version.id,1)])).toEqual([t]);
 });
 
-test('OBS-E2E-064: reconcile scoped spans and skill-version cohorts', { tag:['@flow'], annotation:flowAnnotation({
-  id:'OBS-E2E-064',area:'observe',userGoal:'Tell which spans ran after a skill was loaded, and inspect the overlapping version cohorts',
+test('OBS-E2E-070: reconcile scoped spans and skill-version cohorts', { tag:['@flow'], annotation:flowAnnotation({
+  id:'OBS-E2E-070',area:'observe',userGoal:'Tell which spans ran after a skill was loaded, and inspect the overlapping version cohorts',
   steps:['Run requests for two agents that load different versions', 'Open the filtered span list and compare it with storage', 'Switch to the trace cohort and split the graph by version'],
   backendChecks:['Only spans stamped with the selected version are in the scoped span list','The version trace filter, cohort strip and split graph identify the same application request'],
 }) }, async ({scenario:s,page,probe}) => {

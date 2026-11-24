@@ -64,6 +64,30 @@ export const TRIAL_CHANGES_COPY = {
     faulted: "Faulted",
     duplicate: "Duplicate",
   },
+  // A call still under way: its World state comes in when it ends.
+  collecting:
+    "This trial is still running: its World state shows here once it ends.",
+  // A declared worker the world told apart from the agent.
+  worker: (name) => `Participant · ${name}`,
+  // An attempt the world refused, kept on the record: what was tried and why the world said no.
+  refusedHeading: "Refused attempts",
+  refusedAttempt: (one) => [one.action, one.reason].filter(Boolean).join(": "),
+  // Records two or more participants named; the key states what the calls named, never a database identity.
+  sharedHeading: "Records touched by more than one participant",
+  sharedRecord: (one) => `${one.argument} ${one.value}`,
+  sharedAction: (action, who) =>
+    `${who} · ${action.tool} · ${action.outcome}${action.write === true ? " (write)" : ""}`,
+  committedWrites: (n) =>
+    `Committed writes: ${n} (tools with recorded effects)`,
+  sharedTruncated:
+    "More records not shown: this trial's record reached its size limit",
+  // Each record's served `truncation`; a cut list of records ("records") is said once, for the trial.
+  sharedRecordCut: {
+    actions:
+      "More calls on this record not shown: its record reached its size limit",
+    unknown:
+      "More records or calls may not be shown: this trial's record reached its size limit",
+  },
   committedLabel: "Committed",
   readLabel: "Read only",
   answerLostLabel: "Answered with a timeout",
@@ -207,3 +231,10 @@ export const ACTION_TONE = {
   read: "text.secondary",
   warning: "warning.dark",
 };
+
+// A call's outcome while it is still under way (the server's `queued` and `in_progress`): its World state is not in yet.
+export const TRIAL_UNDER_WAY = new Set(["queued", "in_progress"]);
+
+// Records shared between a call's participants are not an actors feature: the tab shows them with actors off too.
+export const hasSharedRecords = (trialState) =>
+  Boolean(trialState?.shared_records?.length);

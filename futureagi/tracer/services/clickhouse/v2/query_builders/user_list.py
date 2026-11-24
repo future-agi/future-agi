@@ -55,7 +55,8 @@ class UserListQueryBuilderV2(V2RewriteMixin, UserListQueryBuilder):
 
         read = getattr(self, "_current_facts", None)
         if (
-            activity_read_available(self, read)
+            read is not None
+            and activity_read_available(self, read)
             and self.limit is not None
             and self.offset is not None
             and not scalar_witness
@@ -93,17 +94,17 @@ class UserListQueryBuilderV2(V2RewriteMixin, UserListQueryBuilder):
         )
 
         read = getattr(self, "_current_facts", None)
-        if activity_read_available(self, read):
+        if read is not None and activity_read_available(self, read):
             if before_first_seen is not None and before_end_user_id is None:
                 raise ValueError("dimension candidate cursor must be provided together")
             if (window_start is None) != (window_end is None):
                 raise ValueError("dimension candidate window must be provided together")
-            window = (
+            start, end = (
                 (window_start, window_end)
                 if window_start is not None
                 else self.parse_time_range(self.filters)
             )
-            if window[0] is None or window[1] is None or window[0] >= window[1]:
+            if start is None or end is None or start >= end:
                 raise ValueError("dimension candidate window is invalid")
             return build_activity_page(
                 self,
@@ -113,7 +114,7 @@ class UserListQueryBuilderV2(V2RewriteMixin, UserListQueryBuilder):
                 cursor_before=(before_first_seen, str(before_end_user_id))
                 if before_end_user_id is not None
                 else None,
-                window=window,
+                window=(start, end),
                 # The manager reuses these exact usage rows after admission.
                 # Aggregate only the finite candidate page, never all users.
             )

@@ -8,6 +8,7 @@ import (
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
+	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc/codes"
 )
@@ -133,6 +134,7 @@ func (s *Server) prepareExportAttempt(ctx context.Context, decode exportDecoder,
 			return preparedExport{}, err
 		}
 	}
+	out.ctx = pricing.WithProjectTypes(ctx, req.Traces())
 	return out, nil
 }
 

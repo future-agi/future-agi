@@ -11,8 +11,8 @@ on:
       ordinary_shards:
         description: Ordinary shard count for same-ref timing comparisons
         type: choice
-        options: ['1', '2', '4']
-        default: '4'
+        options: ["1", "2", "4"]
+        default: "4"
       ordinary_cold_build:
         description: Compare ordinary shard counts without registry layer imports
         type: boolean
@@ -100,11 +100,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {target: backend, context: futureagi, file: Dockerfile.oss}
-          - {target: code-executor, context: futureagi/code-executor, file: Dockerfile}
-          - {target: fi-collector, context: fi-collector, file: Dockerfile}
-          - {target: frontend, context: frontend, file: Dockerfile}
-          - {target: gateway, context: agentcc-gateway, file: Dockerfile}
+          - { target: backend, context: futureagi, file: Dockerfile.oss }
+          - {
+              target: code-executor,
+              context: futureagi/code-executor,
+              file: Dockerfile,
+            }
+          - { target: fi-collector, context: fi-collector, file: Dockerfile }
+          - { target: frontend, context: frontend, file: Dockerfile }
+          - { target: gateway, context: agentcc-gateway, file: Dockerfile }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -586,6 +590,40 @@ jobs:
             '{{.Name}} {{.State.Status}} {{.State.StartedAt}} {{.State.FinishedAt}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' \
             > "$RUNNER_TEMP/stack-profile/services.tsv"
 
+      - name: Record the stack's pulled images
+        # The report combines shards from different attempts (a re-run of failed
+        # jobs) only when they ran the same pulled images: scripts/shard-report.mjs
+        # receipts compares these. Image references and digests only, never
+        # container env. The images this job built from the commit are marked
+        # `built` and never compared: their digests differ on every shard. The
+        # list follows the build steps above; a ref missing from it only makes
+        # a combined report fail, never pass.
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stack-images"
+          built=("futureagi/code-executor:$IMAGE_TAG")
+          if [[ $BUILD_BACKEND == true ]]; then built+=("futureagi/future-agi:$IMAGE_TAG" "futureagi/fi-collector:$IMAGE_TAG"); fi
+          if [[ $BUILD_FRONTEND == true ]]; then built+=("futureagi/frontend:$IMAGE_TAG"); fi
+          if [[ $BUILD_GATEWAY == true ]]; then built+=("futureagi/agentcc-gateway:$IMAGE_TAG"); fi
+          if [[ $E2E_STACK == standalone ]]; then built+=("futureagi/standalone:$IMAGE_TAG"); fi
+          built_json=$(printf '%s\n' "${built[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
+          bin/e2e compose ps --all --quiet | xargs -r docker inspect --format '{{.Config.Image}}' | sort -u |
+            while IFS= read -r ref; do
+              docker image inspect --format '{{json .RepoDigests}}' "$ref" |
+                jq -c --arg ref "$ref" --argjson built "$built_json" '{ref: $ref, built: ($built | index([$ref]) != null), digests: ((. // []) | sort)}'
+            done | jq -s 'sort_by(.ref)' > "$RUNNER_TEMP/stack-images/images.json"
+          jq -e 'length > 0' "$RUNNER_TEMP/stack-images/images.json" > /dev/null
+
+      - name: Upload the stack's pulled images
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-images-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/stack-images/images.json
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Upload blob report
         # The report job merges every shard's blob into one report and checks
         # that the shards ran the whole suite. A leg that never reached the
@@ -595,7 +633,9 @@ jobs:
         with:
           name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: e2e/blob-report
-          retention-days: 3
+          # The same value as e2e-ci.yml: scripts/stack-cost.test.mjs keeps
+          # this step equal to the one there.
+          retention-days: 14
           if-no-files-found: error
 
       - name: Upload report
@@ -736,7 +776,7 @@ jobs:
         with:
           name: once-per-stack-${{ matrix.stack }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/once-per-stack/record.json
-          retention-days: 3
+          retention-days: 14
           if-no-files-found: error
 
       - name: Capture backend lifecycle on failure
