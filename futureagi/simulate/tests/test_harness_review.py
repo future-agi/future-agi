@@ -1252,14 +1252,15 @@ def test_a_file_import_cites_file_and_row():
         revision=2,
         at="t",
         used_files=[
-            {"file_id": "f-1", "row": 7},
-            {"file_id": "f-2", "row": None},
+            {"file_id": "knowledge/orders.csv", "row": 7},
+            {"file_id": "f-2", "row": None, "name": "Refund policy.pdf"},
             {"file_id": "", "row": 3},
         ],
     )["tool:issue_refund"]
+    # Each file carries the name a person reads: given, or the last part of its path in the environment.
     assert source["used"] == [
-        {"kind": "file", "id": "f-1", "row": 7},
-        {"kind": "file", "id": "f-2", "row": None},
+        {"kind": "file", "id": "knowledge/orders.csv", "row": 7, "name": "orders.csv"},
+        {"kind": "file", "id": "f-2", "row": None, "name": "Refund policy.pdf"},
     ]
 
 

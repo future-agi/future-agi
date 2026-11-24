@@ -4,6 +4,7 @@ where each change came from."""
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import PurePosixPath
 from typing import Any
 
 from simulate.services.harness_versioning.references import ALL
@@ -123,7 +124,8 @@ def record_sources(
     """Where each change came from: every item this write moved gets one source (who, through what, at which draft
     revision), appended to the sources it already had. A retried write at the same revision adds nothing. A chat
     write names the person's message it answered (`message_id`); a file import names each file and row it read
-    (`used_files`, each `{"file_id", "row"}`, the row ``None`` for a whole file)."""
+    (`used_files`, each `{"file_id", "row", "name"}`, the row ``None`` for a whole file and the name, when not given,
+    the last part of the file's path)."""
     out = {key: list(value) for key, value in (provenance or {}).items()}
     whole = whole_documents(before, after)
     old, new = item_index(before, whole), item_index(after, whole)
@@ -148,7 +150,12 @@ def record_sources(
     used = [
         *used,
         *(
-            SourceUsed(kind="file", id=str(one["file_id"]), row=one.get("row"))
+            SourceUsed(
+                kind="file",
+                id=str(one["file_id"]),
+                row=one.get("row"),
+                name=str(one.get("name") or PurePosixPath(str(one["file_id"])).name),
+            )
             for one in used_files or []
             if one.get("file_id")
         ),

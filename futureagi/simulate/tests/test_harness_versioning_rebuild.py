@@ -785,7 +785,7 @@ class TestLanding:
             ),
             origin="import",
             user=user,
-            used_files=[{"file_id": "f-1", "row": 4}],
+            used_files=[{"file_id": "knowledge/orders.csv", "row": 4}],
         )
 
         draft = drafts.open_draft(environment, "environment")
@@ -796,7 +796,14 @@ class TestLanding:
             for one in source["used"]
         ]
         assert used and all(
-            one == {"kind": "file", "id": "f-1", "row": 4} for one in used
+            one
+            == {
+                "kind": "file",
+                "id": "knowledge/orders.csv",
+                "row": 4,
+                "name": "orders.csv",
+            }
+            for one in used
         )
 
     def test_the_rebuild_lands_on_top_of_the_unsaved_edits(
