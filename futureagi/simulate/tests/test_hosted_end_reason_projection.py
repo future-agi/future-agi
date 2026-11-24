@@ -31,6 +31,7 @@ def projected_call(monkeypatch):
         call_metadata={},
         conversation_metrics_data={},
         ended_reason="old-reason",
+        completed_at=None,
         test_execution=SimpleNamespace(run_test_id=None),
         id="call-id",
         save=MagicMock(),

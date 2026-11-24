@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
   Stack,
@@ -16,9 +16,17 @@ import OtherPartyName from "src/components/VoiceDetailDrawerV2/OtherPartyName";
 import WorldActorAction from "src/components/VoiceDetailDrawerV2/WorldActorAction";
 import { DEFAULT_ROLE_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
 import { isOtherRole } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
+import { seriesColor } from "src/theme/data-colors";
+import { OutcomeReason } from "./chatDrawerCells";
 
 // `task`: a scenario's start message no person or actor sent.
-const ROLE_LABEL = { agent: "Assistant", customer: "Customer", task: "Task" };
+const ROLE_LABEL = {
+  agent: "Assistant",
+  customer: "Customer",
+  task: "Task",
+  tool: "Tool call",
+};
+const TOOL_SERIES = 1;
 
 // Voice turns carry a real `at` (seconds into the recording); chat turns don't,
 // so a made-up mm:ss there would misrepresent the transcript. Fall back to the
@@ -81,27 +89,59 @@ export default function ChatTranscriptPane({
   customerName,
   participants,
   hasCustomer,
+  focusTurn = null,
+  notice = null,
 }) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const rowRefs = useRef({});
+  // Turn n starts at the caller's nth message; turn 0, before the caller spoke, is the top.
+  const focusIndex = !focusTurn
+    ? -1
+    : focusTurn.turn < 1
+      ? turns.length
+        ? 0
+        : -1
+      : turns.reduce(
+          (found, s, i) =>
+            found.index >= 0 || s.role !== "customer"
+              ? found
+              : found.seen + 1 === focusTurn.turn
+                ? { seen: found.seen + 1, index: i }
+                : { seen: found.seen + 1, index: -1 },
+          { seen: 0, index: -1 },
+        ).index;
+  useEffect(() => {
+    if (focusIndex < 0) return;
+    setRoleFilter("all");
+    setQuery("");
+    rowRefs.current[focusIndex]?.scrollIntoView?.({ block: "center" });
+  }, [focusIndex, focusTurn]);
   // The pane stays mounted across calls; the next call may have no others.
   const activeFilter =
     roleFilter === "others" && !participants.length ? "all" : roleFilter;
 
-  const shown = turns.filter((s) => {
-    if (
-      activeFilter === "others"
-        ? !isOtherRole(s.role)
-        : activeFilter !== "all" && s.role !== activeFilter
-    )
-      return false;
-    if (query && !s.text?.toLowerCase().includes(query.toLowerCase()))
-      return false;
-    return true;
-  });
+  const shown = turns
+    .map((s, index) => ({ ...s, index }))
+    .filter((s) => {
+      if (
+        activeFilter === "others"
+          ? !isOtherRole(s.role)
+          : activeFilter !== "all" && s.role !== activeFilter
+      )
+        return false;
+      if (query && !s.text?.toLowerCase().includes(query.toLowerCase()))
+        return false;
+      return true;
+    });
 
   return (
     <>
+      {notice && (
+        <Box sx={{ pt: 1.5 }}>
+          <OutcomeReason reason={notice} />
+        </Box>
+      )}
       {participants.length > 0 && (
         <Box sx={{ px: 2, pt: 1.25 }}>
           <CallParticipants
@@ -154,13 +194,31 @@ export default function ChatTranscriptPane({
       <Stack sx={{ px: 2, pb: 2 }}>
         {shown.map((s, i) => (
           <Box
-            key={i}
+            key={s.index}
+            ref={(el) => {
+              rowRefs.current[s.index] = el;
+            }}
+            data-focused={String(s.index === focusIndex)}
             sx={{
+              ...(s.index === focusIndex && {
+                outline: "2px solid",
+                outlineColor: "primary.main",
+                outlineOffset: -2,
+              }),
               borderLeft: "2px solid",
-              borderColor:
-                s.role === "agent" ? "text.secondary" : "text.disabled",
+              // Each speaker keeps its own mark, so a tool call never reads as the customer.
+              borderColor: (t) =>
+                s.role === "agent"
+                  ? t.palette.text.secondary
+                  : s.role === "tool"
+                    ? seriesColor(t, TOOL_SERIES)
+                    : t.palette.text.disabled,
               bgcolor:
-                s.role === "agent" ? "action.hover" : "background.neutral",
+                s.role === "agent"
+                  ? "action.hover"
+                  : s.role === "tool"
+                    ? "transparent"
+                    : "background.neutral",
               px: 1.75,
               py: 1.25,
             }}
@@ -177,7 +235,10 @@ export default function ChatTranscriptPane({
               }}
             >
               {turnStamp(s, i)} ·{" "}
-              {isOtherRole(s.role) ? (
+              {/* A row of tool calls is named by the server, by what its calls recorded. */}
+              {s.role === "tool" && s.toolLabel ? (
+                s.toolLabel
+              ) : isOtherRole(s.role) ? (
                 <OtherPartyName party={s} color="text.subtitle" />
               ) : (
                 ROLE_LABEL[s.role] || s.role
@@ -212,7 +273,11 @@ export default function ChatTranscriptPane({
   );
 }
 ChatTranscriptPane.propTypes = {
+  // The server's reason the conversation itself was not kept, said above what the pane can still show.
+  notice: PropTypes.string,
   customerName: PropTypes.string,
+  // A turn to bring into view and mark: `{ turn }`, a new object each time it is asked for.
+  focusTurn: PropTypes.shape({ turn: PropTypes.number }),
   // Who took part, as the server says: one with no channel only acted in the world.
   participants: PropTypes.arrayOf(
     PropTypes.shape({
@@ -233,6 +298,7 @@ ChatTranscriptPane.propTypes = {
       channel: PropTypes.string,
       text: PropTypes.string,
       toolCalls: PropTypes.any,
+      toolLabel: PropTypes.string,
     }),
   ).isRequired,
 };
