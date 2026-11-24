@@ -34,6 +34,7 @@ from contextvars import ContextVar
 from datetime import timedelta
 from functools import wraps
 from time import sleep
+from typing import TYPE_CHECKING
 
 from django.apps import apps
 from django.db import (
@@ -61,7 +62,23 @@ from tracer.models.derived_metric import (
     MetricStateConflict,
 )
 
-_lock_budget = ContextVar("metric_lifecycle_lock_budget", default=None)
+if TYPE_CHECKING:
+    from tracer.services.derived_metrics.lease import ProjectLease
+
+_lock_budget: ContextVar["ProjectLease | None"] = ContextVar(
+    "metric_lifecycle_lock_budget", default=None
+)
+# PostgreSQL rejects a lock_timeout above INT_MAX milliseconds (about 24.8 days).
+_PG_MAX_LOCK_TIMEOUT_MS = 2_147_483_647
+
+
+def bounded_lock_timeout_ms(milliseconds: int) -> int:
+    """A lock_timeout PostgreSQL accepts: at least 1 ms (0 would disable the
+    timeout) and at most INT_MAX ms. Real leases stay far below the cap; a
+    lease read on another clock must not turn every guarded statement into an
+    invalid-parameter error.
+    """
+    return min(_PG_MAX_LOCK_TIMEOUT_MS, max(1, milliseconds))
 
 
 @contextmanager
@@ -89,7 +106,7 @@ def _budgeted_row_lock(execute, sql, params, many, context):
         or (statement.startswith("SELECT ") and "FOR UPDATE" in statement)
     ):
         return execute(sql, params, many, context)
-    milliseconds = max(1, int(lease.remaining_seconds() * 1000))
+    milliseconds = bounded_lock_timeout_ms(int(lease.remaining_seconds() * 1000))
     db = context["connection"]
     try:
         with transaction.atomic(using=db.alias):
@@ -268,7 +285,7 @@ def revoke_generations(
     definition_version_ids=None,
     now=None,
     using=DEFAULT_DB_ALIAS,
-):
+) -> int:
     """Durably fence captures, even if there were no pins at revocation time.
 
     Manifest and definition selectors intersect for existing pins. A definition
@@ -852,9 +869,10 @@ def _register_collector_protocol():
                     setattr(instance, Model._meta.pk.attname, None)
             return result
 
-    delete_with_current_graph._metric_lifecycle = True
-    Collector.collect = remember_roots
-    Collector.delete = delete_with_current_graph
+    # Intentional monkeypatch; the marker makes re-registration a no-op.
+    delete_with_current_graph._metric_lifecycle = True  # type: ignore[attr-defined]
+    Collector.collect = remember_roots  # type: ignore[method-assign, assignment]
+    Collector.delete = delete_with_current_graph  # type: ignore[method-assign, assignment]
 
 
 def register_deletion_hooks():

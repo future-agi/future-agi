@@ -17328,6 +17328,8 @@ export interface HarnessRunSummaryApi {
   /** Errored receipts, also counted in outcome_failed. */
   outcome_errored: number;
   outcome_skipped: number;
+  /** Calls the user stopped; neither errored nor failed. */
+  outcome_cancelled: number;
   /** Calls that ran with no pass or fail. */
   outcome_no_score: number;
   /** The run's verdict from its receipts; null for a run without receipts. */
@@ -17580,6 +17582,108 @@ export interface AgentVersionCreateResponseApi {
   /** @minLength 1 */
   readonly message?: string;
   version?: AgentVersionResponseApi;
+}
+
+/**
+ * Current status of this version
+ */
+export type AgentVersionDetailResponseApiStatus =
+  (typeof AgentVersionDetailResponseApiStatus)[keyof typeof AgentVersionDetailResponseApiStatus];
+
+export const AgentVersionDetailResponseApiStatus = {
+  draft: "draft",
+  active: "active",
+  archived: "archived",
+  deprecated: "deprecated",
+} as const;
+
+/**
+ * Snapshot of agent configuration at this version
+ */
+export type AgentVersionDetailResponseApiConfigurationSnapshot = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentWorkerApiBinding =
+  (typeof HarnessEnvironmentWorkerApiBinding)[keyof typeof HarnessEnvironmentWorkerApiBinding];
+
+export const HarnessEnvironmentWorkerApiBinding = {
+  separate: "separate",
+  shared: "shared",
+  not_declared: "not_declared",
+} as const;
+
+export type HarnessEnvironmentWorkerApiEnforcement =
+  (typeof HarnessEnvironmentWorkerApiEnforcement)[keyof typeof HarnessEnvironmentWorkerApiEnforcement];
+
+export const HarnessEnvironmentWorkerApiEnforcement = {
+  held_at_world: "held_at_world",
+  not_enforced: "not_enforced",
+  bypassed: "bypassed",
+  unknown: "unknown",
+} as const;
+
+export interface HarnessEnvironmentWorkerApi {
+  /** @minLength 1 */
+  id: string;
+  name?: string;
+  /**
+   * What the cards call it: its name, else its id.
+   * @minLength 1
+   */
+  display_name: string;
+  tools: string[];
+  allowed_tools: string[];
+  tools_shown: string[];
+  binding: HarnessEnvironmentWorkerApiBinding;
+  enforcement: HarnessEnvironmentWorkerApiEnforcement;
+  /** @minLength 1 */
+  enforcement_label: string;
+  address_env?: string;
+  process?: string;
+}
+
+export interface AgentVersionDetailResponseApi {
+  readonly id?: string;
+  /** Version number of the agent */
+  readonly version_number?: number;
+  version_name?: string | null;
+  readonly version_name_display?: string;
+  /** Current status of this version */
+  readonly status?: AgentVersionDetailResponseApiStatus;
+  /** @minLength 1 */
+  readonly status_display?: string;
+  score?: string | null;
+  /** Number of tests run for this version */
+  readonly test_count?: number;
+  pass_rate?: string | null;
+  /**
+   * Description of changes in this version
+   * @minLength 1
+   */
+  readonly description?: string;
+  commit_message?: string | null;
+  release_notes?: string | null;
+  /** Parent agent definition */
+  readonly agent_definition?: string;
+  /** Organization this version belongs to */
+  readonly organization?: string;
+  /** Snapshot of agent configuration at this version */
+  readonly configuration_snapshot?: AgentVersionDetailResponseApiConfigurationSnapshot;
+  readonly is_active?: string;
+  readonly is_latest?: string;
+  agent_kind?: string | null;
+  api_key?: string | null;
+  source?: AgentVersionSourceApi | null;
+  origin?: string | null;
+  preflight_status?: string | null;
+  check_step?: "snapshot" | "reading" | "check" | null;
+  check_failure?: AgentVersionCheckFailureApi | null;
+  check_started_at?: string | null;
+  readonly environments_count?: number;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  readonly participants?: readonly HarnessEnvironmentWorkerApi[];
 }
 
 export interface AgentVersionActivateResponseApi {
@@ -20676,6 +20780,11 @@ export interface HarnessEnvironmentToolStatusApi {
    * @minLength 1
    */
   status_label: string;
+  /**
+   * Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.
+   * @minLength 1
+   */
+  status_reason: string;
   /** Restored to the seeded records before each trial; null when not known. */
   reset_between_trials: boolean;
   /**
@@ -20873,6 +20982,8 @@ export interface HarnessEnvironmentContractApi {
   runtime_dependencies?: HarnessEnvironmentContractApiRuntimeDependenciesItem[];
   implementation?: string;
   tool_entrypoints?: HarnessEnvironmentContractApiToolEntrypointsItem[];
+  /** The workers the app's source declares; a run shows which of them took part. */
+  workers?: HarnessEnvironmentWorkerApi[];
   data_store?: HarnessEnvironmentContractApiDataStore;
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
@@ -20883,6 +20994,8 @@ export interface HarnessEnvironmentContractApi {
   /** Tools that reach a system the environment has no copy of: Unsupported for this controlled test. */
   production_only?: string[];
   tool_status: HarnessEnvironmentToolStatusApi[];
+  /** Whether this is an open draft's contract, which no run uses until the draft is saved. */
+  from_draft?: boolean;
   fault_targets: HarnessEnvironmentFaultTargetApi[];
   end_conditions: HarnessEnvironmentEndConditionsApi;
   notes?: string;
@@ -24479,6 +24592,12 @@ export interface HarnessSubGoalApi {
   verdict?: HarnessSubGoalApiVerdict;
   /** @maxItems 16 */
   evidence?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^(task|worker:.*\S.*)$
+   */
+  subject?: string;
 }
 
 export type HarnessTargetMetricsApiProvider =
@@ -27185,6 +27304,7 @@ export interface TestExecutionItemResponseApi {
   readonly outcome_failed?: number;
   readonly outcome_errored?: number;
   readonly outcome_skipped?: number;
+  readonly outcome_cancelled?: number;
   readonly outcome_no_score?: number;
   /** The run's verdict: running, cancelled, passed, failed, or no_score when it completed with only unscored calls. A run without receipts is judged by its completed calls (passed) and failed calls. */
   readonly outcome_status?: TestExecutionItemResponseApiOutcomeStatus;
@@ -28352,6 +28472,7 @@ export const CallExecutionV3DetailResponseApiOutcome = {
   inconclusive: "inconclusive",
   no_score: "no_score",
   error: "error",
+  cancelled: "cancelled",
 } as const;
 
 export type CallExecutionV3DetailResponseApiScoringStatus =
@@ -28396,6 +28517,14 @@ export const SubGoalResultApiResult = {
   unmeasured: "unmeasured",
 } as const;
 
+export type SubGoalResultApiSubjectKind =
+  (typeof SubGoalResultApiSubjectKind)[keyof typeof SubGoalResultApiSubjectKind];
+
+export const SubGoalResultApiSubjectKind = {
+  task: "task",
+  worker: "worker",
+} as const;
+
 export interface SubGoalResultApi {
   /** @minLength 1 */
   name: string;
@@ -28404,6 +28533,19 @@ export interface SubGoalResultApi {
   reason?: string;
   /** What the check was decided from: world_state, tool_calls, transcript, recording. */
   evidence?: string[];
+  /** @minLength 1 */
+  subject?: string;
+  subject_kind?: SubGoalResultApiSubjectKind;
+  /**
+   * The worker whose own check this is.
+   * @minLength 1
+   */
+  worker_id?: string;
+  /**
+   * What the results show: its name, with the worker's name when it is one worker's own check.
+   * @minLength 1
+   */
+  display_name: string;
 }
 
 export interface CostBreakdownApi {
@@ -28492,6 +28634,11 @@ export interface SimulateRunV3FunctionCallApi {
   on_behalf_of?: string;
   /** agent_call for the agent's own tool call, world_actor_action for an actor's action in the world. */
   kind?: SimulateRunV3FunctionCallApiKind;
+  /**
+   * How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to another agent or a control pass. Absent on a world actor's action.
+   * @minLength 1
+   */
+  tool_label?: string;
 }
 
 /**
@@ -28557,6 +28704,14 @@ export interface BlockedCallApi {
   count?: number;
 }
 
+export interface TrialRefusedActionApi {
+  /** @minLength 1 */
+  action: string;
+  /** Why the world refused the call, as a code. */
+  code: string;
+  reason: string;
+}
+
 export interface TrialStateChangeApi {
   /** @minLength 1 */
   who: string;
@@ -28576,6 +28731,12 @@ export interface TrialStateChangeApi {
   no_change?: boolean;
   /** Calls to hosts outside the test world, refused before they left: counted in refused, never a change. */
   blocked?: BlockedCallApi[];
+  refused_actions?: TrialRefusedActionApi[];
+  /**
+   * The worker this participant is; absent for the agent and the actors.
+   * @minLength 1
+   */
+  worker_id?: string;
 }
 
 export type DuplicateCommitApiArguments = { [key: string]: unknown };
@@ -28903,7 +29064,7 @@ export interface ActorUsageTotalApi {
  */
 export interface TrialNoticeApi {
   /**
-   * fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing (the agent's change refused before anyone approved it: `action`, `count`)
+   * fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, approval_missing (the agent's change refused before anyone approved it: `action`, `count`), worker_channel_bypassed or worker_limits_not_enforced
    * @minLength 1
    */
   code: string;
@@ -28917,6 +29078,69 @@ export interface TrialNoticeApi {
   mode?: string;
   /** For evidence_incomplete. */
   count?: number;
+  workers?: string[];
+}
+
+export interface SharedRecordActionApi {
+  /** @minLength 1 */
+  who: string;
+  /**
+   * The participant's name, as the state changes give it.
+   * @minLength 1
+   */
+  name: string;
+  tool: string;
+  /** @minLength 1 */
+  outcome: string;
+  write: boolean;
+}
+
+/**
+ * Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut.
+ */
+export type SharedRecordApiTruncation =
+  (typeof SharedRecordApiTruncation)[keyof typeof SharedRecordApiTruncation];
+
+export const SharedRecordApiTruncation = {
+  actions: "actions",
+  records: "records",
+  unknown: "unknown",
+} as const;
+
+/**
+ * Records two or more participants named in this trial, and what the world made of each call.
+ */
+export interface SharedRecordApi {
+  /**
+   * What the calls named, as argument=value; never a database identity.
+   * @minLength 1
+   */
+  key: string;
+  /** @minLength 1 */
+  argument: string;
+  /** @minLength 1 */
+  value: string;
+  actions: SharedRecordActionApi[];
+  committed_writes: number;
+  truncated: boolean;
+  /** This record's own actions were cut; null for a trial recorded before this was reported. */
+  actions_truncated?: boolean;
+  /** Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut. */
+  truncation?: SharedRecordApiTruncation;
+}
+
+/**
+ * Participants running on their own that the run stopped when their deadline passed.
+ */
+export interface StoppedWorkerApi {
+  /** @minLength 1 */
+  worker: string;
+  /** @minLength 1 */
+  process: string;
+  /** When the run stopped it, in seconds since the epoch. */
+  at: number;
+  /** @minLength 1 */
+  reason: string;
 }
 
 export interface TrialStateApi {
@@ -28950,6 +29174,23 @@ export interface TrialStateApi {
   limits?: HarnessActorLimitsApi;
   /** How the trial ran that the person should know, e.g. a scenario fault that did not take effect. */
   notices: TrialNoticeApi[];
+  /** Records two or more participants named in this trial, and what the world made of each call. */
+  shared_records?: SharedRecordApi[];
+  /** More records were touched by more than one participant than the trial kept; null for a trial recorded before this was reported. */
+  shared_records_truncated?: boolean;
+  /** Participants running on their own that the run stopped when their deadline passed. */
+  stopped_workers?: StoppedWorkerApi[];
+}
+
+export interface EarlierAttemptApi {
+  /** Its id: `/workers/?attempt=` reads its worker record. */
+  attempt: string;
+  /** Which attempt it was, counted from 1; the call itself is `attempt_number`. */
+  number: number;
+  rerun_at: string;
+  /** False when it was snapshotted before attempts kept their worker record and trial state. */
+  kept: boolean;
+  trial_state: TrialStateApi;
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -29101,12 +29342,17 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
+  /** The agent's tool calls, from the tool trace when the call has one, else the transcript; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them. */
+  tool_call_count: number;
   call_actors: CallCallActorApi[];
   /** Who else took part: each actor who spoke, in the order they first spoke, then each world actor who acted. Never an actor planned for the call who did not join. */
   participants: CallParticipantApi[];
   /** The simulated person spoke in the call; false when an actor's message or the scenario's task started it and the person never spoke. */
   has_customer: boolean;
   trial_state: TrialStateApi;
+  earlier_attempts: EarlierAttemptApi[];
+  /** Which attempt this call is, counted from 1: one more than its earlier attempts. */
+  attempt_number: number;
   /** Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view. */
   actors_enabled: boolean;
   /** False when the trial did not start from the seeded records; it is then left out of repeatability, pass^k and run comparisons. */
@@ -29117,6 +29363,486 @@ export interface CallExecutionV3DetailResponseApi {
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;
   /** @minLength 1 */
   csat_reason: string;
+}
+
+export type CallWorkersResponseApiCollection =
+  (typeof CallWorkersResponseApiCollection)[keyof typeof CallWorkersResponseApiCollection];
+
+export const CallWorkersResponseApiCollection = {
+  complete: "complete",
+  partial: "partial",
+  unavailable: "unavailable",
+  no_evidence: "no_evidence",
+  infrastructure_lost: "infrastructure_lost",
+} as const;
+
+export type CallWorkersResponseApiWorkerDepths = { [key: string]: number };
+
+export type CallWorkersResponseApiState =
+  (typeof CallWorkersResponseApiState)[keyof typeof CallWorkersResponseApiState];
+
+export const CallWorkersResponseApiState = {
+  recorded: "recorded",
+  not_kept: "not_kept",
+  unreadable: "unreadable",
+} as const;
+
+export type CallWorkerApiState =
+  (typeof CallWorkerApiState)[keyof typeof CallWorkerApiState];
+
+export const CallWorkerApiState = {
+  completed: "completed",
+  failed: "failed",
+  no_return: "no_return",
+  deadline_passed: "deadline_passed",
+  cancel_requested: "cancel_requested",
+  cancelled: "cancelled",
+  infrastructure: "infrastructure",
+  not_observed: "not_observed",
+  observed_no_end: "observed_no_end",
+  unknown: "unknown",
+} as const;
+
+export type CleanupApiStatus =
+  (typeof CleanupApiStatus)[keyof typeof CleanupApiStatus];
+
+export const CleanupApiStatus = {
+  stopped: "stopped",
+  stopped_with_sandbox: "stopped_with_sandbox",
+  still_running: "still_running",
+  unknown: "unknown",
+} as const;
+
+export interface CleanupApi {
+  status: CleanupApiStatus;
+  /** @minLength 1 */
+  at: string;
+}
+
+export type WorkerCheckApiResult =
+  (typeof WorkerCheckApiResult)[keyof typeof WorkerCheckApiResult];
+
+export const WorkerCheckApiResult = {
+  not_applicable: "not_applicable",
+  inconclusive: "inconclusive",
+  unmeasured: "unmeasured",
+} as const;
+
+export interface WorkerCheckApi {
+  /** @minLength 1 */
+  name: string;
+  passed: boolean;
+  result?: WorkerCheckApiResult;
+}
+
+/**
+ * How its limits were enforced in this trial: enforced (only when the trial shows its own calls), not enforced, skipped, or not known.
+ */
+export type CallWorkerApiEnforcement =
+  (typeof CallWorkerApiEnforcement)[keyof typeof CallWorkerApiEnforcement];
+
+export const CallWorkerApiEnforcement = {
+  held_at_world: "held_at_world",
+  not_enforced: "not_enforced",
+  bypassed: "bypassed",
+  unknown: "unknown",
+} as const;
+
+export interface CallWorkerApi {
+  /** @minLength 1 */
+  worker_id: string;
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  observed: boolean;
+  undeclared: boolean;
+  instance_ids: string[];
+  /** @minLength 1 */
+  model?: string;
+  tokens?: number;
+  state: CallWorkerApiState;
+  cut_short: boolean;
+  past_deadline: boolean;
+  stopped_at?: number;
+  cleanup?: CleanupApi;
+  checks: WorkerCheckApi[];
+  /** How its limits were enforced in this trial: enforced (only when the trial shows its own calls), not enforced, skipped, or not known. */
+  enforcement?: CallWorkerApiEnforcement;
+  /** @minLength 1 */
+  enforcement_label?: string;
+  /** Its calls went through the main app in this trial, so its limits were not enforced and its own checks were not graded. */
+  channel_bypassed?: boolean;
+}
+
+export type CallWorkerEventApiType =
+  (typeof CallWorkerEventApiType)[keyof typeof CallWorkerEventApiType];
+
+export const CallWorkerEventApiType = {
+  delegated: "delegated",
+  transferred: "transferred",
+  tool_call: "tool_call",
+  returned: "returned",
+} as const;
+
+export type ShownTextApiFormat =
+  (typeof ShownTextApiFormat)[keyof typeof ShownTextApiFormat];
+
+export const ShownTextApiFormat = {
+  code: "code",
+  text: "text",
+} as const;
+
+export interface ShownTextApi {
+  format: ShownTextApiFormat;
+  /** @minLength 1 */
+  text: string;
+}
+
+export type CallWorkerEventApiStatus =
+  (typeof CallWorkerEventApiStatus)[keyof typeof CallWorkerEventApiStatus];
+
+export const CallWorkerEventApiStatus = {
+  ok: "ok",
+  error: "error",
+} as const;
+
+export type CallWorkerEventApiLaunch =
+  (typeof CallWorkerEventApiLaunch)[keyof typeof CallWorkerEventApiLaunch];
+
+export const CallWorkerEventApiLaunch = {
+  async: "async",
+} as const;
+
+export type CallWorkerEventApiRelationship =
+  (typeof CallWorkerEventApiRelationship)[keyof typeof CallWorkerEventApiRelationship];
+
+export const CallWorkerEventApiRelationship = {
+  observed: "observed",
+  unknown: "unknown",
+} as const;
+
+export type CallWorkerEventApiAttribution =
+  (typeof CallWorkerEventApiAttribution)[keyof typeof CallWorkerEventApiAttribution];
+
+export const CallWorkerEventApiAttribution = {
+  reported: "reported",
+  unattributed: "unattributed",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type CallWorkerEventApiInput = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type CallWorkerEventApiOutput = { [key: string]: unknown };
+
+export interface CallWorkerEventApi {
+  seq: number;
+  type: CallWorkerEventApiType;
+  /** @minLength 1 */
+  worker_id: string;
+  /** @minLength 1 */
+  by?: string;
+  /** @minLength 1 */
+  delegation_id?: string;
+  /** @minLength 1 */
+  task?: string;
+  /** @minLength 1 */
+  result?: string;
+  task_shown?: ShownTextApi;
+  result_shown?: ShownTextApi;
+  /** @minLength 1 */
+  tool?: string;
+  status?: CallWorkerEventApiStatus;
+  /** @minLength 1 */
+  span_id?: string;
+  /** @minLength 1 */
+  trace_id?: string;
+  /** Any valid JSON value. */
+  input?: CallWorkerEventApiInput;
+  /** Any valid JSON value. */
+  output?: CallWorkerEventApiOutput;
+  input_omitted?: boolean;
+  output_omitted?: boolean;
+  /** Why the world refused the call, as a code. */
+  refusal_code?: string;
+  launch?: CallWorkerEventApiLaunch;
+  relationship?: CallWorkerEventApiRelationship;
+  /** @minLength 1 */
+  at: string;
+  /**
+   * When a tool call finished; null when the record does not say.
+   * @minLength 1
+   */
+  ended_at?: string;
+  attribution: CallWorkerEventApiAttribution;
+}
+
+export interface CallWorkerCoordinatorApi {
+  /** @minLength 1 */
+  name: string;
+}
+
+export type CallWorkerStepApiKind =
+  (typeof CallWorkerStepApiKind)[keyof typeof CallWorkerStepApiKind];
+
+export const CallWorkerStepApiKind = {
+  handoff: "handoff",
+  tool_call: "tool_call",
+} as const;
+
+export type CallWorkerEventOrNullApiType =
+  (typeof CallWorkerEventOrNullApiType)[keyof typeof CallWorkerEventOrNullApiType];
+
+export const CallWorkerEventOrNullApiType = {
+  delegated: "delegated",
+  transferred: "transferred",
+  tool_call: "tool_call",
+  returned: "returned",
+} as const;
+
+export type CallWorkerEventOrNullApiStatus =
+  (typeof CallWorkerEventOrNullApiStatus)[keyof typeof CallWorkerEventOrNullApiStatus];
+
+export const CallWorkerEventOrNullApiStatus = {
+  ok: "ok",
+  error: "error",
+} as const;
+
+export type CallWorkerEventOrNullApiLaunch =
+  (typeof CallWorkerEventOrNullApiLaunch)[keyof typeof CallWorkerEventOrNullApiLaunch];
+
+export const CallWorkerEventOrNullApiLaunch = {
+  async: "async",
+} as const;
+
+export type CallWorkerEventOrNullApiRelationship =
+  (typeof CallWorkerEventOrNullApiRelationship)[keyof typeof CallWorkerEventOrNullApiRelationship];
+
+export const CallWorkerEventOrNullApiRelationship = {
+  observed: "observed",
+  unknown: "unknown",
+} as const;
+
+export type CallWorkerEventOrNullApiAttribution =
+  (typeof CallWorkerEventOrNullApiAttribution)[keyof typeof CallWorkerEventOrNullApiAttribution];
+
+export const CallWorkerEventOrNullApiAttribution = {
+  reported: "reported",
+  unattributed: "unattributed",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type CallWorkerEventOrNullApiInput = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type CallWorkerEventOrNullApiOutput = { [key: string]: unknown };
+
+export interface CallWorkerEventOrNullApi {
+  seq: number;
+  type: CallWorkerEventOrNullApiType;
+  /** @minLength 1 */
+  worker_id: string;
+  /** @minLength 1 */
+  by?: string;
+  /** @minLength 1 */
+  delegation_id?: string;
+  /** @minLength 1 */
+  task?: string;
+  /** @minLength 1 */
+  result?: string;
+  task_shown?: ShownTextApi;
+  result_shown?: ShownTextApi;
+  /** @minLength 1 */
+  tool?: string;
+  status?: CallWorkerEventOrNullApiStatus;
+  /** @minLength 1 */
+  span_id?: string;
+  /** @minLength 1 */
+  trace_id?: string;
+  /** Any valid JSON value. */
+  input?: CallWorkerEventOrNullApiInput;
+  /** Any valid JSON value. */
+  output?: CallWorkerEventOrNullApiOutput;
+  input_omitted?: boolean;
+  output_omitted?: boolean;
+  /** Why the world refused the call, as a code. */
+  refusal_code?: string;
+  launch?: CallWorkerEventOrNullApiLaunch;
+  relationship?: CallWorkerEventOrNullApiRelationship;
+  /** @minLength 1 */
+  at: string;
+  /**
+   * When a tool call finished; null when the record does not say.
+   * @minLength 1
+   */
+  ended_at?: string;
+  attribution: CallWorkerEventOrNullApiAttribution;
+}
+
+export type CallWorkerStepApiEnd =
+  (typeof CallWorkerStepApiEnd)[keyof typeof CallWorkerStepApiEnd];
+
+export const CallWorkerStepApiEnd = {
+  finished: "finished",
+  failed: "failed",
+  passed: "passed",
+  no_return: "no_return",
+  cut_off: "cut_off",
+} as const;
+
+export type CallWorkerStepApiEndState =
+  (typeof CallWorkerStepApiEndState)[keyof typeof CallWorkerStepApiEndState];
+
+export const CallWorkerStepApiEndState = {
+  completed: "completed",
+  failed: "failed",
+  no_return: "no_return",
+  deadline_passed: "deadline_passed",
+  cancel_requested: "cancel_requested",
+  cancelled: "cancelled",
+  infrastructure: "infrastructure",
+  not_observed: "not_observed",
+  observed_no_end: "observed_no_end",
+  unknown: "unknown",
+} as const;
+
+export type CallWorkerStepApiRelationship =
+  (typeof CallWorkerStepApiRelationship)[keyof typeof CallWorkerStepApiRelationship];
+
+export const CallWorkerStepApiRelationship = {
+  observed: "observed",
+  unknown: "unknown",
+} as const;
+
+export interface CallWorkerStepApi {
+  kind: CallWorkerStepApiKind;
+  key: number;
+  parent: number;
+  depth: number;
+  /** @minLength 1 */
+  worker_id: string;
+  transfer?: boolean;
+  handoff?: CallWorkerEventOrNullApi;
+  returned?: CallWorkerEventOrNullApi;
+  /** @minLength 1 */
+  started_at?: string;
+  /** @minLength 1 */
+  ended_at?: string;
+  parallel?: boolean;
+  end?: CallWorkerStepApiEnd;
+  end_state?: CallWorkerStepApiEndState;
+  did_not_finish?: boolean;
+  first_of_worker?: boolean;
+  children?: number[];
+  call?: CallWorkerEventApi;
+  turn: number;
+  order: number;
+  relationship: CallWorkerStepApiRelationship;
+}
+
+export interface CallWorkerTurnApi {
+  /** @minLength 1 */
+  text: string;
+  /** @minLength 1 */
+  at: string;
+  shown?: ShownTextApi;
+}
+
+export interface CallWorkerRoundApi {
+  turn: number;
+  request: CallWorkerTurnApi;
+  response: CallWorkerTurnApi;
+  children: number[];
+  calls_outside: number;
+  handoffs: number[];
+  expects_messages: boolean;
+}
+
+export interface HandOffCountsApi {
+  hand_offs: number;
+  workers: number;
+  finished: number;
+  did_not_finish: number;
+  passed: number;
+  cut_off: number;
+}
+
+export type FailurePlacementApiStatus =
+  (typeof FailurePlacementApiStatus)[keyof typeof FailurePlacementApiStatus];
+
+export const FailurePlacementApiStatus = {
+  failed: "failed",
+  inconclusive: "inconclusive",
+} as const;
+
+export type FailurePlacementApiUntied =
+  (typeof FailurePlacementApiUntied)[keyof typeof FailurePlacementApiUntied];
+
+export const FailurePlacementApiUntied = {
+  no_moment: "no_moment",
+  several_hand_offs: "several_hand_offs",
+  no_hand_off: "no_hand_off",
+} as const;
+
+export interface FailurePlacementApi {
+  /** @minLength 1 */
+  name: string;
+  status: FailurePlacementApiStatus;
+  step: number;
+  /** @minLength 1 */
+  worker_id: string;
+  untied: FailurePlacementApiUntied;
+}
+
+export interface CallWorkersResponseApi {
+  workers: CallWorkerApi[];
+  events: CallWorkerEventApi[];
+  events_omitted?: number;
+  coordinator?: CallWorkerCoordinatorApi;
+  /** @minLength 1 */
+  started_at?: string;
+  spans_received?: boolean;
+  /** @minLength 1 */
+  collected_at: string;
+  /**
+   * The project the call's traces were read from, to open them in Traces; null when none was read.
+   * @minLength 1
+   */
+  project_id: string;
+  collection?: CallWorkersResponseApiCollection;
+  steps: CallWorkerStepApi[];
+  turns: CallWorkerRoundApi[];
+  depth: number;
+  parallel: number;
+  asynchronous: number;
+  overlap_unknown: boolean;
+  worker_depths: CallWorkersResponseApiWorkerDepths;
+  counts: HandOffCountsApi;
+  cut_off: boolean;
+  beyond_boundary: boolean;
+  placements: FailurePlacementApi[];
+  stopped_by_user: boolean;
+  pending: boolean;
+  /** @minLength 1 */
+  next_read_at?: string;
+  state: CallWorkersResponseApiState;
+}
+
+export interface CallWorkersPendingApi {
+  pending: boolean;
+  /** @minLength 1 */
+  next_read_at: string;
+  /** The run's agent version declares at least one participant, so this call's record is worth waiting for; false for a single-agent app. */
+  participants_declared: boolean;
 }
 
 export type RunDashboardMetricApiUnit =
@@ -29318,6 +30044,7 @@ export interface RunDashboardRiskApi {
   passed: number;
   failed: number;
   error: number;
+  cancelled: number;
   inconclusive: number;
   no_score: number;
 }
@@ -29379,6 +30106,7 @@ export interface OutcomeCountsApi {
   passed: number;
   failed: number;
   error: number;
+  cancelled: number;
   inconclusive: number;
   no_score: number;
 }
@@ -29483,6 +30211,7 @@ export interface ReliabilityRowApi {
   passed: number;
   failed: number;
   error: number;
+  cancelled: number;
   inconclusive: number;
   no_score: number;
   /** @minLength 1 */
@@ -29525,6 +30254,7 @@ export interface TurnDistributionApi {
   passed: number;
   failed: number;
   error: number;
+  cancelled: number;
   inconclusive: number;
   no_score: number;
   turn_count: number;
@@ -29726,6 +30456,7 @@ export const RunCallApiOutcome = {
   inconclusive: "inconclusive",
   no_score: "no_score",
   error: "error",
+  cancelled: "cancelled",
 } as const;
 
 export type RunCallApiScoringStatus =
@@ -29988,6 +30719,178 @@ export interface ApiErrorResponseApi {
   error?: string;
   attr?: string;
   details?: ApiErrorResponseApiDetails;
+}
+
+export type RouteTrialApiRoute =
+  (typeof RouteTrialApiRoute)[keyof typeof RouteTrialApiRoute];
+
+export const RouteTrialApiRoute = {
+  recorded: "recorded",
+  no_hand_off: "no_hand_off",
+  partial: "partial",
+  pending: "pending",
+  not_finished: "not_finished",
+  unreadable: "unreadable",
+  no_evidence: "no_evidence",
+} as const;
+
+export type RouteCellApiState =
+  (typeof RouteCellApiState)[keyof typeof RouteCellApiState];
+
+export const RouteCellApiState = {
+  step: "step",
+  failed: "failed",
+  no_answer: "no_answer",
+  cut_off: "cut_off",
+  repeated: "repeated",
+  absent: "absent",
+} as const;
+
+export type RouteCellApiStatesItem =
+  (typeof RouteCellApiStatesItem)[keyof typeof RouteCellApiStatesItem];
+
+export const RouteCellApiStatesItem = {
+  step: "step",
+  failed: "failed",
+  no_answer: "no_answer",
+  cut_off: "cut_off",
+  repeated: "repeated",
+  absent: "absent",
+} as const;
+
+/**
+ * One per column; null when the trial has no route to compare.
+ */
+export interface RouteCellApi {
+  state: RouteCellApiState;
+  /** The step's key in the trial's worker record (`steps[].key`); the first when it was taken more than once. */
+  step: number;
+  /** Every step's key in this cell. */
+  steps: number[];
+  count: number;
+  /** Each occurrence's own state, in the order the trial took them. */
+  states: RouteCellApiStatesItem[];
+}
+
+export interface RouteTrialApi {
+  number: number;
+  /** @minLength 1 */
+  call_execution_id: string;
+  /** @minLength 1 */
+  result: string;
+  route: RouteTrialApiRoute;
+  /** One per column; null when the trial has no route to compare. */
+  cells: RouteCellApi[];
+}
+
+export type RouteColumnApiKind =
+  (typeof RouteColumnApiKind)[keyof typeof RouteColumnApiKind];
+
+export const RouteColumnApiKind = {
+  handoff: "handoff",
+  tool_call: "tool_call",
+} as const;
+
+/**
+ * Who asked, or called the tool: a worker, the coordinator, or unknown when the record does not say.
+ */
+export type RouteColumnApiFromKind =
+  (typeof RouteColumnApiFromKind)[keyof typeof RouteColumnApiFromKind];
+
+export const RouteColumnApiFromKind = {
+  worker: "worker",
+  coordinator: "coordinator",
+  unknown: "unknown",
+} as const;
+
+/**
+ * Null on a tool-call column.
+ */
+export type RouteColumnApiToKind =
+  (typeof RouteColumnApiToKind)[keyof typeof RouteColumnApiToKind];
+
+export const RouteColumnApiToKind = {
+  worker: "worker",
+  coordinator: "coordinator",
+  unknown: "unknown",
+} as const;
+
+export interface RouteColumnApi {
+  /** @minLength 1 */
+  key: string;
+  kind: RouteColumnApiKind;
+  /** Who asked, or called the tool: a worker, the coordinator, or unknown when the record does not say. */
+  from_kind: RouteColumnApiFromKind;
+  /**
+   * A worker's id within the run; null otherwise.
+   * @minLength 1
+   */
+  from_id: string;
+  /**
+   * Null when the record does not name it.
+   * @minLength 1
+   */
+  from_name: string;
+  /** Null on a tool-call column. */
+  to_kind: RouteColumnApiToKind;
+  /** @minLength 1 */
+  to_id: string;
+  /** @minLength 1 */
+  to_name: string;
+  /** @minLength 1 */
+  tool: string;
+}
+
+export type RouteSplitGroupApiState =
+  (typeof RouteSplitGroupApiState)[keyof typeof RouteSplitGroupApiState];
+
+export const RouteSplitGroupApiState = {
+  step: "step",
+  failed: "failed",
+  no_answer: "no_answer",
+  cut_off: "cut_off",
+  repeated: "repeated",
+  absent: "absent",
+} as const;
+
+export type RouteSplitGroupApiStatesItem =
+  (typeof RouteSplitGroupApiStatesItem)[keyof typeof RouteSplitGroupApiStatesItem];
+
+export const RouteSplitGroupApiStatesItem = {
+  step: "step",
+  failed: "failed",
+  no_answer: "no_answer",
+  cut_off: "cut_off",
+  repeated: "repeated",
+  absent: "absent",
+} as const;
+
+export interface RouteSplitGroupApi {
+  state: RouteSplitGroupApiState;
+  count: number;
+  /** Each occurrence's own state, in order; trials split when these differ. */
+  states: RouteSplitGroupApiStatesItem[];
+  trials: number[];
+}
+
+/**
+ * Null when every trial took the same route.
+ */
+export interface RouteSplitApi {
+  column: number;
+  /** @minLength 1 */
+  key: string;
+  groups: RouteSplitGroupApi[];
+}
+
+export interface TrialRoutesResponseApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  tool_calls: boolean;
+  trials: RouteTrialApi[];
+  columns: RouteColumnApi[];
+  split: RouteSplitApi;
+  same_route: boolean;
 }
 
 export interface DeploymentHeartbeatApi {
@@ -45953,7 +46856,10 @@ export type SdkApiV1SimulationRunsListParams = {
 
 export type SimulateAgentDefinitionsListParams = {
   search?: string;
-  agent_type?: SimulateAgentDefinitionsListAgentType;
+  agent_type?: SimulateAgentDefinitionsListAgentTypeItem[];
+  source?: SimulateAgentDefinitionsListSourceItem[];
+  environments?: SimulateAgentDefinitionsListEnvironmentsItem[];
+  observe?: SimulateAgentDefinitionsListObserveItem[];
   agent_definition_id?: string;
   /**
    * @minimum 1
@@ -45965,12 +46871,42 @@ export type SimulateAgentDefinitionsListParams = {
   limit?: number;
 };
 
-export type SimulateAgentDefinitionsListAgentType =
-  (typeof SimulateAgentDefinitionsListAgentType)[keyof typeof SimulateAgentDefinitionsListAgentType];
+export type SimulateAgentDefinitionsListAgentTypeItem =
+  (typeof SimulateAgentDefinitionsListAgentTypeItem)[keyof typeof SimulateAgentDefinitionsListAgentTypeItem];
 
-export const SimulateAgentDefinitionsListAgentType = {
+export const SimulateAgentDefinitionsListAgentTypeItem = {
   voice: "voice",
   text: "text",
+} as const;
+
+export type SimulateAgentDefinitionsListSourceItem =
+  (typeof SimulateAgentDefinitionsListSourceItem)[keyof typeof SimulateAgentDefinitionsListSourceItem];
+
+export const SimulateAgentDefinitionsListSourceItem = {
+  github: "github",
+  archive: "archive",
+  livekit: "livekit",
+  vapi: "vapi",
+  retell: "retell",
+  bland: "bland",
+  eleven_labs: "eleven_labs",
+  phone: "phone",
+} as const;
+
+export type SimulateAgentDefinitionsListEnvironmentsItem =
+  (typeof SimulateAgentDefinitionsListEnvironmentsItem)[keyof typeof SimulateAgentDefinitionsListEnvironmentsItem];
+
+export const SimulateAgentDefinitionsListEnvironmentsItem = {
+  with: "with",
+  without: "without",
+} as const;
+
+export type SimulateAgentDefinitionsListObserveItem =
+  (typeof SimulateAgentDefinitionsListObserveItem)[keyof typeof SimulateAgentDefinitionsListObserveItem];
+
+export const SimulateAgentDefinitionsListObserveItem = {
+  linked: "linked",
+  not_linked: "not_linked",
 } as const;
 
 export type SimulateAgentDefinitionsBuildPreflightListParams = {
@@ -46514,6 +47450,13 @@ export type SimulateTestExecutionsPreviewCallsListParams = {
   run_test_id: string;
 };
 
+export type SimulateV3CallExecutionWorkersParams = {
+  /**
+   * An earlier attempt's rerun snapshot id: its record as the rerun kept it; 404 when it is not this call's, state `not_kept` when it was snapshotted before records were kept.
+   */
+  attempt?: string;
+};
+
 export type SimulateV3TestExecutionCallsParams = {
   search?: string;
   filters?: string;
@@ -46571,6 +47514,18 @@ export const SimulateV3TestExecutionCallsGroupBy = {
 
 export type SimulateV3TestExecutionTracesParams = {
   call_execution_id: string;
+};
+
+export type SimulateV3TestExecutionTrialRoutesParams = {
+  /**
+   * The scenario whose trials to line up: the key the run's calls list serves as `source_scenario_key`.
+   * @minLength 1
+   */
+  scenario_key: string;
+  /**
+   * Also a column for each tool called, by who called it and the tool.
+   */
+  tool_calls?: boolean;
 };
 
 export type TracerAlertsListParams = {

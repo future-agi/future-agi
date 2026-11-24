@@ -139,6 +139,8 @@ export const mapVersionDetail = (raw) => ({
   apiKey: raw.api_key ?? null,
   source: raw.source ?? null,
   config: raw.configuration_snapshot ?? {},
+  // The workers its newest built environment declares, read-only on the Definition tab.
+  participants: raw.participants,
 });
 
 export function useAgentDetail(agentId) {

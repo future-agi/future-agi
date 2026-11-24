@@ -1983,7 +1983,7 @@ class HostedHarnessProvider:
                     HostedHarnessGateway,
                 )
 
-                HostedHarnessGateway().cancel(job, reason=reason)
+                HostedHarnessGateway(require_provider=False).cancel(job, reason=reason)
             except Exception:
                 logger.exception(
                     "hosted harness direct cancellation fallback failed job=%s",
@@ -2383,9 +2383,11 @@ class HostedHarnessProvider:
 
         asked = request.query_params.get("group_by")
         group_by = DEFAULT_GROUP_BY if asked is None else asked
-        from simulate.selectors.environment_documents import contract_data
         from simulate.services.harness_actor_rules import actor_rules
-        from simulate.services.harness_environment import environment_actor_side
+        from simulate.services.harness_environment import (
+            environment_actor_side,
+            working_contract,
+        )
         from simulate.services.harness_tool_reach import door_reach, fault_targets
 
         page = list(page or [])
@@ -2395,7 +2397,7 @@ class HostedHarnessProvider:
             if any(one.actors or one.faults for one in page)
             else ([], actor_rules({}))
         )
-        contract = contract_data(job)
+        contract = working_contract(job)[0]
         targets = fault_targets(contract, rules, actor_cast)
         door = targets if door_reach(contract) else None
 
@@ -3189,10 +3191,14 @@ class HostedHarnessProvider:
         }
 
     def _job(self, request, pk):
+        try:
+            job_id = uuid.UUID(str(pk))
+        except ValueError:
+            return None
         organization = request_organization(request)
         return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
-                id=pk, organization=organization
+                id=job_id, organization=organization
             ),
             request,
         ).first()

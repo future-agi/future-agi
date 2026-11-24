@@ -162,6 +162,7 @@ def test_native_direct_conversion_preserves_legacy_cost(scope, immutable):
             "gen_ai.usage.cache_read_tokens": 40,
         },
     }
+    project = SimpleNamespace(id="project", trace_type="observe")
     if immutable:
         span["attributes"]["fi.usage.plan.id"] = "opaque"
     with patch(
@@ -171,7 +172,7 @@ def test_native_direct_conversion_preserves_legacy_cost(scope, immutable):
             with pytest.raises(ValueError, match=CONTRACT["admission_error"]):
                 _convert_single_span(
                     span,
-                    {("test", "org", "observe"): SimpleNamespace(id="project")},
+                    {("test", "org", "observe"): project},
                     {},
                     "org",
                 )
@@ -179,7 +180,7 @@ def test_native_direct_conversion_preserves_legacy_cost(scope, immutable):
         else:
             result = _convert_single_span(
                 span,
-                {("test", "org", "observe"): SimpleNamespace(id="project")},
+                {("test", "org", "observe"): project},
                 {},
                 "org",
             )

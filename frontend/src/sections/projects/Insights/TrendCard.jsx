@@ -149,7 +149,7 @@ function TrendChart({ rows, series, runId, onSelectRun }) {
   const surface = theme.palette.background.paper;
   const axisText = {
     fill: theme.palette.text.secondary,
-    fontSize: 11,
+    fontSize: theme.typography.s2.fontSize,
     fontFamily: theme.typography.fontFamily,
   };
   const hoverX = geometry && hover >= 0 ? geometry.xs[hover] : null;
@@ -329,7 +329,7 @@ function TrendLegend({ items, onCategory }) {
                 border: 0,
                 bgcolor: "transparent",
                 font: "inherit",
-                fontSize: 12,
+                typography: "s1",
                 color: item.absent ? "text.disabled" : "text.primary",
                 cursor: clickable ? "pointer" : "default",
                 "&:hover": clickable
@@ -337,7 +337,7 @@ function TrendLegend({ items, onCategory }) {
                   : undefined,
                 "&:focus-visible": {
                   outline: "2px solid",
-                  outlineColor: "primary.main",
+                  outlineColor: "border.focus",
                 },
               }}
             >
@@ -393,14 +393,14 @@ function RunPager({ runs, runId, onSelectRun }) {
         color="inherit"
         disabled={!older}
         onClick={() => onSelectRun(older.id)}
-        startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+        startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
         sx={{ color: "text.secondary" }}
       >
         Older
       </Button>
       <Typography
         variant="body2"
-        sx={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
+        sx={{ fontVariantNumeric: "tabular-nums", typography: "m3" }}
       >
         {formatWhen(current.finished_at || current.created_at)}
         <Box component="span" sx={{ color: "text.secondary" }}>
@@ -413,7 +413,7 @@ function RunPager({ runs, runId, onSelectRun }) {
         color="inherit"
         disabled={!newer}
         onClick={() => onSelectRun(newer.id)}
-        endIcon={<Iconify icon="mdi:arrow-right" width={16} />}
+        endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
         sx={{ color: "text.secondary" }}
       >
         Newer
@@ -477,10 +477,11 @@ export default function TrendCard({
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         px: 2,
-        pt: 1.75,
+        pt: 2,
         pb: 1,
+        bgcolor: "background.paper",
       }}
     >
       <Stack
@@ -490,7 +491,7 @@ export default function TrendCard({
         spacing={2}
         sx={{ mb: 1.25 }}
       >
-        <Typography variant="subtitle2" component="h2">
+        <Typography variant="m3" component="h2" fontWeight={500}>
           {chart ? "Category share across runs" : "Category share"}
         </Typography>
         {chart && (
@@ -530,7 +531,7 @@ export default function TrendCard({
                   border: 0,
                   bgcolor: "transparent",
                   font: "inherit",
-                  color: "primary.main",
+                  color: "text.link",
                   cursor: "pointer",
                   "&:hover": { textDecoration: "underline" },
                 }}

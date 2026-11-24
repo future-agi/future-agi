@@ -1,0 +1,313 @@
+{
+  "total_count": 28,
+  "workflow_runs": [
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:36Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953458,
+      "name": "Update CI",
+      "path": ".github/workflows/update-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:36Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953438,
+      "name": "Python types (advisory)",
+      "path": ".github/workflows/python-types.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:36Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953540,
+      "name": "pr-title-lint",
+      "path": ".github/workflows/pr-title-lint.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:36Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953495,
+      "name": "Branch name check",
+      "path": ".github/workflows/branch-name-check.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:36Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953516,
+      "name": "docs-declaration",
+      "path": ".github/workflows/docs-declaration.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:36Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953366,
+      "name": "Standalone install CI",
+      "path": ".github/workflows/standalone-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:36Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953538,
+      "name": "migrations-callout",
+      "path": ".github/workflows/migrations-callout-check.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304954070,
+      "name": "pr-title-lint",
+      "path": ".github/workflows/pr-title-lint.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953698,
+      "name": "Python lint",
+      "path": ".github/workflows/python-lint.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953643,
+      "name": "E2E CI",
+      "path": ".github/workflows/e2e-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304954150,
+      "name": "Branch name check",
+      "path": ".github/workflows/branch-name-check.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953765,
+      "name": "Test integrity",
+      "path": ".github/workflows/test-integrity.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "failure",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304954213,
+      "name": "docs-declaration",
+      "path": ".github/workflows/docs-declaration.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953880,
+      "name": "Images CI",
+      "path": ".github/workflows/images-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953846,
+      "name": "Collector and compose CI",
+      "path": ".github/workflows/fi-collector-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953691,
+      "name": "E2E Harness Self-tests",
+      "path": ".github/workflows/e2e-harness-selftest.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304954069,
+      "name": "migrations-callout",
+      "path": ".github/workflows/migrations-callout-check.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "failure",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953901,
+      "name": "E2E CI",
+      "path": ".github/workflows/e2e-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304954164,
+      "name": "Python types (advisory)",
+      "path": ".github/workflows/python-types.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953840,
+      "name": "Images CI",
+      "path": ".github/workflows/images-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953801,
+      "name": "Backend CI",
+      "path": ".github/workflows/backend-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "failure",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304954064,
+      "name": "Backend CI",
+      "path": ".github/workflows/backend-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953904,
+      "name": "Test integrity",
+      "path": ".github/workflows/test-integrity.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304954277,
+      "name": "E2E Harness Self-tests",
+      "path": ".github/workflows/e2e-harness-selftest.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953892,
+      "name": "Python lint",
+      "path": ".github/workflows/python-lint.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953777,
+      "name": "Collector and compose CI",
+      "path": ".github/workflows/fi-collector-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304953963,
+      "name": "Update CI",
+      "path": ".github/workflows/update-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-11-24T01:25:37Z",
+      "event": "pull_request",
+      "head_sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+      "id": 45304954108,
+      "name": "Standalone install CI",
+      "path": ".github/workflows/standalone-ci.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    }
+  ]
+}

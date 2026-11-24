@@ -2,12 +2,25 @@ name: Backend CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    # Only these three activity types. A run started by any other one (a body
+    # or title edit, a label) becomes this workflow's newest suite for the
+    # head commit, and GitHub then ignores the older suite's required check,
+    # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
+    # the merge queue re-tests every dev merge, but a PR moved onto main is
+    # not re-tested until a push or reopen (see e2e/README.md).
+    types: [opened, synchronize, reopened]
     # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
   # The queue entrypoint calls this workflow without forwarding any secrets.
   workflow_call:
+    inputs:
+      job_prefix:
+        # How the caller's jobs prefix these job names ("<caller job> / ").
+        # Empty keeps today's names: none, or "backend / " in a merge group.
+        type: string
+        required: false
+        default: ""
     outputs:
       verdict:
         description: Result of the required backend aggregate step
@@ -34,7 +47,7 @@ concurrency:
   # per PR even across forks, whereas a fork branch also named "dev" would share
   # a head_ref group with internal dev runs and cancel them.
   # Manual profiles can be dispatched together without replacing a pending trial.
-  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
+  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -56,7 +69,6 @@ env:
 jobs:
   policy-self-test:
     name: Scope policy fixtures
-    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -67,9 +79,10 @@ jobs:
           persist-credentials: false
       - name: Exercise the candidate policy against Git fixtures
         run: python3 -I .github/scripts/test_ci_scope.py
+      - name: "\"CI ran on this base\" verdicts on recorded API payloads"
+        run: python3 -I .github/scripts/test_ci_base_gate.py
 
   changes:
-    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -119,7 +132,14 @@ jobs:
                 [[ $HEAD_SHA == "$GITHUB_SHA" ]]
                 git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
               else
-                [[ $(git show -s --format=%P HEAD) == "$BASE_SHA $HEAD_SHA" ]]
+                # The event's base.sha can predate the base tip GitHub built its
+                # test merge on: it is not refreshed until the head merges the
+                # base. Plan from the merge's own first parent, which must
+                # descend from the event base, with the head as second parent.
+                read -r first second extra <<< "$(git show -s --format=%P HEAD)"
+                [[ -z ${extra:-} && ${second:-} == "$HEAD_SHA" ]]
+                git merge-base --is-ancestor "$BASE_SHA" "$first"
+                BASE_SHA=$first
               fi
               policy=$BASE_SHA ;;
             *) policy=$GITHUB_SHA; export BASE_SHA=$policy HEAD_SHA=$policy ;;
@@ -154,9 +174,11 @@ jobs:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           # The merge-group event does not attest to the provenance of every member.
+          # A call from Retarget proof forwards no secrets: like a merge group,
+          # it runs without the private package (GITHUB_WORKFLOW is the caller's).
           internal=false
           case "$GITHUB_EVENT_NAME" in
-            pull_request) if [[ -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
+            pull_request) if [[ $GITHUB_WORKFLOW == "Backend CI" && -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
             push|workflow_dispatch|schedule) internal=true ;;
           esac
           echo "internal=$internal" >> "$GITHUB_OUTPUT"
@@ -462,6 +484,16 @@ jobs:
       - name: Exercise terminal recording with the installed shard pytest
         if: matrix.group == 1 && matrix.suite == 'main'
         run: uv run --no-sync python -I .ci/test_collected_ids.py PluginProtocolTest RecordTest
+
+      - name: Check capability fixtures before the legacy EE decorator (one process)
+        if: matrix.group == 1 && matrix.suite == 'main'
+        run: |
+          uv run pytest -v -n 0 -o usefixtures=check_capability_isolation \
+            'tfc/capabilities/tests/test_enforcement_matrix.py::TestExpiredDeniesLockedFeatures::test_unlocked_feature_allowed_when_expired[optimization]' \
+            ee/usage/tests/test_license.py::TestUnifiedFeatureCheck::test_cloud_uses_plan_resolver \
+            tfc/capabilities/tests/test_blank_org_id.py::test_none_org_id_still_denies \
+            tfc/capabilities/tests/test_service_license_states.py::TestCloudResolverFailure::test_cloud_denies_paid_feature_when_org_id_missing \
+            tfc/tests/test_ee_gating.py::TestRequireEEFeatureDecorator::test_sync_fn_passes_in_ee
 
       - name: Collect the eligible inventory without sharding
         if: matrix.group == 1
@@ -940,6 +972,7 @@ jobs:
       - name: Verify each planned shard receipt
         id: qualification
         env:
+          BACKEND_JOB_PREFIX: ${{ inputs.job_prefix }}
           GH_TOKEN: ${{ github.token }}
           SHARDS: ${{ needs.changes.outputs.shards }}
           # Set this repository variable to 'true' to fail on unexpected runtime
@@ -958,8 +991,50 @@ jobs:
           # An early qualification error (e.g. listing artifacts failed) has no report.
           if-no-files-found: ${{ steps.qualification.outcome == 'success' && 'error' || 'ignore' }}
 
+  candidate-receipt:
+    # Not part of the required check: records which merge candidate this run
+    # tested, for the "CI ran on this base" check (.github/scripts/ci_base_gate.py).
+    # Only on pull requests whose suite was selected, ran and passed; its own
+    # failure never changes the required verdict. Default permissions (read).
+    # It sits above backend-tests, which stays the last job: policy tests read
+    # that job's script through to the end of this file.
+    name: Record the tested merge candidate
+    needs: [changes, backend-tests]
+    if: ${{ github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the merge candidate this run tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIND: backend
+          # Whether the suite ran with the private package ("internal") or
+          # without it ("oss", as merge groups and Retarget proof do).
+          SCOPE: ${{ needs.changes.outputs.internal == 'true' && 'internal' || 'oss' }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA")
+          # GITHUB_SHA is the merge of the head onto the base tip this run used.
+          jq -e --arg head "$HEAD_SHA" '(.parents | length) == 2 and .parents[1].sha == $head' <<<"$commit" > /dev/null
+          mkdir -p "$RUNNER_TEMP/ci-candidate"
+          jq -n --arg kind "$KIND" --argjson pr "$PR" --arg head "$HEAD_SHA" --arg base_ref "$BASE_REF" \
+            --arg base_sha "$(jq -r '.parents[0].sha' <<<"$commit")" --arg merge_sha "$GITHUB_SHA" \
+            --arg merge_tree "$(jq -r '.commit.tree.sha' <<<"$commit")" \
+            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --arg scope "$SCOPE" \
+            '{schema: 1, kind: $kind, scope: $scope, pr: $pr, head_sha: $head, base_ref: $base_ref, base_sha: $base_sha,
+              merge_sha: $merge_sha, merge_tree: $merge_tree, run_id: $run_id, run_attempt: $run_attempt}' \
+            | tee "$RUNNER_TEMP/ci-candidate/receipt.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-candidate-backend-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-candidate/receipt.json
+          if-no-files-found: error
+
   backend-tests:
-    name: ${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && 'Backend metadata edit' || 'Backend Tests Pass' }} # the ONLY required status check
+    name: Backend Tests Pass # the ONLY required status check
     needs:
       [
         changes,
@@ -975,7 +1050,7 @@ jobs:
         slim-smoke,
         code-executor-base-pin,
       ]
-    if: ${{ always() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

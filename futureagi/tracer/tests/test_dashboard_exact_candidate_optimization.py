@@ -24,6 +24,7 @@ from tracer.services import exact_aggregation_cache
 from tracer.services.clickhouse.v2.query_builders.dashboard import (
     DashboardQueryBuilderV2,
 )
+from tracer.tests.test_span_physical_identity_latest import engine as engine
 from tracer.views import dashboard as view
 from tracer.views.dashboard import (
     DashboardExactReadError,
@@ -1256,10 +1257,20 @@ def test_native_disjoint_groups_against_unfiltered_whole_final(
 
 
 @pytest.fixture
-def root_final_native(tmp_path):
-    from tracer.tests.test_span_physical_identity_latest import engine
-
-    yield from engine.__wrapped__(tmp_path)
+def root_final_native(request):
+    run, insert = request.getfixturevalue("engine")
+    # Per-metric exact reads pack a complete dashboard winner, not just the
+    # filter and metric columns. Mirror the remaining stored fields of schema 002.
+    run("""ALTER TABLE spans
+        ADD COLUMN org_id Nullable(UUID), ADD COLUMN trace_session_id Nullable(UUID),
+        ADD COLUMN prompt_version_id Nullable(UUID), ADD COLUMN prompt_label_id Nullable(UUID),
+        ADD COLUMN custom_eval_config_id Nullable(UUID),
+        ADD COLUMN gen_ai_system LowCardinality(String), ADD COLUMN gen_ai_operation LowCardinality(String),
+        ADD COLUMN operation_name LowCardinality(String), ADD COLUMN input_gcs_url Nullable(String),
+        ADD COLUMN output_gcs_url Nullable(String), ADD COLUMN tags String DEFAULT '[]',
+        ADD COLUMN eval_status LowCardinality(String), ADD COLUMN semconv_source LowCardinality(String),
+        ADD COLUMN updated_at DateTime64(6, 'UTC') DEFAULT start_time""")
+    return run, insert
 
 
 @pytest.mark.parametrize(
