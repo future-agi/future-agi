@@ -137,6 +137,15 @@ def approved_contract_key(job: HostedHarnessJob) -> str:
     return str(review.get("approved_contract_key") or "")
 
 
+def approved_seed_key(job: HostedHarnessJob) -> str:
+    review = stored_review(job)
+    if review is None or review.get("status") != APPROVED:
+        return ""
+    return str(
+        review.get("approved_contract_key") or review.get("source_contract_key") or ""
+    )
+
+
 def _write(job: HostedHarnessJob, review: dict[str, Any]) -> None:
     payload = dict(job.payload or {})
     payload["metadata"] = {**(payload.get("metadata") or {}), REVIEW_KEY: review}
@@ -783,7 +792,8 @@ def _store_approved_contract(job: HostedHarnessJob, review: dict[str, Any]) -> s
 
 def approve(job: HostedHarnessJob, *, user: User, base_url: str) -> HostedHarnessJob:
     """Start the build from the design as changed. A changed design is stored on the
-    environment first, so the build seeds from exactly what was approved. Refused
+    environment first, and an unchanged one builds from the contract it was read
+    from, so the build seeds from exactly what was approved. Refused
     with 409 when the design is closed, the job is not waiting, or the agent changed,
     and with 503 when the build could not be started."""
     from simulate.services.agent_contracts import remove_contract

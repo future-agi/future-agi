@@ -1,4 +1,5 @@
 import copy
+import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -7,8 +8,10 @@ import pytest
 from django.utils import timezone
 
 from simulate.models import HostedHarnessJob
+from simulate.services.agent_contracts import contract_bytes
 from simulate.services.harness_build_retry import retry_failed_build, retryable
 from simulate.services.harness_design_review import (
+    APPROVED,
     DISCARD_REASON,
     READING,
     READING_FAILED,
@@ -21,6 +24,7 @@ from simulate.services.harness_design_review import (
     stored_review,
 )
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness_gateway import _seed_contract_for
 from simulate.tasks.harness_agent_versions import (
     DESIGN_READING_DEADLINE_SECONDS,
     read_agent_for_design_review,
@@ -43,8 +47,8 @@ START = "simulate.temporal.client.start_hosted_harness_gateway_workflow"
 AUTHORING = "simulate.services.harness_usage.require_harness_authoring"
 READ = "simulate.services.agent_reading_sandbox.read_version_contract"
 ACTIVITY_INFO = "tfc.logging.temporal.context.try_activity_info"
-
-
+READ_KEY = "agent-contracts/org/agent/version/read.json"
+EDITED_KEY = "environment-contracts/org/env/approved.json"
 BASE_URL = "https://platform.example.com"
 
 run_reading = read_agent_for_design_review._original_func
@@ -73,6 +77,23 @@ def _age_reading(job, seconds):
     review["created_at"] = (timezone.now() - timedelta(seconds=seconds)).isoformat()
     job.payload["metadata"][REVIEW_KEY] = review
     job.save(update_fields=["payload", "updated_at"])
+
+
+def _approved_job(**review):
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        payload={
+            "metadata": {
+                REVIEW_KEY: {
+                    "status": APPROVED,
+                    "approved_contract_key": "",
+                    "source_contract_key": READ_KEY,
+                    **review,
+                }
+            }
+        },
+        agent_version_id=uuid.uuid4(),
+    )
 
 
 @pytest.mark.django_db
@@ -161,6 +182,65 @@ class TestRetryAfterAFailedReading:
         schedule.assert_called_once_with(str(job.id))
         job.refresh_from_db()
         assert stored_review(job)["status"] == READING
+
+
+class TestApprovedSeed:
+    @pytest.fixture(autouse=True)
+    def seeding_on(self, settings):
+        settings.HARNESS_SEED_CONTRACT_ENABLED = True
+
+    def test_an_edited_design_that_cannot_be_read_fails_the_build(self):
+        job = _approved_job(approved_contract_key=EDITED_KEY)
+
+        with (
+            patch("simulate.services.agent_contracts.read_contract", return_value=None),
+            patch(STORED, return_value=copy.deepcopy(CONTRACT)),
+            pytest.raises(HostedHarnessError) as failed,
+        ):
+            _seed_contract_for(job)
+
+        assert (failed.value.code, failed.value.retryable) == (
+            "approved_design_unreadable",
+            True,
+        )
+
+    def test_an_unchanged_design_whose_reading_is_gone_fails_the_build(self):
+        job = _approved_job()
+
+        with (
+            patch("simulate.services.agent_contracts.read_contract", return_value=None),
+            patch(STORED, return_value=copy.deepcopy(CONTRACT)),
+            pytest.raises(HostedHarnessError) as failed,
+        ):
+            _seed_contract_for(job)
+
+        assert failed.value.code == "approved_design_unreadable"
+
+    def test_an_unchanged_design_seeds_from_the_contract_it_was_read_from(self):
+        reviewed = {**copy.deepcopy(CONTRACT), "reading_inputs": {}}
+        replaced = {"agent": {"name": "a later build"}}
+        job = _approved_job()
+
+        with (
+            patch(
+                "simulate.services.agent_contracts.read_contract",
+                side_effect=lambda key: reviewed if key == READ_KEY else None,
+            ),
+            patch(STORED, return_value=replaced),
+        ):
+            body = _seed_contract_for(job)
+
+        assert body == contract_bytes(reviewed)
+
+    def test_an_edited_design_seeds_from_its_stored_edit(self):
+        edited = {"agent": {"name": "edited"}}
+        job = _approved_job(approved_contract_key=EDITED_KEY)
+
+        with patch(
+            "simulate.services.agent_contracts.read_contract",
+            side_effect=lambda key: edited if key == EDITED_KEY else None,
+        ):
+            assert _seed_contract_for(job) == contract_bytes(edited)
 
 
 @pytest.mark.django_db

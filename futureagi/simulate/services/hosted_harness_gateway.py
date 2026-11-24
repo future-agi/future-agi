@@ -2805,19 +2805,22 @@ class HostedHarnessGateway:
         payload["source"] = source
         # A fresh build from a version already read starts from that reading; only the
         # conversation's harness takes one.
-        seed_contract = (
-            _seed_contract_for(job)
-            if authoring_archive is None
+        seed_contract: bytes | None = None
+        seed_error: HostedHarnessError | None = None
+        if (
+            authoring_archive is None
             and not (payload.get("metadata") or {}).get("simulation_only")
             and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
-            else None
-        )
-        if seed_contract is None:
-            from simulate.services.harness_design_review import approved_contract_key
-
-            if approved_contract_key(job):
+        ):
+            try:
+                seed_contract = _seed_contract_for(job)
+            except HostedHarnessError as exc:
+                seed_error = exc
                 structlog_logger.warning(
-                    "hosted_build_approved_design_not_seeded", job_id=str(job.id)
+                    "hosted_build_approved_design_not_seeded",
+                    job_id=str(job.id),
+                    code=exc.code,
+                    exc_info=True,
                 )
         if seed_contract is not None:
             payload["metadata"] = {
@@ -2950,6 +2953,8 @@ class HostedHarnessGateway:
         try:
             if assembly_error is not None:
                 raise assembly_error
+            if seed_error is not None:
+                raise seed_error
             if certify:
                 allowed_domains = _with_certify_egress(
                     allowed_domains,
@@ -5357,19 +5362,21 @@ def _seed_contract_for(job: HostedHarnessJob) -> bytes | None:
         read_contract,
         stored_version_contract,
     )
-    from simulate.services.harness_design_review import approved_contract_key
+    from simulate.services.harness_design_review import approved_seed_key
     from simulate.services.hosted_harness import frozen_build_pin
 
     pinned = frozen_build_pin(job)
     version_id = pinned.id if pinned is not None else job.agent_version_id
-    approved_key = approved_contract_key(job)
+    approved_key = approved_seed_key(job)
     if approved_key:
         contract = read_contract(approved_key)
         if not contract:
-            structlog_logger.warning(
-                "hosted_build_approved_design_unreadable", job_id=str(job.id)
+            raise HostedHarnessError(
+                "approved_design_unreadable",
+                "The approved design could not be read; try the build again",
+                status_code=503,
+                retryable=True,
             )
-            return None
     else:
         if version_id is None:
             return None
@@ -5377,6 +5384,12 @@ def _seed_contract_for(job: HostedHarnessJob) -> bytes | None:
         if not contract:
             return None
     body = contract_bytes(contract)
+    if len(body) > SEED_MAX_BYTES and approved_key:
+        raise HostedHarnessError(
+            "design_too_large",
+            "The approved design is too large to build from",
+            status_code=422,
+        )
     if len(body) > SEED_MAX_BYTES:
         structlog_logger.info(
             "hosted_build_not_seeded",
