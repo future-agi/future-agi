@@ -123,8 +123,15 @@ describe("AgentMoveBanner", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     first.unmount();
-    renderBanner();
+    const { rerender } = renderBanner();
     expect(screen.queryByText(/failed its check/)).not.toBeInTheDocument();
+
+    // Tried again and failed the same way: the old dismissal doesn't hide it.
+    state.versions = versions({ activation_outcome: "validating" });
+    rerender(<AgentMoveBanner env={ENV} onOpenAgentVersions={vi.fn()} />);
+    state.versions = versions({ activation_outcome: "pair_failed" });
+    rerender(<AgentMoveBanner env={ENV} onOpenAgentVersions={vi.fn()} />);
+    expect(screen.getByText(/failed its check/)).toBeInTheDocument();
   });
 
   it("stays quiet about a move that ended superseded", async () => {

@@ -106,6 +106,14 @@ export default function AgentMoveBanner({ env, onOpenAgentVersions }) {
         watched.current = { id: movingId, firstSeen: Date.now() };
         setSlow(false);
         setWatchedEnd(null);
+        // A new try forgets an old dismissal, so the same failure shows again.
+        const tried = `${env?.id}:${movingId}:`;
+        setDismissed((list) => {
+          const next = list.filter((key) => !key.startsWith(tried));
+          if (next.length === list.length) return list;
+          writeDismissed(next);
+          return next;
+        });
       }
       return;
     }
@@ -120,7 +128,7 @@ export default function AgentMoveBanner({ env, onOpenAgentVersions }) {
     } else if (!QUIET.has(version.activationOutcome)) {
       setWatchedEnd(version.id);
     }
-  }, [shown, movingId, agents]);
+  }, [shown, movingId, agents, env?.id]);
 
   // shortcut: the server sends no start time for the move's check, so "long" counts from when this page first saw
   // it; use the check's start once the API sends one.
