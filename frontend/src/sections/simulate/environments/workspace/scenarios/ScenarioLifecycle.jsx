@@ -70,7 +70,7 @@ const RESULT_ROLES = {
   not_run: "neutral",
 };
 
-// The drawer's second header line: state, must-pass and Validate for this one scenario.
+// The drawer's second header line: state and Validate for this one scenario.
 export function LifecycleHeaderLine({ envId, row, locked = false }) {
   const lifecycle = row?.lifecycle;
   if (!lifecycle) return null;
@@ -100,15 +100,6 @@ export function LifecycleHeaderLine({ envId, row, locked = false }) {
         />
       )}
       <NotMeasuredChip lifecycle={lifecycle} />
-      {lifecycle.must_pass && (
-        <StatusBadge
-          status="must_pass"
-          role="discovery"
-          label={LIFECYCLE_COPY.mustPass}
-          size="sm"
-          dot={false}
-        />
-      )}
       {canValidate && (
         <ValidateScenariosButton
           envId={envId}

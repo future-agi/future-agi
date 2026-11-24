@@ -140,7 +140,6 @@ export const LIFECYCLE_COPY = {
   },
   keptRuns: "Runs, but not proved.",
   notMeasured: "Not measured at run time",
-  mustPass: "Must pass",
   statusTitle: "Status",
   stateLabel: "State",
   proofLabel: "Proof",
@@ -275,7 +274,7 @@ export const groupScenarios = (rows, mode = "goal", env) => {
 // The Coverage drawer's proof per use case: whether each one proves a success, a refusal and a caught wrong answer.
 export const WORKFLOW_PROOF_COPY = {
   title: "Proof per use case",
-  hint: "Counted over the saved default scenarios, not the filter or unsaved changes. Once any scenario is must-pass, only use cases with one are listed.",
+  hint: "Counted over the saved default scenarios, not the filter or unsaved changes.",
   columns: {
     workflow: "Use case",
     success: "Does it right",
