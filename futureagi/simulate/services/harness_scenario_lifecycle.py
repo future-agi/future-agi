@@ -62,7 +62,7 @@ REASON_TEXTS = {
     "credits_failed_attempt": "A check counts a failed call as done: {why}",
     "too_strict": "A check fails a way of handling it that the instructions allow: {why}",
     "unchecked": "No check notices a wrong value for: {why}",
-    "validation_incomplete": "Validation ran out of time before this case; validate again.",
+    "validation_incomplete": "Validation did not finish this case; validate again.",
     "no_negative_control": "No wrong-way example: add a wrong way of handling this case that its checks must fail.",
     "control_misses_case_goal": (
         "Its wrong-way examples only fail checks every scenario shares; add one that fails this case's own goal{goals}."

@@ -238,6 +238,12 @@ def receipt_outcome_counts(
                     & ~Q(status__in=SKIPPED_HARNESS_STATUSES),
                     then=Value("cancelled"),
                 ),
+                # A failed receipt its call has no score for (only checks its proof never verified failed) is not the
+                # agent's failure: counted with the no-score calls, outside the pass rate.
+                When(
+                    Q(status="failed") & Q(call_outcome=NO_SCORE),
+                    then=Value(NO_SCORE),
+                ),
                 default=F("status"),
                 output_field=CharField(),
             ),

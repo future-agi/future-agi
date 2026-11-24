@@ -74,6 +74,7 @@ from simulate.services.harness_scenarios import (
     NO_CALL_ACTOR,
     SIMULATED_USER_ONLY,
 )
+from simulate.services.hosted_harness_ingestion import UNVERIFIED_KEY, graded_sub_goals
 from simulate.services.run_reliability_v3 import (
     NOT_COMPARABLE,
     build_reliability,
@@ -1492,11 +1493,13 @@ def build_run_comparison(
                 result_harness_status=_json_text(
                     "call_metadata", "harness_outcome_status"
                 ),
+                result_unverified=_json_value("call_metadata", UNVERIFIED_KEY),
             )
             fields += [
                 "result_eval_outcome",
                 "result_receipt_sub_goals",
                 "result_harness_status",
+                "result_unverified",
             ]
         for scenario_key, scenario_label, outcome, *trial in calls.values_list(
             *fields
@@ -1508,9 +1511,13 @@ def build_run_comparison(
             elif outcome == "failed":
                 counts[key][1] += 1
             if trial:
-                eval_outcome, sub_goals, harness_status = trial
+                eval_outcome, sub_goals, harness_status, unverified = trial
                 trials.setdefault(key, run_compare.ScenarioTrials(labels[key])).add(
-                    sub_goals if isinstance(sub_goals, list) else None,
+                    (
+                        graded_sub_goals(sub_goals, unverified or [])
+                        if isinstance(sub_goals, list)
+                        else None
+                    ),
                     harness_status,
                     outcome,
                     eval_outcome,

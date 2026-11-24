@@ -310,6 +310,27 @@ class TestBuildRunComparison:
         assert second["verdict"] == "no_meaningful_change"
         assert comparison["summary"]["paired"] == 2
 
+    def test_a_check_its_proof_never_verified_is_never_counted_against_the_agent(
+        self, user, workspace, storage
+    ):
+        from simulate.services.hosted_harness_ingestion import UNVERIFIED_KEY
+
+        environment = _two_scenarios(user, workspace, storage, "cmp-unverified")
+        before = _run(environment, KEYS[:1], key="before")
+        _trials(before, [(KEYS[0], True)])
+        after = _run(environment, KEYS[:1], key="after")
+        _trials(after, [(KEYS[0], False)])
+        call = CallExecution.no_workspace_objects.get(
+            test_execution_id=after.test_execution_id
+        )
+        call.call_metadata = {**call.call_metadata, UNVERIFIED_KEY: ["refunded"]}
+        call.save(update_fields=["call_metadata"])
+        _done(before, ago=timedelta(minutes=5))
+
+        current = _by_key(_compare(_done(after)))[KEYS[0]]["current"]
+
+        assert (current["passed"], current["trials"], current["undecided"]) == (0, 0, 1)
+
     def test_evals_never_change_the_verdict(self, user, workspace, storage):
         environment = _two_scenarios(user, workspace, storage, "cmp-evals")
         before = _run(environment, KEYS[:1], key="before")

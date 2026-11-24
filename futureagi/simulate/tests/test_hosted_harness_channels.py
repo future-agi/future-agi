@@ -519,6 +519,8 @@ def test_recovered_media_fills_only_missing_unambiguous_kinds():
 
 def test_receipt_projects_actual_call_end_time_and_duration():
     registration = MagicMock()
+    # A run pinned to no suite and environment version: no proof to read.
+    registration.job.suite_version_id = registration.job.environment_version_id = None
     call = registration.call_execution
     call.call_metadata = {}
     call.error_message = "chat_target_failed: old attempt could not connect"
@@ -568,6 +570,8 @@ def test_a_receipt_with_no_call_data_still_ends_the_call_so_its_worker_read_is_d
     """A failed or stopped trial whose receipt carries no call: its end is recorded, so `/workers/` answers pending
     until its read has run, never "no workers"."""
     registration = MagicMock()
+    # A run pinned to no suite and environment version: no proof to read.
+    registration.job.suite_version_id = registration.job.environment_version_id = None
     call = registration.call_execution
     call.call_metadata = {}
     call.completed_at = None
