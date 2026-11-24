@@ -203,7 +203,7 @@
     {
       "database": "clickhouse",
       "table": "trajectory_items",
-      "source": "futureagi/tracer/services/clickhouse/v2/schema/028_trajectory_items.sql",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/040_trajectory_items.sql",
       "reason": "Content-addressed message and tool-definition store grows with unique trajectory items across ingested LLM spans"
     },
     {

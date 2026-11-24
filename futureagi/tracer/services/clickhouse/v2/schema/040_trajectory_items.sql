@@ -1,5 +1,5 @@
 -- =============================================================================
--- 028 — Content-addressed trajectory item store + span item-pointer columns
+-- 040 — Content-addressed trajectory item store + span item-pointer columns
 -- =============================================================================
 --
 -- Multi-turn AI agents resend their accumulated message history, system prompt,

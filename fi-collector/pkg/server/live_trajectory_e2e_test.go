@@ -364,7 +364,7 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 
 	switch stage {
 	case "pre_migration":
-		// Stage 1: Write legacy inline spans BEFORE 028_trajectory_items.sql exists,
+		// Stage 1: Write legacy inline spans BEFORE 040_trajectory_items.sql exists,
 		// then keep writing continuously while migration signal file triggers 028!
 		w := newWriter("default", chURL)
 		defer w.Close()
@@ -376,19 +376,19 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 		// Deterministic pre-migration trace for exact verification after 028!
 		preTid := makeUUIDBytes(0x1001)
 		preSid := makeSpanIDBytes(0x100101)
-		preIn := `{"messages":[{"role":"system","content":"Legacy prompt"},{"role":"user","content":"Legacy pre-028 question"}]}`
-		preOut := `{"choices":[{"index":0,"message":{"role":"assistant","content":"Legacy pre-028 answer"}}]}`
+		preIn := `{"messages":[{"role":"system","content":"Legacy prompt"},{"role":"user","content":"Legacy pre-040 question"}]}`
+		preOut := `{"choices":[{"index":0,"message":{"role":"assistant","content":"Legacy pre-040 answer"}}]}`
 		m.PreMigrationTraceID = formatDashedUUID(preTid)
 		m.PreMigrationSpanID = fmt.Sprintf("%016x", preSid)
 		m.PreMigrationInput = preIn
 		m.PreMigrationOutput = preOut
-		m.PreMigrationSessionExt = "sess-legacy-pre028"
+		m.PreMigrationSessionExt = "sess-legacy-pre040"
 
 		wire, err := encodeLiveOTLP(projectID, orgID, []liveSpanSpec{{
 			TraceBytes: preTid, SpanBytes: preSid,
 			Name: "legacy-checkout-agent", Kind: "LLM", Model: "gpt-4o", Provider: "openai",
 			Status: ptrace.StatusCodeOk, StartTime: now, EndTime: now.Add(150 * time.Millisecond),
-			SessionExt: "sess-legacy-pre028", UserExt: "alice_enterprise",
+			SessionExt: "sess-legacy-pre040", UserExt: "alice_enterprise",
 			Input: preIn, Output: preOut, PromptTokens: 120, CompTokens: 45,
 			ExtraStr:  map[string]string{"env": "prod", "region": "us-east"},
 			ExtraNum:  map[string]float64{"tier_score": 8.0},
@@ -409,18 +409,18 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 			baseT := now.Add(time.Duration(tr) * time.Second)
 			specs = append(specs, liveSpanSpec{
 				TraceBytes: tid, SpanBytes: rootSid,
-				Name: fmt.Sprintf("pre028-trace-%02d", tr), Kind: "CHAIN",
+				Name: fmt.Sprintf("pre040-trace-%02d", tr), Kind: "CHAIN",
 				Status: ptrace.StatusCodeOk, StartTime: baseT, EndTime: baseT.Add(time.Second),
 				SessionExt: fmt.Sprintf("sess-pre-%02d", tr%10),
 				UserExt:    fmt.Sprintf("user-pre-%02d", tr%5),
-				Input:      fmt.Sprintf("Pre-028 trace %d input", tr),
-				Output:     fmt.Sprintf("Pre-028 trace %d output", tr),
+				Input:      fmt.Sprintf("Pre-040 trace %d input", tr),
+				Output:     fmt.Sprintf("Pre-040 trace %d output", tr),
 			})
 			for c := 1; c < 20; c++ {
 				specs = append(specs, liveSpanSpec{
 					TraceBytes: tid, SpanBytes: makeSpanIDBytes(uint64(0x200000 + tr*100 + c)),
 					ParentBytes: rootSid,
-					Name:        fmt.Sprintf("pre028-child-%02d", c), Kind: "LLM", Model: "gpt-4o-mini", Provider: "openai",
+					Name:        fmt.Sprintf("pre040-child-%02d", c), Kind: "LLM", Model: "gpt-4o-mini", Provider: "openai",
 					Status: ptrace.StatusCodeOk, StartTime: baseT.Add(time.Duration(c) * 20 * time.Millisecond),
 					EndTime:      baseT.Add(time.Duration(c+1) * 20 * time.Millisecond),
 					SessionExt:   fmt.Sprintf("sess-pre-%02d", tr%10),
@@ -432,16 +432,16 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 			}
 			b, err := encodeLiveOTLP(projectID, orgID, specs)
 			if err != nil {
-				t.Fatalf("encode bulk pre-028: %v", err)
+				t.Fatalf("encode bulk pre-040: %v", err)
 			}
 			if err := sendLiveOTLP(srv, orgID, projectID, b); err != nil {
-				t.Fatalf("send bulk pre-028: %v", err)
+				t.Fatalf("send bulk pre-040: %v", err)
 			}
 		}
 		srv.drainNow(context.Background())
 
 		// Concurrent live-migration test: if FI_LIVE_MIGRATE_READY / FI_LIVE_MIGRATE_DONE
-		// are provided, keep streaming spans + draining while migration 028 runs live!
+		// are provided, keep streaming spans + draining while migration 040 runs live!
 		readyFile := os.Getenv("FI_LIVE_MIGRATE_READY")
 		doneFile := os.Getenv("FI_LIVE_MIGRATE_DONE")
 		if readyFile != "" && doneFile != "" {
@@ -469,7 +469,7 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 				sentDuring.Add(1)
 				time.Sleep(25 * time.Millisecond)
 			}
-			t.Logf("LIVE MIGRATION ZERO-DOWNTIME: sent & drained %d spans concurrently during 028_trajectory_items.sql apply, writer stats=%+v",
+			t.Logf("LIVE MIGRATION ZERO-DOWNTIME: sent & drained %d spans concurrently during 040_trajectory_items.sql apply, writer stats=%+v",
 				sentDuring.Load(), w.Snapshot())
 			if w.Snapshot().BatchesFailed > 0 || w.Snapshot().RowsDeadLettered > 0 {
 				t.Fatalf("unexpected failures during live migration: %+v", w.Snapshot())

@@ -830,7 +830,7 @@ def test_current_fact_bootstrap_option_requires_explicit_boolean(value):
         native.native_definitions(DATABASE, include_current_lists=value)
 
 
-def _make_pre028_retained_client():
+def _make_pre040_retained_client():
     client = MemoryClient(complete=True)
     client.remove("trajectory_items")
     for col in native._TRAJECTORY_SPAN_COLUMNS:
@@ -840,8 +840,8 @@ def _make_pre028_retained_client():
     return client
 
 
-def test_retained_pre028_oss_layout_upgrades_in_place_and_is_idempotent():
-    client = _make_pre028_retained_client()
+def test_retained_pre040_oss_layout_upgrades_in_place_and_is_idempotent():
+    client = _make_pre040_retained_client()
     assert native.inspect_native(client, database=DATABASE) == (
         "trajectory_items",
         native._TRAJECTORY_SPANS_UPGRADE,
@@ -862,9 +862,9 @@ def test_retained_pre028_oss_layout_upgrades_in_place_and_is_idempotent():
     assert client.writes == before_writes
 
 
-def test_interrupted_pre028_upgrade_resumes_cleanly():
+def test_interrupted_pre040_upgrade_resumes_cleanly():
     # Case A: trajectory_items created, ALTER fails -> retry completes ALTER only.
-    client = _make_pre028_retained_client()
+    client = _make_pre040_retained_client()
     client.fail_create = native._TRAJECTORY_SPANS_UPGRADE
     with pytest.raises(native.NativeBootstrapError, match="spans:trajectory_columns"):
         native.bootstrap_native(client, database=DATABASE)
@@ -886,16 +886,16 @@ def test_interrupted_pre028_upgrade_resumes_cleanly():
     assert native.inspect_native(client2, database=DATABASE) == ()
 
 
-def test_pre028_upgrade_fails_closed_on_wrong_type_or_other_missing_tables():
-    # Wrong type on one of the 028 columns refuses before any write.
-    bad_type = _make_pre028_retained_client()
+def test_pre040_upgrade_fails_closed_on_wrong_type_or_other_missing_tables():
+    # Wrong type on one of the 040 columns refuses before any write.
+    bad_type = _make_pre040_retained_client()
     bad_type.columns["spans"]["payload_encoding"] = ("Int32", "DEFAULT", "0")
     with pytest.raises(native.NativeBootstrapError, match="spans: incompatible"):
         native.bootstrap_native(bad_type, database=DATABASE)
     assert not bad_type.writes
 
-    # Missing a non-028 column on spans refuses before any write.
-    missing_core = _make_pre028_retained_client()
+    # Missing a non-040 column on spans refuses before any write.
+    missing_core = _make_pre040_retained_client()
     del missing_core.columns["spans"]["model"]
     with pytest.raises(native.NativeBootstrapError, match="spans: incompatible"):
         native.bootstrap_native(missing_core, database=DATABASE)
@@ -903,7 +903,7 @@ def test_pre028_upgrade_fails_closed_on_wrong_type_or_other_missing_tables():
 
     # Missing another object (e.g. trace_count_rollup_mv) alongside trajectory_items
     # over retained spans still refuses before any write.
-    missing_rollup = _make_pre028_retained_client()
+    missing_rollup = _make_pre040_retained_client()
     missing_rollup.remove("trace_count_rollup_mv")
     with pytest.raises(native.NativeBootstrapError, match="retained rows"):
         native.bootstrap_native(missing_rollup, database=DATABASE)

@@ -32,7 +32,7 @@ func (it Item) Key() ItemKey {
 	return ItemKey{ProjectID: it.ProjectID, ScopeID: it.ScopeID, ItemHash: it.ItemHash}
 }
 
-// ToRow converts the Item to the JSONEachRow map matching schema 028_trajectory_items.sql.
+// ToRow converts the Item to the JSONEachRow map matching schema 040_trajectory_items.sql.
 func (it Item) ToRow(now time.Time) map[string]any {
 	return map[string]any{
 		"project_id":    it.ProjectID,

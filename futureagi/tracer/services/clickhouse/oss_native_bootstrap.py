@@ -15,7 +15,7 @@ with two bounded exceptions:
    source lacks the connecting user is re-created (CREATE OR REPLACE; dictionaries
    hold no rows) so it stops reading as passwordless default.
 2. When an existing `spans` table lacks additive columns introduced by packaged
-   post-027 migrations (such as `028_trajectory_items.sql`), only those safe
+   post-039 migrations (such as `040_trajectory_items.sql`), only those safe
    `ALTER TABLE spans ADD COLUMN IF NOT EXISTS` statements are applied (zero
    part rewrites; existing rows default to `payload_encoding = 'inline'`).
 
@@ -49,16 +49,16 @@ _TABLES = {
     "trace_sessions": ("018_trace_sessions.sql", 2, 0),
     "end_user_id_remap": ("019_id_remap.sql", 2, 0),
     "trace_session_id_remap": ("019_id_remap.sql", 2, 1),
-    "trajectory_items": ("028_trajectory_items.sql", 2, 0),
+    "trajectory_items": ("040_trajectory_items.sql", 2, 0),
 }
 _CURRENT_LISTS = {
     "list_current_root_facts": ("036_list_current_root_facts.sql", 2, 0),
     "list_current_members": ("036_list_current_root_facts.sql", 2, 1),
     "list_current_user_activity": ("037_list_current_user_activity.sql", 1, 0),
 }
-# Additive, metadata-only 028 columns on `spans` (constant defaults, zero part
-# rewrites). Existing pre-028 installations with retained rows may upgrade in
-# place by creating `trajectory_items` and applying the packaged 028 ALTER.
+# Additive, metadata-only 040 columns on `spans` (constant defaults, zero part
+# rewrites). Existing pre-040 installations with retained rows may upgrade in
+# place by creating `trajectory_items` and applying the packaged 040 ALTER.
 _TRAJECTORY_SPAN_COLUMNS = (
     "input_item_hashes",
     "output_item_hashes",
@@ -309,11 +309,11 @@ def native_definitions(
 
 
 def native_upgrade_statements(database: str) -> dict[str, str]:
-    """Fixed packaged additive upgrade statements for retained pre-028 layouts.
+    """Fixed packaged additive upgrade statements for retained pre-040 layouts.
 
     Deliberately NOT a generic ALTER interpreter: only the single exact packaged
     `ALTER TABLE spans ADD COLUMN IF NOT EXISTS ...` statement from
-    `028_trajectory_items.sql` is permitted, qualified to the validated target
+    `040_trajectory_items.sql` is permitted, qualified to the validated target
     database.
     """
     if (
@@ -322,7 +322,7 @@ def native_upgrade_statements(database: str) -> dict[str, str]:
         or database.lower() in {"system", "information_schema"}
     ):
         raise NativeBootstrapError("explicit native database required")
-    sql = _statement(("028_trajectory_items.sql", 2, 1), "ALTER TABLE spans")
+    sql = _statement(("040_trajectory_items.sql", 2, 1), "ALTER TABLE spans")
     prefix = "ALTER TABLE spans"
     if not sql.startswith(prefix) or ";" in core._TOKEN.findall(sql)[:-1]:
         raise NativeBootstrapError("expected packaged additive spans ALTER")
@@ -476,7 +476,7 @@ def _inspect(client, database, definitions):
                 ) from None
     # Do not start partial initialization over retained rows (including tombstones).
     # Exception: creating the purely additive `trajectory_items` table on an
-    # otherwise complete pre-028 layout is lossless because historical rows
+    # otherwise complete pre-040 layout is lossless because historical rows
     # retain `payload_encoding = 'inline'` and never reference `trajectory_items`.
     non_additive_missing = tuple(name for name in missing if name != "trajectory_items")
     if non_additive_missing:

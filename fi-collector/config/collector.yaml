@@ -100,7 +100,7 @@ observed_catalog:
 
 # Content-addressed Trajectory Store (Phase 0 intra-span compaction + Phase 1
 # cross-span message/tool deduplication + dedup-aware storage billing).
-# Safe defaults keep all features OFF until schema 028_trajectory_items.sql and
+# Safe defaults keep all features OFF until schema 040_trajectory_items.sql and
 # hydrating Django readers are deployed.
 trajectory:
   # Phase 0: strip duplicate promoted input/output copies from attributes_extra

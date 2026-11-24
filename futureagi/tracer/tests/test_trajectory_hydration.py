@@ -1,5 +1,5 @@
 """Unit tests for Phase 0 sentinel compaction, Phase 1 Trajectory Store hydration,
-and 028_trajectory_items.sql replicated cluster rewriting.
+and 040_trajectory_items.sql replicated cluster rewriting.
 
 Runs completely offline (no live ClickHouse or Postgres required).
 """
@@ -180,7 +180,7 @@ def test_hydrate_span_dicts_zero_queries_for_inline_and_single_batch_for_mixed()
             "id": "legacy",
             "input": "legacy-in",
             "output": "legacy-out",
-            # No payload_encoding column at all (pre-028 fixture)
+            # No payload_encoding column at all (pre-040 fixture)
         },
     ]
     hydrate_span_dicts(inline_rows, query_fn)
@@ -534,7 +534,7 @@ def test_ch_span_reader_hydrates_get_list_and_export():
 
 
 # --------------------------------------------------------------------------- #
-# 5. Phase 0 adapter.py lockstep checks + 028 replicated cluster rewriter
+# 5. Phase 0 adapter.py lockstep checks + 040 replicated cluster rewriter
 # --------------------------------------------------------------------------- #
 @pytest.mark.unit
 def test_adapter_split_attributes_phase0_overflow_and_cutoff():
@@ -571,7 +571,7 @@ def test_migration_028_replicated_rewriter_and_no_ttl():
     from tracer.services.clickhouse import oss_cdc_bootstrap as cdc
 
     schema_path = (
-        Path(apply_schema.__file__).parent / "schema" / "028_trajectory_items.sql"
+        Path(apply_schema.__file__).parent / "schema" / "040_trajectory_items.sql"
     )
     raw = schema_path.read_text()
     stmts = apply_schema.split_statements(raw)
@@ -666,7 +666,7 @@ def test_trajectory_query_chunking_three_key_pk_and_prewhere():
     )
 
     schema_sql = (
-        Path(apply_schema.__file__).parent / "schema" / "028_trajectory_items.sql"
+        Path(apply_schema.__file__).parent / "schema" / "040_trajectory_items.sql"
     ).read_text()
     assert "PRIMARY KEY (project_id, scope_id, item_hash)" in schema_sql
 

@@ -138,7 +138,7 @@ func (b *Batch) ToRows(now time.Time) []map[string]any {
 // `payload_encoding = 'inline'` with its full original input/output and any
 // stripped flattened attributes. Called if inserting `trajectory_items` into
 // ClickHouse fails after retries. Removes the additive Phase 1 columns so
-// fallback rows remain compatible even if ClickHouse lacks 028_trajectory_items.sql.
+// fallback rows remain compatible even if ClickHouse lacks 040_trajectory_items.sql.
 func (b *Batch) RestoreInline() {
 	for _, fb := range b.fallbacks {
 		if fb.Row == nil {

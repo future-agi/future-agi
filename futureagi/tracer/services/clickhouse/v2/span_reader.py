@@ -130,8 +130,8 @@ class CHSpan:
     # Ingestion/arrival time used by retention, not the displayed event time.
     created_at: datetime | None = None
 
-    # Phase 1 Trajectory Store (028_trajectory_items.sql) pointer fields.
-    # Defaults preserve compatibility with pre-028 fixtures and inline rows.
+    # Phase 1 Trajectory Store (040_trajectory_items.sql) pointer fields.
+    # Defaults preserve compatibility with pre-040 fixtures and inline rows.
     input_item_hashes: tuple[str, ...] = ()
     output_item_hashes: tuple[str, ...] = ()
     tool_def_hashes: tuple[str, ...] = ()
