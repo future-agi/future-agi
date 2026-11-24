@@ -41,7 +41,6 @@ from tracer.services.clickhouse.query_builders.filters import (
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _attribute_plan,
-    _values_fit_second_inline_budget,
     partition_span_filter_plans,
 )
 from tracer.services.clickhouse.query_builders.session_filters import (
@@ -1945,30 +1944,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 # The compiler proves this value witness exhaustive even when
                 # missing-key defaults and independent argMax fields matter.
                 # Otherwise retain its conservative necessary raw witness.
-                # Individually small IN leaves can still exceed max_query_size
-                # together when double-inlined across witness_cte + classifier,
-                # so check the combined string payload against the second-copy
-                # budget and fall back to key-presence discovery when exceeded.
-                population_values = tuple(
-                    value
-                    for plan in witness_plans
-                    for param_name, param_value in plan.params.items()
-                    if param_name.startswith("latest_filter_param_")
-                    for value in (
-                        param_value
-                        if isinstance(param_value, (tuple, list))
-                        else (param_value,)
-                    )
-                    if isinstance(value, str)
-                )
                 predicate = (
-                    witness.raw_population_witness_predicate
-                    if witness.raw_population_witness_predicate is not None
-                    else witness.raw_graph_value_witness_predicate
+                    witness.raw_graph_value_witness_predicate
                     or witness.raw_witness_predicate
                 )
-                if not _values_fit_second_inline_budget(population_values):
-                    predicate = witness.raw_key_witness_predicate or predicate
                 witness_cte = f"""
         (SELECT groupUniqArray(assumeNotNull(trace_session_id))
          FROM {self.TABLE}

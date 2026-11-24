@@ -327,23 +327,13 @@ def _users_attr_enrichment_query(
     if (start_date is None) != (end_date is None):
         raise ValueError("attribute enrichment window must be provided together")
     time_filter = ""
-    partition_hour_filter = ""
     latest_time_filter = ""
     if start_date is not None:
         params["attr_start_date"] = start_date
         params["attr_end_date"] = end_date
         params["attr_start_us"] = _unix_microseconds(start_date)
         params["attr_end_us"] = _unix_microseconds(end_date)
-        partition_hour_filter = """
-          AND toDate(start_time) BETWEEN
-              toDate(%(attr_start_date)s) AND toDate(%(attr_end_date)s)
-          AND toStartOfHour(start_time) >= toStartOfHour(
-              fromUnixTimestamp64Micro(%(attr_start_us)s, 'UTC')
-          )
-          AND toStartOfHour(start_time) < fromUnixTimestamp64Micro(%(attr_end_us)s, 'UTC')
-        """
-        time_filter = f"""
-          {partition_hour_filter}
+        time_filter = """
           AND start_time >= fromUnixTimestamp64Micro(%(attr_start_us)s, 'UTC')
           AND start_time < fromUnixTimestamp64Micro(%(attr_end_us)s, 'UTC')
         """
@@ -485,7 +475,6 @@ def _users_attr_enrichment_query(
         ARRAY JOIN %(requested_attribute_keys)s AS attribute_key
         PREWHERE 1 = 1
           {project_clause}
-          {partition_hour_filter}
           AND (
               project_id,
               observation_type,

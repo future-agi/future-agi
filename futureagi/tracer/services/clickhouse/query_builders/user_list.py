@@ -2008,7 +2008,6 @@ class UserListQueryBuilder(BaseQueryBuilder):
             GROUP BY resolved_end_user_id
         ) AS relation_user_matches
         WHERE {requirement_where_sql}
-        {_SEEDED_PAGE_READ_SETTINGS}
         """
         return query, params
 
@@ -2270,7 +2269,6 @@ class UserListQueryBuilder(BaseQueryBuilder):
             ) AS native_span_rows
         ) AS native_span_flags
         GROUP BY end_user_id
-        {_SEEDED_PAGE_READ_SETTINGS}
         """
         return query, params
 
@@ -2526,7 +2524,6 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 {", ".join(projections)}
             FROM session_rows
             GROUP BY end_user_id
-            {_SEEDED_PAGE_READ_SETTINGS}
             """
             queries.append((query, dict(base_params), session_fields))
 
@@ -2587,7 +2584,6 @@ class UserListQueryBuilder(BaseQueryBuilder):
               AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
               AND {resolved_eu} IN %(candidate_end_user_ids)s
             GROUP BY end_user_id
-            {_SEEDED_PAGE_READ_SETTINGS}
             """
             queries.append((query, dict(base_params), span_fields))
 
