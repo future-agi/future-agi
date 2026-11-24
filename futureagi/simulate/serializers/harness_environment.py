@@ -1010,6 +1010,14 @@ class HarnessEnvironmentSuggestedEvalSerializer(
     pass_threshold = serializers.FloatField(min_value=0, max_value=1)
 
 
+class HarnessEnvironmentBuildRetrySerializer(serializers.Serializer):
+    """A stopped build queued again, and where it starts."""
+
+    environment_id = serializers.UUIDField()
+    state = serializers.CharField()
+    resume_from = serializers.ChoiceField(choices=("start", "checks"))
+
+
 class HarnessEnvironmentEvalRequirementSerializer(serializers.Serializer):
     """Whether an added eval must pass, and the score from 0 to 1 it must reach.
 

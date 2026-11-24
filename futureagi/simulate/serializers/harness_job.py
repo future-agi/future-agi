@@ -1087,6 +1087,12 @@ class HarnessJobStatusSerializer(serializers.Serializer):
     total_scenarios = serializers.IntegerField()
     deadline_at = serializers.CharField()
     failure = serializers.JSONField(allow_null=True)
+    retry_from = serializers.ChoiceField(
+        choices=("start", "checks"),
+        allow_null=True,
+        required=False,
+        help_text="Where trying a stopped build again starts; null when it cannot be tried again.",
+    )
 
 
 class HarnessJobEventSerializer(serializers.Serializer):

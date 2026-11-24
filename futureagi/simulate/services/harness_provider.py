@@ -370,6 +370,12 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     return {k: v for k, v in metadata.items() if k != "observability_refusal"}
 
 
+def _retry_from(job: HostedHarnessJob) -> str | None:
+    from simulate.services.harness_build_retry import resume_point, retryable
+
+    return resume_point(job) if retryable(job) else None
+
+
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     from simulate.services.harness_usage import harness_consumption
     from simulate.services.harness_versioning.read import versioning_flags
@@ -561,6 +567,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
                 job.cancel_requested_at.isoformat() if job.cancel_requested_at else None
             ),
             "failure": job.failure,
+            "retry_from": _retry_from(job),
         },
         "events": events,
         "stage_outputs": stage_outputs,

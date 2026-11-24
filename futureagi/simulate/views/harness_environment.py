@@ -78,6 +78,7 @@ from simulate.serializers.harness_environment import (
     HarnessDraftsSerializer,
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
+    HarnessEnvironmentBuildRetrySerializer,
     HarnessEnvironmentDetailQuerySerializer,
     HarnessEnvironmentDetailSerializer,
     HarnessEnvironmentDetailV2Serializer,
@@ -1019,6 +1020,36 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         ).rstrip("/")
         job = approve(job, user=request.user, base_url=base_url)
         return Response(design_document(job))
+
+    @viewer_denied("start the build again")
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={202: HarnessEnvironmentBuildRetrySerializer},
+        operation_id="simulate_api_harness-environments_build_retry",
+        operation_description=(
+            "Start a stopped build again from its approved design. A build that "
+            "already froze its world and scenarios resumes at the release checks."
+        ),
+    )
+    @action(detail=True, methods=["post"], url_path="build/retry")
+    def retry_build(self, request, pk=None):
+        from simulate.services.harness_build_retry import retry_failed_build
+        from simulate.services.hosted_harness_ingress import _public_base_url
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        job, resume_from = retry_failed_build(
+            job, user=request.user, base_url=_public_base_url(request)
+        )
+        return Response(
+            {
+                "environment_id": str(job.id),
+                "state": job.state,
+                "resume_from": resume_from,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @viewer_denied("discard the environment's design")
     @validated_request(
