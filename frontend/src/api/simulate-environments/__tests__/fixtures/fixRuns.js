@@ -81,7 +81,7 @@ const candidate = (fixId, attempt, outcome, extra = {}) => ({
   wording: {
     headline:
       outcome === "rejected"
-        ? "Target pass rate 0% → 0%. No must-pass scenario broke."
+        ? "Target pass rate 0% → 0%."
         : "Held-back pass rate 17% → 83%. No must-pass scenario broke.",
     must_pass:
       outcome === "rejected" ? "" : "None of the 9 must-pass scenarios broke.",

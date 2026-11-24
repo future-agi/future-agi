@@ -1005,11 +1005,14 @@ describe("candidateGroups", () => {
             held_back_pass_rate: [0.17, 0.33],
           }),
         ),
-        cand(
-          2,
-          "rejected",
-          rejectedAt("must-pass", { must_pass_regressions: ["a", "b"] }),
-        ),
+        {
+          ...cand(
+            2,
+            "rejected",
+            rejectedAt("must-pass", { must_pass_regressions: ["a", "b"] }),
+          ),
+          wording: { must_pass: "2 must-pass scenarios broke." },
+        },
         cand(3, "rejected", rejectedAt("sandbox-fit")),
         cand(4, "rejected", null),
         cand(5, "pending", null),
@@ -1040,8 +1043,9 @@ describe("candidateGroups", () => {
       ["pending", "Did not run", false],
     ]);
     const byGroup = Object.fromEntries(groups.map((g) => [g.id, g.rows]));
+    // The server's must-pass line, never one written here.
     expect(byGroup["must-pass"][0]).toMatchObject({
-      result: "Broke 2 must-pass scenarios",
+      result: "2 must-pass scenarios broke.",
       broke: true,
     });
     expect(byGroup["held-back"][0].result).toBe(

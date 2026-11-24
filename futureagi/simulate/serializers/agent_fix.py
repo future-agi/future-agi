@@ -31,9 +31,9 @@ from simulate.selectors.agent_fix import (
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
 from simulate.selectors.agent_fix_wording import (
     FixNames,
-    candidate_files,
     candidate_wording,
     flaky_protected,
+    stored_files,
 )
 from simulate.serializers.harness_environment import HarnessVersionPersonSerializer
 from simulate.services.harness_environment import environment_name
@@ -359,7 +359,7 @@ class AgentFixCandidateDetailSerializer(AgentFixCandidateSerializer):
             candidate,
             verdict_tiers(candidate),
             review=self.context.get("eval_review"),
-            files=candidate_files(candidate),
+            files=stored_files(candidate),
             names=self.context["fix_names"],
         )
         return AgentFixCandidateWordingSerializer(wording.model_dump()).data

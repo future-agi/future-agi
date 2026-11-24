@@ -13,7 +13,7 @@ import subprocess
 import tarfile
 import tempfile
 from decimal import Decimal
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 from django.conf import settings
@@ -105,6 +105,63 @@ def source_archive(fix_run: AgentFixRun) -> bytes:
     return body
 
 
+class ChangedFile(NamedTuple):
+    path: str
+    added: int
+    removed: int
+
+
+def patch_files(patch: bytes) -> list[ChangedFile]:
+    """Each file a git patch changes, in its order, with its added and removed lines, as
+    git itself counts them: a path reads as written, never quoted, and a line is a line
+    whatever characters it holds. A binary file counts no lines."""
+    if not patch.strip():
+        return []
+    with tempfile.TemporaryDirectory(prefix="agent-fix-numstat-") as cwd:
+        counted = subprocess.run(
+            ["git", "-c", "core.quotePath=false", "apply", "--numstat", "-z"],
+            cwd=cwd,
+            input=patch,
+            env=dict(os.environ),
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout
+    fields = counted.split(b"\0")
+    files, at = [], 0
+    while at < len(fields):
+        entry = fields[at]
+        at += 1
+        if not entry:
+            continue
+        added, removed, path = entry.split(b"\t", 2)
+        if not path:
+            # A rename names its old path, then its new one.
+            path, at = fields[at + 1], at + 2
+        files.append(
+            ChangedFile(
+                path.decode("utf-8", "replace"),
+                int(added) if added.isdigit() else 0,
+                int(removed) if removed.isdigit() else 0,
+            )
+        )
+    return files
+
+
+def _counted_files(fix_run: AgentFixRun, patch: bytes) -> list[list[Any]] | None:
+    """The patch's files to store with the candidate; None, said in the log, when git
+    could not count them: the candidate still stands, and reads with no change line."""
+    try:
+        return [list(one) for one in patch_files(patch)]
+    except (subprocess.SubprocessError, ValueError) as exc:
+        logger.warning(
+            "agent_fix_patch_not_counted",
+            fix_run=str(fix_run.id),
+            error=type(exc).__name__,
+        )
+        return None
+
+
 def add_candidate(
     fix_run: AgentFixRun, *, attempt: int, summary: str, tree: bytes
 ) -> tuple[AgentFixCandidate, str]:
@@ -140,6 +197,8 @@ def add_candidate(
                     attempt=attempt,
                     agent_version=version,
                     patch_object_key=patch_key,
+                    # Counted once here, so reading the candidate never reads its patch.
+                    changed_files=_counted_files(fix_run, patch),
                     summary=summary[:4000],
                 )
         except IntegrityError as exc:

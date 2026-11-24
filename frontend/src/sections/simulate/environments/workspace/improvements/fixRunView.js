@@ -677,15 +677,9 @@ function candidateResult(c, group, fix, live) {
     return { result: outcomeLabel(c.outcome, live), broke: false };
   if (group === "rejected")
     return { result: oldVerdictLine(c.verdict), broke: false };
-  if (group === "must-pass") {
-    const n = (c.verdict?.must_pass_regressions || []).length;
-    return {
-      result: n
-        ? `Broke ${n} must-pass ${n === 1 ? "scenario" : "scenarios"}`
-        : "Broke a must-pass scenario",
-      broke: true,
-    };
-  }
+  // The server's words for what it broke, as the pull request says them.
+  if (group === "must-pass")
+    return { result: c.wording?.must_pass || "", broke: true };
   return {
     result: tierLine(failedTierOf(c), c.verdict, c.wording, fix.request),
     broke: false,

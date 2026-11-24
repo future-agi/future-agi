@@ -34,16 +34,14 @@ from simulate.selectors.agent_fix import (
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
 from simulate.selectors.agent_fix_wording import (
     CandidateWording,
-    ChangedFile,
     FixNames,
     candidate_wording,
-    changed_files,
     flaky_protected,
-    must_pass_check,
     percent,
     plural,
+    regressions,
 )
-from simulate.services.agent_fix_engine import load_object
+from simulate.services.agent_fix_engine import ChangedFile, load_object, patch_files
 from simulate.services.agent_fix_runs import (
     base_moved,
     record_override,
@@ -190,8 +188,8 @@ def _limited_note(candidate: AgentFixCandidate) -> str:
 def _override_note(candidate: AgentFixCandidate, names: FixNames) -> str:
     """What a candidate the must-pass check refused is opened with, and the user's reason."""
     checks = "\n".join(
-        f"- {_text(must_pass_check(check, names) or 'A must-pass scenario')}"
-        for check in overridable_regressions(candidate)
+        f"- {_text(one)}"
+        for one in regressions(overridable_regressions(candidate), names)
     )
     reason = "\n".join(
         f"> {_line(line)}" for line in candidate.override_reason.splitlines()
@@ -613,7 +611,8 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     # Only a winner is graded.
     winner = candidate.outcome == AgentFixCandidate.Outcome.WINNER
     review = eval_review(candidate.fix_run) if winner else None
-    files = changed_files(patch)
+    # Counted the way the candidate's stored files were, from the patch that ships.
+    files = patch_files(patch)
     names = FixNames(candidate.fix_run)
     # The epoch page's words: the read takes them from the same place.
     wording = candidate_wording(

@@ -5,24 +5,16 @@ which the pull request only escapes as Markdown."""
 import re
 from functools import cached_property
 from math import floor
-from typing import Any, NamedTuple
+from typing import Any
 
-import structlog
-from django.core.cache import cache
-from minio.error import S3Error
 from pydantic import BaseModel, Field
-from urllib3.exceptions import HTTPError
 
 from simulate.models import AgentFixCandidate, AgentFixRun
 from simulate.pydantic_schemas.agent_fix import EvalGrading, EvalReview, VerdictTier
 from simulate.selectors.agent_fix import inventory
-from simulate.services.agent_fix_engine import load_object
+from simulate.services.agent_fix_engine import ChangedFile
 from simulate.services.harness_environment import environment_sub_goals
 
-logger = structlog.get_logger(__name__)
-
-# A candidate's patch never changes once the candidate exists, so its files are kept a day.
-_CHANGES_TTL_S = 24 * 60 * 60
 # The files a change line names; the rest are counted.
 _FILES_NAMED = 3
 
@@ -33,12 +25,6 @@ EVALS_INCOMPLETE = (
 )
 
 
-class ChangedFile(NamedTuple):
-    path: str
-    added: int
-    removed: int
-
-
 class CandidateWording(BaseModel):
     """What the epoch page and the pull request say about a candidate."""
 
@@ -46,7 +32,7 @@ class CandidateWording(BaseModel):
     headline: str = ""
     # The must-pass check's result; blank before the check ran.
     must_pass: str = ""
-    # The files its patch changes; None when the patch could not be read.
+    # The files its patch changes; None when they were not counted.
     changes: str | None = None
     # What a reviewer must know before trusting it.
     caveats: list[str] = Field(default_factory=list)
@@ -61,48 +47,15 @@ def plural(count: int, one: str, many: str) -> str:
     return f"{count} {one if count == 1 else many}"
 
 
-def changed_files(patch: bytes) -> list[ChangedFile]:
-    """Each file the patch changes, in patch order, with its added and removed lines."""
-    files: dict[str, list[int]] = {}
-    path, in_hunk = None, False
-    for line in patch.decode("utf-8", "replace").splitlines():
-        if line.startswith("diff --git "):
-            path, in_hunk = line.rsplit(" b/", 1)[-1], False
-            files.setdefault(path, [0, 0])
-        elif path is None:
-            continue
-        elif line.startswith("@@"):
-            in_hunk = True
-        elif in_hunk and line.startswith("+"):
-            files[path][0] += 1
-        elif in_hunk and line.startswith("-"):
-            files[path][1] += 1
+def stored_files(candidate: AgentFixCandidate) -> list[ChangedFile] | None:
+    """The files of the patch that ships, as counted when the candidate was stored; None
+    when they were not. Reading them never reads the patch."""
+    if candidate.changed_files is None:
+        return None
     return [
-        ChangedFile(name, added, removed) for name, (added, removed) in files.items()
+        ChangedFile(str(path), int(added), int(removed))
+        for path, added, removed in candidate.changed_files
     ]
-
-
-def candidate_files(candidate: AgentFixCandidate) -> list[ChangedFile] | None:
-    """The files of the patch that ships: the one the Changes tab shows and the pull
-    request applies. None when it could not be read: the read still answers, without them."""
-    key = f"agent-fix-changed-files:{candidate.id}"
-    found = cache.get(key)
-    if found is not None:
-        return [ChangedFile(*one) for one in found]
-    try:
-        patch = load_object(candidate.patch_object_key)
-    except (S3Error, HTTPError) as exc:
-        logger.warning(
-            "agent_fix_patch_unreadable",
-            candidate=str(candidate.id),
-            error=getattr(exc, "code", None) or type(exc).__name__,
-        )
-        return None
-    if patch is None:
-        return None
-    files = changed_files(patch)
-    cache.set(key, [tuple(one) for one in files], _CHANGES_TTL_S)
-    return files
 
 
 def changes_line(files: list[ChangedFile]) -> str:
@@ -172,23 +125,29 @@ def headline(verdict: dict, tiers: list[VerdictTier]) -> str:
         ("Target", verdict.get("target_pass_rate")),
     ):
         if rate:
-            broke = (
-                _broke(verdict)
-                if _must_pass_status(verdict, tiers) == "failed"
-                else f"No must-pass scenario broke{_noise(verdict)}."
-            )
-            return f"{name} pass rate {percent(rate[0])} → {percent(rate[1])}. {broke}"
+            said = f"{name} pass rate {percent(rate[0])} → {percent(rate[1])}."
+            # Only a check that ran says whether one broke.
+            status = _must_pass_status(verdict, tiers)
+            if status == "failed":
+                return f"{said} {_broke(verdict)}"
+            if status == "passed":
+                return f"{said} No must-pass scenario broke{_noise(verdict)}."
+            return said
     return ""
+
+
+# A slug: lowercase words or numbers joined by underscores or hyphens.
+_SLUG = re.compile(r"[a-z0-9]+(?:[_-][a-z0-9]+)+")
 
 
 def display_name(name: str) -> str:
     """A scenario's name as a person reads it. Some are stored as a slug
-    ("reschedule_appointment_out_of_hours_recovery"); such a name, with no space and an
-    underscore or a hyphen, reads as words in sentence case."""
+    ("reschedule_appointment_out_of_hours_recovery"), which reads as words in sentence
+    case. Any other name, such as "Check-in" or "COVID-19", is kept as written."""
     name = name.strip()
-    if " " in name or not re.search(r"[_-]", name):
+    if not _SLUG.fullmatch(name):
         return name
-    words = " ".join(re.split(r"[_-]+", name)).strip().lower()
+    words = " ".join(re.split(r"[_-]", name))
     return words[:1].upper() + words[1:]
 
 
@@ -231,6 +190,28 @@ def must_pass_check(check: str, names: FixNames) -> str | None:
     return f"{named}: its check “{what}”" if what else named
 
 
+def regressions(checks: list[str], names: FixNames) -> list[str]:
+    """The must-pass checks a candidate broke, each by its scenario's name and what it
+    checks, each said once; the scenarios with no name are counted, never shown by key."""
+    said = list(
+        dict.fromkeys(
+            one for one in (must_pass_check(check, names) for check in checks) if one
+        )
+    )
+    unnamed = {
+        str(check).partition(": ")[0]
+        for check in checks
+        if must_pass_check(check, names) is None
+    }
+    if unnamed:
+        said.append(
+            "A must-pass scenario"
+            if len(unnamed) == 1
+            else f"{len(unnamed)} must-pass scenarios"
+        )
+    return said
+
+
 def flaky_protected(report: dict, names: FixNames) -> list[str]:
     """The protected scenarios the current version is flaky on, so the fix was not held
     to them: each once by its name, with what each check checks and how often it passed.
@@ -256,6 +237,8 @@ def flaky_protected(report: dict, names: FixNames) -> list[str]:
             f"Protected scenario “{name}” is flaky on the current version, so this"
             f" epoch wasn't held to it: {held}."
         )
+    # Two keys the inventory names alike, with the same checks, read the same: once.
+    said = list(dict.fromkeys(said))
     if unnamed:
         scenarios = (
             "1 protected scenario is"
@@ -321,7 +304,8 @@ def candidate_wording(
     names: FixNames,
 ) -> CandidateWording:
     """Everything the page and the pull request say about the candidate, from its verdict,
-    its fix's plan, the patch that ships, the fix's eval review and its names."""
+    its fix's plan, the files of the patch that ships, the fix's eval review and its
+    names."""
     verdict: dict[str, Any] = candidate.verdict or {}
     return CandidateWording(
         headline=headline(verdict, tiers),

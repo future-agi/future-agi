@@ -1,9 +1,14 @@
 """An epoch's result in words: the epoch page's read and the pull request's body say the
 same sentences, from the patch that ships."""
 
-from unittest.mock import patch
+import importlib
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
+from django.apps import apps
+from minio.error import S3Error
+from urllib3.exceptions import MaxRetryError
 
 from simulate.models import AgentFixCandidate, AgentFixRun
 from simulate.pydantic_schemas.agent_fix import (
@@ -15,15 +20,24 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix_wording import (
     EVALS_INCOMPLETE,
     FixNames,
-    changed_files,
     changes_line,
     display_name,
+    flaky_protected,
     headline,
     must_pass_check,
     must_pass_line,
+    regressions,
 )
 from simulate.services import agent_fix_github
-from simulate.tests.test_agent_fix_services import _TIERS, _candidate, _diff, _fix_run
+from simulate.services.agent_fix_engine import patch_files
+from simulate.tests.test_agent_fix_services import (
+    _TIERS,
+    BASE_AGENT,
+    _candidate,
+    _diff,
+    _fix_run,
+    _tree,
+)
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixtures
     any_suite_may_launch as any_suite_may_launch,
 )
@@ -122,8 +136,10 @@ def _winner(source_run, storage, *, noise=(), summary=_LAST_ROUND):
     AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
         state=AgentFixRun.State.READY
     )
+    # The patch, and its files as counted when it was stored.
     storage.objects[candidate.patch_object_key] = _SHIPPED
     AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+        changed_files=[list(one) for one in patch_files(_SHIPPED)],
         outcome=AgentFixCandidate.Outcome.WINNER,
         summary=summary,
         verdict={
@@ -142,8 +158,13 @@ def _winner(source_run, storage, *, noise=(), summary=_LAST_ROUND):
 
 
 def _read(auth_client, fix_run, review):
-    with patch("simulate.serializers.agent_fix.eval_review", return_value=review):
+    # A read never reads a patch from storage.
+    with (
+        patch("simulate.serializers.agent_fix.eval_review", return_value=review),
+        patch("simulate.services.agent_fix_engine.load_object") as load,
+    ):
         response = auth_client.get(f"{BASE}/{fix_run.id}/")
+    load.assert_not_called()
     assert response.status_code == 200, response.content
     (candidate,) = response.json()["candidates"]
     return candidate
@@ -257,11 +278,13 @@ class TestOneWording:
         for sentence in said:
             assert sentence in body
 
-    def test_a_patch_that_cannot_be_read_leaves_the_rest_of_the_read(
+    def test_files_never_counted_read_as_no_change_line_and_no_patch_is_read(
         self, auth_client, source_run, storage
     ):
         fix_run, candidate = _winner(source_run, storage)
-        del storage.objects[candidate.patch_object_key]
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            changed_files=None
+        )
 
         wording = _read(auth_client, fix_run, _DONE)["wording"]
 
@@ -271,7 +294,7 @@ class TestOneWording:
     def test_a_list_reads_no_patch(self, auth_client, source_run, storage):
         fix_run, _ = _winner(source_run, storage)
 
-        with patch("simulate.selectors.agent_fix_wording.load_object") as load:
+        with patch("simulate.services.agent_fix_engine.load_object") as load:
             response = auth_client.get(
                 f"{BASE}/", {"environment_id": str(fix_run.environment_id)}
             )
@@ -279,6 +302,121 @@ class TestOneWording:
         assert response.status_code == 200, response.content
         assert "wording" not in response.json()["results"][0]["candidates"][0]
         load.assert_not_called()
+
+
+class TestCountedWhenStored:
+    def test_a_path_reads_as_written_and_a_line_counts_once_whatever_it_holds(
+        self, auth_client, source_run, storage
+    ):
+        fix_run = _fix_run(source_run)
+        # A form feed inside a line, and a path git would quote.
+        candidate = _candidate(
+            fix_run,
+            tree=_tree({"agent.py": b"PROMPT = 'x\x0cy'\n", "café.py": b"a\nb\n"}),
+        )
+
+        assert candidate.changed_files == [["agent.py", 1, 1], ["café.py", 2, 0]]
+        stored = storage.objects[candidate.patch_object_key]
+        assert [list(one) for one in patch_files(stored)] == candidate.changed_files
+        wording = _read(auth_client, fix_run, _DONE)["wording"]
+        assert wording["changes"] == (
+            "Changes agent.py and café.py: 3 lines added, 1 removed."
+        )
+
+    def test_a_non_ascii_path_reads_as_written_in_the_pull_request(
+        self, source_run, storage
+    ):
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run, tree=_tree({**BASE_AGENT, "café.py": b"a\n"}))
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            state=AgentFixRun.State.READY
+        )
+        candidate = AgentFixCandidate.no_workspace_objects.select_related(
+            "fix_run"
+        ).get(id=candidate.id)
+
+        with patch.object(agent_fix_github, "eval_review", return_value=_DONE):
+            title, body = agent_fix_github._description(
+                candidate, storage.objects[candidate.patch_object_key]
+            )
+
+        # Nothing held back here, so the title carries that mark before the file.
+        assert title.endswith(": change café.py")
+        assert "Changes café.py: 1 line added, 0 removed." in body
+        assert "| `café.py` | +1 | −0 |" in body
+        assert "\\303" not in body
+
+
+_MIGRATION = importlib.import_module(
+    "simulate.migrations.0117_agent_fix_candidate_changed_files"
+)
+
+
+def _stored(body):
+    return SimpleNamespace(
+        read=lambda: body, close=lambda: None, release_conn=lambda: None
+    )
+
+
+class TestBackfill:
+    """Candidates stored before their files were counted are counted from their patch."""
+
+    def _two(self, source_run):
+        fix_run = _fix_run(source_run)
+        first = _candidate(fix_run, attempt=1)
+        second = _candidate(fix_run, attempt=2)
+        AgentFixCandidate.no_workspace_objects.filter(fix_run=fix_run).update(
+            changed_files=None
+        )
+        return first, second
+
+    def _run(self, client):
+        with patch(
+            "tfc.utils.storage_client.bounded_storage_client", return_value=client
+        ) as made:
+            _MIGRATION.count_changed_files(apps, None)
+        return made
+
+    def test_each_readable_patch_is_counted_and_a_missing_one_left_alone(
+        self, source_run
+    ):
+        first, second = self._two(source_run)
+        missing = S3Error(None, "NoSuchKey", "gone", "k", "r", "h")
+        client = MagicMock()
+        client.get_object.side_effect = lambda bucket, key: (
+            _stored(_SHIPPED)
+            if key == second.patch_object_key
+            else (_ for _ in ()).throw(missing)
+        )
+
+        self._run(client)
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        assert first.changed_files is None
+        assert second.changed_files == [list(one) for one in patch_files(_SHIPPED)]
+
+    def test_storage_that_is_down_stops_the_pass_after_one_read(self, source_run):
+        first, second = self._two(source_run)
+        client = MagicMock()
+        client.get_object.side_effect = MaxRetryError(None, "storage", "refused")
+
+        made = self._run(client)
+
+        # A client that gives up fast, asked once, and nothing counted.
+        assert made.call_args.kwargs == {"connect": 5, "read": 30, "retries": 1}
+        assert client.get_object.call_count == 1
+        first.refresh_from_db()
+        second.refresh_from_db()
+        assert first.changed_files is None and second.changed_files is None
+
+    def test_nothing_to_count_asks_storage_nothing(self, source_run):
+        fix_run = _fix_run(source_run)
+        _candidate(fix_run)
+
+        made = self._run(MagicMock())
+
+        made.assert_not_called()
 
 
 class TestNoIdsInThePullRequest:
@@ -435,6 +573,17 @@ class TestMustPassWords:
             "Target pass rate 0% → 63%. 2 must-pass scenarios broke."
         )
 
+    def test_a_candidate_stopped_before_must_pass_ran_says_nothing_of_it(self):
+        rejected_at_target = [
+            VerdictTier(name="static", status="passed"),
+            VerdictTier(name="target", status="failed"),
+            VerdictTier(name="must-pass", status="skipped"),
+        ]
+        verdict = {"target_pass_rate": [0.33, 0.33], "must_pass_regressions": []}
+
+        assert headline(verdict, rejected_at_target) == "Target pass rate 33% → 33%."
+        assert must_pass_line(verdict, {"must_pass": 6}, rejected_at_target) == ""
+
     def test_a_slug_name_reads_as_words_and_a_written_one_is_kept(self):
         assert display_name("reschedule_appointment_out_of_hours_recovery") == (
             "Reschedule appointment out of hours recovery"
@@ -445,6 +594,42 @@ class TestMustPassWords:
         )
         assert display_name("Refunds") == "Refunds"
         assert display_name("  ") == ""
+        # Not slugs: written that way on purpose.
+        for written in ("Check-in", "COVID-19", "API_Timeout"):
+            assert display_name(written) == written
+
+    def test_broken_checks_name_their_scenario_once_and_count_the_unnamed(self):
+        names = FixNames.__new__(FixNames)
+        names.__dict__.update(scenarios={_SLUG: "Reschedule out of hours"}, checks={})
+
+        assert regressions(
+            [
+                f"{_SLUG}: slot_unavailable_handled",
+                f"{_SLUG}: confirms",
+                "refund: asks",
+                "refund: polite",
+                "late: x",
+            ],
+            names,
+        ) == ["Must-pass scenario “Reschedule out of hours”", "2 must-pass scenarios"]
+        assert regressions(["refund: asks"], names) == ["A must-pass scenario"]
+
+    def test_flaky_scenarios_that_read_the_same_are_said_once(self):
+        names = FixNames.__new__(FixNames)
+        names.__dict__.update(
+            scenarios={"a": "Late booking", "b": "Late booking"}, checks={}
+        )
+        report = {
+            "flaky_protected": [
+                {"key": "a", "sub_goal": "x", "passed": 1, "runs": 3},
+                {"key": "b", "sub_goal": "y", "passed": 1, "runs": 3},
+            ]
+        }
+
+        assert flaky_protected(report, names) == [
+            "Protected scenario “Late booking” is flaky on the current version, so this"
+            " epoch wasn't held to it: a check passed 1 of 3 runs."
+        ]
 
     def test_a_check_is_named_or_not_shown(self):
         names = FixNames.__new__(FixNames)
@@ -462,7 +647,7 @@ class TestMustPassWords:
         assert must_pass_check("unknown-key: slot_unavailable_handled", names) is None
 
     def test_the_change_line_names_few_files_and_counts_the_rest(self):
-        one = changed_files(_diff(("prompts/booking.md", 1, 0)))
+        one = patch_files(_diff(("prompts/booking.md", 1, 0)))
 
         assert (
             changes_line(one) == "Changes prompts/booking.md: 1 line added, 0 removed."

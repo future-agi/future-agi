@@ -188,16 +188,18 @@ class _EnvironmentProxyPoolManager(urllib3.PoolManager):
             manager.clear()
 
 
-def storage_http_client() -> urllib3.PoolManager:
+def storage_http_client(
+    *, connect: float = 300, read: float = 300, retries: int = 5
+) -> urllib3.PoolManager:
     # Minio's settings for its own transport (minio.api.Minio.__init__), so the
     # proxy changes only the route: the same timeouts, retries and trusted CAs.
     return _EnvironmentProxyPoolManager(
-        timeout=urllib3.Timeout(connect=300, read=300),
+        timeout=urllib3.Timeout(connect=connect, read=read),
         maxsize=10,
         cert_reqs="CERT_REQUIRED",
         ca_certs=os.environ.get("SSL_CERT_FILE") or certifi.where(),
         retries=urllib3.Retry(
-            total=5, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504]
+            total=retries, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504]
         ),
     )
 
@@ -205,19 +207,30 @@ def storage_http_client() -> urllib3.PoolManager:
 def get_storage_client() -> Minio:
     """Return a Minio client pointing at S3, MinIO, or GCS."""
     global _client
-    if _client is not None:
-        return _client
+    if _client is None:
+        _client = _storage_client(storage_http_client())
+    return _client
 
+
+def bounded_storage_client(*, connect: float, read: float, retries: int) -> Minio:
+    """A new client, not the shared one, that gives up after the given seconds and
+    retries: for a one-off pass, such as a migration, that must not wait on storage
+    that is down."""
+    return _storage_client(
+        storage_http_client(connect=connect, read=read, retries=retries)
+    )
+
+
+def _storage_client(http_client: urllib3.PoolManager) -> Minio:
     if STORAGE_BACKEND == "gcs":
-        _client = Minio(
+        return Minio(
             "storage.googleapis.com",
             access_key=os.getenv("GCS_HMAC_ACCESS_KEY", ""),
             secret_key=os.getenv("GCS_HMAC_SECRET_KEY", ""),
             region=os.getenv("MINIO_REGION") or "auto",
             secure=True,
-            http_client=storage_http_client(),
+            http_client=http_client,
         )
-        return _client
 
     raw_endpoint = os.getenv("S3_ENDPOINT") or os.getenv(
         "S3_ENDPOINT_URL", "s3.amazonaws.com"
@@ -232,15 +245,14 @@ def get_storage_client() -> Minio:
     else:
         secure = STORAGE_BACKEND == "s3"
 
-    _client = Minio(
+    return Minio(
         host,
         access_key=os.getenv("S3_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY_ID", ""),
         secret_key=os.getenv("S3_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY", ""),
         region=os.getenv("S3_REGION") or os.getenv("AWS_DEFAULT_REGION", ""),
         secure=secure,
-        http_client=storage_http_client(),
+        http_client=http_client,
     )
-    return _client
 
 
 def reset_storage_client():
