@@ -251,6 +251,83 @@ class HarnessPortBindingTests(unittest.TestCase):
 
 
 class FaultFixtureTests(unittest.TestCase):
+    def test_judge_keeps_pre_injection_receipt_separate_from_rollout_kill(self):
+        import json
+        from deploy.tests import test_update_e2e_faults as matrix
+
+        case = matrix.FaultE2EBase()
+        calls = matrix.FaultLogicTests().calls()[:15]  # through the post-pull image inspect
+        fd = mock.Mock()
+        fd.calls.return_value = calls
+        for problem in ('none', 'wrong-status', 'changed-data', 'extra-receipt'):
+            with self.subTest(problem=problem), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                co = e2e.Checkout(mock.Mock(logs_dir=root), 'fixture', root, 0, 0, '')
+                co.state_dir.mkdir()
+                co.env_path.write_bytes(b'old')
+                path = co.state_dir / 'receipt-20000101T000000Z-1.json'
+                detail = 'localhost:12345/futureagi/standalone:v1.52.0 is not on this host after the pull'
+                record = dict(kind='apply', target_version=matrix.V52, stage='pulled', error=detail,
+                              status='failed_before_rollout' if problem != 'wrong-status' else 'succeeded')
+                first = e2e.Result([], 4, '', f' app Pulled\napply stopped before restarting anything: {detail}. Receipt: {path}')
+                killed = e2e.Result([], -9, '', '')
+                spec = matrix.Spec('fixture', co, [], ['apply'], 'apply', matrix.V52, env_after=b'new')
+
+                def attempt(*_):
+                    if not path.exists():
+                        path.write_text(json.dumps(record))
+                        return first
+                    co.env_path.write_bytes(b'new')
+                    (co.state_dir / 'journal.json').write_text(json.dumps(dict(record, stage='rollout', status='running')))
+                    if problem == 'extra-receipt':
+                        (co.state_dir / 'receipt-20000101T000000Z-2.json').write_text(json.dumps(record))
+                    return killed
+
+                with mock.patch.object(case, 'spawn_run', side_effect=attempt) as spawn, \
+                        mock.patch.object(case, 'started', return_value=[]), mock.patch.object(matrix, 'NOTES', []), \
+                        mock.patch.object(case, 'persistent_data', return_value='bad' if problem == 'changed-data' else 'data'):
+                    before = case.snapshot(co)
+                    if problem in ('wrong-status', 'changed-data'):
+                        with self.assertRaises(AssertionError):
+                            case.prepared_run(spec, fd, fd.env, before, 'data')
+                        self.assertEqual(spawn.call_count, 1)
+                        continue
+                    result, baseline = case.prepared_run(spec, fd, fd.env, before, 'data')
+                    self.assertEqual(spawn.call_count, 2)
+                    self.assertEqual(before['receipts'], [])
+                    self.assertEqual(baseline['receipts'], [path.name])
+                    call = matrix.faults.Call(35, 'docker', 'sigkill', '1', ('inspect', 'app'), ('rollout', 'apply', 'running'))
+                    point = matrix.faults.FaultPoint(35, 'inspect', call.glob, 1, 'sigkill')
+                    args = (spec, point, result, [call], 'rollout', call, baseline, 'retry')
+                    if problem == 'extra-receipt':
+                        with self.assertRaises(AssertionError):
+                            case.judge(*args)
+                    else:
+                        self.assertEqual(case.judge(*args), 'killed: at stage rollout')
+
+    def test_image_history_is_time_bounded_and_does_not_print_other_actor_attributes(self):
+        image_id = 'sha256:' + 'a' * 64
+        lines = [f'{n}\tuntag\t{image_id}\t/other/path' for n in range(1, 27)]
+        probe = mock.Mock(return_value=e2e.Result([], 0, '\n'.join(lines), 'unrelated stderr'))
+        history = e2e.image_attempt._events(probe, 1, 26)
+        self.assertEqual(probe.call_args.args[:5], ('events', '--since', '0.000000001', '--until', '0.000000026'))
+        self.assertEqual(history['omitted'], 2)
+        self.assertEqual(history['events'], [dict(unix_ns=n, action='untag', actor=image_id, name=None)
+                                             for n in range(3, 27)])
+        result = e2e.Result([], 1, '', 'No such image: /other/path')
+        self.assertEqual(e2e.image_attempt._inspect(result), dict(exit=1, category='not_found'))
+
+    def test_image_collector_only_runs_on_failure_and_cannot_replace_the_exception(self):
+        failure = RuntimeError('fixture install failed')
+        with mock.patch.object(e2e.image_attempt, '_report', side_effect=ValueError) as report:
+            with e2e.image_attempt.install_window(None, None, 'v1.51.0'):
+                pass
+            report.assert_not_called()
+            with self.assertRaises(RuntimeError) as actual, e2e.image_attempt.install_window(None, None, 'v1.51.0'):
+                raise failure
+            self.assertIs(actual.exception, failure)
+            report.assert_called_once()
+
     def test_production_matrices_do_not_share_removable_image_tags(self):
         from deploy.tests import test_update_e2e_faults as matrix
         self.assertNotEqual(matrix.PROD_STAGE, matrix.PROD_FINISH)

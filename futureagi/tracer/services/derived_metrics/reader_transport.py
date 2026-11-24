@@ -127,12 +127,13 @@ class MetricsReadTransport:
                     self.database,
                 ):
                     raise IncapableReadLane("selected metrics shard identity changed")
-                return client.execute(
+                rows: list = client.execute(
                     sql,
                     params,
                     settings=settings,
                     query_id=receipt.query_id if receipt else None,
                 )
+                return rows
             finally:
                 client.disconnect()
         import urllib3
@@ -191,7 +192,8 @@ class MetricsReadTransport:
                 # ClickHouse's HTTP KILL with no matching rows has no envelope.
                 # This is NOT terminal evidence; drain still needs query_log.
                 return []
-            return json.loads(payload)["data"]
+            data: list = json.loads(payload)["data"]
+            return data
         finally:
             if response is not None:
                 response.close()

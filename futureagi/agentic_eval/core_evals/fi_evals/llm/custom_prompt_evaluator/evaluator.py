@@ -36,6 +36,8 @@ class CustomPromptEvaluator(LLM):
     This evaluator can be configured with custom examples and instructions.
     """
 
+    _fractional_score_threshold: float | None = None
+
     def __init__(
         self,
         rule_prompt: str,
@@ -59,6 +61,9 @@ class CustomPromptEvaluator(LLM):
         self._output_type = output_type
         self._model = model
         self.system_template_value = ""  # Store the template value for use in messages
+        if kwargs.get("fractional_score") and output_type in ("score", "numeric"):
+            self._fractional_score_threshold = float(kwargs.get("pass_threshold", 0.5))
+            self.system_template_value = "a numeric fraction between 0 and 1"
         self._choices = choices
         self._multi_choice = multi_choice
         self._choice_scores = kwargs.get("choice_scores")
@@ -134,6 +139,12 @@ class CustomPromptEvaluator(LLM):
                 "- explanation: An explanation of why the result is Pass or Fail.\n"
             )
         elif self._output_type in ("score", "numeric"):
+            if self._fractional_score_threshold is not None:
+                return (
+                    judge_preamble + "Return a JSON object with two fields:\n"
+                    "- explanation: Show what counts in the numerator and denominator according to the rubric.\n"
+                    "- result: The resulting fraction as a number between 0 and 1. Do not round it to tenths."
+                )
             self.system_template_value = (
                 "score in 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0"
             )
@@ -680,7 +691,11 @@ class CustomPromptEvaluator(LLM):
             "name": self.name,
             "display_name": self.display_name,
             "data": {"result": result_value},
-            "failure": True if result_value == "Fail" else False,
+            "failure": (
+                result_value < self._fractional_score_threshold
+                if self._fractional_score_threshold is not None
+                else result_value == "Fail"
+            ),
             "metadata": metadata,
             "reason": chat_completion_response_json["explanation"],
             "runtime": eval_runtime_ms,

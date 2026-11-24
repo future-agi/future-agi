@@ -87,6 +87,8 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
+from . import image_attempt
+
 WORKTREE = Path(__file__).resolve().parents[3]
 FAKEAPP_CONTEXT = Path(__file__).resolve().parent / "fakeapp"
 
@@ -318,8 +320,11 @@ def run(args: Sequence[str], *, cwd: Optional[Path] = None, env: Optional[Mappin
         check: bool = True, timeout: float = 600, stdin: Optional[str] = None) -> Result:
     started = time.monotonic()
     try:
-        completed = subprocess.run(list(args), cwd=str(cwd) if cwd else None, env=dict(env) if env else None,
-                                   capture_output=True, text=True, timeout=timeout, input=stdin, check=False)
+        if tuple(args[:2]) == ("docker", "rmi"):
+            completed = image_attempt.capture_rmi(args, cwd=cwd, env=env, timeout=timeout, stdin=stdin)
+        else:
+            completed = subprocess.run(list(args), cwd=str(cwd) if cwd else None, env=dict(env) if env else None,
+                                       capture_output=True, text=True, timeout=timeout, input=stdin, check=False)
         result = Result(list(map(str, args)), completed.returncode, completed.stdout or "", completed.stderr or "",
                         time.monotonic() - started)
     except subprocess.TimeoutExpired as exc:
