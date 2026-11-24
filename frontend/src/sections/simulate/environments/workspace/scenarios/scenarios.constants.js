@@ -167,7 +167,8 @@ export const LIFECYCLE_COPY = {
     caught: "Caught",
     not_caught: "Not caught",
     not_run: "Not run",
-    none: "None yet. Saved before proofs existed.",
+    none: "None yet.",
+    noneLegacy: "None yet. Saved before proofs existed.",
   },
 };
 

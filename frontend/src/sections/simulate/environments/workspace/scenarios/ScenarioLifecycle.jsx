@@ -225,7 +225,9 @@ export function LifecycleSection({ envId, lifecycle, Row, sectionSx }) {
             </Stack>
           ) : (
             <Typography className="sd-val">
-              {LIFECYCLE_COPY.wrongWay.none}
+              {lifecycle.legacy
+                ? LIFECYCLE_COPY.wrongWay.noneLegacy
+                : LIFECYCLE_COPY.wrongWay.none}
             </Typography>
           )}
           <Typography

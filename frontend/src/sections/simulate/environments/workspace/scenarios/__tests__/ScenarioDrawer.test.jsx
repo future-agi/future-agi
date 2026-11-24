@@ -401,6 +401,21 @@ describe("ScenarioDrawer status", () => {
     expect(screen.queryByText("Not measured")).toBeNull();
   });
 
+  it("doesn't call a scenario proved since then an older one", () => {
+    open(
+      withLifecycle({
+        state: "kept_as_written",
+        legacy: false,
+        warning: "no_negative_control",
+        warning_text:
+          "Kept as written: no wrong-way example to prove the check can fail.",
+        proof: { proved: false, controls: [] },
+      }),
+    );
+    expect(screen.getByText("None yet.")).toBeInTheDocument();
+    expect(screen.queryByText(/Saved before proofs existed/)).toBeNull();
+  });
+
   it("says an older kept-as-written scenario has no wrong-way example yet", () => {
     open(
       withLifecycle({
