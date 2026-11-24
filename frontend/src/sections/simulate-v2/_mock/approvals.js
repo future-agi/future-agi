@@ -57,9 +57,8 @@ export const approvalOf = ({ env, envState, task }) => {
     ? cast.find((a) => a.id === approver.activatedBy)
     : null;
 
-  /* Whoever is primary opens the conversation — the caller unless an actor was made primary. */
-  const lead =
-    cast.find((x) => x.id === envState?.primaryActor)?.name || "Caller";
+  /* The caller asks; the approver is reached through the agent. */
+  const lead = "Caller";
   const events = [
     {
       at: 0,

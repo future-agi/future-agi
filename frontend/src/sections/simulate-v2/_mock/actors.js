@@ -726,8 +726,15 @@ export const createActorPatch = (env, envState, fields) => {
   };
 };
 
-/** Who starts the conversation: the scenario's caller, or one of the cast. */
-export const primaryActorOf = (envState) => envState?.primaryActor || "caller";
+/**
+  Who speaks first: the caller or the agent (Dileep, 24 Nov — it's only ever
+  one of the two). An outbound agent dials the customer, so it defaults to
+  the agent; set in Settings. Actors join later, by their own "When they
+  come in". An older primaryActor save is no longer read.
+*/
+export const firstSpeakerOf = (envState) =>
+  envState?.firstSpeaker ||
+  (envState?.agent?.callDirection === "outbound" ? "agent" : "caller");
 
 /** The agent's own workers as actors — real, from its definition, read-only. */
 export const subAgentActorsOf = (members = []) =>
@@ -740,38 +747,20 @@ export const subAgentActorsOf = (members = []) =>
   }));
 
 /**
- * Who can reach whom. Whoever is primary starts the conversation (the
- * caller unless an actor was made primary); present actors are in it; an
+ * Who can reach whom. The caller or the agent speaks first (firstSpeakerOf); present actors are in it; an
  * activated actor is reached through whoever activates it (another actor,
  * or the agent); sub-agents are reached by the agent handing work over. All
  * of them act on one world, shared from the start. A chain that comes back
  * on itself is a trigger loop — named, so it can't run forever.
  *   { edges: [{ from, to, label }], loops: [[names]] }
  */
-export const relationsOf = (
-  cast,
-  { primary = "caller", workers = [] } = {},
-) => {
+export const relationsOf = (cast, { first = "caller", workers = [] } = {}) => {
   const byId = new Map(cast.map((a) => [a.id, a]));
-  const lead = primary !== "caller" && byId.get(primary);
-  const edges = lead
-    ? [
-        {
-          from: lead.name,
-          to: "Agent",
-          label: "starts the conversation · primary",
-        },
-        { from: "Caller", to: "Agent", label: "in the conversation" },
-      ]
-    : [
-        {
-          from: "Caller",
-          to: "Agent",
-          label: "starts the conversation · primary",
-        },
-      ];
+  const edges =
+    first === "agent"
+      ? [{ from: "Agent", to: "Caller", label: "speaks first" }]
+      : [{ from: "Caller", to: "Agent", label: "speaks first" }];
   cast.forEach((a) => {
-    if (lead && a.id === lead.id) return;
     if (sideOf(a) === "caller")
       edges.push({
         from: a.name,

@@ -10,7 +10,6 @@ import {
   IconButton,
   Tooltip,
   Collapse,
-  TextField,
   MenuItem,
   Menu,
 } from "@mui/material";
@@ -41,7 +40,7 @@ import {
   relationsOf,
   actorKindOf,
   CALLER_KINDS,
-  primaryActorOf,
+  firstSpeakerOf,
   actorEditPatch,
   resetActorPatch,
   approvesOf,
@@ -89,11 +88,9 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
   */
   /* As this environment has them — its edits layered over the library. */
   const inCast = useMemo(() => castOf(env, envState), [env, envState]);
-  /* Proposed by the builder and not yet looked at: reviewed once accepted
-     or edited here. */
-  const unreviewed = inCast
-    .filter((a) => !a.edited && !(envState.actorsReviewed || []).includes(a.id))
-    .map((a) => a.id);
+  /* No Accept step (Dileep, 24 Nov): the actors are part of the environment
+     approved with the contract, and a later builder change lands as an
+     unsaved edit reviewed before Save. */
 
   const drop = (id) =>
     patch({
@@ -112,20 +109,15 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
     } else if (!actor?.id) {
       /* A new actor is this environment's own, added to the cast — made by
          the person, so already reviewed, not the builder's proposal. */
-      const made = createActorPatch(env, envState, fields);
-      const id = made.actors[made.actors.length - 1];
-      patch({
-        ...made,
-        actorsReviewed: [...(envState.actorsReviewed || []), id],
-      });
+      patch(createActorPatch(env, envState, fields));
     }
     setEditing(null);
   };
-  const primary = primaryActorOf(envState);
+  const first = firstSpeakerOf(envState);
   const relations = useMemo(
     /* Sub-agents are the agent's Participants, not part of this cast. */
-    () => relationsOf(inCast, { primary, workers: [] }),
-    [inCast, primary],
+    () => relationsOf(inCast, { first, workers: [] }),
+    [inCast, first],
   );
   /*
     The branches an approver opens (roadmap actors.md): approves, rejects,
@@ -217,7 +209,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
      actor reads only the ones ticked for it; grading-only files never. */
   const worldFiles = (envState.sources || []).filter((x) => !x.archived);
 
-  /* One actor's row, with what it takes to edit, reset, accept or remove it. */
+  /* One actor's row, with what it takes to edit, reset or remove it. */
   const renderRow = (a) => (
     <Box key={a.id} sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
       <ActorRow
@@ -225,14 +217,8 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
         env={env}
         envState={envState}
         cast={inCast}
-        proposed={!locked && unreviewed.includes(a.id)}
         scenarioCount={
           sideOf(a) === "caller" ? subActorUse.get(a.id) ?? 0 : null
-        }
-        onAccept={() =>
-          patch({
-            actorsReviewed: [...(envState.actorsReviewed || []), a.id],
-          })
         }
         onEdit={locked ? null : () => setEditing(a)}
         onReset={locked || !a.edited ? null : () => reset(a.id)}
@@ -345,30 +331,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
 
       <SectionCard
         title={`Actors (${inCast.length + 1})`}
-        subtitle={
-          unreviewed.length ? `${unreviewed.length} to review` : "In every run"
-        }
-        action={
-          !locked && unreviewed.length > 1 ? (
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() =>
-                patch({
-                  actorsReviewed: [
-                    ...new Set([
-                      ...(envState.actorsReviewed || []),
-                      ...unreviewed,
-                    ]),
-                  ],
-                })
-              }
-              sx={{ color: "text.primary", borderColor: "divider" }}
-            >
-              {`Accept all ${unreviewed.length}`}
-            </Button>
-          ) : null
-        }
+        subtitle="In every run"
         sx={{ mb: 2 }}
       >
         {loadState === "loading" && (
@@ -480,36 +443,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
       {inCast.length > 0 && (
         <SectionCard
           title="How they connect"
-          action={
-            <TextField
-              select
-              size="small"
-              label="Who starts the conversation"
-              value={primary}
-              disabled={locked}
-              onChange={(e) =>
-                patch({
-                  primaryActor: e.target.value,
-                  ...envChangePatch(
-                    envState,
-                    "actors",
-                    `${e.target.value === "caller" ? "The caller" : inCast.find((a) => a.id === e.target.value)?.name} starts the conversation`,
-                  ),
-                })
-              }
-              sx={{ width: 260 }}
-            >
-              <MenuItem value="caller" sx={{ typography: "s2" }}>
-                The caller
-              </MenuItem>
-              {inCast.map((a) => (
-                <MenuItem key={a.id} value={a.id} sx={{ typography: "s2" }}>
-                  {a.name}
-                </MenuItem>
-              ))}
-            </TextField>
-          }
-          subtitle="Who can reach whom in a run"
+          subtitle={`Who can reach whom in a run. ${first === "agent" ? "Your agent" : "The caller"} speaks first — set in Settings.`}
           sx={{ mb: 2 }}
         >
           <Box>
@@ -590,8 +524,6 @@ function ActorRow({
   onEdit,
   onReset,
   onBranches,
-  proposed = false,
-  onAccept,
   scenarioCount = null,
   files = [],
   readable = [],
@@ -723,20 +655,6 @@ function ActorRow({
           </Typography>
         </Tooltip>
 
-        {proposed && onAccept && (
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={onAccept}
-            sx={{
-              color: "text.primary",
-              borderColor: "divider",
-              flexShrink: 0,
-            }}
-          >
-            Accept
-          </Button>
-        )}
         <Stack
           className="row-tools"
           direction="row"
@@ -1056,8 +974,6 @@ ActorRow.propTypes = {
   env: PropTypes.object,
   envState: PropTypes.object,
   cast: PropTypes.array,
-  proposed: PropTypes.bool,
-  onAccept: PropTypes.func,
   files: PropTypes.array,
   readable: PropTypes.array,
   onToggleFile: PropTypes.func,

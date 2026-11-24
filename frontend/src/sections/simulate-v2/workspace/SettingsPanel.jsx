@@ -60,6 +60,7 @@ import {
   scenariosInSet,
 } from "../_mock/versions";
 import { twinById, resolveSeedPromptToJson } from "../_mock/twins";
+import { firstSpeakerOf } from "../_mock/actors";
 import { validatingOf, validatingSaveBlock } from "../_mock/validating";
 import TwinLogo from "./../components/TwinLogo";
 import { envLabelOf, pendingCostOf } from "../_mock/envVersionKinds";
@@ -171,6 +172,49 @@ export default function SettingsPanel({
               >
                 The name only — the environment ID below and every run stay as
                 they are.
+              </Typography>
+            </Box>
+            {/* Who speaks first — the caller or the agent (Dileep, 24 Nov);
+                moved off the Actors tab. An outbound agent defaults to the agent. */}
+            <Box>
+              <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.625 }}>
+                Who speaks first
+              </Typography>
+              <TextField
+                select
+                size="small"
+                value={firstSpeakerOf(envState)}
+                disabled={locked}
+                onChange={(e) =>
+                  patch({
+                    firstSpeaker: e.target.value,
+                    ...envChangePatch(
+                      envState,
+                      "actors",
+                      e.target.value === "agent"
+                        ? "Your agent speaks first"
+                        : "The caller speaks first",
+                    ),
+                  })
+                }
+                sx={{
+                  width: 260,
+                  "& .MuiInputBase-root": { typography: "s2" },
+                }}
+              >
+                <MenuItem value="caller" sx={{ typography: "s2" }}>
+                  The caller
+                </MenuItem>
+                <MenuItem value="agent" sx={{ typography: "s2" }}>
+                  Your agent
+                </MenuItem>
+              </TextField>
+              <Typography
+                sx={{ typography: "s3", color: "text.tertiary", mt: 0.625 }}
+              >
+                {envState?.agent?.callDirection === "outbound"
+                  ? "Your agent dials out, so it speaks first unless you change it. Actors join later, by their own When they come in."
+                  : "The caller opens the conversation; pick Your agent for an agent that calls customers. Actors join later, by their own When they come in."}
               </Typography>
             </Box>
             <Box sx={{ maxWidth: 460 }}>
