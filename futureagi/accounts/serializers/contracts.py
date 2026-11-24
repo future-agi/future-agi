@@ -654,6 +654,7 @@ class SecretKeyListItemSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     enabled = serializers.BooleanField()
     type = serializers.CharField()
+    can_switch = serializers.BooleanField()
     expires_at = serializers.DateTimeField(allow_null=True)
     is_expired = serializers.BooleanField()
 
