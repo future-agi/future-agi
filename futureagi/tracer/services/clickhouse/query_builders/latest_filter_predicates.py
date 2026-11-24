@@ -285,8 +285,6 @@ _SPAN_COLUMNS = {
     "total_tokens": ("total_tokens", "number", True),
     "prompt_tokens": ("prompt_tokens", "number", True),
     "completion_tokens": ("completion_tokens", "number", True),
-    "input": ("input", "text", True),
-    "output": ("output", "text", True),
 }
 _TRACE_ANY_SPAN_COLUMNS = {
     key: value
@@ -302,8 +300,6 @@ _TRACE_ANY_SPAN_COLUMNS = {
         "observation_type",
         "span_kind",
         "node_type",
-        "input",
-        "output",
     }
 }
 _INTERNAL_ROOT_METRIC_TYPE = "INTERNAL_ROOT_METRIC"

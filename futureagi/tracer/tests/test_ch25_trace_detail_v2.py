@@ -369,9 +369,15 @@ class TestV2TenantGate:
             ]
             for offset in range(0, span_count, 200)
         ]
-        # 1 identity + 6 content batches of 200 + 3 eval batches + 3 annotation batches
+        # 1 identity + 6 content batches of 200 + 1 trace-wide eval read
+        # + 1 trace-wide annotation read
+        trace_wide_evals = [
+            {"span_id": "S5", "eval_config_id": "E1", "log_id": "L1"},
+            # A span no longer live in this trace (e.g. deleted): dropped.
+            {"span_id": "GONE", "eval_config_id": "E1", "log_id": "L2"},
+        ]
         analytics = _SequenceAnalytics(
-            [identity_rows, *content_batches, [], [], [], [], [], []]
+            [identity_rows, *content_batches, trace_wide_evals, []]
         )
         detail = read_trace_detail(
             analytics=analytics,
@@ -381,8 +387,19 @@ class TestV2TenantGate:
             deadline_ms=5000,
         )
         assert len(detail.spans) == span_count
-        # 1 identity + 6 content + 3 eval + 3 annotation = 13 queries
-        assert detail.query_count == 13
+        assert [row["log_id"] for row in detail.evals] == ["L1"]
+        # 1 identity + 6 content + 1 eval + 1 annotation = 9 queries
+        assert detail.query_count == 9
+        eval_query, eval_params = analytics.query_calls[7][:2]
+        annotation_query, annotation_params = analytics.query_calls[8][:2]
+        # Above the span-list limit the reads are trace-wide: no span IDs are
+        # bound, so the statement stays small and argMax sees every version.
+        assert "latest_trace_evals" in eval_query
+        assert "detail_eval_span_ids" not in eval_params
+        assert "observation_span_id IN" not in eval_query
+        assert "latest_trace_annotations" in annotation_query
+        assert "detail_annotation_span_ids" not in annotation_params
+        assert "observation_span_id IN" not in annotation_query
         # Verify deep 1,200-level tree walks iteratively without RecursionError
         from tracer.services.clickhouse.query_builders.trace_detail import (
             compute_trace_summary_and_graph,

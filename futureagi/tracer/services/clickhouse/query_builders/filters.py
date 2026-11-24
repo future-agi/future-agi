@@ -681,8 +681,6 @@ class ClickHouseFilterBuilder:
         "end_time": "end_time",
         "created_at": "created_at",
         "project_id": "project_id",
-        "input": "input",
-        "output": "output",
     }
 
     # Voice system metrics — use typed Map columns (span_attr_num) instead of
@@ -2611,8 +2609,6 @@ class ClickHouseFilterBuilder:
         "trace_name",
         "model",
         "provider",
-        "input",
-        "output",
     }
 
     _NULLABLE_UUID_COLUMNS = frozenset(

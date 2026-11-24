@@ -4196,8 +4196,28 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         effective_max_spans = min(
             max(int(max_spans), 0), self._MAX_EVAL_SESSION_SPANS_PER_TRACE
         )
-        # Emit all trace-level paths before nested span paths so high span
-        # fan-out never crowds out top-level trace fields when bounded.
+        full_size = len(paths) + effective_max_traces * (
+            len(self._TRACE_PUBLIC_FIELDS)
+            + effective_max_spans
+            * (len(self._SPAN_PUBLIC_FIELDS) + len(span_attribute_keys))
+        )
+        if (
+            effective_max_traces == max(int(max_traces), 0)
+            and effective_max_spans == max(int(max_spans), 0)
+            and full_size <= self._MAX_EVAL_ATTRIBUTE_PATHS
+        ):
+            # Nothing is capped: keep the established per-trace order.
+            for i in range(effective_max_traces):
+                for trace_field in self._TRACE_PUBLIC_FIELDS:
+                    paths.append(f"traces.{i}.{trace_field}")
+                for j in range(effective_max_spans):
+                    for field in self._SPAN_PUBLIC_FIELDS:
+                        paths.append(f"traces.{i}.spans.{j}.{field}")
+                    for key in span_attribute_keys:
+                        paths.append(f"traces.{i}.spans.{j}.{key}")
+            return paths
+        # Bounded: emit all trace-level paths before nested span paths so
+        # high span fan-out never crowds out top-level trace fields.
         for i in range(effective_max_traces):
             for trace_field in self._TRACE_PUBLIC_FIELDS:
                 if len(paths) >= self._MAX_EVAL_ATTRIBUTE_PATHS:
