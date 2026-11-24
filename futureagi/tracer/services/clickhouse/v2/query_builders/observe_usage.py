@@ -176,8 +176,8 @@ class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
         ]
         root_fields = ", ".join(f"live.{field}" for field in fields)
         # Resolve latest span state by six-key argMax instead of spans FINAL so
-        # ClickHouse prunes partitions via start_time and granules via idx_trace_id
-        # even when use_skip_indexes_if_final = 0 is active on the connection.
+        # ClickHouse can prune granules via idx_trace_id even when
+        # use_skip_indexes_if_final = 0 is active on the connection.
         # Keep immutable key columns outside argMax and mutable columns inside
         # one tuple so a newer NULL replaces an older value.
         mutable_fields = [
@@ -242,7 +242,6 @@ class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
                             argMax(tuple({", ".join(tuple_exprs)}), _version) AS latest_span
                         FROM spans
                         PREWHERE {self.project_filter_sql()}
-                            AND start_time >= fromUnixTimestamp64Micro(%(usage_start_us)s) - INTERVAL 7 DAY
                             AND trace_id IN (
                                 SELECT trace_id FROM spans
                                 PREWHERE {self.project_filter_sql()}

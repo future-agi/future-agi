@@ -100,11 +100,11 @@ ATTRIBUTE_READ_EXPLICIT_SEGMENT = timedelta(hours=6)
 # extra row requested by ``_candidate_ids`` remains an explicit truncation
 # sentinel, so callers never mistake this discovery sample for a complete
 # distribution.
-ATTRIBUTE_READ_CANDIDATE_LIMIT = 256
+ATTRIBUTE_READ_CANDIDATE_LIMIT = 64
 # Value pickers replay full typed Map values only after acquiring a finite
-# identity set. Keep that acquisition bounded while wide enough to sample
-# sparse (<1%) values on high-fan-out multi-span traces.
-ATTRIBUTE_READ_VALUE_CANDIDATE_LIMIT = 64
+# identity set. Keep that acquisition deliberately tiny so a key lookup cannot
+# pull another large values block before LIMIT stops the read.
+ATTRIBUTE_READ_VALUE_CANDIDATE_LIMIT = 8
 # Exact-key discovery may continue through a small number of deterministic
 # candidate pages when a storage-order first probe replays entirely to
 # cleared/tombstoned latest state. This cap is shared across adaptive bands and
@@ -837,11 +837,6 @@ _STRATIFIED_CANDIDATE_SQL = """
         toStartOfHour(attribute_source.start_time) ASC,
         attribute_source.trace_id ASC,
         attribute_source.id ASC
-    LIMIT 8 BY
-        attribute_source.project_id,
-        attribute_source.observation_type,
-        attribute_source.service_name,
-        empty(attribute_source.parent_span_id)
     LIMIT %(candidate_limit)s
 """
 

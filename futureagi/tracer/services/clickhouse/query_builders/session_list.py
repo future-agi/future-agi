@@ -2690,7 +2690,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             if datetime_predicate
             else ""
         )
-        seed_keyset_template: str | None = None
+        outer_predicates: list[str] = []
         if before_start_time is not None:
             if not slice_start <= before_start_time < slice_end:
                 raise ValueError("session keyset must stay inside its slice")
@@ -2699,27 +2699,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 before_start_time
             )
             params["filter_before_session_id"] = str(before_id)
-            # Apply the scan checkpoint to roots before per-session max() so a
-            # session held below the previous page's publication floor can be
-            # reacquired through its older root, even when it also has a newer
-            # root above the checkpoint.
-            seed_keyset_template = (
-                "({start_time} < fromUnixTimestamp64Micro("
+            outer_predicates.append(
+                "(start_time < fromUnixTimestamp64Micro("
                 "%(filter_before_start_time_us)s, 'UTC') OR ("
-                "{start_time} = fromUnixTimestamp64Micro("
+                "start_time = fromUnixTimestamp64Micro("
                 "%(filter_before_start_time_us)s, 'UTC') AND "
-                "toString({session_id}) < %(filter_before_session_id)s))"
+                "toString(session_id) < %(filter_before_session_id)s))"
             )
-        seed_keyset_fragment = (
-            "\n              AND "
-            + seed_keyset_template.format(
-                start_time="seed_spans.start_time",
-                session_id="seed_spans.trace_session_id",
-            )
-            if seed_keyset_template
-            else ""
-        )
-        outer_predicates: list[str] = []
         if self._bounded_sampling_rate is not None:
             params["bounded_sampling_salt"] = str(self._bounded_sampling_salt)
             params["bounded_sampling_rate"] = float(self._bounded_sampling_rate)
@@ -2742,7 +2728,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
               AND seed_spans.start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s, 'UTC'){datetime_fragment}
             WHERE (seed_spans.parent_span_id IS NULL OR seed_spans.parent_span_id = '')
               AND isNotNull(seed_spans.trace_session_id)
-              AND seed_spans.trace_session_id != toUUID('{NIL_UUID}'){witness_fragment}{seed_keyset_fragment}
+              AND seed_spans.trace_session_id != toUUID('{NIL_UUID}'){witness_fragment}
             GROUP BY seed_spans.trace_session_id
         """
         if self._bounded_sampling_rate is not None:
@@ -2751,15 +2737,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             # hash to raw aliases would change which straddlers are selected.
             ts_map = survivor_map_subquery("trace_session_id_remap")
             resolved_session = resolved_id_expr("raw_trace_session_id", "seed_ts_remap")
-            remapped_keyset_where = (
-                "WHERE "
-                + seed_keyset_template.format(
-                    start_time="raw_roots.start_time",
-                    session_id=resolved_session,
-                )
-                if seed_keyset_template
-                else ""
-            )
             seed_source = f"""
             SELECT
                 {resolved_session} AS session_id,
@@ -2779,7 +2756,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             ) AS raw_roots
             LEFT JOIN ({ts_map}) AS seed_ts_remap
                 ON raw_trace_session_id = seed_ts_remap.any_id
-            {remapped_keyset_where}
             GROUP BY session_id
             """
         query = f"""

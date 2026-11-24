@@ -288,18 +288,16 @@ def build_session_message_having_predicate(
         values = [str(v) for v in values if v is not None]
         if not values:
             return "0 = 1" if op == "in" else "1 = 1"
-        params[param_prefix] = tuple(v.lower() for v in values)
+        # Exact comparisons stay case-sensitive, as `equals` always was here.
+        params[param_prefix] = tuple(values)
         sql_op = "IN" if op == "in" else "NOT IN"
-        return f"lowerUTF8(toString({expression})) {sql_op} %({param_prefix})s"
+        return f"toString({expression}) {sql_op} %({param_prefix})s"
     if op in {"equals", "not_equals"}:
         if filter_value is None:
             return "0 = 1"
         params[param_prefix] = str(filter_value)
         sql_op = "=" if op == "equals" else "!="
-        return (
-            f"lowerUTF8(toString({expression})) {sql_op} "
-            f"lowerUTF8(toString(%({param_prefix})s))"
-        )
+        return f"toString({expression}) {sql_op} %({param_prefix})s"
     if op in _LITERAL_TEXT_MATCH_OPS:
         if filter_value is None:
             return "0 = 1"

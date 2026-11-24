@@ -341,7 +341,9 @@ class TestV2TenantGate:
         assert f"LIMIT {_MAX_PHYSICAL_SPANS + 1}" in analytics.queries[0]
         assert "HAVING latest_is_deleted = 0" in analytics.queries[0]
 
+    @override_settings(TRACE_DETAIL_MAX_PHYSICAL_SPANS=2000)
     def test_high_fan_out_coding_agent_trace_batches_evals_and_annotations(self):
+        # The default cap stays at 1,000 spans; an operator can raise it.
         started = datetime(2026, 1, 1, tzinfo=UTC)
         span_count = 1200
         identity_rows = [
@@ -363,11 +365,11 @@ class TestV2TenantGate:
                     parent_span_id="" if index == 0 else f"S{index - 1}",
                     start_time=started,
                 )
-                for index in range(offset, min(offset + 500, span_count))
+                for index in range(offset, min(offset + 200, span_count))
             ]
-            for offset in range(0, span_count, 500)
+            for offset in range(0, span_count, 200)
         ]
-        # 1 identity + 3 content batches (500, 500, 200) + 3 eval batches + 3 annotation batches
+        # 1 identity + 6 content batches of 200 + 3 eval batches + 3 annotation batches
         analytics = _SequenceAnalytics(
             [identity_rows, *content_batches, [], [], [], [], [], []]
         )
@@ -379,8 +381,8 @@ class TestV2TenantGate:
             deadline_ms=5000,
         )
         assert len(detail.spans) == span_count
-        # 1 identity + 3 content + 3 eval + 3 annotation = 10 queries
-        assert detail.query_count == 10
+        # 1 identity + 6 content + 3 eval + 3 annotation = 13 queries
+        assert detail.query_count == 13
         # Verify deep 1,200-level tree walks iteratively without RecursionError
         from tracer.services.clickhouse.query_builders.trace_detail import (
             compute_trace_summary_and_graph,

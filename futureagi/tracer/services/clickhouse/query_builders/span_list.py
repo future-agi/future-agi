@@ -432,10 +432,6 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # so fail closed instead of widening back to a broad filtered scan.
         if not self._active_non_time_filters():
             return None
-        try:
-            partition_span_filter_plans(self.filters)
-        except (TypeError, ValueError):
-            return "unsupported_filter_shape"
         if not supports_span_filters(self.filters):
             return (
                 "unsupported_filter_shape"

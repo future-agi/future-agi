@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from time import monotonic
 from typing import Any, Protocol
 
@@ -25,16 +25,16 @@ from tracer.services.clickhouse.read_budget import (
 )
 
 _MAX_ACCESSIBLE_PROJECTS = 4096
-_MAX_PHYSICAL_SPANS = 5000
-_CONTENT_BATCH_SIZE = 500
+_MAX_PHYSICAL_SPANS = 1000
+_CONTENT_BATCH_SIZE = 200
 _EVAL_SPAN_BATCH_SIZE = 500
-_MAX_EVAL_ROWS = 25000
-_MAX_ANNOTATION_ROWS = 25000
+_MAX_EVAL_ROWS = 5000
+_MAX_ANNOTATION_ROWS = 5000
 MAX_TRACE_DETAIL_EVAL_CONFIGS = 4096
 _DETAIL_DEADLINE_MS = 9_500
 _QUERY_TIMEOUT_MS = 9_500
 _READ_SETTINGS = {
-    "max_threads": 4,
+    "max_threads": 1,
     "max_block_size": 8192,
     "max_memory_usage": 36 * 1024 * 1024 * 1024,
     "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
@@ -329,7 +329,6 @@ class TraceDetailReadBuilder:
         project_id: str,
         span_ids: list[str],
         eval_config_ids: Iterable[str],
-        min_created_at: datetime | None = None,
         limit: int | None = None,
     ) -> tuple[str, dict[str, Any]]:
         normalized_config_ids = tuple(
@@ -356,7 +355,6 @@ class TraceDetailReadBuilder:
                 f"coalesce(argMax(deleted, {version}), 0))"
             )
         )
-        created_at_clause = ""
         params: dict[str, Any] = {
             "detail_eval_trace_id": self.trace_id,
             "detail_eval_span_ids": tuple(dict.fromkeys(span_ids)),
@@ -366,14 +364,6 @@ class TraceDetailReadBuilder:
             # table itself has no tracer-project column.
             "detail_project_id": project_id,
         }
-        if min_created_at is not None:
-            floor_dt = min_created_at - timedelta(days=7)
-            if floor_dt.tzinfo is not None:
-                floor_dt = floor_dt.astimezone(UTC).replace(tzinfo=None)
-            params["detail_eval_min_created_at"] = floor_dt
-            created_at_clause = (
-                "\n                  AND created_at >= %(detail_eval_min_created_at)s"
-            )
         return (
             f"""
             SELECT
@@ -413,7 +403,7 @@ class TraceDetailReadBuilder:
                     argMax(target_type, {version}) AS latest_target_type,
                     {deleted} AS latest_is_deleted
                 FROM {table}
-                PREWHERE custom_eval_config_id IN %(detail_eval_config_ids)s{created_at_clause}
+                PREWHERE custom_eval_config_id IN %(detail_eval_config_ids)s
                   AND trace_id = %(detail_eval_trace_id)s
                   AND observation_span_id IN %(detail_eval_span_ids)s
                 GROUP BY id
@@ -601,12 +591,6 @@ def read_trace_detail(
     )
     if len(eval_config_ids) > MAX_TRACE_DETAIL_EVAL_CONFIGS:
         raise TraceDetailReadUnavailable("eval_config_scope_too_large")
-    span_start_times = [
-        row["start_time"]
-        for row in content_rows
-        if isinstance(row.get("start_time"), datetime)
-    ]
-    min_span_start = min(span_start_times) if span_start_times else None
     eval_rows: list[dict[str, Any]] = []
     eval_unavailable = False
     if span_ids and eval_config_ids:
@@ -618,7 +602,6 @@ def read_trace_detail(
                     project_id=project_id,
                     span_ids=span_batch,
                     eval_config_ids=eval_config_ids,
-                    min_created_at=min_span_start,
                     limit=remaining_eval_budget,
                 )
                 if eval_query:
