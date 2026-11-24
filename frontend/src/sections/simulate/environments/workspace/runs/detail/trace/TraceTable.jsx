@@ -47,7 +47,7 @@ import {
   UnscoredEval,
 } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
-import { STATUS_META } from "../../runs.constants";
+import TraceCheckLines from "./TraceCheckLines";
 
 // The theme hides every border on a table's last row, which here is the head
 // row and the final call row. The column dividers are cell left borders, so put
@@ -115,15 +115,6 @@ const clampSx = {
   overflow: "hidden",
   wordBreak: "break-word",
 };
-
-const EVIDENCE_WORDS = {
-  world_state: "the world",
-  tool_calls: "the agent's calls",
-  transcript: "the transcript",
-  recording: "the recording",
-};
-const evidenceLabel = (evidence) =>
-  `from ${evidence.map((one) => EVIDENCE_WORDS[one] || one).join(", ")}`;
 
 // A persona is worth showing when any field is filled, not only the name: the
 // API sends name: null when the persona has no name key.
@@ -370,84 +361,12 @@ export default function TraceTable({
                   </Stack>
                 </CustomTooltip>
               )}
-              {t.subGoalResults?.length > 0 && (
-                <Stack spacing={0.5} sx={{ mt: 1 }}>
-                  {t.subGoalResults.map((goal, goalIndex) => {
-                    const verdict =
-                      goal.result === "not_applicable" ||
-                      goal.result === "unmeasured"
-                        ? {
-                            label: STATUS_META[goal.result].label,
-                            color: "text.disabled",
-                          }
-                        : runOutcome(
-                            goal.passed === true
-                              ? "passed"
-                              : goal.passed === false
-                                ? "failed"
-                                : "inconclusive",
-                          );
-                    return (
-                      <Stack
-                        key={`${goal.name}-${goalIndex}`}
-                        direction="row"
-                        alignItems="center"
-                        spacing={0.75}
-                      >
-                        <Typography
-                          sx={{ typography: "s3", color: "text.secondary" }}
-                        >
-                          {goal.name}
-                        </Typography>
-                        {goal.evidence?.length > 0 && (
-                          <Typography
-                            sx={{ typography: "s3", color: "text.disabled" }}
-                          >
-                            {evidenceLabel(goal.evidence)}
-                          </Typography>
-                        )}
-                        {goal.result === "unmeasured" && goal.reason ? (
-                          <Typography
-                            sx={{ typography: "s3", color: verdict.color }}
-                          >
-                            {goal.reason}
-                          </Typography>
-                        ) : goal.passed == null ? (
-                          <CustomTooltip
-                            show={!!goal.reason}
-                            size="small"
-                            arrow
-                            title={goal.reason}
-                          >
-                            <Typography
-                              sx={{ typography: "s3", color: verdict.color }}
-                            >
-                              {verdict.label}
-                            </Typography>
-                          </CustomTooltip>
-                        ) : (
-                          <Box
-                            role="img"
-                            aria-label={verdict.label}
-                            title={verdict.label}
-                            sx={{ display: "flex", color: verdict.color }}
-                          >
-                            <Iconify
-                              icon={
-                                goal.passed
-                                  ? "solar:check-linear"
-                                  : "solar:close-linear"
-                              }
-                              width={16}
-                              aria-hidden="true"
-                            />
-                          </Box>
-                        )}
-                      </Stack>
-                    );
-                  })}
-                </Stack>
-              )}
+              <TraceCheckLines
+                subGoals={t.subGoalResults}
+                requiredEvals={(t.evalResults || []).filter(
+                  (result) => result.required,
+                )}
+              />
             </Box>
           </TableCell>
         )}

@@ -278,3 +278,27 @@ export const REQUIRED_EVAL_COPY = {
   label: "Required eval failed",
   required: "Required",
 };
+
+export const CHECK_LINE_COPY = {
+  from: "From",
+  heading: { subGoals: "Sub-goals", evals: "Required evals" },
+  failedOf: (failed, total) => `${failed} of ${total} failed`,
+  passedOf: (kind, passed, total) =>
+    kind === "subGoals"
+      ? `${passed} of ${total} met`
+      : `${passed} of ${total} passed`,
+  allPassed: (kind, total) =>
+    kind === "subGoals" ? `all ${total} met` : `all ${total} passed`,
+  waitingAll: (total) => `${total} waiting`,
+  showMore: (n) => `+ ${n} more`,
+  showLess: "Show less",
+  state: {
+    failed: "Failed",
+    passed: "Passed",
+    inconclusive: "Inconclusive",
+    unmeasured: "Unmeasured",
+    not_applicable: "Not applicable",
+    not_scored: "Couldn't score",
+    waiting: "Waiting",
+  },
+};

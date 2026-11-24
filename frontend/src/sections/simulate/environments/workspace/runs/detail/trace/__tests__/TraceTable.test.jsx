@@ -245,20 +245,17 @@ describe("TraceTable — sub-goal verdicts", () => {
       const goals = within(activeRow()).getAllByText("Verify identity");
       expect(goals).toHaveLength(verdicts.length);
       goals.forEach((goal, index) => {
-        const result = within(goal.parentElement);
-        if (verdicts[index] === "Inconclusive") {
-          expect(result.getByText("Inconclusive")).toBeInTheDocument();
-        } else {
-          expect(
-            result.getByRole("img", { name: verdicts[index] }),
-          ).toBeInTheDocument();
-        }
+        expect(
+          within(goal.parentElement).getByRole("img", {
+            name: verdicts[index],
+          }),
+        ).toBeInTheDocument();
       });
     };
 
     try {
       const { rerender } = render(duplicateGoals([true, false]));
-      expectVerdicts(["Passed", "Failed"]);
+      expectVerdicts(["Failed", "Passed"]);
 
       rerender(duplicateGoals([false, null, true]));
       expectVerdicts(["Failed", "Inconclusive", "Passed"]);
@@ -306,15 +303,19 @@ describe("TraceTable — sub-goal verdicts", () => {
       ["Send confirmation", "Inconclusive"],
     ]) {
       const result = within(details).getByText(name).parentElement;
-      if (verdict === "Inconclusive") {
-        expect(within(result).getByText(verdict)).toBeInTheDocument();
-      } else {
-        expect(
-          within(result).getByRole("img", { name: verdict }),
-        ).toBeInTheDocument();
-        expect(within(result).queryByText(verdict)).not.toBeInTheDocument();
-      }
+      expect(
+        within(result).getByRole("img", { name: verdict }),
+      ).toBeInTheDocument();
+      expect(within(result).queryByText(verdict)).not.toBeInTheDocument();
     }
+    const names = within(details)
+      .getAllByText(/^(Verify identity|Create refund|Send confirmation)$/)
+      .map((one) => one.textContent);
+    expect(names).toEqual([
+      "Create refund",
+      "Send confirmation",
+      "Verify identity",
+    ]);
   });
 
   it("says a check whose evidence never arrived is not measured, and what each check was decided from", () => {
@@ -343,7 +344,8 @@ describe("TraceTable — sub-goal verdicts", () => {
                     name: "Refund once",
                     passed: null,
                     result: "unmeasured",
-                    reason: "Unmeasured: the world's action log could not be read",
+                    reason:
+                      "Unmeasured: the world's action log could not be read",
                     evidence: ["world_state"],
                   },
                 ],
@@ -357,18 +359,20 @@ describe("TraceTable — sub-goal verdicts", () => {
     const details = within(activeRow())
       .getAllByText("Scenario a1")[0]
       .closest("td");
-    expect(within(details).getByText("Not measured")).toBeInTheDocument();
     expect(
-      within(details).getByText(
-        "Unmeasured: the world's action log could not be read",
-      ),
-    ).toBeInTheDocument();
+      within(details).getAllByRole("img", { name: "Unmeasured" }),
+    ).toHaveLength(2);
     expect(
-      within(details).getByText("from the world, the agent's calls"),
-    ).toBeInTheDocument();
+      within(details).getByText("Refund row").parentElement,
+    ).toHaveAccessibleName("From the world, the agent's calls");
     expect(
-      within(details).getByText("from the transcript"),
-    ).toBeInTheDocument();
+      within(details).getByText("Polite").parentElement,
+    ).toHaveAccessibleName("From the transcript");
+    expect(
+      within(details).getByText("Refund once").parentElement,
+    ).toHaveAccessibleName(
+      "From the world. Unmeasured: the world's action log could not be read",
+    );
   });
 });
 
@@ -973,9 +977,10 @@ describe("TraceTable calls with no pass or fail", () => {
         columns: new Set(["callDetails"]),
       }),
     );
-    const verdict = within(screen.getByText("noticed").parentElement).getByText(
-      STATUS_META.not_applicable.label,
-    );
-    expect(verdict).toHaveAccessibleName("The roommate never spoke");
+    const line = screen.getByText("noticed").parentElement;
+    expect(
+      within(line).getByRole("img", { name: STATUS_META.not_applicable.label }),
+    ).toBeInTheDocument();
+    expect(line).toHaveAccessibleName("The roommate never spoke");
   });
 });

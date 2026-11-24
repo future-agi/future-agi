@@ -33,6 +33,7 @@ function liveEvalCell(col, data) {
     status: String(data.status || "succeeded").toLowerCase(),
     threshold: 0.5,
     removed: data.removed === true,
+    required: data.required === true,
   };
 }
 
