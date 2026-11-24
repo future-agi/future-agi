@@ -1,5 +1,5 @@
 import type { APIRequestContext } from '@playwright/test';
-import { ApiClient, Tokens } from './api-client';
+import { ApiClient, Tokens, annotateRetry, isResponseLessReset } from './api-client';
 import { E2E } from './env';
 
 export interface TestActor {
@@ -17,19 +17,41 @@ export interface UserInfo {
 }
 interface KeysEnvelope { status: string; data: { api_key: string; secret_key: string } }
 
-export async function provisionActor(req: APIRequestContext, label: string,
-  createAccount?: (account: { email: string; fullName: string; password: string }) => Promise<void>): Promise<TestActor> {
-  // The domain gives the auto-created organization a stable name.
-  // Freshness must not depend on the caller's label: parallel workers can
-  // provision in the same millisecond.
-  const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const email = `e2e-${label}-${runId}@futureagi.com`;
-  const password = `E2e-${label}-${runId}`;
-  const anon = new ApiClient(req, E2E.apiUrl);
+const SIGNUP_PATH = '/accounts/e2e/clean-signup/';
 
-  if (createAccount) await createAccount({ email, fullName: `E2E ${label}`, password });
-  // Only the test image exposes this route. Signup flows use the public route.
-  else await anon.post('/accounts/e2e/clean-signup/', { email, full_name: `E2E ${label}`, password });
+export async function provisionActor(req: APIRequestContext, label: string,
+  options: { keyAdministrator?: boolean;
+    createAccount?: (account: { email: string; fullName: string; password: string }) => Promise<void> } = {}): Promise<TestActor> {
+  const anon = new ApiClient(req, E2E.apiUrl);
+  const signUp = async () => {
+    // The domain gives the auto-created organization a stable name.
+    // Freshness must not depend on the caller's label: parallel workers can
+    // provision in the same millisecond.
+    const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const identity = { email: `e2e-${label}-${runId}@futureagi.com`, password: `E2e-${label}-${runId}` };
+    if (options.createAccount) {
+      await options.createAccount({ ...identity, fullName: `E2E ${label}` });
+      return identity;
+    }
+    // Only the test image exposes this route. Signup flows use the public route.
+    await anon.post(SIGNUP_PATH, { ...identity, full_name: `E2E ${label}`,
+      ...(options.keyAdministrator ? { key_administrator: true } : {}) });
+    return identity;
+  };
+  // The signup is a POST, so ApiClient never replays it. When the connection
+  // is reset before any response, it is unknown whether the account exists,
+  // so the one retry signs up a NEW identity instead of repeating the first.
+  // Only that reset is retried: an HTTP response, a timeout or any other
+  // error fails the actor, and so does a second reset.
+  let identity;
+  try {
+    identity = await signUp();
+  } catch (error) {
+    if (!isResponseLessReset(error)) throw error;
+    annotateRetry('post', SIGNUP_PATH, error);
+    identity = await signUp();
+  }
+  const { email, password } = identity;
   const tokens = await anon.post<Tokens>('/accounts/token/', { email, password, remember_me: true });
 
   let api = anon.withAuth(tokens);

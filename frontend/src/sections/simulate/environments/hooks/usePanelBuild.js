@@ -76,7 +76,7 @@ export default function usePanelBuild() {
       // Only the redacted draft is staged for build; the raw credentialValues
       // ride the preflight and create requests (write-only) and are never persisted.
       setPrepared(result.draft);
-      heldValues.current = result.credentialValues;
+      heldValues.current = result.buildCredentialValues ?? result.credentialValues;
       buildKey.current = harnessIdempotencyKey();
       preflight.mutate({ draft: result.draft, credentialValues: result.credentialValues });
     },

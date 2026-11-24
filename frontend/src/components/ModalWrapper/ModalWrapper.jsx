@@ -36,6 +36,7 @@ export default function ModalWrapper({
   actionBtnProps = {},
   cancelBtnProps = {},
   onCancelBtn,
+  closeButtonLabel = "Close",
   paperSx = {},
 }) {
   const theme = useTheme();
@@ -68,6 +69,7 @@ export default function ModalWrapper({
             {title}
           </Typography>
           <IconButton
+            aria-label={closeButtonLabel}
             disabled={isLoading}
             onClick={onClose}
             sx={{
@@ -161,5 +163,6 @@ ModalWrapper.propTypes = {
   modalWidth: PropTypes.string,
   actionBtnProps: PropTypes.object,
   cancelBtnProps: PropTypes.object,
+  closeButtonLabel: PropTypes.string,
   paperSx: PropTypes.object,
 };

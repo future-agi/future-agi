@@ -1,6 +1,9 @@
 import runpy
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from tfc import asgi_startup
 
@@ -50,3 +53,36 @@ def test_wsgi_worker_warms_routes_after_application_setup(monkeypatch):
 
     assert module["application"] is application
     assert events == ["application_ready", "urlconf_warm"]
+
+
+def test_warm_migration_modules_imports_them_without_the_database():
+    # No django_db mark: pytest-django fails any database access here.
+    assert asgi_startup.warm_migration_modules() > 0
+    assert "accounts.migrations.0001_initial" in sys.modules
+
+
+@pytest.mark.parametrize("guard_enabled", [True, False])
+def test_asgi_worker_warms_migrations_only_for_the_schema_guard(
+    monkeypatch, settings, guard_enabled
+):
+    events = []
+
+    async def django_app(scope, receive, send):
+        pass
+
+    settings.STARTUP_SCHEMA_GUARD_ENABLED = guard_enabled
+    monkeypatch.setattr("tfc.telemetry.init_telemetry", lambda *, component: None)
+    monkeypatch.setattr("django.core.asgi.get_asgi_application", lambda: django_app)
+    monkeypatch.setattr(
+        asgi_startup, "warm_http_urlconf", lambda: events.append("urlconf") or 0
+    )
+    monkeypatch.setattr(
+        asgi_startup,
+        "warm_migration_modules",
+        lambda: events.append("migrations") or 0,
+    )
+
+    runpy.run_path(str(Path(__file__).parents[1] / "asgi.py"))
+
+    expected = ["urlconf", "migrations"] if guard_enabled else ["urlconf"]
+    assert events == expected

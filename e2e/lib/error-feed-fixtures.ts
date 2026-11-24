@@ -22,14 +22,14 @@ export const test = base.extend<{ errorFeedProfile: void; scopeActors: ScopeActo
     execFileSync('docker', ['exec', backend.Id, 'python', '/opt/e2e/reset_fixture_auth.py'],
       { encoding: 'utf8', timeout: 60_000, stdio: ['pipe', 'pipe', 'pipe'] });
     const scopes = new ScopeActors(`e2e-h1-${info.workerIndex}-${Date.now().toString(36)}`,
-      (req, label) => provisionActor(req, label, async ({ email, fullName, password }) => {
+      (req, label) => provisionActor(req, label, { createAccount: async ({ email, fullName, password }) => {
         if (!email.startsWith('e2e-e2e-h1-') || !email.endsWith('@futureagi.com')) {
           throw new Error('Refusing owner creation outside the owned E2E prefix');
         }
         execFileSync('docker', ['exec', backend.Id, 'python', 'manage.py', 'create_user',
           '--email', email, '--name', fullName, '--password', password],
           { encoding: 'utf8', timeout: 120_000, stdio: ['pipe', 'pipe', 'pipe'] });
-      }), async email => {
+      } }), async email => {
         if (!email.startsWith(scopes.prefix + '-')) throw new Error('Refusing foreign local-mail read');
         let link = '';
         await expect.poll(() => {

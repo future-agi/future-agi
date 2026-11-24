@@ -895,7 +895,9 @@ def test_install_import_and_config_work_when_all_ee_imports_are_denied(
     # The child is launched with ``-c``, so Python does not automatically add
     # the repository's ``futureagi`` package root to sys.path. Keep the
     # import-graph check independent of the caller's working directory.
-    package_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+    package_root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../../..")
+    )
     env["PYTHONPATH"] = os.pathsep.join(
         value for value in (package_root, env.get("PYTHONPATH", "")) if value
     )

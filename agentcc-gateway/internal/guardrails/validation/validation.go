@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -18,14 +20,40 @@ type ValidationGuardrail struct {
 	maxMsgLen       int
 	maxTotalLen     int
 	minMsgLen       int
+	readinessErr    error
+	configErr       error // selected-only length validation; regex uses readinessErr
 }
 
 // New creates a ValidationGuardrail from rule config.
 func New(cfg map[string]interface{}) *ValidationGuardrail {
-	g := &ValidationGuardrail{}
+	g := &ValidationGuardrail{configErr: validateLengthConfig(cfg)}
 
 	if cfg == nil {
 		return g
+	}
+
+	// Legacy HTTP checks skip invalid patterns. Realtime must not admit a
+	// blocking session when any configured pattern would be silently skipped.
+	for _, key := range []string{"deny_patterns", "require_patterns"} {
+		value, exists := cfg[key]
+		if !exists {
+			continue
+		}
+		patterns, ok := value.([]interface{})
+		if !ok {
+			g.readinessErr = fmt.Errorf("%s must be a list of patterns", key)
+			continue
+		}
+		for _, value := range patterns {
+			pattern, ok := value.(string)
+			if !ok {
+				g.readinessErr = fmt.Errorf("%s contains a non-string pattern", key)
+				continue
+			}
+			if _, err := regexp.Compile(pattern); err != nil {
+				g.readinessErr = fmt.Errorf("%s contains an invalid pattern", key)
+			}
+		}
 	}
 
 	// Parse deny patterns.
@@ -35,7 +63,7 @@ func New(cfg map[string]interface{}) *ValidationGuardrail {
 				if s, ok := item.(string); ok {
 					re, err := regexp.Compile(s)
 					if err != nil {
-						slog.Warn("invalid deny pattern, skipping", "pattern", s, "error", err)
+						slog.Warn("invalid deny pattern, skipping")
 						continue
 					}
 					g.denyPatterns = append(g.denyPatterns, re)
@@ -51,7 +79,7 @@ func New(cfg map[string]interface{}) *ValidationGuardrail {
 				if s, ok := item.(string); ok {
 					re, err := regexp.Compile(s)
 					if err != nil {
-						slog.Warn("invalid require pattern, skipping", "pattern", s, "error", err)
+						slog.Warn("invalid require pattern, skipping")
 						continue
 					}
 					g.requirePatterns = append(g.requirePatterns, re)
@@ -67,8 +95,49 @@ func New(cfg map[string]interface{}) *ValidationGuardrail {
 	return g
 }
 
-func (g *ValidationGuardrail) Name() string           { return "input-validation" }
+func (g *ValidationGuardrail) Name() string            { return "input-validation" }
 func (g *ValidationGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// RealtimeReady reports configuration that legacy HTTP checks would skip.
+func (g *ValidationGuardrail) RealtimeReady() error { return g.readinessErr }
+
+// ValidateConfig reports errors captured from the original constructor input.
+// Selected policies opt in; Check and RealtimeReady retain their legacy scope.
+// Reuse the existing regex readiness state rather than a separate regex parser.
+func (g *ValidationGuardrail) ValidateConfig() error {
+	if g.readinessErr != nil {
+		return g.readinessErr
+	}
+	return g.configErr
+}
+
+func validateLengthConfig(cfg map[string]interface{}) error {
+	for _, key := range []string{"min_message_length", "max_message_length", "max_total_length"} {
+		value, present := cfg[key]
+		if !present {
+			continue
+		}
+		valid := false
+		switch n := value.(type) {
+		case int:
+			valid = n >= 0
+		case float64:
+			// The exclusive power-of-two bound avoids rounding MaxInt up and
+			// matches the constructor's int conversion. Zero disables a limit.
+			valid = n >= 0 && n < math.Ldexp(1, strconv.IntSize-1) && math.Trunc(n) == n
+		}
+		if !valid {
+			return fmt.Errorf("input-validation %s must be a nonnegative integer within the supported range", key)
+		}
+	}
+	min := parseIntConfig(cfg, "min_message_length")
+	for _, key := range []string{"max_message_length", "max_total_length"} {
+		if max := parseIntConfig(cfg, key); max > 0 && min > max {
+			return fmt.Errorf("input-validation min_message_length must not exceed enabled %s", key)
+		}
+	}
+	return nil
+}
 
 // Check validates messages against configured rules.
 func (g *ValidationGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {

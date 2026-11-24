@@ -17,9 +17,10 @@ type Dialect struct {
 	// DefaultBase is used when the provider states no base_url. Empty means a
 	// base_url is required.
 	DefaultBase string
-	// Leaf is the endpoint path, joined after the base URL and the provider's
-	// version prefix ("/v1" unless api_path_prefix says otherwise).
+	// Leaf is the endpoint path, joined after the base URL and path prefix.
 	Leaf string
+	// DefaultPathPrefix is used unless api_path_prefix is explicitly set.
+	DefaultPathPrefix string
 	// AuthHeader and AuthScheme carry the key: "Authorization: Bearer <key>".
 	AuthHeader, AuthScheme string
 	// KeyRequired refuses a call locally when the provider has no key.
@@ -33,7 +34,7 @@ var (
 	// TypeSafe is TypeSafe AI's Jev models, which defined the format.
 	TypeSafe = Dialect{
 		Name: "typesafe", Vendor: "TypeSafe",
-		DefaultBase: "https://api.typesafe.ai", Leaf: "/v1/systemone",
+		DefaultBase: "https://api.typesafe.ai", Leaf: "/v1/systemone", DefaultPathPrefix: "/v1",
 		AuthHeader: "Authorization", AuthScheme: "Bearer ", KeyRequired: true,
 		hostSuffix: "typesafe.ai",
 	}
@@ -41,9 +42,17 @@ var (
 	// Perplexity is Perplexity's Decider. It rejects x-api-key: Bearer only.
 	Perplexity = Dialect{
 		Name: "perplexity", Vendor: "Perplexity",
-		DefaultBase: "https://api.perplexity.ai", Leaf: "/v1/decisions",
+		DefaultBase: "https://api.perplexity.ai", Leaf: "/v1/decisions", DefaultPathPrefix: "/v1",
 		AuthHeader: "Authorization", AuthScheme: "Bearer ", KeyRequired: true,
 		hostSuffix: "perplexity.ai",
+	}
+
+	// OpenRouter serves typed decisions on a dedicated endpoint, not its chat API.
+	OpenRouter = Dialect{
+		Name: "openrouter", Vendor: "OpenRouter",
+		DefaultBase: "https://openrouter.ai", Leaf: "/decisions", DefaultPathPrefix: "/api/alpha",
+		AuthHeader: "Authorization", AuthScheme: "Bearer ", KeyRequired: true,
+		hostSuffix: "openrouter.ai",
 	}
 
 	// Generic is any other System One endpoint: Microsoft Foundry (base_url
@@ -52,11 +61,11 @@ var (
 	// without a key, including one owned by an organization.
 	Generic = Dialect{
 		Name: "generic", Vendor: "System One endpoint",
-		Leaf:       "/v1/systemone",
+		Leaf: "/v1/systemone", DefaultPathPrefix: "/v1",
 		AuthHeader: "Authorization", AuthScheme: "Bearer ",
 	}
 
-	vendorDialects = []Dialect{TypeSafe, Perplexity}
+	vendorDialects = []Dialect{TypeSafe, Perplexity, OpenRouter}
 )
 
 // ErrBaseURLRequired is returned for a provider that names no known vendor

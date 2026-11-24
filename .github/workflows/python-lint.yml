@@ -1,0 +1,169 @@
+name: Python lint
+
+# Fails on Python lint violations that a PR adds; old ones are left for cleanup
+# PRs. Rules: the repo's ruff config plus the banned patterns from the coding
+# standards that the config does not select yet. See
+# scripts/check_python_lint_delta.py. S608 (SQL built from strings) only warns.
+#
+# The check to require is "Python Lint Pass". Every candidate runs both jobs,
+# including stacked PRs, merge groups and dev/main landings. A body, title or
+# label change starts no run, so it can neither cancel the candidate run nor
+# hide its required check.
+
+on:
+  pull_request:
+    # Only these three activity types. A run started by any other one (a body
+    # or title edit, a label) becomes this workflow's newest suite for the
+    # head commit, and GitHub then ignores the older suite's required check,
+    # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
+    # the merge queue re-tests every dev merge, but a PR moved onto main is
+    # not re-tested until a push or reopen (see e2e/README.md).
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [dev, main]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-lint-${{ github.event_name == 'push' && github.sha || github.ref }}-candidate
+  cancel-in-progress: true
+
+env:
+  # Keep in step with scripts/lint-staged-python.sh; a test checks they match.
+  RUFF_VERSION: "0.17.3"
+
+jobs:
+  ruff-self-test:
+    name: Ruff gate self-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify self-test checkout
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED"
+      - name: Install ruff for head self-tests
+        run: |
+          if [ ! -f scripts/test_check_python_lint_delta.py ]; then
+            echo "This branch predates the gate's self-test; no head Ruff is needed."
+            exit 0
+          fi
+          # The workflow comes from the merge ref, but self-tests use the head.
+          head_ruff_version="$(sed -nE 's/^  RUFF_VERSION: "([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*(#.*)?$/\1/p' .github/workflows/python-lint.yml)"
+          if ! [[ "$head_ruff_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected exactly one Ruff pin in the head workflow."
+            exit 1
+          fi
+          python3 -I -m pip install --quiet "ruff==${head_ruff_version}"
+      - name: Self-test the gate
+        # Only a branch that carries the gate's tests can test its own copy of
+        # the gate. Branches older than the gate have none; the gate below runs
+        # from the base branch either way.
+        run: |
+          if [ -f scripts/test_check_python_lint_delta.py ]; then
+            python3 -I scripts/test_check_python_lint_delta.py
+          else
+            echo "This branch predates the gate's self-test; nothing to self-test."
+          fi
+
+  ruff-delta:
+    name: Ruff (new violations only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The PR head, not the merge commit, so annotation lines match the diff.
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Report new violations
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'push' && github.event.before) }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}
+        run: |
+          set -euo pipefail
+          trusted_ref=$BASE_SHA
+          # Branch creation has no previous tree/policy. Never silently use HEAD.
+          if [[ $GITHUB_EVENT_NAME == push && ( -z $trusted_ref || $trusted_ref =~ ^0+$ ) ]]; then
+            echo "::error::Push has no before SHA; cannot establish a trusted lint baseline."
+            exit 1
+          fi
+          for sha in "$trusted_ref" "$HEAD_SHA"; do
+            [[ $sha =~ ^[0-9a-f]{40}$ && ! $sha =~ ^0+$ ]]
+          done
+          [[ $(git rev-parse HEAD) == "$HEAD_SHA" ]]
+          if [[ $GITHUB_EVENT_NAME == merge_group || $GITHUB_EVENT_NAME == push ]]; then [[ $HEAD_SHA == "$GITHUB_SHA" ]]; fi
+          if [[ $(git rev-parse --is-shallow-repository) == true ]]; then
+            git fetch -q --no-tags --depth=32 origin "$trusted_ref" "$HEAD_SHA"
+            # An ancestor proves the base directly. In a diverged history a
+            # shallow boundary could hide another, better common ancestor.
+            if ! git merge-base --is-ancestor "$trusted_ref" "$HEAD_SHA"; then
+              if [[ $(git rev-parse --is-shallow-repository) == true ]]; then
+                git fetch -q --no-tags --unshallow origin "$trusted_ref" "$HEAD_SHA"
+              fi
+            fi
+          fi
+          base=$(git merge-base --all "$trusted_ref" "$HEAD_SHA")
+          [[ $base =~ ^[0-9a-f]{40}$ ]]
+          if [[ $GITHUB_EVENT_NAME == merge_group || $GITHUB_EVENT_NAME == push ]]; then
+            # A rewritten branch cannot substitute an older common ancestor for before.
+            [[ $base == "$trusted_ref" ]] || { echo "::error::Event base is not an ancestor of head."; exit 1; }
+          fi
+          # Take the gate AND its Ruff pin from the same base-branch commit.
+          # Head self-tests run in a different job; an upgrade must not run the
+          # old gate with the new Ruff, or let a PR change its own judging gate.
+          gate="$RUNNER_TEMP/check_python_lint_delta.py"
+          git show "${trusted_ref}:scripts/check_python_lint_delta.py" > "$gate"
+          git show "${trusted_ref}:.github/workflows/python-lint.yml" > "$RUNNER_TEMP/python-lint-base.yml"
+          RUFF_VERSION="$(sed -nE 's/^  RUFF_VERSION: "([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*(#.*)?$/\1/p' "$RUNNER_TEMP/python-lint-base.yml")"
+          if ! [[ "$RUFF_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected exactly one Ruff pin in the base workflow."
+            exit 1
+          fi
+          # Provision Ruff independently of the head self-test job.
+          venv="$RUNNER_TEMP/python-lint-base-venv"
+          python3 -I -m venv "$venv"
+          "$venv/bin/python" -I -m pip install --quiet "ruff==${RUFF_VERSION}"
+          # Negotiate only with the executable extracted from the event base.
+          help=$(python3 -I "$gate" --help)
+          config_args=()
+          if grep -Eq -- '^[[:space:]]+--config-ref([[:space:]=]|$)' <<<"$help"; then
+            config_args=(--config-ref "$trusted_ref")
+          elif ! git diff --no-ext-diff --quiet --no-renames "$base" "$trusted_ref" -- \
+              ':(glob)**/pyproject.toml' ':(glob)**/ruff.toml' ':(glob)**/.ruff.toml'; then
+            echo "::error::Ruff settings differ from the merge base. Upgrade the target branch lint gate to support --config-ref or merge the target branch into the PR."
+            exit 1
+          fi
+          python3 -I "$gate" --base "$base" "${config_args[@]}" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"
+
+  python-lint-pass:
+    name: Python Lint Pass
+    needs: [ruff-delta, ruff-self-test]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require both lint verdicts
+        env:
+          RUFF: ${{ needs.ruff-delta.result }}
+          SELF_TEST: ${{ needs.ruff-self-test.result }}
+        run: |
+          if [[ $RUFF != success || $SELF_TEST != success ]]; then
+            echo "::error::Python lint did not pass (delta=$RUFF, self-test=$SELF_TEST)."
+            exit 1
+          fi

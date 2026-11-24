@@ -14,7 +14,9 @@ class SdkConfig(AppConfig):
         from tracer.models import (
             custom_eval_config,  # noqa: F401
             dashboard,  # noqa: F401
+            derived_metric,  # noqa: F401
             eval_ci_cd,  # noqa: F401
+            eval_sampling,  # noqa: F401
             eval_task,  # noqa: F401
             external_eval_config,  # noqa: F401
             feed_alert,  # noqa: F401
@@ -22,6 +24,8 @@ class SdkConfig(AppConfig):
             imagine_analysis,  # noqa: F401
             insights,  # noqa: F401
             instant_eval,  # noqa: F401
+            metric_pg_revision,  # noqa: F401
+            metric_source_intent,  # noqa: F401
             monitor,  # noqa: F401
             observability_provider,  # noqa: F401
             observation_span,  # noqa: F401
@@ -31,6 +35,7 @@ class SdkConfig(AppConfig):
             saved_view,  # noqa: F401
             shared_link,  # noqa: F401
             span_notes,  # noqa: F401
+            sql_query,  # noqa: F401
             trace,  # noqa: F401
             trace_annotation,  # noqa: F401
             trace_error_analysis,  # noqa: F401
@@ -48,3 +53,9 @@ class SdkConfig(AppConfig):
             dispatch_uid="tracer.feed_escalation_policy",
             weak=False,
         )
+
+        from tracer.services.derived_metrics.deletion_protocol import (
+            register_deletion_hooks,
+        )
+
+        register_deletion_hooks()

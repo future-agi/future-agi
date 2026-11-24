@@ -157,6 +157,11 @@ export class ScopeActors {
     this.viewer = await this.invite('viewer', 1, [this.ownerA.workspaceId]);
   }
 
+  /** Additional non-admin members in owner A's default workspace. */
+  async inviteMember(label: string): Promise<ScopeActor> {
+    return this.invite(label, 3, [this.ownerA.workspaceId]);
+  }
+
   async openContext(browser: Browser, actor: ScopeActor): Promise<BrowserContext> {
     // These flows exercise API writes and use page.route for transport-failure
     // checks. A service worker can bypass Playwright's routing entirely.

@@ -1,0 +1,79 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Tokens copied from futureagi.com's design refresh (landing-page PR #327, r16.css) */
+body.dark{--bg:#070912;--panel:#0c0f19;--text:#f4f6fa;--soft:#c4c9d4;--muted:#8a90a0;--dim:#767d8f;--ring:rgba(214,224,255,.30);--ringfaint:rgba(214,224,255,.14);--blue:#4f7bff;--blue2:#8fb0ff;--bad:#fb7185;--good:#34d399;--tint:rgba(79,123,255,.10);--icon:invert(.86) sepia(.2) hue-rotate(190deg)}
+body.light{--bg:#ffffff;--panel:#f6f8fc;--text:#0b0f1a;--soft:#3b4252;--muted:#5b6272;--dim:#7a8090;--ring:rgba(11,15,26,.22);--ringfaint:rgba(11,15,26,.10);--blue:#3461f0;--blue2:#3461f0;--bad:#e11d48;--good:#059669;--tint:rgba(52,97,240,.07);--icon:none}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);font-family:Inter,'Helvetica Neue',Arial,sans-serif;color:var(--text);-webkit-font-smoothing:antialiased}
+#root{position:relative;width:1200px;height:760px;background:var(--bg);border-radius:18px;overflow:hidden}
+svg#d{position:absolute;inset:0}
+.st{position:absolute;width:0;height:0}
+.body{position:absolute;left:-23px;top:-23px;width:46px;height:46px;border-radius:50%;background:var(--panel);border:1.3px solid var(--blue2);display:grid;place-items:center;box-shadow:inset 0 0 0 100px var(--tint)}
+.body img{width:20px;height:20px;filter:var(--icon)}
+.txt{position:absolute;width:230px}
+.txt h3{font-weight:500;font-size:20px;line-height:1.25;margin-bottom:5px}
+.txt p{font-weight:400;font-size:15.5px;line-height:1.45;color:var(--muted)}
+.right .txt{left:38px;top:0;transform:translateY(-50%)}
+.left .txt{right:38px;top:0;transform:translateY(-50%);text-align:right}
+.bottom .txt{right:34px;top:16px;width:230px;text-align:right;transform:none}
+.hi .txt{transform:translateY(-82%)}
+.bottom .txt h3{margin-top:-2px}
+.center{position:absolute;left:600px;top:380px;transform:translate(-50%,-50%);text-align:center;width:300px}
+.center h2{font-weight:300;font-size:40px;letter-spacing:-.02em;line-height:1.05}
+.center .v{display:inline-flex;gap:8px;align-items:center;margin-top:14px;font-size:14px;color:var(--soft)}
+.center .v b{font-weight:500;color:var(--text);border:1px solid var(--ring);border-radius:999px;padding:3px 11px}
+.center .v i{font-style:normal;color:var(--blue2)}
+.center p{margin-top:14px;font-size:14px;line-height:1.5;color:var(--muted)}
+.lbl{position:absolute;font-size:14px;white-space:nowrap;transform:translateY(-50%)}
+.win{color:var(--blue2)} .no{color:var(--bad)} .note{color:var(--dim)}
+</style></head>
+<body><div id="root">
+<svg id="d" width="1200" height="780"></svg>
+<div class="center"><h2>Your agent</h2><div class="v"><b>v1</b><i>→</i><b>v2</b></div>
+<p>Each round starts from real runs and ends with a version proven on cases it never saw.</p></div>
+<div id="stops"></div>
+</div>
+<script>
+document.body.className=new URLSearchParams(location.search).get('theme')||'dark';
+const CX=600, CY=380, R=218, rad=d=>d*Math.PI/180, pt=(a,r=R)=>[CX+r*Math.cos(rad(a)), CY+r*Math.sin(rad(a))];
+const S=[
+ {a:234, side:'left hi',  icon:'activity',     t:'Trace',            p:'Every real run of your agent, recorded step by step.'},
+ {a:306, side:'right hi', icon:'scale',        t:'Evaluate',         p:'Each run scored, with the reason it passed or failed.'},
+ {a:18,  side:'right', icon:'flask-conical',t:'Simulate',         p:'The failures replayed with simulated users in a test world.'},
+ {a:90,  side:'bottom',icon:'sparkles',     t:'Improve',          p:'Epoch tries fixes as full runs and keeps the winner.'},
+ {a:162, side:'left',  icon:'shield-check', t:'Ship and protect', p:'You approve the change. The gateway guards it in production.'},
+];
+const cs=getComputedStyle(document.body), C=n=>cs.getPropertyValue('--'+n).trim();
+let svg='', html='';
+svg+=`<circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${C('ringfaint')}" stroke-width="1"/>`;
+for(let a=0;a<360;a+=6){const [x1,y1]=pt(a,R+5),[x2,y2]=pt(a,R+(a%30?9:13)); svg+=`<path d="M${x1} ${y1}L${x2} ${y2}" stroke="${C('ringfaint')}" stroke-width="1"/>`;}
+const arc=(a1,a2,r=R)=>{const [x1,y1]=pt(a1,r),[x2,y2]=pt(a2,r); return `M${x1} ${y1} A${r} ${r} 0 0 1 ${x2} ${y2}`;};
+const chev=(a,col)=>{const [x,y]=pt(a); const t=rad(a+90); const dx=Math.cos(t), dy=Math.sin(t), nx=-dy, ny=dx, s=6;
+  return `<path d="M${x-dx*s+nx*s} ${y-dy*s+ny*s} L${x} ${y} L${x-dx*s-nx*s} ${y-dy*s-ny*s}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;};
+const seq=[234,306,378,450]; // Trace->Eval->Sim->Improve (unwrapped)
+for(let i=0;i<3;i++){svg+=`<path d="${arc(seq[i]+9,seq[i+1]-9)}" fill="none" stroke="${C('blue2')}" stroke-width="2.2" stroke-linecap="round"/>`+chev((seq[i]+seq[i+1])/2,C('blue2'));}
+// Improve -> Ship: only the winning trial reaches Ship, so this piece of the ring is drawn by the winner (below)
+// way back: Ship -> Trace, dashed
+svg+=`<path d="${arc(162+9,234-9)}" fill="none" stroke="${C('ring')}" stroke-width="1.6" stroke-dasharray="5 7" stroke-linecap="round"/>`+chev(198,C('ring'));
+const [ix,iy]=pt(90);
+// the winner continues along the ring to Ship; the other trials fan off below Improve
+svg+=`<path d="${arc(90+9,162-9)}" fill="none" stroke="${C('blue2')}" stroke-width="2.2" stroke-linecap="round"/>`+chev(126,C('blue2'));
+svg+=`<path d="M${ix+14} ${iy+18} C ${ix+40} ${iy+70}, ${ix+110} ${iy+92}, ${ix+170} ${iy+92}" fill="none" stroke="${C('bad')}" stroke-opacity=".85" stroke-width="1.4"/>
+      <path d="M${ix+168} ${iy+87}l10 10m0 -10l-10 10" stroke="${C('bad')}" stroke-width="1.7" stroke-linecap="round"/>
+      <path d="M${ix+20} ${iy+12} C ${ix+60} ${iy+40}, ${ix+150} ${iy+40}, ${ix+210} ${iy+30}" fill="none" stroke="${C('ring')}" stroke-width="1.3" stroke-dasharray="4 6"/>
+      <circle cx="${ix+213}" cy="${iy+30}" r="3.2" fill="${C('bg')}" stroke="${C('ring')}" stroke-width="1.3"/>`;
+const tag=(x,y,cls,txt)=>`<div class="lbl ${cls}" style="left:${x}px;top:${y}px">${txt}</div>`;
+html+=tag(ix+188, iy+92, 'no', 'a fix that breaks a passing case');
+html+=tag(ix+224, iy+30, 'note', 'a fix that did not help');
+{const [x,y]=pt(126,R+22); html+=tag(x-78,y+6,'win','the winning fix');}
+{const [x,y]=pt(198,R+26); html+=tag(x-200,y,'note','next round, on new runs');}
+// real users feed Trace
+const [tx,ty]=pt(234);
+svg+=`<path d="M${tx-270} ${ty-118} H ${tx-40} Q ${tx-4} ${ty-118} ${tx-2} ${ty-30}" fill="none" stroke="${C('ring')}" stroke-width="1.3" stroke-dasharray="4 6"/>
+      <path d="M${tx-8} ${ty-38} l6 8 l6 -8" fill="none" stroke="${C('ring')}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`;
+html+=tag(tx-270, ty-140, 'note', 'Real users and production traffic');
+document.getElementById('d').innerHTML=svg;
+html+=S.map(s=>{const [x,y]=pt(s.a); return `<div class="st ${s.side}" style="left:${x}px;top:${y}px"><div class="body"><img src="icons/${s.icon}.svg"></div><div class="txt"><h3>${s.t}</h3><p>${s.p}</p></div></div>`;}).join('');
+document.getElementById('stops').innerHTML=html;
+</script></body></html>

@@ -301,8 +301,11 @@ class TestEndUserDimensionSource:
             self._filter("user", "in", ["bob", "carol"])
         )
         assert "trace_id IN (" in sql
-        assert "SELECT id FROM tracer_enduser FINAL" in sql
+        assert "SELECT DISTINCT id AS end_user_id FROM tracer_enduser FINAL" in sql
         assert "_peerdb_is_deleted = 0 AND deleted = 0" in sql
+        # The old-ID dimension is expanded through the remap, like v2's.
+        assert "FROM end_user_id_remap AS remap_match FINAL" in sql
+        assert "end_users" not in sql
 
     def test_v2_in_targets_end_users_rmt(self):
         sql, _ = ClickHouseFilterBuilderV2(table="spans").translate(

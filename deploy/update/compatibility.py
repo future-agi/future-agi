@@ -264,7 +264,7 @@ def topology_profile(mode: str, profiles: Any) -> TopologyProfile:
     require(mode == "distributed" and selected <= {"workers", "observability", "peerdb", "all", "full"},
             ReasonCode.UNSUPPORTED_INSTALLATION)
     products = [("frontend", "frontend"), ("backend", "backend"), ("worker", "backend"),
-                ("worker-exact-aggregation", "backend"),
+                ("worker-exact-aggregation", "backend"), ("worker-sql-workbench", "backend"),
                 ("agentcc-gateway", "agentcc_gateway"), ("serving", "serving"),
                 ("code-executor", "code_executor"), ("fi-collector", "fi_collector"),
                 ("fi-property-catalog-consumer", "fi_collector"),
@@ -272,7 +272,8 @@ def topology_profile(mode: str, profiles: Any) -> TopologyProfile:
                 ("clickhouse-cdc-bootstrap", "backend"), ("peerdb-temporal-init", "backend"),
                 ("peerdb-init", "backend")]
     if selected & {"workers", "all", "full"}:
-        # Inherits queue-worker's profiles, unlike worker-exact-aggregation.
+        # Inherits queue-worker's profiles, unlike the always-on SQL and exact
+        # aggregation workers, which explicitly clear profiles in Compose.
         products.append(("worker-simulation-runner", "simulation_runner"))
         products.extend((service, "backend") for service in (
             "worker-default", "worker-tasks-s", "worker-tasks-l", "worker-tasks-xl",
@@ -676,14 +677,11 @@ def estimate_automatic_update(measurements: TransitionMeasurements, host_sizes: 
         migration_seconds, extra_disk = Fraction(0), Fraction(0)
         migration_data = measurements.migration_measurements
         if isinstance(migration_data, BootstrapEnvelopeMeasurement):
-            # A's sizes cannot bound a later migration's input after an earlier
-            # migration changed the same registered reference table.
-            touched_tables = set()
-            for scope in migration_data.migration_tables:
-                for table in scope["tables"]:
-                    key = (table["engine"], table["table"])
-                    require(key not in touched_tables, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
-                    touched_tables.add(key)
+            # This measures the whole ordered bootstrap, including repeated
+            # touches and intermediate growth. Its validated tables are the exact
+            # scope union, with one pre-bootstrap reference per physical table.
+            # Repeated scopes share that bound; adding/maximizing references would
+            # admit an unmeasured input. Charge the whole envelope once below.
             for table in migration_data.tables:
                 actual = sizes.get((table.engine, table.table))
                 require(actual is not None, ReasonCode.RESTORE_CAPACITY_UNKNOWN)

@@ -42,6 +42,7 @@ from tracer.models.trace_error_analysis import (
     TraceErrorDetail,
     TraceErrorGroup,
 )
+from tracer.models.trace_grouping import TraceGroupingIssueState
 from tracer.models.trace_investigation import (
     TraceInvestigationAttributionEvidence,
     TraceInvestigationFinding,
@@ -683,7 +684,7 @@ def get_cluster_detail(
     """
     qs = (
         TraceErrorGroup.objects.filter(deleted=False, target_type="error_feed")
-        .select_related("project", "assignee")
+        .select_related("project", "assignee", "issue_state")
         .exclude(issue_state__dirty=True)
         .exclude(issue_state__retired=True)
     )
@@ -692,6 +693,11 @@ def get_cluster_detail(
     cluster = qs.filter(cluster_id=cluster_id).first()
     if not cluster:
         return None
+    # Only grouping writes issue state; eval and older scan issues have none.
+    try:
+        stored = cluster.issue_state.mechanism
+    except TraceGroupingIssueState.DoesNotExist:
+        stored = {}
 
     cluster_pk = str(cluster.pk)
     trends_map = _fetch_trends_batch([cluster_pk])
@@ -787,6 +793,8 @@ def get_cluster_detail(
     return FeedDetailCore(
         row=row,
         description=cluster.combined_description,
+        fix_hypothesis=stored.get("fix_hypothesis"),
+        falsifier=stored.get("falsifier"),
         success_trace=success_trace,
         representative_trace=representative_trace,
         rca=rca,

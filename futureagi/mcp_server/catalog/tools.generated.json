@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "eab53ef46ca6961b4a6147138a739796af1532dd05ac91ec3c5714b38b315f42",
-  "tool_count": 107,
+  "tool_names_sha256": "03bf14677de766e8e34a0a290f1d550ccb660300de650b26986590188f662271",
+  "tool_count": 128,
   "tools": [
     {
       "name": "whoami",
@@ -197,7 +197,7 @@
           },
           "search": {
             "type": "string",
-            "default": {}
+            "default": "{}"
           },
           "page_size": {
             "type": "integer",
@@ -729,18 +729,40 @@
             "type": "string"
           },
           "eval_tags": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "use_cases": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "experiment_id": {
             "type": "string",
@@ -1549,11 +1571,22 @@
             "maximum": 100
           },
           "modality": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -4433,7 +4466,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -4467,7 +4500,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -4510,7 +4543,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -4544,7 +4577,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -4593,6 +4626,9 @@
             "type": "number",
             "maximum": 100.0,
             "minimum": 1.0
+          },
+          "sampling_policy": {
+            "$ref": "#/definitions/SamplingPolicy"
           },
           "last_run": {
             "anyOf": [
@@ -4657,30 +4693,6 @@
               }
             ]
           },
-          "start_time": {
-            "anyOf": [
-              {
-                "title": "Start time",
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "end_time": {
-            "anyOf": [
-              {
-                "title": "End time",
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "evals_details": {
             "anyOf": [
               {
@@ -4719,7 +4731,259 @@
           "sampling_rate",
           "run_type",
           "evals"
-        ]
+        ],
+        "definitions": {
+          "SamplingAttribute": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              }
+            }
+          },
+          "SamplingPolicy": {
+            "anyOf": [
+              {
+                "required": [
+                  "version",
+                  "sampling_unit",
+                  "window"
+                ],
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "maximum": 1,
+                    "minimum": 1
+                  },
+                  "sampling_unit": {
+                    "title": "Sampling unit",
+                    "type": "string",
+                    "enum": [
+                      "span",
+                      "trace",
+                      "session",
+                      "user",
+                      "attribute"
+                    ]
+                  },
+                  "unit_attribute": {
+                    "$ref": "#/definitions/SamplingAttribute"
+                  },
+                  "missing_id": {
+                    "title": "Missing id",
+                    "type": "string",
+                    "enum": [
+                      "exclude",
+                      "row"
+                    ],
+                    "default": "exclude"
+                  },
+                  "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                      "closed",
+                      "live"
+                    ],
+                    "default": "closed"
+                  },
+                  "window": {
+                    "$ref": "#/definitions/SamplingWindow"
+                  },
+                  "strata": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingRule"
+                    }
+                  },
+                  "group_by": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingAttribute"
+                    }
+                  },
+                  "default": {
+                    "$ref": "#/definitions/SamplingRule"
+                  },
+                  "cell_quotas": {
+                    "title": "Cell quotas",
+                    "description": "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer",
+                      "maximum": 1000000,
+                      "minimum": 0
+                    }
+                  },
+                  "coordination": {
+                    "title": "Coordination",
+                    "description": "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+                    "type": "string",
+                    "enum": [
+                      "independent",
+                      "project"
+                    ]
+                  },
+                  "panel": {
+                    "title": "Panel",
+                    "description": "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "prn_start": {
+                    "title": "Prn start",
+                    "description": "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "SamplingPredicate": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "op": {
+                "title": "Op",
+                "type": "string",
+                "enum": [
+                  "in",
+                  "not_in",
+                  "exists",
+                  "missing",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "default": "in"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "description": "Any valid JSON value."
+                },
+                "maxItems": 100
+              }
+            }
+          },
+          "SamplingRule": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/SamplingPredicate"
+                }
+              },
+              "rate": {
+                "title": "Rate",
+                "description": "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                "type": "number",
+                "maximum": 100,
+                "minimum": 0
+              },
+              "target_n": {
+                "title": "Target n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "min_n": {
+                "title": "Min n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "max_n": {
+                "title": "Max n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "rare_below": {
+                "title": "Rare below",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              }
+            }
+          },
+          "SamplingWindow": {
+            "required": [
+              "start"
+            ],
+            "type": "object",
+            "properties": {
+              "start": {
+                "title": "Start",
+                "description": "Inclusive ISO 8601 UTC event time.",
+                "type": "string",
+                "minLength": 1
+              },
+              "end": {
+                "anyOf": [
+                  {
+                    "title": "End",
+                    "description": "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4738,13 +5002,12 @@
             "name",
             "filters",
             "sampling_rate",
+            "sampling_policy",
             "last_run",
             "spans_limit",
             "run_type",
             "row_type",
             "status",
-            "start_time",
-            "end_time",
             "evals_details",
             "evals",
             "failed_spans"
@@ -4765,6 +5028,9 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "sampling_policy": {
+            "$ref": "#/definitions/SamplingPolicy"
+          },
           "name": {
             "title": "Name",
             "type": "string",
@@ -4852,7 +5118,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -4886,7 +5152,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -4929,7 +5195,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -4963,7 +5229,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -5084,7 +5350,259 @@
             "format": "uuid"
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "definitions": {
+          "SamplingAttribute": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              }
+            }
+          },
+          "SamplingPolicy": {
+            "anyOf": [
+              {
+                "required": [
+                  "version",
+                  "sampling_unit",
+                  "window"
+                ],
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "maximum": 1,
+                    "minimum": 1
+                  },
+                  "sampling_unit": {
+                    "title": "Sampling unit",
+                    "type": "string",
+                    "enum": [
+                      "span",
+                      "trace",
+                      "session",
+                      "user",
+                      "attribute"
+                    ]
+                  },
+                  "unit_attribute": {
+                    "$ref": "#/definitions/SamplingAttribute"
+                  },
+                  "missing_id": {
+                    "title": "Missing id",
+                    "type": "string",
+                    "enum": [
+                      "exclude",
+                      "row"
+                    ],
+                    "default": "exclude"
+                  },
+                  "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                      "closed",
+                      "live"
+                    ],
+                    "default": "closed"
+                  },
+                  "window": {
+                    "$ref": "#/definitions/SamplingWindow"
+                  },
+                  "strata": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingRule"
+                    }
+                  },
+                  "group_by": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingAttribute"
+                    }
+                  },
+                  "default": {
+                    "$ref": "#/definitions/SamplingRule"
+                  },
+                  "cell_quotas": {
+                    "title": "Cell quotas",
+                    "description": "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer",
+                      "maximum": 1000000,
+                      "minimum": 0
+                    }
+                  },
+                  "coordination": {
+                    "title": "Coordination",
+                    "description": "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+                    "type": "string",
+                    "enum": [
+                      "independent",
+                      "project"
+                    ]
+                  },
+                  "panel": {
+                    "title": "Panel",
+                    "description": "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "prn_start": {
+                    "title": "Prn start",
+                    "description": "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "SamplingPredicate": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "op": {
+                "title": "Op",
+                "type": "string",
+                "enum": [
+                  "in",
+                  "not_in",
+                  "exists",
+                  "missing",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "default": "in"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "description": "Any valid JSON value."
+                },
+                "maxItems": 100
+              }
+            }
+          },
+          "SamplingRule": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/SamplingPredicate"
+                }
+              },
+              "rate": {
+                "title": "Rate",
+                "description": "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                "type": "number",
+                "maximum": 100,
+                "minimum": 0
+              },
+              "target_n": {
+                "title": "Target n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "min_n": {
+                "title": "Min n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "max_n": {
+                "title": "Max n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "rare_below": {
+                "title": "Rare below",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              }
+            }
+          },
+          "SamplingWindow": {
+            "required": [
+              "start"
+            ],
+            "type": "object",
+            "properties": {
+              "start": {
+                "title": "Start",
+                "description": "Inclusive ISO 8601 UTC event time.",
+                "type": "string",
+                "minLength": 1
+              },
+              "end": {
+                "anyOf": [
+                  {
+                    "title": "End",
+                    "description": "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5099,6 +5617,7 @@
           "path": [],
           "query": [],
           "body": [
+            "sampling_policy",
             "name",
             "filters",
             "sampling_rate",
@@ -5310,7 +5829,7 @@
           },
           "project_ids": {
             "type": "string",
-            "default": []
+            "default": ""
           },
           "agent_definition_id": {
             "type": "string",
@@ -5332,17 +5851,46 @@
           "category": {
             "type": "string",
             "enum": [
+              "",
               "system_metric",
               "eval_metric",
               "annotation_metric",
               "custom_attribute",
-              "custom_column"
+              "custom_column",
+              "derived_metric",
+              "metric"
             ],
             "default": ""
+          },
+          "context": {
+            "type": "string",
+            "enum": [
+              "sessions",
+              "spans",
+              "traces",
+              "users",
+              "task_sessions",
+              "task_spans",
+              "task_traces",
+              "task",
+              "tasks"
+            ],
+            "description": "Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled."
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "span",
+              "trace",
+              "conversation",
+              "user"
+            ],
+            "description": "Filter by the active definition's source grain, before projection."
           },
           "role": {
             "type": "string",
             "enum": [
+              "",
               "metric",
               "dimension"
             ],
@@ -5351,6 +5899,7 @@
           "source": {
             "type": "string",
             "enum": [
+              "",
               "traces",
               "spans",
               "sessions",
@@ -5404,6 +5953,8 @@
             "exclude_custom_attributes",
             "search",
             "category",
+            "context",
+            "level",
             "role",
             "source",
             "page",
@@ -5489,28 +6040,64 @@
             "type": "string"
           },
           "project_id": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "uuid"
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "triggered",
-                "healthy"
-              ]
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "triggered",
+                  "healthy"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "triggered",
+                    "healthy"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "metric_type": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sort_by": {
             "type": "string",
@@ -6038,18 +6625,40 @@
             "maximum": 100
           },
           "status": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_type": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "assigned_to": {
             "type": "string"
@@ -7061,6 +7670,100 @@
                 ]
               },
               {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "voice",
+                    "text"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "github",
+                  "archive",
+                  "livekit",
+                  "vapi",
+                  "retell",
+                  "bland",
+                  "eleven_labs",
+                  "phone"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "github",
+                    "archive",
+                    "livekit",
+                    "vapi",
+                    "retell",
+                    "bland",
+                    "eleven_labs",
+                    "phone"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environments": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "with",
+                  "without"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "with",
+                    "without"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observe": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "linked",
+                  "not_linked"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "linked",
+                    "not_linked"
+                  ]
+                }
+              },
+              {
                 "type": "null"
               }
             ]
@@ -7103,6 +7806,9 @@
           "query": [
             "search",
             "agent_type",
+            "source",
+            "environments",
+            "observe",
             "agent_definition_id",
             "page",
             "limit"
@@ -7856,6 +8562,18 @@
             "title": "Observability enabled",
             "type": "boolean"
           },
+          "production_project_id": {
+            "anyOf": [
+              {
+                "title": "Production project id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "agent_name": {
             "title": "Agent name",
             "type": "string",
@@ -8127,6 +8845,7 @@
           "query": [],
           "body": [
             "observability_enabled",
+            "production_project_id",
             "agent_name",
             "agent_type",
             "description",
@@ -8817,6 +9536,7 @@
           "simulation_type": {
             "type": "string",
             "enum": [
+              "",
               "agent_definition",
               "prompt"
             ],
@@ -9053,7 +9773,7 @@
                   "properties": {
                     "column_id": {
                       "type": "string",
-                      "description": "Column or attribute id to filter on."
+                      "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                     },
                     "property_id": {
                       "type": "string",
@@ -9087,7 +9807,7 @@
                         },
                         "col_type": {
                           "type": "string",
-                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                         },
                         "attribute_value_types": {
                           "type": "array",
@@ -9205,6 +9925,1090 @@
       "source": {
         "operationId": "simulate_run-tests_create_create"
       }
+    },
+    {
+      "name": "get_debug_failures",
+      "description": "Return the Debug failures diagnosis of a finished run (test execution), or its progress while it runs.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "test_execution_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "test_execution_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/test-executions/{test_execution_id}/debug-analysis/",
+        "parameters": {
+          "path": [
+            "test_execution_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_test_execution_debug_analysis_retrieve"
+      }
+    },
+    {
+      "name": "run_debug_failures",
+      "description": "Start Debug failures on a finished run (test execution), one analysis job per call. It may incur usage charges. A run that has not finished is refused; poll get_debug_failures for the diagnosis.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "test_execution_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "test_execution_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/test-executions/{test_execution_id}/debug-analysis/",
+        "parameters": {
+          "path": [
+            "test_execution_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_test_execution_debug_analysis_create"
+      }
+    },
+    {
+      "name": "list_evidence_imports",
+      "description": "List the evidence imports of an environment that a person can still finish, newest first.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/evidence-imports/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_list_evidence_imports"
+      }
+    },
+    {
+      "name": "create_evidence_import",
+      "description": "Import evidence for an environment's tests from Observe sessions or calls, dataset rows, or transcripts. Returns what each case holds and lacks. Draft its cases with draft_evidence_import.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source_kind": {
+            "title": "Source kind",
+            "type": "string",
+            "enum": [
+              "session",
+              "call",
+              "trace",
+              "transcript",
+              "dataset"
+            ]
+          },
+          "project_id": {
+            "title": "Project id",
+            "description": "Session, call and trace imports: the Observe project.",
+            "type": "string",
+            "format": "uuid"
+          },
+          "ids": {
+            "description": "Session, call, trace and dataset imports: session ids, the trace ids of calls or traces, or row ids, in the order picked.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 20,
+            "minItems": 1
+          },
+          "dataset_id": {
+            "title": "Dataset id",
+            "description": "Dataset imports: the dataset.",
+            "type": "string",
+            "format": "uuid"
+          },
+          "columns": {
+            "$ref": "#/definitions/EvidenceDatasetColumns"
+          },
+          "transcripts": {
+            "description": "Transcript imports: one case each, in this order.",
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/EvidenceTranscriptInput"
+            },
+            "maxItems": 20,
+            "minItems": 1
+          },
+          "production": {
+            "title": "Production",
+            "description": "Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence.",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source_kind"
+        ],
+        "definitions": {
+          "EvidenceDatasetColumns": {
+            "description": "Dataset imports: the columns to read.",
+            "required": [
+              "conversation"
+            ],
+            "type": "object",
+            "properties": {
+              "conversation": {
+                "title": "Conversation",
+                "description": "The conversation: chat messages as JSON, or lines that start \"User:\" or \"Agent:\".",
+                "type": "string",
+                "format": "uuid"
+              },
+              "labels": {
+                "description": "Columns read as the row's labels.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "default": [],
+                "maxItems": 10
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "title": "Expected",
+                    "description": "The column that says what should happen.",
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "EvidenceTranscriptInput": {
+            "required": [
+              "name",
+              "format",
+              "text"
+            ],
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "description": "What the person calls it, such as the file's name; redacted before it is stored.",
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              "format": {
+                "title": "Format",
+                "description": "json: a list of {role, content} messages, or {\"messages\": [...]}. text: lines that start \"User:\" or \"Agent:\". csv: a header with a role column and a text column.",
+                "type": "string",
+                "enum": [
+                  "json",
+                  "text",
+                  "csv"
+                ]
+              },
+              "text": {
+                "title": "Text",
+                "description": "The transcript as pasted or uploaded.",
+                "type": "string",
+                "maxLength": 500000,
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/evidence-imports/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "source_kind",
+            "project_id",
+            "ids",
+            "dataset_id",
+            "columns",
+            "transcripts",
+            "production"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_evidence_imports"
+      }
+    },
+    {
+      "name": "get_evidence_import",
+      "description": "Return one evidence import and its cases, read again from their sources, to review the drafted scenarios.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "import_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "import_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/",
+        "parameters": {
+          "path": [
+            "id",
+            "import_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_evidence_import"
+      }
+    },
+    {
+      "name": "draft_evidence_import",
+      "description": "Ask the environment's builder to draft a scenario for each waiting case of an evidence import. The builder calls models, so it may incur usage charges. Poll get_evidence_import to review the drafts.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "import_id": {
+            "type": "string"
+          },
+          "case_ids": {
+            "description": "The import's waiting cases the environment's builder drafts.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 20,
+            "minItems": 1
+          },
+          "shows": {
+            "title": "Shows",
+            "description": "What the person says each case records, by case id.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "failure",
+                "success",
+                "partial"
+              ]
+            },
+            "default": {}
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "import_id",
+          "case_ids"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/",
+        "parameters": {
+          "path": [
+            "id",
+            "import_id"
+          ],
+          "query": [],
+          "body": [
+            "case_ids",
+            "shows"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_evidence-imports_draft_evidence_cases"
+      }
+    },
+    {
+      "name": "add_evidence_import_cases",
+      "description": "Add the reviewed, drafted cases of an evidence import to the environment's suite. Reuse the same idempotency_key to repeat a call safely.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "import_id": {
+            "type": "string"
+          },
+          "case_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 20,
+            "minItems": 1
+          },
+          "expected_drafts": {
+            "$ref": "#/definitions/EvidenceExpectedDrafts"
+          },
+          "idempotency_key": {
+            "title": "Idempotency key",
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "import_id",
+          "case_ids",
+          "expected_drafts",
+          "idempotency_key"
+        ],
+        "definitions": {
+          "EvidenceDraftRef": {
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object",
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revision": {
+                "title": "Revision",
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "EvidenceExpectedDrafts": {
+            "description": "The unsaved changes the review saw (GET drafts); none means the suite is saved with the cases.",
+            "required": [
+              "environment",
+              "suite"
+            ],
+            "type": "object",
+            "properties": {
+              "environment": {
+                "$ref": "#/definitions/EvidenceDraftRef"
+              },
+              "suite": {
+                "$ref": "#/definitions/EvidenceDraftRef"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/",
+        "parameters": {
+          "path": [
+            "id",
+            "import_id"
+          ],
+          "query": [],
+          "body": [
+            "case_ids",
+            "expected_drafts",
+            "idempotency_key"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_evidence-imports_add_evidence_cases"
+      }
+    },
+    {
+      "name": "discard_evidence_import",
+      "description": "Discard an evidence import that was never added, with a transcript's stored text. Of an import with added cases, only the cases not added are discarded.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "import_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "import_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/",
+        "parameters": {
+          "path": [
+            "id",
+            "import_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_discard_evidence_import"
+      }
+    },
+    {
+      "name": "get_epoch_launch_options",
+      "description": "Return what an Epoch on a finished run starts with, the launch form's default for each limit, and why a launch would be refused now. Supply source_run_id, the run's test execution ID. Read it before launch_epoch.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source_run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "source_run_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/agent-fix-runs/launch-options/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "source_run_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_launch_options"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "list_epochs",
+      "description": "List the Epochs of one environment, newest first, with each Epoch's state and limits. Supply environment_id.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "environment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "environment_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/agent-fix-runs/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "environment_id",
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_list"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "get_epoch",
+      "description": "Return one Epoch, with its state and step, the limits it holds to, its candidates, and its result once it has ended.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/agent-fix-runs/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_read"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "launch_epoch",
+      "description": "Start an Epoch on a finished run. It spends credits up to budget_credits and calls models, so it may incur usage charges. Take the scenarios, surfaces, budget and time cap from get_epoch_launch_options; allowed_models, reply_latency_margin_pct, cost_margin_pct and cost_limit_usd are its model lock and limits. Poll get_epoch.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source_run_id": {
+            "title": "Source run id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "target_scenario_keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            },
+            "maxItems": 200,
+            "minItems": 1
+          },
+          "protected_scenario_keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            },
+            "default": [],
+            "maxItems": 200
+          },
+          "surfaces": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "prompt",
+                "tools",
+                "settings",
+                "code"
+              ]
+            },
+            "minItems": 1
+          },
+          "locked_paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 512,
+              "minLength": 1
+            },
+            "default": []
+          },
+          "budget_credits": {
+            "title": "Budget credits",
+            "type": "integer",
+            "maximum": 50000,
+            "minimum": 1
+          },
+          "max_minutes": {
+            "title": "Max minutes",
+            "type": "integer",
+            "maximum": 1440,
+            "minimum": 1
+          },
+          "allowed_models": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1
+            },
+            "maxItems": 50
+          },
+          "reply_latency_margin_pct": {
+            "title": "Reply latency margin pct",
+            "type": "integer",
+            "maximum": 1000,
+            "minimum": 0
+          },
+          "cost_margin_pct": {
+            "title": "Cost margin pct",
+            "type": "integer",
+            "maximum": 1000,
+            "minimum": 0
+          },
+          "cost_limit_usd": {
+            "anyOf": [
+              {
+                "title": "Cost limit usd",
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "source_run_id",
+          "target_scenario_keys",
+          "surfaces",
+          "budget_credits"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/agent-fix-runs/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "source_run_id",
+            "target_scenario_keys",
+            "protected_scenario_keys",
+            "surfaces",
+            "locked_paths",
+            "budget_credits",
+            "max_minutes",
+            "allowed_models",
+            "reply_latency_margin_pct",
+            "cost_margin_pct",
+            "cost_limit_usd"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_create"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "stop_epoch",
+      "description": "Stop a running Epoch. It ends as Stopped, and the environment does not change.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/agent-fix-runs/{id}/stop/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_stop"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "retry_epoch",
+      "description": "Start a failed Epoch again as a new Epoch with the same request. Check runs it finished are reused and not paid twice; the rest may incur usage charges. An Epoch can be retried once.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/agent-fix-runs/{id}/retry/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_retry"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "get_epoch_candidate_patch",
+      "description": "Return an Epoch candidate's change as a git patch on the base agent version, to apply by hand.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "candidate_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "candidate_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/",
+        "parameters": {
+          "path": [
+            "id",
+            "candidate_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_candidates_candidate_patch"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "make_epoch_candidate_default",
+      "description": "Make an Epoch candidate the environment's default agent version, so later runs use it. To ship a candidate that only its must-pass check refused, give override_reason.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "candidate_id": {
+            "type": "string"
+          },
+          "override_reason": {
+            "title": "Override reason",
+            "type": "string",
+            "default": "",
+            "maxLength": 2000
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "candidate_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/",
+        "parameters": {
+          "path": [
+            "id",
+            "candidate_id"
+          ],
+          "query": [],
+          "body": [
+            "override_reason"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_candidates_make_default"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "open_epoch_candidate_pull_request",
+      "description": "Open a pull request with an Epoch candidate's change on a GitHub agent's repository. It is opened once. To ship a candidate that only its must-pass check refused, give override_reason.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "candidate_id": {
+            "type": "string"
+          },
+          "override_reason": {
+            "title": "Override reason",
+            "type": "string",
+            "default": "",
+            "maxLength": 2000
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "candidate_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/",
+        "parameters": {
+          "path": [
+            "id",
+            "candidate_id"
+          ],
+          "query": [],
+          "body": [
+            "override_reason"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_candidates_pull_request"
+      },
+      "entitlement": "fix_my_agent"
     },
     {
       "name": "list_gateways",
@@ -10309,7 +12113,7 @@
               "properties": {
                 "column_id": {
                   "type": "string",
-                  "description": "Column or attribute id to filter on."
+                  "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                 },
                 "property_id": {
                   "type": "string",
@@ -10343,7 +12147,7 @@
                     },
                     "col_type": {
                       "type": "string",
-                      "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                     },
                     "attribute_value_types": {
                       "type": "array",
@@ -10432,7 +12236,8 @@
                   "eval_metric",
                   "annotation_metric",
                   "custom_attribute",
-                  "custom_column"
+                  "custom_column",
+                  "derived_metric"
                 ],
                 "default": "system_metric"
               },
@@ -10444,7 +12249,8 @@
                   "datasets",
                   "simulation",
                   "both",
-                  "all"
+                  "all",
+                  "derived_metrics"
                 ],
                 "default": "traces"
               },
@@ -10538,7 +12344,8 @@
                   "eval_metric",
                   "annotation_metric",
                   "custom_attribute",
-                  "custom_column"
+                  "custom_column",
+                  "derived_metric"
                 ]
               },
               "source": {
@@ -10549,7 +12356,8 @@
                   "datasets",
                   "simulation",
                   "both",
-                  "all"
+                  "all",
+                  "derived_metrics"
                 ],
                 "default": "traces"
               },
@@ -10593,6 +12401,11 @@
               "config_id": {
                 "title": "Config id",
                 "type": "string"
+              },
+              "derived_run_id": {
+                "title": "Derived run id",
+                "type": "string",
+                "format": "uuid"
               },
               "label_id": {
                 "title": "Label id",
@@ -10642,7 +12455,7 @@
                   "properties": {
                     "column_id": {
                       "type": "string",
-                      "description": "Column or attribute id to filter on."
+                      "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                     },
                     "property_id": {
                       "type": "string",
@@ -10676,7 +12489,7 @@
                         },
                         "col_type": {
                           "type": "string",
-                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                         },
                         "attribute_value_types": {
                           "type": "array",
@@ -10799,7 +12612,7 @@
           },
           "project_ids": {
             "type": "string",
-            "default": []
+            "default": ""
           },
           "agent_definition_id": {
             "type": "string",
@@ -10821,17 +12634,46 @@
           "category": {
             "type": "string",
             "enum": [
+              "",
               "system_metric",
               "eval_metric",
               "annotation_metric",
               "custom_attribute",
-              "custom_column"
+              "custom_column",
+              "derived_metric",
+              "metric"
             ],
             "default": ""
+          },
+          "context": {
+            "type": "string",
+            "enum": [
+              "sessions",
+              "spans",
+              "traces",
+              "users",
+              "task_sessions",
+              "task_spans",
+              "task_traces",
+              "task",
+              "tasks"
+            ],
+            "description": "Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled."
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "span",
+              "trace",
+              "conversation",
+              "user"
+            ],
+            "description": "Filter by the active definition's source grain, before projection."
           },
           "role": {
             "type": "string",
             "enum": [
+              "",
               "metric",
               "dimension"
             ],
@@ -10840,6 +12682,7 @@
           "source": {
             "type": "string",
             "enum": [
+              "",
               "traces",
               "spans",
               "sessions",
@@ -10893,6 +12736,8 @@
             "exclude_custom_attributes",
             "search",
             "category",
+            "context",
+            "level",
             "role",
             "source",
             "page",
@@ -11072,6 +12917,226 @@
       },
       "source": {
         "operationId": "usage_v2_usage-overview_list"
+      }
+    },
+    {
+      "name": "run_sql",
+      "description": "Start one read-only project-scoped ClickHouse SELECT or JOIN in a required time window (at most 31 days). Returns a personal job id; poll get_sql_result. No raw tables, settings, writes, external functions, or public result links.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "title": "Project id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string",
+            "maxLength": 32768,
+            "minLength": 1
+          },
+          "start": {
+            "title": "Start",
+            "type": "string",
+            "format": "date-time"
+          },
+          "end": {
+            "title": "End",
+            "type": "string",
+            "format": "date-time"
+          },
+          "reuse": {
+            "title": "Reuse",
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_id",
+          "sql",
+          "start",
+          "end"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/sql-query/run/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "project_id",
+            "sql",
+            "start",
+            "end",
+            "reuse"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_run"
+      }
+    },
+    {
+      "name": "get_sql_result",
+      "description": "Poll a SQL job owned by the caller. Defaults to 100 rows within a bounded byte page; pass result.next_offset as offset until has_more is false. Wide rows are marked previewed; use the authenticated REST download for full cells. Results expire after 24 hours; current project membership is required on every page.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/sql-query/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "project_id",
+            "offset",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_read"
+      }
+    },
+    {
+      "name": "cancel_sql",
+      "description": "Cancel a SQL job owned by the caller without changing project data.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project id",
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/sql-query/{id}/cancel/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "project_id"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_cancel"
+      }
+    },
+    {
+      "name": "get_sql_catalog",
+      "description": "List the stable scoped SQL datasets and columns available in a project.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/sql-query/catalog/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "project_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_catalog"
       }
     }
   ]

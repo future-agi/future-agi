@@ -215,6 +215,8 @@ class RcaSummarySerializer(serializers.Serializer):
 class FeedDetailCoreSerializer(serializers.Serializer):
     row = FeedListRowSerializer()
     description = serializers.CharField(allow_null=True)
+    fix_hypothesis = serializers.CharField(allow_null=True)
+    falsifier = serializers.CharField(allow_null=True)
     success_trace = TracePreviewSerializer(allow_null=True)
     representative_trace = TracePreviewSerializer(allow_null=True)
     rca = RcaSummarySerializer(allow_null=True, required=False)

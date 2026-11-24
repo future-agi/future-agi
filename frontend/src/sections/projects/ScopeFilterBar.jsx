@@ -137,7 +137,7 @@ export default function ScopeFilterBar({
             inputProps={{ "aria-label": "Search users", maxLength: 200 }}
             sx={{
               width: 200,
-              "& .MuiInputBase-root": { height: 28, fontSize: 13 },
+              "& .MuiInputBase-root": { height: 28, fontSize: 12 },
             }}
           />
         )}

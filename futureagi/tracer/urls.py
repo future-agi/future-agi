@@ -16,6 +16,7 @@ from tracer.views.charts import ChartsView
 from tracer.views.custom_eval_config import CustomEvalConfigView
 from tracer.views.dashboard import DashboardViewSet, DashboardWidgetViewSet
 from tracer.views.dataset import DatasetView
+from tracer.views.derived_metric import DerivedMetricRunViewSet, DerivedMetricViewSet
 from tracer.views.error_analysis import (
     TraceErrorAnalysisView,
     TraceErrorTaskView,
@@ -74,6 +75,7 @@ from tracer.views.shared_link import (
     resolve_shared_issue_trace,
     resolve_shared_link,
 )
+from tracer.views.sql_query import SavedSQLQueryViewSet, SQLQueryViewSet
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
 from tracer.views.trace_grouping import (
     AcknowledgeGroupingOutboxView,
@@ -107,6 +109,9 @@ from tracer.views.trace_severity import (
 
 router = DefaultRouter()
 
+router.register(r"sql-query", SQLQueryViewSet, basename="sql-query")
+router.register(r"saved-sql-query", SavedSQLQueryViewSet, basename="saved-sql-query")
+
 router.register(r"project", ProjectView, basename="project")
 router.register(r"project-version", ProjectVersionView, basename="project-version")
 router.register(r"trace", TraceView, basename="trace")
@@ -130,6 +135,10 @@ router.register(r"replay-session", ReplaySessionView, basename="replay-session")
 router.register(r"saved-views", SavedViewViewSet, basename="saved-view")
 router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
+router.register(r"derived-metrics", DerivedMetricViewSet, basename="derived-metric")
+router.register(
+    r"derived-metric-runs", DerivedMetricRunViewSet, basename="derived-metric-run"
+)
 
 urlpatterns = [
     path("alerts/", AlertView.as_view(), name="alerts"),
