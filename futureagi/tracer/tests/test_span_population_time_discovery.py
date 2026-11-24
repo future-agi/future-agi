@@ -567,8 +567,7 @@ def _engine_population_page(execute, subject, filters, **overrides):
         supports_bounded_speculative_reads = False
 
         def execute_ch_query(self, sql, params, **_kwargs):
-            rows = execute(sql, params)
-            return QueryResult(rows, len(rows), "clickhouse", 0)
+            return execute(sql, params, with_stats=True)
 
     options = {
         "builder": subject,
@@ -581,7 +580,8 @@ def _engine_population_page(execute, subject, filters, **overrides):
         "include_incomplete_rows": True,
         "bounded_continuation": True,
         "max_seed_attempts": 64,
-        "max_query_count": 128,
+        # Leave room under the 128-statement ceiling for physical density probes.
+        "max_query_count": 64,
     }
     options.update(overrides)
     return read_bounded_filter_page(**options)
@@ -650,10 +650,10 @@ def test_adaptive_population_batches_preserve_physical_ties_and_latest_winners(
     assert subject.recommended_filter_cursor_adaptive_seed_batch_size() == 200
     seed_limits = []
 
-    def record(sql, params):
+    def record(sql, params, **kwargs):
         if "filter_seed_limit" in params:
             seed_limits.append(params["filter_seed_limit"])
-        return execute(sql, params)
+        return execute(sql, params, **kwargs)
 
     first = _engine_population_page(record, subject, filters, page_size=2)
     assert first.complete and first.has_more

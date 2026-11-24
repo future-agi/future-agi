@@ -992,7 +992,8 @@ class DashboardMetricsCatalogQuerySerializer(StrictInputSerializer):
         allow_blank=True,
         default="",
     )
-    context = serializers.ChoiceField(
+    # DRF's metaclass pops declared fields, so Field.context stays intact.
+    context = serializers.ChoiceField(  # type: ignore[assignment]
         choices=(
             "sessions",
             "spans",

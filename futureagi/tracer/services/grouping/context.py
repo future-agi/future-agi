@@ -194,7 +194,7 @@ def build_claim_context(
                     organization_id=scope.organization_id,
                     project_id=scope.project_id,
                     pending=rows,
-                    candidates=candidates,
+                    candidates=candidates,  # type: ignore[arg-type]  # .values() rows are plain dicts
                     limit=limit,
                 )
             )
