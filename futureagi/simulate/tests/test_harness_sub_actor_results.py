@@ -172,8 +172,20 @@ _RUN4_RECEIPT = {
     "scenario_key": "live-manager-negotiates-discount",
     "status": "failed",
     "sub_goals": [
-        {"name": "crm_deal_lookup", "held": True, "reason": "", "judged": False, "verdict": "pass"},
-        {"name": "crm_discount_applied", "held": False, "reason": "not applied", "judged": False, "verdict": "fail"},
+        {
+            "name": "crm_deal_lookup",
+            "held": True,
+            "reason": "",
+            "judged": False,
+            "verdict": "pass",
+        },
+        {
+            "name": "crm_discount_applied",
+            "held": False,
+            "reason": "not applied",
+            "judged": False,
+            "verdict": "fail",
+        },
     ],
     "evaluations": [],
 }
@@ -184,10 +196,16 @@ def _proofs_on_the_run_s_versions(monkeypatch, proofs):
 
     from simulate.services import hosted_harness_ingestion as ingestion
 
-    rows = SimpleNamespace(values_list=lambda *a, **k: SimpleNamespace(first=lambda: proofs))
+    rows = SimpleNamespace(
+        values_list=lambda *a, **k: SimpleNamespace(first=lambda: proofs)
+    )
     manager = SimpleNamespace(filter=lambda **pair: rows)
-    monkeypatch.setattr(ingestion.HarnessSuiteValidation, "no_workspace_objects", manager)
-    return SimpleNamespace(suite_version_id="s", environment_version_id="e", agent_version_id="a")
+    monkeypatch.setattr(
+        ingestion.HarnessSuiteValidation, "no_workspace_objects", manager
+    )
+    return SimpleNamespace(
+        suite_version_id="s", environment_version_id="e", agent_version_id="a"
+    )
 
 
 def test_a_check_the_case_s_proof_never_verified_does_not_fail_the_agent(monkeypatch):
@@ -201,7 +219,9 @@ def test_a_check_the_case_s_proof_never_verified_does_not_fail_the_agent(monkeyp
     )
     from simulate.services.run_results_v3 import call_outcome, receipt_sub_goals
 
-    job = _proofs_on_the_run_s_versions(monkeypatch, {"live_manager_negotiates_discount": _RUN4_PROOF})
+    job = _proofs_on_the_run_s_versions(
+        monkeypatch, {"live_manager_negotiates_discount": _RUN4_PROOF}
+    )
     unverified = unverified_checks(job, _RUN4_RECEIPT["scenario_key"])
     assert unverified == ["crm_deal_lookup", "crm_discount_applied"]
 
@@ -218,10 +238,16 @@ def test_a_check_the_case_s_proof_never_verified_does_not_fail_the_agent(monkeyp
         UNVERIFIED_KEY: unverified,
         "harness_outcome_status": receipt_outcome_status(graded),
     }
-    applied = next(one for one in receipt_sub_goals(metadata) if one["name"] == "crm_discount_applied")
+    applied = next(
+        one
+        for one in receipt_sub_goals(metadata)
+        if one["name"] == "crm_discount_applied"
+    )
     assert (applied["passed"], applied["result"]) == (None, "unmeasured")
     assert "never verified" in applied["reason"]
-    call = CallExecution(status=CallExecution.CallStatus.COMPLETED, call_metadata=metadata)
+    call = CallExecution(
+        status=CallExecution.CallStatus.COMPLETED, call_metadata=metadata
+    )
     # The run lists it Not measured (the inconclusive outcome), never Failed.
     assert call_outcome(call, {}) == "inconclusive"
     # Fix my agent never takes it for a sub-goal the agent failed.
@@ -235,20 +261,29 @@ def test_a_verified_check_s_failure_still_fails_the_agent(monkeypatch):
     )
 
     proof = {**_RUN4_PROOF, "excused": ["crm_deal_lookup"]}
-    job = _proofs_on_the_run_s_versions(monkeypatch, {"live-manager-negotiates-discount": proof})
+    job = _proofs_on_the_run_s_versions(
+        monkeypatch, {"live-manager-negotiates-discount": proof}
+    )
     # Both failed: the lookup its proof never verified, the discount it did.
     both = {
         **_RUN4_RECEIPT,
-        "sub_goals": [{**one, "held": False, "verdict": "fail"} for one in _RUN4_RECEIPT["sub_goals"]],
+        "sub_goals": [
+            {**one, "held": False, "verdict": "fail"}
+            for one in _RUN4_RECEIPT["sub_goals"]
+        ],
     }
 
     graded = graded_receipt(both, unverified_checks(job, both["scenario_key"]))
 
     assert receipt_outcome_status(graded) == "failed"
-    assert [(one["name"], one["passed"]) for one in _receipt_evaluations(graded)] == [("crm_discount_applied", False)]
+    assert [(one["name"], one["passed"]) for one in _receipt_evaluations(graded)] == [
+        ("crm_discount_applied", False)
+    ]
 
 
-def test_without_a_proof_or_with_the_agent_s_own_one_the_checks_read_as_the_receipt_says(monkeypatch):
+def test_without_a_proof_or_with_the_agent_s_own_one_the_checks_read_as_the_receipt_says(
+    monkeypatch,
+):
     from simulate.services.harness_versioning.versions import OTHER_AGENTS
     from simulate.services.hosted_harness_ingestion import (
         graded_receipt,
@@ -256,8 +291,18 @@ def test_without_a_proof_or_with_the_agent_s_own_one_the_checks_read_as_the_rece
     )
 
     job = _proofs_on_the_run_s_versions(monkeypatch, {})
-    assert graded_receipt(_RUN4_RECEIPT, unverified_checks(job, _RUN4_RECEIPT["scenario_key"])) is _RUN4_RECEIPT
+    assert (
+        graded_receipt(
+            _RUN4_RECEIPT, unverified_checks(job, _RUN4_RECEIPT["scenario_key"])
+        )
+        is _RUN4_RECEIPT
+    )
     # Proved with the run's own agent version: that proof verified both checks.
-    proved = {**_RUN4_PROOF, OTHER_AGENTS: {"a": {"format": 2, "proved": True, "excused": []}}}
-    job = _proofs_on_the_run_s_versions(monkeypatch, {"live-manager-negotiates-discount": proved})
+    proved = {
+        **_RUN4_PROOF,
+        OTHER_AGENTS: {"a": {"format": 2, "proved": True, "excused": []}},
+    }
+    job = _proofs_on_the_run_s_versions(
+        monkeypatch, {"live-manager-negotiates-discount": proved}
+    )
     assert unverified_checks(job, _RUN4_RECEIPT["scenario_key"]) == []

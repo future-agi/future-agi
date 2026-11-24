@@ -962,7 +962,9 @@ def _apply_receipt_to_call(
         recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
     # Checks the case's proof never verified on these versions are graded unmeasured; the receipt stays as sealed.
-    unverified = unverified_checks(job, str(body.get("scenario_key") or allocation.scenario_key))
+    unverified = unverified_checks(
+        job, str(body.get("scenario_key") or allocation.scenario_key)
+    )
     if unverified:
         metadata[UNVERIFIED_KEY] = unverified
     else:
@@ -1373,9 +1375,15 @@ def graded_receipt(body: dict[str, Any], unverified: list[str]) -> dict[str, Any
 
 def graded_call_receipt(metadata: Any) -> Any:
     """A call's stored receipt as graded (`graded_receipt`), from the unverified checks kept beside it."""
-    receipt = metadata.get("hosted_harness_receipt") if isinstance(metadata, dict) else None
+    receipt = (
+        metadata.get("hosted_harness_receipt") if isinstance(metadata, dict) else None
+    )
     unverified = metadata.get(UNVERIFIED_KEY) if isinstance(metadata, dict) else None
-    return graded_receipt(receipt, unverified) if isinstance(receipt, dict) and unverified else receipt
+    return (
+        graded_receipt(receipt, unverified)
+        if isinstance(receipt, dict) and unverified
+        else receipt
+    )
 
 
 def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
