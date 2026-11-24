@@ -196,7 +196,9 @@ export default function ReviewChangesDrawer({
   const save = () =>
     (direct ? flow.onSave : flow.onSaveValidated)(name, {
       onSuccess: (data) => {
-        const notActive = data?.not_active?.length ?? 0;
+        // The server lists every scenario not Active; one kept as written runs, and has no reason.
+        const held = (data?.not_active ?? []).filter((one) => one.reason);
+        const notActive = held.length;
         enqueueSnackbar(notActive ? COPY.notActive(notActive) : COPY.saved, {
           variant: notActive ? "warning" : "success",
         });

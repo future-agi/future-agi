@@ -170,7 +170,11 @@ describe("ReviewChangesDrawer", () => {
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
     flow.onSaveValidated.mock.lastCall[1].onSuccess({
-      not_active: [{ scenario_key: "a" }],
+      // Kept as written has no reason: it isn't Active, but it runs.
+      not_active: [
+        { scenario_key: "a", reason: "not_validated" },
+        { scenario_key: "b", reason: null },
+      ],
     });
     expect(enqueueSnackbar).toHaveBeenCalledWith(
       "1 scenario won't run yet. Their reasons are on the Scenarios tab.",
