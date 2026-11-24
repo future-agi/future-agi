@@ -7,7 +7,6 @@ from simulate.views.agent_fix import (
     AgentFixRunViewSet,
 )
 from simulate.views.agent_fix_issue import AgentFixIssueJobViewSet
-from simulate.views.harness_scenario_tags import HarnessScenarioTagViewSet
 from simulate.views.agent_prompt_optimiser import AgentPromptOptimiserRunViewSet
 from simulate.views.call_transcript import (
     CallBranchAnalysisView,
@@ -22,6 +21,7 @@ from simulate.views.chat_simulation import (
     TestExecutionChatBatchView,
 )
 from simulate.views.debug_analysis import TestExecutionDebugAnalysisView
+from simulate.views.harness_scenario_tags import HarnessScenarioTagViewSet
 from simulate.views.preview_pagination import (
     RunTestPreviewExecutionsView,
     TestExecutionPreviewCallsView,

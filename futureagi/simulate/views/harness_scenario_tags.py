@@ -68,9 +68,7 @@ class HarnessScenarioTagViewSet(viewsets.ViewSet):
         environment = self._environment(request, environment_id)
         if environment is None:
             return self._not_found()
-        return Response(
-            {"tags": harness_scenario_tags.environment_tags(environment)}
-        )
+        return Response({"tags": harness_scenario_tags.environment_tags(environment)})
 
     @viewer_denied("change scenario tags")
     @validated_request(
