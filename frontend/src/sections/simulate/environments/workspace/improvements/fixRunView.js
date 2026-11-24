@@ -84,12 +84,10 @@ export function formatMinutes(total) {
 }
 
 // A fix's winner is graded by the platform's evals after the fix ends, and ships only
-// once they finish. The PR body says the same when they could not.
+// once they finish. When they could not, the verdict's caveats say so, as the PR does.
 export function gradingNote(fix) {
   if (fix.eval_grading === "pending")
     return "Platform evals are still scoring this candidate. You can ship it once they finish.";
-  if (fix.eval_grading === "incomplete")
-    return "Platform evals did not finish on this candidate, so their results are missing. You can still ship it.";
   return null;
 }
 
@@ -138,11 +136,6 @@ export const winnerOf = (fix) =>
 export const isShipped = (fix, candidate) =>
   !!candidate &&
   candidate.agent_version_id === fix.environment?.default_agent_version_id;
-
-const brokeText = (n) =>
-  n
-    ? `${n} must-pass ${n === 1 ? "scenario" : "scenarios"} broke.`
-    : "No must-pass scenario broke.";
 
 const triedText = (fix) => {
   const n = (fix.candidates || []).length;
@@ -209,12 +202,8 @@ export function headline(fix) {
     );
   }
   if (fix.state !== "ready" || !winner || !fix.plan) return endingText(fix);
-  const { verdict } = winner;
-  const broke = brokeText(verdict.must_pass_regressions.length);
-  if (verdict.held_back_pass_rate) {
-    return `Held-back pass rate ${rateChange(verdict.held_back_pass_rate)}. ${broke}`;
-  }
-  return `Target pass rate ${rateChange(verdict.target_pass_rate)}. ${broke}`;
+  // The server's words, as the pull request says them.
+  return winner.wording?.headline || null;
 }
 
 const rateCard = (id, label, rate, note) => ({
@@ -443,8 +432,8 @@ const rateLine = (rate, gain, tail = "") =>
       : `Not a clear gain${tail}.`;
 
 // One tier's result in plain words, from the verdict's own numbers. The engine's detail
-// (its statistics) is never shown.
-function tierLine(tier, verdict, plan, request) {
+// (its statistics) is never shown. The must-pass line is the server's (`wording`).
+function tierLine(tier, verdict, wording, request) {
   const passed = tier.status === "passed";
   if (tier.status === "pending")
     return "Runs only if this candidate is picked.";
@@ -461,17 +450,8 @@ function tierLine(tier, verdict, plan, request) {
         passed,
         " on scenarios the epoch never saw",
       );
-    case "must-pass": {
-      const broke = (verdict?.must_pass_regressions || []).length;
-      if (!passed)
-        return broke ? brokeText(broke) : "A must-pass scenario broke.";
-      const kept = plan?.protected
-        ? `, including the ${plan.protected} you protected`
-        : "";
-      return plan?.must_pass
-        ? `None of the ${plan.must_pass} must-pass scenarios broke${kept}.`
-        : "No must-pass scenario broke.";
-    }
+    case "must-pass":
+      return wording?.must_pass || "";
     case "repeats":
       return passed
         ? "Held up over the repeat runs."
@@ -508,7 +488,7 @@ export function describeChecks(
   tiers = [],
   request = null,
   verdict = null,
-  plan = null,
+  wording = null,
 ) {
   const failed = tiers.findIndex((t) => t.status === "failed");
   return tiers.map((t, i) => {
@@ -524,7 +504,7 @@ export function describeChecks(
     return {
       ...t,
       label: checkLabel(t.name, request),
-      detail: notRun ? "" : tierLine(t, verdict, plan, request),
+      detail: notRun ? "" : tierLine(t, verdict, wording, request),
       ...(t.status === "skipped" && !notRun && { unknown: "Unknown" }),
       notRun,
       ...(notRun && {
@@ -548,9 +528,9 @@ export function rejectionChecks(
   tiers = [],
   request = null,
   verdict = null,
-  plan = null,
+  wording = null,
 ) {
-  const described = describeChecks(tiers, request, verdict, plan);
+  const described = describeChecks(tiers, request, verdict, wording);
   const rejecting = described.findIndex((t) => t.status === "failed");
   if (rejecting < 0) return described;
   return [described[rejecting], ...described.filter((_, i) => i !== rejecting)];
@@ -645,7 +625,12 @@ export function noSafeNumbers(fix) {
       return {
         attempt: t.attempt,
         label: checkLabel(t.check.name, fix.request),
-        detail: tierLine(t.check, candidate?.verdict, fix.plan, fix.request),
+        detail: tierLine(
+          t.check,
+          candidate?.verdict,
+          candidate?.wording,
+          fix.request,
+        ),
       };
     }),
   };
@@ -716,7 +701,7 @@ function candidateResult(c, group, fix, live) {
     };
   }
   return {
-    result: tierLine(failedTierOf(c), c.verdict, fix.plan, fix.request),
+    result: tierLine(failedTierOf(c), c.verdict, c.wording, fix.request),
     broke: false,
   };
 }
@@ -734,7 +719,10 @@ export function candidateGroups(fix) {
       {
         id: c.id,
         attempt: c.attempt,
-        tried: c.summary || "",
+        // What its patch changes, from the server; the engine's note on its last
+        // round is not the whole change.
+        changes: c.wording?.changes || "",
+        notes: c.summary || "",
         // The candidate's own check run, for its Open run.
         run: c.check_runs?.[0] || null,
         target: Array.isArray(target)

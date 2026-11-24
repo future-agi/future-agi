@@ -105,7 +105,7 @@ export default function CandidatesTable({ fix }) {
         <TableHead>
           <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
             <TableCell>Candidate</TableCell>
-            <TableCell>What it tried</TableCell>
+            <TableCell>What it changes</TableCell>
             <Tooltip
               arrow
               describeChild
@@ -183,12 +183,22 @@ export default function CandidatesTable({ fix }) {
                       </Typography>
                     </TableCell>
                     <TableCell sx={{ maxWidth: 360 }}>
-                      <Tooltip arrow title={row.tried} enterDelay={400}>
+                      {/* What its patch changes; the engine's own note on its
+                          last round reads on hover, labelled as such. */}
+                      <Tooltip
+                        arrow
+                        title={
+                          row.notes
+                            ? `Notes from Epoch on its last change: ${row.notes}`
+                            : ""
+                        }
+                        enterDelay={400}
+                      >
                         <Typography
                           noWrap
                           sx={{ typography: "s2", color: "text.secondary" }}
                         >
-                          {row.tried || "—"}
+                          {row.changes || "—"}
                         </Typography>
                       </Tooltip>
                     </TableCell>

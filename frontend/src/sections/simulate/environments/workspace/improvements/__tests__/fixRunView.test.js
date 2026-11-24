@@ -94,13 +94,39 @@ describe("labels and identity", () => {
 });
 
 describe("headline", () => {
-  it("leads with the held-back set, else the targets", () => {
+  it("is the server's words for the winner, never composed here", () => {
     expect(headline(byId("fix-ready-archive"))).toBe(
-      "Held-back pass rate 17% → 83%. 1 must-pass scenario broke.",
+      "Held-back pass rate 17% → 83%. No must-pass scenario broke (1 moved within normal noise).",
     );
     expect(headline(byId("fix-ready-no-held"))).toBe(
       "Target pass rate 33% → 100%. No must-pass scenario broke.",
     );
+    const fix = byId("fix-ready-archive");
+    const winner = winnerOf(fix);
+    winner.wording = { ...winner.wording, headline: "Said by the server." };
+    expect(headline(fix)).toBe("Said by the server.");
+  });
+
+  it("reads the must-pass check and each candidate's change from the server", () => {
+    const fix = byId("fix-ready-archive");
+    const winner = winnerOf(fix);
+    winner.wording = {
+      ...winner.wording,
+      must_pass: "The server's must-pass line.",
+      changes: "The server's change line.",
+    };
+    const mustPass = describeChecks(
+      winner.verdict.tiers,
+      fix.request,
+      winner.verdict,
+      winner.wording,
+    ).find((t) => t.name === "must-pass");
+    expect(mustPass.detail).toBe("The server's must-pass line.");
+    const [row] = candidateGroups(fix)[0].rows;
+    expect(row).toMatchObject({
+      changes: "The server's change line.",
+      notes: winner.summary,
+    });
   });
 
   it("says why every other ending ended and what to do next, never the engine's summary", () => {

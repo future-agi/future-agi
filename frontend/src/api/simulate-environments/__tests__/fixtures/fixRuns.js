@@ -77,6 +77,17 @@ const candidate = (fixId, attempt, outcome, extra = {}) => ({
   ],
   pull_request_url: "",
   created_at: `2026-10-29T08:${String(10 + attempt).padStart(2, "0")}:05Z`,
+  // The server's words for it, as the pull request says them; never composed here.
+  wording: {
+    headline:
+      outcome === "rejected"
+        ? "Target pass rate 0% → 0%. No must-pass scenario broke."
+        : "Held-back pass rate 17% → 83%. No must-pass scenario broke.",
+    must_pass:
+      outcome === "rejected" ? "" : "None of the 9 must-pass scenarios broke.",
+    changes: "Changes instructions.md: 3 lines added, 1 removed.",
+    caveats: [],
+  },
   ...extra,
 });
 
@@ -156,6 +167,16 @@ const finishedCandidates = (id) => [
       ...candidate(id, 3, "winner").verdict,
       must_pass_regressions: ["on-time-cancel"],
       must_pass_within_noise: ["refund-window"],
+    },
+    wording: {
+      ...candidate(id, 3, "winner").wording,
+      headline:
+        "Held-back pass rate 17% → 83%. No must-pass scenario broke (1 moved within normal noise).",
+      must_pass:
+        "None of the 9 must-pass scenarios broke (1 moved within normal noise).",
+      caveats: [
+        "Must-pass case “refund-window” passed less often, within normal noise, so it was not counted.",
+      ],
     },
   }),
 ];
@@ -251,6 +272,10 @@ export const FIX_RUN_FIXTURES = [
     report: { ending: "ready", summary: "Proven on the targets only." },
     candidates: finishedCandidates("fix-ready-no-held").map((c) => ({
       ...c,
+      wording: {
+        ...c.wording,
+        headline: "Target pass rate 33% → 100%. No must-pass scenario broke.",
+      },
       verdict: {
         ...c.verdict,
         held_back_pass_rate: null,

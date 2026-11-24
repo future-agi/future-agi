@@ -217,11 +217,13 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   {checksLine(v.tiers)}
                 </Typography>
               </Box>
-              {describeChecks(v.tiers, fix.request, v, fix.plan).map((t, i) => (
-                <Box key={t.name} sx={rowSx(i + 1)}>
-                  <CheckRows check={t} />
-                </Box>
-              ))}
+              {describeChecks(v.tiers, fix.request, v, winner.wording).map(
+                (t, i) => (
+                  <Box key={t.name} sx={rowSx(i + 1)}>
+                    <CheckRows check={t} />
+                  </Box>
+                ),
+              )}
             </Box>
           </Box>
         )}
@@ -243,7 +245,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                       c.verdict.tiers,
                       fix.request,
                       c.verdict,
-                      fix.plan,
+                      c.wording,
                     ).map((t) => (
                       <CheckRows key={t.name} check={t} sx={{ mt: 0.25 }} />
                     ))

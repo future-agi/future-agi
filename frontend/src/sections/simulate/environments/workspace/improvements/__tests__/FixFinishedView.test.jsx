@@ -149,14 +149,34 @@ describe("FixVerdict", () => {
     expect(screen.queryByText("Limited validation")).toBeNull();
   });
 
-  it("lists must-pass breaks, noting what was within noise", () => {
-    renderUi(<FixVerdict fix={fixOf("fix-ready-archive")} />);
-    const breaks = within(screen.getByTestId("must-pass-breaks"));
-    expect(breaks.getByText("on-time-cancel")).toBeInTheDocument();
-    expect(breaks.getByText(/refund-window/)).toBeInTheDocument();
+  it("shows the server's headline and caveats as written", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.wording = {
+      ...winner.wording,
+      headline: "Held-back pass rate 17% → 83%. Said by the server.",
+      caveats: [
+        "Platform evals did not finish on this candidate, so their results are missing. Review it closely.",
+        "A second caveat.",
+      ],
+    };
+    renderUi(<FixVerdict fix={fix} />);
     expect(
-      breaks.getByText(/within normal noise, not counted/),
+      screen.getByText("Held-back pass rate 17% → 83%. Said by the server."),
     ).toBeInTheDocument();
+    const caveats = within(screen.getByTestId("verdict-caveats"));
+    winner.wording.caveats.forEach((caveat) =>
+      expect(caveats.getByText(caveat)).toBeInTheDocument(),
+    );
+  });
+
+  it("shows no caveats when the server gives none", () => {
+    const fix = fixOf("fix-ready-archive");
+    fix.candidates.forEach((c) => {
+      c.wording = { ...c.wording, caveats: [] };
+    });
+    renderUi(<FixVerdict fix={fix} />);
+    expect(screen.queryByTestId("verdict-caveats")).toBeNull();
   });
 
   it("marks a check the fix could not measure as Unknown, with its own icon", () => {
@@ -924,16 +944,25 @@ describe("Ship, while the evals grade the winner", () => {
     );
   });
 
-  it("ships a trial the evals could not finish grading, and says so", async () => {
+  it("ships a trial the evals could not finish grading; the verdict's caveat says so", async () => {
+    const said =
+      "Platform evals did not finish on this candidate, so their results are missing. Review it closely.";
     updateFixtureFixRun("fix-ready-archive", (f) => ({
       ...f,
       eval_grading: "incomplete",
+      candidates: f.candidates.map((c) =>
+        c.outcome === "winner"
+          ? { ...c, wording: { ...c.wording, caveats: [said] } }
+          : c,
+      ),
     }));
     renderPage("fix-ready-archive");
     expect(await shipButton()).toBeEnabled();
-    expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
-      "Platform evals did not finish on this candidate, so their results are missing. You can still ship it.",
-    );
+    // Said once, in the words the pull request uses.
+    expect(screen.queryByTestId("ship-grading-note")).toBeNull();
+    expect(
+      within(screen.getByTestId("verdict-caveats")).getByText(said),
+    ).toBeInTheDocument();
   });
 
   it("says nothing once grading is done", async () => {

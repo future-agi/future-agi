@@ -70,14 +70,14 @@ describe("FixRunningView", () => {
 });
 
 describe("TrialsTable", () => {
-  it("lists trials with what they tried, status, pass rate and its change", () => {
+  it("lists trials with what their patch changes, status, pass rate and its change", () => {
     renderView(byId("fix-search"));
     const row = within(screen.getByTestId("trial-1"));
+    // The server's change line, never the engine's note on its last round.
     expect(
-      row.getByText(
-        "Tried: Escalate refused late cancellations to the front desk.",
-      ),
+      row.getByText("Changes instructions.md: 3 lines added, 1 removed."),
     ).toBeInTheDocument();
+    expect(row.queryByText(/Escalate refused late cancellations/)).toBeNull();
     expect(row.getByText("Rejected")).toBeInTheDocument();
     expect(row.getByText("0%")).toBeInTheDocument();
     expect(

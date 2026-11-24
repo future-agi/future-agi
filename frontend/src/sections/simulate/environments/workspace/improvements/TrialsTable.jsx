@@ -1,7 +1,7 @@
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import { useLocation } from "react-router-dom";
-import { Box, Link, Stack, Typography } from "@mui/material";
+import { Box, Link, Stack, Tooltip, Typography } from "@mui/material";
 
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import { RouterLink } from "src/routes/components";
@@ -47,7 +47,7 @@ function PassCell({ rate }) {
 }
 PassCell.propTypes = { rate: PropTypes.arrayOf(PropTypes.number) };
 
-// The design's trials table, contract columns only: what each trial tried,
+// The design's trials table, contract columns only: what each trial changes,
 // how it ended, and its pass rate on the target scenarios.
 export default function TrialsTable({ fix }) {
   const location = useLocation();
@@ -121,12 +121,24 @@ export default function TrialsTable({ fix }) {
                 <Typography
                   sx={{ typography: "s2", fontWeight: 600 }}
                 >{`Candidate ${c.attempt}`}</Typography>
-                <Typography
-                  noWrap
-                  sx={{ typography: "s3", color: "text.subtitle" }}
+                {/* What its patch changes, in the server's words; the engine's
+                    note on its last round reads on hover, labelled as such. */}
+                <Tooltip
+                  arrow
+                  title={
+                    c.summary
+                      ? `Notes from Epoch on its last change: ${c.summary}`
+                      : ""
+                  }
+                  enterDelay={400}
                 >
-                  {`Tried: ${c.summary}`}
-                </Typography>
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.subtitle" }}
+                  >
+                    {c.wording?.changes || "—"}
+                  </Typography>
+                </Tooltip>
               </Box>
             </Stack>
             {live ? (
