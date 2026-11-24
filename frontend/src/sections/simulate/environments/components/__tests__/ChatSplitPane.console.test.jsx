@@ -162,6 +162,35 @@ describe("ChatSplitPane with a long builder conversation", () => {
     },
   );
 
+  it("keeps the reader's place when older steps load above it", () => {
+    const start = (oldest) => ({
+      id: "older-steps",
+      role: "history",
+      oldest,
+      hasOlder: true,
+    });
+    const older = {
+      id: "b-old",
+      role: "builder",
+      steps: [{ id: "s-old", kind: "error", text: "older error" }],
+    };
+    const { rerender } = render(renderSplit([start(201), ...makeTurns(4)]));
+    const list = screen.getByTestId("builder-console-list");
+    list.scrollTop = 40;
+    // The older step adds 300px above everything else.
+    const rect = vi
+      .spyOn(window.HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(() => ({
+        top: screen.queryByText("older error")
+          ? 300 - (list.scrollTop - 40)
+          : 0,
+        bottom: 500,
+      }));
+    rerender(renderSplit([start(1), older, ...makeTurns(4)]));
+    rect.mockRestore();
+    expect(list.scrollTop).toBe(340);
+  });
+
   it("receives turns while collapsed and scrolls to the newest on reopen", () => {
     const { rerender } = render(renderSplit(makeTurns(TURN_COUNT), true));
     collapse();

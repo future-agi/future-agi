@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("src/utils/axios", () => ({
-  default: { post: vi.fn(() => Promise.resolve({ data: { ok: true } })) },
+  default: {
+    get: vi.fn(() => Promise.resolve({ data: { ok: true } })),
+    post: vi.fn(() => Promise.resolve({ data: { ok: true } })),
+  },
 }));
 
 import axios from "src/utils/axios";
 import {
   cancelHarnessJob,
   createHarnessJob,
+  getHarnessJob,
   harnessIdempotencyKey,
+  listOlderHarnessEvents,
   sendHarnessConversationMessage,
 } from "./harness";
 
@@ -77,6 +82,20 @@ describe("createHarnessJob", () => {
   });
 });
 
+describe("builder chat events", () => {
+  const job = `/simulate/api/harness-jobs/${JOB_ID}/`;
+
+  it("polls for the ones after a sequence and reads back the ones before", async () => {
+    await getHarnessJob(JOB_ID, { eventsAfter: 5 });
+    expect(axios.get).toHaveBeenLastCalledWith(job, {
+      params: { events_after: 5 },
+    });
+    await listOlderHarnessEvents(JOB_ID, 201);
+    expect(axios.get).toHaveBeenLastCalledWith(`${job}conversation/history/`, {
+      params: { kind: "events", before: 201 },
+    });
+  });
+});
 
 describe("sendHarnessConversationMessage", () => {
   beforeEach(() => {

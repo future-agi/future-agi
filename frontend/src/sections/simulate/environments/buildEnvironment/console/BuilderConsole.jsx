@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import { visuallyHidden } from "@mui/utils";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -10,6 +11,7 @@ import { CONSOLE_COPY } from "../build.constants";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ViewerLock from "../../components/ViewerLock";
 import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
+import KeepPlace from "./KeepPlace";
 import { JumpToLatestBar, StopOrbit } from "./BuilderProgress";
 import { Turn } from "./ConsoleTurn";
 // Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
@@ -99,6 +101,7 @@ export default function BuilderConsole({
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
   const { canEdit } = useSimulationAccess();
   const { draft, scaffolds } = state;
+  const theme = useTheme();
   const listRef = useRef(null);
   const lastScrollRef = useRef({ top: 0, height: 0 });
   const [following, setFollowing] = useState(true);
@@ -154,13 +157,18 @@ export default function BuilderConsole({
   // Sending from any path (composer, a question card, Stop) and reopening the
   // console both return to the latest turn. Adjusted during render, so the next
   // paint already follows.
-  const [prev, setPrev] = useState({ running, active });
-  if (prev.running !== running || prev.active !== active) {
+  // Older steps loaded above are not new messages, whatever they hold.
+  const from = turns?.find((turn) => turn.role === "history")?.oldest;
+  const [prev, setPrev] = useState({ running, active, from });
+  if (prev.from !== from) {
+    setSeenMessages(messageCount);
+    setPrev({ ...prev, from });
+  } else if (prev.running !== running || prev.active !== active) {
     // Reopened to show a message, it goes to that message instead.
     const reopened = active && !prev.active;
     if ((running && !prev.running) || reopened)
       setFollowing(!(reopened && asked));
-    setPrev({ running, active });
+    setPrev({ running, active, from });
   }
 
   const handleScroll = () => {
@@ -298,37 +306,47 @@ export default function BuilderConsole({
           py: 3,
         }}
       >
-        <Stack spacing={3}>
-          {(turns || []).length === 0 && !busy ? (
-            <Stack alignItems="center" spacing={1} sx={{ py: 6, opacity: 0.7 }}>
-              <Box
-                sx={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: "50%",
-                  display: "grid",
-                  placeItems: "center",
-                  bgcolor: "action.selected",
-                  color: "text.secondary",
-                }}
+        <KeepPlace
+          listRef={listRef}
+          from={from}
+          duration={theme.transitions.duration.standard}
+        >
+          <Stack spacing={3}>
+            {(turns || []).length === 0 && !busy ? (
+              <Stack
+                alignItems="center"
+                spacing={1}
+                sx={{ py: 6, opacity: 0.7 }}
               >
-                <Iconify icon="solar:chat-round-line-linear" width={17} />
-              </Box>
-              <Typography
-                sx={{
-                  typography: "s1",
-                  color: "text.secondary",
-                  textAlign: "center",
-                  maxWidth: 320,
-                }}
-              >
-                {CONSOLE_COPY.empty}
-              </Typography>
-            </Stack>
-          ) : (
-            (turns || []).map((turn) => <Turn key={turn.id} turn={turn} />)
-          )}
-        </Stack>
+                <Box
+                  sx={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    display: "grid",
+                    placeItems: "center",
+                    bgcolor: "action.selected",
+                    color: "text.secondary",
+                  }}
+                >
+                  <Iconify icon="solar:chat-round-line-linear" width={17} />
+                </Box>
+                <Typography
+                  sx={{
+                    typography: "s1",
+                    color: "text.secondary",
+                    textAlign: "center",
+                    maxWidth: 320,
+                  }}
+                >
+                  {CONSOLE_COPY.empty}
+                </Typography>
+              </Stack>
+            ) : (
+              (turns || []).map((turn) => <Turn key={turn.id} turn={turn} />)
+            )}
+          </Stack>
+        </KeepPlace>
       </Box>
 
       <Box role="status" sx={visuallyHidden}>

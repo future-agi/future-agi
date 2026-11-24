@@ -664,44 +664,75 @@ describe("harnessJobQuery", () => {
     status: { stage: "completed" },
     conversation: { conversation_id: "c1", messages: [], ...conversation },
   });
+  const starts = (oldest_sequence, has_older) => ({
+    events: { oldest_sequence, has_older },
+  });
   // What the cache holds after the server answers each of these in turn.
   const held = async (...answers) => {
+    getHarnessJob.mockReset();
     const client = new QueryClient();
-    const query = { ...harnessJobQuery("env-1"), staleTime: 0 };
-    for (const one of answers) {
-      getHarnessJob.mockResolvedValueOnce(one);
+    const query = {
+      ...harnessJobQuery("env-1", { queryClient: client }),
+      staleTime: 0,
+    };
+    answers.forEach((one) => getHarnessJob.mockResolvedValueOnce(one));
+    while (getHarnessJob.mock.calls.length < answers.length) {
       await client.fetchQuery(query);
     }
     const { conversation } = client.getQueryData(query.queryKey);
-    return conversation?.events.map((one) => one.sequence);
+    return {
+      sequences: conversation.events.map((one) => one.sequence),
+      start: conversation.history?.events,
+      asked: getHarnessJob.mock.calls.map(([, options]) => options),
+    };
   };
 
-  it("keeps the chat events a later poll no longer sends", async () => {
-    expect(
-      await held(
-        answer({ events: events(1, 3) }),
-        answer({ events: events(3, 5) }),
-        answer({ events: [] }),
-      ),
-    ).toEqual([1, 2, 3, 4, 5]);
+  it("asks only for the newer chat events and keeps the ones held", async () => {
+    const { sequences, start, asked } = await held(
+      answer({ events: events(3, 5), history: starts(3, true) }),
+      answer({ events: events(6, 6), history: {} }),
+      answer({ events: [], history: {} }),
+    );
+    expect(sequences).toEqual([3, 4, 5, 6]);
+    expect(start).toEqual({ oldest_sequence: 3, has_older: true });
+    expect(asked).toEqual([
+      undefined,
+      { eventsAfter: 5 },
+      { eventsAfter: 6 },
+    ]);
+  });
+
+  it("reads on until it has caught up, when more than a page is new", async () => {
+    const { sequences, asked } = await held(
+      answer({ events: events(1, 2) }),
+      answer({ events: events(3, 5), events_has_newer: true }),
+      answer({ events: events(6, 7), events_has_newer: false }),
+    );
+    expect(sequences).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(asked).toEqual([
+      undefined,
+      { eventsAfter: 2 },
+      { eventsAfter: 5 },
+    ]);
   });
 
   it("starts over when events were missed, rather than leave a gap", async () => {
-    expect(
-      await held(
-        answer({ events: events(1, 3) }),
-        answer({ events: events(7, 9) }),
-      ),
-    ).toEqual([7, 8, 9]);
+    const { sequences, start } = await held(
+      answer({ events: events(1, 3), history: starts(1, false) }),
+      answer({ events: events(7, 9), history: starts(7, true) }),
+    );
+    expect(sequences).toEqual([7, 8, 9]);
+    expect(start).toEqual({ oldest_sequence: 7, has_older: true });
   });
 
-  it("drops the held events with the conversation they belong to", async () => {
-    expect(
-      await held(
-        answer({ events: events(1, 3) }),
-        answer({ conversation_id: "c2", events: events(2, 2) }),
-      ),
-    ).toEqual([2]);
+  it("reads a new conversation whole, without the old one's events", async () => {
+    const { sequences, asked } = await held(
+      answer({ events: events(1, 3) }),
+      answer({ conversation_id: "c2", events: [] }),
+      answer({ conversation_id: "c2", events: events(1, 2) }),
+    );
+    expect(sequences).toEqual([1, 2]);
+    expect(asked).toEqual([undefined, { eventsAfter: 3 }, undefined]);
   });
 });
 

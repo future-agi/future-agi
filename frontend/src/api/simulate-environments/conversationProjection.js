@@ -145,6 +145,11 @@ export function projectConversation(conversation) {
     builder = null;
   };
 
+  // Where the held steps start: the ones before are read on demand, and once
+  // read back, the line says so.
+  const start = conversation.history?.events;
+  let startMarked = !(start?.has_older || start?.read_back);
+
   const pushActivity = (line, seedId) => {
     if (!builder?.title) {
       builder = {
@@ -268,6 +273,16 @@ export function projectConversation(conversation) {
     }
 
     const e = item.data;
+    if (!startMarked) {
+      startMarked = true;
+      builder = null;
+      turns.push({
+        id: "older-steps",
+        role: "history",
+        oldest: e.sequence,
+        hasOlder: Boolean(start.has_older),
+      });
+    }
     switch (e.kind) {
       case "tool_started": {
         const b = startBuilder();

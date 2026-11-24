@@ -10,9 +10,10 @@
 // The return shape { turns, running, send } is unchanged so BuilderConsole and
 // BuildingStage stay untouched; `frozen`, `frozenReason` and `stop` are additive.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
 
 import {
+  listOlderHarnessEvents,
   sendHarnessConversationMessage,
   harnessIdempotencyKey,
 } from "src/api/harness/harness";
@@ -21,7 +22,7 @@ import {
   getScenarioSelection,
   clearScenarioSelection,
 } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
-import { harnessJobQuery } from "./environment";
+import { useHarnessJob } from "./environment";
 import {
   isVersioningDisabled,
   nudgesKey,
@@ -31,6 +32,7 @@ import {
 } from "./versions";
 import { useNudgeActions } from "./nudgeActions";
 import {
+  mergeEvents,
   projectConversation,
   conversationInFlight,
   conversationStopping,
@@ -52,9 +54,7 @@ export function useWorkspaceChat(env, { source } = {}) {
   const jobId = jobIdFor(env, source);
   const queryClient = useQueryClient();
 
-  const jobQuery = useQuery(
-    harnessJobQuery(jobId, { enabled: Boolean(jobId) }),
-  );
+  const jobQuery = useHarnessJob(jobId, { enabled: Boolean(jobId) });
   const conversation = jobQuery.data?.conversation ?? null;
 
   // Keep the latest conversation/jobId in refs so `send` stays referentially
@@ -163,6 +163,48 @@ export function useWorkspaceChat(env, { source } = {}) {
     },
     [mutate],
   );
+
+  // The steps before the ones held, a page at a time.
+  const older = useMutation({
+    mutationFn: ({ id, before }) => listOlderHarnessEvents(id, before),
+    onSuccess: (page, { id, before, conversationId }) => {
+      // Only onto the events it was read for: they start over when some are missed.
+      queryClient.setQueryData(["harness-job", id], (prev) =>
+        prev?.conversation?.conversation_id === conversationId &&
+        prev.conversation.events?.[0]?.sequence === before
+          ? {
+              ...prev,
+              conversation: {
+                ...prev.conversation,
+                events: mergeEvents(page.events, prev.conversation.events),
+                history: {
+                  ...prev.conversation.history,
+                  events: {
+                    oldest_sequence: page.oldest_sequence,
+                    has_older: page.has_older,
+                    read_back: true,
+                  },
+                },
+              },
+            }
+          : prev,
+      );
+    },
+  });
+  const { mutate: readOlder } = older;
+  const askedHere = older.variables?.id === jobId;
+  const loadingOlder = askedHere && older.isPending;
+  const olderFailed = askedHere && older.isError;
+  const loadOlder = useCallback(() => {
+    const held = conversationRef.current;
+    const before = held?.events?.[0]?.sequence;
+    if (!before) return;
+    readOlder({
+      id: jobIdRef.current,
+      before,
+      conversationId: held.conversation_id,
+    });
+  }, [readOlder]);
 
   const interrupt = useCallback(() => {
     const id = jobIdRef.current;
@@ -285,6 +327,14 @@ export function useWorkspaceChat(env, { source } = {}) {
     // Attach the reply callback to open `ask` steps (the projector stays pure).
     // A resolved question renders its summary from props, so it needs no handler.
     return projected.map((turn) => {
+      if (turn.role === "history") {
+        return {
+          ...turn,
+          loading: loadingOlder,
+          failed: olderFailed,
+          onLoad: loadOlder,
+        };
+      }
       if (turn.role === "system" && turn.kind === "nudge") {
         if (!nudges) return turn;
         const nudge = nudges.byId[turn.nudgeId];
@@ -335,6 +385,9 @@ export function useWorkspaceChat(env, { source } = {}) {
     stopNudgeById,
     flagsFor,
     resetNudgeActions,
+    loadingOlder,
+    olderFailed,
+    loadOlder,
   ]);
 
   // Retry a failed send by replaying its original variables (same payload, same

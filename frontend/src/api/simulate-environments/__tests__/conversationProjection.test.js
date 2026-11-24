@@ -554,6 +554,19 @@ describe("projectConversation", () => {
 });
 
 describe("projectConversation with older events loaded", () => {
+  it("marks where the held events start, after the messages before them", () => {
+    const turns = projectConversation({
+      messages: [msg({ message_id: "u1", role: "user" })],
+      events: [evt({ sequence: 201 })],
+      history: { events: { oldest_sequence: 201, has_older: true } },
+    });
+    expect(turns.map((turn) => turn.role)).toEqual([
+      "user",
+      "history",
+      "builder",
+    ]);
+  });
+
   it("keeps the id of every later turn", () => {
     const at = (s) => `2026-09-22T10:00:0${s}Z`;
     const step = (sequence) =>

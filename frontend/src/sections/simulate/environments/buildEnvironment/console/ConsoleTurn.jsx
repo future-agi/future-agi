@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import AskUserQuestionCard from "./AskUserQuestionCard";
 import ChatMarkdown from "./ChatMarkdown";
 import NudgeCard from "./NudgeCard";
+import OlderSteps from "./OlderSteps";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -77,6 +78,8 @@ export function Turn({ turn }) {
     );
   }
 
+  if (turn.role === "history") return <OlderSteps turn={turn} />;
+
   if (turn.role === "system") return <NudgeCard turn={turn} />;
 
   return (
@@ -108,7 +111,7 @@ export function Turn({ turn }) {
 Turn.propTypes = {
   turn: PropTypes.shape({
     id: PropTypes.string,
-    role: PropTypes.oneOf(["builder", "user", "system"]),
+    role: PropTypes.oneOf(["builder", "user", "system", "history"]),
     title: PropTypes.string,
     text: PropTypes.string,
     steps: PropTypes.arrayOf(STEP_SHAPE),

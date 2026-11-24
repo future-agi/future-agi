@@ -11,6 +11,8 @@ const secretFilesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-files/");
 const conversationMessagesPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/conversation/messages/", { id });
+const conversationHistoryPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/conversation/history/", { id });
 const scenariosPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/scenarios/", { id });
 const amendScenariosPath = (id) =>
@@ -57,7 +59,15 @@ export const uploadHarnessSecretFile = async (formData) =>
       timeout: 60000,
     })
   ).data;
-export const getHarnessJob = async (id) => (await axios.get(jobPath(id))).data;
+// `eventsAfter` limits the builder chat's events to the newer ones, oldest first
+// and a page at a time; without it the newest ones come.
+export const getHarnessJob = async (id, { eventsAfter } = {}) =>
+  (
+    await axios.get(
+      jobPath(id),
+      eventsAfter ? { params: { events_after: eventsAfter } } : {},
+    )
+  ).data;
 // The contract marks this endpoint runtimeRequestValidation: true against
 // HarnessJobAction, so it must be sent an object. Posting no body at all makes the
 // validator parse `undefined`, which fails before the request ever leaves the browser.
@@ -68,6 +78,14 @@ export const cancelHarnessJob = async (id, reason) => {
   if (trimmed) body.reason = trimmed.slice(0, 500);
   return (await axios.post(cancelPath(id), body)).data;
 };
+
+// The page of builder chat events just before a sequence, oldest first.
+export const listOlderHarnessEvents = async (id, before) =>
+  (
+    await axios.get(conversationHistoryPath(id), {
+      params: { kind: "events", before },
+    })
+  ).data;
 
 // Post a turn into the live builder conversation. `payload` carries the required
 // { content, client_request_id, kind } and, for a reply to a blocking question,
