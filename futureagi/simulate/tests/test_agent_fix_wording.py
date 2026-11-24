@@ -348,7 +348,7 @@ class TestCountedWhenStored:
 
 
 _MIGRATION = importlib.import_module(
-    "simulate.migrations.0117_agent_fix_candidate_changed_files"
+    "simulate.migrations.0118_agent_fix_candidate_count_changed_files"
 )
 
 
