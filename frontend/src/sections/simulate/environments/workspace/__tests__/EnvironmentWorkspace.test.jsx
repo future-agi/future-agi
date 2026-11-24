@@ -11,6 +11,7 @@ import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
+import { BUILD_STOPPED_COPY } from "../workspace.constants";
 
 // getHarnessJob resolves the harness-backed environment; listHarnessJobs is
 // exported for parity with the other consumers of this module.
@@ -822,7 +823,8 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText("Failed")).toBeInTheDocument();
     expect(screen.queryByText("Building")).toBeNull();
     expect(screen.getByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
-    expect(screen.getByText(INFRASTRUCTURE_LINE)).toBeInTheDocument();
+    expect(screen.getAllByText(INFRASTRUCTURE_LINE)).toHaveLength(2);
+    expect(screen.getByText(BUILD_STOPPED_COPY.badge)).toBeInTheDocument();
   });
 
   it("swaps the build experience for the workspace in place when the job completes", async () => {
