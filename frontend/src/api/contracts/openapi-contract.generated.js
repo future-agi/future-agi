@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1211,
+  endpointCount: 1212,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29773,6 +29773,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           503: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/build/retry/": {
+      post: {
+        operationId: "simulate_api_harness-environments_build_retry",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessEnvironmentBuildRetry",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -60048,6 +60070,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "sub_goals",
         "sub_goal_results",
         "outcome",
+        "required_evals_failed",
         "cost_breakdown_cents",
         "evaluations",
         "function_calls",
@@ -60515,6 +60538,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "no_score",
             "error",
           ],
+        },
+        required_evals_failed: {
+          description:
+            "Names of the required evaluations this call failed; shown beside its verdict.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         cost_breakdown_cents: {
           $ref: "#/definitions/CostBreakdown",
@@ -72453,6 +72485,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessEnvironmentOfferedEval",
           },
+        },
+      },
+    },
+    HarnessEnvironmentBuildRetry: {
+      required: ["environment_id", "state", "resume_from"],
+      type: "object",
+      properties: {
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        resume_from: {
+          title: "Resume from",
+          type: "string",
+          enum: ["start", "checks"],
         },
       },
     },
@@ -103754,6 +103807,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "reason",
         "status",
+        "required",
       ],
       type: "object",
       properties: {
@@ -103796,6 +103850,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Status",
           type: "string",
           enum: ["pending", "succeeded", "failed", "timed_out", "skipped"],
+        },
+        required: {
+          title: "Required",
+          description:
+            "Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it.",
+          type: "boolean",
         },
       },
     },
@@ -115066,6 +115126,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-nullable": true,
         },
+        retry_from: {
+          title: "Retry from",
+          description:
+            "Where trying a stopped build again starts; null when it cannot be tried again.",
+          type: "string",
+          enum: ["start", "checks"],
+          "x-nullable": true,
+        },
       },
     },
     HarnessParallelism: {
@@ -123685,6 +123753,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "missing",
         "pass_rate",
         "average_score",
+        "required",
       ],
       type: "object",
       properties: {
@@ -123727,6 +123796,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Average score",
           type: "number",
           "x-nullable": true,
+        },
+        required: {
+          title: "Required",
+          description:
+            "Marked required on the environment; reported beside the calls' verdicts.",
+          type: "boolean",
         },
       },
     },
@@ -124224,6 +124299,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "source_scenario_key",
         "trial_index",
         "outcome",
+        "required_evals_failed",
         "execution_status",
         "modality",
         "provider",
@@ -124333,6 +124409,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "no_score",
             "error",
           ],
+        },
+        required_evals_failed: {
+          description:
+            "Names of the required evaluations this call failed; shown beside its verdict.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         outcome_reason: {
           title: "Outcome reason",

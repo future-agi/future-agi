@@ -53831,6 +53831,55 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/build/retry/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_build_retry",
+                "description": "Start a stopped build again from its approved design. A build that already froze its world and scenarios resumes at the release checks.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentBuildRetry"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/compare/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_compare",
@@ -153558,6 +153607,34 @@
                 }
             }
         },
+        "HarnessEnvironmentBuildRetry": {
+            "required": [
+                "environment_id",
+                "state",
+                "resume_from"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "resume_from": {
+                    "title": "Resume from",
+                    "type": "string",
+                    "enum": [
+                        "start",
+                        "checks"
+                    ]
+                }
+            }
+        },
         "HarnessCompareInterval": {
             "description": "Newcombe 95% interval of the difference.",
             "required": [
@@ -157066,6 +157143,16 @@
                 "failure": {
                     "title": "Failure",
                     "type": "object",
+                    "x-nullable": true
+                },
+                "retry_from": {
+                    "title": "Retry from",
+                    "description": "Where trying a stopped build again starts; null when it cannot be tried again.",
+                    "type": "string",
+                    "enum": [
+                        "start",
+                        "checks"
+                    ],
                     "x-nullable": true
                 }
             }
@@ -168680,7 +168767,8 @@
                 "score",
                 "passed",
                 "reason",
-                "status"
+                "status",
+                "required"
             ],
             "type": "object",
             "properties": {
@@ -168729,6 +168817,11 @@
                         "timed_out",
                         "skipped"
                     ]
+                },
+                "required": {
+                    "title": "Required",
+                    "description": "Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it.",
+                    "type": "boolean"
                 }
             }
         },
@@ -169739,6 +169832,7 @@
                 "sub_goals",
                 "sub_goal_results",
                 "outcome",
+                "required_evals_failed",
                 "cost_breakdown_cents",
                 "evaluations",
                 "function_calls",
@@ -170207,6 +170301,14 @@
                         "no_score",
                         "error"
                     ]
+                },
+                "required_evals_failed": {
+                    "description": "Names of the required evaluations this call failed; shown beside its verdict.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 },
                 "cost_breakdown_cents": {
                     "$ref": "#/definitions/CostBreakdown"
@@ -171860,7 +171962,8 @@
                 "errored",
                 "missing",
                 "pass_rate",
-                "average_score"
+                "average_score",
+                "required"
             ],
             "type": "object",
             "properties": {
@@ -171903,6 +172006,11 @@
                     "title": "Average score",
                     "type": "number",
                     "x-nullable": true
+                },
+                "required": {
+                    "title": "Required",
+                    "description": "Marked required on the environment; reported beside the calls' verdicts.",
+                    "type": "boolean"
                 }
             }
         },
@@ -172575,6 +172683,7 @@
                 "source_scenario_key",
                 "trial_index",
                 "outcome",
+                "required_evals_failed",
                 "execution_status",
                 "modality",
                 "provider",
@@ -172684,6 +172793,14 @@
                         "no_score",
                         "error"
                     ]
+                },
+                "required_evals_failed": {
+                    "description": "Names of the required evaluations this call failed; shown beside its verdict.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 },
                 "outcome_reason": {
                     "title": "Outcome reason",

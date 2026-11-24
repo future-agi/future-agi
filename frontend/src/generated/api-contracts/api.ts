@@ -680,6 +680,7 @@ import type {
   HarnessDraftsApi,
   HarnessEnvironmentAddEvaluationApi,
   HarnessEnvironmentAvailableEvalsApi,
+  HarnessEnvironmentBuildRetryApi,
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentEvalEditApi,
   HarnessEnvironmentEvalRequirementApi,
@@ -62641,6 +62642,59 @@ export const simulateApiHarnessEnvironmentsAgentPolicy = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessAgentPolicyApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsBuildRetryResponse202 = {
+  data: HarnessEnvironmentBuildRetryApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsBuildRetryResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsBuildRetryResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 403>;
+};
+
+export type simulateApiHarnessEnvironmentsBuildRetryResponseSuccess =
+  simulateApiHarnessEnvironmentsBuildRetryResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsBuildRetryResponseError = (
+  | simulateApiHarnessEnvironmentsBuildRetryResponse403
+  | simulateApiHarnessEnvironmentsBuildRetryResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsBuildRetryResponse =
+  | simulateApiHarnessEnvironmentsBuildRetryResponseSuccess
+  | simulateApiHarnessEnvironmentsBuildRetryResponseError;
+
+export const getSimulateApiHarnessEnvironmentsBuildRetryUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/build/retry/`;
+};
+
+/**
+ * Start a stopped build again from its approved design. A build that already froze its world and scenarios resumes at the release checks.
+ */
+export const simulateApiHarnessEnvironmentsBuildRetry = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsBuildRetryResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsBuildRetryResponse>(
+    getSimulateApiHarnessEnvironmentsBuildRetryUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };

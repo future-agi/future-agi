@@ -22495,6 +22495,21 @@ export interface HarnessAgentPolicyResponseApi {
   agent_version?: HarnessVersionApi;
 }
 
+export type HarnessEnvironmentBuildRetryApiResumeFrom =
+  (typeof HarnessEnvironmentBuildRetryApiResumeFrom)[keyof typeof HarnessEnvironmentBuildRetryApiResumeFrom];
+
+export const HarnessEnvironmentBuildRetryApiResumeFrom = {
+  start: "start",
+  checks: "checks",
+} as const;
+
+export interface HarnessEnvironmentBuildRetryApi {
+  environment_id: string;
+  /** @minLength 1 */
+  state: string;
+  resume_from: HarnessEnvironmentBuildRetryApiResumeFrom;
+}
+
 export type HarnessComparePairApiBand =
   (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
 
@@ -23996,6 +24011,17 @@ export interface HarnessJobInfoApi {
   test_execution_id: string;
 }
 
+/**
+ * Where trying a stopped build again starts; null when it cannot be tried again.
+ */
+export type HarnessJobStatusApiRetryFrom =
+  (typeof HarnessJobStatusApiRetryFrom)[keyof typeof HarnessJobStatusApiRetryFrom];
+
+export const HarnessJobStatusApiRetryFrom = {
+  start: "start",
+  checks: "checks",
+} as const;
+
 export type HarnessJobStatusApiFailure = { [key: string]: unknown };
 
 export interface HarnessJobStatusApi {
@@ -24014,6 +24040,8 @@ export interface HarnessJobStatusApi {
   /** @minLength 1 */
   deadline_at: string;
   failure: HarnessJobStatusApiFailure;
+  /** Where trying a stopped build again starts; null when it cannot be tried again. */
+  retry_from?: HarnessJobStatusApiRetryFrom;
 }
 
 export type HarnessJobEventApiPayload = { [key: string]: unknown };
@@ -29197,6 +29225,8 @@ export interface SimulateRunV3EvaluationResultApi {
   passed: boolean;
   reason: string;
   status: SimulateRunV3EvaluationResultApiStatus;
+  /** Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it. */
+  required: boolean;
 }
 
 /**
@@ -29853,6 +29883,8 @@ export interface CallExecutionV3DetailResponseApi {
   sub_goals: string[];
   sub_goal_results: SubGoalResultApi[];
   outcome: CallExecutionV3DetailResponseApiOutcome;
+  /** Names of the required evaluations this call failed; shown beside its verdict. */
+  required_evals_failed: string[];
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
@@ -30297,6 +30329,8 @@ export interface EvaluationSummaryApi {
   missing: number;
   pass_rate: number;
   average_score: number;
+  /** Marked required on the environment; reported beside the calls' verdicts. */
+  required: boolean;
 }
 
 export interface FailureBreakdownApi {
@@ -30543,6 +30577,8 @@ export interface RunCallApi {
   source_scenario_key: string;
   trial_index: number;
   outcome: RunCallApiOutcome;
+  /** Names of the required evaluations this call failed; shown beside its verdict. */
+  required_evals_failed: string[];
   /** @minLength 1 */
   outcome_reason?: string;
   /** @minLength 1 */

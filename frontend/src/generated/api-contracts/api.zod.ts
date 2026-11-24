@@ -47330,6 +47330,15 @@ export const SimulateApiHarnessEnvironmentsAgentPolicyResponse = zod.object({
 });
 
 /**
+ * Start a stopped build again from its approved design. A build that already froze its world and scenarios resumes at the release checks.
+ */
+export const SimulateApiHarnessEnvironmentsBuildRetryParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsBuildRetryBody = zod.object({});
+
+/**
  * Two runs of this environment, scenario by scenario; against defaults to
 the previous completed run. Not gated on versioning: a run from before
 versioning compares too, with null versions.
@@ -54175,6 +54184,12 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
+    retry_from: zod
+      .enum(["start", "checks"])
+      .optional()
+      .describe(
+        "Where trying a stopped build again starts; null when it cannot be tried again.",
+      ),
   }),
   events: zod.array(
     zod.object({
@@ -55217,6 +55232,12 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
+    retry_from: zod
+      .enum(["start", "checks"])
+      .optional()
+      .describe(
+        "Where trying a stopped build again starts; null when it cannot be tried again.",
+      ),
   }),
   events: zod.array(
     zod.object({
@@ -55454,6 +55475,12 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
+    retry_from: zod
+      .enum(["start", "checks"])
+      .optional()
+      .describe(
+        "Where trying a stopped build again starts; null when it cannot be tried again.",
+      ),
   }),
   events: zod.array(
     zod.object({
@@ -65847,6 +65874,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     "no_score",
     "error",
   ]),
+  required_evals_failed: zod
+    .array(zod.string().min(1))
+    .describe(
+      "Names of the required evaluations this call failed; shown beside its verdict.",
+    ),
   cost_breakdown_cents: zod.object({
     stt: zod.number(),
     llm: zod.number(),
@@ -65870,6 +65902,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         "timed_out",
         "skipped",
       ]),
+      required: zod
+        .boolean()
+        .describe(
+          "Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it.",
+        ),
     }),
   ),
   function_calls: zod.array(
@@ -66926,6 +66963,11 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       missing: zod.number(),
       pass_rate: zod.number(),
       average_score: zod.number(),
+      required: zod
+        .boolean()
+        .describe(
+          "Marked required on the environment; reported beside the calls' verdicts.",
+        ),
     }),
   ),
   failure_breakdown: zod.array(
@@ -67509,6 +67551,11 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "no_score",
         "error",
       ]),
+      required_evals_failed: zod
+        .array(zod.string().min(1))
+        .describe(
+          "Names of the required evaluations this call failed; shown beside its verdict.",
+        ),
       outcome_reason: zod.string().min(1).optional(),
       execution_status: zod.string().min(1),
       modality: zod.string().min(1),
@@ -67553,6 +67600,11 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             "timed_out",
             "skipped",
           ]),
+          required: zod
+            .boolean()
+            .describe(
+              "Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it.",
+            ),
         }),
       ),
       scoring_status: zod.enum([
