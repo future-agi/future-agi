@@ -21,7 +21,7 @@ import {
   getScenarioSelection,
   clearScenarioSelection,
 } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
-import { useOlderChat } from "./chatHistory";
+import { useChatRead, useOpenChatAt } from "./chatHistory";
 import { useHarnessJob } from "./environment";
 import {
   isVersioningDisabled,
@@ -163,8 +163,20 @@ export function useWorkspaceChat(env, { source } = {}) {
     [mutate],
   );
 
-  const olderEvents = useOlderChat("events", jobId, conversation);
-  const olderMessages = useOlderChat("messages", jobId, conversation);
+  const olderEvents = useChatRead("events", jobId, conversation);
+  const olderMessages = useChatRead("messages", jobId, conversation);
+  const earlierAround = useChatRead("earlier", jobId, conversation);
+  const laterAround = useChatRead("later", jobId, conversation);
+  const openAt = useOpenChatAt(jobId, conversation);
+  const historyReads = useMemo(
+    () => ({
+      "older-events": olderEvents,
+      "older-messages": olderMessages,
+      "older-around": earlierAround,
+      gap: laterAround,
+    }),
+    [olderEvents, olderMessages, earlierAround, laterAround],
+  );
 
   const interrupt = useCallback(() => {
     const id = jobIdRef.current;
@@ -288,12 +300,13 @@ export function useWorkspaceChat(env, { source } = {}) {
     // A resolved question renders its summary from props, so it needs no handler.
     return projected.map((turn) => {
       if (turn.role === "history") {
-        const isEvents = turn.kind === "events";
+        const { loading, failed, load } = historyReads[turn.id];
         return {
           ...turn,
-          loading: isEvents ? olderEvents.loading : olderMessages.loading,
-          failed: isEvents ? olderEvents.failed : olderMessages.failed,
-          onLoad: isEvents ? olderEvents.load : olderMessages.load,
+          loading,
+          failed,
+          onLoad: load,
+          ...(turn.id === "older-messages" && openAt),
         };
       }
       if (turn.role === "system" && turn.kind === "nudge") {
@@ -346,12 +359,8 @@ export function useWorkspaceChat(env, { source } = {}) {
     stopNudgeById,
     flagsFor,
     resetNudgeActions,
-    olderEvents.loading,
-    olderEvents.failed,
-    olderEvents.load,
-    olderMessages.loading,
-    olderMessages.failed,
-    olderMessages.load,
+    historyReads,
+    openAt,
   ]);
 
   // Retry a failed send by replaying its original variables (same payload, same

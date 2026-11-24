@@ -4,15 +4,10 @@ import { enqueueSnackbar } from "notistack";
 import { CONSOLE_COPY } from "../build.constants";
 import { subscribeBuilderChatFocus } from "./builderChatFocusBus";
 
-// shortcut: looks back at most this many pages (200 messages each) for the
-// message, since every page read is drawn; a server read around a message id
-// would reach any of them.
-const SEARCH_PAGES = 5;
-
 /**
  * Opens the chat at a message another part of the workspace asks for, reading
- * older pages until it is there. `onFound` gets its node; without one the chat
- * opens at the latest, and says why when a message was named.
+ * the messages around it when it isn't held. `onFound` gets its node; without
+ * one the chat opens at the latest, and says why when a message was named.
  */
 export default function useOpenAtMessage({
   active,
@@ -22,17 +17,13 @@ export default function useOpenAtMessage({
   onFound,
   onLatest,
 }) {
-  // { messageId, pages, from, failed }: `from` is where the messages started
-  // when the last page was asked for.
+  // { messageId, reading, gaveUp }: `gaveUp` is why it can't be shown.
   const [asked, setAsked] = useState(null);
   const handlers = useRef();
-  handlers.current = { onFound, onLatest };
+  handlers.current = { onFound, onLatest, asked };
 
   useEffect(
-    () =>
-      subscribeBuilderChatFocus((messageId) =>
-        setAsked({ messageId, pages: 0 }),
-      ),
+    () => subscribeBuilderChatFocus((messageId) => setAsked({ messageId })),
     [],
   );
 
@@ -54,27 +45,27 @@ export default function useOpenAtMessage({
       handlers.current.onLatest();
       if (why) enqueueSnackbar(why, { variant: "info" });
     };
+    const { failed, missing } = CONSOLE_COPY.search;
     if (!id || !count) openAtLatest();
-    else if (asked.failed) openAtLatest(CONSOLE_COPY.search.failed);
-    else if (!older?.hasOlder) openAtLatest(CONSOLE_COPY.search.missing);
-    // A page is on its way, or landed and not yet drawn.
-    else if (older.loading || asked.from === older.oldest) return;
-    else if (asked.pages >= SEARCH_PAGES) {
-      openAtLatest(CONSOLE_COPY.search.tooFar);
-    } else {
-      const next = { ...asked, pages: asked.pages + 1, from: older.oldest };
+    else if (asked.gaveUp) openAtLatest(asked.gaveUp);
+    // All that is left is read, or it is held and the chat doesn't show it.
+    else if (!older?.hasOlder || older.holds(asked.messageId)) {
+      openAtLatest(missing);
+    } else if (!asked.reading) {
+      const next = { ...asked, reading: true };
       setAsked(next);
+      const giveUp = (why) =>
+        setAsked((now) => (now === next ? { ...now, gaveUp: why } : now));
       older
-        .onLoad()
-        .catch(() =>
-          setAsked((now) => (now === next ? { ...now, failed: true } : now)),
-        );
+        .open(asked.messageId, () => handlers.current.asked === next)
+        .then((found) => !found && giveUp(missing))
+        .catch(() => giveUp(failed));
     }
   }, [active, asked, count, listRef, older]);
 
   return {
     asked: Boolean(asked),
-    looking: Boolean(active && asked?.pages),
+    looking: Boolean(active && asked?.reading),
     stop: useCallback(() => setAsked(null), []),
   };
 }

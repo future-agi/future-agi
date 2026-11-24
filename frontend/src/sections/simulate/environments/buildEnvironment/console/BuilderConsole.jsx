@@ -1,5 +1,12 @@
 import PropTypes from "prop-types";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { visuallyHidden } from "@mui/utils";
@@ -12,7 +19,7 @@ import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ViewerLock from "../../components/ViewerLock";
 import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
 import KeepPlace from "./KeepPlace";
-import OlderChat from "./OlderChat";
+import OlderChat, { GapLine, WithoutSteps } from "./OlderChat";
 import SearchStatus from "./SearchStatus";
 import useOpenAtMessage from "./useOpenAtMessage";
 import useReaderScroll from "./useReaderScroll";
@@ -114,6 +121,11 @@ export default function BuilderConsole({
     starts
       .slice(starts.indexOf(turn) + 1)
       .every((lower) => !lower.hasOlder || lower.failed);
+  const autoLoads = (turn) => {
+    if (turn.id === "gap") return reader.movedDown;
+    if (turn.afterGap && reader.movedDown) return false;
+    return reader.movedUp && (turn.id === "older-around" || loadsFirst(turn));
+  };
   const lastScrollRef = useRef({ top: 0, height: 0 });
   const [following, setFollowing] = useState(true);
   const messageCount = countMessages(turns);
@@ -130,7 +142,7 @@ export default function BuilderConsole({
     active,
     listRef,
     count: turns?.length ?? 0,
-    older: starts.find((turn) => turn.kind === "messages"),
+    older: starts.find((turn) => turn.id === "older-messages"),
     onFound: (target) => {
       const list = listRef.current;
       setFollowing(false);
@@ -159,7 +171,7 @@ export default function BuilderConsole({
   const lastTurn = turns?.[count - 1];
   const lastId = lastTurn?.id;
   const lastSteps = lastTurn?.steps?.length;
-  const from = starts.map((turn) => `${turn.kind} ${turn.oldest}`).join();
+  const from = starts.map((turn) => `${turn.id} ${turn.oldest}`).join();
   const drawn = useRef({ from });
   useEffect(() => {
     // Older ones loading above leave the list where it is (see KeepPlace).
@@ -218,7 +230,12 @@ export default function BuilderConsole({
       // changed height means text rewrapped and moved the list, not the user.
       setFollowing(false);
       setSeenMessages(messageCount);
-      reader.scrolledUp();
+      reader.scrolled(true);
+    } else if (
+      scrollTop > lastScrollRef.current.top &&
+      scrollHeight === lastScrollRef.current.height
+    ) {
+      reader.scrolled(false);
     }
     lastScrollRef.current = { top: scrollTop, height: scrollHeight };
   };
@@ -380,18 +397,16 @@ export default function BuilderConsole({
             ) : (
               (turns || []).map((turn) =>
                 turn.role === "history" ? (
-                  <OlderChat
-                    key={turn.id}
-                    turn={turn}
-                    listRef={listRef}
-                    aboveBar={showJump}
-                    auto={
-                      active &&
-                      reader.movedUp &&
-                      !search.asked &&
-                      loadsFirst(turn)
-                    }
-                  />
+                  <Fragment key={turn.id}>
+                    {turn.withoutSteps && <WithoutSteps aboveBar={showJump} />}
+                    <OlderChat
+                      turn={turn}
+                      listRef={listRef}
+                      aboveBar={showJump}
+                      auto={active && !search.asked && autoLoads(turn)}
+                    />
+                    {turn.kind === "gap" && <GapLine />}
+                  </Fragment>
                 ) : (
                   <Turn key={turn.id} turn={turn} />
                 ),

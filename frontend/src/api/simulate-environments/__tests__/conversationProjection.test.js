@@ -583,6 +583,58 @@ describe("projectConversation with older events loaded", () => {
   });
 });
 
+describe("projectConversation with messages read around one far back", () => {
+  const at = (s) => `2026-09-22T10:00:0${s}Z`;
+  const said = (sequence, over) =>
+    msg({
+      message_id: `m${sequence}`,
+      sequence,
+      role: "user",
+      created_at: at(sequence),
+      ...over,
+    });
+  const tool = (sequence, second) =>
+    evt({ event_id: `e${sequence}`, sequence, emitted_at: at(second) });
+  const project = (edge, over) =>
+    projectConversation({
+      around: { messages: [said(1), said(2, edge)], has_older: true },
+      messages: [said(6), said(7)],
+      events: [tool(40, 1), tool(41, 4), tool(42, 8)],
+      history: {
+        messages: { oldest_sequence: 6, has_older: true },
+        events: { oldest_sequence: 40, has_older: true },
+      },
+      ...over,
+    });
+
+  it("draws them apart from the rest, with only the steps the messages held can place", () => {
+    expect(project().map((turn) => turn.id)).toEqual([
+      "older-around",
+      "m1",
+      "m2",
+      "gap",
+      "older-messages",
+      "m6",
+      "m7",
+      "turn-grp-e42",
+    ]);
+  });
+
+  it.each([
+    ["as text, when its answer may not be loaded", undefined, "note"],
+    ["to be answered, when it is the open one", "m2", "ask"],
+  ])("shows a question at the edge %s", (_, message_id, kind) => {
+    const question = { role: "assistant", kind: "question", content: "Which?" };
+    const turns = project(question, {
+      blocking_input: message_id && { message_id },
+    });
+    expect(turns.flatMap((turn) => turn.steps ?? [])[0]).toMatchObject({
+      id: "m2",
+      kind,
+    });
+  });
+});
+
 describe("projectConversation nudge cards", () => {
   const card = (over = {}) =>
     msg({

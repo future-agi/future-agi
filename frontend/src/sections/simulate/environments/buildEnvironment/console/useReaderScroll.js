@@ -6,12 +6,13 @@ const isField = (node) => node.closest?.("input, textarea, [contenteditable]");
 
 /**
  * Tells the reader moving the list from the console moving it. `movedUp` is
- * true once the reader last moved it up, and false again when the console
- * scrolls it. A wheel, touch or key counts even where the list is too short to
+ * true once the reader moved it up, and false again when the console scrolls
+ * it; `movedDown` while the last way they moved it is down. A wheel, touch or key counts even where the list is too short to
  * scroll; a dragged scrollbar counts by the scroll it makes.
  */
 export default function useReaderScroll(listRef, onMove) {
   const [movedUp, setMovedUp] = useState(false);
+  const [movedDown, setMovedDown] = useState(false);
   const ownScroll = useRef(false);
   const touchY = useRef(null);
 
@@ -27,19 +28,22 @@ export default function useReaderScroll(listRef, onMove) {
   const startOwnScroll = useCallback(() => {
     ownScroll.current = true;
     setMovedUp(false);
+    setMovedDown(false);
   }, []);
   const moved = (up) => {
     ownScroll.current = false;
     if (up) setMovedUp(true);
+    setMovedDown(!up);
     onMove();
   };
 
   return {
     movedUp,
+    movedDown,
     startOwnScroll,
-    // The list scrolled up: by the reader, unless the console is scrolling it.
-    scrolledUp: () => {
-      if (!ownScroll.current) moved(true);
+    // The list scrolled: by the reader, unless the console is scrolling it.
+    scrolled: (up) => {
+      if (!ownScroll.current) moved(up);
     },
     listProps: {
       onWheel: ({ deltaY }) => deltaY && moved(deltaY < 0),

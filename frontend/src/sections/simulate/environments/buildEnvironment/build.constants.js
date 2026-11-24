@@ -71,11 +71,17 @@ export const CONSOLE_COPY = {
       failed: "Couldn't load the earlier messages.",
       end: "Start of the chat",
     },
+    gap: {
+      load: "Load the next messages",
+      loading: "Loading the next messages…",
+      failed: "Couldn't load the next messages.",
+    },
+    gapHere: "Some messages here aren't loaded",
+    withoutSteps: "The builder's steps aren't shown for these messages.",
     retry: "Try again",
   },
   search: {
     looking: "Looking for that message…",
-    tooFar: "That message is too far back to open here.",
     missing: "That message isn't in this chat, so it can't be shown.",
     failed: "Couldn't load the earlier messages. Try again.",
   },

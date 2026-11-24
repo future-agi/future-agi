@@ -70,11 +70,24 @@ function finalizeRunningSteps(steps) {
 export function projectConversation(conversation) {
   if (!conversation) return [];
   // The older ones are only for reading: the chat's state follows the newest.
-  const messages = [
+  const recent = [
     ...(conversation.older_messages ?? []),
     ...(conversation.messages ?? []),
   ];
-  const events = Array.isArray(conversation.events) ? conversation.events : [];
+  // Messages read around one far back, with some before the rest not held.
+  const around = conversation.around?.messages ?? [];
+  const apart = new Set(around.map((m) => m.message_id));
+  const isApart = ({ src, data }) =>
+    src === "msg" && apart.has(data.message_id);
+  const messages = [...around, ...recent];
+  const allEvents = Array.isArray(conversation.events)
+    ? conversation.events
+    : [];
+  // A step from before the rest starts belongs with a message that isn't held.
+  const startsAt = apart.size ? Date.parse(recent[0]?.created_at) || 0 : 0;
+  const events = allEvents.filter(
+    (e) => !startsAt || (Date.parse(e.emitted_at) || 0) >= startsAt,
+  );
   const blocking = conversation.blocking_input || null;
 
   // A question is resolved once a user message replies to it; capture the answer
@@ -98,6 +111,7 @@ export function projectConversation(conversation) {
       data: e,
     })),
   ].sort((a, b) => {
+    if (isApart(a) !== isApart(b)) return isApart(a) ? -1 : 1;
     const ta = Date.parse(a.t) || 0;
     const tb = Date.parse(b.t) || 0;
     if (ta !== tb) return ta - tb;
@@ -134,6 +148,7 @@ export function projectConversation(conversation) {
     delete starts[src];
     const start = kind && conversation.history?.[kind];
     if (!start?.has_older && !start?.read_back) return;
+    if (kind === "events" && events.length < allEvents.length) return;
     builder = null;
     turns.push({
       id: `older-${kind}`,
@@ -141,6 +156,32 @@ export function projectConversation(conversation) {
       kind,
       oldest: seq,
       hasOlder: Boolean(start.has_older),
+      afterGap: apart.size > 0,
+    });
+  };
+
+  if (apart.size) {
+    turns.push({
+      id: "older-around",
+      role: "history",
+      kind: "messages",
+      oldest: around[0].sequence,
+      hasOlder: conversation.around.has_older,
+    });
+  }
+  // Where the messages read apart end.
+  const markGap = () => {
+    builder = null;
+    turns.push({
+      id: "gap",
+      role: "history",
+      kind: "gap",
+      oldest: around.at(-1).sequence,
+      hasOlder: true,
+      // Steps are read back from the latest only, so none are held here.
+      withoutSteps:
+        allEvents.length > 0 ||
+        Boolean(conversation.history?.events?.has_older),
     });
   };
 
@@ -169,8 +210,13 @@ export function projectConversation(conversation) {
     }
   };
 
+  let gapAhead = apart.size > 0;
   for (const item of timeline) {
-    markStart(item);
+    if (gapAhead && !isApart(item)) {
+      markGap();
+      gapAhead = false;
+    }
+    if (!isApart(item)) markStart(item);
     if (item.src === "msg") {
       const m = item.data;
       if (m.role === "user") {
@@ -230,6 +276,20 @@ export function projectConversation(conversation) {
           answerFor,
           m.message_id,
         );
+        // Its answer may be among the ones not held: shown, not asked again.
+        if (
+          !answered &&
+          isApart(item) &&
+          blocking?.message_id !== m.message_id
+        ) {
+          b.steps.push({
+            id: m.message_id,
+            kind: "note",
+            text: normalizeQuestion(m, blocking).prompt,
+            markdown: true,
+          });
+          continue;
+        }
         b.steps.push({
           id: m.message_id,
           kind: "ask",

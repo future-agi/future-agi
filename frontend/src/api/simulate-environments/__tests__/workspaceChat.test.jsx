@@ -10,14 +10,14 @@ import {
 
 vi.mock("src/api/harness/harness", () => ({
   getHarnessJob: vi.fn(),
-  listOlderHarnessChat: vi.fn(),
+  listHarnessChatHistory: vi.fn(),
   sendHarnessConversationMessage: vi.fn(),
   harnessIdempotencyKey: vi.fn(() => "req-test"),
 }));
 
 import {
   getHarnessJob,
-  listOlderHarnessChat,
+  listHarnessChatHistory,
   sendHarnessConversationMessage,
   harnessIdempotencyKey,
 } from "src/api/harness/harness";
@@ -72,7 +72,7 @@ describe("useWorkspaceChat (real)", () => {
     clearScenarioSelection();
     sendHarnessConversationMessage.mockReset();
     getHarnessJob.mockReset();
-    listOlderHarnessChat.mockReset();
+    listHarnessChatHistory.mockReset();
     harnessIdempotencyKey.mockReset();
     harnessIdempotencyKey.mockReturnValue("req-test");
   });
@@ -123,14 +123,14 @@ describe("useWorkspaceChat (real)", () => {
       const { result } = renderChat(conversation);
       expect(start(result)).toMatchObject({ oldest: 3, hasOlder: true });
 
-      listOlderHarnessChat.mockRejectedValueOnce(new Error("offline"));
+      listHarnessChatHistory.mockRejectedValueOnce(new Error("offline"));
       act(() => {
         start(result).onLoad();
       });
       await waitFor(() => expect(start(result).failed).toBe(true));
       expect(tools(result)).toEqual(["tool 3", "tool 4"]);
 
-      listOlderHarnessChat.mockResolvedValueOnce({
+      listHarnessChatHistory.mockResolvedValueOnce({
         events: [tool(1), tool(2)],
         oldest_sequence: 1,
         has_older: false,
@@ -145,7 +145,7 @@ describe("useWorkspaceChat (real)", () => {
           failed: false,
         }),
       );
-      expect(listOlderHarnessChat).toHaveBeenLastCalledWith("job-1", {
+      expect(listHarnessChatHistory).toHaveBeenLastCalledWith("job-1", {
         kind: "events",
         before: 3,
       });
@@ -155,7 +155,7 @@ describe("useWorkspaceChat (real)", () => {
     it("drops a page for events that started over while it loaded", async () => {
       const { result, client } = renderChat(conversation);
       let answer;
-      listOlderHarnessChat.mockReturnValueOnce(
+      listHarnessChatHistory.mockReturnValueOnce(
         new Promise((resolve) => {
           answer = resolve;
         }),
@@ -205,7 +205,7 @@ describe("useWorkspaceChat (real)", () => {
         history: { messages: { oldest_sequence: 4, has_older: true } },
       }),
     );
-    listOlderHarnessChat.mockResolvedValueOnce({
+    listHarnessChatHistory.mockResolvedValueOnce({
       // A Stop the server never settled.
       messages: [
         message(2),
@@ -231,12 +231,112 @@ describe("useWorkspaceChat (real)", () => {
         "message 5",
       ]),
     );
-    expect(listOlderHarnessChat).toHaveBeenCalledWith("job-1", {
+    expect(listHarnessChatHistory).toHaveBeenCalledWith("job-1", {
       kind: "messages",
       before: 4,
     });
     expect(start()).toMatchObject({ kind: "messages", hasOlder: true });
     expect(result.current.stopping).toBe(false);
+  });
+
+  describe("opened at a message far back", () => {
+    const message = (sequence) => ({
+      message_id: `m${sequence}`,
+      sequence,
+      role: "user",
+      kind: "user_message",
+      state: "completed",
+      content: `message ${sequence}`,
+      created_at: `2026-09-22T10:00:0${sequence}Z`,
+    });
+    const page = (...sequences) => ({
+      messages: sequences.map(message),
+      events: [],
+      oldest_sequence: sequences[0],
+      newest_sequence: sequences.at(-1),
+      has_older: sequences[0] > 1,
+      has_newer: true,
+    });
+    const show = () =>
+      renderChat(
+        conversationWith({
+          messages: [message(8), message(9)],
+          history: { messages: { oldest_sequence: 8, has_older: true } },
+        }),
+      );
+    const mark = (result, id) =>
+      result.current.turns.find((turn) => turn.id === id);
+    const ids = (result) => result.current.turns.map((turn) => turn.id);
+    const openAt = async (result, answer, wanted = () => true) => {
+      listHarnessChatHistory.mockImplementationOnce(() => answer);
+      let found;
+      await act(async () => {
+        found = await mark(result, "older-messages")
+          .open("m4", wanted)
+          .catch(() => "failed");
+      });
+      return found;
+    };
+
+    it("reads the page around it, then on from both its ends until it joins the rest", async () => {
+      const { result } = show();
+      expect(await openAt(result, Promise.resolve(page(3, 4, 5)))).toBe(true);
+      expect(listHarnessChatHistory).toHaveBeenLastCalledWith("job-1", {
+        kind: "messages",
+        around: "m4",
+      });
+      await waitFor(() => expect(ids(result)).toContain("gap"));
+
+      listHarnessChatHistory.mockResolvedValueOnce(page(1, 2));
+      act(() => {
+        mark(result, "older-around").onLoad();
+      });
+      await waitFor(() =>
+        expect(mark(result, "older-around").hasOlder).toBe(false),
+      );
+      expect(listHarnessChatHistory).toHaveBeenLastCalledWith("job-1", {
+        kind: "messages",
+        before: 3,
+      });
+
+      listHarnessChatHistory.mockResolvedValueOnce(page(4, 5, 6, 7));
+      act(() => {
+        mark(result, "gap").onLoad();
+      });
+      await waitFor(() =>
+        expect(ids(result)).toEqual([
+          "older-messages",
+          ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((one) => `m${one}`),
+        ]),
+      );
+      expect(listHarnessChatHistory).toHaveBeenLastCalledWith("job-1", {
+        kind: "messages",
+        around: "m5",
+      });
+    });
+
+    it.each([
+      [
+        "the server doesn't have",
+        () => Promise.reject({ statusCode: 404 }),
+        false,
+      ],
+      [
+        "that couldn't be read",
+        () => Promise.reject(new Error("offline")),
+        "failed",
+      ],
+    ])("tells apart a message %s", async (_, answer, found) => {
+      const { result } = show();
+      expect(await openAt(result, answer())).toBe(found);
+      expect(ids(result)).toEqual(["older-messages", "m8", "m9"]);
+    });
+
+    it("drops the page once the reader no longer wants it", async () => {
+      const { result } = show();
+      await openAt(result, Promise.resolve(page(3, 4, 5)), () => false);
+      expect(ids(result)).toEqual(["older-messages", "m8", "m9"]);
+    });
   });
 
   it("projects turns from the polled conversation", () => {

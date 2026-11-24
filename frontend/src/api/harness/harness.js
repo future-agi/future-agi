@@ -79,11 +79,14 @@ export const cancelHarnessJob = async (id, reason) => {
   return (await axios.post(cancelPath(id), body)).data;
 };
 
-// The page of builder chat `kind` (messages or events) just before a sequence,
-// oldest first.
-export const listOlderHarnessChat = async (id, { kind, before }) =>
-  (await axios.get(conversationHistoryPath(id), { params: { kind, before } }))
-    .data;
+// A page of builder chat `kind` (messages or events), oldest first: the ones
+// just before a sequence, or the messages around one (its id).
+export const listHarnessChatHistory = async (id, { kind, before, around }) =>
+  (
+    await axios.get(conversationHistoryPath(id), {
+      params: { kind, before, around },
+    })
+  ).data;
 
 // Post a turn into the live builder conversation. `payload` carries the required
 // { content, client_request_id, kind } and, for a reply to a blocking question,

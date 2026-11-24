@@ -779,6 +779,48 @@ describe("harnessJobQuery", () => {
         has_older: true,
       });
     });
+
+    describe("read around one far back", () => {
+      const answers = [
+        answer({ messages: messages(7, 9), history: window(7, true) }),
+        answer({ messages: messages(8, 10), history: window(8, true) }),
+      ];
+      const around = (from, to) => ({
+        around: { messages: messages(from, to), has_older: true },
+      });
+
+      it("stay apart while some between aren't loaded, also after a poll", async () => {
+        const { conversation } = await held(
+          {
+            ...answers[0],
+            conversation: { ...answers[0].conversation, ...around(2, 4) },
+          },
+          answers[1],
+        );
+        expect(ids(conversation.around.messages)).toEqual(["m2", "m3", "m4"]);
+        expect(ids(conversation.older_messages)).toEqual(["m7"]);
+        expect(conversation.history.messages.oldest_sequence).toBe(7);
+      });
+
+      it("join the rest once they reach it", async () => {
+        const { conversation } = await held(answers[0], {
+          ...answers[1],
+          conversation: { ...answers[1].conversation, ...around(3, 6) },
+        });
+        expect(conversation.around).toBeNull();
+        expect(ids(conversation.older_messages)).toEqual([
+          "m3",
+          "m4",
+          "m5",
+          "m6",
+          "m7",
+        ]);
+        expect(conversation.history.messages).toMatchObject({
+          oldest_sequence: 3,
+          has_older: true,
+        });
+      });
+    });
   });
 });
 
