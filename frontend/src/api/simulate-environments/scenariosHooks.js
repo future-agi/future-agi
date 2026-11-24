@@ -253,11 +253,13 @@ export function useArchiveScenario(envId) {
       restore
         ? restoreScenario(envId, key)
         : archiveScenario(envId, key, reason),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({
         queryKey: harnessScenariosListKey(envId),
       });
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(envId) });
+      // A restore that isn't live lands in the unsaved changes.
+      if (data?.live === false) refreshDrafts(queryClient, envId);
     },
   });
 }

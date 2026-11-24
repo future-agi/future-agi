@@ -241,6 +241,11 @@ export default function ScenariosStep({
   // The list polls every 15s. A failed first load takes the whole tab; a failed
   // background refetch keeps the rows already on screen and says so inline.
   const loadFailed = pageData.isError || suiteQuery.isError;
+  // The open drawer reads the row from the current list, so a Validate or archive shows there too; a row the list
+  // no longer shows keeps the copy it was opened with.
+  const drawerRow = openRow
+    ? pageData.rows.find((one) => one.id === openRow.id) ?? openRow
+    : null;
   const retryLoad = () => {
     if (pageData.isError) pageData.refetch();
     if (suiteQuery.isError) suiteQuery.refetch();
@@ -781,7 +786,7 @@ export default function ScenariosStep({
             prev && lifecycle ? { ...prev, lifecycle } : prev,
           )
         }
-        row={openRow}
+        row={drawerRow}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => {
           setOpenRow(null);

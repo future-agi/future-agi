@@ -133,7 +133,7 @@ describe("isBeingValidated", () => {
     scenarioKey: key,
     lifecycle: { state },
   });
-  it("marks the named scenarios, or the ones not proved yet when none are named", () => {
+  it("marks the named scenarios, or every one but the archived when none are named", () => {
     expect(
       isBeingValidated(row("active", "a"), {
         job_id: "j",
@@ -151,6 +151,9 @@ describe("isBeingValidated", () => {
     ).toBe(true);
     expect(
       isBeingValidated(row("active"), { job_id: "j", scenario_keys: null }),
+    ).toBe(true);
+    expect(
+      isBeingValidated(row("archived"), { job_id: "j", scenario_keys: null }),
     ).toBe(false);
     expect(isBeingValidated(row("draft"), { job_id: null })).toBe(false);
   });

@@ -52,15 +52,19 @@ export default function ValidateScenariosButton({
       keys.every((key) => live.scenario_keys.includes(key)));
   const elsewhere = Boolean(live?.job_id) && !covers && !validationJobId;
 
+  // The end is said once, as a toast, by the button that started or followed it.
+  const told = useRef(null);
+  // Follows each new validation that proves its cases, not only the first; never one whose end it already said.
   useEffect(() => {
-    if (covers && !validationJobId) {
+    if (
+      covers &&
+      live.job_id !== validationJobId &&
+      live.job_id !== told.current
+    ) {
       setMessage(null);
       setValidationJobId(live.job_id);
     }
   }, [covers, live?.job_id, validationJobId]);
-
-  // The end is said once, as a toast, by the button that started or followed it.
-  const told = useRef(null);
   useEffect(() => {
     if (quiet || !validationJobId || !state || state === "validating") return;
     if (told.current === validationJobId) return;
@@ -98,7 +102,7 @@ export default function ValidateScenariosButton({
       told.current = null;
       setValidationJobId(result.job_id ?? null);
     } catch (error) {
-      setMessage(error?.response?.data?.message ?? error?.message ?? null);
+      setMessage(error?.message ?? null);
     }
   };
 

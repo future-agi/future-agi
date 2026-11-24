@@ -35,8 +35,11 @@ describe("ArchiveScenarioButton", () => {
   it("says to remove a scenario only the unsaved changes hold, and leaves its state alone", async () => {
     const user = userEvent.setup();
     const onChanged = vi.fn();
+    // The request layer rejects with the server's error body itself.
     archiveScenario.mockRejectedValue({
-      response: { data: { error: "scenario_unsaved", message: "x" } },
+      error: "scenario_unsaved",
+      message: "x",
+      statusCode: 409,
     });
     renderButton({ row: row("active"), onChanged });
 

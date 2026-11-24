@@ -99,6 +99,23 @@ describe("ValidateScenariosButton", () => {
     expect(validateScenarios).not.toHaveBeenCalled();
   });
 
+  it("follows a second validation that starts after the first one ended", async () => {
+    getRunningScenarioValidation
+      .mockResolvedValueOnce({ ...NOTHING_RUNNING, job_id: "val-9" })
+      .mockResolvedValue({ ...NOTHING_RUNNING, job_id: "val-10" });
+    getScenarioValidation.mockResolvedValue({
+      state: "finished",
+      proofs_recorded: true,
+      proved: 1,
+      total: 1,
+    });
+    renderButton();
+    await waitFor(() =>
+      expect(getScenarioValidation).toHaveBeenCalledWith("env-1", "val-10"),
+    );
+    await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalledTimes(2));
+  });
+
   it("says why when there is nothing to prove, without a progress state", async () => {
     validateScenarios.mockResolvedValue({
       state: "ready",

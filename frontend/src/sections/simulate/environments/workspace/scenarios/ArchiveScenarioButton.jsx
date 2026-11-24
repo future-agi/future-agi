@@ -10,10 +10,8 @@ import { LIFECYCLE_COPY } from "./scenarios.constants";
 
 const COPY = LIFECYCLE_COPY.archive;
 
-const errorText = (error) => {
-  const data = error?.response?.data;
-  return COPY.errors[data?.error] ?? data?.message ?? error?.message;
-};
+// The request layer hands back the server's error body itself.
+const errorText = (error) => COPY.errors[error?.error] ?? error?.message;
 
 // Archive (with an optional note) or Restore one scenario. `onChanged` gets the scenario's new lifecycle.
 export default function ArchiveScenarioButton({ envId, row, onChanged }) {
