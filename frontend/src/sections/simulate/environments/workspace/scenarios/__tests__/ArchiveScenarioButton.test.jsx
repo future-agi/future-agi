@@ -59,6 +59,24 @@ describe("ArchiveScenarioButton", () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["active", "Restored. It runs again.", "success"],
+    ["draft", "Restored, but held back. Its Status says why.", "warning"],
+  ])(
+    "says whether a restored %s scenario runs",
+    async (state, said, variant) => {
+      const user = userEvent.setup();
+      restoreScenario.mockResolvedValue({ live: true, lifecycle: { state } });
+      renderButton({ row: row("archived") });
+
+      await user.click(screen.getByRole("button", { name: "Restore" }));
+
+      await waitFor(() =>
+        expect(enqueueSnackbar).toHaveBeenCalledWith(said, { variant }),
+      );
+    },
+  );
+
   it("says a restore that lands in the unsaved changes needs a save", async () => {
     const user = userEvent.setup();
     restoreScenario.mockResolvedValue({

@@ -7,6 +7,7 @@ import Iconify from "src/components/iconify";
 import { ARCHIVE_REASON_MAX } from "src/api/simulate-environments/scenarios";
 import { useArchiveScenario } from "src/api/simulate-environments/scenariosHooks";
 import { LIFECYCLE_COPY } from "./scenarios.constants";
+import { isRunnable } from "./lifecycleView";
 
 const COPY = LIFECYCLE_COPY.archive;
 
@@ -34,12 +35,12 @@ export default function ArchiveScenarioButton({ envId, row, onChanged }) {
       setAnchor(null);
       setNote("");
       onChanged?.(result.lifecycle);
-      const said = !restore
-        ? COPY.archived
-        : result.live
-          ? COPY.restoredLive
-          : COPY.restoredDraft;
-      enqueueSnackbar(said, { variant: "success" });
+      // Back in the saved version isn't the same as running: an unproved one is still held.
+      const held = restore && result.live && !isRunnable(result.lifecycle);
+      let said = COPY.archived;
+      if (restore) said = result.live ? COPY.restoredLive : COPY.restoredDraft;
+      if (held) said = COPY.restoredHeld;
+      enqueueSnackbar(said, { variant: held ? "warning" : "success" });
     } catch (error) {
       enqueueSnackbar(errorText(error), { variant: "error" });
     }

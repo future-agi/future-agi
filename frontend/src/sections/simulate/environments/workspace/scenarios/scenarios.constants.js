@@ -121,6 +121,7 @@ export const LIFECYCLE_COPY = {
     cancel: "Cancel",
     archived: "Archived. It no longer runs.",
     restoredLive: "Restored. It runs again.",
+    restoredHeld: "Restored, but held back. Its Status says why.",
     restoredDraft: "Restored into the unsaved changes. Save to run it.",
     errors: {
       scenario_unsaved:
