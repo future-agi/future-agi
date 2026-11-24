@@ -1,11 +1,21 @@
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import ActorRow from "../ActorRow";
 import { typedActor } from "./castFixtures";
 
 vi.mock("src/api/simulate-environments/versions", () => ({
   useActorView: () => ({}),
 }));
+
+const specCard = (title) => screen.getByText(title).parentElement;
+const specValue = (card, label) =>
+  within(card).getByText(label).nextElementSibling.textContent;
 
 describe("ActorRow", () => {
   it("says in how many scenarios the actor comes in its own way, and how, as the server lists them", async () => {
@@ -121,12 +131,18 @@ describe("ActorRow", () => {
         loudChannels={["audio_mix"]}
       />,
     );
-    const details =
-      "Heard nearby · Loudness automatic · May do: crm.approve_discount · Comes in: From the start · If they do not answer: Nothing happens · In 2 scenarios";
-    expect(screen.queryByText(details)).toBeNull();
+    expect(screen.getByText("From the start · Used by 2")).toBeInTheDocument();
+    expect(screen.queryByText("Their part")).toBeNull();
     fireEvent.click(screen.getByText("Sam"));
-    expect(screen.getByText(details)).toBeInTheDocument();
+    const part = specCard("Their part");
+    expect(specValue(part, "Actions they may take")).toBe(
+      "crm.approve_discount",
+    );
+    expect(specValue(part, "When they come in")).toBe("From the start");
+    expect(specValue(part, "Voice")).toBe("Loudness automatic");
+    expect(specValue(part, "If they don't answer")).toBe("Nothing happens");
+    expect(within(part).queryByText("How they join")).toBeNull();
     fireEvent.click(screen.getByText("Sam"));
-    await waitFor(() => expect(screen.queryByText(details)).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Their part")).toBeNull());
   });
 });

@@ -141,6 +141,10 @@ const addActor = (side = "In the world") => {
   fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(side) }));
 };
 const openRow = (name) => fireEvent.click(screen.getByText(name));
+const specCard = (title) => screen.getByText(title).parentElement;
+const specRow = (card, label) =>
+  within(card).getByText(label).nextElementSibling;
+const specValue = (card, label) => specRow(card, label).textContent;
 const saveButton = () => screen.getByRole("button", { name: "Save to draft" });
 const sent = (call = 0) => mutate.mock.calls[call][0];
 
@@ -678,13 +682,21 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByText("When the agent calls crm.request_approval · Used by 2"),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/^May do:/)).toBeNull();
+    expect(screen.queryByText("Their part")).toBeNull();
     openRow("Priya Raman");
-    expect(
-      screen.getByText(
-        "May do: crm.approve_discount · Comes in: When the agent calls crm.request_approval · If they do not answer: Sam Rivera answers instead · In 2 scenarios",
-      ),
-    ).toBeInTheDocument();
+    const part = specCard("Their part");
+    expect(specValue(part, "Tests")).toBe(
+      "Approve only discounts she can justify",
+    );
+    expect(specValue(part, "Actions they may take")).toBe(
+      "crm.approve_discount",
+    );
+    expect(specValue(part, "When they come in")).toBe(
+      "When the agent calls crm.request_approval",
+    );
+    expect(specValue(part, "If they don't answer")).toBe(
+      "Sam Rivera answers instead",
+    );
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument();
   });
 
@@ -701,14 +713,12 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     openRow("Priya Raman");
-    expect(
-      screen.getByText(
-        /May do: crm.approve_discount, crm.old \(not an action of this world\)/,
-      ),
-    ).toBeInTheDocument();
+    expect(specValue(specCard("Their part"), "Actions they may take")).toBe(
+      "crm.approve_discount, crm.old (not an action of this world)",
+    );
   });
 
-  it("shows how a speaking actor joins and how loud it is, beside what it may do", () => {
+  it("shows how a speaking actor joins and how loud it is, and no world actions for the caller's side", () => {
     actorsData = cast([
       typedActor({
         id: "colleague",
@@ -723,11 +733,12 @@ describe("WorldActorsPanel", () => {
       screen.getByText("From the start · 2 scenarios"),
     ).toBeInTheDocument();
     openRow("Jordan Taylor");
-    expect(
-      screen.getByText(
-        "Heard nearby · Loudness automatic · May do: Nothing in the world · Comes in: From the start · If they do not answer: Nothing happens · In 2 scenarios",
-      ),
-    ).toBeInTheDocument();
+    const part = specCard("Their part");
+    expect(specValue(part, "How they join")).toBe("Heard nearby");
+    expect(specValue(part, "Voice")).toBe("Loudness automatic");
+    expect(specValue(part, "When they come in")).toBe("From the start");
+    expect(specValue(part, "If they don't answer")).toBe("Nothing happens");
+    expect(within(part).queryByText("Actions they may take")).toBeNull();
   });
 
   it("shows how the actors connect, from each actor's reaches and when it comes in, once there is more than one actor", () => {
@@ -785,27 +796,28 @@ describe("WorldActorsPanel", () => {
 
   it("shows what an actor sees and never sees in plain words once its row is opened, and folds it away again", async () => {
     render(<WorldActorsPanel envId="env-1" locked />);
-    expect(screen.queryByText("Sees")).toBeNull();
+    expect(screen.queryByText("What Priya Raman sees")).toBeNull();
     openRow("Priya Raman");
+    const sees = specCard("What Priya Raman sees");
+    expect(specValue(sees, "What they want")).toBe("Approve fast");
+    expect(specValue(sees, "What they know")).toBe("The limit is 25%");
+    expect(specValue(sees, "How they behave")).toBe("Answers after 5 s");
+    const never = specRow(sees, "Never sees");
     expect(
-      screen.getByText("What they want: Approve fast"),
+      within(never).getByText("Grader material: solution, sub goals"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("What they know: The limit is 25%"),
+      within(never).getByText("The scenario's hidden task, unless it is told"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("How they behave: Answers after 5 s"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Grader material: solution, sub goals"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
+      within(never).getByText(
         "What the 3 other actors each keep to themselves: goal, prompt",
       ),
     ).toBeInTheDocument();
     openRow("Priya Raman");
-    await waitFor(() => expect(screen.queryByText("Sees")).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByText("What Priya Raman sees")).toBeNull(),
+    );
   });
 
   it("adds someone in the world with every field, sending only what was set, as typed changes", () => {
@@ -1249,9 +1261,9 @@ describe("WorldActorsPanel", () => {
       screen.getByText("30 s after the start · Used by 0"),
     ).toBeInTheDocument();
     openRow("Priya Raman");
-    expect(
-      screen.getByText(/Comes in: 30 s after the start/),
-    ).toBeInTheDocument();
+    expect(specValue(specCard("Their part"), "When they come in")).toBe(
+      "30 s after the start",
+    );
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(screen.getByLabelText("Comes in")).toHaveTextContent(
       "At a set time",
@@ -1422,10 +1434,17 @@ describe("WorldActorsPanel", () => {
     viewState = { isLoading: true };
     const { rerender } = render(<WorldActorsPanel envId="env-1" locked />);
     openRow("Priya Raman");
-    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    const loading = specCard("What Priya Raman sees");
+    expect(within(loading).getByText("Knows")).toBeInTheDocument();
+    expect(within(loading).getByText("Can do")).toBeInTheDocument();
+    expect(within(loading).getByText("Never sees")).toBeInTheDocument();
+    expect(within(loading).queryByText("What they want")).toBeNull();
+    expect(screen.queryByText("Couldn't load what they see")).toBeNull();
     const retry = vi.fn();
     viewState = { isError: true, refetch: retry };
     rerender(<WorldActorsPanel envId="env-1" locked />);
+    expect(screen.queryByText("What Priya Raman sees")).toBeNull();
+    expect(screen.getByText("Couldn't load what they see")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalled();
   });
@@ -1532,7 +1551,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Edit / })).toBeNull();
     openRow("Priya Raman");
-    expect(screen.getByText("Sees")).toBeInTheDocument();
+    expect(screen.getByText("What Priya Raman sees")).toBeInTheDocument();
   });
 
   it("offers no other edit while a remove is in flight, so its answer can't be lost", () => {
@@ -1641,7 +1660,7 @@ describe("WorldActorsPanel", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText("Sees")).toBeInTheDocument();
+    expect(screen.getByText("What Priya Raman sees")).toBeInTheDocument();
   });
 
   it("will not close or discard the form while a save is in flight", () => {
@@ -1678,9 +1697,12 @@ describe("WorldActorsPanel", () => {
   it("shows Not set for a value with nothing in it", () => {
     render(<WorldActorsPanel envId="env-1" locked />);
     openRow("Priya Raman");
-    expect(screen.getByText("Not set").parentElement).toHaveTextContent(
-      "What they may agree to and keep to themselves: Not set",
-    );
+    expect(
+      specValue(
+        specCard("What Priya Raman sees"),
+        "What they may agree to and keep to themselves",
+      ),
+    ).toBe("Not set");
   });
 
   it("lists the policy points waiting for a decision above the cast, to accept as written or edit an actor for", () => {
