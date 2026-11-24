@@ -20,6 +20,8 @@
 --
 -- No TTL is declared here: retention stays owned by ee/usage/tasks/retention.py
 -- (per 020_remove_ttls.sql); cold storage tiering is deferred to a later phase.
+--
+-- cluster-shard-key: trajectory_items = cityHash64(project_id, scope_id, item_hash)
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS trajectory_items
@@ -35,7 +37,7 @@ CREATE TABLE IF NOT EXISTS trajectory_items
 )
 ENGINE = ReplacingMergeTree(first_seen_at)
 PARTITION BY toYYYYMM(first_seen_at)
-PRIMARY KEY (project_id, scope_id)
+PRIMARY KEY (project_id, scope_id, item_hash)
 ORDER BY    (project_id, scope_id, item_hash)
 SETTINGS
     index_granularity       = 8192,

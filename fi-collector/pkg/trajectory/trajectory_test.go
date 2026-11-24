@@ -158,7 +158,9 @@ func TestExtractSpanFormats(t *testing.T) {
 			t.Fatalf("expected Applied=true")
 		}
 		var env Envelope
-		_ = json.Unmarshal([]byte(ext.EnvelopeJSON), &env)
+		if err := json.Unmarshal([]byte(ext.EnvelopeJSON), &env); err != nil {
+			t.Fatalf("unmarshal Responses API envelope: %v", err)
+		}
 		if env.Input.SystemKey != "instructions" || env.Input.MessagesKey != "input" {
 			t.Fatalf("unexpected Responses API envelope: %+v", env.Input)
 		}
@@ -174,9 +176,37 @@ func TestExtractSpanFormats(t *testing.T) {
 			t.Errorf("developer role should be project-scoped, got %q", ext.InputHashes[0])
 		}
 		var env Envelope
-		_ = json.Unmarshal([]byte(ext.EnvelopeJSON), &env)
+		if err := json.Unmarshal([]byte(ext.EnvelopeJSON), &env); err != nil {
+			t.Fatalf("unmarshal TopLevelMessageArray envelope: %v", err)
+		}
 		if env.Input.Format != "msg_array" {
 			t.Fatalf("expected msg_array, got %+v", env.Input)
+		}
+	})
+
+	t.Run("SmartPreviewSurfacesLatestUserTurnPastLargeToolsAndSystem", func(t *testing.T) {
+		bigSys := strings.Repeat("System instruction rule. ", 100)
+		bigTool := map[string]any{"type": "function", "function": map[string]any{"name": "deploy", "description": strings.Repeat("schema ", 200)}}
+		inObj := map[string]any{
+			"model": "gpt-4o",
+			"tools": []any{bigTool},
+			"messages": []any{
+				map[string]any{"role": "system", "content": bigSys},
+				map[string]any{"role": "user", "content": "Old turn 1 question"},
+				map[string]any{"role": "assistant", "content": "Old turn 1 answer"},
+				map[string]any{"role": "user", "content": "Debug checkout error 502 right now"},
+			},
+		}
+		inBytes, _ := json.Marshal(inObj)
+		ext := ExtractSpan(projectID, sessionID, traceID, string(inBytes), "", DefaultPreviewMaxBytes)
+		if !ext.Applied {
+			t.Fatalf("expected Applied=true")
+		}
+		if !strings.Contains(ext.InputPreview, "Debug checkout error 502 right now") {
+			t.Fatalf("InputPreview should surface latest user message, got: %q", ext.InputPreview)
+		}
+		if len(ext.InputPreview) > DefaultPreviewMaxBytes {
+			t.Fatalf("InputPreview len=%d exceeds %d", len(ext.InputPreview), DefaultPreviewMaxBytes)
 		}
 	})
 
@@ -402,5 +432,51 @@ func TestConfigFromEnv(t *testing.T) {
 		return ""
 	}); err == nil {
 		t.Fatalf("expected error for invalid FI_TRAJECTORY_DEDUP_MODE")
+	}
+}
+
+func TestSeenStoreTTLExpiryAndProjectInvalidation(t *testing.T) {
+	now := time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC)
+	store := NewSeenStore(nil, 100, 1*time.Hour, 24*time.Hour)
+	store.nowFn = func() time.Time { return now }
+
+	projItem := Item{ProjectID: "p1", ScopeID: ProjectScopeID, ItemHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Content: "sys"}
+	sessItem := Item{ProjectID: "p1", ScopeID: "sess-1", ItemHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Content: "msg"}
+	otherItem := Item{ProjectID: "p2", ScopeID: ProjectScopeID, ItemHash: "cccccccccccccccccccccccccccccccc", Content: "other"}
+
+	newItems, reused, _ := store.FilterNew(context.Background(), []Item{projItem, sessItem, otherItem})
+	if len(newItems) != 3 || reused != 0 {
+		t.Fatalf("first pass: new=%d reused=%d", len(newItems), reused)
+	}
+
+	// Within TTL: all 3 reused.
+	now = now.Add(30 * time.Minute)
+	newItems, reused, _ = store.FilterNew(context.Background(), []Item{projItem, sessItem, otherItem})
+	if len(newItems) != 0 || reused != 3 {
+		t.Fatalf("within TTL: new=%d reused=%d", len(newItems), reused)
+	}
+
+	// Past sessionTTL (1h) but within projectTTL (24h): only sessItem expires and re-inserts.
+	now = now.Add(45 * time.Minute)
+	newItems, reused, _ = store.FilterNew(context.Background(), []Item{projItem, sessItem, otherItem})
+	if len(newItems) != 1 || newItems[0].ItemHash != sessItem.ItemHash || reused != 2 {
+		t.Fatalf("after sessionTTL: new=%+v reused=%d", newItems, reused)
+	}
+
+	// Past projectTTL (24h): projItem & otherItem expire and refresh into current partition.
+	now = now.Add(24 * time.Hour)
+	newItems, reused, _ = store.FilterNew(context.Background(), []Item{projItem, otherItem})
+	if len(newItems) != 2 || reused != 0 {
+		t.Fatalf("after projectTTL: new=%d reused=%d", len(newItems), reused)
+	}
+
+	// Project invalidation evicts ONLY p1 entries, keeping p2 cached.
+	evicted := store.InvalidateProject("p1")
+	if evicted != 2 {
+		t.Fatalf("InvalidateProject(p1) evicted=%d, want 2", evicted)
+	}
+	newItems, reused, _ = store.FilterNew(context.Background(), []Item{projItem, otherItem})
+	if len(newItems) != 1 || newItems[0].ProjectID != "p1" || reused != 1 {
+		t.Fatalf("after InvalidateProject: new=%+v reused=%d", newItems, reused)
 	}
 }

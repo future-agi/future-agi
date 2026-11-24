@@ -72,6 +72,8 @@ func ExtractSpan(
 
 	var (
 		items        []Item
+		inItems      []Item
+		outItems     []Item
 		inputHashes  []string
 		outputHashes []string
 		toolHashes   []string
@@ -85,6 +87,7 @@ func ExtractSpan(
 			env.Input = shape
 			inputHashes = msgHashes
 			toolHashes = append(toolHashes, tHashes...)
+			inItems = extracted
 			items = append(items, extracted...)
 			extractedIn = true
 		}
@@ -95,6 +98,7 @@ func ExtractSpan(
 			env.Output = shape
 			outputHashes = msgHashes
 			toolHashes = append(toolHashes, tHashes...)
+			outItems = extracted
 			items = append(items, extracted...)
 			extractedOut = true
 		}
@@ -119,17 +123,49 @@ func ExtractSpan(
 		Items:         items,
 	}
 	if extractedIn {
-		res.InputPreview = TruncateUTF8(input, previewMaxBytes)
+		res.InputPreview = smartMessagePreview(input, inItems, "user", previewMaxBytes)
 	} else {
 		// Output was extracted, input stays inline intact inside spans.input!
 		res.InputPreview = input
 	}
 	if extractedOut {
-		res.OutputPreview = TruncateUTF8(output, previewMaxBytes)
+		res.OutputPreview = smartMessagePreview(output, outItems, "assistant", previewMaxBytes)
 	} else {
 		res.OutputPreview = output
 	}
 	return res
+}
+
+// smartMessagePreview chooses a concise, human-readable preview (capped at
+// maxBytes) for list tables (Trace List, Span List, Session List first/last
+// message & message search) so multi-turn agent prompts with large leading
+// system prompts or tool schemas surface the actual latest user/assistant turn
+// instead of truncated JSON boilerplate. Detail/eval paths ignore the preview
+// and hydrate the full lossless payload from trajectory_items.
+func smartMessagePreview(raw string, items []Item, preferredRole string, maxBytes int) string {
+	if len(raw) <= maxBytes {
+		return raw
+	}
+	// Walk backwards so the newest turn wins; prefer preferredRole ("user" for
+	// input, "assistant" for output), else fall back to the newest non-system,
+	// non-tool_def message.
+	var fallback string
+	for i := len(items) - 1; i >= 0; i-- {
+		it := items[i]
+		if it.ItemType == "tool_def" || it.Role == "system" || it.Role == "developer" {
+			continue
+		}
+		if it.Role == preferredRole {
+			return TruncateUTF8(it.Content, maxBytes)
+		}
+		if fallback == "" {
+			fallback = it.Content
+		}
+	}
+	if fallback != "" {
+		return TruncateUTF8(fallback, maxBytes)
+	}
+	return TruncateUTF8(raw, maxBytes)
 }
 
 // decomposePayload tries to extract messages (and optional tools / top-level

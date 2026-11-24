@@ -393,6 +393,9 @@ func selectCandidates(attrs SpanAttributeMaps, maxKeys int) ([]attributeCandidat
 		consider(attributeCandidate{key: key, attributeType: AttributeTypeBoolean, value: value})
 	}
 	for key, value := range attrs.Extra {
+		if strings.HasPrefix(key, "__fi_promoted_") {
+			continue
+		}
 		switch typed := value.(type) {
 		case []any:
 			consider(attributeCandidate{key: key, attributeType: AttributeTypeArray, array: typed})

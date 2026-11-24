@@ -62,16 +62,25 @@ end
 return res
 `
 
-// SeenStore provides 2-tier (pod-local LRU + optional shared Redis set)
+type lruEntry struct {
+	key       ItemKey
+	expiresAt time.Time
+}
+
+// SeenStore provides 2-tier (pod-local TTL-bounded LRU + optional shared Redis set)
 // deduplication so:
 //  1. Turns hitting the same pod resolve in ~50 ns with zero network I/O.
 //  2. Turns hitting different pods behind a load balancer resolve via Redis so
 //     items are neither redundantly written nor double-billed to the customer.
 //  3. Redis outages fail open to local LRU + ClickHouse ReplacingMergeTree.
+//  4. Entries expire after sessionTTL / projectTTL so long-lived pods refresh
+//     active project-scoped prompts/tools into current monthly partitions and
+//     never outlive retention boundaries.
 type SeenStore struct {
 	rdb        *redis.Client
 	sessionTTL time.Duration
 	projectTTL time.Duration
+	nowFn      func() time.Time
 
 	mu       sync.Mutex
 	cap      int
@@ -95,10 +104,45 @@ func NewSeenStore(rdb *redis.Client, lruCap int, sessionTTL, projectTTL time.Dur
 		rdb:        rdb,
 		sessionTTL: sessionTTL,
 		projectTTL: projectTTL,
+		nowFn:      time.Now,
 		cap:        lruCap,
 		ll:         list.New(),
 		entries:    make(map[ItemKey]*list.Element, min(lruCap, 4096)),
 	}
+}
+
+func (s *SeenStore) now() time.Time {
+	if s.nowFn != nil {
+		return s.nowFn()
+	}
+	return time.Now()
+}
+
+func (s *SeenStore) ttlFor(scopeID string) time.Duration {
+	if scopeID == ProjectScopeID {
+		return s.projectTTL
+	}
+	return s.sessionTTL
+}
+
+// InvalidateProject evicts all pod-local LRU entries belonging to projectID.
+// Wired to Redis `fi:project:invalidate` so deleted/recreated projects never
+// skip trajectory_items writes based on stale local cache state.
+func (s *SeenStore) InvalidateProject(projectID string) int {
+	if s == nil || projectID == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for k, elem := range s.entries {
+		if k.ProjectID == projectID {
+			s.ll.Remove(elem)
+			delete(s.entries, k)
+			removed++
+		}
+	}
+	return removed
 }
 
 // RedisErrors returns the cumulative number of Redis fail-open events.
@@ -119,6 +163,7 @@ func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Ite
 	inSlice := make(map[ItemKey]struct{}, len(items))
 	var misses []candidate
 
+	now := s.now()
 	s.mu.Lock()
 	for _, it := range items {
 		k := it.Key()
@@ -129,10 +174,17 @@ func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Ite
 		}
 		inSlice[k] = struct{}{}
 		if elem, ok := s.entries[k]; ok {
-			s.ll.MoveToFront(elem)
-			reusedCount++
-			reusedBytes += int64(len(it.Content))
-			continue
+			ent := elem.Value.(*lruEntry)
+			if now.Before(ent.expiresAt) {
+				s.ll.MoveToFront(elem)
+				reusedCount++
+				reusedBytes += int64(len(it.Content))
+				continue
+			}
+			// Expired: evict and re-verify via Tier 2 / ClickHouse so active
+			// project-scoped prompts periodically refresh into current partitions.
+			s.ll.Remove(elem)
+			delete(s.entries, k)
 		}
 		misses = append(misses, candidate{item: it})
 	}
@@ -147,7 +199,7 @@ func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Ite
 		newItems = make([]Item, 0, len(misses))
 		s.mu.Lock()
 		for _, c := range misses {
-			s.putLocked(c.item.Key())
+			s.putLocked(c.item.Key(), now)
 			newItems = append(newItems, c.item)
 		}
 		s.mu.Unlock()
@@ -199,7 +251,7 @@ func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Ite
 			if cmds[i].Err() != nil {
 				s.redisErr.Add(1)
 				for _, it := range group {
-					s.putLocked(it.Key())
+					s.putLocked(it.Key(), now)
 					newItems = append(newItems, it)
 				}
 				continue
@@ -209,13 +261,13 @@ func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Ite
 		if err != nil || len(vals) != len(group) {
 			s.redisErr.Add(1)
 			for _, it := range group {
-				s.putLocked(it.Key())
+				s.putLocked(it.Key(), now)
 				newItems = append(newItems, it)
 			}
 			continue
 		}
 		for j, it := range group {
-			s.putLocked(it.Key())
+			s.putLocked(it.Key(), now)
 			if vals[j] == 0 {
 				// Already stored & billed by another collector pod.
 				reusedCount++
@@ -263,21 +315,26 @@ func (s *SeenStore) Forget(ctx context.Context, items []Item) {
 	for sk, hashes := range groups {
 		pipe.SRem(rctx, redisSeenKey(sk.projectID, sk.scopeID), hashes...)
 	}
-	_, _ = pipe.Exec(rctx)
+	if _, err := pipe.Exec(rctx); err != nil {
+		// Best-effort Redis SREM after ClickHouse fallback; ReplacingMergeTree remains authoritative.
+		s.redisErr.Add(1)
+	}
 }
 
-func (s *SeenStore) putLocked(k ItemKey) {
+func (s *SeenStore) putLocked(k ItemKey, now time.Time) {
+	exp := now.Add(s.ttlFor(k.ScopeID))
 	if elem, ok := s.entries[k]; ok {
+		elem.Value.(*lruEntry).expiresAt = exp
 		s.ll.MoveToFront(elem)
 		return
 	}
 	if s.ll.Len() >= s.cap {
 		if oldest := s.ll.Back(); oldest != nil {
 			s.ll.Remove(oldest)
-			delete(s.entries, oldest.Value.(ItemKey))
+			delete(s.entries, oldest.Value.(*lruEntry).key)
 		}
 	}
-	s.entries[k] = s.ll.PushFront(k)
+	s.entries[k] = s.ll.PushFront(&lruEntry{key: k, expiresAt: exp})
 }
 
 func redisSeenKey(projectID, scopeID string) string {

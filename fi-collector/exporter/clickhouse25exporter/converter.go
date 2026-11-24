@@ -1054,6 +1054,17 @@ func overflowAsStringWithKind(overflow map[string]any, key string) (string, bool
 	return string(b), true
 }
 
+// isIndexedAttrPrefix reports whether k starts with prefix followed immediately
+// by an ASCII digit (e.g. "gen_ai.prompt.0.content"). This prevents stripping
+// non-message metadata such as "gen_ai.prompt.name" or "gen_ai.prompt.template.variables".
+func isIndexedAttrPrefix(k, prefix string) bool {
+	if !strings.HasPrefix(k, prefix) || len(k) <= len(prefix) {
+		return false
+	}
+	c := k[len(prefix)]
+	return c >= '0' && c <= '9'
+}
+
 // stripFlattenedTrajectoryAttrs removes redundant OpenInference/OpenLLMetry
 // flattened message/tool keys from overflow once the span's messages have been
 // extracted into trajectory_items. Returns the stripped key/values (for
@@ -1062,13 +1073,13 @@ func stripFlattenedTrajectoryAttrs(overflow map[string]any) (map[string]any, int
 	var stripped map[string]any
 	var totalBytes int64
 	for k, v := range overflow {
-		if strings.HasPrefix(k, "llm.input_messages.") ||
-			strings.HasPrefix(k, "llm.output_messages.") ||
-			strings.HasPrefix(k, "gen_ai.prompt.") ||
-			strings.HasPrefix(k, "gen_ai.completion.") ||
-			strings.HasPrefix(k, "gen_ai.input.messages.") ||
-			strings.HasPrefix(k, "gen_ai.output.messages.") ||
-			strings.HasPrefix(k, "llm.tools.") {
+		if isIndexedAttrPrefix(k, "llm.input_messages.") ||
+			isIndexedAttrPrefix(k, "llm.output_messages.") ||
+			isIndexedAttrPrefix(k, "gen_ai.prompt.") ||
+			isIndexedAttrPrefix(k, "gen_ai.completion.") ||
+			isIndexedAttrPrefix(k, "gen_ai.input.messages.") ||
+			isIndexedAttrPrefix(k, "gen_ai.output.messages.") ||
+			isIndexedAttrPrefix(k, "llm.tools.") {
 			if stripped == nil {
 				stripped = make(map[string]any)
 			}

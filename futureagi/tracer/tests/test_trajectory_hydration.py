@@ -31,6 +31,7 @@ from tracer.services.clickhouse.v2.trajectory_hydration import (
     SENTINEL_PROMOTED_INPUT_KEY,
     SENTINEL_PROMOTED_OUTPUT_JSON,
     SENTINEL_PROMOTED_OUTPUT_KEY,
+    build_trajectory_items_query,
     hydrate_chspans,
     hydrate_span_dicts,
     reconstruct_payload,
@@ -54,10 +55,16 @@ def _h(tag: str) -> str:
 def test_reconstruct_openai_chat_with_tools_and_choices():
     h_sys, h_u1, h_t1, h_out = _h("sys"), _h("u1"), _h("tool1"), _h("out1")
     store = {
-        (PROJECT_SCOPE_ID, h_sys): '{"role":"system","content":"You are a coding agent."}',
+        (
+            PROJECT_SCOPE_ID,
+            h_sys,
+        ): '{"role":"system","content":"You are a coding agent."}',
         (SESSION_ID, h_u1): '{"role":"user","content":"Fix the bug"}',
         (PROJECT_SCOPE_ID, h_t1): '{"type":"function","function":{"name":"read_file"}}',
-        (SESSION_ID, h_out): '{"index":0,"message":{"role":"assistant","content":"Checking file."}}',
+        (
+            SESSION_ID,
+            h_out,
+        ): '{"index":0,"message":{"role":"assistant","content":"Checking file."}}',
     }
 
     def resolve(prefixed: str) -> str | None:
@@ -147,7 +154,10 @@ def test_reconstruct_msg_array_and_missing_item_safety():
     ]
 
     # Missing item -> returns None so caller keeps inline preview safely.
-    assert reconstruct_payload({"f": "msg_array"}, [h2, _h("missing")], None, store.get) is None
+    assert (
+        reconstruct_payload({"f": "msg_array"}, [h2, _h("missing")], None, store.get)
+        is None
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -243,7 +253,9 @@ def test_hydrate_span_dicts_zero_queries_for_inline_and_single_batch_for_mixed()
             {"role": "user", "content": "Question?"},
         ],
     }
-    assert json.loads(hydrated["output"]) == [{"role": "assistant", "content": "Answer!"}]
+    assert json.loads(hydrated["output"]) == [
+        {"role": "assistant", "content": "Answer!"}
+    ]
     # Phase 0 sentinels popped and replaced with the hydrated full payload!
     attrs = json.loads(hydrated["span_attributes"])
     assert SENTINEL_PROMOTED_INPUT_KEY not in attrs
@@ -409,7 +421,9 @@ def test_read_trace_detail_and_physical_span_detail_hydrate_items_v1():
         },
         authorized_project_id=PROJECT_ID,
     )
-    assert json.loads(phys["input"]) == [{"role": "user", "content": "Hydrated question"}]
+    assert json.loads(phys["input"]) == [
+        {"role": "user", "content": "Hydrated question"}
+    ]
     assert json.loads(phys["span_attributes"]) == {"input.value": phys["input"]}
 
 
@@ -434,7 +448,9 @@ def test_ch_span_reader_hydrates_get_list_and_export():
             "cost": 0.0,
             "input": "preview...",
             "output": "ok",
-            "attributes_extra": json.dumps({SENTINEL_PROMOTED_INPUT_KEY: "input.value"}),
+            "attributes_extra": json.dumps(
+                {SENTINEL_PROMOTED_INPUT_KEY: "input.value"}
+            ),
             "attrs_string": {},
             "attrs_number": {},
             "attrs_bool": {},
@@ -470,10 +486,14 @@ def test_ch_span_reader_hydrates_get_list_and_export():
                 # export_fields_by_ids query: SELECT id, argMax(..., _version) AS alias, ...
                 import re
 
+                # Regression guard: aliasing an aggregate to bare `project_id` breaks
+                # ClickHouse 25.3 analyzer on `PREWHERE project_id = ...` (Code 184).
+                assert "AS project_id," not in sql and "AS project_id " not in sql
                 cols_sql = sql.split("SELECT ", 1)[1].split(" FROM spans", 1)[0]
                 aliases = ["id", *re.findall(r"\bAS\s+(\w+)", cols_sql)]
+                lookup = {**row_map, "project_id_str": PROJECT_ID}
                 return SimpleNamespace(
-                    result_rows=[tuple(row_map.get(a, "") for a in aliases)]
+                    result_rows=[tuple(lookup.get(a, "") for a in aliases)]
                 )
             return SimpleNamespace(result_rows=[full_tuple])
 
@@ -489,12 +509,20 @@ def test_ch_span_reader_hydrates_get_list_and_export():
     assert SENTINEL_PROMOTED_INPUT_KEY not in attrs
 
     trace_spans = reader.list_by_trace(TRACE_ID, project_id=PROJECT_ID)
-    assert len(trace_spans) == 1 and json.loads(trace_spans[0].input)[0]["content"] == "Full eval prompt"
+    assert (
+        len(trace_spans) == 1
+        and json.loads(trace_spans[0].input)[0]["content"] == "Full eval prompt"
+    )
 
     id_spans = reader.list_by_ids(["sp-1"], project_id=PROJECT_ID)
-    assert len(id_spans) == 1 and json.loads(id_spans[0].input)[0]["content"] == "Full eval prompt"
+    assert (
+        len(id_spans) == 1
+        and json.loads(id_spans[0].input)[0]["content"] == "Full eval prompt"
+    )
 
-    exported = reader.export_fields_by_ids(["sp-1"], {"input", "span_attributes"}, project_id=PROJECT_ID)
+    exported = reader.export_fields_by_ids(
+        ["sp-1"], {"input", "span_attributes"}, project_id=PROJECT_ID
+    )
     assert json.loads(exported["sp-1"]["input"]) == [
         {"role": "user", "content": "Full eval prompt"}
     ]
@@ -558,8 +586,14 @@ def test_migration_028_replicated_rewriter_and_no_ttl():
         cluster="fi_cluster",
         zk_prefix="/clickhouse/tables/{cluster}",
     )
-    assert "CREATE TABLE IF NOT EXISTS trajectory_items ON CLUSTER 'fi_cluster'" in rewritten_create
-    assert "ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/trajectory_items', '{replica}', first_seen_at)" in rewritten_create
+    assert (
+        "CREATE TABLE IF NOT EXISTS trajectory_items ON CLUSTER 'fi_cluster'"
+        in rewritten_create
+    )
+    assert (
+        "ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/trajectory_items', '{replica}', first_seen_at)"
+        in rewritten_create
+    )
 
     rewritten_alter = apply_schema_rewriter.rewrite_for_replicated(
         stmts[1],
@@ -577,3 +611,309 @@ def test_migration_028_replicated_rewriter_and_no_ttl():
         "payload_envelope",
     ):
         assert col in rewritten_alter
+
+
+@pytest.mark.unit
+def test_session_detail_sql_projects_trajectory_pointers_and_list_strips_sentinels():
+    from tracer.services.clickhouse.v2.query_builders.session_detail import (
+        build_session_detail_traces_query,
+    )
+    from tracer.views.trace_session import _merge_session_attribute_sources
+
+    sql, _params = build_session_detail_traces_query(
+        PROJECT_ID, (SESSION_ID,), limit=10, offset=0
+    )
+    for col in (
+        "input_item_hashes",
+        "output_item_hashes",
+        "tool_def_hashes",
+        "item_scope_id",
+        "payload_encoding",
+        "payload_envelope",
+    ):
+        assert col in sql
+
+    merged = _merge_session_attribute_sources(
+        {
+            "span_attributes_raw": json.dumps(
+                {
+                    "custom.env": "prod",
+                    SENTINEL_PROMOTED_INPUT_KEY: "input.value",
+                    SENTINEL_PROMOTED_INPUT_JSON: True,
+                    SENTINEL_PROMOTED_OUTPUT_KEY: "output.value",
+                    SENTINEL_PROMOTED_OUTPUT_JSON: False,
+                }
+            ),
+            "attrs_string": {"team": "payments"},
+            "attrs_number": {"score": 9.5},
+            "attrs_bool": {"vip": 1},
+        }
+    )
+    assert merged == {
+        "custom.env": "prod",
+        "team": "payments",
+        "score": 9.5,
+        "vip": True,
+    }
+    assert not any(k.startswith("__fi_promoted_") for k in merged)
+
+
+@pytest.mark.unit
+def test_trajectory_query_chunking_three_key_pk_and_prewhere():
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        _MAX_HASHES_PER_QUERY,
+        fetch_trajectory_items_dict_rows,
+    )
+
+    schema_sql = (
+        Path(apply_schema.__file__).parent / "schema" / "028_trajectory_items.sql"
+    ).read_text()
+    assert "PRIMARY KEY (project_id, scope_id, item_hash)" in schema_sql
+
+    sql, _params = build_trajectory_items_query(
+        project_id=PROJECT_ID,
+        scope_ids=[PROJECT_SCOPE_ID, SESSION_ID],
+        item_hashes=["a" * 32],
+    )
+    assert "PREWHERE project_id = %(traj_project_id)s" in sql
+    assert "AND item_hash IN %(traj_item_hashes)s" in sql
+    assert "WHERE item_hash" not in sql
+
+    # 3,200 hashes under a single scope must split into 3 bounded queries.
+    total = _MAX_HASHES_PER_QUERY * 2 + 200
+    refs = [(PROJECT_ID, PROJECT_SCOPE_ID, f"{i:032x}") for i in range(total)]
+    batch_sizes: list[int] = []
+
+    def fake_query(_sql, params):
+        hs = params["traj_item_hashes"]
+        batch_sizes.append(len(hs))
+        return [
+            {"scope_id": PROJECT_SCOPE_ID, "item_hash": h, "content": f"c:{h}"}
+            for h in hs
+        ]
+
+    resolved = fetch_trajectory_items_dict_rows(fake_query, refs)
+    assert len(batch_sizes) == 3
+    assert all(n <= _MAX_HASHES_PER_QUERY for n in batch_sizes)
+    assert len(resolved) == total
+
+
+@pytest.mark.unit
+def test_hydrate_chspans_restores_extra_sentinels_and_prompt_template_metadata_stays_in_attrs_string():
+    from tracer.services.clickhouse.attribute_reads import AttributeReadSelector
+    from tracer.services.clickhouse.v2.adapter import split_attributes
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+    # 1. gen_ai.prompt.template.* & gen_ai.prompt.name stay in attrs_string;
+    #    gen_ai.prompt.0.content goes to overflow.
+    s, _n, _b, extra = split_attributes(
+        {
+            "gen_ai.prompt.name": "checkout-v2",
+            "gen_ai.prompt.template.variables": '{"tier":"gold"}',
+            "gen_ai.prompt.0.content": "huge prompt body",
+            "gen_ai.completion.0.content": "huge completion body",
+        }
+    )
+    assert s["gen_ai.prompt.name"] == "checkout-v2"
+    assert s["gen_ai.prompt.template.variables"] == '{"tier":"gold"}'
+    assert "gen_ai.prompt.0.content" in extra and "gen_ai.prompt.0.content" not in s
+    assert "gen_ai.completion.0.content" in extra
+
+    # 2. hydrate_chspans & attributes_extra_as_dict restore Phase 0 promoted keys
+    #    and never leak __fi_promoted_* sentinels.
+    raw_extra = json.dumps(
+        {
+            "custom": "ok",
+            SENTINEL_PROMOTED_INPUT_KEY: "input.value",
+            SENTINEL_PROMOTED_INPUT_JSON: True,
+        }
+    )
+    sp = span_reader.CHSpan(
+        id="span-sentinel-1",
+        project_id=PROJECT_ID,
+        trace_id=TRACE_ID,
+        parent_span_id="",
+        name="llm.call",
+        observation_type="llm",
+        operation_name="chat",
+        start_time=datetime(2026, 11, 22, 0, 0, tzinfo=UTC),
+        end_time=datetime(2026, 11, 22, 0, 0, 1, tzinfo=UTC),
+        latency_ms=1000,
+        model="gpt-4o",
+        provider="openai",
+        prompt_tokens=10,
+        completion_tokens=5,
+        total_tokens=15,
+        cost=0.001,
+        status="OK",
+        status_message="",
+        org_id=None,
+        project_version_id=None,
+        end_user_id=None,
+        trace_session_id=SESSION_ID,
+        prompt_version_id=None,
+        prompt_label_id=None,
+        custom_eval_config_id=None,
+        input='{"hello":"world"}',
+        output="plain answer",
+        tags="[]",
+        span_events="[]",
+        metadata="{}",
+        resource_attrs="{}",
+        attributes_extra=raw_extra,
+        payload_encoding=ENCODING_INLINE,
+    )
+    hydrated = hydrate_chspans([sp], lambda _q, _p: [])[0]
+    parsed = json.loads(hydrated.attributes_extra)
+    assert parsed == {"custom": "ok", "input.value": {"hello": "world"}}
+    assert CHSpanReader.attributes_extra_as_dict(sp) == {
+        "custom": "ok",
+        "input.value": {"hello": "world"},
+    }
+
+    # 3. attribute_reads._browse_row_keys never leaks __fi_promoted_* into EvalPicker.
+    keys, _ = AttributeReadSelector._browse_row_keys(
+        {
+            "string_keys": ["env"],
+            "number_keys": [],
+            "boolean_keys": [],
+            "attributes_extra": raw_extra,
+        },
+        json_attribute_mode="all",
+    )
+    assert "env" in keys and "custom" in keys
+    assert not any(k.startswith("__fi_promoted_") for k in keys)
+
+
+@pytest.mark.unit
+def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1():
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+    item_hash = "d" * 32
+    env_json = json.dumps({"in": {"f": "msg_array"}})
+    full_msg = json.dumps({"role": "user", "content": "Full lossless dataset question"})
+    expected_in = json.dumps([json.loads(full_msg)], separators=(",", ":"))
+    raw_extra = json.dumps(
+        {
+            "meta": "keep",
+            SENTINEL_PROMOTED_INPUT_KEY: "input.value",
+            SENTINEL_PROMOTED_INPUT_JSON: True,
+        }
+    )
+
+    class _FakeClient:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def query(self, sql, parameters=None, settings=None):
+            self.queries.append(sql)
+
+            class _Res:
+                pass
+
+            res = _Res()
+            if "FROM trajectory_items" in sql:
+                res.result_rows = [(SESSION_ID, item_hash, full_msg)]
+            elif "GROUP BY id, trace_id" in sql:
+                # child_tree_spans_by_trace_ids
+                res.result_rows = [
+                    (
+                        "child-1",
+                        "trace-1",
+                        PROJECT_ID,
+                        "root-1",
+                        "llm.call",
+                        "llm",
+                        "chat",
+                        "OK",
+                        "",
+                        "gpt-4o",
+                        "openai",
+                        "512B preview",
+                        "plain out",
+                        "{}",
+                        {},
+                        {},
+                        {"flag": 1},
+                        raw_extra,
+                        10,
+                        5,
+                        15,
+                        50,
+                        0.001,
+                        "[]",
+                        "[]",
+                        "2026-11-22 00:00:00",
+                        [item_hash],
+                        [],
+                        [],
+                        SESSION_ID,
+                        ENCODING_ITEMS_V1,
+                        env_json,
+                    )
+                ]
+            elif "GROUP BY id" in sql:
+                # export_fields_by_ids requesting ONLY span_attributes (no input/output!)
+                res.result_rows = [
+                    (
+                        "span-1",
+                        raw_extra,
+                        {"flag": 1},
+                        {},
+                        {"env": "prod"},
+                        "512B preview",
+                        [item_hash],
+                        SESSION_ID,
+                        "plain out",
+                        [],
+                        ENCODING_ITEMS_V1,
+                        env_json,
+                        PROJECT_ID,
+                        [],
+                    )
+                ]
+            else:
+                # list_by_ids(columns=["id", "input"])
+                res.result_rows = [
+                    (
+                        "span-1",
+                        "512B preview",
+                        PROJECT_ID,
+                        [item_hash],
+                        [],
+                        [],
+                        SESSION_ID,
+                        ENCODING_ITEMS_V1,
+                        env_json,
+                    )
+                ]
+            return res
+
+    client = _FakeClient()
+    reader = CHSpanReader.__new__(CHSpanReader)
+    reader._client = client
+
+    # 1. export_fields_by_ids with ONLY {"span_attributes"} restores promoted input.value!
+    exported = reader.export_fields_by_ids(
+        ["span-1"], {"span_attributes"}, project_id=PROJECT_ID
+    )
+    assert "input" not in exported["span-1"]
+    restored_extra = json.loads(exported["span-1"]["attributes_extra"])
+    assert restored_extra["meta"] == "keep"
+    assert restored_extra["input.value"] == [json.loads(full_msg)]
+    assert not any(k.startswith("__fi_promoted_") for k in restored_extra)
+
+    # 2. child_tree_spans_by_trace_ids hydrates items_v1 child spans & strips helper cols.
+    tree = reader.child_tree_spans_by_trace_ids(["trace-1"], project_id=PROJECT_ID)
+    child = tree["trace-1"][0]
+    assert child["input"] == expected_in
+    assert "payload_encoding" not in child
+    assert json.loads(child["attributes_extra"])["input.value"] == [
+        json.loads(full_msg)
+    ]
+
+    # 3. list_by_ids(columns=["id", "input"]) hydrates items_v1 and keeps exact keys.
+    proj_rows = reader.list_by_ids(
+        ["span-1"], project_id=PROJECT_ID, columns=["id", "input"]
+    )
+    assert proj_rows == [{"id": "span-1", "input": expected_in}]

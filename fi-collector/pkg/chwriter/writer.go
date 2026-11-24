@@ -279,7 +279,10 @@ func (w *Writer) InsertTable(ctx context.Context, table string, rows []map[strin
 	if len(rows) == 0 {
 		return nil
 	}
-	insertURL := w.insertURL(table)
+	// Item-first durability contract: trajectory_items MUST commit synchronously
+	// before dependent spans reference their hashes, even if AsyncInsert is enabled
+	// on the hot spans writer.
+	insertURL := w.insertSyncURL(table)
 	limit := w.maxInsertBytes
 	size := len(rows) * 512
 	if limit > 0 {
@@ -551,6 +554,15 @@ func (w *Writer) insertURL(table string) string {
 	} else {
 		q += "&async_insert=0"
 	}
+	return w.cfg.URL + q
+}
+
+// insertSyncURL builds a strictly synchronous INSERT URL (async_insert=0) for
+// tables that must be durably committed before dependent rows (e.g., trajectory_items).
+func (w *Writer) insertSyncURL(table string) string {
+	q := fmt.Sprintf("?database=%s&query=%s&async_insert=0",
+		urlEscape(w.cfg.Database),
+		urlEscape(fmt.Sprintf("INSERT INTO %s FORMAT JSONEachRow", table)))
 	return w.cfg.URL + q
 }
 

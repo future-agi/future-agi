@@ -18,6 +18,7 @@ SKIP_ATTR_PREFIXES = (
     "llm.output_messages",
     "input.value",
     "output.value",
+    "__fi_promoted_",
 )
 
 # Heavy content columns fetched in the Phase-1b query, with null-safe defaults.

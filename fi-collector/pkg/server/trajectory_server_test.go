@@ -351,7 +351,9 @@ func TestServerCrossPodDedupBillingShadowAndLive(t *testing.T) {
 			}
 
 			var billedAmount int64
-			_, _ = fmt.Sscanf(ev["amount"].(string), "%d", &billedAmount)
+			if _, err := fmt.Sscanf(ev["amount"].(string), "%d", &billedAmount); err != nil {
+				t.Fatalf("parse billed amount %q: %v", ev["amount"], err)
+			}
 			if tc.billDeduped {
 				if billedAmount != props.StoredBytes {
 					t.Fatalf("live mode: amount=%d, want stored_bytes=%d (raw=%d)", billedAmount, props.StoredBytes, props.RawBytes)

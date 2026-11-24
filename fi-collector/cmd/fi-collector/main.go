@@ -156,6 +156,11 @@ func main() {
 		var trajSeen *trajectory.SeenStore
 		if cfg.Trajectory.Active() {
 			trajSeen = trajectory.NewSeenStore(rdb, cfg.Trajectory.LRUSize, cfg.Trajectory.SessionTTL, cfg.Trajectory.ProjectTTL)
+			if authenticator != nil {
+				authenticator.OnProjectInvalidate(func(projectID string) {
+					trajSeen.InvalidateProject(projectID)
+				})
+			}
 		}
 		opts = append(opts, server.WithTrajectory(cfg.Trajectory, trajSeen))
 	}

@@ -51,7 +51,7 @@ TRAJECTORY_SPAN_COLUMNS: tuple[str, ...] = (
 )
 
 
-def _normalize_hash(value: Any) -> str:
+def _normalize_hash(value: bytes | bytearray | str) -> str:
     if isinstance(value, (bytes, bytearray)):
         return value.decode("ascii", errors="ignore").rstrip("\x00")
     return str(value).rstrip("\x00")
@@ -187,10 +187,64 @@ def _parse_envelope(raw: Any) -> dict[str, Any] | None:
     return None
 
 
+_MAX_SCOPES_PER_QUERY = 500
+_MAX_HASHES_PER_QUERY = 1500
+
+
+def _chunk_project_refs(
+    refs: Iterable[tuple[str, str, str]],
+) -> list[tuple[str, tuple[str, ...], tuple[str, ...]]]:
+    """Group refs by project and split into bounded (project, scopes, hashes) chunks.
+
+    Bounds each ClickHouse query well below max_query_size (256 KiB) and
+    max_result_rows even for large dataset exports or multi-hundred-span traces.
+    """
+    by_proj_scope: dict[str, dict[str, list[str]]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    for project_id, scope_id, item_hash in refs:
+        if not project_id or not scope_id or not item_hash:
+            continue
+        key = (project_id, scope_id, item_hash)
+        if key in seen:
+            continue
+        seen.add(key)
+        by_proj_scope.setdefault(project_id, {}).setdefault(scope_id, []).append(
+            item_hash
+        )
+
+    chunks: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+    for project_id, scope_map in by_proj_scope.items():
+        cur_scopes: list[str] = []
+        cur_hashes: list[str] = []
+        cur_hash_set: set[str] = set()
+        for scope_id, hashes in scope_map.items():
+            # Split oversized single scopes cleanly so each query stays bounded.
+            for off in range(0, len(hashes), _MAX_HASHES_PER_QUERY):
+                h_slice = hashes[off : off + _MAX_HASHES_PER_QUERY]
+                new_hashes = [h for h in h_slice if h not in cur_hash_set]
+                if cur_scopes and (
+                    len(cur_scopes) >= _MAX_SCOPES_PER_QUERY
+                    or len(cur_hashes) + len(new_hashes) > _MAX_HASHES_PER_QUERY
+                ):
+                    chunks.append((project_id, tuple(cur_scopes), tuple(cur_hashes)))
+                    cur_scopes = []
+                    cur_hashes = []
+                    cur_hash_set = set()
+                    new_hashes = h_slice
+                if not cur_scopes or cur_scopes[-1] != scope_id:
+                    cur_scopes.append(scope_id)
+                for h in new_hashes:
+                    cur_hash_set.add(h)
+                    cur_hashes.append(h)
+        if cur_scopes and cur_hashes:
+            chunks.append((project_id, tuple(cur_scopes), tuple(cur_hashes)))
+    return chunks
+
+
 def build_trajectory_items_query(
     *, project_id: str, scope_ids: Iterable[str], item_hashes: Iterable[str]
 ) -> tuple[str, dict[str, Any]]:
-    """Build a single PK-pruned query against ``trajectory_items``."""
+    """Build a single 3-key PK-pruned query against ``trajectory_items``."""
     scopes = tuple(dict.fromkeys(str(s) for s in scope_ids if s))
     hashes = tuple(dict.fromkeys(str(h) for h in item_hashes if h))
     if not project_id or not scopes or not hashes:
@@ -203,7 +257,7 @@ def build_trajectory_items_query(
         FROM trajectory_items
         PREWHERE project_id = %(traj_project_id)s
           AND scope_id IN %(traj_scope_ids)s
-        WHERE item_hash IN %(traj_item_hashes)s
+          AND item_hash IN %(traj_item_hashes)s
         GROUP BY scope_id, item_hash
     """
     params = {
@@ -219,14 +273,8 @@ def fetch_trajectory_items_dict_rows(
     refs: Iterable[tuple[str, str, str]],
 ) -> dict[tuple[str, str, str], str]:
     """Fetch referenced items using a dict-row query callback (analytics executor)."""
-    by_project: dict[str, tuple[set[str], set[str]]] = {}
-    for project_id, scope_id, item_hash in refs:
-        scopes, hashes = by_project.setdefault(project_id, (set(), set()))
-        scopes.add(scope_id)
-        hashes.add(item_hash)
-
     resolved: dict[tuple[str, str, str], str] = {}
-    for project_id, (scopes, hashes) in by_project.items():
+    for project_id, scopes, hashes in _chunk_project_refs(refs):
         sql, params = build_trajectory_items_query(
             project_id=project_id, scope_ids=scopes, item_hashes=hashes
         )
@@ -246,14 +294,8 @@ def fetch_trajectory_items_tuple_rows(
     refs: Iterable[tuple[str, str, str]],
 ) -> dict[tuple[str, str, str], str]:
     """Fetch referenced items using a tuple-row query callback (CHSpanReader client)."""
-    by_project: dict[str, tuple[set[str], set[str]]] = {}
-    for project_id, scope_id, item_hash in refs:
-        scopes, hashes = by_project.setdefault(project_id, (set(), set()))
-        scopes.add(scope_id)
-        hashes.add(item_hash)
-
     resolved: dict[tuple[str, str, str], str] = {}
-    for project_id, (scopes, hashes) in by_project.items():
+    for project_id, scopes, hashes in _chunk_project_refs(refs):
         sql, params = build_trajectory_items_query(
             project_id=project_id, scope_ids=scopes, item_hashes=hashes
         )
@@ -282,21 +324,31 @@ def restore_promoted_attributes(
     out_key = attrs.pop(SENTINEL_PROMOTED_OUTPUT_KEY, None)
     out_was_json = bool(attrs.pop(SENTINEL_PROMOTED_OUTPUT_JSON, False))
 
-    if isinstance(in_key, str) and in_key and in_key not in attrs and span_input is not None:
+    if (
+        isinstance(in_key, str)
+        and in_key
+        and in_key not in attrs
+        and span_input is not None
+    ):
         attrs[in_key] = _parse_json_item(span_input) if in_was_json else span_input
 
-    if isinstance(out_key, str) and out_key and out_key not in attrs and span_output is not None:
+    if (
+        isinstance(out_key, str)
+        and out_key
+        and out_key not in attrs
+        and span_output is not None
+    ):
         attrs[out_key] = _parse_json_item(span_output) if out_was_json else span_output
 
     return attrs
 
 
 def restore_promoted_in_attributes_extra(
-    raw_extra: Any,
+    raw_extra: str | dict[str, Any] | None,
     *,
     span_input: str | None = None,
     span_output: str | None = None,
-) -> Any:
+) -> str | dict[str, Any] | None:
     """Restore Phase 0 promoted attributes inside a raw ``attributes_extra`` JSON string or dict.
 
     Fast-paths in O(1) when no sentinel marker is present so legacy spans incur
@@ -309,7 +361,9 @@ def restore_promoted_in_attributes_extra(
         ):
             return raw_extra
         copy = dict(raw_extra)
-        restore_promoted_attributes(copy, span_input=span_input, span_output=span_output)
+        restore_promoted_attributes(
+            copy, span_input=span_input, span_output=span_output
+        )
         return copy
 
     if isinstance(raw_extra, str):
@@ -321,10 +375,35 @@ def restore_promoted_in_attributes_extra(
             return raw_extra
         if not isinstance(parsed, dict):
             return raw_extra
-        restore_promoted_attributes(parsed, span_input=span_input, span_output=span_output)
+        restore_promoted_attributes(
+            parsed, span_input=span_input, span_output=span_output
+        )
         return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
 
     return raw_extra
+
+
+def _hydrate_envelope_fields(
+    env: dict[str, Any],
+    *,
+    project_id: str,
+    item_scope_id: str,
+    input_hashes: Sequence[str] | None,
+    output_hashes: Sequence[str] | None,
+    tool_hashes: Sequence[str] | None,
+    resolved: dict[tuple[str, str, str], str],
+) -> tuple[str | None, str | None]:
+    def _resolve(prefixed_hash: str) -> str | None:
+        s, raw = _resolve_scope_and_hash(prefixed_hash, item_scope_id)
+        return resolved.get((project_id, s, raw))
+
+    hydrated_in = None
+    if (in_shape := env.get("in")) is not None:
+        hydrated_in = reconstruct_payload(in_shape, input_hashes, tool_hashes, _resolve)
+    hydrated_out = None
+    if (out_shape := env.get("out")) is not None:
+        hydrated_out = reconstruct_payload(out_shape, output_hashes, None, _resolve)
+    return hydrated_in, hydrated_out
 
 
 def hydrate_span_dicts(
@@ -370,34 +449,19 @@ def hydrate_span_dicts(
     for idx, row in enumerate(rows):
         env = envelopes.get(idx)
         if env is not None:
-            pid = str(row.get("project_id") or project_id_fallback or "")
-            scope = str(row.get("item_scope_id") or "")
-
-            def _resolve(prefixed_hash: str, _pid: str = pid, _scope: str = scope) -> str | None:
-                s, raw = _resolve_scope_and_hash(prefixed_hash, _scope)
-                return resolved.get((_pid, s, raw))
-
-            in_shape = env.get("in")
-            if in_shape is not None:
-                hydrated_in = reconstruct_payload(
-                    in_shape,
-                    row.get("input_item_hashes"),
-                    row.get("tool_def_hashes"),
-                    _resolve,
-                )
-                if hydrated_in is not None:
-                    row["input"] = hydrated_in
-
-            out_shape = env.get("out")
-            if out_shape is not None:
-                hydrated_out = reconstruct_payload(
-                    out_shape,
-                    row.get("output_item_hashes"),
-                    None,
-                    _resolve,
-                )
-                if hydrated_out is not None:
-                    row["output"] = hydrated_out
+            hydrated_in, hydrated_out = _hydrate_envelope_fields(
+                env,
+                project_id=str(row.get("project_id") or project_id_fallback or ""),
+                item_scope_id=str(row.get("item_scope_id") or ""),
+                input_hashes=row.get("input_item_hashes"),
+                output_hashes=row.get("output_item_hashes"),
+                tool_hashes=row.get("tool_def_hashes"),
+                resolved=resolved,
+            )
+            if hydrated_in is not None:
+                row["input"] = hydrated_in
+            if hydrated_out is not None:
+                row["output"] = hydrated_out
 
         if attr_key in row:
             row[attr_key] = restore_promoted_in_attributes_extra(
@@ -442,42 +506,37 @@ def hydrate_chspans(
             envelopes[idx] = env
             refs.extend(span_refs)
 
-    if not refs:
-        return spans
-
-    resolved = fetch_trajectory_items_tuple_rows(query_fn, refs)
+    resolved = fetch_trajectory_items_tuple_rows(query_fn, refs) if refs else {}
     out = list(spans)
-    for idx, env in envelopes.items():
-        span = out[idx]
-        pid = str(span.project_id or "")
-        scope = str(span.item_scope_id or "")
-
-        def _resolve(prefixed_hash: str, _pid: str = pid, _scope: str = scope) -> str | None:
-            s, raw = _resolve_scope_and_hash(prefixed_hash, _scope)
-            return resolved.get((_pid, s, raw))
-
+    for idx, span in enumerate(out):
         updates: dict[str, Any] = {}
-        in_shape = env.get("in")
-        if in_shape is not None:
-            hydrated_in = reconstruct_payload(
-                in_shape,
-                span.input_item_hashes,
-                span.tool_def_hashes,
-                _resolve,
+        env = envelopes.get(idx)
+        if env is not None:
+            hydrated_in, hydrated_out = _hydrate_envelope_fields(
+                env,
+                project_id=str(span.project_id or ""),
+                item_scope_id=str(span.item_scope_id or ""),
+                input_hashes=span.input_item_hashes,
+                output_hashes=span.output_item_hashes,
+                tool_hashes=span.tool_def_hashes,
+                resolved=resolved,
             )
             if hydrated_in is not None:
                 updates["input"] = hydrated_in
-
-        out_shape = env.get("out")
-        if out_shape is not None:
-            hydrated_out = reconstruct_payload(
-                out_shape,
-                span.output_item_hashes,
-                None,
-                _resolve,
-            )
             if hydrated_out is not None:
                 updates["output"] = hydrated_out
+
+        raw_extra = getattr(span, "attributes_extra", None)
+        if isinstance(raw_extra, str) and _SENTINEL_MARKER in raw_extra:
+            eff_in = updates.get("input", getattr(span, "input", None))
+            eff_out = updates.get("output", getattr(span, "output", None))
+            restored_extra = restore_promoted_in_attributes_extra(
+                raw_extra,
+                span_input=eff_in,
+                span_output=eff_out,
+            )
+            if restored_extra != raw_extra:
+                updates["attributes_extra"] = restored_extra
 
         if updates:
             out[idx] = replace(span, **updates)

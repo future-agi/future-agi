@@ -64,6 +64,12 @@ PAYLOAD_COLUMNS = (
     "span_events",
     "tags",
     "status_message",
+    "input_item_hashes",
+    "output_item_hashes",
+    "tool_def_hashes",
+    "item_scope_id",
+    "payload_encoding",
+    "payload_envelope",
 )
 
 
@@ -254,9 +260,9 @@ def test_projected_column_set_is_the_deployed_stored_column_set():
         declared = re.match(r"([A-Za-z_]\w*)\s+\S", text)
         if declared and not text.startswith("--") and "MATERIALIZED" not in text:
             stored.append(declared.group(1))
-    assert tuple(stored) == _PHYSICAL_SPAN_COLUMNS
-    # Later schema files may only add computed columns to ``spans``; a stored
-    # one would have to join the projection too, so fail loudly if that changes.
+    # Later schema files may add computed columns OR stored columns (e.g. 028
+    # trajectory pointer columns); any stored column added via ALTER TABLE spans
+    # must join `_PHYSICAL_SPAN_COLUMNS` in declaration order.
     for schema in sorted(SCHEMA_DIR.glob("*.sql")):
         for statement in re.findall(
             r"ALTER TABLE spans\b(.*?);", schema.read_text(), re.DOTALL
@@ -266,10 +272,12 @@ def test_projected_column_set_is_the_deployed_stored_column_set():
                 statement,
                 re.DOTALL,
             ):
-                assert "MATERIALIZED" in added or "ALIAS" in added, (
-                    schema.name,
-                    added.strip(),
-                )
+                if "MATERIALIZED" in added or "ALIAS" in added:
+                    continue
+                declared = re.match(r"([A-Za-z_]\w*)\s+\S", added.strip())
+                assert declared, (schema.name, added.strip())
+                stored.append(declared.group(1))
+    assert tuple(stored) == _PHYSICAL_SPAN_COLUMNS
 
 
 SPANS_FINAL_RE = re.compile(r"\bspans\s+FINAL\b")

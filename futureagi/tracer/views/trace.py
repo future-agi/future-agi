@@ -5573,6 +5573,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "llm.output_messages",
             "input.value",
             "output.value",
+            "__fi_promoted_",
         )
         aggregated_attrs = {}  # (project_id, trace_id) -> {attr_key -> values}
         for task_name in attribute_task_names:

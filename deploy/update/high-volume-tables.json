@@ -201,6 +201,12 @@
       "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
     },
     {
+      "database": "clickhouse",
+      "table": "trajectory_items",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/028_trajectory_items.sql",
+      "reason": "Content-addressed message and tool-definition store grows with unique trajectory items across ingested LLM spans"
+    },
+    {
       "database": "postgres",
       "table": "agentcc_request_log",
       "app_label": "prism",

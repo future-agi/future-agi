@@ -64,6 +64,10 @@ from tracer.services.clickhouse.read_budget import (
     is_read_budget_error,
 )
 from tracer.services.clickhouse.v2.trace_detail_reads import PhysicalSpanIdentity
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    ENCODING_ITEMS_V1,
+    hydrate_span_dicts,
+)
 
 SCHEMA = "insights-evidence/v1"
 UNIT_KINDS = ("trace", "session", "user")
@@ -2157,7 +2161,13 @@ _CONTENT_HEAVY_INNER = """
                         argMax(metadata, _version) AS latest_metadata,
                         argMax(attrs_string, _version) AS latest_attrs_string,
                         argMax(attrs_number, _version) AS latest_attrs_number,
-                        argMax(attrs_bool, _version) AS latest_attrs_bool,"""
+                        argMax(attrs_bool, _version) AS latest_attrs_bool,
+                        argMax(input_item_hashes, _version) AS latest_input_item_hashes,
+                        argMax(output_item_hashes, _version) AS latest_output_item_hashes,
+                        argMax(tool_def_hashes, _version) AS latest_tool_def_hashes,
+                        argMax(item_scope_id, _version) AS latest_item_scope_id,
+                        argMax(payload_encoding, _version) AS latest_payload_encoding,
+                        argMax(payload_envelope, _version) AS latest_payload_envelope,"""
 
 _CONTENT_HEAVY_DERIVED = f""",
                     {_extra_value_sql("latest_attributes_extra", "input.value")}
@@ -2166,13 +2176,15 @@ _CONTENT_HEAVY_DERIVED = f""",
                         AS output_value_full,
                     if(
                         (position(latest_attributes_extra, '"input.value"') > 0
-                         OR position(latest_attributes_extra, '"output.value"') > 0)
+                         OR position(latest_attributes_extra, '"output.value"') > 0
+                         OR position(latest_attributes_extra, '"__fi_promoted_') > 0)
                         AND isValidJSON(latest_attributes_extra)
                         AND JSONType(latest_attributes_extra) = 'Object',
                         concat('{{', arrayStringConcat(arrayMap(
                             kv -> concat(toJSONString(kv.1), ':', kv.2),
                             arrayFilter(
-                                kv -> kv.1 NOT IN ('input.value', 'output.value'),
+                                kv -> kv.1 NOT IN ('input.value', 'output.value')
+                                  AND NOT startsWith(kv.1, '__fi_promoted_'),
                                 JSONExtractKeysAndValuesRaw(latest_attributes_extra))),
                             ','), '}}'),
                         latest_attributes_extra
@@ -2193,6 +2205,12 @@ _CONTENT_HEAVY_OUTER = """
                 lengthUTF8(latest_input) AS input_chars,
                 substringUTF8(latest_output, 1, %(evidence_heavy_chars)s) AS output,
                 lengthUTF8(latest_output) AS output_chars,
+                latest_input_item_hashes AS input_item_hashes,
+                latest_output_item_hashes AS output_item_hashes,
+                latest_tool_def_hashes AS tool_def_hashes,
+                latest_item_scope_id AS item_scope_id,
+                latest_payload_encoding AS payload_encoding,
+                latest_payload_envelope AS payload_envelope,
                 if(input_value_full = latest_input, '',
                     substringUTF8(input_value_full, 1, %(evidence_heavy_chars)s))
                     AS input_value,
@@ -2785,6 +2803,41 @@ def _read_content(
             builder.content_query(identities, heavy_chars=heavy, status_chars=status),
             max_rows=len(batch) + 1,
         )
+        if heavy > 0 and any(
+            row.get("payload_encoding") == ENCODING_ITEMS_V1 for row in result
+        ):
+            pre_vals = [(row.get("input"), row.get("output")) for row in result]
+            hydrate_span_dicts(
+                result,
+                lambda q, p: reader.rows((q, p), max_rows=50_000),
+                project_id_fallback=builder.project_id,
+            )
+            for row, (pre_in, pre_out) in zip(result, pre_vals, strict=True):
+                if row.get("payload_encoding") == ENCODING_ITEMS_V1:
+                    raw_env = row.get("payload_envelope")
+                    try:
+                        parsed_env = (
+                            json.loads(raw_env)
+                            if isinstance(raw_env, str) and raw_env
+                            else (raw_env if isinstance(raw_env, dict) else {})
+                        )
+                    except (ValueError, TypeError):
+                        parsed_env = {}
+                    for field_name, env_key, pre_val in (
+                        ("input", "in", pre_in),
+                        ("output", "out", pre_out),
+                    ):
+                        # Only overwrite *_chars and re-slice sides that were
+                        # actually reconstructed from trajectory_items; an
+                        # un-extracted inline side (or missing-item fallback)
+                        # already carries its exact pre-truncation SQL length.
+                        if (
+                            parsed_env.get(env_key) is not None
+                            and row.get(field_name) != pre_val
+                        ):
+                            full_val = row.get(field_name) or ""
+                            row[f"{field_name}_chars"] = len(full_val)
+                            row[field_name] = full_val[:heavy]
         found = {(str(row["trace_id"]), str(row["id"])): row for row in result}
         if len(result) != len(batch) or set(found) != {node.key for node in batch}:
             raise EvidenceUnavailable("incomplete_content_replay")
@@ -2849,6 +2902,8 @@ def _span_sources(
     parsed = _parse_json(extra.value) if extra.value.strip() else {}
     if isinstance(parsed, dict):
         for key, value in parsed.items():
+            if str(key).startswith("__fi_promoted_"):
+                continue
             name = str(key) if str(key) not in attributes else f"{key} (extra)"
             attributes[name] = value
     elif parsed is _UNPARSED:

@@ -32,6 +32,7 @@ read-only.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
@@ -49,6 +50,7 @@ from tracer.services.clickhouse.v2.query_settings import (
 )
 from tracer.services.clickhouse.v2.trajectory_hydration import (
     ENCODING_INLINE,
+    ENCODING_ITEMS_V1,
     TRAJECTORY_SPAN_COLUMNS,
     hydrate_chspans,
     hydrate_span_dicts,
@@ -1437,15 +1439,17 @@ class CHSpanReader:
         versions, so it is filtered after the dedup."""
         if not trace_ids:
             return []
+
         aliases = ", ".join(
             f"{col} AS {alias}" for col, alias in _DEDUP_KEY_ALIASES.items()
         )
+        traj_cols = ", ".join(TRAJECTORY_SPAN_COLUMNS)
         shown = "(observation_type = 'tool' OR upper(status) = 'ERROR')"
         sql = (
             "SELECT trace_id, id, name, observation_type, start_time, status,"
             " status_head, input_head, output_head, input_chars, output_chars,"
             f" images, audio, countIf({shown}) OVER (PARTITION BY trace_id)"
-            " AS in_trace, created_at FROM ("
+            f" AS in_trace, created_at, {traj_cols} FROM ("
             " SELECT trace_id, id, name, observation_type, start_time, created_at, status,"
             " substringUTF8(status_message, 1, %(err)s) AS status_head,"
             " substringUTF8(input, 1, %(chars)s) AS input_head,"
@@ -1454,6 +1458,7 @@ class CHSpanReader:
             " lengthUTF8(output) AS output_chars,"
             " countMatches(input, %(image)s) AS images,"
             " countMatches(input, %(audio)s) AS audio,"
+            f" {traj_cols},"
             f" is_deleted, {aliases}"
             " FROM spans"
             " WHERE project_id = %(pid)s AND trace_id IN %(tids)s"
@@ -1461,9 +1466,9 @@ class CHSpanReader:
             " ORDER BY _version DESC"
             f" LIMIT 1 BY {_DEDUP_KEY}"
             ") WHERE is_deleted = 0"
-            f" AND ({shown} OR images > 0 OR audio > 0)"
+            f" AND ({shown} OR images > 0 OR audio > 0"
+            " OR (payload_encoding = 'items_v1' AND length(input_item_hashes) > 0))"
             " ORDER BY trace_id, upper(status) = 'ERROR' DESC, start_time, id"
-            " LIMIT %(per)s BY trace_id"
         )
         image, audio = media_patterns
         params = {
@@ -1472,16 +1477,78 @@ class CHSpanReader:
             "err": int(error_chars),
             "image": image,
             "audio": audio,
-            "per": int(per_trace),
         }
-        out: list[dict[str, Any]] = []
+        all_keys = self._ACTIVITY_KEYS + TRAJECTORY_SPAN_COLUMNS
+        raw_out: list[dict[str, Any]] = []
         ids = [str(t) for t in trace_ids]
         for start in range(0, len(ids), self._ACTIVITY_BATCH):
             batch = tuple(ids[start : start + self._ACTIVITY_BATCH])
             rows = self._client.query(
                 sql, parameters={**params, "tids": batch}, settings={}
             ).result_rows
-            out.extend(dict(zip(self._ACTIVITY_KEYS, row, strict=True)) for row in rows)
+            raw_out.extend(dict(zip(all_keys, row, strict=True)) for row in rows)
+
+        # Hydrate only items_v1 rows (ZERO queries against trajectory_items for inline spans).
+        v1_rows = [r for r in raw_out if r.get("payload_encoding") == ENCODING_ITEMS_V1]
+        if v1_rows:
+            pre_vals = [(r.get("input"), r.get("output")) for r in v1_rows]
+            self._hydrate_dict_rows(
+                v1_rows,
+                project_id_fallback=str(project_id),
+                attr_key="_unused_activity_attr",
+            )
+            img_re = re.compile(image)
+            aud_re = re.compile(audio)
+            limit_chars = int(field_chars)
+            for r, (pre_in, pre_out) in zip(v1_rows, pre_vals, strict=True):
+                raw_env = r.get("payload_envelope")
+                try:
+                    env = (
+                        json.loads(raw_env)
+                        if isinstance(raw_env, str) and raw_env
+                        else (raw_env if isinstance(raw_env, dict) else {})
+                    )
+                except (ValueError, TypeError):
+                    env = {}
+                if env.get("in") is not None and r.get("input") != pre_in:
+                    full_in = str(r.get("input") or "")
+                    r["input_chars"] = len(full_in)
+                    r["input"] = full_in[:limit_chars]
+                    r["images"] = len(img_re.findall(full_in))
+                    r["audio"] = len(aud_re.findall(full_in))
+                if env.get("out") is not None and r.get("output") != pre_out:
+                    full_out = str(r.get("output") or "")
+                    r["output_chars"] = len(full_out)
+                    r["output"] = full_out[:limit_chars]
+
+        # Re-apply shown/media filter and per_trace cap (failed first, then start_time, id).
+        per_limit = int(per_trace)
+        by_trace: dict[str, list[dict[str, Any]]] = {}
+        for r in raw_out:
+            is_shown = (
+                r.get("observation_type") == "tool"
+                or str(r.get("status") or "").upper() == "ERROR"
+            )
+            if not (
+                is_shown
+                or int(r.get("images") or 0) > 0
+                or int(r.get("audio") or 0) > 0
+            ):
+                continue
+            for col in TRAJECTORY_SPAN_COLUMNS:
+                r.pop(col, None)
+            by_trace.setdefault(str(r["trace_id"]), []).append(r)
+
+        out: list[dict[str, Any]] = []
+        for t_rows in by_trace.values():
+            t_rows.sort(
+                key=lambda s: (
+                    0 if str(s.get("status") or "").upper() == "ERROR" else 1,
+                    s["start_time"],
+                    s["id"],
+                )
+            )
+            out.extend(t_rows[:per_limit])
         out.sort(key=lambda s: (s["trace_id"], s["start_time"], s["id"]))
         return out
 
@@ -1573,7 +1640,24 @@ class CHSpanReader:
         """
         if not span_ids:
             return []
-        read = _projection_columns(columns) if columns is not None else None
+        effective_columns = list(columns) if columns is not None else None
+        needs_hydration = False
+        if effective_columns is not None:
+            col_set = set(effective_columns)
+            if col_set & {"input", "output", "attributes_extra"}:
+                needs_hydration = True
+                extras = ["project_id", *TRAJECTORY_SPAN_COLUMNS]
+                if "attributes_extra" in col_set:
+                    extras.extend(["input", "output"])
+                for col in extras:
+                    if col not in col_set:
+                        effective_columns.append(col)
+                        col_set.add(col)
+        read = (
+            _projection_columns(effective_columns)
+            if effective_columns is not None
+            else None
+        )
         select = (
             _named_select(include_heavy, read)
             if read
@@ -1606,7 +1690,15 @@ class CHSpanReader:
             settings = _FINAL_SKIP_INDEX_SETTINGS
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
         if columns is not None:
-            return [_row_to_dict(columns, r) for r in rows]
+            dicts = [_row_to_dict(effective_columns, r) for r in rows]
+            if needs_hydration and dicts:
+                self._hydrate_dict_rows(
+                    dicts,
+                    project_id_fallback=str(project_id) if project_id else None,
+                    attr_key="attributes_extra",
+                )
+            allowed = set(columns)
+            return [{k: d[k] for k in columns if k in allowed} for d in dicts]
         return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     def export_fields_by_ids(
@@ -1630,18 +1722,23 @@ class CHSpanReader:
             return {}
 
         columns = _export_columns_for_fields(field_names)
-        needs_hydration = bool(
-            columns & {"input", "output", "attributes_extra"}
-        )
+        needs_hydration = bool(columns & {"input", "output", "attributes_extra"})
         query_columns = set(columns)
         if needs_hydration:
             query_columns.add("project_id")
             query_columns.update(TRAJECTORY_SPAN_COLUMNS)
+            if "attributes_extra" in columns:
+                # Phase 0 promoted attributes restore from span.input/output.
+                query_columns.update({"input", "output"})
         select_exprs = ["id"]
         aliases = ["id"]
         for alias in sorted(query_columns):
+            # Never alias an aggregate to the bare key column name (`project_id`),
+            # or ClickHouse 25.3's analyzer rejects `PREWHERE project_id = ...`
+            # with Code 184 ILLEGAL_AGGREGATION.
+            sql_alias = f"{alias}_str" if alias == "project_id" else alias
             select_exprs.append(
-                f"argMax({_EXPORT_COLUMN_SQL[alias]}, _version) AS {alias}"
+                f"argMax({_EXPORT_COLUMN_SQL[alias]}, _version) AS {sql_alias}"
             )
             aliases.append(alias)
 
@@ -1677,8 +1774,7 @@ class CHSpanReader:
             )
         allowed = {"id"} | columns
         return {
-            str(d["id"]): {k: v for k, v in d.items() if k in allowed}
-            for d in dicts
+            str(d["id"]): {k: v for k, v in d.items() if k in allowed} for d in dicts
         }
 
     # ─── Batch helpers for dataset child-tree export ─────────────────────────
@@ -1762,6 +1858,7 @@ class CHSpanReader:
         }
 
     _CHILD_TREE_COLUMNS: tuple[tuple[str, str], ...] = (
+        ("toString(project_id)", "project_id_str"),
         ("parent_span_id", "parent_span_id"),
         ("name", "name"),
         ("observation_type", "observation_type"),
@@ -1785,11 +1882,18 @@ class CHSpanReader:
         ("tags", "tags"),
         ("span_events", "span_events"),
         ("start_time", "start_time"),
+        ("input_item_hashes", "input_item_hashes"),
+        ("output_item_hashes", "output_item_hashes"),
+        ("tool_def_hashes", "tool_def_hashes"),
+        ("item_scope_id", "item_scope_id"),
+        ("payload_encoding", "payload_encoding"),
+        ("payload_envelope", "payload_envelope"),
     )
 
     _CHILD_TREE_ALIASES: tuple[str, ...] = (
         "id",
         "trace_id",
+        "project_id",
         "parent_span_id",
         "name",
         "observation_type",
@@ -1813,6 +1917,12 @@ class CHSpanReader:
         "tags",
         "span_events",
         "start_time",
+        "input_item_hashes",
+        "output_item_hashes",
+        "tool_def_hashes",
+        "item_scope_id",
+        "payload_encoding",
+        "payload_envelope",
     )
 
     def child_tree_spans_by_trace_ids(
@@ -1854,9 +1964,21 @@ class CHSpanReader:
             },
         ).result_rows
 
+        all_dicts = [
+            dict(zip(self._CHILD_TREE_ALIASES, row, strict=False)) for row in rows
+        ]
+        if all_dicts:
+            self._hydrate_dict_rows(
+                all_dicts,
+                project_id_fallback=str(project_id) if project_id else None,
+                attr_key="attributes_extra",
+            )
+
         result: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            d = dict(zip(self._CHILD_TREE_ALIASES, row, strict=False))
+        for d in all_dicts:
+            for col in TRAJECTORY_SPAN_COLUMNS:
+                d.pop(col, None)
+            d.pop("project_id", None)
             tid = str(d["trace_id"])
             result.setdefault(tid, []).append(d)
 
@@ -3227,7 +3349,24 @@ class CHSpanReader:
             return {}
         if columns is not None and "trace_id" not in columns:
             raise ValueError("columns must include 'trace_id' — it keys the result")
-        read = _projection_columns(columns) if columns is not None else None
+        effective_columns = list(columns) if columns is not None else None
+        needs_hydration = False
+        if effective_columns is not None:
+            col_set = set(effective_columns)
+            if col_set & {"input", "output", "attributes_extra"}:
+                needs_hydration = True
+                extras = ["project_id", *TRAJECTORY_SPAN_COLUMNS]
+                if "attributes_extra" in col_set:
+                    extras.extend(["input", "output"])
+                for col in extras:
+                    if col not in col_set:
+                        effective_columns.append(col)
+                        col_set.add(col)
+        read = (
+            _projection_columns(effective_columns)
+            if effective_columns is not None
+            else None
+        )
         select = (
             _named_select(include_heavy, read)
             if read
@@ -3257,8 +3396,14 @@ class CHSpanReader:
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         if columns is not None:
-            projected = (_row_to_dict(columns, r) for r in rows)
-            return {row["trace_id"]: row for row in projected}
+            dicts = [_row_to_dict(effective_columns, r) for r in rows]
+            if needs_hydration and dicts:
+                self._hydrate_dict_rows(
+                    dicts,
+                    project_id_fallback=str(project_id) if project_id else None,
+                    attr_key="attributes_extra",
+                )
+            return {d["trace_id"]: {k: d[k] for k in columns} for d in dicts}
         hydrated = self._hydrate_chspans([_row_to_chspan(r) for r in rows])
         return {span.trace_id: span for span in hydrated}
 
@@ -3636,9 +3781,16 @@ class CHSpanReader:
     @staticmethod
     def attributes_extra_as_dict(span: CHSpan) -> dict:
         try:
-            return json.loads(span.attributes_extra) if span.attributes_extra else {}
+            parsed = json.loads(span.attributes_extra) if span.attributes_extra else {}
         except json.JSONDecodeError:
             return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return restore_promoted_attributes(
+            parsed,
+            span_input=span.input,
+            span_output=span.output,
+        )
 
     @staticmethod
     def to_django_dict(span: CHSpan) -> dict[str, Any]:

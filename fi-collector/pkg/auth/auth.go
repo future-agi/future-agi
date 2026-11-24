@@ -70,9 +70,19 @@ type Authenticator struct {
 	columns *routingColumns
 	checker columnChecker
 
-	dropped [len(dropReasons)]atomic.Int64
-	dropLog LogLimiter
-	clock   func() time.Time // nil: time.Now
+	dropped             [len(dropReasons)]atomic.Int64
+	dropLog             LogLimiter
+	clock               func() time.Time // nil: time.Now
+	onProjectInvalidate func(string)
+}
+
+// OnProjectInvalidate registers a callback invoked whenever a project ID is
+// invalidated on `fi:project:invalidate` (e.g., to evict per-project trajectory
+// SeenStore LRU entries). Must be called before WatchRevocations starts.
+func (a *Authenticator) OnProjectInvalidate(fn func(string)) {
+	if a != nil {
+		a.onProjectInvalidate = fn
+	}
 }
 
 // Resolver provides key and project persistence. Authentication, caching,
@@ -188,6 +198,9 @@ func (a *Authenticator) WatchRevocations(ctx context.Context) {
 				if n := a.cache.evictProjectID(msg.Payload); n > 0 {
 					a.log.Debug("deleted project evicted from cache",
 						"project_id", msg.Payload, "entries", n)
+				}
+				if a.onProjectInvalidate != nil {
+					a.onProjectInvalidate(msg.Payload)
 				}
 			}
 		case <-ctx.Done():

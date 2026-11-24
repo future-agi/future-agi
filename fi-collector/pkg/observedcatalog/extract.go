@@ -187,7 +187,13 @@ func canonicalMaps(row map[string]any) (attributecatalog.SpanAttributeMaps, erro
 			return attributecatalog.SpanAttributeMaps{}, fmt.Errorf("observedcatalog: trailing overflow JSON")
 		}
 	}
-	return attributecatalog.SpanAttributeMaps{Strings: copyMap(stringsMap), Numbers: copyMap(numbersMap), Booleans: copyMap(boolMap), Extra: copyMap(extra)}, nil
+	cleanExtra := copyMap(extra)
+	for k := range cleanExtra {
+		if strings.HasPrefix(k, "__fi_promoted_") {
+			delete(cleanExtra, k)
+		}
+	}
+	return attributecatalog.SpanAttributeMaps{Strings: copyMap(stringsMap), Numbers: copyMap(numbersMap), Booleans: copyMap(boolMap), Extra: cleanExtra}, nil
 }
 
 func copyMap[T any](in map[string]T) map[string]T {

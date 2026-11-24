@@ -36,8 +36,6 @@ var overflowKeyPrefixes = []string{
 	"llm.input_messages",
 	"llm.output_messages",
 	"llm.tools",
-	"gen_ai.prompt.",
-	"gen_ai.completion.",
 	"gen_ai.input.messages",
 	"gen_ai.output.messages",
 	"gen_ai.system_instructions",
@@ -49,11 +47,21 @@ var overflowKeyPrefixes = []string{
 	"embedding.embeddings",
 }
 
+// indexedOverflowKeyPrefixes only overflow when followed by an ASCII digit
+// (e.g. "gen_ai.prompt.0.content"), keeping prompt template metadata such as
+// "gen_ai.prompt.name" or "gen_ai.prompt.template.variables" filterable in attrs_string.
+var indexedOverflowKeyPrefixes = []string{
+	"gen_ai.prompt.",
+	"gen_ai.completion.",
+}
+
 // MaxAttrsStringBytes caps the length of a single non-hot string attribute
-// routed into attrs_string. Larger custom strings (e.g. document chunks,
-// transcripts) move to attributes_extra (ZSTD(3), unindexed) so they do not
-// saturate idx_attrs_str_ngram. Must match _MAX_ATTRS_STRING_BYTES in adapter.py.
-const MaxAttrsStringBytes = 4096
+// routed into attrs_string. Aligned to observedcatalog.MaxStringValueBytes
+// (16 KiB) so every filterable string attribute stays queryable in attrs_string
+// while giant unindexed blobs (> 16 KiB, e.g. document chunks, transcripts)
+// move to attributes_extra (ZSTD(3), unindexed) instead of saturating
+// idx_attrs_str_ngram. Must match _MAX_ATTRS_STRING_BYTES in adapter.py.
+const MaxAttrsStringBytes = 16384
 
 // hotStringKeys are promoted by DeriveHotKeys from attrs_string; never demote
 // them by length so converter promotion semantics stay identical for any value.
@@ -172,6 +180,14 @@ func hasOverflowPrefix(key string) bool {
 	for _, p := range overflowKeyPrefixes {
 		if strings.HasPrefix(key, p) {
 			return true
+		}
+	}
+	for _, p := range indexedOverflowKeyPrefixes {
+		if strings.HasPrefix(key, p) && len(key) > len(p) {
+			c := key[len(p)]
+			if c >= '0' && c <= '9' {
+				return true
+			}
 		}
 	}
 	return false

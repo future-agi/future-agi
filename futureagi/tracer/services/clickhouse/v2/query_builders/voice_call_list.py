@@ -59,7 +59,7 @@ class _VoiceTraceReplayBuilder(_TraceRootReplayV2, TraceListQueryBuilder):
             (
                 "concat('{', arrayStringConcat(arrayMap("
                 "kv -> concat(toJSONString(kv.1), ':', kv.2), "
-                "arrayFilter(kv -> kv.1 != 'call_logs', "
+                "arrayFilter(kv -> kv.1 != 'call_logs' AND NOT startsWith(kv.1, '__fi_promoted_'), "
                 "JSONExtractKeysAndValuesRaw(toString(attributes_extra)))), ','), '}')",
                 "span_attributes",
             ),
