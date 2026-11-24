@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 MANIFEST = Path(__file__).with_name("skills-coverage.json")
-FLOW = re.compile(r"^(SKILLS-E2E-\d+|OBS-E2E-06[34]):")
+FLOW = re.compile(r"^(SKILLS-E2E-\d+|OBS-E2E-0(?:69|70)):")
 
 
 def required_runs():
