@@ -263,6 +263,11 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     )
     # The files whose rule entries #4296 retired: their suites now run.
     RETIRED = json.loads((CI / "fixtures/runtime-skips-retired.json").read_text())
+    # Since #4296 this file's tests run against the CI ClickHouse sidecar,
+    # which they seed themselves, so "no spans to plan against" cannot happen
+    # on CI: it skipped 0 times in #4296's own run and its landing merge group
+    # (artifact backend-runtime-skips 14893650282). Its rule is gone as well.
+    HOURLY = "tracer/tests/test_hourly_aggregate_state_route_live_ch.py"
     # The measurement date; rules are read as of it so these tests do not age.
     DAY = datetime.date(2026, 11, 22)
 
@@ -376,11 +381,15 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         # skips the tests that import the private package, under its own names.
         # It was measured before #4296 made the retired suites run; their skips
         # there had the same reasons and counts as on the internal run, and
-        # none of those files imports the private package. They are left out
-        # until a merge group after #4296 is measured.
+        # none of those files imports the private package. They are left out,
+        # and so are the hourly-state file's 2 skips (see HOURLY). What is
+        # kept is exactly what #4296's landing merge group measured, file by
+        # file: 274 skips (artifact backend-runtime-skips 14893650282).
         self.assertEqual(self.MEASURED_OSS["total"], 1818)
         retired = set(self.RETIRED["files"])
         self.assertEqual(len(retired), 46)
+        self.assertNotIn(self.HOURLY, retired)
+        retired.add(self.HOURLY)
         kept = {
             **self.MEASURED_OSS,
             "pairs": [
@@ -388,7 +397,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             ],
         }
         dropped = self.MEASURED_OSS["total"] - sum(p["tests"] for p in kept["pairs"])
-        self.assertEqual(dropped, 1542)
+        self.assertEqual(dropped, 1542 + 2)
         error, report, _ = self.report(
             self.measured_rows(kept, runs="oss"),
             files={pair["file"] for pair in kept["pairs"]},
@@ -402,7 +411,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def test_retired_suites_have_no_rule(self):
         # A skip in a file whose suite now runs is unexpected again.
         rules = self.rules()
-        for path in self.RETIRED["files"]:
+        for path in [*self.RETIRED["files"], self.HOURLY]:
             with self.subTest(path=path):
                 self.assertFalse(any(path in rule["files"] for rule in rules))
 
@@ -661,11 +670,30 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertIn("(internal runs) matched nothing", report["rule_problems"][0])
 
     def test_a_varying_rule_is_an_upper_bound_from_the_inventory(self):
-        rules = self.rules()
-        (rule,) = [r for r in rules if "varies" in r]
-        ((path, bound),) = rule["files"].items()
-        self.assertEqual(bound, 8)  # the file's collected tests on 22 Nov
+        # No committed rule varies today: the last one (the hourly-state file)
+        # went once its tests ran on the CI sidecar. The mechanism stays, so
+        # it is exercised with a rule of the same shape.
+        self.assertFalse(any("varies" in rule for rule in self.rules()))
+        path = "tracer/tests/test_shared_table_example.py"
         reason = "Skipped: test ClickHouse has no spans to plan against"
+        rules = self.rules(
+            self.rule_file(
+                [
+                    {
+                        "files": {path: 8},
+                        "varies": "The skip depends on spans other tests leave.",
+                        "reason": f"^{re.escape(reason)}$",
+                        "why": "Earlier tests on the shard decide it.",
+                        "issue": "TH-1",
+                        "owner": "tracer",
+                        "expires": "2027-01-06",
+                    }
+                ]
+            )
+        )
+        (rule,) = rules
+        ((path, bound),) = rule["files"].items()
+        self.assertEqual(bound, 8)
         collected = {path: bound}
         for skipped, unexpected, problems in (
             (0, 0, 0),
@@ -677,6 +705,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             with self.subTest(skipped=skipped):
                 error, report, out = self.report(
                     self.rows([(path, reason)] * skipped),
+                    rules,
                     files={path},
                     collected=collected,
                 )
@@ -687,7 +716,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                     self.assertIn("above its bound 8", report["rule_problems"][0])
         self.assertIn("(of up to 8 collected)", out)
         # The bound is what the inventory collects there, checked on each run.
-        _, report, _ = self.report([], files={path}, collected={path: 9})
+        _, report, _ = self.report([], rules, files={path}, collected={path: 9})
         self.assertEqual(
             report["rule_problems"],
             [
@@ -695,7 +724,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             ],
         )
         # A run that did not schedule the file says nothing about it.
-        _, report, _ = self.report([], files=set(), collected={})
+        _, report, _ = self.report([], rules, files=set(), collected={})
         self.assertEqual(report["rule_problems"], [])
 
     def test_counts_are_judged_only_on_a_complete_run(self):
@@ -1018,7 +1047,8 @@ class ProducerIdentityTest(unittest.TestCase):
                     "id": 1,
                     "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
                 }
-                with patch.object(checker.subprocess, "check_output", return_value=raw):
+                done = subprocess.CompletedProcess([], 0, stdout=raw, stderr=b"")
+                with patch.object(checker.subprocess, "run", return_value=done):
                     if status == b"0\n":
                         self.assertEqual(
                             checker.verify_artifact(artifact, "repo")[3], []
@@ -1028,13 +1058,103 @@ class ProducerIdentityTest(unittest.TestCase):
                             checker.verify_artifact(artifact, "repo")
 
     def test_raw_archive_digest_is_mandatory(self):
+        wrong = subprocess.CompletedProcess([], 0, stdout=b"wrong bytes", stderr=b"")
         with (
-            patch.object(
-                checker.subprocess, "check_output", return_value=b"wrong bytes"
-            ),
-            self.assertRaisesRegex(ValueError, "digest"),
+            patch.object(checker.subprocess, "run", return_value=wrong),
+            patch.object(checker.time, "sleep") as slept,
+            self.assertRaisesRegex(ValueError, "digest mismatch .* after 4 downloads"),
         ):
             checker.verify_artifact({"id": 1, "digest": "sha256:other"}, "fixture/repo")
+        # A wrong digest is fetched again from scratch before failing closed.
+        self.assertEqual([c.args[0] for c in slept.call_args_list], [2, 4, 8])
+
+
+class GhApiRetryTest(unittest.TestCase):
+    """Transient GitHub API failures, as in run 45334240608, are read again."""
+
+    CUT = b"unexpected end of JSON input"
+
+    def runner(self, *results):
+        calls = []
+        queue = list(results)
+
+        def run(cmd, capture_output):
+            calls.append(cmd)
+            code, out, err = queue.pop(0)
+            return subprocess.CompletedProcess(cmd, code, stdout=out, stderr=err)
+
+        return run, calls
+
+    def test_a_transient_failure_is_read_again_from_scratch(self):
+        run, calls = self.runner((1, b"", self.CUT), (0, b'[{"jobs": [1, 2]}]', b""))
+        pauses = []
+        self.assertEqual(
+            checker.gh_api(
+                ["--paginate", "--slurp", "x"], run=run, pause=pauses.append
+            ),
+            [{"jobs": [1, 2]}],
+        )
+        self.assertEqual(calls, [["gh", "api", "--paginate", "--slurp", "x"]] * 2)
+        self.assertEqual(pauses, [2])
+
+    def test_a_cut_short_body_is_never_used(self):
+        run, _ = self.runner((0, b'[{"jobs": [1,', b""), (0, b'[{"jobs": [1]}]', b""))
+        self.assertEqual(
+            checker.gh_api(["x"], run=run, pause=lambda s: None), [{"jobs": [1]}]
+        )
+
+    def test_other_failures_fail_at_once_with_gh_s_error(self):
+        run, calls = self.runner((1, b"", b"gh: Not Found (HTTP 404)"))
+        with self.assertRaisesRegex(
+            subprocess.CalledProcessError, r"after 1 tries: gh: Not Found"
+        ):
+            checker.gh_api(["x"], run=run, pause=lambda s: None)
+        self.assertEqual(len(calls), 1)
+
+    def test_retries_are_bounded_and_fail_closed(self):
+        for bad in (
+            (1, b"", self.CUT),
+            (1, b"", b"HTTP 502: Bad Gateway"),
+            (0, b"[{", b""),
+        ):
+            with self.subTest(bad=bad):
+                run, calls = self.runner(*[bad] * checker.API_TRIES)
+                pauses = []
+                with self.assertRaisesRegex(
+                    (subprocess.CalledProcessError, ValueError),
+                    f"after {checker.API_TRIES} tries",
+                ):
+                    checker.gh_api(["x"], run=run, pause=pauses.append)
+                self.assertEqual(len(calls), checker.API_TRIES)
+                self.assertEqual(pauses, [2, 4, 8])
+
+    def test_the_verdict_s_reads_go_through_the_retry(self):
+        run, calls = self.runner(
+            (1, b"", self.CUT),
+            (0, b'[{"jobs": [{"name": "a"}]}, {"jobs": [{"name": "b"}]}]', b""),
+            (0, b'{"created_at": "2026-11-24T05:00:00Z"}', b""),
+        )
+        with (
+            patch.object(checker.subprocess, "run", run),
+            patch.object(checker.time, "sleep"),
+        ):
+            self.assertEqual(
+                [job["name"] for job in checker.pages("runs/1/jobs", "jobs")],
+                ["a", "b"],
+            )
+            self.assertEqual(checker.run_date("runs/1"), datetime.date(2026, 11, 24))
+        self.assertEqual(len(calls), 3)
+
+    def test_a_download_cut_short_is_fetched_again(self):
+        good = b"whole archive"
+        artifact = {"id": 7, "digest": "sha256:" + hashlib.sha256(good).hexdigest()}
+        fetched = iter([b"whole arch", good])
+        self.assertEqual(
+            checker.download_artifact(
+                artifact, "repo", fetch=lambda: next(fetched), pause=lambda s: None
+            ),
+            good,
+        )
 
 
 @unittest.skipUnless(plugin, "run with the shard pytest installation")
