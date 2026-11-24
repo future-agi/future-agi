@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -16,6 +16,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import ContentSkeleton from "src/components/content-skeleton";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
@@ -32,7 +33,7 @@ import { modalityOfWorld } from "../worlds";
 import AgentPicker, { useWorldAgents } from "./AgentPicker";
 import { StartCard } from "./startBits";
 import WorldFitReport from "./WorldFitReport";
-import { fitVerdict } from "./worldFit";
+import { fitVerdict, pairedRows, pairingOf } from "./worldFit";
 
 const footSx = {
   px: 2,
@@ -234,8 +235,36 @@ function useAdaptedVersion(agentId) {
         rows[0] ||
         null,
       isLoading: Boolean(agentId) && versions.isLoading,
+      error: versions.error,
+      refetch: versions.refetch,
     };
-  }, [agentId, versions.data, versions.isLoading]);
+  }, [
+    agentId,
+    versions.data,
+    versions.isLoading,
+    versions.error,
+    versions.refetch,
+  ]);
+}
+
+/* How the agent fits the suite, and the last fit read for this suite and version: a pairing
+   that can't be counted keeps its table. */
+function useFit(choice) {
+  const query = useHarnessReleaseFit(choice);
+  const key = `${choice.suiteId}:${choice.agentVersionId}`;
+  const [last, setLast] = useState({ key: null, fit: null });
+  useEffect(() => {
+    if (query.data) setLast({ key, fit: query.data });
+  }, [key, query.data]);
+  const kept = last.key === key ? last.fit : null;
+  return {
+    fit: choice.agentVersionId ? query.data || kept : null,
+    // False while the fit shown counts another pairing than the one asked for.
+    counted: Boolean(query.data && !query.isPlaceholderData),
+    isFetching: Boolean(query.isFetching),
+    error: query.isError ? query.error : null,
+    retry: query.refetch,
+  };
 }
 
 const suiteLabel = (suite) =>
@@ -252,63 +281,132 @@ const PREPARING = [
 ];
 const STEP_OF_STATE = { queued: 0, provisioning: 0, running: 1 };
 
+// A run starts just after its adaptation completes; how long it is waited for, and how often.
+const RUN_WAIT_MS = 30000;
+const RUN_POLL_MS = 2000;
+const ENDED = ["failed", "canceled"];
+
 /* Run the measurable cases: the adaptation is drafted and checked without a session, then its
    run opens. The environment page is never shown. */
-function Preparing({ jobId, onFailed }) {
+function Preparing({ jobId, onFailed, onClose }) {
   const navigate = useNavigate();
-  const { data } = useQuery(harnessJobQuery(jobId));
+  const jobQuery = harnessJobQuery(jobId);
+  const { data, error, isError, refetch } = useQuery({
+    ...jobQuery,
+    // The poll stops when the job ends; a completed one is read on until its run shows.
+    refetchInterval: (query) =>
+      jobQuery.refetchInterval?.(query) ||
+      (query.state.data?.status?.state === "completed" ? RUN_POLL_MS : false),
+  });
   const result = data?.job?.metadata?.adaptation_result;
   const status = data?.status;
+  const completed = status?.state === "completed";
+  const run = result?.run;
+  const refused = result?.compose?.message;
+  const compositionId = result?.composition_id;
+  const failure = status?.failure?.message;
+  const ended = ENDED.includes(status?.state);
   const current = STEP_OF_STATE[status?.state] ?? (result ? 2 : 0);
   useEffect(() => {
-    if (result?.run) {
+    if (run) {
       navigate(
         paths.dashboard.simulate.environments.execution(
-          result.composition_id,
-          result.run.run_test_id,
-          result.run.test_execution_id,
+          compositionId,
+          run.run_test_id,
+          run.test_execution_id,
         ),
       );
-    } else if (["failed", "canceled"].includes(status?.state)) {
-      onFailed(status.failure?.message || "Preparing your run failed");
+    } else if (ended) {
+      onFailed(failure || "Preparing your run failed");
+    } else if (completed && refused) {
+      onFailed(`Your run can't start: ${refused}`);
     }
-  }, [result, status, navigate, onFailed]);
+  }, [
+    run,
+    ended,
+    failure,
+    completed,
+    refused,
+    compositionId,
+    navigate,
+    onFailed,
+  ]);
+  const overdue = completed && !run && !refused;
+  useEffect(() => {
+    if (!overdue) return undefined;
+    const timer = setTimeout(
+      () =>
+        onFailed(
+          compositionId
+            ? "Your environment is ready, but its run didn't start. Open it to run the cases."
+            : "Preparing finished without a run. Try again.",
+          compositionId,
+        ),
+      RUN_WAIT_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [overdue, compositionId, onFailed]);
   return (
-    <Stack spacing={0.75} role="status" aria-label="Preparing your run">
-      <Typography sx={{ ...T13, fontWeight: 600 }}>
-        Preparing your run
-      </Typography>
-      {PREPARING.map((step, index) => (
-        <Stack key={step.key} direction="row" spacing={1} alignItems="center">
-          <Iconify
-            icon={
-              index < current
-                ? "solar:check-circle-linear"
-                : index === current
-                  ? "solar:refresh-circle-linear"
-                  : "solar:record-circle-linear"
-            }
-            width={16}
-            sx={{
-              color: index < current ? "status.success.fg" : "text.tertiary",
-            }}
-          />
-          <Typography
-            sx={{
-              ...T12,
-              color: index === current ? "text.primary" : "text.secondary",
-            }}
-          >
-            {step.label}
-          </Typography>
-        </Stack>
-      ))}
+    <Stack spacing={0.75}>
+      <Stack spacing={0.75} role="status" aria-label="Preparing your run">
+        <Typography sx={{ ...T13, fontWeight: 600 }}>
+          Preparing your run
+        </Typography>
+        {PREPARING.map((step, index) => (
+          <Stack key={step.key} direction="row" spacing={1} alignItems="center">
+            <Iconify
+              icon={
+                index < current
+                  ? "solar:check-circle-linear"
+                  : index === current
+                    ? "solar:refresh-circle-linear"
+                    : "solar:record-circle-linear"
+              }
+              width={16}
+              sx={{
+                color: index < current ? "status.success.fg" : "text.tertiary",
+              }}
+            />
+            <Typography
+              sx={{
+                ...T12,
+                color: index === current ? "text.primary" : "text.secondary",
+              }}
+            >
+              {step.label}
+            </Typography>
+          </Stack>
+        ))}
+      </Stack>
+      {isError && (
+        <Alert
+          severity="error"
+          sx={{ ...T12 }}
+          action={
+            <Button size="small" color="inherit" onClick={() => refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          {`Couldn't read how your run is going: ${errorMessage(error)}`}
+        </Alert>
+      )}
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Typography sx={{ ...T12, color: "text.secondary" }}>
+          This keeps going if you close it. You can find it in My environments.
+        </Typography>
+        <Button size="small" color="inherit" onClick={onClose} sx={BTN_SX}>
+          Close
+        </Button>
+      </Stack>
     </Stack>
   );
 }
 Preparing.propTypes = {
   jobId: PropTypes.string.isRequired,
+  // (message, the environment it made if any)
   onFailed: PropTypes.func.isRequired,
+  onClose: PropTypes.func.isRequired,
 };
 
 /*
@@ -324,62 +422,99 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
   const { agents, isLoading } = useWorldAgents(modality);
   const [agentId, setAgentId] = useState(null);
   const agent = agents.find((a) => a.id === agentId) || null;
-  const { version, isLoading: versionLoading } = useAdaptedVersion(
-    agent?.sample ? null : agentId,
-  );
+  const {
+    version,
+    isLoading: versionLoading,
+    error: versionsError,
+    refetch: refetchVersions,
+  } = useAdaptedVersion(agent?.sample ? null : agentId);
   const suites = world.release?.suites?.length
     ? world.release.suites
     : [world.suite];
   const [suiteId, setSuiteId] = useState(world.suite.id);
   const suite = suites.find((one) => one.id === suiteId) || suites[0];
   const [suiteAnchor, setSuiteAnchor] = useState(null);
-  // The pairing the person changed (null: the suggestion).
-  const [pairing, setPairing] = useState(null);
-  const fitQuery = useHarnessReleaseFit({
+  // The pairing the person changed for this version (null: the suggestion).
+  const [edited, setEdited] = useState({ versionId: null, pairing: null });
+  const versionId = agent && !agent.sample ? version?.id || null : null;
+  const pairing = edited.versionId === versionId ? edited.pairing : null;
+  const fitQuery = useFit({
     suiteId: suite.id,
-    agentVersionId: agent && !agent.sample ? version?.id : null,
+    agentVersionId: versionId,
     pairing,
   });
-  const fit = agent && !agent.sample && version ? fitQuery.data : null;
+  // The rows show the person's pairing at once; the count follows it.
+  const fit = fitQuery.fit && {
+    ...fitQuery.fit,
+    rows: pairedRows(fitQuery.fit, pairing),
+  };
   // The run being prepared.
   const [job, setJob] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  // One key per choice, so a retried click cannot start a second adaptation.
+  // { message, compositionId }: what went wrong, and the environment it still made.
+  const [error, setError] = useState(null);
+  // One key per choice, so a retried click cannot start a second adaptation. An adaptation that
+  // ended without its run, or a key already spent, takes a new one.
+  const [attempt, setAttempt] = useState(0);
   const keys = useMemo(
     () => ({ review: harnessIdempotencyKey(), run: harnessIdempotencyKey() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [agentId, suiteId, pairing],
+    [versionId, suiteId, pairing, attempt],
   );
+  // Leaving the tab never leaves the drawer locked.
+  const reportBusy = useRef(onBusyChange);
+  useEffect(() => {
+    reportBusy.current = onBusyChange;
+  }, [onBusyChange]);
+  useEffect(() => () => reportBusy.current?.(false), []);
 
   const choose = (id) => {
     setAgentId(id);
-    setPairing(null);
-    setError("");
+    setEdited({ versionId: null, pairing: null });
+    setError(null);
   };
-  const paired = () =>
-    Object.fromEntries((fit?.rows || []).map((row) => [row.world, row.agent]));
+  const pair = (worldTool, agentTool) =>
+    setEdited((was) => {
+      const before =
+        (was.versionId === versionId && was.pairing) || pairingOf(fit.rows);
+      // The agent tool leaves its old pair; the world tool takes it.
+      const next = Object.fromEntries(
+        Object.entries(before).map(([world, agent]) => [
+          world,
+          agent === agentTool ? null : agent,
+        ]),
+      );
+      next[worldTool] = agentTool;
+      return { versionId, pairing: next };
+    });
   const stopped = useCallback(
-    (message) => {
+    (failure) => {
       setJob(null);
       setSubmitting(false);
-      setError(message);
+      setError(failure);
       onBusyChange?.(false);
     },
     [onBusyChange],
+  );
+  const runFailed = useCallback(
+    (message, compositionId = null) => {
+      setAttempt((n) => n + 1);
+      stopped({ message, compositionId });
+    },
+    [stopped],
   );
 
   const start = async (mode) => {
     setSubmitting(true);
     onBusyChange?.(true);
-    setError("");
+    setError(null);
     try {
       const created = await createHarnessAdaptation({
         suite_id: suite.id,
         agent_version_id: version.id,
         name: `${world.name} · ${agent.name}`,
         idempotency_key: keys[mode],
-        pairing: paired(),
+        pairing: pairingOf(fit.rows),
         mode,
       });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
@@ -392,26 +527,40 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
         setJob({ id: created.job.job_id });
       }
     } catch (requestError) {
-      stopped(errorMessage(requestError));
+      if (requestError?.error === "idempotency_conflict")
+        setAttempt((n) => n + 1);
+      stopped({ message: errorMessage(requestError) });
     }
   };
 
-  const { verdict, none } = fit ? fitVerdict(fit) : {};
-  const measurable = fit ? fit.total - fit.unmeasured.length : 0;
+  const { verdict, none, measurable } =
+    fit && fitQuery.counted ? fitVerdict(fit) : {};
   const blocked = !agent
-    ? ""
+    ? null
     : agent.sample
-      ? "A sample agent can't be used. Connect your agent from Build environment's Connect your agent, or from Agents"
-      : versionLoading
-        ? "Reading the agent's versions"
-        : !version
-          ? "This agent has no version to use yet"
-          : fitQuery.isError
-            ? errorMessage(fitQuery.error)
-            : !fit
-              ? "Reading your agent's tools"
-              : "";
-  const waiting = !fit || Boolean(blocked) || submitting;
+      ? {
+          text: "A sample agent can't be used. Connect your agent from Build environment's Connect your agent, or from Agents",
+        }
+      : versionsError && !version
+        ? {
+            error: `Couldn't read the agent's versions: ${errorMessage(versionsError)}`,
+            retry: refetchVersions,
+          }
+        : versionLoading
+          ? { loading: "Reading the agent's versions" }
+          : !version
+            ? { text: "This agent has no version to use yet" }
+            : fitQuery.error
+              ? { error: errorMessage(fitQuery.error), retry: fitQuery.retry }
+              : !fit
+                ? { loading: "Reading your agent's tools" }
+                : null;
+  const waiting =
+    !fit ||
+    !fitQuery.counted ||
+    fitQuery.isFetching ||
+    Boolean(blocked) ||
+    submitting;
   const runTip = none
     ? "Nothing can be measured yet — pair a world tool, or choose another world"
     : "";
@@ -425,30 +574,43 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
           value={agentId}
           onChange={choose}
           modality={modality}
+          disabled={submitting}
           subtitle={`Your ${modality === "voice" ? "voice" : "chat"} agents — this world is for ${modality === "voice" ? "voice" : "chat"} agents.`}
         />
         {fit && (
           <WorldFitReport
             agentName={agent.name}
             fit={fit}
-            onPair={(worldTool, agentTool) => {
-              // The agent tool leaves its old pair; the world tool takes it.
-              const next = Object.fromEntries(
-                Object.entries(paired()).map(([world, agent]) => [
-                  world,
-                  agent === agentTool ? null : agent,
-                ]),
-              );
-              next[worldTool] = agentTool;
-              setPairing(next);
-            }}
+            counting={!fitQuery.counted}
+            disabled={submitting}
+            onPair={pair}
             onOtherWorld={onOtherWorld}
           />
         )}
-        {blocked && (
+        {blocked?.text && (
           <Typography sx={{ ...T12, color: "text.secondary" }}>
-            {blocked}
+            {blocked.text}
           </Typography>
+        )}
+        {blocked?.loading && (
+          <ContentSkeleton rows={3} label={blocked.loading} />
+        )}
+        {blocked?.error && (
+          <Alert
+            severity="error"
+            sx={{ ...T12 }}
+            action={
+              <Button
+                size="small"
+                color="inherit"
+                onClick={() => blocked.retry()}
+              >
+                Retry
+              </Button>
+            }
+          >
+            {blocked.error}
+          </Alert>
         )}
         <Stack
           spacing={0.75}
@@ -467,11 +629,37 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
           />
         </Stack>
         {error && (
-          <Alert severity="error" sx={{ ...T12 }}>
-            {error}
+          <Alert
+            severity={error.compositionId ? "warning" : "error"}
+            sx={{ ...T12 }}
+            action={
+              error.compositionId && (
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() =>
+                    navigate(
+                      paths.dashboard.simulate.environments.detail(
+                        error.compositionId,
+                      ),
+                    )
+                  }
+                >
+                  Open environment
+                </Button>
+              )
+            }
+          >
+            {error.message}
           </Alert>
         )}
-        {job && <Preparing jobId={job.id} onFailed={stopped} />}
+        {job && (
+          <Preparing
+            jobId={job.id}
+            onFailed={runFailed}
+            onClose={() => stopped(null)}
+          />
+        )}
       </Stack>
       <Stack direction="row" alignItems="center" spacing={1.5} sx={footSx}>
         <Typography sx={{ ...T12, color: "text.secondary" }}>
@@ -480,6 +668,7 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
           </Box>
           {` · ${suiteLabel(suite)} · `}
           <ButtonBase
+            disabled={submitting}
             onClick={(event) => setSuiteAnchor(event.currentTarget)}
             sx={{
               ...T12,
@@ -546,7 +735,7 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
               sx={{ ...BTN_SX, whiteSpace: "nowrap" }}
             >
               {verdict === "partial"
-                ? `Run the ${measurable} measurable cases`
+                ? `Run the ${plural(measurable, "measurable case")}`
                 : "Run the same cases"}
             </Button>
           </span>
@@ -634,12 +823,20 @@ export default function ReadyEnvironmentPanel({
 }) {
   const { world } = item;
   const [tab, setTab] = useState(item.initialTab || "world");
+  const [busy, setBusy] = useState(false);
+  const busyChanged = useCallback(
+    (next) => {
+      setBusy(next);
+      onBusyChange?.(next);
+    },
+    [onBusyChange],
+  );
   return (
     <Stack spacing={2} sx={{ pb: 2.5 }}>
       <Tabs value={tab} onChange={(_, v) => setTab(v)}>
-        <Tab value="world" label="World" />
-        <Tab value="start" label="Use with my agent" />
-        <Tab value="customize" label="Customize" />
+        <Tab value="world" label="World" disabled={busy} />
+        <Tab value="start" label="Use with my agent" disabled={busy} />
+        <Tab value="customize" label="Customize" disabled={busy} />
       </Tabs>
       {tab === "world" && (
         <WorldTab world={world} onUse={() => setTab("start")} />
@@ -647,7 +844,7 @@ export default function ReadyEnvironmentPanel({
       {tab === "start" && (
         <UseTab
           world={world}
-          onBusyChange={onBusyChange}
+          onBusyChange={busyChanged}
           onOtherWorld={onOtherWorld}
         />
       )}

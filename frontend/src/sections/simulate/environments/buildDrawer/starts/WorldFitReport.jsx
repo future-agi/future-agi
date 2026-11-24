@@ -55,7 +55,7 @@ function TextLink({ children, onClick }) {
 }
 TextLink.propTypes = { children: PropTypes.node, onClick: PropTypes.func };
 
-function PairRow({ row, agentName, agentTools, onPair }) {
+function PairRow({ row, agentName, agentTools, disabled, onPair }) {
   return (
     <Stack
       direction="row"
@@ -75,6 +75,7 @@ function PairRow({ row, agentName, agentTools, onPair }) {
           fullWidth
           value={row.agent || ""}
           displayEmpty
+          disabled={disabled}
           inputProps={{ "aria-label": `${agentName}'s tool for ${row.world}` }}
           onChange={(event) => onPair(row.world, event.target.value || null)}
           sx={{
@@ -115,6 +116,7 @@ PairRow.propTypes = {
   row: PropTypes.object.isRequired,
   agentName: PropTypes.string.isRequired,
   agentTools: PropTypes.array.isRequired,
+  disabled: PropTypes.bool,
   onPair: PropTypes.func.isRequired,
 };
 
@@ -126,6 +128,8 @@ PairRow.propTypes = {
 export default function WorldFitReport({
   agentName,
   fit,
+  counting = false,
+  disabled = false,
   onPair,
   onOtherWorld,
 }) {
@@ -138,21 +142,31 @@ export default function WorldFitReport({
   return (
     <Stack spacing={1.5}>
       <Stack direction="row" spacing={1} alignItems="flex-start">
-        <Iconify
-          icon={VERDICT[verdict].icon}
-          width={16}
-          sx={{ color: VERDICT[verdict].tone, flexShrink: 0, mt: "2px" }}
-        />
-        <Typography sx={T13}>
-          <Box component="span" sx={{ fontWeight: 600 }}>
-            {VERDICT[verdict].label}
-          </Box>
-          {verdict === "ready"
-            ? ` — all ${cases(fit.total)} can be measured with ${agentName}.`
-            : verdict === "none"
-              ? ` — ${agentName} has none of this world's tools. Pair one below, or choose another world.`
-              : ` — ${fit.unmeasured.length} of ${cases(fit.total)} can't be measured. They stay listed, never dropped.`}
-        </Typography>
+        {counting ? (
+          <Typography sx={{ ...T13, color: "text.secondary" }}>
+            The cases this pairing measures haven&apos;t been counted yet.
+          </Typography>
+        ) : (
+          <>
+            <Iconify
+              icon={VERDICT[verdict].icon}
+              width={16}
+              sx={{ color: VERDICT[verdict].tone, flexShrink: 0, mt: "2px" }}
+            />
+            <Typography sx={T13}>
+              <Box component="span" sx={{ fontWeight: 600 }}>
+                {VERDICT[verdict].label}
+              </Box>
+              {verdict === "ready"
+                ? ` — all ${cases(fit.total)} can be measured with ${agentName}.`
+                : verdict === "partial"
+                  ? ` — ${fit.unmeasured.length} of ${cases(fit.total)} can't be measured. They stay listed, never dropped.`
+                  : matched.length
+                    ? ` — no case has every tool it needs paired. Pair more below, or choose another world.`
+                    : ` — ${agentName} has none of this world's tools. Pair one below, or choose another world.`}
+            </Typography>
+          </>
+        )}
       </Stack>
       <Typography sx={{ ...T12, color: "text.secondary", mt: -0.5 }}>
         A case can only be graded if your agent has the tool it needs — pair
@@ -212,6 +226,7 @@ export default function WorldFitReport({
             row={row}
             agentName={agentName}
             agentTools={fit.agent_tools}
+            disabled={disabled}
             onPair={onPair}
           />
         ))}
@@ -232,7 +247,7 @@ export default function WorldFitReport({
         Live: only the starting state is checked.
       </Typography>
 
-      {fit.unmeasured.length > 0 && (
+      {!counting && fit.unmeasured.length > 0 && (
         <Box
           sx={{
             border: "1px solid",
@@ -294,6 +309,9 @@ export default function WorldFitReport({
 WorldFitReport.propTypes = {
   agentName: PropTypes.string.isRequired,
   fit: PropTypes.object.isRequired,
+  // The fit's counts are of another pairing than its rows show.
+  counting: PropTypes.bool,
+  disabled: PropTypes.bool,
   // (worldTool, agentTool or null): the person pairs a world tool with one of the agent's.
   onPair: PropTypes.func.isRequired,
   onOtherWorld: PropTypes.func,

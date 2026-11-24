@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
@@ -47,8 +47,13 @@ export function useHarnessReleaseFit({ suiteId, agentVersionId, pairing }) {
         ...(pairing ? { pairing } : {}),
       }),
     enabled: Boolean(suiteId && agentVersionId),
-    // A changed pairing keeps the table in place while it is counted again.
-    placeholderData: keepPreviousData,
+    // A changed pairing keeps the table in place while it is counted again; another suite or
+    // version starts over.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === suiteId &&
+      previousQuery?.queryKey[2] === agentVersionId
+        ? previous
+        : undefined,
     retry: false,
     meta: { errorHandled: true },
   });

@@ -10,12 +10,13 @@ import { agentIconOf, agentMetaOf, uiOnlyToast } from "./startUtils";
 
 const AGENTS_LIMIT = 100;
 
-function AgentRow({ agent, divider, selected, onClick }) {
+function AgentRow({ agent, divider, selected, disabled, onClick }) {
   return (
     <ButtonBase
       role="radio"
       aria-checked={selected}
       aria-label={agent.name}
+      disabled={disabled}
       onClick={onClick}
       sx={{
         width: "100%",
@@ -70,6 +71,7 @@ AgentRow.propTypes = {
   agent: PropTypes.object.isRequired,
   divider: PropTypes.bool,
   selected: PropTypes.bool,
+  disabled: PropTypes.bool,
   onClick: PropTypes.func,
 };
 
@@ -106,6 +108,7 @@ export default function AgentPicker({
   title = "Agent",
   subtitle = null,
   modality = null,
+  disabled = false,
 }) {
   const typeWord = modality === "voice" ? "voice" : modality ? "chat" : null;
   const connectNew = useConnectNewAgent();
@@ -143,6 +146,7 @@ export default function AgentPicker({
         </Typography>
         <Button
           size="small"
+          disabled={disabled}
           onClick={connectAgent}
           startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
           sx={{ color: "text.secondary", flexShrink: 0 }}
@@ -162,6 +166,7 @@ export default function AgentPicker({
               agent={a}
               divider={i > 0}
               selected={a.id === value}
+              disabled={disabled}
               onClick={() => onChange(a.id)}
             />
           ))}
@@ -196,4 +201,5 @@ AgentPicker.propTypes = {
   title: PropTypes.string,
   subtitle: PropTypes.string,
   modality: PropTypes.oneOf(["voice", "text"]),
+  disabled: PropTypes.bool,
 };
