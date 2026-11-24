@@ -487,20 +487,12 @@ describe("FixFinishedView, what to try next", () => {
 });
 
 describe("FixFinishedView, protected cases it could not be held to", () => {
-  it("names them in plain words, and says nothing for a report without them", () => {
-    const fix = fixOf("fix-no-improvement");
-    fix.report = {
-      ...fix.report,
-      flaky_protected: [
-        {
-          key: "s3",
-          name: "Escalate a large order",
-          sub_goal: "a",
-          passed: 2,
-          runs: 3,
-        },
-      ],
-    };
+  it("shows the server's sentences as written, and nothing without them", () => {
+    const said = [
+      "Protected scenario “Escalate a large order” is flaky on the current version, so this epoch wasn't held to it: a check passed 2 of 3 runs.",
+      "1 protected scenario is flaky on the current version, so this epoch wasn't held to it.",
+    ];
+    const fix = fixOf("fix-no-improvement", { flaky_protected_text: said });
     const { unmount } = renderUi(
       <FixFinishedView
         fix={fix}
@@ -509,9 +501,8 @@ describe("FixFinishedView, protected cases it could not be held to", () => {
         renderTab={() => null}
       />,
     );
-    expect(screen.getByTestId("flaky-protected")).toHaveTextContent(
-      "1 protected case is flaky on the current version, so this epoch wasn't held to it: “Escalate a large order”.",
-    );
+    const flaky = within(screen.getByTestId("flaky-protected"));
+    said.forEach((line) => expect(flaky.getByText(line)).toBeInTheDocument());
     unmount();
 
     renderUi(

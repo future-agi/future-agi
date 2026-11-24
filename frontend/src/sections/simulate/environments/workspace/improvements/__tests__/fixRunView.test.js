@@ -18,7 +18,6 @@ import {
   checkIcon,
   checkLabel,
   describeChecks,
-  flakyProtectedText,
   noSafeNumbers,
   originOf,
   outcomeLabel,
@@ -208,51 +207,6 @@ describe("headline", () => {
         ending(state, { code: "fix_engine_failed", message: "x" }),
       ).not.toMatch(/engine text/);
     }
-  });
-
-  it("says the protected cases a fix could not be held to by name, each once", () => {
-    const fix = (rows) => ({ report: { flaky_protected: rows } });
-    expect(flakyProtectedText(fix([]))).toBeNull();
-    // A report from before the field says nothing.
-    expect(flakyProtectedText({ report: { summary: "x" } })).toBeNull();
-    expect(
-      flakyProtectedText(
-        fix([
-          {
-            key: "s3",
-            name: "Escalate a large order",
-            sub_goal: "a",
-            passed: 2,
-            runs: 3,
-          },
-          {
-            key: "s3",
-            name: "Escalate a large order",
-            sub_goal: "b",
-            passed: 1,
-            runs: 3,
-          },
-          { key: "s9", name: null, sub_goal: "a", passed: 1, runs: 3 },
-        ]),
-      ),
-    ).toBe(
-      "2 protected cases are flaky on the current version, so this epoch wasn't held to them: “Escalate a large order”, “s9”.",
-    );
-    expect(
-      flakyProtectedText(
-        fix([
-          {
-            key: "s3",
-            name: "Escalate a large order",
-            sub_goal: "a",
-            passed: 2,
-            runs: 3,
-          },
-        ]),
-      ),
-    ).toBe(
-      "1 protected case is flaky on the current version, so this epoch wasn't held to it: “Escalate a large order”.",
-    );
   });
 
   it("says in one sentence what stopped the trials of a no-safe fix", () => {

@@ -346,6 +346,54 @@ class TestNoIdsInThePullRequest:
             assert raw not in body
 
 
+class TestFlakyProtectedOnThePage:
+    def test_the_read_says_the_flaky_protected_scenarios_as_the_pull_request(
+        self, auth_client, source_run, storage, named
+    ):
+        fix_run, candidate = _winner(source_run, storage)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            report={
+                "flaky_protected": [
+                    {
+                        "key": _SLUG,
+                        "sub_goal": "slot_unavailable_handled",
+                        "passed": 2,
+                        "runs": 3,
+                    },
+                    {"key": "refund", "sub_goal": "asks", "passed": 1, "runs": 3},
+                ]
+            }
+        )
+        candidate.fix_run.refresh_from_db()
+
+        with patch("simulate.serializers.agent_fix.eval_review", return_value=_DONE):
+            read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+        body = _body(candidate, _DONE)
+
+        assert read["flaky_protected_text"] == [
+            "Protected scenario “Reschedule out of hours” is flaky on the current"
+            " version, so this epoch wasn't held to it: its check “Says the slot is"
+            " unavailable and offers another” passed 2 of 3 runs.",
+            "1 protected scenario is flaky on the current version, so this epoch"
+            " wasn't held to it.",
+        ]
+        for line in read["flaky_protected_text"]:
+            assert f"- {line}" in body
+        for raw in _RAW:
+            assert all(raw not in line for line in read["flaky_protected_text"])
+
+    def test_a_list_says_no_flaky_protected_text(
+        self, auth_client, source_run, storage
+    ):
+        fix_run, _ = _winner(source_run, storage)
+
+        response = auth_client.get(
+            f"{BASE}/", {"environment_id": str(fix_run.environment_id)}
+        )
+
+        assert "flaky_protected_text" not in response.json()["results"][0]
+
+
 class TestMustPassWords:
     _PASSED = [VerdictTier(name="must-pass", status="passed")]
     _FAILED = [VerdictTier(name="must-pass", status="failed")]

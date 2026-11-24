@@ -33,6 +33,7 @@ from simulate.selectors.agent_fix_wording import (
     FixNames,
     candidate_files,
     candidate_wording,
+    flaky_protected,
 )
 from simulate.serializers.harness_environment import HarnessVersionPersonSerializer
 from simulate.services.harness_environment import environment_name
@@ -541,6 +542,9 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
     eval_warnings = serializers.SerializerMethodField()
     eval_grading = serializers.SerializerMethodField()
     candidates = AgentFixCandidateDetailSerializer(many=True)
+    # The protected scenarios the fix could not be held to, word for word as its pull
+    # request says them.
+    flaky_protected_text = serializers.SerializerMethodField()
 
     def to_representation(self, instance: AgentFixRun) -> dict:
         self._review = eval_review(instance)
@@ -558,6 +562,12 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
         return AgentFixEvalWarningSerializer(warnings, many=True).data
 
     @swagger_serializer_method(
+        serializer_or_field=serializers.ListField(child=serializers.CharField())
+    )
+    def get_flaky_protected_text(self, fix_run: AgentFixRun) -> list[str]:
+        return flaky_protected(fix_run.report or {}, self.context["fix_names"])
+
+    @swagger_serializer_method(
         serializer_or_field=serializers.ChoiceField(
             choices=[one.value for one in EvalGrading]
         )
@@ -566,7 +576,12 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
         return self._review.grading.value
 
     class Meta(AgentFixRunSerializer.Meta):
-        fields = [*AgentFixRunSerializer.Meta.fields, "eval_warnings", "eval_grading"]
+        fields = [
+            *AgentFixRunSerializer.Meta.fields,
+            "eval_warnings",
+            "eval_grading",
+            "flaky_protected_text",
+        ]
 
 
 class AgentFixRunListSerializer(serializers.Serializer):

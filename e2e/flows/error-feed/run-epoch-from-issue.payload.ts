@@ -194,6 +194,7 @@ export function readyEpoch(ids: Ids): Json {
     limited_validation: false,
     issue: { job_id: ids.job, cluster_id: ids.cluster, project_id: PROJECT_ID, title: ISSUE_TITLE },
     from_issue: true,
+    flaky_protected_text: [],
     check_runs: [],
     candidates: [
       {

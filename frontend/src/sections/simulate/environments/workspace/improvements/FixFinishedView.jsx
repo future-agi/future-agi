@@ -21,7 +21,6 @@ import {
   endingLabel,
   endingSentence,
   endingSpent,
-  flakyProtectedText,
   headline,
   noSafeNumbers,
   winnerOf,
@@ -210,7 +209,8 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
     ? TABS
     : TABS.filter((t) => t.id === "trials" || t.id === "cost");
   const current = tabs.find((t) => t.id === tab) ? tab : "trials";
-  const flaky = flakyProtectedText(fix);
+  // The server's sentences, as the pull request says them.
+  const flaky = fix.flaky_protected_text || [];
   const launch = () => setLaunching(true);
   return (
     <Box data-testid="fix-finished-view" sx={{ px: 3, py: 2.5 }}>
@@ -232,13 +232,17 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
         </EpochEnding>
       )}
       <FinishedDiagnosis fix={fix} />
-      {flaky && (
-        <Typography
-          data-testid="flaky-protected"
-          sx={{ typography: "s2", color: "text.secondary", mb: 2 }}
-        >
-          {flaky}
-        </Typography>
+      {flaky.length > 0 && (
+        <Box data-testid="flaky-protected" sx={{ mb: 2 }}>
+          {flaky.map((line) => (
+            <Typography
+              key={line}
+              sx={{ typography: "s2", color: "text.secondary" }}
+            >
+              {line}
+            </Typography>
+          ))}
+        </Box>
       )}
       <CustomTabs value={current} onChange={(_, v) => onTab(v)} sx={TABS_SX}>
         {tabs.map((t) => (

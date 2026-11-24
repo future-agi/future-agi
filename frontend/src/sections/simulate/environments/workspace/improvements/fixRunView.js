@@ -602,20 +602,6 @@ export function noSafeHeadline(fix) {
   return `No safe improvement: no candidate passed every check (${each}).`;
 }
 
-// The protected cases the fix could not be held to, in words: each scenario once, by its
-// name, or by its key when the engine sent none. Null for a report without them.
-export function flakyProtectedText(fix) {
-  const rows = fix.report?.flaky_protected || [];
-  const names = [
-    ...new Map(rows.map((r) => [r.key, r.name || r.key])).values(),
-  ];
-  if (!names.length) return null;
-  const quoted = names.map((n) => `“${n}”`).join(", ");
-  return names.length === 1
-    ? `1 protected case is flaky on the current version, so this epoch wasn't held to it: ${quoted}.`
-    : `${names.length} protected cases are flaky on the current version, so this epoch wasn't held to them: ${quoted}.`;
-}
-
 // The numbers behind the no-safe headline: each trial's rejecting check in plain words,
 // from its verdict's own numbers.
 export function noSafeNumbers(fix) {
