@@ -556,6 +556,7 @@ export const DRAFTS_COPY = {
   validating: "Validating changes",
   validateError: "Couldn't start validating. Try again in a moment.",
   validation: {
+    validating: "Validating the changes. Save opens when it's done.",
     retry: "Validation did not start. Try again",
     superseded: "The environment changed while validating. Validate again",
     failed: (n) =>
@@ -741,7 +742,10 @@ export const REVIEW_COPY = {
   hide: "Hide",
   comparability: ({ rechecked, exact }) =>
     `${scenarioWord(rechecked)} pair with past runs as Rechecked if their gates pass, outdated if not; ${exact} compare exactly. Agent, scenario set and evals don't move.`,
-  nameLabel: "Name this version (optional)",
+  // A plain save names the version only if asked; a validated one needs a name.
+  nameLabel: (optional) =>
+    optional ? "Name this version (optional)" : "Name this version",
+  nameNeeded: "Name the version to save it.",
   nameTooLong: (max) => `Use ${max} characters or fewer.`,
   namePlaceholder: "For example: Refund window from the 2026 policy",
   discardAll: "Discard all",

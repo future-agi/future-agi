@@ -167,6 +167,7 @@ export default function ReviewChangesDrawer({
   else if (!counts.accepted) heldReason = COPY.saveAllRejected;
   else if (flow.stale) heldReason = flow.stale;
   else if (ready && nameTooLong) heldReason = COPY.nameTooLong(NAME_LIMIT);
+  else if (ready && !direct && !name.trim()) heldReason = COPY.nameNeeded;
 
   // Before Validate, say what it proves; after, the state it reached.
   const note =
@@ -337,7 +338,7 @@ export default function ReviewChangesDrawer({
               <TextField
                 size="small"
                 fullWidth
-                label={COPY.nameLabel}
+                label={COPY.nameLabel(direct)}
                 placeholder={COPY.namePlaceholder}
                 value={name}
                 onChange={(event) => setName(event.target.value)}

@@ -190,6 +190,23 @@ describe("ReviewChangesDrawer", () => {
     expect(flow.onSaveValidated).not.toHaveBeenCalled();
   });
 
+  it("holds a validated Save until the version has a name", async () => {
+    const user = userEvent.setup();
+    setFlow([change({ decision: "accepted", summary: "Refund window" })], {
+      canSaveValidated: true,
+    });
+    renderDrawer();
+    const field = screen.getByLabelText("Name this version");
+    expect(screen.getByRole("button", { name: /^Save/ })).not.toHaveAttribute(
+      "aria-disabled",
+    );
+    await user.clear(field);
+    expect(screen.getByRole("button", { name: /^Save/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
   it("holds Save for a name over the limit", async () => {
     const user = userEvent.setup();
     setFlow([change({ decision: "accepted", summary: "" })], {

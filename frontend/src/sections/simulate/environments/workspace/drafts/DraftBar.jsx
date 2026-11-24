@@ -180,13 +180,15 @@ export default function DraftBar({
             {flow.discardPending ? COPY.discarding : COPY.discard}
           </Button>
         </ViewerLock>
-        {/* With the review drawer, saving happens there: accept, validate, name, save. The bar only opens it;
-            someone who can't edit still opens it to read the changes. */}
+        {/* With the review drawer, saving happens there: accept, validate, name, save. The bar only opens it, also
+            while a check runs; someone who can't edit still opens it to read the changes. */}
         {onReview && (
           <Button
             size="small"
             variant="contained"
-            disabled={saveReasons.length > 0 || pending}
+            disabled={
+              saveReasons.length > 0 || flow.savePending || flow.discardPending
+            }
             aria-describedby={saveReasons.join(" ") || undefined}
             onClick={onReview}
           >

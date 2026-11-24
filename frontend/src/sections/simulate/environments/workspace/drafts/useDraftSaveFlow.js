@@ -126,6 +126,7 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
     onValidate: () => {
       discard.reset();
       save.reset();
+      saveValidated.reset();
       validate.mutate({
         expectedRevisions: Object.fromEntries(
           drafts.pieces.map((piece) => [piece, drafts[piece].revision]),

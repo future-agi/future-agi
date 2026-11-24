@@ -49,6 +49,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     })),
     useSaveCandidates: vi.fn(() => ({
       mutate: saveValidatedMutate,
+      reset: vi.fn(),
       isPending: false,
       error: null,
       ...state.saveValidated,
