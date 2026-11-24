@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import copy
 import re
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from simulate.models import HarnessAgentVersionRuntime, HostedHarnessJob
 from simulate.services.harness_design_contract import (
@@ -39,6 +41,7 @@ COLLECTIONS = {
 READING = "reading"
 READING_STAGE = "understanding_agent"
 READING_FAILED = "reading_failed"
+READING_TIMED_OUT = "reading_timed_out"
 SourceKind = HarnessAgentVersionRuntime.SourceKind
 _CODE_SOURCES = (SourceKind.GITHUB, SourceKind.ARCHIVE)
 _CONFIGURED_SOURCES = (SourceKind.PHONE, SourceKind.LIVEKIT)
@@ -314,14 +317,52 @@ def _close_reading(
 
 
 def fail_design_reading(
-    job_id: str, *, code: str, message: str, retryable: bool
+    job_id: str,
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+    started_before: datetime | None = None,
 ) -> bool:
     with transaction.atomic():
         waiting = _waiting_on_reading(job_id)
-        if waiting is None:
+        if waiting is None or (
+            started_before is not None
+            and not _reading_started_before(waiting[1], started_before)
+        ):
             return False
         _close_reading(*waiting, code=code, message=message, retryable=retryable)
     return True
+
+
+def _reading_started_before(review: dict[str, Any], cutoff: datetime) -> bool:
+    started = parse_datetime(str(review.get("created_at") or ""))
+    return started is not None and started < cutoff
+
+
+def fail_stale_reading(job: HostedHarnessJob) -> bool:
+    review = stored_review(job)
+    if (
+        review is None
+        or review.get("status") != READING
+        or job.state != HostedHarnessJob.State.RECEIVED
+    ):
+        return False
+    from simulate.tasks.harness_agent_versions import DESIGN_READING_DEADLINE_SECONDS
+
+    cutoff = timezone.now() - timedelta(seconds=DESIGN_READING_DEADLINE_SECONDS)
+    if not _reading_started_before(review, cutoff):
+        return False
+    failed = fail_design_reading(
+        str(job.id),
+        code=READING_TIMED_OUT,
+        message="Reading the agent took too long and stopped. Build again.",
+        retryable=True,
+        started_before=cutoff,
+    )
+    if failed:
+        logger.warning("design_reading_timed_out", environment_id=str(job.id))
+    return failed
 
 
 def _pin_read_commit(job: HostedHarnessJob, commit_sha: str) -> None:
@@ -420,6 +461,7 @@ def agent_changed(review: dict[str, Any]) -> bool:
 
 
 def design_document(job: HostedHarnessJob) -> dict[str, Any]:
+    fail_stale_reading(job)
     review = review_for(job)
     edits = review.get("edits") or []
     view = _effective(review.get("proposal") or {}, edits)
@@ -815,8 +857,12 @@ def discard(job: HostedHarnessJob, *, user: User) -> HostedHarnessJob:
     from simulate.services.hosted_harness import delete_environment
 
     with transaction.atomic():
-        locked, review = _locked(job)
-        _require_open(review)
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        review = stored_review(locked)
+        if review is None or review.get("status") != READING:
+            _require_open(review_for(locked))
         delete_environment(locked, reason=DISCARD_REASON)
     logger.info(
         "design_review_discarded",

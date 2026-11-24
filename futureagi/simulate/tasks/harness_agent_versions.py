@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from django.db import close_old_connections
 
 from simulate.temporal.constants import READING_ACTIVITY_TIMEOUT_SECONDS
 from tfc.temporal.drop_in import temporal_activity
 
 __all__ = [
+    "DESIGN_READING_DEADLINE_SECONDS",
     "preflight_harness_agent_version",
     "read_agent_for_design_review",
     "read_harness_agent_version_document",
@@ -15,6 +17,8 @@ __all__ = [
     "schedule_agent_preflight",
     "schedule_design_reading",
 ]
+
+logger = structlog.get_logger(__name__)
 
 
 @temporal_activity(time_limit=600, max_retries=3, queue="simulation_runner")
@@ -85,16 +89,20 @@ def schedule_agent_document_reading(version_id: Any):
     )
 
 
-_DESIGN_READING_ATTEMPTS = 2
+DESIGN_READING_ATTEMPTS = 2
+DESIGN_READING_DEADLINE_SECONDS = (
+    READING_ACTIVITY_TIMEOUT_SECONDS * DESIGN_READING_ATTEMPTS + 300
+)
+_CRASHED_MESSAGE = "Reading the agent stopped before it finished. Build again."
 
 
 def _retries_left(info) -> bool:
-    return info is not None and info.attempt < _DESIGN_READING_ATTEMPTS
+    return info is not None and info.attempt < DESIGN_READING_ATTEMPTS
 
 
 @temporal_activity(
     time_limit=READING_ACTIVITY_TIMEOUT_SECONDS,
-    max_retries=_DESIGN_READING_ATTEMPTS - 1,
+    max_retries=DESIGN_READING_ATTEMPTS - 1,
     queue="simulation_runner",
 )
 def read_agent_for_design_review(job_id: str) -> str:
@@ -116,13 +124,20 @@ def read_agent_for_design_review(job_id: str) -> str:
                 version_id, check_id=info.workflow_run_id if info else None
             )
         except Exception as exc:
-            if _retries_left(info):
+            retryable = bool(getattr(exc, "retryable", True))
+            if retryable and _retries_left(info):
                 raise
+            logger.warning(
+                "design_reading_crashed",
+                environment_id=job_id,
+                agent_version_id=version_id,
+                exc_info=True,
+            )
             return open_review_after_reading(
                 job_id,
                 code=str(getattr(exc, "code", "") or CRASHED),
-                message="Reading the agent stopped before it finished. Build again.",
-                retryable=True,
+                message=str(getattr(exc, "message", "") or _CRASHED_MESSAGE),
+                retryable=retryable,
             )
         if outcome.status == "failed" and outcome.retryable and _retries_left(info):
             raise RuntimeError(outcome.code)
