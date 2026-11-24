@@ -118639,6 +118639,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "state",
         "reason",
+        "held_by",
         "reason_text",
         "warning",
         "warning_text",
@@ -118666,6 +118667,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "Why it is in this state, as a code; null when nothing holds it.",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+        held_by: {
+          title: "Held by",
+          description:
+            "Who holds it back, by its reason: ours (something on our side could not be read, or validation could not finish or run; try again), unproved (not checked on these versions yet), proof_failed (its proof found something wrong with the case). Null when nothing holds it, or it is archived.",
+          type: "string",
+          enum: ["ours", "unproved", "proof_failed"],
           "x-nullable": true,
         },
         reason_text: {
@@ -141004,7 +141013,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         by: {
           title: "By",
           description:
-            "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
+            "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
           type: "object",
           additionalProperties: {
             type: "integer",
