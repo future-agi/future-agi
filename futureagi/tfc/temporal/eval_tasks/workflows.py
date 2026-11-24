@@ -17,7 +17,7 @@ the Temporal sandbox; all DB work and logging live in the activities.
 """
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -42,6 +42,8 @@ from tfc.temporal.eval_tasks.search_attributes import (
 from tfc.temporal.eval_tasks.types import (
     WF_STATUS_COMPLETED,
     WF_STATUS_PAUSED,
+    CheckedReapInput,
+    CheckedReconcileInput,
     ClaimBatchInput,
     ContinuousDrainState,
     EvalTaskWorkflowInput,
@@ -272,27 +274,28 @@ def _set_status(status: str) -> None:
 
 async def _set_db_status(
     task_id: str, status: str, expected_status: str | None = None
-) -> None:
+) -> dict:
     """Persist ``status`` on the task's DB row (the UI's source of truth).
 
     The Search Attribute set by ``_set_status`` is for Temporal queries only;
     the DB row is what the UI reads. ``expected_status`` makes it a guarded
     transition (e.g. only flip ``pending`` → ``running``).
     """
-    await workflow.execute_activity(
+    ack: dict = await workflow.execute_activity(
         "set_eval_task_status_activity",
         SetStatusInput(task_id=task_id, status=status, expected_status=expected_status),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return ack
 
 
-async def _mark_running(task_id: str) -> None:
+async def _mark_running(task_id: str) -> dict:
     """Flip the task's DB row ``pending`` → ``running`` at drain start, so the UI
     shows the running state (and the pause endpoint, which requires ``running``,
     becomes reachable)."""
-    await _set_db_status(task_id, STATUS_RUNNING, expected_status=STATUS_PENDING)
+    return await _set_db_status(task_id, STATUS_RUNNING, expected_status=STATUS_PENDING)
 
 
 async def _fail_task(task_id: str) -> None:
@@ -303,10 +306,15 @@ async def _fail_task(task_id: str) -> None:
     await _set_db_status(task_id, STATUS_FAILED)
 
 
-async def _reconcile(task_id: str) -> None:
-    await workflow.execute_activity(
+async def _reconcile(task_id: str, *, first_closed: bool = False) -> dict:
+    args = (
+        CheckedReconcileInput(task_id=task_id, require_running=True)
+        if first_closed
+        else ReconcileActivityInput(task_id=task_id)
+    )
+    reconciled: dict = await workflow.execute_activity(
         "reconcile_eval_task_activity",
-        ReconcileActivityInput(task_id=task_id),
+        args,
         # Exact 100k historical selection is intentionally off the HTTP path.
         # It remains heartbeating and each ClickHouse statement is bounded, but
         # the fully buffered multi-query proof may legitimately outlive the
@@ -315,6 +323,7 @@ async def _reconcile(task_id: str) -> None:
         heartbeat_timeout=_HEARTBEAT,
         retry_policy=RECONCILE_RETRY_POLICY,
     )
+    return reconciled
 
 
 def _is_retryable_reconcile_budget_error(exc: Exception) -> bool:
@@ -357,7 +366,12 @@ async def _reconcile_continuous(task_id: str) -> bool:
     return True
 
 
-async def _reap(task_id: str, *, workflow_confirmed_stopped: bool = False) -> dict:
+async def _reap(
+    task_id: str,
+    *,
+    workflow_confirmed_stopped: bool = False,
+    first_closed: bool = False,
+) -> dict:
     """Reclaim entries a previous execution abandoned in ``running``.
 
     ``workflow_confirmed_stopped`` is passed through from this execution's own
@@ -367,34 +381,46 @@ async def _reap(task_id: str, *, workflow_confirmed_stopped: bool = False) -> di
     no-ops inside ninety minutes of a crash. See
     ``tracer.services.eval_tasks.reaper.effective_stale_seconds``.
     """
-    return await workflow.execute_activity(
-        "reap_stale_running_activity",
-        ReapInput(
+    args = (
+        CheckedReapInput(
+            task_id=task_id,
+            workflow_confirmed_stopped=workflow_confirmed_stopped,
+            require_running=True,
+        )
+        if first_closed
+        else ReapInput(
             task_id=task_id, workflow_confirmed_stopped=workflow_confirmed_stopped
-        ),
+        )
+    )
+    reaped: dict = await workflow.execute_activity(
+        "reap_stale_running_activity",
+        args,
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return reaped
 
 
 async def _task_state(task_id: str) -> dict:
-    return await workflow.execute_activity(
+    state: dict = await workflow.execute_activity(
         "get_eval_task_state_activity",
         TaskStateInput(task_id=task_id),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return state
 
 
 async def _claim(task_id: str, n: int) -> dict:
-    return await workflow.execute_activity(
+    claimed: dict = await workflow.execute_activity(
         "claim_eval_batch_activity",
         ClaimBatchInput(task_id=task_id, n=n),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return claimed
 
 
 async def _finalize(task_id: str) -> bool:
@@ -578,6 +604,13 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
             await _fail_task(input.task_id)
             raise
 
+    def _stopped(
+        self, input: EvalTaskWorkflowInput, status: str
+    ) -> EvalTaskWorkflowOutput:
+        _set_status(status)
+        self._phase = PHASE_DONE
+        return EvalTaskWorkflowOutput(input.task_id, WF_STATUS_PAUSED, input.processed)
+
     async def _run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
         self._lost.update(input.lost_entry_ids or ())
         self._phase = PHASE_MATERIALIZING
@@ -586,16 +619,37 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
         if not input.already_reconciled:
             # First run only: flip the DB row pending → running (re-runs after a
             # continue-as-new are already running).
-            await _mark_running(input.task_id)
-            await _reconcile(input.task_id)
+            ack = await _mark_running(input.task_id)
+            # A base status activity returns no deadline. Keep its dev command
+            # sequence, including on replay; never spend activity retries waiting.
+            deadline = ack.get("first_reconcile_at")
+            first_closed = deadline is not None and workflow.patched(
+                "historical-first-closed-reconcile-delay-v1"
+            )
+            if first_closed:
+                if ack["status"] not in (STATUS_RUNNING, STATUS_PENDING):
+                    return self._stopped(input, ack["status"])
+                remaining = (
+                    datetime.fromisoformat(ack["first_reconcile_at"]) - workflow.now()
+                )
+                if remaining > timedelta(0):
+                    self._phase = PHASE_SLEEPING
+                    await workflow.sleep(remaining)
+                    self._phase = PHASE_MATERIALIZING
+            result = await _reconcile(input.task_id, first_closed=first_closed)
+            if first_closed and result.get("inactive_status") is not None:
+                return self._stopped(input, result["inactive_status"])
             # Reclaim entries left RUNNING by a crashed prior execution. Only
             # on a genuine first start: a continue-as-new hop takes the
             # ``already_reconciled`` branch, which is also why its input need
             # not carry the describe forward.
-            await _reap(
+            reaped = await _reap(
                 input.task_id,
                 workflow_confirmed_stopped=input.workflow_confirmed_stopped,
+                first_closed=first_closed,
             )
+            if first_closed and reaped.get("inactive_status") is not None:
+                return self._stopped(input, reaped["inactive_status"])
 
         self._phase = PHASE_DRAINING
         processed = input.processed

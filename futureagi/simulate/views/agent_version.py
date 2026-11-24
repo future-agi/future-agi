@@ -19,6 +19,7 @@ from simulate.serializers.response.agent_definition import (
 from simulate.serializers.response.agent_version import (
     AgentVersionActivateResponseSerializer,
     AgentVersionCreateResponseSerializer,
+    AgentVersionDetailResponseSerializer,
     AgentVersionListResponseSerializer,
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
@@ -408,7 +409,7 @@ class AgentVersionDetailView(APIView):
 
     @swagger_auto_schema(
         responses={
-            200: AgentVersionResponseSerializer,
+            200: AgentVersionDetailResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
@@ -427,7 +428,7 @@ class AgentVersionDetailView(APIView):
 
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
 
-            serializer = AgentVersionResponseSerializer(
+            serializer = AgentVersionDetailResponseSerializer(
                 version, context=version_list_context([version])
             )
             return Response(serializer.data, status=status.HTTP_200_OK)

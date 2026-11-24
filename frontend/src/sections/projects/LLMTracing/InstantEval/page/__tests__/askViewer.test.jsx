@@ -164,7 +164,7 @@ describe("a Viewer on the Ask page", () => {
       <AskRunView projectId="project-1" run={runningRun} unit="traces" />,
     );
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
     expect(screen.getByText(VIEWER_CANT_RUN)).toBeInTheDocument();
   });
 
@@ -200,7 +200,7 @@ describe("a Viewer on the Ask page", () => {
       <AskRunView projectId="project-1" run={runningRun} unit="traces" />,
     );
     expect(screen.getByRole("button", { name: "Pause" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.queryByText(VIEWER_CANT_RUN)).not.toBeInTheDocument();
   });
 });
