@@ -1597,7 +1597,12 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                counts = queue_eval_for_finished_calls(execution, eval_config)
+                counts = queue_eval_for_finished_calls(
+                    execution,
+                    eval_config,
+                    keep_replaced=True,
+                    replaced_by=request.user,
+                )
         except EvalSelectionFull as full:
             return Response({"detail": str(full)}, status=status.HTTP_409_CONFLICT)
         except EvalSelectionRefused as refused:
@@ -1704,6 +1709,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 enable_tool_evaluation=request.validated_data.get(
                     "enable_tool_evaluation"
                 ),
+                replaced_by=request.user,
             )
         except RegradeEvalNotFound:
             # An eval removed between the check above and the service's own.

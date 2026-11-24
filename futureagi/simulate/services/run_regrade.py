@@ -7,6 +7,8 @@ caller keeps its own request parsing and words its own answers; this module
 raises a typed exception for every refusal.
 """
 
+import uuid
+
 import structlog
 from django.db import transaction
 from django.utils import timezone
@@ -16,6 +18,11 @@ from simulate.models import (
     HostedHarnessJob,
     SimulateEvalConfig,
     TestExecution,
+)
+from simulate.services.eval_result_store import (
+    forget_replacement,
+    keep_replaced_verdicts,
+    replaced_verdict_rows,
 )
 from simulate.services.harness_evals import regrade_mapping
 from simulate.services.harness_run_evals import EVAL_QUEUED_KEY, stamp_eval_queued
@@ -111,6 +118,7 @@ def regrade_run_evals(
     *,
     harness_run,
     enable_tool_evaluation=None,
+    replaced_by=None,
 ):
     """Mark the runs evaluating and queue one grading job for all their calls.
 
@@ -120,6 +128,11 @@ def regrade_run_evals(
     so neither caller can queue the grader with another run test's config.
     Every refusal leaves the database as it was. Returns how many calls
     were queued.
+
+    Each verdict a placeholder replaces is kept in ``SimulateEvalResult`` as the
+    run's own score, replaced, with the time and ``replaced_by`` (the person
+    who asked, when there is one). It is written in the same transaction as
+    the placeholder, so the original can't be lost between the two.
     """
     # The grader loads these ids without a run-test scope, so the scope is
     # enforced here, where both callers share it.
@@ -314,6 +327,12 @@ def regrade_run_evals(
         # And its dispatch stamps, so a failed dispatch leaves no stamp that
         # would read a restored call as still scoring.
         previous_eval_queued = {}
+        # The verdicts the placeholders replace, kept as the run's own score.
+        replaced_rows = []
+        replacement_id = uuid.uuid4()
+        eval_configs_by_key = {
+            str(eval_config.id): eval_config for eval_config in eval_configs
+        }
         stamped_at = timezone.now()
         for call_execution in call_executions_to_update:
             # Provider-agnostic eval flags live in call_metadata
@@ -342,6 +361,22 @@ def regrade_run_evals(
                 )
                 for eval_config in eval_configs
             }
+            replaced_rows.extend(
+                replaced_verdict_rows(
+                    call_execution=call_execution,
+                    slots={
+                        key: previous
+                        for key, previous in previous_outputs[call_execution.id].items()
+                        if previous is not no_output
+                    },
+                    eval_configs=eval_configs_by_key,
+                    organization_id=run_test.organization_id,
+                    workspace_id=run_test.workspace_id,
+                    replacement_id=replacement_id,
+                    replaced_at=stamped_at,
+                    replaced_by=replaced_by,
+                )
+            )
 
             # Set placeholder values for each eval config that will be run
             for eval_config in eval_configs:
@@ -357,6 +392,7 @@ def regrade_run_evals(
                 f"Bulk updated eval_started flag and initialized eval_outputs for "
                 f"{len(call_executions_list)} call executions with {len(eval_configs)} eval configs"
             )
+        keep_replaced_verdicts(replaced_rows)
 
     # Trigger the async task to run evaluations. If the async backend is
     # unavailable, put every call and run back and let the caller say so.
@@ -390,10 +426,15 @@ def regrade_run_evals(
                     call_execution.eval_outputs.pop(config_id, None)
                 else:
                     call_execution.eval_outputs[config_id] = previous
-        if call_executions_list:
-            CallExecution.objects.bulk_update(
-                call_executions_list, ["call_metadata", "eval_outputs"]
-            )
+        # The verdicts go back on their calls and this request's kept copies
+        # go, together: nothing was replaced.
+        with transaction.atomic():
+            if call_executions_list:
+                CallExecution.objects.bulk_update(
+                    call_executions_list, ["call_metadata", "eval_outputs"]
+                )
+            if replaced_rows:
+                forget_replacement(replacement_id)
         failed_test_executions = list(
             TestExecution.objects.filter(id__in=updated_test_executions)
         )

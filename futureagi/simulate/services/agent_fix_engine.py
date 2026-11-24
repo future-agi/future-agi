@@ -448,7 +448,9 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
         # Every config in one pass: queueing one reopens a call's eval side, so a
         # call per config would leave all but the first config ungraded.
         try:
-            queue_evals_for_finished_calls(execution, configs)
+            # A fix's own check runs, regraded by a machine loop: never a
+            # person's history, and this queue never replaces an answer.
+            queue_evals_for_finished_calls(execution, configs, keep_replaced=False)
         except ValueError:
             # A cancelled run is never graded; its evals read as not finished.
             logger.warning(

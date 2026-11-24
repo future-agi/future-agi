@@ -18,6 +18,7 @@ from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from .code_archive import CodeArchive
 from .component_evaluation import ComponentEvaluation
 from .eval_config import SimulateEvalConfig
+from .eval_result_store import SimulateEvalAsk, SimulateEvalResult
 from .evidence_import import EvidenceImport, EvidenceImportCase
 from .harness_environment_credentials import (
     HarnessCredentialFile,
@@ -68,6 +69,8 @@ from .test_execution import (
 from .trial_item_result import TrialItemResult
 
 __all__ = [
+    "SimulateEvalAsk",
+    "SimulateEvalResult",
     "AgentFixCandidate",
     "AgentFixIssueJob",
     "AgentFixRun",
