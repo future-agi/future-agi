@@ -184,6 +184,7 @@ export function useChatRead(read, jobId, conversation) {
   latest.current = { jobId, conversation };
   const { params, join } = READS[read];
   const reading = useMutation({
+    meta: { errorHandled: true },
     mutationFn: ({ id, asked }) => listHarnessChatHistory(id, asked),
     onSuccess: (page, { id, asked, messageId, wanted, conversationId }) => {
       queryClient.setQueryData(["harness-job", id], (job) => {

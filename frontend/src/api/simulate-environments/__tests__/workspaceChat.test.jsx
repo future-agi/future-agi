@@ -327,9 +327,12 @@ describe("useWorkspaceChat (real)", () => {
         "failed",
       ],
     ])("tells apart a message %s", async (_, answer, found) => {
-      const { result } = show();
+      const { result, client } = show();
       expect(await openAt(result, answer())).toBe(found);
       expect(ids(result)).toEqual(["older-messages", "m8", "m9"]);
+      // The chat says it itself, so the app-wide error toast stays quiet.
+      const [read] = client.getMutationCache().getAll();
+      expect(read.options.meta).toEqual({ errorHandled: true });
     });
 
     it("drops the page once the reader no longer wants it", async () => {
