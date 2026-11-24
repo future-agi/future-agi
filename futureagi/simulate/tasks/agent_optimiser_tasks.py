@@ -1,11 +1,41 @@
 import structlog
 
 logger = structlog.get_logger(__name__)
-from simulate.models import AgentOptimiserRun, AgentPromptOptimiserRun
+from simulate.models import AgentOptimiserRun, AgentPromptOptimiserRun, TestExecution
 from simulate.utils.agent_optimiser import execute_simulation_analysis
 from simulate.utils.agent_prompt_optimiser import run_agent_prompt_optimiser
 from tfc.temporal.drop_in import temporal_activity
 from tfc.utils.error_codes import get_error_message
+
+
+def _with_run_summary(run: AgentOptimiserRun) -> dict:
+    """The run's input, with the test run's summary in it.
+
+    The analysis reads the summary. A refresh made in a web request stores
+    the input without one when the test run has none, and the summary is made
+    here, inside the job the person started, never inside the request.
+    """
+    input_data = dict(run.input_data or {})
+    test_execution_id = input_data.get("test_execution_id")
+    if input_data.get("cluster_dict_by_eval") is not None or not test_execution_id:
+        return input_data
+
+    from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+
+    logger.info(
+        "optimiser_run_making_missing_summary",
+        run_id=str(run.id),
+        test_execution_id=str(test_execution_id),
+    )
+    run_eval_summary_task(str(test_execution_id))
+    input_data["cluster_dict_by_eval"] = (
+        TestExecution.objects.filter(id=test_execution_id)
+        .values_list("eval_explanation_summary", flat=True)
+        .first()
+    )
+    run.input_data = input_data
+    run.save(update_fields=["input_data", "updated_at"])
+    return input_data
 
 
 @temporal_activity(
@@ -30,7 +60,7 @@ def execute_optimiser_run(run_id: str):
         logger.info(f"Executing optimiser run {run_id} for {run.agent_optimiser.name}")
 
         run.mark_as_running()
-        result = execute_simulation_analysis(run.input_data)
+        result = execute_simulation_analysis(_with_run_summary(run))
         run.mark_as_completed(result=result)
 
         logger.info(f"Optimiser run {run_id} completed successfully")

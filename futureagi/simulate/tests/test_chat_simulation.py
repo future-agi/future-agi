@@ -1057,7 +1057,8 @@ class TestMonitorTestExecutionForChat:
         mock_close_connections,
         test_execution,
     ):
-        """Test execution should be marked completed when no call executions exist."""
+        """Test execution should be marked completed when no call executions
+        exist; its summary is marked not current and no summary is queued."""
         # Execute
         monitor_test_execution_for_chat(str(test_execution.id))
 
@@ -1068,7 +1069,7 @@ class TestMonitorTestExecutionForChat:
             test_execution.eval_explanation_summary_status
             == EvalExplanationSummaryStatus.PENDING
         )
-        mock_eval_summary.assert_called_once()
+        mock_eval_summary.assert_not_called()
 
     @patch("tfc.temporal.drop_in.decorator.close_old_connections")
     @patch("simulate.tasks.eval_summary_tasks.run_eval_summary_task.apply_async")
@@ -1094,15 +1095,15 @@ class TestMonitorTestExecutionForChat:
                 call_metadata={"eval_started": True, "eval_completed": True},
             )
 
-        # Execute: the settle completes the run and queues the summary after
-        # the commit.
+        # Execute: the settle completes the run; no summary is queued, even
+        # after the commit.
         with django_capture_on_commit_callbacks(execute=True):
             monitor_test_execution_for_chat(str(test_execution.id))
 
         # Assert
         test_execution.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
-        mock_eval_summary.assert_called_once()
+        mock_eval_summary.assert_not_called()
 
     @patch("tfc.temporal.drop_in.decorator.close_old_connections")
     def test_monitor_marks_evaluating_when_evals_running(
@@ -1222,8 +1223,8 @@ class TestMonitorTestExecutionForChat:
             simulation_call_type=CallExecution.SimulationCallType.TEXT,
         )
 
-        # Execute: the settle completes the run and queues the summary after
-        # the commit.
+        # Execute: the settle completes the run; no summary is queued, even
+        # after the commit.
         with (
             patch(
                 "simulate.tasks.eval_summary_tasks.run_eval_summary_task.apply_async"
@@ -1235,7 +1236,7 @@ class TestMonitorTestExecutionForChat:
         # Assert - should be marked completed
         test_execution.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
-        mock_eval.assert_called_once()
+        mock_eval.assert_not_called()
 
     @pytest.mark.django_db
     def test_monitor_handles_invalid_test_execution_id(self):

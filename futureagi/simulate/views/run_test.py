@@ -6445,7 +6445,8 @@ class RunTestEvalExplanationSummaryView(APIView):
     """
     API View to get evaluation explanation summary statistics for a single test execution.
 
-    GET: Fetches stored summary from DB, triggers async calculation if not present
+    GET: Returns the stored summary and its status. A read starts nothing:
+    the summary is made only by the refresh below, which a person presses.
     """
 
     permission_classes = [IsAuthenticated]
@@ -6459,10 +6460,7 @@ class RunTestEvalExplanationSummaryView(APIView):
         },
     )
     def get(self, request, test_execution_id, *args, **kwargs):
-        """
-        Fetch the evaluation explanation summary from the database.
-        If not present, trigger async calculation and return empty response.
-        """
+        """Return the stored summary and its status; write and queue nothing."""
         try:
             organization = (
                 getattr(request, "organization", None) or request.user.organization
@@ -6475,20 +6473,6 @@ class RunTestEvalExplanationSummaryView(APIView):
                 run_test__organization=organization,
                 run_test__deleted=False,
             )
-
-            if test_execution.eval_explanation_summary is None:
-                test_execution.eval_explanation_summary_status = (
-                    EvalExplanationSummaryStatus.PENDING
-                )
-                test_execution.save(update_fields=["eval_explanation_summary_status"])
-                try:
-                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-                except Exception as dispatch_error:
-                    logger.exception(
-                        "eval_summary_fetch_dispatch_failed",
-                        test_execution_id=str(test_execution.id),
-                        error=str(dispatch_error),
-                    )
 
             return self._gm.success_response(
                 {
@@ -6542,8 +6526,9 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                 run_test__organization=organization,
                 run_test__deleted=False,
             )
+            # A person asked: the pane waits while the status says running.
             test_execution.eval_explanation_summary_status = (
-                EvalExplanationSummaryStatus.PENDING
+                EvalExplanationSummaryStatus.RUNNING
             )
             test_execution.save(update_fields=["eval_explanation_summary_status"])
             try:
@@ -6555,6 +6540,11 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                     test_execution_id=str(test_execution.id),
                     error=str(dispatch_error),
                 )
+                # No job is coming, so the pane must not wait for one.
+                test_execution.eval_explanation_summary_status = (
+                    EvalExplanationSummaryStatus.PENDING
+                )
+                test_execution.save(update_fields=["eval_explanation_summary_status"])
                 message = (
                     "Summary refresh marked pending; async dispatch failed "
                     "and can be retried"
@@ -6574,7 +6564,8 @@ class TestExecutionOptimiserAnalysisView(APIView):
     """
     API View to get agent optimiser analysis for a test execution.
 
-    GET: Fetches the latest optimiser analysis result
+    GET: Returns the latest optimiser analysis. A read creates nothing: an
+    analysis starts only from the refresh below, which a person presses.
     """
 
     permission_classes = [IsAuthenticated]
@@ -6605,9 +6596,7 @@ class TestExecutionOptimiserAnalysisView(APIView):
                 run_test__deleted=False,
             )
 
-            optimiser = get_or_create_optimiser_for_test_execution(test_execution)
-
-            result_data = get_latest_optimiser_result(optimiser, test_execution)
+            result_data = get_latest_optimiser_result(test_execution.agent_optimiser)
 
             return self._gm.success_response(result_data)
 

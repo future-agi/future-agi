@@ -408,10 +408,7 @@ def monitor_test_execution_for_chat(test_execution_id: str):
                 EvalExplanationSummaryStatus.PENDING
             )
             test_execution.save(update_fields=["eval_explanation_summary_status"])
-            # Lazy import to avoid circular dependency
-            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-            run_eval_summary_task.apply_async(args=(str(test_execution.id),))
+            # The summary is made only when a person asks for it.
 
             return
 

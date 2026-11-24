@@ -10,6 +10,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     CallExecution,
@@ -18,7 +19,6 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
-
 from simulate.utils.agent_optimiser import (
     _build_chat_aggregate_metrics,
     _build_fix_your_agent_eval_templates,
@@ -257,24 +257,26 @@ class TestGetLatestOptimiserResult:
         run.status = "completed"
         run.updated_at.isoformat.return_value = "2024-01-01T00:00:00"
         optimiser.latest_run = run
-        te = MagicMock()
 
-        result = get_latest_optimiser_result(optimiser, te)
+        result = get_latest_optimiser_result(optimiser)
         assert result["response"] == {"agent_level": {}}
 
+    @pytest.mark.parametrize("has_optimiser", [False, True])
     @patch("simulate.utils.agent_optimiser.create_optimiser_run_for_test_execution")
-    def test_creates_run_when_none(self, mock_create):
-        optimiser = MagicMock()
-        optimiser.latest_run = None
-        te = MagicMock()
-        mock_run = MagicMock()
-        mock_run.result = None
-        mock_run.status = "pending"
-        mock_run.updated_at.isoformat.return_value = "2024-01-01T00:00:00"
-        mock_create.return_value = mock_run
+    def test_creates_nothing_when_there_is_no_run(self, mock_create, has_optimiser):
+        """Reading the analysis of a run never analysed starts nothing: the
+        person is told to trigger a refresh."""
+        optimiser = MagicMock() if has_optimiser else None
+        if optimiser is not None:
+            optimiser.latest_run = None
 
-        result = get_latest_optimiser_result(optimiser, te)
-        assert result["status"] == "pending"
+        result = get_latest_optimiser_result(optimiser)
+
+        mock_create.assert_not_called()
+        assert result["response"] is None
+        assert result["message"] == (
+            "No optimiser runs found. Trigger a refresh to start analysis."
+        )
 
 
 class TestPrepareSimulationAnalysisInput:

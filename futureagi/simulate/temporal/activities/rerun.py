@@ -150,16 +150,16 @@ async def finalize_rerun_execution(input: FinalizeRerunInput) -> None:
                 )
 
         # The calls say the run is done and not failed. Complete it if it is
-        # still open, queue its summary only if this write moved it, and
-        # release the rerun's hold on it either way.
+        # still open, and release the rerun's hold on it either way.
         if final_status == TestExecution.ExecutionStatus.COMPLETED:
             from simulate.services.scoring_status import SETTLE_FROM_STATUSES
 
             # The scoring sweeper's settle may have completed this run in the
             # seconds before this activity, and a stop or a failure may have
-            # ended it. Only a run still open is completed here, so its
-            # summary is built once and a finished run is not stamped again.
-            moved = await TestExecution.objects.filter(
+            # ended it. Only a run still open is completed here, so a finished
+            # run is not stamped again. The summary is marked pending and made
+            # only when a person asks for it.
+            await TestExecution.objects.filter(
                 id=test_execution.id, status__in=SETTLE_FROM_STATUSES
             ).aupdate(
                 status=final_status,
@@ -177,26 +177,6 @@ async def finalize_rerun_execution(input: FinalizeRerunInput) -> None:
             if "execution_metadata" in update_fields:
                 released.append("execution_metadata")
 
-            # Trigger eval summary task. Before the release is written: if
-            # that write fails, the retry of this activity finds the run
-            # completed and moves no row, so it would never queue the summary.
-            if moved:
-                try:
-                    from simulate.tasks.eval_summary_tasks import (
-                        run_eval_summary_task,
-                    )
-
-                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-                    logger.info(
-                        "triggered_eval_summary_for_rerun",
-                        test_execution_id=input.test_execution_id,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "failed_to_trigger_eval_summary",
-                        test_execution_id=input.test_execution_id,
-                        error=str(e),
-                    )
             await test_execution.asave(update_fields=released)
         elif final_status == TestExecution.ExecutionStatus.FAILED:
             update_fields.extend(["completed_at", "picked_up_by_executor"])

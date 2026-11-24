@@ -731,8 +731,9 @@ class TestFinalizeTestExecutionActivity:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
-    async def test_finalize_test_execution_triggers_eval_summary(self, test_execution):
-        """Test that finalize triggers eval summary task on completion."""
+    async def test_finalize_test_execution_queues_no_eval_summary(self, test_execution):
+        """Finalize completes the run and queues no summary: the summary is
+        made only when a person asks for it."""
         from simulate.temporal.activities.test_execution import finalize_test_execution
         from simulate.temporal.types.activities import FinalizeInput
 
@@ -753,7 +754,8 @@ class TestFinalizeTestExecutionActivity:
                 )
             )
 
-            mock_task.apply_async.assert_called_once()
+            mock_task.apply_async.assert_not_called()
+            mock_task.assert_not_called()
 
 
 # ============================================================================

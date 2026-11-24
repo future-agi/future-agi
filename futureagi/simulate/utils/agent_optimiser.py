@@ -330,17 +330,9 @@ def prepare_simulation_analysis_input(test_execution_id: str) -> dict | None:
             )
             return None
 
-        if test_execution.eval_explanation_summary is None:
-            # The analysis step relies on clustered eval explanations.
-            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-            logger.info(
-                "sim_analysis_input_eval_summary_missing",
-                test_execution_id=test_execution_id,
-            )
-            run_eval_summary_task(str(test_execution.id))
-            test_execution.refresh_from_db(fields=["eval_explanation_summary"])
-
+        # A run with no summary yet stores None here; the queued optimiser job
+        # makes the summary first. No model runs while preparing, which
+        # happens inside a web request.
         input_data = {
             "test_execution_id": test_execution_id,
             "scenarios": scenarios,
@@ -609,31 +601,20 @@ def get_or_create_optimiser_for_test_execution(
     return optimiser
 
 
-def get_latest_optimiser_result(
-    optimiser: AgentOptimiser, test_execution: TestExecution
-) -> dict:
-    """
-    Get the latest optimiser run result.
+def get_latest_optimiser_result(optimiser: AgentOptimiser | None) -> dict:
+    """The latest optimiser run's result, read only.
 
-    Args:
-        optimiser: AgentOptimiser instance
-        test_execution: TestExecution instance
-    Returns:
-        dict with response data including status and result
+    A run never analysed gets the message to trigger a refresh: reading
+    creates no optimiser run and queues no analysis.
     """
-    latest_run = optimiser.latest_run
+    latest_run = optimiser.latest_run if optimiser is not None else None
 
     if not latest_run:
-        run = create_optimiser_run_for_test_execution(test_execution, optimiser)
-
-        if not run:
-            return {
-                "response": None,
-                "status": "completed",
-                "message": "No optimiser runs found. Trigger a refresh to start analysis.",
-            }
-
-        latest_run = run
+        return {
+            "response": None,
+            "status": "completed",
+            "message": "No optimiser runs found. Trigger a refresh to start analysis.",
+        }
 
     return {
         "response": latest_run.result,

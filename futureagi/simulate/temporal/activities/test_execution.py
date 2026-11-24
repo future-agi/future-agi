@@ -649,8 +649,9 @@ async def finalize_test_execution(input: FinalizeInput) -> None:
 
             # The scoring sweeper's settle may have completed this run in the
             # seconds before this activity, and a stop or a failure may have
-            # ended it. Only a run still open is completed here, so its
-            # summary is built once and a finished run is not stamped again.
+            # ended it. Only a run still open is completed here, so a finished
+            # run is not stamped again. The summary is marked pending and made
+            # only when a person asks for it.
             moved = await TestExecution.objects.filter(
                 id=test_execution.id, status__in=SETTLE_FROM_STATUSES
             ).aupdate(
@@ -667,18 +668,6 @@ async def finalize_test_execution(input: FinalizeInput) -> None:
                 await TestExecution.objects.filter(id=test_execution.id).aupdate(
                     picked_up_by_executor=False
                 )
-            else:
-                try:
-                    from simulate.tasks.eval_summary_tasks import (
-                        run_eval_summary_task,
-                    )
-
-                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-                    activity.logger.info(
-                        f"Triggered eval summary for test_execution={input.test_execution_id}"
-                    )
-                except Exception as e:
-                    activity.logger.warning(f"Failed to trigger eval summary: {str(e)}")
         else:
             await test_execution.asave(
                 update_fields=[

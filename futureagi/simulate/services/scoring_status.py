@@ -100,22 +100,6 @@ CALL_SCORING_OPEN_Q = (
     | Q(call_metadata__csat_status__in=CSAT_OPEN_STATUSES)
 )
 
-# A verdict that lands on a call the sweeper already closed, on a run that has
-# completed, has the run's summary built again by a job that starts this long
-# after the first such verdict: one job then covers every late verdict of the
-# run that lands in between.
-SUMMARY_REBUILD_DELAY_SECONDS = 300
-# How long the marker "a rebuild is scheduled for this run" lives: 30 s less
-# than the delay, so a verdict that lands just before the job starts schedules
-# one more job instead of counting on a job that may already have read the
-# calls.
-SUMMARY_REBUILD_MARKER_SECONDS = SUMMARY_REBUILD_DELAY_SECONDS - 30
-
-
-def summary_rebuild_marker_key(test_execution_id: Any) -> str:
-    """Cache key of the marker that a summary rebuild is scheduled for a run."""
-    return f"simulate:summary_rebuild:{test_execution_id}"
-
 
 def locked_call_metadata_update(
     call_execution_id: Any, mutate: Callable[[dict[str, Any]], bool | None]

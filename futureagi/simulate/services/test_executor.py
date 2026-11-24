@@ -176,7 +176,6 @@ from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE, APICallStatusChoi
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.temporal.drop_in import temporal_activity
 
-# Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
 from tfc.utils.evaluation_denials import EvaluationDenied
 
@@ -311,10 +310,7 @@ class TestExecutor:
                     test_execution.save(
                         update_fields=["eval_explanation_summary_status"]
                     )
-                    # Lazy import to avoid circular dependency
-                    from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
+                    # The summary is made only when a person asks for it.
 
                     test_execution.picked_up_by_executor = False
                     test_execution.save()
@@ -524,14 +520,7 @@ class TestExecutor:
                             EvalExplanationSummaryStatus.PENDING
                         )
                         test_execution.save()
-                        # Lazy import to avoid circular dependency
-                        from simulate.tasks.eval_summary_tasks import (
-                            run_eval_summary_task,
-                        )
-
-                        run_eval_summary_task.apply_async(
-                            args=(str(test_execution.id),)
-                        )
+                        # The summary is made only when a person asks for it.
 
                     logger.info(
                         f"Test execution {test_execution.id} completed - all evaluations finished"
@@ -4094,10 +4083,6 @@ class TestExecutor:
                                     self._check_and_update_test_execution_completion(
                                         call_execution_locked.test_execution_id
                                     )
-                        else:
-                            self._rebuild_summary_after_late_verdict(
-                                call_execution_locked.test_execution_id
-                            )
                 except Exception as e:
                     # If select_for_update fails (e.g., outside transaction), fall back to regular update
                     # This can happen in some Celery task contexts
@@ -4142,10 +4127,6 @@ class TestExecutor:
                                 self._check_and_update_test_execution_completion(
                                     call_execution.test_execution_id
                                 )
-                    else:
-                        self._rebuild_summary_after_late_verdict(
-                            call_execution.test_execution_id
-                        )
             else:
                 logger.debug(
                     f"Not all eval configs completed for call {call_execution.id}. "
@@ -4249,7 +4230,9 @@ class TestExecutor:
                         f"Test execution {test_execution_id} marked as completed - all evaluations done"
                     )
 
-                    # After commit, so the summary reads the completed run.
+                    # After commit, so the live update reads the completed
+                    # run. The summary is marked pending above and is made
+                    # only when a person asks for it.
                     def _after_completion():
                         self._after_run_completed(test_execution_id)
 
@@ -4266,17 +4249,11 @@ class TestExecutor:
             return False
 
     def _after_run_completed(self, test_execution_id):
-        """Summary and live update for a run the settle just completed."""
-        try:
-            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+        """Live update for a run the settle just completed.
 
-            run_eval_summary_task.apply_async(args=(str(test_execution_id),))
-        except Exception:
-            logger.exception(
-                "simulate_run_completed_hooks_failed",
-                test_execution_id=str(test_execution_id),
-                hook="summary",
-            )
+        No summary is queued: it is analysis made by model calls, and it
+        starts only when a person asks for it.
+        """
         try:
             from simulate.utils.websocket_notifications import (
                 notify_simulation_update,
@@ -4296,88 +4273,6 @@ class TestExecutor:
                 test_execution_id=str(test_execution_id),
                 hook="notify",
             )
-
-    def _rebuild_summary_after_late_verdict(self, test_execution_id):
-        """Schedule one rebuild of a completed run's summary after a late verdict.
-
-        A grading job that outlives the scoring clock writes its verdict on a
-        call the sweeper already closed, after the run completed and its
-        summary was built without that verdict. The run stays completed and
-        keeps its ``completed_at``, and nothing is written to the summary
-        here. One summary job is scheduled to start after a delay, and a
-        marker in the cache says so for a little less than that delay: every
-        further late verdict of the run that finds the marker schedules
-        nothing, and the job, starting after all of them, reads them all.
-        """
-        from datetime import timedelta
-
-        from django.core.cache import cache
-
-        from simulate.services.scoring_status import (
-            SUMMARY_REBUILD_DELAY_SECONDS,
-            SUMMARY_REBUILD_MARKER_SECONDS,
-            summary_rebuild_marker_key,
-        )
-        from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-        if not TestExecution.objects.filter(
-            id=test_execution_id, status=TestExecution.ExecutionStatus.COMPLETED
-        ).exists():
-            # A run still scoring gets its summary from the settle; a failed
-            # or stopped run has none to rebuild.
-            return
-        run_id = str(test_execution_id)
-        key = summary_rebuild_marker_key(run_id)
-        try:
-            scheduled_already = not cache.add(
-                key, "1", timeout=SUMMARY_REBUILD_MARKER_SECONDS
-            )
-        except Exception:
-            # Without the cache nothing says whether a rebuild is scheduled.
-            # One job too many costs less than a summary left without the
-            # verdict, so this one is scheduled.
-            logger.warning(
-                "simulate_summary_rebuild_marker_failed",
-                test_execution_id=run_id,
-                step="set",
-                exc_info=True,
-            )
-            scheduled_already = False
-        if scheduled_already:
-            return
-
-        def _schedule():
-            try:
-                run_eval_summary_task.apply_async(
-                    args=(run_id,),
-                    start_delay=timedelta(seconds=SUMMARY_REBUILD_DELAY_SECONDS),
-                )
-            except Exception:
-                logger.exception(
-                    "simulate_summary_rebuild_handoff_failed",
-                    test_execution_id=run_id,
-                )
-                # No job is coming, so the marker must not make the next late
-                # verdict wait out a window with nothing in it.
-                try:
-                    cache.delete(key)
-                except Exception:
-                    logger.warning(
-                        "simulate_summary_rebuild_marker_failed",
-                        test_execution_id=run_id,
-                        step="clear",
-                        exc_info=True,
-                    )
-                return
-            logger.info(
-                "simulate_summary_rebuild_scheduled",
-                test_execution_id=run_id,
-                delay_seconds=SUMMARY_REBUILD_DELAY_SECONDS,
-            )
-
-        # After commit: nothing is scheduled for a transaction that rolls
-        # back, and the job is not handed over while a row lock is held.
-        transaction.on_commit(_schedule, robust=True)
 
     def _run_simulate_evaluations(
         self,
