@@ -3,7 +3,9 @@ import { Alert, MenuItem, Stack, TextField, Typography } from "@mui/material";
 
 import { useSetFileRole } from "src/api/simulate-environments/versions";
 import SectionCard from "../../components/SectionCard";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { refusalText } from "../evals/refusalText";
+import { WORKSPACE_COPY } from "../workspace.constants";
 import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.fileRoles;
@@ -23,6 +25,7 @@ const attachedFiles = (sources) =>
 // Each attached file with the role the builder uses it in, and a pick to change it.
 export default function FileRoles({ envId, sources, revision, locked }) {
   const setRole = useSetFileRole(envId);
+  const { canEdit } = useSimulationAccess();
   const paths = attachedFiles(sources);
   if (!paths.length) return null;
   const roles = sources.roles ?? {};
@@ -37,7 +40,7 @@ export default function FileRoles({ envId, sources, revision, locked }) {
             size="small"
             label={path.slice(PREFIX.length)}
             value={roles[path] ?? ""}
-            disabled={locked || setRole.isPending}
+            disabled={locked || !canEdit || setRole.isPending}
             // A file with no role yet says so instead of showing an empty field.
             SelectProps={{ displayEmpty: true }}
             InputLabelProps={{ shrink: true }}
@@ -56,6 +59,11 @@ export default function FileRoles({ envId, sources, revision, locked }) {
             ))}
           </TextField>
         ))}
+        {!canEdit && (
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {WORKSPACE_COPY.viewer.edit}
+          </Typography>
+        )}
         {seedsUsed && sources.seed_records_loaded === false && (
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
             {C.seedContextOnly}

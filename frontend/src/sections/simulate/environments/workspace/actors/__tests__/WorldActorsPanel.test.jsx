@@ -24,6 +24,11 @@ let asked;
 let realHooks = false;
 let viewState;
 
+let canEdit;
+vi.mock("src/sections/simulate/environments/hooks/useSimulationAccess", () => ({
+  default: () => ({ canEdit, canRun: canEdit }),
+}));
+
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
 }));
@@ -440,6 +445,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
 
 describe("WorldActorsPanel", () => {
   beforeEach(() => {
+    canEdit = true;
     mutate.mockReset();
     resetEdit.mockReset();
     refetch.mockReset();
@@ -476,6 +482,26 @@ describe("WorldActorsPanel", () => {
       role: "seed_records",
       revision: 5,
     });
+  });
+
+  it("shows a viewer each file's role without letting them change it", () => {
+    canEdit = false;
+    actorsData = cast([MANAGER], {
+      knowledge_sources: {
+        files: ["knowledge/refunds.md"],
+        records: [],
+        roles: { "knowledge/refunds.md": "policy" },
+      },
+    });
+    render(<WorldActorsPanel envId="env-1" />);
+    const card = within(screen.getByTestId("file-roles"));
+    expect(card.getByLabelText("refunds.md")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(
+      card.getByText("You don't have permission to edit this environment."),
+    ).toBeInTheDocument();
   });
 
   it("shows a skeleton while loading, with no count and nothing to add yet", () => {
