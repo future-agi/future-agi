@@ -23,10 +23,7 @@ import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { useAgentDefinitions } from "src/components/run-tests/common";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
-import {
-  harnessIdempotencyKey,
-  storeHarnessSecretValues,
-} from "src/api/harness/harness";
+import { harnessIdempotencyKey } from "src/api/harness/harness";
 import {
   createHarnessAdaptation,
   createHarnessHostedAgent,
@@ -36,8 +33,6 @@ import { paths } from "src/routes/paths";
 
 import {
   errorMessage,
-  providerCredentialName,
-  releaseUsePayload,
   shortDigest,
 } from "./harnessShared";
 
@@ -139,40 +134,29 @@ export function UseReleaseDialog({ release, open, onClose }) {
   const [connector, setConnector] = useState("retell_chat");
   const [agent, setAgent] = useState(null);
   const [version, setVersion] = useState(null);
-  const [apiKey, setApiKey] = useState("");
-  const [targetId, setTargetId] = useState("");
-  const [dynamicVariables, setDynamicVariables] = useState("");
   const [name, setName] = useState(release?.name || "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   // One key per dialog, so a retried click cannot start a second adaptation.
   const [idempotencyKey] = useState(harnessIdempotencyKey);
 
-  const keyName = providerCredentialName(connector);
   const ready =
-    Boolean(suiteId && version?.id && apiKey.trim() && targetId.trim()) &&
-    Boolean(name.trim()) &&
-    !submitting;
+    Boolean(suiteId && version?.id && name.trim()) && !submitting;
 
   const submit = async () => {
     setSubmitting(true);
     setError("");
     try {
-      const stored = await storeHarnessSecretValues({ [keyName]: apiKey });
-      const job = await createHarnessAdaptation(
-        releaseUsePayload({
-          suiteId,
-          agentVersionId: version.id,
-          name,
-          connector,
-          targetId,
-          dynamicVariables,
-          secretRefs: stored?.secret_refs || {},
-          idempotencyKey,
-        }),
-      );
+      // The agent as connected on the Agents page: its provider, agent id and stored key are
+      // read from the version on the server, so nothing is typed in again here.
+      const job = await createHarnessAdaptation({
+        suite_id: suiteId,
+        agent_version_id: version.id,
+        name: name.trim(),
+        idempotency_key: idempotencyKey,
+      });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
-      navigate(paths.dashboard.simulate.harness.detail(job.job.job_id));
+      navigate(paths.dashboard.simulate.environments.detail(job.job.job_id));
     } catch (requestError) {
       setError(errorMessage(requestError));
       setSubmitting(false);
@@ -223,44 +207,12 @@ export function UseReleaseDialog({ release, open, onClose }) {
           />
           <TextField
             size="small"
-            type="password"
-            label={keyName}
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            helperText="Used to inspect and clone the agent. Stored as a run-scoped secret; never written to the job or artifacts."
-          />
-          <TextField
-            size="small"
-            label={
-              connector === "vapi"
-                ? "Vapi assistant ID"
-                : connector === "retell_chat"
-                  ? "Retell chat agent ID"
-                  : "Retell voice agent ID"
-            }
-            value={targetId}
-            onChange={(event) => setTargetId(event.target.value)}
-            helperText="ALK clones this agent for each run and points its tools at the environment."
-          />
-          {connector === "retell_chat" && (
-            <TextField
-              size="small"
-              multiline
-              minRows={2}
-              label="Dynamic variables (JSON)"
-              placeholder={'{"customer_name":"Jane Doe"}'}
-              value={dynamicVariables}
-              onChange={(event) => setDynamicVariables(event.target.value)}
-            />
-          )}
-          <TextField
-            size="small"
             label="Environment name"
             value={name}
             onChange={(event) => setName(event.target.value)}
           />
           <Typography variant="caption" color="text.secondary">
-            Adapting inspects your agent, maps its tools onto this environment
+            Adapting reads your agent as connected on the Agents page, maps its tools onto this environment
             and proves the mapping on every scenario, then asks you to approve
             it. The scenario suite stays as released.
           </Typography>

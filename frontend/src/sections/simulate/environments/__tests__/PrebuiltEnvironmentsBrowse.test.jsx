@@ -110,11 +110,8 @@ describe("PrebuiltEnvironmentsBrowse", () => {
       within(dialog).getByRole("combobox", { name: "Agent version" }),
     );
     await user.click(screen.getByRole("option", { name: "v1" }));
-    await user.type(within(dialog).getByLabelText("RETELL_API_KEY"), "secret");
-    await user.type(
-      within(dialog).getByLabelText("Retell chat agent ID"),
-      "agent_abc",
-    );
+    // No key or provider id is typed: the server reads them from the version as connected.
+    expect(within(dialog).queryByLabelText("RETELL_API_KEY")).not.toBeInTheDocument();
     await user.click(
       within(dialog).getByRole("button", { name: /Adapt to my agent/ }),
     );
@@ -123,12 +120,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
       expect.objectContaining({
         suite_id: "suite-1",
         agent_version_id: "version-1",
-        agent: expect.objectContaining({
-          connector: "retell_chat",
-          config: { agent_id: "agent_abc" },
-        }),
       }),
     );
+    expect(createHarnessAdaptation.mock.calls[0][0]).not.toHaveProperty("agent");
     expect(navigate).toHaveBeenCalledWith(expect.stringContaining("job-1"));
   });
 

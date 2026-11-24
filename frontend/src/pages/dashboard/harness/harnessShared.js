@@ -216,37 +216,6 @@ export const displayText = (value, fallback = "") => {
   }
 };
 
-export const providerCredentialName = (connector) =>
-  connector === "vapi"
-    ? "VAPI_API_KEY"
-    : ["retell", "retell_chat"].includes(connector)
-      ? "RETELL_API_KEY"
-      : null;
-
-export const parseProviderDynamicVariables = (text) => {
-  if (!text.trim()) return {};
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error("Dynamic variables must be valid JSON.");
-  }
-  if (
-    !value ||
-    Array.isArray(value) ||
-    typeof value !== "object" ||
-    Object.entries(value).some(
-      ([name, item]) =>
-        !name || !["string", "number", "boolean"].includes(typeof item),
-    )
-  ) {
-    throw new Error(
-      "Dynamic variables must be a JSON object with string, number, or boolean values.",
-    );
-  }
-  return value;
-};
-
 // "sha256:<64 hex>" reads as noise in a label; the first 12 hex digits identify it on screen.
 export const shortDigest = (digest) => {
   const text = String(digest || "");
@@ -279,37 +248,6 @@ export const adaptationProgress = (conversation) => {
   }
   return done;
 };
-
-// The request body adaptation and composition share (environment-releases.md §7.6). The
-// agent block is the hosted-job agent in provider_import mode, so each run clones the agent.
-export const releaseUsePayload = ({
-  suiteId,
-  agentVersionId,
-  name,
-  connector,
-  targetId,
-  dynamicVariables,
-  secretRefs,
-  idempotencyKey,
-}) => ({
-  suite_id: suiteId,
-  agent_version_id: agentVersionId,
-  name: name.trim(),
-  idempotency_key: idempotencyKey,
-  agent: {
-    connector,
-    mode: "provider_import",
-    config: {
-      ...(connector === "vapi"
-        ? { assistant_id: targetId.trim() }
-        : { agent_id: targetId.trim() }),
-      ...(connector === "retell_chat" && dynamicVariables.trim()
-        ? { dynamic_variables: parseProviderDynamicVariables(dynamicVariables) }
-        : {}),
-    },
-    secret_refs: secretRefs,
-  },
-});
 
 export const BINDING_MODE_LABELS = {
   canonical: "Canonical",
