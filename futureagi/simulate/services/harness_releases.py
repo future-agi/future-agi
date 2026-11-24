@@ -1199,6 +1199,11 @@ def apply_frozen_simulator(values: dict[str, str], simulator: dict[str, Any]) ->
 # --- adaptation (contract §7.5) -------------------------------------------------------------------
 
 ADAPTATION_OUTPUT = "/work/authoring/adaptation"
+# What the adaptation's control process verified (agent-learning-kit `hosted.record_verified`):
+# written beside the workspace, in the folder the builder session's tools refuse, and read from
+# there on its own, never from the output directory the session can write.
+ADAPTATION_VERIFIED = "/work/.authoring-credentials/adaptation-verified.json"
+ADAPTATION_VERIFIED_SCHEMA = "futureagi.adaptation-verified.v1"
 
 
 def adaptation_of(job: HostedHarnessJob) -> dict[str, Any] | None:
@@ -1391,8 +1396,29 @@ def _adaptation_failure(code: str, message: str) -> dict[str, Any]:
     }
 
 
-def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | None]:
-    """Register what a completed adaptation produced; returns (adaptation_result, failure)."""
+def _verified_digests(verified: Any) -> tuple[str | None, str | None]:
+    """(binding digest, proof digest) the control process recorded, or Nones when it recorded
+    nothing this platform reads."""
+    if (
+        not isinstance(verified, dict)
+        or verified.get("schema_version") != ADAPTATION_VERIFIED_SCHEMA
+    ):
+        return None, None
+    binding = verified.get("binding")
+    proof = verified.get("binding_proof")
+    return (
+        binding.get("digest") if isinstance(binding, dict) else None,
+        proof.get("digest") if isinstance(proof, dict) else None,
+    )
+
+
+def _adapt(
+    job: HostedHarnessJob, output: Path, verified: Any = None
+) -> tuple[dict[str, Any], dict | None]:
+    """Register what a completed adaptation produced; returns (adaptation_result, failure).
+    `verified` is the control process's own record of what it sealed (`ADAPTATION_VERIFIED`),
+    read apart from `output`: the binding and the proof in `output` are taken only when they
+    are the ones it names."""
     result = _read(output, "result.json")
     if result.get("schema_version") != ADAPTATION_RESULT_SCHEMA:
         raise _error(
@@ -1446,14 +1472,26 @@ def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | 
         if mode == "tool_routed" and (output / "binding-proof.json").is_file()
         else None
     )
-    if binding_proof is not None:
-        # The adaptation's control process proves the sealed binding itself and records the
-        # proof's digest in its result: a proof file that is not that proof is refused.
-        sealed = (result.get("binding_proof") or {}).get("digest")
-        if not sealed or proof_digest(binding_proof) != sealed:
+    if mode == "tool_routed":
+        # The control process proves the sealed binding itself and records both digests
+        # outside the workspace. result.json and binding-proof.json come from a directory the
+        # builder session can write, so agreeing with each other proves nothing: the binding
+        # and the proof are held to the record.
+        verified_binding, verified_proof = _verified_digests(verified)
+        if not verified_binding or not verified_proof:
             raise _error(
                 "binding_unproved",
-                "binding-proof.json is not the proof the adaptation's result names",
+                "the adaptation's control process recorded no verified proof",
+            )
+        if binding.get("digest") != verified_binding:
+            raise _error(
+                "binding_unproved",
+                "binding.json is not the binding the control process verified",
+            )
+        if binding_proof is None or proof_digest(binding_proof) != verified_proof:
+            raise _error(
+                "binding_unproved",
+                "binding-proof.json is not the proof the control process verified",
             )
     composition = create_composition(
         organization,
@@ -1477,12 +1515,15 @@ def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | 
     return adaptation_result, None
 
 
-def complete_adaptation(job: HostedHarnessJob, output: Path | None) -> HostedHarnessJob:
+def complete_adaptation(
+    job: HostedHarnessJob, output: Path | None, verified: Any = None
+) -> HostedHarnessJob:
     """Finish an adaptation job from its `/work/authoring/adaptation` output (contract §7.5).
 
-    `output` is None when the process left no output. A completed result registers the binding
-    and the composition on the base suite and records `metadata.adaptation_result`; anything the
-    platform refuses, or a failed result, fails the job with the reason.
+    `output` is None when the process left no output. `verified` is the control process's
+    record of what it sealed, read from `ADAPTATION_VERIFIED`. A completed result registers the
+    binding and the composition on the base suite and records `metadata.adaptation_result`;
+    anything the platform refuses, or a failed result, fails the job with the reason.
     """
     from simulate.models import HostedHarnessConversation
 
@@ -1493,7 +1534,7 @@ def complete_adaptation(job: HostedHarnessJob, output: Path | None) -> HostedHar
         )
     else:
         try:
-            adaptation_result, failure = _adapt(job, Path(output))
+            adaptation_result, failure = _adapt(job, Path(output), verified)
         except HostedHarnessError as exc:
             failure = _adaptation_failure(exc.code, exc.message)
     now = timezone.now()

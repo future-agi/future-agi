@@ -14,6 +14,7 @@ conflict with the instruction quoted; a quote the instructions don't hold is dro
 import json
 import os
 import re
+import time
 from functools import lru_cache
 from typing import Any
 
@@ -52,10 +53,11 @@ logger = structlog.get_logger(__name__)
 # A suggestion or a policy check is kept a day per agent profile and world: neither changes
 # unless one of them does, and both digests are in the key.
 _CACHE_SECONDS = 24 * 60 * 60
-# This call is made inside a request, so it is kept short and made by one request at a time
-# (`_one_at_a_time`): a second cold request is answered from names instead of waiting too.
-_MODEL_SECONDS = 20
-_FLIGHT_SECONDS = 2 * _MODEL_SECONDS + 5
+# This call is made inside a request, so the request has one short budget for it, the retry
+# included (`_ask_model`), and it is made by one request at a time (`_one_at_a_time`). A request
+# that runs out, or finds another already asking, is answered by names instead of waiting.
+_MODEL_BUDGET_SECONDS = 12.0
+_FLIGHT_SECONDS = int(_MODEL_BUDGET_SECONDS) + 5
 
 # Verbs that say what a tool does; two tools that read alike share one of these groups.
 _VERBS = (
@@ -210,14 +212,19 @@ def _ask_model(task: str, material: dict[str, Any]) -> dict[str, Any]:
             {"role": "user", "content": json.dumps(material)},
         ],
     }
-    # One retry: a dropped connection or a gateway hiccup is common and costs nothing to repeat.
+    # One retry: a dropped connection or a gateway hiccup is common. Both tries share the one
+    # budget, so the request never waits longer than it in total.
+    deadline = time.monotonic() + _MODEL_BUDGET_SECONDS
     for attempt in (1, 2):
+        remaining = deadline - time.monotonic()
+        if remaining < 1:
+            raise httpx.TimeoutException("the fit's model budget is spent")
         try:
             response = httpx.post(
                 f"{url}/v1/chat/completions",
                 json=body,
                 headers={"Authorization": f"Bearer {key}"},
-                timeout=_MODEL_SECONDS,
+                timeout=remaining,
             )
         except httpx.TransportError:
             if attempt == 2:

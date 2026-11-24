@@ -367,6 +367,18 @@ def _ask_harness_to_adapt(
     schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
 
 
+def _read_verified(sandbox: Any, path: str) -> dict[str, Any] | None:
+    """The adaptation control process's record at `path`, or None when it left none (a failed
+    adaptation, or an image that does not write one): the platform then accepts no routed
+    binding from that sandbox."""
+    try:
+        body = sandbox.fs.download_file(path, _PROVIDER_POLL_TIMEOUT_SECONDS)
+        document = json.loads(body)
+    except Exception:  # noqa: BLE001 - absent or unreadable is the same answer: nothing verified
+        return None
+    return document if isinstance(document, dict) else None
+
+
 def _alk_source_overlay() -> bytes | None:
     """The ALK source a development chat sandbox runs instead of its image's, when configured."""
     root = str(getattr(settings, "ALK_HOSTED_SOURCE_OVERLAY", "") or "").strip()
@@ -5195,12 +5207,16 @@ class HostedHarnessGateway:
         directory (contract §7.5), then clean up through the normal attempt protocol."""
         from simulate.services.harness_releases import (
             ADAPTATION_OUTPUT,
+            ADAPTATION_VERIFIED,
             complete_adaptation,
         )
 
         sandbox = self.client.get(
             str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
         )
+        # Read first and on its own: the control process's record of what it verified, from the
+        # folder the builder session's tools refuse. It is never taken from the output archive.
+        verified = _read_verified(sandbox, ADAPTATION_VERIFIED)
         packed = sandbox.process.exec(
             f"mkdir -p {ADAPTATION_OUTPUT} && "
             f"tar -czf /tmp/adaptation.tar.gz -C {ADAPTATION_OUTPUT} .",
@@ -5221,7 +5237,7 @@ class HostedHarnessGateway:
                     archive.extractall(directory, filter="data")
             except tarfile.TarError:
                 output = None
-            job = complete_adaptation(attempt.job, output)
+            job = complete_adaptation(attempt.job, output, verified)
         attempt.terminal_stage = (
             "completed" if job.state == HostedHarnessJob.State.COMPLETED else "failed"
         )

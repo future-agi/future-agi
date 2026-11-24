@@ -39,7 +39,10 @@ from simulate.services.harness_releases import (
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
-from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
+from tfc.utils.api_serializers import (
+    ApiTextErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
 
 
 def _no_organization() -> Response:
@@ -126,6 +129,7 @@ class HarnessAdaptationViewSet(viewsets.ViewSet):
             return Response(exc.as_dict(), status=exc.status_code)
 
     @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             202: HarnessJobReadSerializer,
             404: ApiTextErrorResponseSerializer,
