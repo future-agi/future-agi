@@ -1,4 +1,5 @@
 import math
+from uuid import UUID
 
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
@@ -406,12 +407,15 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     def _issue_job(self, fix_run: AgentFixRun) -> AgentFixIssueJob | None:
         """The issue job the epoch came from: a list's ``issue_links``, or read once
         for a single epoch."""
-        links = self.context.get("issue_links")
-        if links is None:
-            links = self.context.setdefault("_issue_links", {})
-            if fix_run.id not in links:
-                links.update(jobs_of_epochs([fix_run]) or {fix_run.id: None})
-        return links.get(fix_run.id)
+        listed: dict[UUID, AgentFixIssueJob] | None = self.context.get("issue_links")
+        if listed is not None:
+            return listed.get(fix_run.id)
+        read: dict[UUID, AgentFixIssueJob | None] = self.context.setdefault(
+            "_issue_links", {}
+        )
+        if fix_run.id not in read:
+            read[fix_run.id] = jobs_of_epochs([fix_run]).get(fix_run.id)
+        return read[fix_run.id]
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_limited_validation(self, fix_run: AgentFixRun) -> bool:
