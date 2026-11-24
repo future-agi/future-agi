@@ -7,6 +7,7 @@ from simulate.views.agent_fix import (
     AgentFixRunViewSet,
 )
 from simulate.views.agent_fix_issue import AgentFixIssueJobViewSet
+from simulate.views.harness_scenario_tags import HarnessScenarioTagViewSet
 from simulate.views.agent_prompt_optimiser import AgentPromptOptimiserRunViewSet
 from simulate.views.call_transcript import (
     CallBranchAnalysisView,
@@ -180,6 +181,11 @@ router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
 )
 router.register(r"harness-jobs", HarnessJobViewSet, basename="harness-job")
+router.register(
+    r"harness-environments/(?P<environment_id>[^/.]+)/scenario-tags",
+    HarnessScenarioTagViewSet,
+    basename="harness-scenario-tags",
+)
 router.register(
     r"harness-environments",
     HarnessEnvironmentViewSet,

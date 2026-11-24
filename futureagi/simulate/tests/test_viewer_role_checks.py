@@ -61,6 +61,8 @@ VIEWER_REFUSALS = [
         "edit evaluations",
     ),
     ("post", f"{ENVIRONMENT}build/retry/", "start the build again"),
+    ("put", f"{ENVIRONMENT}scenario-tags/scenarios/one/", "change scenario tags"),
+    ("post", f"{ENVIRONMENT}scenario-tags/change/", "change scenario tags"),
     ("post", "/simulate/agent-definitions/create/", "create an agent"),
     ("put", f"{AGENT}edit/", "edit an agent"),
     ("post", f"{AGENT}versions/create/", "create an agent version"),

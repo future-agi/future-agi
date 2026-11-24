@@ -1187,6 +1187,11 @@ class HarnessScenarioRowSerializer(serializers.Serializer):
     """One authored scenario on the Scenarios list."""
 
     id = serializers.UUIDField()
+    tags = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="The free-text tags people put on the scenario; never versioned.",
+    )
     scenario_id = serializers.UUIDField(allow_null=True)
     scenario_key = serializers.CharField()
     number = serializers.IntegerField(allow_null=True)

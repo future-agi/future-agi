@@ -1490,12 +1490,12 @@ def _environment_agent_maker(
 
 
 def _with_design_review(on_create, runtime, contract):
-    from simulate.services.harness_design_review import create_design_review
+    from simulate.services.harness_design_review import begin_design_review
 
     def make(job) -> None:
         if on_create is not None:
             on_create(job)
-        create_design_review(job, runtime, contract)
+        begin_design_review(job, runtime, contract)
 
     return make
 
@@ -1552,8 +1552,9 @@ class HostedHarnessProvider:
         from simulate.serializers.harness_job import names_agent_version
         from simulate.services.harness_agent_versions import advisory_xact_lock
         from simulate.services.harness_design_review import (
-            awaiting_design_approval,
+            design_review_pending,
             review_contract_for,
+            review_wanted,
         )
         from simulate.services.harness_versioning.versions import versioning_enabled
         from simulate.services.hosted_harness import (
@@ -1611,6 +1612,10 @@ class HostedHarnessProvider:
         connected_build = connected_runtime is not None
         review_contract = (
             review_contract_for(connected_runtime) if connected_build else None
+        )
+        review_pending = review_contract is not None or (
+            review_wanted(payload, connected_runtime)
+            and (connected_build or versioning_enabled())
         )
         if (
             not connected_build
@@ -1730,7 +1735,7 @@ class HostedHarnessProvider:
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)
-                if review_contract is not None:
+                if review_pending:
                     on_create = _with_design_review(
                         on_create, connected_runtime, review_contract
                     )
@@ -1743,7 +1748,7 @@ class HostedHarnessProvider:
                     request_digest=client_digest,
                     state=(
                         HostedHarnessJob.State.RECEIVED
-                        if review_contract is not None
+                        if review_pending
                         else HostedHarnessJob.State.QUEUED
                     ),
                 )
@@ -1759,7 +1764,7 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness scheduler is unavailable"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        if awaiting_design_approval(job):
+        if design_review_pending(job):
             return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
         try:
             retry_cfg = job.payload["retry"]
@@ -2506,6 +2511,13 @@ class HostedHarnessProvider:
         queryset = apply_search(queryset, request.query_params.get("search", ""))
         offerable = queryset
         queryset = apply_filters(queryset, request.query_params)
+        from simulate.services.harness_scenario_tags import (
+            filter_by_tags,
+            tag_field,
+            tags_by_key,
+        )
+
+        queryset = filter_by_tags(job, queryset, request.query_params)
         queryset = apply_ordering(queryset, request.query_params.get("ordering", ""))
 
         paginator = ExtendedPageNumberPagination()
@@ -2530,10 +2542,13 @@ class HostedHarnessProvider:
         targets = fault_targets(contract, rules, actor_cast)
         door = targets if door_reach(contract) else None
 
+        tagged = tags_by_key(job, [one.scenario_key for one in page])
+
         def row_of(one: HostedHarnessScenario) -> dict[str, Any]:
             row = scenario_row(
                 one, targets=door, fault_targets=targets, actor_cast=actor_cast
             )
+            row = {**row, "tags": tagged.get(one.scenario_key, [])}
             return row if drafted is None else {**row, "draft_change": one.draft_change}
 
         rows = grouped([row_of(one) for one in page], group_by)
@@ -2550,6 +2565,9 @@ class HostedHarnessProvider:
         response.data["fields"] = field_catalogue(
             offerable, spoken=spoken, call_actor_labels=lambda: call_actor_labels(job)
         )
+        tags_entry = tag_field(job, offerable)
+        if tags_entry is not None:
+            response.data["fields"].append(tags_entry)
         response.data["scenario_editing"] = self._editing_contract(spoken)
         from simulate.services.harness_scenarios import GROUPINGS
 
