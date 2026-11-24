@@ -13,6 +13,7 @@ import {
   Skeleton,
   Stack,
   Tooltip,
+  Chip,
   Alert,
   Button,
 } from "@mui/material";
@@ -22,7 +23,12 @@ import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { statusColors } from "src/utils/runStatus";
 import useRequestLogs from "./hooks/useRequestLogs";
-import { formatCost } from "../utils/formatters";
+import {
+  formatCost,
+  isUnpriced,
+  UNPRICED_LABEL,
+  UNPRICED_TOOLTIP,
+} from "../utils/formatters";
 import { REQUEST_TAG } from "../constants/requestTags";
 import {
   BUILTIN_COLUMNS,
@@ -161,6 +167,20 @@ function renderBuiltinCell(colKey, log, ctx) {
         </TableCell>
       );
     case "cost":
+      if (isUnpriced(log)) {
+        return (
+          <TableCell>
+            <Tooltip title={UNPRICED_TOOLTIP} placement="top" arrow>
+              <Chip
+                label={UNPRICED_LABEL}
+                size="small"
+                variant="outlined"
+                color="warning"
+              />
+            </Tooltip>
+          </TableCell>
+        );
+      }
       return (
         <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
           <Typography variant="body2">{formatCost(log.cost)}</Typography>

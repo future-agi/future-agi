@@ -451,9 +451,23 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
     )
 
 
+# What a trial failed on when no check of its did: a write the world committed twice, or another failure of the agent's.
+REPEATED_WRITE = "committed_a_write_twice"
+FAILED_BEYOND_CHECKS = "failed_beyond_its_checks"
+
+
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal and whether it held (None: undecided); a conversation the agent broke fails every undecided goal.
-    Not applicable and inconclusive sub-goals are left out."""
+    Not applicable and inconclusive sub-goals are left out, and a trial that ended on a failure of ours judges none."""
+    failure = (
+        receipt.get("failure") if isinstance(receipt.get("failure"), Mapping) else None
+    )
+    if (
+        receipt.get("status") == "errored"
+        and failure is not None
+        and failure.get("domain") != "agent"
+    ):
+        return {}
     # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
     checks = [
         one
@@ -476,6 +490,14 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     judged.update(
         {name: None for name, result in results.items() if result == "unmeasured"}
     )
+    # A trial graded failed with no check failing failed beyond its checks: the world committed a write twice.
+    call = receipt.get("call") if isinstance(receipt.get("call"), Mapping) else {}
+    if (
+        call.get("duplicate_commits") or receipt.get("status") == "failed"
+    ) and False not in judged.values():
+        judged[
+            REPEATED_WRITE if call.get("duplicate_commits") else FAILED_BEYOND_CHECKS
+        ] = False
     return {
         name: held if isinstance(held, bool) else None for name, held in judged.items()
     }

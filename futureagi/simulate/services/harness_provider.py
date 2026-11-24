@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from simulate.models import (
     AgentDefinition,
     HostedHarnessConversation,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
@@ -446,7 +447,12 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     current_attempt = (
         attempt if attempt and attempt.attempt_number >= cycle_start else None
     )
-    registered_keys = {reg.scenario_key for reg in scenario_regs}
+    # A receipt and a started event name a trial by its execution key where the job runs executions.
+    registered_keys = {reg.scenario_key for reg in scenario_regs} | set(
+        HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
+            "execution_key", flat=True
+        )
+    )
     finished = {
         row.body.get("scenario_key")
         for row in receipt_rows
@@ -3340,10 +3346,14 @@ class HostedHarnessProvider:
         }
 
     def _job(self, request, pk):
+        try:
+            job_id = uuid.UUID(str(pk))
+        except ValueError:
+            return None
         organization = request_organization(request)
         return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
-                id=pk, organization=organization
+                id=job_id, organization=organization
             ),
             request,
         ).first()

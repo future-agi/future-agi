@@ -224,6 +224,15 @@ def call_outcome(
         and harness_outcome not in SKIPPED_HARNESS_STATUSES
     ):
         return "cancelled"
+    receipt = metadata.get("hosted_harness_receipt")
+    failure = receipt.get("failure") if isinstance(receipt, dict) else None
+    if (
+        harness_outcome in HARNESS_ERROR
+        and isinstance(failure, dict)
+        and failure.get("domain") == "agent"
+    ):
+        # The trial ended on the agent's own failure (it stalled, it hung up): the agent failed it.
+        return "failed"
     if harness_outcome in HARNESS_ERROR:
         return "error"
     if call.status in {

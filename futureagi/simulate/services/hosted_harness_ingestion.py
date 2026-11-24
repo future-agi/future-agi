@@ -14,7 +14,11 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES, TRIAL_STATE_KEY
+from simulate.constants.hosted_harness import (
+    SCENARIO_FAILURE_CODES,
+    SCENARIO_KEY,
+    TRIAL_STATE_KEY,
+)
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -98,6 +102,10 @@ _DEGRADE_REASONS = {
     "conformance_gate_failed",
 }
 _TERMINAL_STAGES = {"completed", "failed", "canceled"}
+_TRIAL_FAILURE_COPY = {
+    "agent_exited_before_ready": "The agent stopped before it was ready.",
+    "target_agent_stalled": "The agent stopped responding during the trial.",
+}
 _ARTIFACT_KINDS = {
     "recording_combined",
     "recording_stereo",
@@ -962,15 +970,9 @@ def _apply_receipt_to_call(
         recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
     # Checks the case's proof never verified on these versions are graded unmeasured; the receipt stays as sealed.
-    unverified = unverified_checks(
-        job,
-        str(body.get("scenario_key") or allocation.scenario_key),
-        [
-            str(one["name"])
-            for one in body.get("sub_goals") or []
-            if isinstance(one, dict) and one.get("name")
-        ],
-    )
+    # The case this call ran, stored once for every reader (a receipt's `scenario_key` names the execution).
+    metadata[SCENARIO_KEY] = metadata.get(SCENARIO_KEY) or case_key(allocation)
+    unverified = unverified_checks(job, metadata[SCENARIO_KEY])
     if unverified:
         metadata[UNVERIFIED_KEY] = unverified
     else:
@@ -986,6 +988,12 @@ def _apply_receipt_to_call(
     else:
         metadata["harness_grading_status"] = "failed"
         failure = body.get("failure") or {}
+        ending = "This is a grading failure, not an agent failure."
+        if failure:
+            ending = "The trial ended before grading could finish."
+            code = failure.get("code")
+            if isinstance(code, str):
+                ending = _TRIAL_FAILURE_COPY.get(code, ending)
         metadata["harness_grading_error"] = (
             "Required evaluation coverage was incomplete "
             f"({coverage['executed']}/{coverage['expected']} executed"
@@ -994,12 +1002,7 @@ def _apply_receipt_to_call(
                 if coverage.get("unmeasured")
                 else ""
             )
-            + "). "
-            + (
-                f"The trial ended with {failure.get('code') or failure.get('message')}."
-                if failure
-                else "This is a grading failure, not an agent failure."
-            )
+            + f"). {ending}"
         )
     update_fields = [
         "status",
@@ -1324,12 +1327,18 @@ UNVERIFIED_KEY = "harness_unverified_checks"
 UNVERIFIED_REASON = "This check was never verified for this scenario, so it does not count against the agent."
 
 
-def unverified_checks(
-    job: HostedHarnessJob, scenario_key: str, checks: list[str] | None = None
-) -> list[str]:
+def case_key(allocation: Any) -> str:
+    """The scenario key of the case a call ran: its execution's source scenario, else its registration's. A receipt's
+    `scenario_key` names the execution (a trial's own key), never the case."""
+    source = getattr(allocation, "source_scenario", None)
+    return str(source.scenario_key if source is not None else allocation.scenario_key)
+
+
+def unverified_checks(job: HostedHarnessJob, scenario_key: str) -> list[str]:
     """The checks the case's proof on the run's suite and environment versions could not verify (its `excused`, which a
-    step it could only assume would have decided), for the run's agent version; none without a proof. A proof made only
-    with another agent version vouches for none of this agent's `checks`."""
+    step it could only assume would have decided): the run's agent version's own entry when it has one, else the
+    case's entry; none without a proof. A proof plays the reference, not the agent, so another version's still says
+    which checks it could verify."""
     from simulate.services.harness_starting_records import scenario_token
     from simulate.services.harness_versioning.versions import OTHER_AGENTS
 
@@ -1350,12 +1359,7 @@ def unverified_checks(
     if not isinstance(entry, dict):
         return []
     own = (entry.get(OTHER_AGENTS) or {}).get(str(job.agent_version_id))
-    if isinstance(own, dict):
-        entry = own
-    elif entry.get("agent_version_id") and str(entry["agent_version_id"]) != str(
-        job.agent_version_id
-    ):
-        return sorted(str(one) for one in checks or [])
+    entry = own if isinstance(own, dict) else entry
     return sorted(str(one) for one in entry.get("excused") or [])
 
 

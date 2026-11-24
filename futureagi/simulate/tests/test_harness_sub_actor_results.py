@@ -377,24 +377,29 @@ def test_a_failed_evaluation_keeps_the_trial_failed_beside_an_unverified_check()
     )
 
 
-def test_a_proof_made_only_with_another_agent_version_vouches_for_none_of_this_one_s_checks(
+def test_a_candidate_agent_version_without_its_own_proof_is_graded_by_the_case_s_proof(
     monkeypatch,
 ):
+    from simulate.services.harness_versioning.versions import OTHER_AGENTS
     from simulate.services.hosted_harness_ingestion import unverified_checks
 
-    other = {**_RUN4_PROOF, "excused": [], "agent_version_id": "another"}
+    # Fix my agent's check run: a candidate version that was never validated. The case's proof plays the reference,
+    # not the agent, so its excused list still says which checks were never verified; the rest grade the candidate.
+    proved = {
+        **_RUN4_PROOF,
+        "excused": ["crm_deal_lookup"],
+        "agent_version_id": "default",
+    }
     job = _proofs_on_the_run_s_versions(
-        monkeypatch, {"live-manager-negotiates-discount": other}
+        monkeypatch, {"live-manager-negotiates-discount": proved}
     )
-    names = ["crm_deal_lookup", "crm_discount_applied"]
-
-    assert unverified_checks(job, _RUN4_RECEIPT["scenario_key"], names) == names
-    # Made with this agent version: its own excused list stands.
-    own = {**other, "agent_version_id": "a"}
+    assert unverified_checks(job, _RUN4_RECEIPT["scenario_key"]) == ["crm_deal_lookup"]
+    # The run's own version's entry wins where it has one.
+    own = {**proved, OTHER_AGENTS: {"a": {"format": 2, "excused": []}}}
     job = _proofs_on_the_run_s_versions(
         monkeypatch, {"live-manager-negotiates-discount": own}
     )
-    assert unverified_checks(job, _RUN4_RECEIPT["scenario_key"], names) == []
+    assert unverified_checks(job, _RUN4_RECEIPT["scenario_key"]) == []
 
 
 def test_compare_and_fix_my_agent_read_an_unverified_check_as_undecided_never_a_pass():
@@ -451,3 +456,137 @@ def test_a_double_commit_keeps_the_trial_failed_beside_an_unverified_check():
         receipt_outcome_status(graded_receipt(twice, ["crm_discount_applied"]))
         == "failed"
     )
+
+
+def test_a_trial_the_world_committed_twice_is_failed_in_compare_and_fix_my_agent_though_every_check_held():
+    from simulate.selectors.agent_fix import REPEATED_WRITE, judged_sub_goals
+    from simulate.services.run_compare import trial_passed
+
+    held = [
+        {"name": "looked_up", "held": True, "verdict": "pass"},
+        {"name": "applied", "held": True, "verdict": "pass"},
+    ]
+    twice = {"status": "failed", "sub_goals": held, "call": {"duplicate_commits": 1}}
+
+    assert trial_passed(held, "failed") is False
+    assert judged_sub_goals(twice) == {
+        "looked_up": True,
+        "applied": True,
+        REPEATED_WRITE: False,
+    }
+    # The same trial without the double commit passed.
+    assert trial_passed(held, "passed") is True
+    assert judged_sub_goals({"status": "passed", "sub_goals": held}) == {
+        "looked_up": True,
+        "applied": True,
+    }
+
+
+def test_a_verified_failure_fails_the_trial_beside_an_unverified_check():
+    from simulate.services.run_compare import trial_passed
+
+    goals = [
+        {"name": "applied", "held": False, "verdict": "fail"},
+        {"name": "looked_up", "held": None, "verdict": "unmeasured"},
+    ]
+
+    assert trial_passed(goals, "failed") is False
+    # Nothing verified failed: undecided, never a pass.
+    assert trial_passed(goals[1:], "no_score") is None
+
+
+def test_a_passed_receipt_with_no_score_is_never_counted_passed_in_a_run_s_totals():
+    from simulate.services.run_outcome import outcome_fields
+
+    receipts = {
+        "by_status": {"passed": 3, "failed": 1},
+        "no_score_by_status": {"passed": 2},
+    }
+
+    fields = outcome_fields(status="completed", receipts=receipts, calls=None)
+
+    assert (
+        fields["outcome_passed"],
+        fields["outcome_failed"],
+        fields["outcome_no_score"],
+    ) == (1, 1, 2)
+
+
+def test_a_trial_that_ended_on_our_side_never_blames_the_agent_in_verify_or_fix_my_agent():
+    from simulate.selectors.agent_fix import _record, judged_sub_goals
+    from simulate.services.run_compare import trial_passed
+
+    # Our simulated caller went off script; the checks ran on a conversation that was never the scenario's.
+    off_script = {
+        "status": "errored",
+        "failure": {"domain": "simulator", "code": "caller_off_script"},
+        "sub_goals": [
+            {"name": "looked_up", "held": False, "verdict": "fail"},
+            {"name": "applied", "held": False, "verdict": "fail"},
+        ],
+    }
+
+    assert (
+        trial_passed(off_script["sub_goals"], "errored", off_script["failure"]) is None
+    )
+    assert judged_sub_goals(off_script) == {}
+    record = _record("case", 1, off_script, "")
+    assert (record.status, record.sub_goals) == ("error", {})
+    # The agent broke the conversation itself: that is its failure.
+    agent = {**off_script, "failure": {"domain": "agent", "code": "agent_hung_up"}}
+    assert trial_passed(agent["sub_goals"], "errored", agent["failure"]) is False
+
+
+def test_compare_counts_an_agent_that_stalled_as_a_failed_trial_and_our_failure_as_no_trial():
+    from simulate.services.run_compare import ScenarioTrials
+
+    goals = [{"name": "replied", "held": False, "verdict": "fail"}]
+
+    stalled = ScenarioTrials("case")
+    stalled.add(
+        goals,
+        "errored",
+        "error",
+        None,
+        {"domain": "agent", "code": "target_agent_stalled"},
+    )
+    assert (stalled.side()["passed"], stalled.side()["trials"]) == (0, 1)
+
+    ours = ScenarioTrials("case")
+    ours.add(
+        goals,
+        "errored",
+        "error",
+        None,
+        {"domain": "simulator", "code": "caller_off_script"},
+    )
+    assert (ours.side()["trials"], ours.side()["undecided"]) == (0, 0)
+
+
+def test_a_trial_the_agent_itself_errored_reads_failed_in_the_row_the_scan_and_the_pass_rate():
+    from simulate.models import CallExecution
+    from simulate.services.run_reliability_v3 import trial_pass_from
+    from simulate.services.run_results_v3 import call_outcome
+    from simulate.services.run_results_v3_scan import _outcome
+
+    def call(domain):
+        return CallExecution(
+            status=CallExecution.CallStatus.COMPLETED,
+            call_metadata={
+                "harness_outcome_status": "errored",
+                "hosted_harness_receipt": {
+                    "status": "errored",
+                    "failure": {"domain": domain},
+                },
+            },
+        )
+
+    assert call_outcome(call("agent"), {}) == "failed"
+    assert call_outcome(call("simulator"), {}) == "error"
+    assert (
+        _outcome("completed", "errored", None, None, None, agent_failed=True)
+        == "failed"
+    )
+    assert _outcome("completed", "errored", None, None, None) == "error"
+    # One pass and three stalls: 25%, never 100%.
+    assert trial_pass_from({"passed": 1, "failed": 3}, 0)["trials_evaluated"] == 4

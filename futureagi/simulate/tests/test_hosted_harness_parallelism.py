@@ -1050,3 +1050,51 @@ def test_preflight_keeps_parallel_input_available_when_larger_profile_is_qualifi
     assert response.data["parallelism_enabled"] is True
     response = _preflight(_payload(parallelism=4, scenario_count=10))
     assert response.data["effective_parallelism"] == 4
+
+
+@pytest.mark.django_db
+def test_a_run_s_trials_are_counted_by_their_execution_keys(organization):
+    from simulate.models import HostedHarnessExecution, HostedHarnessScenario
+
+    job, _ = create_hosted_job(
+        organization,
+        _payload(parallelism=4, scenario_count=2),
+        idempotency_key="execution-counts",
+    )
+    first = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    provision_scenarios(
+        first.attempt,
+        {
+            "operation": "provision",
+            "name": "Execution counts",
+            "personas": [
+                {"scenario_key": f"scenario-{i}", "name": f"Caller {i}"}
+                for i in range(1, 3)
+            ],
+        },
+    )
+    # Each trial runs as an execution with its own hashed key, which its events and receipt name.
+    for index, registration in enumerate(
+        HostedHarnessScenario.no_workspace_objects.filter(job=job).order_by(
+            "scenario_key"
+        )
+    ):
+        HostedHarnessExecution.no_workspace_objects.create(
+            job=job,
+            source_scenario=registration,
+            execution_key=f"9f2c{index}e1a",
+            trial_index=0,
+            call_execution=registration.call_execution,
+        )
+        HostedHarnessEvent.no_workspace_objects.create(
+            attempt=first.attempt,
+            event_id=f"started-{index}",
+            sequence=index + 1,
+            stage="running",
+            event_type="scenario_started",
+            payload={"scenario_key": f"9f2c{index}e1a"},
+            digest="sha256:" + "a" * 64,
+            emitted_at=datetime.now(UTC),
+        )
+
+    assert serialize_job(job)["status"]["active_scenarios"] == 2

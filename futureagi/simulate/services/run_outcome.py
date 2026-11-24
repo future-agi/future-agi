@@ -176,7 +176,12 @@ def outcome_fields(
         counts = None
     by_status = receipts["by_status"] if receipts is not None else None
     return {
-        "outcome_passed": by_status.get("passed", 0) if by_status is not None else None,
+        # A passed receipt whose call has no score is not a pass, as `receipt_counts` reads it.
+        "outcome_passed": (
+            by_status.get("passed", 0) - receipts["no_score_by_status"].get("passed", 0)
+            if receipts is not None
+            else None
+        ),
         "outcome_failed": (
             by_status.get("failed", 0) + by_status.get("errored", 0)
             if by_status is not None
@@ -218,9 +223,13 @@ def receipt_outcome_counts(
         HostedHarnessReceipt.no_workspace_objects.filter(job_id__in=job_ids)
         .exclude(receipt_of_deleted_call)
         .annotate(
+            # A receipt with no execution (a registration's own call) reads its registration's call.
             call_outcome=Coalesce(
                 KeyTextTransform(
                     "harness_outcome_status", "execution__call_execution__call_metadata"
+                ),
+                KeyTextTransform(
+                    "harness_outcome_status", "scenario__call_execution__call_metadata"
                 ),
                 Value(""),
                 output_field=CharField(),

@@ -20,7 +20,11 @@ from simulate.models import (
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
 from simulate.services.run_reliability_v3 import wilson
-from simulate.services.run_results_v3_scoring import HARNESS_FAILED, HARNESS_PASSED
+from simulate.services.run_results_v3_scoring import (
+    HARNESS_ERROR,
+    HARNESS_FAILED,
+    HARNESS_PASSED,
+)
 
 # Two-sided 95%.
 Z = 1.959963984540054
@@ -82,23 +86,31 @@ def verdict(
     return INCONCLUSIVE, (low, high)
 
 
-def trial_passed(sub_goals: Any, harness_status: Any) -> bool | None:
-    """Whether a trial passed: every sub-goal held; None when one was undecided, even beside a failure. Not
-    applicable and inconclusive sub-goals are left out (only those: undecided); no sub-goals reads the status."""
+def trial_passed(
+    sub_goals: Any, harness_status: Any, failure: Any = None
+) -> bool | None:
+    """Whether a trial passed: every sub-goal held. A failed check, or a trial graded failed with none (the world
+    committed a write twice), fails it; else a check undecided or never verified leaves it undecided. Not applicable
+    and inconclusive sub-goals are left out; no sub-goals reads the status."""
     checks = [one for one in sub_goals or [] if isinstance(one, Mapping)]
+    results = [sub_goal_result(dict(one)) for one in checks]
+    status = str(harness_status or "").lower()
+    if status in HARNESS_ERROR:
+        # Ended on a failure: the agent's fails it, ours (or one not known) decides nothing about the agent.
+        return (
+            False
+            if isinstance(failure, Mapping) and failure.get("domain") == "agent"
+            else None
+        )
+    if "fail" in results or status in HARNESS_FAILED:
+        return False
     if checks:
-        results = [sub_goal_result(dict(one)) for one in checks]
         # A check nothing decided, or one never verified for this scenario, leaves the trial undecided: never a pass.
         if any(result in (None, "unmeasured") for result in results):
             return None
         held = [SUB_GOAL_PASSED[one] for one in results if one in SUB_GOAL_PASSED]
         return all(held) if held else None
-    status = str(harness_status or "").lower()
-    if status in HARNESS_PASSED:
-        return True
-    if status in HARNESS_FAILED:
-        return False
-    return None
+    return True if status in HARNESS_PASSED else None
 
 
 @dataclass
@@ -113,20 +125,26 @@ class ScenarioTrials:
     sub_goals: set[str] = field(default_factory=set)
 
     def add(
-        self, sub_goals: Any, harness_status: Any, call_outcome: Any, eval_outcome: Any
+        self,
+        sub_goals: Any,
+        harness_status: Any,
+        call_outcome: Any,
+        eval_outcome: Any,
+        failure: Any = None,
     ) -> None:
         for one in sub_goals or []:
             if isinstance(one, Mapping) and one.get("name"):
                 self.sub_goals.add(str(one["name"]))
-        outcome = (
-            None
-            if call_outcome in _UNRUN_OUTCOMES
-            else trial_passed(sub_goals, harness_status)
+        # A trial that errored on the agent's own failure (it stalled, it hung up) ran: it is the agent's failure.
+        agents = isinstance(failure, Mapping) and failure.get("domain") == "agent"
+        unrun = call_outcome in _UNRUN_OUTCOMES and not (
+            call_outcome == "error" and agents
         )
+        outcome = None if unrun else trial_passed(sub_goals, harness_status, failure)
         if outcome is not None:
             self.decided += 1
             self.passed += int(outcome)
-        elif call_outcome not in _UNRUN_OUTCOMES:
+        elif not unrun:
             self.undecided += 1
         if eval_outcome in ("passed", "failed"):
             self.eval_measured += 1

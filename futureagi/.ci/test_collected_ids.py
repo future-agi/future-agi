@@ -261,6 +261,8 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     MEASURED_OSS = json.loads(
         (CI / "fixtures/runtime-skips-measured-oss.json").read_text()
     )
+    # The files whose rule entries #4296 retired: their suites now run.
+    RETIRED = json.loads((CI / "fixtures/runtime-skips-retired.json").read_text())
     # The measurement date; rules are read as of it so these tests do not age.
     DAY = datetime.date(2026, 11, 22)
 
@@ -360,7 +362,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def test_enforced_the_measured_skips_all_pass(self):
         # Every skipped test of a real Backend CI run on 22 Nov, each under an
         # exact, ticketed, owned and expiring rule.
-        self.assertEqual(self.MEASURED["total"], 1811)
+        self.assertEqual(self.MEASURED["total"], 268)
         error, report, _ = self.report(
             self.measured_rows(), files=self.measured_files()
         )
@@ -372,16 +374,37 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def test_enforced_a_measured_oss_run_passes(self):
         # Every skipped test of a real merge group on 22 Nov. An oss run also
         # skips the tests that import the private package, under its own names.
+        # It was measured before #4296 made the retired suites run; their skips
+        # there had the same reasons and counts as on the internal run, and
+        # none of those files imports the private package. They are left out
+        # until a merge group after #4296 is measured.
         self.assertEqual(self.MEASURED_OSS["total"], 1818)
+        retired = set(self.RETIRED["files"])
+        self.assertEqual(len(retired), 46)
+        kept = {
+            **self.MEASURED_OSS,
+            "pairs": [
+                p for p in self.MEASURED_OSS["pairs"] if p["file"] not in retired
+            ],
+        }
+        dropped = self.MEASURED_OSS["total"] - sum(p["tests"] for p in kept["pairs"])
+        self.assertEqual(dropped, 1542)
         error, report, _ = self.report(
-            self.measured_rows(self.MEASURED_OSS, runs="oss"),
-            files={pair["file"] for pair in self.MEASURED_OSS["pairs"]},
+            self.measured_rows(kept, runs="oss"),
+            files={pair["file"] for pair in kept["pairs"]},
             runs=("oss",),
         )
         self.assertIsNone(error)
         self.assertEqual(report["tests"], [])
         self.assertEqual(report["rule_problems"], [])
-        self.assertEqual(len(report["allowed"]), self.MEASURED_OSS["total"])
+        self.assertEqual(len(report["allowed"]), self.MEASURED_OSS["total"] - dropped)
+
+    def test_retired_suites_have_no_rule(self):
+        # A skip in a file whose suite now runs is unexpected again.
+        rules = self.rules()
+        for path in self.RETIRED["files"]:
+            with self.subTest(path=path):
+                self.assertFalse(any(path in rule["files"] for rule in rules))
 
     def test_rules_are_exactly_the_measured_files_and_counts(self):
         rules = self.rules()
@@ -408,9 +431,10 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                         if i == index
                     },
                 )
-        self.assertEqual(
-            [sum(rule["files"].values()) for rule in rules[:2]], [1462, 327]
-        )
+        # Only the live ClickHouse opt-in rule is left of TH-10617; chDB is
+        # installed and its suites run.
+        self.assertEqual(sum(rules[0]["files"].values()), 251)
+        self.assertFalse(any("chdb" in rule["reason"] for rule in rules))
 
     def test_no_rule_covers_a_file_or_reason_that_was_not_measured(self):
         rules = self.rules()
@@ -418,7 +442,8 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             self.assertTrue(rule["reason"].startswith("^"), rule["reason"])
             for path in rule["files"]:
                 self.assertNotRegex(path, r"[*?\[\]]")
-        self.assertTrue(all(rule["reason"].endswith("$") for rule in rules[:2]))
+        self.assertTrue(rules[0]["reason"].endswith("$"))
+        covered = self.measured("test_derived_metric_user_rules_clickhouse")
         for path, reason in (
             (
                 "simulate/tests/test_new.py",
@@ -432,10 +457,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                 "model_hub/tests/test_y.py",
                 "Skipped: optional isolated ClickHouse engine",
             ),
-            (
-                "tracer/tests/test_relational_filter_native.py",
-                "Skipped: could not import 'chdb': No module named 'chdb' (also prefixed)",
-            ),
+            (covered["file"], covered["reason"] + " (also suffixed)"),
         ):
             with self.subTest(path=path):
                 self.assertIsNone(
@@ -443,7 +465,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                 )
 
     def test_more_skips_in_a_file_than_were_measured_fail(self):
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         rows = self.rows([(pair["file"], pair["reason"])] * (pair["tests"] + 2))
         error, report, out = self.report(rows, files={pair["file"]})
         self.assertEqual(
@@ -478,7 +500,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         rows = self.rows(
             [
                 (
-                    "tracer/tests/test_relational_filter_native.py",
+                    "tracer/tests/test_derived_metric_user_rules_clickhouse.py",
                     "Skipped: database is not reachable",
                 )
             ]
@@ -487,11 +509,11 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertTrue(error.startswith("1 eligible"), error)
         self.assertEqual(
             report["tests"][0]["test"].split("::")[0],
-            "tracer/tests/test_relational_filter_native.py",
+            "tracer/tests/test_derived_metric_user_rules_clickhouse.py",
         )
 
     def test_every_skip_of_a_test_must_be_covered(self):
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         row = self.rows([(pair["file"], pair["reason"])])[0]
         row["skips"].append({"phase": "call", "reason": "Skipped: something else"})
         self.assertIsNone(checker.allowing_rule(row, self.rules()))
@@ -600,7 +622,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             self.assertTrue(rule["owner"].strip(), rule)
 
     def test_an_expired_rule_allows_nothing_and_fails_the_check(self):
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         rules = self.rules(today=datetime.date(2027, 1, 7))
         self.assertTrue(all(rule["expired"] for rule in rules))
         error, report, out = self.report(
@@ -677,7 +699,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertEqual(report["rule_problems"], [])
 
     def test_counts_are_judged_only_on_a_complete_run(self):
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         rows = self.rows([(pair["file"], pair["reason"])] * (pair["tests"] + 2))
         error, report, _ = self.report(rows, files={pair["file"]}, partial=True)
         # Partial evidence lists the skips and never fails on counts.
@@ -688,7 +710,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
 
     def test_a_skip_is_allowed_only_for_the_path_the_inventory_recorded(self):
         rules = self.rules()
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         row = self.rows([(pair["file"], pair["reason"])])[0]
         row.pop("inventory_test")
         self.assertIsNone(checker.allowing_rule(row, rules))
@@ -996,7 +1018,8 @@ class ProducerIdentityTest(unittest.TestCase):
                     "id": 1,
                     "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
                 }
-                with patch.object(checker.subprocess, "check_output", return_value=raw):
+                done = subprocess.CompletedProcess([], 0, stdout=raw, stderr=b"")
+                with patch.object(checker.subprocess, "run", return_value=done):
                     if status == b"0\n":
                         self.assertEqual(
                             checker.verify_artifact(artifact, "repo")[3], []
@@ -1006,13 +1029,103 @@ class ProducerIdentityTest(unittest.TestCase):
                             checker.verify_artifact(artifact, "repo")
 
     def test_raw_archive_digest_is_mandatory(self):
+        wrong = subprocess.CompletedProcess([], 0, stdout=b"wrong bytes", stderr=b"")
         with (
-            patch.object(
-                checker.subprocess, "check_output", return_value=b"wrong bytes"
-            ),
-            self.assertRaisesRegex(ValueError, "digest"),
+            patch.object(checker.subprocess, "run", return_value=wrong),
+            patch.object(checker.time, "sleep") as slept,
+            self.assertRaisesRegex(ValueError, "digest mismatch .* after 4 downloads"),
         ):
             checker.verify_artifact({"id": 1, "digest": "sha256:other"}, "fixture/repo")
+        # A wrong digest is fetched again from scratch before failing closed.
+        self.assertEqual([c.args[0] for c in slept.call_args_list], [2, 4, 8])
+
+
+class GhApiRetryTest(unittest.TestCase):
+    """Transient GitHub API failures, as in run 45334240608, are read again."""
+
+    CUT = b"unexpected end of JSON input"
+
+    def runner(self, *results):
+        calls = []
+        queue = list(results)
+
+        def run(cmd, capture_output):
+            calls.append(cmd)
+            code, out, err = queue.pop(0)
+            return subprocess.CompletedProcess(cmd, code, stdout=out, stderr=err)
+
+        return run, calls
+
+    def test_a_transient_failure_is_read_again_from_scratch(self):
+        run, calls = self.runner((1, b"", self.CUT), (0, b'[{"jobs": [1, 2]}]', b""))
+        pauses = []
+        self.assertEqual(
+            checker.gh_api(
+                ["--paginate", "--slurp", "x"], run=run, pause=pauses.append
+            ),
+            [{"jobs": [1, 2]}],
+        )
+        self.assertEqual(calls, [["gh", "api", "--paginate", "--slurp", "x"]] * 2)
+        self.assertEqual(pauses, [2])
+
+    def test_a_cut_short_body_is_never_used(self):
+        run, _ = self.runner((0, b'[{"jobs": [1,', b""), (0, b'[{"jobs": [1]}]', b""))
+        self.assertEqual(
+            checker.gh_api(["x"], run=run, pause=lambda s: None), [{"jobs": [1]}]
+        )
+
+    def test_other_failures_fail_at_once_with_gh_s_error(self):
+        run, calls = self.runner((1, b"", b"gh: Not Found (HTTP 404)"))
+        with self.assertRaisesRegex(
+            subprocess.CalledProcessError, r"after 1 tries: gh: Not Found"
+        ):
+            checker.gh_api(["x"], run=run, pause=lambda s: None)
+        self.assertEqual(len(calls), 1)
+
+    def test_retries_are_bounded_and_fail_closed(self):
+        for bad in (
+            (1, b"", self.CUT),
+            (1, b"", b"HTTP 502: Bad Gateway"),
+            (0, b"[{", b""),
+        ):
+            with self.subTest(bad=bad):
+                run, calls = self.runner(*[bad] * checker.API_TRIES)
+                pauses = []
+                with self.assertRaisesRegex(
+                    (subprocess.CalledProcessError, ValueError),
+                    f"after {checker.API_TRIES} tries",
+                ):
+                    checker.gh_api(["x"], run=run, pause=pauses.append)
+                self.assertEqual(len(calls), checker.API_TRIES)
+                self.assertEqual(pauses, [2, 4, 8])
+
+    def test_the_verdict_s_reads_go_through_the_retry(self):
+        run, calls = self.runner(
+            (1, b"", self.CUT),
+            (0, b'[{"jobs": [{"name": "a"}]}, {"jobs": [{"name": "b"}]}]', b""),
+            (0, b'{"created_at": "2026-11-24T05:00:00Z"}', b""),
+        )
+        with (
+            patch.object(checker.subprocess, "run", run),
+            patch.object(checker.time, "sleep"),
+        ):
+            self.assertEqual(
+                [job["name"] for job in checker.pages("runs/1/jobs", "jobs")],
+                ["a", "b"],
+            )
+            self.assertEqual(checker.run_date("runs/1"), datetime.date(2026, 11, 24))
+        self.assertEqual(len(calls), 3)
+
+    def test_a_download_cut_short_is_fetched_again(self):
+        good = b"whole archive"
+        artifact = {"id": 7, "digest": "sha256:" + hashlib.sha256(good).hexdigest()}
+        fetched = iter([b"whole arch", good])
+        self.assertEqual(
+            checker.download_artifact(
+                artifact, "repo", fetch=lambda: next(fetched), pause=lambda s: None
+            ),
+            good,
+        )
 
 
 @unittest.skipUnless(plugin, "run with the shard pytest installation")
