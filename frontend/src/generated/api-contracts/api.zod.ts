@@ -38605,6 +38605,11 @@ export const SimulateApiAgentFixRunsListQueryParams = zod.object({
     .min(1)
     .max(simulateApiAgentFixRunsListQueryLimitMax)
     .optional(),
+  state: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated fix states to list."),
 });
 
 export const simulateApiAgentFixRunsListResponseResultsItemStageMax = 32;

@@ -10557,6 +10557,11 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100
+          },
+          "state": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated fix states to list."
           }
         },
         "additionalProperties": false,
@@ -10578,7 +10583,8 @@
           "query": [
             "environment_id",
             "page",
-            "limit"
+            "limit",
+            "state"
           ],
           "body": []
         }

@@ -47013,6 +47013,11 @@ export type SimulateApiAgentFixRunsListParams = {
    * @maximum 100
    */
   limit?: number;
+  /**
+   * Comma-separated fix states to list.
+   * @minLength 1
+   */
+  state?: string;
 };
 
 export type SimulateApiAgentFixRunsLaunchOptionsParams = {

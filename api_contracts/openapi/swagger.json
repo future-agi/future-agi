@@ -51901,6 +51901,14 @@
                         "type": "integer",
                         "maximum": 100,
                         "minimum": 1
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "description": "Comma-separated fix states to list.",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
                     }
                 ],
                 "responses": {
