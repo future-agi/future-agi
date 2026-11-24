@@ -105,7 +105,7 @@ export const LIFECYCLE_COPY = {
     nothing: "Nothing to validate",
     saveWaits: "Save waits until it finishes.",
     rowValidating: "Validating",
-    rowHint: "Being proved again. Its state updates when Validate finishes.",
+    rowHint: "Being proved now. Its state updates when Validate finishes.",
     failed: (reason) =>
       `Validate didn't finish${reason ? `: ${reason.replace(/\.$/, "")}` : ""}. Nothing changed; scenarios keep their state.`,
     tryAgain: "Try again",
