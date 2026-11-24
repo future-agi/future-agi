@@ -526,7 +526,16 @@ def enqueue_message(
             if not str(key).startswith("_")
         },
     }
+    from simulate.services.harness_releases import adaptation_of, record_approval
+
     with transaction.atomic():
+        adaptation = None
+        if reply_to is not None and adaptation_of(job) is not None:
+            # The reply may be its approval, kept on the job. Locked before the conversation,
+            # as complete_adaptation locks them.
+            adaptation = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update()
             .filter(job=job)
@@ -598,6 +607,8 @@ def enqueue_message(
         conversation.next_message_sequence += 1
         conversation.last_activity_at = timezone.now()
         if reply_to is not None:
+            if adaptation is not None:
+                record_approval(adaptation, conversation.blocking_input, content)
             # Answered: the turn waiting on it runs on, so the question is no longer open.
             conversation.blocking_input = None
             if conversation.state == HostedHarnessConversation.State.WAITING_FOR_USER:

@@ -27,6 +27,7 @@ from simulate.services.harness_provider import (
     HostedHarnessProvider,
     request_organization,
     request_workspace,
+    scope_jobs,
 )
 from simulate.services.harness_releases import (
     adaptation_of,
@@ -37,12 +38,37 @@ from simulate.services.harness_releases import (
     visible_suite,
 )
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.views.harness_environment import _uuid_or_none
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,
     EmptyRequestSerializer,
 )
+
+
+def _adaptation(request, pk) -> HostedHarnessJob | None:
+    """An adaptation under the caller's organization and workspace, as any job is found."""
+    identifier = _uuid_or_none(pk)
+    organization = request_organization(request)
+    if identifier is None or organization is None:
+        return None
+    job = scope_jobs(
+        HostedHarnessJob.no_workspace_objects.filter(
+            id=identifier, organization=organization, deleted=False
+        ),
+        request,
+    ).first()
+    return job if job is not None and adaptation_of(job) is not None else None
+
+
+def _adaptation_not_found() -> Response:
+    return Response(
+        build_error_envelope(
+            "adaptation not found", status_code=status.HTTP_404_NOT_FOUND
+        ),
+        status=status.HTTP_404_NOT_FOUND,
+    )
 
 
 def _no_organization() -> Response:
@@ -81,7 +107,11 @@ class HarnessReleaseViewSet(viewsets.ViewSet):
             return Response(
                 release_fit(
                     visible_suite(organization, data["suite_id"]),
-                    organization_agent_version(organization, data["agent_version_id"]),
+                    organization_agent_version(
+                        organization,
+                        request_workspace(request),
+                        data["agent_version_id"],
+                    ),
                     data.get("pairing"),
                 )
             )
@@ -110,19 +140,9 @@ class HarnessAdaptationViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get"])
     def design(self, request, pk=None):
         """Review the design: what the adaptation takes from the ready world, before it's built."""
-        organization = request_organization(request)
-        if organization is None:
-            return _no_organization()
-        job = HostedHarnessJob.no_workspace_objects.filter(
-            id=pk, organization=organization, deleted=False
-        ).first()
-        if job is None or adaptation_of(job) is None:
-            return Response(
-                build_error_envelope(
-                    "adaptation not found", status_code=status.HTTP_404_NOT_FOUND
-                ),
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        job = _adaptation(request, pk)
+        if job is None:
+            return _adaptation_not_found()
         try:
             return Response(adaptation_design(job))
         except HostedHarnessError as exc:
@@ -139,11 +159,11 @@ class HarnessAdaptationViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         """Approve and build: the design is taken once the mapping has been checked on every case."""
-        organization = request_organization(request)
-        if organization is None:
-            return _no_organization()
+        job = _adaptation(request, pk)
+        if job is None:
+            return _adaptation_not_found()
         try:
-            job = approve_adaptation(organization, pk)
+            job = approve_adaptation(job)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         return Response({"id": str(job.id)}, status=status.HTTP_202_ACCEPTED)

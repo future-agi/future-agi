@@ -369,12 +369,16 @@ def _ask_harness_to_adapt(
 
 def _read_verified(sandbox: Any, path: str) -> dict[str, Any] | None:
     """The adaptation control process's record at `path`, or None when it left none (a failed
-    adaptation, or an image that does not write one): the platform then accepts no routed
-    binding from that sandbox."""
+    adaptation, or an image that does not write one): the platform then accepts no binding from
+    that sandbox. A read the provider failed is raised, to be tried again: it says nothing of
+    what was verified."""
     try:
-        body = sandbox.fs.download_file(path, _PROVIDER_POLL_TIMEOUT_SECONDS)
-        document = json.loads(body)
-    except Exception:  # noqa: BLE001 - absent or unreadable is the same answer: nothing verified
+        document = json.loads(
+            sandbox.fs.download_file(path, _PROVIDER_POLL_TIMEOUT_SECONDS)
+        )
+    except (SandboxNotFoundError, SandboxFileNotFoundError, FileNotFoundError):
+        return None
+    except (TypeError, ValueError):
         return None
     return document if isinstance(document, dict) else None
 
