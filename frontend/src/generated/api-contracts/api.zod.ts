@@ -623,6 +623,7 @@ export const AccountsKeyGetSecretKeysResponse = zod.object({
         created_at: zod.string().datetime({ offset: true }),
         enabled: zod.boolean(),
         type: zod.string().min(1),
+        can_switch: zod.boolean(),
         expires_at: zod.string().datetime({ offset: true }).nullable(),
         is_expired: zod.boolean(),
       }),

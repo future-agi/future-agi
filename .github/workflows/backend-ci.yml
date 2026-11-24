@@ -964,7 +964,10 @@ jobs:
     needs: [changes, test]
     if: ${{ !cancelled() && needs.test.result != 'skipped' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Usually about 15 s. Room for the listings to catch up (90 s of pauses)
+    # while API reads are also being retried, so a run that still lacks a
+    # producer fails naming it rather than on this timeout.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:

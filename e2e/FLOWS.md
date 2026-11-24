@@ -3758,3 +3758,30 @@
 - the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
 - B reading A's import answers 404, through A's environment and through B's own
 - a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending
+
+### SIM-E2E-037 — a Viewer opens a built environment, finds Run and Rename locked with the reason, and is refused a run
+
+**Goal:** A Viewer of a workspace opens one of its built environments, sees that they can't start a run or rename it and why, and the API refuses the run they try anyway without starting anything
+
+**Spec:** `flows/simulate/viewer-environment-refusal.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment in the owner's workspace (lib/environment-seed.ts)
+2. as a Viewer of that workspace, open the environment
+3. hover Run simulation
+4. look at Rename
+5. as the same Viewer, start a run through the API
+
+**Backend state verified:**
+
+- the run answers 403 with code viewer_read_only, action "start a paid run" and its reason
+- simulate_hosted_harness_job has no run job for the environment afterwards
+
+**Browser observations:**
+
+- the environment opens on its workspace with its name
+- Run simulation is disabled and its tooltip says "You don't have permission to start runs."
+- Rename environment is disabled

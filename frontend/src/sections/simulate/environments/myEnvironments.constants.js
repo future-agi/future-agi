@@ -65,12 +65,6 @@ export const DELETE_DIALOG_COPY = {
   confirm: "Delete",
 };
 
-// The destructive-action colour, from the theme's error palette.
-export const DELETE_TONE = {
-  main: "status.danger.fg",
-  hover: "status.danger.solid",
-};
-
 // A field the list API doesn't send at all (not even as null). Cells draw a
 // "Coming soon" chip for it; a field sent as null draws a dash instead.
 export const NOT_PROVIDED = Symbol("not provided");
