@@ -1,14 +1,10 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Button, MenuItem, TextField } from "@mui/material";
+import { Box, Stack, Button, TextField } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { FilterPanel } from "src/components/filter-panel";
-import {
-  LIFECYCLE_COPY,
-  SCENARIOS_COPY,
-  scenarioToolbarButtonSx,
-} from "./scenarios.constants";
+import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 import DisplayPanel from "./DisplayPanel";
 
 // One row holds everything until the search would shrink below ~200px; under
@@ -36,8 +32,6 @@ export default function ScenarioToolbar({
   filterCount,
   rowHeight = "Short",
   onRowHeightChange,
-  stateFilter = "",
-  onStateFilterChange,
   actions,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
@@ -101,34 +95,6 @@ export default function ScenarioToolbar({
             {SCENARIOS_COPY.filterLabel}
             {filterCount ? ` (${filterCount})` : ""}
           </Button>
-          {onStateFilterChange && (
-            <TextField
-              select
-              size="small"
-              value={stateFilter}
-              onChange={(e) => onStateFilterChange(e.target.value)}
-              SelectProps={{
-                displayEmpty: true,
-                SelectDisplayProps: {
-                  "aria-label": LIFECYCLE_COPY.filterLabel,
-                },
-              }}
-              sx={{
-                minWidth: 140,
-                "& .MuiSelect-select": { typography: "s1" },
-              }}
-            >
-              {LIFECYCLE_COPY.filters.map((one) => (
-                <MenuItem
-                  key={one.value}
-                  value={one.value}
-                  sx={{ typography: "s1" }}
-                >
-                  {one.label}
-                </MenuItem>
-              ))}
-            </TextField>
-          )}
           <Button
             size="small"
             variant="outlined"
@@ -195,7 +161,5 @@ ScenarioToolbar.propTypes = {
   filterCount: PropTypes.number,
   rowHeight: PropTypes.string,
   onRowHeightChange: PropTypes.func,
-  stateFilter: PropTypes.string,
-  onStateFilterChange: PropTypes.func,
   actions: PropTypes.node,
 };

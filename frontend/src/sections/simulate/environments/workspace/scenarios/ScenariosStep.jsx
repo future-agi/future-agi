@@ -56,6 +56,8 @@ import PagedScenarioViews from "./PagedScenarioViews";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // carries this on its tooltip while locked.
+// The Filter panel's own field for a scenario's state; the server's fields never use this name.
+const STATE_FIELD = "lifecycle_state";
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
 // The add CTA. Rendered in two places (the toolbar when the list is populated, and
@@ -160,12 +162,17 @@ export default function ScenariosStep({
   const [trials, setTrials] = useState(1);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({});
-  // The State filter rides with the filters as the list's `lifecycle` param.
-  const [stateFilter, setStateFilter] = useState("");
-  const listFilters = useMemo(
-    () => (stateFilter ? { ...filters, lifecycle: stateFilter } : filters),
-    [filters, stateFilter],
-  );
+  // State is picked by its label and sent as the list's `lifecycle` param, which only the list takes.
+  const { listFilters, fieldFilters } = useMemo(() => {
+    const { [STATE_FIELD]: picked, ...rest } = filters;
+    const state = LIFECYCLE_COPY.filters.find(
+      (one) => one.label === picked?.[0],
+    );
+    return {
+      fieldFilters: rest,
+      listFilters: state ? { ...rest, lifecycle: state.value } : rest,
+    };
+  }, [filters]);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   // The row opened in full from the table (the scenario drawer).
@@ -274,9 +281,25 @@ export default function ScenariosStep({
   // The filter catalogue comes straight from the server (`fields`), counted
   // over the searched suite so an OR stays buildable; it drops into the shared
   // FilterPanel unchanged.
+  const hasStates = Boolean(pageData.proofCounts);
   const filterFields = useMemo(
-    () => withServedLabels(pageData.fields || [], pageData.levelLabels),
-    [pageData.fields, pageData.levelLabels],
+    () => [
+      // The list takes one state at a time and has no "is not".
+      ...(hasStates
+        ? [
+            {
+              value: STATE_FIELD,
+              label: LIFECYCLE_COPY.filterLabel,
+              type: "enum",
+              single: true,
+              operators: ["is"],
+              choices: LIFECYCLE_COPY.filters.map((one) => one.label),
+            },
+          ]
+        : []),
+      ...withServedLabels(pageData.fields || [], pageData.levelLabels),
+    ],
+    [hasStates, pageData.fields, pageData.levelLabels],
   );
   // The editor offers every noise bed the backend serves, not only the ones the suite already uses.
   const noiseOptions = useMemo(
@@ -314,6 +337,8 @@ export default function ScenariosStep({
             : r.field;
         flat[key] = [...(flat[key] || []), ...values];
       });
+      // The Query tab can add State twice; the last pick counts.
+      if (flat[STATE_FIELD]) flat[STATE_FIELD] = flat[STATE_FIELD].slice(-1);
       setFilters(flat);
     } else {
       setFilters(result);
@@ -333,16 +358,10 @@ export default function ScenariosStep({
       (pageData.proofCounts.not_proved ?? 0)
     : 0;
   const hiddenCount = hiddenGroupIds.length;
-  const hasSearchOrFilters =
-    query.length > 0 || filterCount > 0 || Boolean(stateFilter);
-  const changeStateFilter = (next) => {
-    setStateFilter(next);
-    resetView();
-  };
+  const hasSearchOrFilters = query.length > 0 || filterCount > 0;
   const clearFilters = () => {
     setQuery("");
     setFilters({});
-    setStateFilter("");
     setHiddenGroupIds([]);
     resetView();
   };
@@ -609,16 +628,12 @@ export default function ScenariosStep({
                   filters={filters}
                   onApplyFilters={applyFilters}
                   filterCount={filterCount}
-                  stateFilter={stateFilter}
-                  onStateFilterChange={
-                    pageData.proofCounts ? changeStateFilter : undefined
-                  }
                   actions={
                     <>
                       <CoverageMatrix
                         jobId={env?.id}
                         search={debouncedQuery}
-                        filters={filters}
+                        filters={fieldFilters}
                         versioned={Boolean(env?.versioning?.enabled)}
                       />
                       {!locked && env?.id && (

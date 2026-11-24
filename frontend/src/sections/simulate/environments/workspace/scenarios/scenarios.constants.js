@@ -70,7 +70,6 @@ export const LIFECYCLE_COPY = {
   filterLabel: "State",
   // The list's `lifecycle` query values; archived rows show only when asked for.
   filters: [
-    { value: "", label: "All states" },
     { value: "active", label: "Active" },
     { value: "draft", label: DRAFT_LABEL },
     { value: "kept_as_written", label: "Kept as written" },

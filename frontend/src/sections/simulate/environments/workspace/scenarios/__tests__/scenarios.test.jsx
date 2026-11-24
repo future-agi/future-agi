@@ -707,8 +707,17 @@ describe("ScenariosStep lifecycle", () => {
       await screen.findByText("6 proved · 0 kept as written · 4 not proved"),
     ).toBeInTheDocument();
 
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "State" }));
-    fireEvent.click(screen.getByRole("option", { name: "Source changed" }));
+    // State sits inside Filter: one pick, "Is" only, as the list takes it.
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[0]);
+    fireEvent.click(screen.getByRole("option", { name: "State" }));
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[1]);
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Is",
+    ]);
+    fireEvent.click(screen.getByRole("option", { name: "Is" }));
+    fireEvent.click(screen.getByText(/^Select value/));
+    fireEvent.click(screen.getByText("Source changed"));
 
     await waitFor(() =>
       expect(listScenarios).toHaveBeenLastCalledWith(
