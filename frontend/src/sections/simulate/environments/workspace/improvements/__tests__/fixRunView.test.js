@@ -573,6 +573,18 @@ describe("step rows", () => {
     expect(rows[3].lines).toEqual([
       "Checks the best candidate on scenarios it never saw and on the must-pass scenarios",
     ]);
+    // Proposing, running with no plan yet, says what it does, without counts.
+    const proposing = stepRows({
+      ...byId("fix-unknown-identity"),
+      diagnosis: { causes: [] },
+    });
+    expect(proposing[2]).toMatchObject({
+      id: "search",
+      state: "now",
+      lines: [
+        "Tries changes one at a time; stops early once candidates stop beating the best",
+      ],
+    });
     // A queued epoch has no plan yet either: its Checking row is never blank.
     const queued = stepRows(byId("fix-queued"));
     expect(queued.find((r) => r.id === "verify").lines).toEqual([

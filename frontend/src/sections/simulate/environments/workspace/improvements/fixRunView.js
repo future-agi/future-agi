@@ -870,11 +870,12 @@ function stepLines(id, fix, state) {
   }
   if (id === "diagnose") return diagnoseLines(fix, state);
   if (id === "search") {
-    if (state === "todo")
+    // Before it runs, or before the plan's counts arrive, what the stage does.
+    if (state === "todo" || !plan)
       return [
         "Tries changes one at a time; stops early once candidates stop beating the best",
       ];
-    return plan ? [searchCount(plan, candidates)] : [];
+    return [searchCount(plan, candidates)];
   }
   // Before the plan, what the stage does, without its counts.
   if (!plan)
