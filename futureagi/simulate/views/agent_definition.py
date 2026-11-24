@@ -52,6 +52,7 @@ from simulate.services.agent_definition import (
 from simulate.services.agent_overview import (
     annotate_agent_rows,
     environment_refs,
+    filter_agent_rows,
     observability_on,
     observe_project,
     recent_agent_runs,
@@ -157,7 +158,6 @@ class AgentDefinitionView(APIView):
 
             validated = request.validated_query_data
             search_query = validated.get("search", "").strip()
-            agent_type = validated.get("agent_type", None)
             required_agent_id = validated.get("agent_definition_id", None)
 
             # Use Subquery to get latest version info in a single query (avoid N+1)
@@ -175,10 +175,13 @@ class AgentDefinitionView(APIView):
             )
 
             agents = (
-                annotate_agent_rows(
-                    AgentDefinition.objects.filter(
-                        organization=user_organization,
-                    )
+                filter_agent_rows(
+                    annotate_agent_rows(
+                        AgentDefinition.objects.filter(
+                            organization=user_organization,
+                        )
+                    ),
+                    validated,
                 )
                 .annotate(
                     _latest_version=Subquery(latest_version_subquery),
@@ -186,9 +189,6 @@ class AgentDefinitionView(APIView):
                 )
                 .select_related("observability_provider__project", "production_project")
             )
-
-            if agent_type is not None:
-                agents = agents.filter(agent_type=agent_type)
 
             # Apply search filter
             if search_query:
@@ -471,20 +471,22 @@ class AgentDefinitionDetailView(APIView):
                     active_version, context=context
                 ).data
 
+            agent_kind = getattr(agent, "_agent_kind", None)
+            source = getattr(agent, "_source", None)
             return Response(
                 {
                     **agent_data,
                     "versions": versions_data,
                     "active_version": active_version_data,
                     "version_count": agent.version_count,
-                    "agent_kind": agent._agent_kind,
-                    "source": agent._source,
+                    "agent_kind": agent_kind,
+                    "source": source,
                     "environment_count": agent._environment_count,
                     "observability_enabled": observability_on(agent),
-                    "observe_project": observe_project(agent, agent._agent_kind),
+                    "observe_project": observe_project(agent, agent_kind),
                     "connected": connected_agent(agent.id),
                     "managed_by": (
-                        (environment_refs([agent]).get(agent.id) or [None])[0]
+                        next(iter(environment_refs([agent]).get(agent.id) or []), None)
                         if environment_owned(agent.id)
                         else None
                     ),
@@ -494,7 +496,7 @@ class AgentDefinitionDetailView(APIView):
                     },
                     "source_checked_at": agent.source_checked_at,
                     "source_check_interval_seconds": (
-                        poll_interval_seconds() if agent._source == "github" else None
+                        poll_interval_seconds() if source == "github" else None
                     ),
                 },
                 status=status.HTTP_200_OK,

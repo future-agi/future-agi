@@ -68,7 +68,7 @@ from simulate.models import (
 )
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.selectors.runs import user_executions
-from simulate.semantics import SupportedProviders
+from simulate.services.call_provider import call_agent_provider_expression
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.harness_scenarios import (
     NO_CALL_ACTOR,
@@ -90,6 +90,7 @@ from simulate.services.run_results_v3_expressions import (
     project_annotation,
 )
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
     ERRORED_CALL_STATUSES,
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
@@ -101,6 +102,7 @@ from simulate.services.run_results_v3_scoring import (
     NATIVE_FAILED,
     NATIVE_PASSED,
     QUEUED_CALL_STATUSES,
+    SKIPPED_HARNESS_STATUSES,
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
@@ -108,7 +110,11 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     score_tokens,
 )
-from simulate.types import CallActorDelivery, CallActorFacetValue
+from simulate.types import (
+    WORKER_SUBJECT_PREFIX,
+    CallActorDelivery,
+    CallActorFacetValue,
+)
 
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
@@ -732,6 +738,9 @@ class _NativeHarnessVerdict(Func):
             f"THEN {source_sql} ELSE '{{}}'::jsonb END) AS check_result(key, value) "
             "WHERE jsonb_typeof(check_result.value) = 'object' "
             "AND check_result.value->>'source' = 'harness' "
+            # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+            f"AND left(COALESCE(check_result.value->>'subject', ''), {len(WORKER_SUBJECT_PREFIX)}) "
+            f"<> '{WORKER_SUBJECT_PREFIX}' "
             f"AND NOT ({ids_sql} ? check_result.key) AND {condition})"
         )
         return sql, [*source_params, *source_params, *ids_params, *verdict_params]
@@ -771,10 +780,6 @@ def run_calls_queryset(
         if execution_ids is not None
         else Q(test_execution=execution)
     )
-    provider_cases = [
-        When(provider_call_data__has_key=provider, then=Value(provider))
-        for provider in sorted(SupportedProviders)
-    ]
     dataset_goal = Cell.all_objects.filter(
         row_id=OuterRef("row_id"),
         column__name__in=["use_case", "goal"],
@@ -916,6 +921,15 @@ def run_calls_queryset(
         result_outcome=Case(
             When(status__in=list(QUEUED_CALL_STATUSES), then=Value("queued")),
             When(status__in=list(IN_PROGRESS_CALL_STATUSES), then=Value("in_progress")),
+            # A skipped scenario is stored cancelled but nobody stopped it: an error.
+            When(
+                status__in=list(CANCELLED_CALL_STATUSES),
+                call_metadata__harness_outcome_status__in=list(
+                    SKIPPED_HARNESS_STATUSES
+                ),
+                then=Value("error"),
+            ),
+            When(status__in=list(CANCELLED_CALL_STATUSES), then=Value("cancelled")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),
@@ -955,13 +969,7 @@ def run_calls_queryset(
         ),
         result_tokens=_safe_json_float("conversation_metrics_data", "total_tokens"),
         result_cost_cents=Cast("customer_cost_cents", FloatField()),
-        result_provider=Case(
-            *provider_cases,
-            default=Coalesce(
-                F("test_execution__agent_definition__provider"), Value("Unknown")
-            ),
-            output_field=CharField(),
-        ),
+        result_provider=call_agent_provider_expression(),
         result_scenario_key=Coalesce(
             _json_text("call_metadata", "harness_scenario_key"),
             _json_text("call_metadata", "hosted_harness_receipt", "scenario_key"),

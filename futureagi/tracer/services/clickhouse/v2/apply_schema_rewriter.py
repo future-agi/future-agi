@@ -72,6 +72,10 @@ _CREATE_MV_RE = re.compile(
     r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?MATERIALIZED\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?" + _OBJECT_NAME,
     re.IGNORECASE,
 )
+_CREATE_VIEW_RE = re.compile(
+    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?" + _OBJECT_NAME,
+    re.IGNORECASE,
+)
 _ALTER_TABLE_RE = re.compile(
     r"^\s*ALTER\s+TABLE\s+" + _OBJECT_NAME,
     re.IGNORECASE,
@@ -105,11 +109,11 @@ _ENGINE_RE = re.compile(
 
 
 def extract_table_name(stmt: str) -> str | None:
-    """Return the table or MV name for an apply-time rewrite. Returns None
-    for statements that aren't subject to engine rewriting (INSERTs, DROPs, etc.).
+    """Return the table, MV or ordinary view name for an apply-time rewrite.
+    Returns None for statements outside topology rewriting (INSERTs, DROPs, etc.).
     Handles bare identifiers, backtick/double-quoted, and <db>.<table> shapes.
     """
-    for rx in (_CREATE_TABLE_RE, _CREATE_MV_RE, _ALTER_TABLE_RE):
+    for rx in (_CREATE_TABLE_RE, _CREATE_MV_RE, _CREATE_VIEW_RE, _ALTER_TABLE_RE):
         m = rx.match(stmt)
         if m:
             return _object_name_from_match(m)
@@ -143,6 +147,16 @@ def rewrite_for_replicated(stmt: str, *, table_name: str, cluster: str,
     design — silent partial rewrites in replicated mode have caused
     multi-day operational incidents in other CH-adopting shops.
     """
+    # Ordinary views have no engine. Attach topology only at the declaration,
+    # not by searching the SELECT text (which can contain SQL-looking literals).
+    # In particular CREATE OR REPLACE VIEW upgrades must reach every replica.
+    view = _CREATE_VIEW_RE.match(stmt)
+    if view:
+        suffix = stmt[view.end():]
+        if re.match(r"\s+ON\s+CLUSTER\b", suffix, re.IGNORECASE):
+            return stmt
+        return f"{stmt[:view.end()]} ON CLUSTER '{cluster}'{suffix}"
+
     # 1. Insert ON CLUSTER right after the object name on CREATE/ALTER.
     #    We only do this if not already present (idempotent).
     if "ON CLUSTER" not in stmt.upper():

@@ -35,10 +35,25 @@ describe("Error Feed traces export", () => {
       wrapper: createWrapper(),
     });
 
-    await expect(result.current.mutateAsync("c1")).resolves.toEqual(overview);
+    await expect(
+      result.current.mutateAsync({ clusterId: "c1" }),
+    ).resolves.toEqual(overview);
     expect(axios.get).toHaveBeenCalledOnce();
     expect(axios.get).toHaveBeenCalledWith("/tracer/feed/issues/c1/overview/", {
       params: { rep_limit: 200 },
+    });
+  });
+
+  it("reads a smaller sample when the export asks for one", async () => {
+    axios.get.mockResolvedValue({ data: { result: {} } });
+
+    const { result } = renderHook(() => useExportErrorFeedTraces(), {
+      wrapper: createWrapper(),
+    });
+
+    await result.current.mutateAsync({ clusterId: "c1", repLimit: 10 });
+    expect(axios.get).toHaveBeenCalledWith("/tracer/feed/issues/c1/overview/", {
+      params: { rep_limit: 10 },
     });
   });
 });

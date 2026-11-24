@@ -736,10 +736,10 @@ type AccessGroupConfig struct {
 
 // MirrorConfig controls traffic mirroring for shadow testing.
 type MirrorConfig struct {
-	Enabled          bool         `yaml:"enabled" json:"enabled"`
-	CaptureResults   bool         `yaml:"capture_results" json:"capture_results"`
-	MaxStored        int          `yaml:"max_stored" json:"max_stored"`
-	FlushIntervalSec int          `yaml:"flush_interval_sec" json:"flush_interval_sec"`
+	Enabled          bool `yaml:"enabled" json:"enabled"`
+	CaptureResults   bool `yaml:"capture_results" json:"capture_results"`
+	MaxStored        int  `yaml:"max_stored" json:"max_stored"`
+	FlushIntervalSec int  `yaml:"flush_interval_sec" json:"flush_interval_sec"`
 	// MaxConcurrent bounds the number of in-flight async mirror requests.
 	// Mirroring is fire-and-forget shadow traffic, so excess is dropped (not
 	// queued) once this budget is exhausted, preventing unbounded goroutine and
@@ -803,11 +803,13 @@ type RetryConfig struct {
 
 // CircuitBreakerConfig controls per-provider circuit breaking.
 type CircuitBreakerConfig struct {
-	Enabled          bool          `yaml:"enabled" json:"enabled"`
-	FailureThreshold int           `yaml:"failure_threshold" json:"failure_threshold"`
-	SuccessThreshold int           `yaml:"success_threshold" json:"success_threshold"`
-	Cooldown         time.Duration `yaml:"cooldown" json:"cooldown"`
-	OnStatusCodes    []int         `yaml:"on_status_codes" json:"on_status_codes"`
+	Enabled           bool          `yaml:"enabled" json:"enabled"`
+	FailureThreshold  int           `yaml:"failure_threshold" json:"failure_threshold"`
+	SuccessThreshold  int           `yaml:"success_threshold" json:"success_threshold"`
+	Cooldown          time.Duration `yaml:"cooldown" json:"cooldown"`
+	OnStatusCodes     []int         `yaml:"on_status_codes" json:"on_status_codes"`
+	HalfOpenMaxProbes int           `yaml:"half_open_max_probes" json:"half_open_max_probes"` // 0 = unlimited
+	GateDirectCalls   bool          `yaml:"gate_direct_calls" json:"gate_direct_calls"`
 }
 
 // RoutingTargetConfig defines a single routing target for a model.
@@ -1086,8 +1088,17 @@ type IPACLConfig struct {
 	Deny           []string `yaml:"deny" json:"deny"`                       // denied IPs/CIDRs (takes precedence over allow)
 }
 
-// DefaultConfig returns sensible defaults.
+// DefaultConfig starts a new configuration. Persist these settings when authoring
+// one; a file without them must keep its original admission policy on reload.
 func DefaultConfig() *Config {
+	cfg := loadDefaults()
+	cfg.Routing.CircuitBreaker.HalfOpenMaxProbes = 1
+	cfg.Routing.CircuitBreaker.GateDirectCalls = true
+	return cfg
+}
+
+// loadDefaults contains only defaults compatible with an existing deployment.
+func loadDefaults() *Config {
 	return &Config{
 		ModelDatabase: ModelDatabaseConfig{
 			CatalogueURL:          modeldb.DefaultCatalogueURL,
@@ -1167,7 +1178,7 @@ func DefaultConfig() *Config {
 
 // Load reads config from a YAML/JSON file and overrides with env vars.
 func Load(path string) (*Config, error) {
-	cfg := DefaultConfig()
+	cfg := loadDefaults()
 
 	if path != "" {
 		if err := loadFromFile(cfg, path); err != nil {
@@ -1231,7 +1242,7 @@ func warnUnreadKeys(data []byte) {
 	dec := yaml.NewDecoder(strings.NewReader(text))
 	dec.KnownFields(true)
 	var typeErr *yaml.TypeError
-	if !errors.As(dec.Decode(DefaultConfig()), &typeErr) {
+	if !errors.As(dec.Decode(loadDefaults()), &typeErr) {
 		return
 	}
 	var unread []string
@@ -1309,23 +1320,10 @@ func envDuration(name string, dst *time.Duration) {
 	*dst = d
 }
 
-// envBool is envDuration for true or false.
-func envBool(name string, dst *bool) {
-	v := os.Getenv(name)
-	if v == "" {
-		return
-	}
-	b, err := strconv.ParseBool(strings.TrimSpace(v))
-	if err != nil {
-		slog.Warn("ignoring environment variable: not true or false",
-			"env", name, "value", v)
-		return
-	}
-	*dst = b
-}
-
-// envListenerSwitch is envBool for a listener switch: a value that is not
-// true or false is kept for Validate to refuse, never ignored.
+// envListenerSwitch applies a listener switch (true or false) from the
+// environment. Unlike envDuration, a value that is not true or false is kept
+// for Validate to refuse, never ignored: ignoring it could leave a listener on
+// that the operator meant to turn off.
 func (s *ServerConfig) envListenerSwitch(name string, dst *bool) {
 	v := os.Getenv(name)
 	if v == "" {

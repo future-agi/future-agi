@@ -1,0 +1,179 @@
+[
+  {
+    "files": {
+      "model_hub/tests/test_ch25_annotation_queue_session_validation_sliceE.py": 5,
+      "tracer/tests/test_ch25_session_bulkselect_and_scorecol_sliceF.py": 8,
+      "tracer/tests/test_ch25_session_eval_candidate_and_target_sliceC.py": 9,
+      "tracer/tests/test_ch25_session_trace_ids_sliceD.py": 13,
+      "tracer/tests/test_ch25_trace_session_fields_reader.py": 7,
+      "tracer/tests/test_dashboard_narrow_replay_ch25.py": 6,
+      "tracer/tests/test_dashboard_replay_read_settings_ch25.py": 3,
+      "tracer/tests/test_derived_metric_changes_clickhouse.py": 24,
+      "tracer/tests/test_derived_metric_forward_history_clickhouse.py": 4,
+      "tracer/tests/test_derived_metric_user_rules_clickhouse.py": 47,
+      "tracer/tests/test_end_user_uuid_equality_ch25.py": 11,
+      "tracer/tests/test_long_text_anchor_equality_ch25.py": 4,
+      "tracer/tests/test_metric_burst_owner_repair_clickhouse.py": 1,
+      "tracer/tests/test_metric_filter_family.py": 18,
+      "tracer/tests/test_metric_progress_closeout_clickhouse.py": 3,
+      "tracer/tests/test_metric_schema_contract.py": 21,
+      "tracer/tests/test_session_annotation_graph_ch25.py": 15,
+      "tracer/tests/test_session_annotation_membership_ch25.py": 28,
+      "tracer/tests/test_session_rollup_projection_ch25.py": 22,
+      "tracer/tests/test_span_long_text_population_equality_ch25.py": 2
+    },
+    "reason": "^(?:Skipped:\\ explicit\\ isolated\\ native\\ engine\\ required|Skipped:\\ isolated\\ native\\ fixture\\ engine\\ required|Skipped:\\ live\\ ClickHouse\\ tests\\ are\\ opt\\-in:\\ set\\ FI_LIVE_CH_TESTS=1|Skipped:\\ optional\\ isolated\\ ClickHouse\\ engine|Skipped:\\ optional\\ isolated\\ ClickHouse\\ execution\\ engine|Skipped:\\ owned\\ ClickHouse\\ change\\-discovery\\ sidecar\\ not\\ requested|Skipped:\\ owned\\ ClickHouse\\ sidecar\\ not\\ requested|Skipped:\\ refusing\\ to\\ run\\ outside\\ the\\ ch_rehearsal\\ harness\\ \\(CH25_DATABASE='test_tfc'\\);\\ set\\ CH25_DATABASE=ch_rehearsal|Skipped:\\ requires\\ explicit\\ owned\\ B20\\ native\\ ClickHouse\\ runtime|Skipped:\\ requires\\ the\\ owned\\ isolated\\ session\\-annotation\\ ClickHouse\\ fixture)$",
+    "why": "Opt-in by design: live ClickHouse (owned, isolated or live, or the ch_rehearsal harness). No CI job provides one; TH-10617 runs these. 251 tests in 20 files on 22 Nov (Backend CI run 45072697969).",
+    "issue": "TH-10617",
+    "owner": "model_hub and tracer",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "tracer/tests/test_grouping_node_contract.py": 4
+    },
+    "reason": "^Skipped: set OMEGA_GROUPING_WORKER_ROOT to the worker checkout$",
+    "why": "Optional by design: compares with the grouping worker, a separate repository, when a checkout is given. 4 tests.",
+    "issue": "TH-10618",
+    "owner": "tracer",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "tfc/tests/test_licensing_migration_boot.py": 1
+    },
+    "reason": "^Skipped: Cloud control-plane not installed in this configuration$",
+    "why": "Not applicable by design: the cloud control plane is not installed in the test settings. 1 test.",
+    "issue": "TH-10618",
+    "owner": "tfc platform",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "simulate/tests/test_scenario_fault_rules.py": 1
+    },
+    "reason": "^Skipped: could not import 'fi\\.alk\\.harness\\.actors': No module named 'fi'$",
+    "why": "Optional by design: compares with the harness package where it is installed; CI does not install it. 1 test.",
+    "issue": "TH-10618",
+    "owner": "simulate",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "tracer/tests/test_hourly_aggregate_state_route_live_ch.py": 8
+    },
+    "varies": "The skip depends on spans other tests on the same shard leave in the shared ClickHouse table.",
+    "reason": "^Skipped: test ClickHouse has no spans to plan against$",
+    "why": "The test needs spans it does not create. Its shard's earlier tests decide whether any are there, so 1 or 2 of the file's 8 tests skipped in six runs on 22 Nov.",
+    "issue": "TH-10618",
+    "owner": "tracer",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "tracer/tests/test_span_attribute_null_target_grain.py": 1
+    },
+    "reason": "^Skipped: local ClickHouse is unavailable",
+    "why": "The test connects to a hard-coded local ClickHouse port. 1 test.",
+    "issue": "TH-10618",
+    "owner": "tracer",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "tracer/tests/test_exact_attribute_detail.py": 1
+    },
+    "reason": "^Skipped: local ClickHouse is unavailable",
+    "why": "The test connects to a hard-coded local ClickHouse port. 1 test.",
+    "issue": "TH-10618",
+    "owner": "tracer",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "model_hub/tests/test_annotation_e2e_gaps.py": 1
+    },
+    "reason": "^Skipped: NLTK punkt_tab tokenizer not available in this env$",
+    "why": "The CI environment lacks the NLTK punkt_tab data. 1 test.",
+    "issue": "TH-10618",
+    "owner": "model_hub",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "model_hub/tests/test_dataset_huggingface_api.py": 1
+    },
+    "tests": [
+      "model_hub/tests/test_dataset_huggingface_api.py::TestCreateDatasetFromHuggingFaceE2E::test_create_dataset_creates_rows_with_integer_keys"
+    ],
+    "reason": "^Skipped:\\ API\\ returned\\ 400:\\ \\{'status':\\ False,\\ 'type':\\ 'validation_error',\\ 'code':\\ 'invalid',\\ 'detail':\\ '\\(\\\\'model_type\\\\',\\ \\[ErrorDetail\\(string=\\\\'\"\"\\ is\\ not\\ a\\ valid\\ choice\\.",
+    "why": "This one test's own request is rejected with the measured model_type validation error (400), and the test skips instead of failing. Its request fixture is fixed by the dataset owner (dataset and experiment code is frozen for other lanes); any other 400, or this skip in another test, is unexpected. 1 test.",
+    "issue": "TH-10618",
+    "owner": "model_hub datasets (dataset and experiment owner)",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "tfc/tests/test_temporal_billing_imports.py": 1
+    },
+    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.dunning': No module named 'ee\\.cloud'$",
+    "why": "Not applicable by design on an oss run (a fork pull request or a merge group): the private package is not checked out. 1 test.",
+    "issue": "TH-10618",
+    "owner": "tfc platform",
+    "expires": "2027-01-06",
+    "runs": "oss"
+  },
+  {
+    "files": {
+      "tfc/tests/test_temporal_billing_cancellation.py": 5
+    },
+    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.invoice_generation': No module named 'ee\\.cloud'$",
+    "why": "Not applicable by design on an oss run: the private package is not checked out. 5 tests.",
+    "issue": "TH-10618",
+    "owner": "tfc platform",
+    "expires": "2027-01-06",
+    "runs": "oss"
+  },
+  {
+    "files": {
+      "tracer/tests/test_analysis_retention.py": 1
+    },
+    "reason": "^Skipped: the Cloud retention scheduler ships in the private ee/cloud tree$",
+    "why": "Not applicable by design on an oss run: the private package is not checked out. 1 test.",
+    "issue": "TH-10618",
+    "owner": "tracer",
+    "expires": "2027-01-06",
+    "runs": "oss"
+  },
+  {
+    "files": {
+      "tfc/tests/test_temporal_billing_imports.py": 1
+    },
+    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.dunning': No module named 'ee\\.cloud\\.billing\\.dunning'$",
+    "why": "On an internal run the private package is checked out but lacks this module: a broken checkout, waived only until the ticket is done. 1 test.",
+    "issue": "TH-10618",
+    "owner": "tfc platform",
+    "expires": "2027-01-06",
+    "runs": "internal"
+  },
+  {
+    "files": {
+      "tracer/tests/test_clickhouse_integration.py": 3
+    },
+    "reason": "^Skipped: (?:Dataset tables not in test schema: .*Unknown table expression identifier 'model_hub_cell' |Simulation tables not in test schema: .*Unknown table expression identifier 'simulate_call_execution' ).*\\(UNKNOWN_TABLE\\)",
+    "why": "The test ClickHouse schema lacks the simulation and dataset tables. 3 tests.",
+    "issue": "TH-10618",
+    "owner": "tracer",
+    "expires": "2027-01-06"
+  },
+  {
+    "files": {
+      "tracer/tests/test_ch25_session_bulkselect_and_scorecol_sliceF.py": 3
+    },
+    "reason": "^Skipped: no Organization in pg-test for the Site-2 fixture$",
+    "why": "The fixture expects an Organization row the test database does not have. 3 tests.",
+    "issue": "TH-10619",
+    "owner": "tracer",
+    "expires": "2027-01-06"
+  }
+]

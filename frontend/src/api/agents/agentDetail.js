@@ -121,6 +121,7 @@ export const mapAgentDetail = (raw) => ({
   },
   sourceCheckedAt: raw.source_checked_at ?? null,
   sourceCheckIntervalSeconds: raw.source_check_interval_seconds ?? null,
+  observabilityProviderId: raw.observability_provider ?? null,
 });
 
 const toStoredAgent = (d) => ({
@@ -138,6 +139,8 @@ export const mapVersionDetail = (raw) => ({
   apiKey: raw.api_key ?? null,
   source: raw.source ?? null,
   config: raw.configuration_snapshot ?? {},
+  // The workers its newest built environment declares, read-only on the Definition tab.
+  participants: raw.participants,
 });
 
 export function useAgentDetail(agentId) {
@@ -149,6 +152,29 @@ export function useAgentDetail(agentId) {
       ),
     select: mapAgentDetail,
     enabled: !!agentId,
+  });
+}
+
+// The connection's last recorded setup problem (`configuration_health` on the
+// observability provider), or null when imports are healthy or the field is not
+// served. Shape: { status, reason_code, first_failed_at, last_failed_at,
+// failure_count, next_retry_at }.
+export function useProviderConfigurationHealth(providerId) {
+  return useQuery({
+    queryKey: ["agents", "provider-health", providerId],
+    queryFn: async () =>
+      unwrap(
+        (
+          await axios.get(
+            endpoints.agentDefinitions.observabilityProvider(providerId),
+          )
+        ).data,
+      ),
+    select: (d) => d?.configuration_health ?? null,
+    enabled: !!providerId,
+    // A link to a deleted provider answers 400; the warning is optional, so
+    // that is not worth an error toast on the agent page.
+    meta: { errorHandled: true },
   });
 }
 

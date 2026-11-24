@@ -54,6 +54,7 @@ from simulate.services.scoring_status import (
     TRANSPORT_RUN_STATUSES,
     settle_run_after_commit,
 )
+from simulate.tasks.alk_sim import dispatch_worker_read
 from tracer.services.observability_switch import (
     ObservabilityRefused,
     refusal_body,
@@ -188,9 +189,10 @@ def find_replayed_job(
     idempotency_key: str,
     workspace=None,
     lock: bool = False,
+    request_digest: str | None = None,
 ) -> HostedHarnessJob | None:
     """The job this idempotency key already made for the same request, if any."""
-    request_digest = canonical_digest(payload)
+    request_digest = request_digest or canonical_digest(payload)
     jobs = HostedHarnessJob.no_workspace_objects.filter(
         organization=organization,
         idempotency_key=idempotency_key,
@@ -224,6 +226,7 @@ def create_hosted_job(
     idempotency_key: str,
     workspace=None,
     on_create: Callable[[HostedHarnessJob], None] | None = None,
+    request_digest: str | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Create the job, or return the one this idempotency key already made.
 
@@ -231,7 +234,7 @@ def create_hosted_job(
     """
     from simulate.services.harness_agent_versions import advisory_xact_lock
 
-    request_digest = canonical_digest(payload)
+    request_digest = request_digest or canonical_digest(payload)
     with transaction.atomic():
         # Same-key creates take turns, so a concurrent one replays the first's job.
         advisory_xact_lock(idempotency_lock_name(organization, idempotency_key))
@@ -241,6 +244,7 @@ def create_hosted_job(
             idempotency_key=idempotency_key,
             workspace=workspace,
             lock=True,
+            request_digest=request_digest,
         )
         if existing is not None:
             return existing, False
@@ -2177,7 +2181,9 @@ def delete_environment(job: HostedHarnessJob) -> None:
                 )
 
                 cancel_job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
-                HostedHarnessGateway().cancel(cancel_job, reason=DELETE_CANCEL_REASON)
+                HostedHarnessGateway(require_provider=False).cancel(
+                    cancel_job, reason=DELETE_CANCEL_REASON
+                )
             except Exception:
                 logger.exception(
                     "hosted_harness_delete_direct_cancel_failed", job_id=job_id
@@ -3270,26 +3276,47 @@ def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
 
 def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     """Move a terminal job's Run, and the calls it left open, to their end states."""
-    from simulate.selectors.held_back import coding_agent_failure_message
+    from simulate.selectors.held_back import (
+        coding_agent_failure_message,
+        has_plain_words,
+        person_failure_message,
+    )
 
     if not job.test_execution_id:
         return
-    message = (job.failure or {}).get("message")
-    if message and ((job.payload or {}).get("metadata") or {}).get(
-        "coding_agent_key_id"
-    ):
-        # A coding agent reads these; the stored message can end with guest output.
-        message = coding_agent_failure_message(job.failure)
+    failure = job.failure or {}
+    message = failure.get("message")
+    coding_agent_run = bool(
+        ((job.payload or {}).get("metadata") or {}).get("coding_agent_key_id")
+    )
+    if message and coding_agent_run:
+        # A coding agent reads only fixed text: the stored message can end with guest output,
+        # which can quote a held-back case. It stays on the job.
+        message = coding_agent_failure_message(failure)
+    elif message and has_plain_words(failure):
+        # A person's own run reads the plain words too, with what their agent printed after
+        # them. A coding agent's key reads only the runs it started.
+        message = person_failure_message(failure)
     calls = CallExecution.no_workspace_objects.filter(
         test_execution_id=job.test_execution_id
     )
-    calls.filter(
+    still_open = calls.filter(
         status__in=(
             CallExecution.CallStatus.PENDING,
             CallExecution.CallStatus.REGISTERED,
             CallExecution.CallStatus.ONGOING,
         )
-    ).update(
+    )
+    # A call under way, or one still reading pending whose start had not arrived, may have workers' evidence to keep.
+    ended = list(
+        still_open.filter(
+            status__in=(
+                CallExecution.CallStatus.PENDING,
+                CallExecution.CallStatus.ONGOING,
+            )
+        ).values_list("id", flat=True)
+    )
+    still_open.update(
         status=(
             CallExecution.CallStatus.CANCELLED
             if job.state == HostedHarnessJob.State.CANCELED
@@ -3298,6 +3325,9 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
         completed_at=now,
         **({"ended_reason": message} if message else {}),
     )
+    # A call cut short keeps what its workers did before the end.
+    for call_id in ended:
+        transaction.on_commit(partial(dispatch_worker_read, call_id), robust=True)
     execution_status = {
         HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,
         HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,

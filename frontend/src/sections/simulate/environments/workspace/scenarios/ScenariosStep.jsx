@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Typography, Button } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Typography,
+  Button,
+  ClickAwayListener,
+} from "@mui/material";
 import { useSnackbar } from "notistack";
 import { useSearchParams } from "react-router-dom";
 
@@ -115,6 +121,7 @@ export default function ScenariosStep({
   patch,
   locked = false,
   onStartRun,
+  runDialogOpen = false,
   canRun = false,
   runBlockedReason,
 }) {
@@ -298,12 +305,8 @@ export default function ScenariosStep({
     }
   };
 
-  // Hiding groups is a page-local visual toggle.
-  const hiddenCount = pageData.pageGroups.filter((g) =>
-    hiddenGroupIds.includes(g.id),
-  ).length;
-
-  const filtered = query.length > 0 || filterCount > 0 || hiddenCount > 0;
+  const hiddenCount = hiddenGroupIds.length;
+  const hasSearchOrFilters = query.length > 0 || filterCount > 0;
   const clearFilters = () => {
     setQuery("");
     setFilters({});
@@ -397,7 +400,13 @@ export default function ScenariosStep({
 
   // Escape clears the selection, unless it is closing something on top
   // (drawer, editor, confirm) or the user is typing in a field.
-  const overlayOpen = !!openRow || !!editing || !!pendingDelete || adding;
+  const overlayOpen =
+    runDialogOpen ||
+    !!openRow ||
+    !!editing ||
+    !!pendingDelete ||
+    adding ||
+    !!importId;
   const clearSelection = sel.clear;
   const hasSelection = sel.count > 0;
   useEffect(() => {
@@ -417,6 +426,18 @@ export default function ScenariosStep({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [hasSelection, overlayOpen, clearSelection]);
+
+  const handleClickAway = (event) => {
+    if (!hasSelection || overlayOpen) return;
+    // The chat uses the checked rows. Cancel can unmount the run dialog before
+    // this document listener fires, but the click's original path still includes it.
+    const keepSelection = event
+      .composedPath()
+      .some((node) =>
+        node.matches?.("[data-builder-chat], [data-scenario-run-dialog]"),
+      );
+    if (!keepSelection) clearSelection();
+  };
 
   // The scenario names a bulk delete targets. Names — not ids — because the
   // amend route resolves drops by name.
@@ -501,26 +522,9 @@ export default function ScenariosStep({
       ) : !hasScenarios ? (
         <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
       ) : (
-        <>
-          {loadFailed && (
-            <Alert
-              severity="error"
-              sx={{ mb: 2, flexShrink: 0 }}
-              action={
-                <Button color="inherit" size="small" onClick={retryLoad}>
-                  Retry
-                </Button>
-              }
-            >
-              Couldn&apos;t refresh the scenarios. Showing the last loaded list.
-            </Alert>
-          )}
-          {editHint && (
-            <Alert severity="info" sx={{ mb: 2, typography: "s3", flexShrink: 0 }}>
-              {editHint}
-            </Alert>
-          )}
+        <ClickAwayListener onClickAway={handleClickAway}>
           <Box
+            role="presentation"
             sx={{
               flex: 1,
               minHeight: 320,
@@ -529,6 +533,28 @@ export default function ScenariosStep({
               flexDirection: "column",
             }}
           >
+            {loadFailed && (
+              <Alert
+                severity="error"
+                sx={{ mb: 2, flexShrink: 0 }}
+                action={
+                  <Button color="inherit" size="small" onClick={retryLoad}>
+                    Retry
+                  </Button>
+                }
+              >
+                Couldn&apos;t refresh the scenarios. Showing the last loaded
+                list.
+              </Alert>
+            )}
+            {editHint && (
+              <Alert
+                severity="info"
+                sx={{ mb: 2, typography: "s3", flexShrink: 0 }}
+              >
+                {editHint}
+              </Alert>
+            )}
             {/* The bulk-action bar covers the toolbar's row while a selection is
                 active. Both sit in one grid cell, the toolbar staying mounted
                 underneath, so the row keeps the toolbar's height (no shift when
@@ -653,23 +679,20 @@ export default function ScenariosStep({
                 lockTooltip={rowsLockTooltip}
                 rowHeight={rowHeight}
                 readout={
-                  filtered
+                  hasSearchOrFilters || hiddenCount > 0
                     ? {
                         shown: pageData.total,
                         total: suiteTotal,
                         hiddenCount,
-                        onlyGroupsHidden:
-                          hiddenCount > 0 &&
-                          query.length === 0 &&
-                          filterCount === 0,
-                        onClear: clearFilters,
+                        onShowAll: () => setHiddenGroupIds([]),
+                        onClear: hasSearchOrFilters ? clearFilters : undefined,
                       }
                     : undefined
                 }
               />
             </Box>
           </Box>
-        </>
+        </ClickAwayListener>
       )}
 
       {importId && env?.id ? (
@@ -695,6 +718,9 @@ export default function ScenariosStep({
           setEditing(row);
         }}
         locked={rowsLocked}
+        testConditions={
+          !!pageData.scenarioEditing?.editable_fields?.includes("faults")
+        }
       />
       <ScenarioEditor
         open={!!editing}
@@ -739,6 +765,7 @@ ScenariosStep.propTypes = {
   locked: PropTypes.bool,
   // Starts a run scoped to the selected scenarios × trials — (ids, trials).
   onStartRun: PropTypes.func,
+  runDialogOpen: PropTypes.bool,
   // Whether the env is runnable; gates the selection bar's Run button.
   canRun: PropTypes.bool,
   // Why it can't run yet; Run shows disabled with this instead of hiding.

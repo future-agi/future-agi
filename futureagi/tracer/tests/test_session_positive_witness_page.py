@@ -440,7 +440,10 @@ def test_native_independent_leaves_all_aliases_and_root_metrics(engine, width):
     assert pages == [[str(UUID(int=100))], []]
     sql, params = builder(*filters).build_page_hydration_query([str(UUID(int=100))])
     metrics = engine.execute(sql, params)[0]
-    assert metrics["total_tokens"] == reference["metrics"][0]["total_tokens"] == 24
+    # The independent page oracle accounts for roots; hydration accounts for
+    # all members. Each independent child contributes exactly once across aliases.
+    assert reference["metrics"][0]["total_tokens"] == 24
+    assert metrics["total_tokens"] == 24 + width * 999
     assert datetime.fromisoformat(metrics["session_start"]).replace(
         tzinfo=UTC
     ) == START + timedelta(minutes=1)

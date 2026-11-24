@@ -12,8 +12,11 @@ from simulate.models import AgentDefinition, AgentVersion, RunTest
 from simulate.services.agent_definition import sync_provider_credentials
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 
-ID = uuid.uuid4()
-OTHER = uuid.uuid4()
+# Fixed, not uuid4(): these values are part of the pytest ids. Every CI shard
+# collects the tests in its own process, and pytest-split runs each case
+# exactly once only when all shards see the same ids.
+ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
+OTHER = uuid.UUID("00000000-0000-4000-8000-000000000002")
 ENVIRONMENT = f"/simulate/api/harness-environments/{ID}/"
 JOBS = "/simulate/api/harness-jobs/"
 AGENT = f"/simulate/agent-definitions/{ID}/"

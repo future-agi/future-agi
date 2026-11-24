@@ -18,7 +18,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -31,6 +31,7 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_sampling import EvalSamplingCohort, EvalSamplingMember
 from tracer.models.eval_task import EvalTask, RunType
 from tracer.selectors.eval_tasks.row_resolver import EvalTaskSelectionRejected
+from tracer.services.eval_tasks.running_task import InactiveTask, locked_running_task
 from tracer.services.eval_tasks.sampling import stats
 from tracer.services.eval_tasks.sampling.errors import (
     SamplingFilterRejected,
@@ -48,6 +49,7 @@ from tracer.services.eval_tasks.sampling.policy import (
     validate_policy,
 )
 from tracer.services.eval_tasks.sampling.query import (
+    BATCH_SIZE,
     SamplingQuery,
     live_scan_windows,
     sampling_clock,
@@ -56,6 +58,9 @@ from tracer.services.eval_tasks.sampling.query import (
 from tracer.services.eval_tasks.sampling.witnesses import TraceWitnessReader
 
 if TYPE_CHECKING:
+    from django.db.models import QuerySet
+
+    from tracer.models.observation_span import EvalLogger
     from tracer.services.eval_tasks.reconciler import ReconcileResult
 
 logger = logging.getLogger(__name__)
@@ -293,7 +298,16 @@ class _Fence:
     edited, raises before it writes anything else.
     """
 
-    def __init__(self, task_id, revision: str, cohort_id, token: uuid.UUID) -> None:
+    def __init__(
+        self,
+        task_id,
+        revision: str,
+        cohort_id,
+        token: uuid.UUID,
+        *,
+        require_running: bool,
+    ) -> None:
+        self.require_running = require_running
         self.task_id, self.revision = task_id, revision
         self.cohort_id, self.token = cohort_id, token
 
@@ -305,7 +319,7 @@ class _Fence:
         )
 
         with transaction.atomic():
-            task = _locked_task(self.task_id)
+            task = _locked_task(self.task_id, require_running=self.require_running)
             if _task_revision(task) != self.revision:
                 raise EvalTaskRevisionChanged(
                     "Evaluation task changed while its sampling pass was running."
@@ -319,15 +333,30 @@ class _Fence:
                 )
             yield task
 
-    def release(self) -> None:
-        EvalSamplingCohort.objects.filter(
-            pk=self.cohort_id, lease_token=self.token
-        ).update(lease_token=None, lease_expires_at=None)
+    def finish(self, *, discard_incomplete: bool = False) -> None:
+        # Failure cleanup and lease release are writes too. If pause/delete
+        # won, leave the token to expire; the next active holder can take over.
+        needs_lock = self.require_running or discard_incomplete
+        with transaction.atomic() if needs_lock else nullcontext():
+            if self.require_running:
+                try:
+                    locked_running_task(self.task_id)
+                except InactiveTask:
+                    return
+            owned = EvalSamplingCohort.objects.filter(
+                pk=self.cohort_id, lease_token=self.token
+            )
+            if discard_incomplete:
+                owned.filter(complete=False).delete()
+            else:
+                owned.update(lease_token=None, lease_expires_at=None)
 
 
-def _locked_task(task_id) -> EvalTask:
+def _locked_task(task_id, *, require_running: bool = False) -> EvalTask:
     task = (
-        EvalTask.objects.select_for_update(of=("self",))
+        locked_running_task(task_id)
+        if require_running
+        else EvalTask.objects.select_for_update(of=("self",))
         .select_related("project")
         .get(pk=task_id)
     )
@@ -509,14 +538,14 @@ def _await_closed_settle(task: EvalTask) -> datetime:
 
 
 def _acquire(
-    task_id, now: datetime
+    task_id, now: datetime, *, require_running: bool = False
 ) -> tuple[EvalTask, dict, str, EvalSamplingCohort, bool, _Fence]:
     """Short locked snapshot: policy, revision, cohort and its lease."""
     from tracer.services.eval_tasks.reconciler import _task_revision
 
     token = uuid.uuid4()
     with transaction.atomic():
-        task = _locked_task(task_id)
+        task = _locked_task(task_id, require_running=require_running)
         policy, version = task_policy(task, now=now)
         margin = closed_settle_margin() if policy["mode"] == "closed" else timedelta(0)
         context = {
@@ -563,7 +592,13 @@ def _acquire(
             cohort.save(update_fields=["frozen_at"])
             fresh = True
         cohort.refresh_from_db()
-        fence = _Fence(task.pk, _task_revision(task), cohort.pk, token)
+        fence = _Fence(
+            task.pk,
+            _task_revision(task),
+            cohort.pk,
+            token,
+            require_running=require_running,
+        )
     return task, policy, version, cohort, fresh, fence
 
 
@@ -604,20 +639,45 @@ def _freeze_closed(
         # own it. If even that cleanup fails, the cohort stays uncertified and
         # the next lease holder discards it before freezing.
         try:
-            with transaction.atomic():
-                EvalSamplingCohort.objects.filter(
-                    pk=cohort.pk, lease_token=fence.token, complete=False
-                ).delete()
+            fence.finish(discard_incomplete=True)
         except Exception:
             logger.warning("sampling.freeze_cleanup_failed", exc_info=True)
         raise
 
 
-def reconcile_policy(task: EvalTask) -> ReconcileResult:
+def _retire_pending_pages(results: QuerySet[EvalLogger], *, write: WriteScope) -> int:
+    """Retire bounded pages under the task/revision/lease fence.
+
+    Each page locks eval rows before retiring their issue memberships. Commit
+    before taking the next page's eval locks, preserving the retirement lock
+    order without loading a whole backlog or retaining issue locks across pages.
+    """
+    from tracer.services.eval_tasks.recalculate import drop_pending_entries
+
+    results = results.using("default")
+    remaining = results
+    dropped = 0
+    while True:
+        with write():
+            ids = list(
+                remaining.select_for_update(of=("self",))
+                .order_by("pk")
+                .values_list("pk", flat=True)[:BATCH_SIZE]
+            )
+            if not ids:
+                return dropped
+            dropped += drop_pending_entries(results.filter(pk__in=ids).order_by("pk"))
+            # A busy Recalculate journal is deliberately skipped. Advance even
+            # then so the pass finishes and the next reconcile can retry it.
+            remaining = results.filter(pk__gt=ids[-1])
+
+
+def reconcile_policy(
+    task: EvalTask, *, require_running: bool = False
+) -> ReconcileResult:
     from tracer.models.observation_span import EvalEntryStatus, EvalLogger
     from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
     from tracer.services.eval_tasks.entries import materialize_pending
-    from tracer.services.eval_tasks.recalculate import drop_pending_entries
     from tracer.services.eval_tasks.reconciler import (
         ReconcileResult,
         _continuous_requires_full_reclassification,
@@ -628,7 +688,9 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
     from tracer.services.eval_tasks.sampling.pending import revalidate_pending
 
     now = _await_closed_settle(task)
-    task, policy, version, cohort, fresh, fence = _acquire(task.pk, now)
+    task, policy, version, cohort, fresh, fence = _acquire(
+        task.pk, now, require_running=require_running
+    )
     try:
         if policy["mode"] == "closed" and not cohort.complete:
             _freeze_closed(task, policy, version, cohort, fence)
@@ -650,9 +712,9 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 )
                 | ~Q(output_metadata___task_selection__sampling__policy_version=version)
             )
-            # A dropped Recalculate replacement puts its previous result back,
-            # as on every other reconciler drop path.
-            result = ReconcileResult(dropped=drop_pending_entries(stale))
+        result = ReconcileResult(
+            dropped=_retire_pending_pages(stale, write=fence.write)
+        )
         witnesses = TraceWitnessReader(task)
         live_windows = (
             prepare_live_members(
@@ -701,13 +763,14 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 )
             result.requeued += requeued
             result.dropped += dropped
-        with fence.write() as locked:
-            current_evals = locked.evals.values_list("id", flat=True)
-            result.dropped += drop_pending_entries(
-                EvalLogger.objects.filter(
-                    eval_task_id=str(locked.id), status=EvalEntryStatus.PENDING
-                ).exclude(custom_eval_config_id__in=current_evals)
-            )
+        result.dropped += _retire_pending_pages(
+            EvalLogger.objects.filter(
+                eval_task_id=str(task.id), status=EvalEntryStatus.PENDING
+            ).exclude(
+                custom_eval_config_id__in=task.evals.values_list("id", flat=True)
+            ),
+            write=fence.write,
+        )
         result.dropped += revalidate_pending(
             task, policy, version, cohort, sampling_clock(), page_write=fence.write
         )
@@ -727,7 +790,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
         return result
     finally:
         try:
-            fence.release()
+            fence.finish()
         except Exception:
             # The lease expires on its own; never mask the pass's outcome.
             logger.warning("sampling.lease_release_failed", exc_info=True)

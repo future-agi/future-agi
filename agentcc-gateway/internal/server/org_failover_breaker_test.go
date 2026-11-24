@@ -48,7 +48,7 @@ func TestOrgConfiguredFailoverKeepsBreakers(t *testing.T) {
 								before := keyed.count("synthetic-org-a-key")
 								statuses := map[int]int{}
 								for i := 0; i < 12; i++ {
-									status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"primary"}})
+									status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", stream)
 									statuses[status]++
 								}
 								wantCalls := 6
@@ -104,7 +104,7 @@ func TestOrgFailoverSharesGlobalBreakerState(t *testing.T) {
 						}
 						srv.handlers.tenantStore.Set("org-a", &orgCfg)
 						for i := 0; i < 8; i++ {
-							status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"primary"}})
+							status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", stream)
 							if phase > 0 && (status != http.StatusOK || !strings.Contains(body, "synthetic response")) {
 								t.Fatalf("switching failover config lost successful fallback: status=%d body=%s", status, body)
 							}
@@ -133,7 +133,7 @@ func TestOrgFailoverAllRefusedOverHTTP(t *testing.T) {
 				orgCfg.Routing = orgFailoverConfig(legacy)
 				srv.handlers.tenantStore.Set("org-a", &orgCfg)
 				for i := 0; i < 12; i++ {
-					status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"primary"}})
+					status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", stream)
 					want := http.StatusUnauthorized
 					if i >= 4 {
 						want = http.StatusServiceUnavailable

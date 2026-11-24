@@ -12,6 +12,7 @@ from uuid import UUID
 
 import structlog
 from django.db import transaction
+from django.db.models import QuerySet
 from django.utils import timezone
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
@@ -78,7 +79,7 @@ def environment_of(
     return environment
 
 
-def _versions_of(definition: AgentDefinition):
+def _versions_of(definition: AgentDefinition) -> QuerySet[AgentVersion]:
     return AgentVersion.no_workspace_objects.filter(
         agent_definition_id=definition.id
     ).order_by("-version_number")
@@ -155,7 +156,9 @@ def _source_gone() -> HostedHarnessError:
 def _branch_head(definition: AgentDefinition, source: dict[str, Any]) -> str:
     from simulate.services.harness_agent_changes import mark_source_checked
 
-    head = branch_head_of(definition.organization_id, definition.workspace_id, source)
+    head: str = branch_head_of(
+        definition.organization_id, definition.workspace_id, source
+    )
     mark_source_checked([definition.id])
     return head
 
@@ -302,6 +305,7 @@ def version_at_head(
     parent = _parent(definition)
     runtime = _runtime(parent)
     source = _github_source(runtime)
+    assert runtime is not None
     if head_sha.lower() == str(source.get("commit_sha") or "").lower():
         return parent, False
     at_head = {
@@ -447,7 +451,7 @@ def provider_sync(
 
 
 def upload_version(
-    definition: AgentDefinition, *, archive_artifact_id: UUID, user: Any = None
+    definition: AgentDefinition, *, archive_artifact_id: UUID | None, user: Any = None
 ) -> AgentVersion:
     from simulate.services.harness_versioning.archives import archive_exists
     from simulate.services.hosted_harness_gateway import _source_object_key
@@ -501,7 +505,7 @@ def _same_upload_version(
     upload and the parent's credentials, so the same folder again makes no version."""
     if parent_runtime is None:
         return None
-    rows = (
+    candidates = (
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_definition_id=definition.id,
             source_kind=SourceKind.ARCHIVE,
@@ -512,7 +516,7 @@ def _same_upload_version(
         .defer("credential_blob", "diff")
         .order_by("-created_at")[:_UPLOAD_COMPARE_LIMIT]
     )
-    rows = list(rows)
+    rows = list(candidates)
     if not rows:
         return None
     uploaded = _upload_digests(definition.organization_id, archive_artifact_id)
@@ -635,7 +639,7 @@ def manual_version(
             user=user,
         )
     if runtime is None:
-        kind = _CONFIGURED_KINDS[connector]
+        kind: str = _CONFIGURED_KINDS[connector]
         current = _configured_payload(definition, parent, connector)
     else:
         kind = runtime.source_kind
@@ -788,6 +792,8 @@ def set_environment_policy(
             AgentVersion._base_manager.filter(id=locked.agent_version_id)
             .values_list("agent_definition_id", flat=True)
             .first()
+            if locked.agent_version_id is not None
+            else None
         )
         target = None
         if policy == POLICY_PINNED and version_id is not None:
@@ -869,13 +875,15 @@ def build_preflight(
         "version",
         ready,
         f"v{version.version_number} "
-        + ("is ready" if ready else f"is {runtime.preflight_status}"),
+        + (
+            "is ready" if ready or runtime is None else f"is {runtime.preflight_status}"
+        ),
     )
     if runtime is not None and runtime.source_kind == SourceKind.GITHUB:
         source = runtime.source or {}
         stored = CodeArchive.no_workspace_objects.filter(
             organization_id=definition.organization_id,
-            workspace_id=definition.workspace_id,
+            workspace=definition.workspace_id,
             repository=str(source.get("repository") or "").lower(),
             commit_sha=str(source.get("commit_sha") or "").lower(),
         ).exists()

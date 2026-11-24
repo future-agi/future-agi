@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import uuid
 import zlib
 from collections.abc import Callable, Iterable, Mapping
@@ -27,6 +28,7 @@ from urllib.parse import quote, unquote, urlparse
 
 import structlog
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
@@ -37,12 +39,15 @@ from integrations.services.github_app import (
     installation_credential,
 )
 from simulate.models import (
+    CallExecution,
     HostedHarnessAttempt,
     HostedHarnessConversation,
     HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessSecret,
+    TestExecution,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.agent_contracts import store_build_contract
@@ -84,6 +89,7 @@ from simulate.services.hosted_harness_diagnostics import (
 )
 from simulate.services.hosted_sandbox import (
     SandboxCommandRequest,
+    SandboxCommandStep,
     SandboxConflictError,
     SandboxFileNotFoundError,
     SandboxLaunchSpec,
@@ -162,6 +168,9 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
+# Written by the guest after exit 78: {"cause": <a FAILURE_CAUSES value or null>}.
+_FAILURE_CAUSE_PATH = "/run/futureagi/failure-cause.json"
+_FAILURE_CAUSE_MAX_BYTES = 512
 # The raw contract a version was read into, handed to a build so it starts at the
 # world stage instead of reading the agent again.
 _SEED_CONTRACT_PATH = "/work/seed/contract.json"
@@ -172,6 +181,17 @@ _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
 _PROVIDER_UNREACHABLE_GRACE_SECONDS = 180
+# Capped so pkill 10 + seal 45 + provider get about 30 + delete 120 stays inside the cancel activity's 4-minute timeout.
+_CANCEL_SEAL_CAP_SECONDS = 45
+_CANCEL_SEAL_POLL_SECONDS = 2
+_CANCEL_SIGNAL_TIMEOUT_SECONDS = 10
+
+
+def _cancel_seal_seconds() -> float:
+    """How long a stop waits for the guest to seal the call in flight, as configured and capped."""
+    return max(
+        0.0, min(float(settings.HARNESS_CANCEL_SEAL_SECONDS), _CANCEL_SEAL_CAP_SECONDS)
+    )
 
 
 def _empty_workspace_archive() -> bytes:
@@ -911,10 +931,30 @@ _GUEST_INNER_EXCEPTION = re.compile(
 
 
 # The labels of a guest's typed failures; the stored message adds the cause it printed.
-RUNTIME_VALIDATION_FAILED = (
-    "Generated environment failed real-runtime validation after bounded repair"
-)
+RUNTIME_VALIDATION_FAILED = "We couldn't run this agent version in its environment"
 AUTHORING_FAILED = "Environment authoring failed before a runnable world was saved"
+
+# Why a candidate failed real-runtime validation, as the harness names it. The only failure
+# fact a coding agent's key reads beyond the label: guest text can quote a held-back case.
+FAILURE_CAUSES = frozenset(
+    {
+        "agent_exited_before_ready",
+        "agent_not_ready_in_time",
+        "dependency_not_ready_in_time",
+        "chat_target_timeout",
+        "chat_target_refused",
+    }
+)
+UNKNOWN_FAILURE_CAUSE = "unknown"
+
+
+def closed_failure_cause(value: object) -> str:
+    """A cause as stored or read: a value from ``FAILURE_CAUSES``, else ``unknown``."""
+    return (
+        value
+        if isinstance(value, str) and value in FAILURE_CAUSES
+        else UNKNOWN_FAILURE_CAUSE
+    )
 
 
 def guest_failure_cause(tail: str) -> str:
@@ -1146,14 +1186,14 @@ def acquire_source_archive(
                 status_code=413,
             )
         body = archive.getvalue()
-        stored = store_commit_archive(
+        archived = store_commit_archive(
             organization_id=organization_id,
             workspace_id=workspace_id,
             repository=repository,
             commit_sha=commit_sha,
             body=body,
         )
-        if require_stored and not stored:
+        if require_stored and not archived:
             raise HostedHarnessError(
                 "code_archive_not_stored",
                 "The agent's code could not be stored; it is tried again",
@@ -1655,10 +1695,18 @@ def _simulation_mark(
 def _with_simulation_mark(
     payload: Mapping[str, Any], mark: Mapping[str, str]
 ) -> dict[str, Any]:
-    """A copy of the document that carries the mark, replacing any value already there."""
+    """A copy of the document that carries the mark and the actors switch, replacing any value already there."""
+    from simulate.services.harness_versioning.versions import actors_enabled
+
     document = dict(payload)
     metadata = dict(document.get("metadata") or {})
     metadata["customer_code_environment"] = dict(mark)
+    # Every job document says whether the harness may author, play and apply actors and test conditions.
+    on = actors_enabled()
+    metadata["actors"] = {
+        "enabled": on,
+        "share": list(settings.HARNESS_ACTORS_SHARE) if on else [0.0, 0.0],
+    }
     document["metadata"] = metadata
     return document
 
@@ -2392,25 +2440,35 @@ def _load_bundle_scenarios(manifest: dict, job: HostedHarnessJob) -> list[dict]:
 
 
 class HostedHarnessGateway:
-    def __init__(self) -> None:
+    # Set instead of a client when none is configured: raised on first sandbox use.
+    _provider_error: HostedHarnessError | None = None
+
+    def __init__(self, *, require_provider: bool = True) -> None:
         try:
             self.client = get_sandbox_provider()
         except SandboxProviderUnavailableError as exc:
             # The provider SDK is the optional `sandbox` extra. Retrying cannot
             # install it, so this is neither a 503 nor retryable.
-            raise HostedHarnessError(
+            error = HostedHarnessError(
                 "sandbox_sdk_missing",
                 str(exc),
                 status_code=501,
                 retryable=False,
-            ) from exc
+            )
+            if require_provider:
+                raise error from exc
+            self._provider_error = error
         except SandboxProviderConfigurationError as exc:
-            raise HostedHarnessError(
+            error = HostedHarnessError(
                 "sandbox_provider_not_configured",
                 str(exc),
                 status_code=503,
                 retryable=True,
-            ) from exc
+            )
+            if require_provider:
+                raise error from exc
+            # Raised on first sandbox use instead: a run whose sandbox was never created can still be cancelled.
+            self._provider_error = error
 
     # TODO: no caller since the authoring activity was removed; delete with its
     # sandbox helpers.
@@ -2631,8 +2689,9 @@ class HostedHarnessGateway:
             # Preserve the validated environment bundle with the authored inputs.
             # Later simulation Runs restore this exact snapshot instead of
             # regenerating or re-authoring the environment.
+            # umask 077: the archive holds every case, and /tmp is readable by every user.
             packed = sandbox.process.exec(
-                "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
+                "umask 077; cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
                 "--exclude=__pycache__ --exclude=./cost.json .",
                 timeout=180,
             )
@@ -3069,23 +3128,11 @@ class HostedHarnessGateway:
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )
             )
-            if certify:
-                bundle_command = bundle_cache.certify_command()
-            elif assembled is not None:
-                bundle_command = (
-                    bundle_cache.source_check_command(assembled.source_digest)
-                    + bundle_command
-                )
-            entrypoint = (
-                "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
-                "--source /work/source --output /work/artifacts"
-            )
-            if adaptation is not None:
-                guest_command = adaptation.command
-            elif release is not None:
-                guest_command = f"{release.bundle_command} && {entrypoint}"
-            else:
-                guest_command = (
+            # The two agent-learning-kit entrypoints, and certify, run the suite's customer
+            # processes: only those steps may run each as its own OS user. Extend, the bundle
+            # author and the copies between them run as the sandbox user, without that means.
+            steps = [
+                SandboxCommandStep(
                     "if [ ! -f /work/authoring/contract.json ]; then "
                     "python -m fi.alk.harness.hosted_authoring_entrypoint "
                     "/work/job.json --source /work/source --output /work/authoring "
@@ -3100,19 +3147,44 @@ class HostedHarnessGateway:
                         if seed_contract is not None
                         else ""
                     )
-                    + "; fi && "
-                    + ((extend_command + " && ") if extend_command else "")
-                    + bundle_command
-                    + " && "
-                    + entrypoint
+                    + "; fi",
+                    harness=True,
                 )
+            ]
+            if extend_command:
+                steps.append(SandboxCommandStep(extend_command))
+            if certify:
+                steps.extend(bundle_cache.certify_steps())
+            else:
+                source_check = (
+                    bundle_cache.source_check_command(assembled.source_digest)
+                    if assembled is not None
+                    else ""
+                )
+                if source_check:
+                    steps.append(SandboxCommandStep(source_check.removesuffix(" && ")))
+                steps.append(SandboxCommandStep(bundle_command))
+            entrypoint = SandboxCommandStep(
+                "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
+                "--source /work/source --output /work/artifacts",
+                harness=True,
+            )
+            steps.append(entrypoint)
+            if adaptation is not None:
+                # An adaptation authors and runs nothing: its own process is the whole command.
+                steps = [SandboxCommandStep(adaptation.command)]
+            elif release is not None:
+                # A release run composes its bundle from the staged releases, then runs it.
+                steps = [SandboxCommandStep(release.bundle_command), entrypoint]
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
-                    command=guest_command,
+                    command=" && ".join(step.command for step in steps),
                     env=authoring_exports,
                     run_async=True,
                     suppress_input_echo=True,
+                    # The suite's held-back cases sit in this sandbox; the agent must not read them.
+                    steps=tuple(steps),
                 ),
             )
             sandbox.fs.upload_file(
@@ -3271,8 +3343,11 @@ class HostedHarnessGateway:
                 if overlay is not None
                 else ""
             )
+            # The builder writes held-back scenarios here, after the entrypoint's lock-down ran:
+            # only the harness's own user may read them.
             + "mkdir -p /work/authoring && "
             "chown -R svc-control:svc-control /work/authoring && "
+            "chmod -R go-rwx /work/authoring && "
             f"chmod 0600 {_CHAT_CAPABILITIES_PATH} {_CHAT_POLICY_PATH}",
             timeout=60,
         )
@@ -3313,6 +3388,7 @@ class HostedHarnessGateway:
                 # Settings go in the environment, never on the command line a process listing shows.
                 env=chat_exports,
                 command=(
+                    "umask 077 && "
                     "python -m fi.alk.harness.hosted_chat_entrypoint "
                     "--job /work/job.json --source /work/source "
                     "--workspace /work/authoring "
@@ -3839,6 +3915,8 @@ class HostedHarnessGateway:
         if capture is not None:
             observation["logs"] = capture.entrypoint_log[-8000:]
             observation["process_logs"] = capture.process_logs[-16000:]
+        if command.exit_code == 78:
+            observation["failure_cause"] = self._guest_failure_cause(attempt, sandbox)
         if command.exit_code:
             observation["refusal_file"] = read_failure_file(sandbox)
         if command.exit_code is not None:
@@ -3852,6 +3930,31 @@ class HostedHarnessGateway:
                 observation["process_logs"],
             )
         return observation
+
+    @staticmethod
+    def _guest_failure_cause(attempt: HostedHarnessAttempt, sandbox) -> object:
+        """The cause the guest recorded after exit 78, unchecked; ``None`` when it recorded
+        none, an older image wrote no file, or the read fails. The guest wrote it, so the read
+        is bounded, and a failed read never changes the attempt's outcome."""
+        try:
+            read = sandbox.process.exec(
+                f"head -c {_FAILURE_CAUSE_MAX_BYTES} {_FAILURE_CAUSE_PATH} 2>/dev/null",
+                timeout=_PROGRESS_FILE_TIMEOUT_SECONDS,
+            )
+        except Exception:  # noqa: BLE001 - the cause is optional; the exit code decides
+            logger.exception(
+                "could not read the guest failure cause attempt=%s", attempt.id
+            )
+            return None
+        if read.exit_code:
+            return None
+        try:
+            body = json.loads(str(read.result or ""))
+        except ValueError:
+            # The guest wrote this file; what it holds is the guest's, not a platform fault.
+            logger.warning("unreadable guest failure cause attempt=%s", attempt.id)
+            return None
+        return body.get("cause") if isinstance(body, dict) else None
 
     @staticmethod
     def _sync_offline_control(attempt: HostedHarnessAttempt, sandbox) -> None:
@@ -4206,7 +4309,7 @@ class HostedHarnessGateway:
         ):
             try:
                 packed = sandbox.process.exec(
-                    "cd /work/authoring && "
+                    "umask 077; cd /work/authoring && "
                     "[ -f contract.json ] && [ -d scenarios ] && "
                     "tar -czf /tmp/authoring-rerun.tar.gz "
                     "--exclude=__pycache__ --exclude=./cost.json .",
@@ -4363,7 +4466,7 @@ class HostedHarnessGateway:
             str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
         )
         packed = sandbox.process.exec(
-            "test -d /work/outbound-spool && "
+            "umask 077; test -d /work/outbound-spool && "
             "tar -czf /tmp/offline-outbound.tar.gz -C /work outbound-spool",
             timeout=120,
         )
@@ -4525,7 +4628,11 @@ class HostedHarnessGateway:
         )
         return True
 
-    def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
+    def cancel(
+        self, job: HostedHarnessJob, *, reason: str, await_seal: bool = False
+    ) -> HostedHarnessJob:
+        """Stop the job and remove its sandbox; `await_seal` (the cancel activity only, never a request) first waits,
+        bounded, for the guest to seal the call in flight."""
         from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
 
         validate_cancellation_reason(reason)
@@ -4563,10 +4670,12 @@ class HostedHarnessGateway:
                     attempt.id,
                     provider_ref="",
                     verified_absent=True,
-                    details={"provider": self.client.name, "sandbox_created": False},
+                    details={
+                        # No `client` when no sandbox provider is configured: a stop needs none here.
+                        "provider": getattr(getattr(self, "client", None), "name", ""),
+                        "sandbox_created": False,
+                    },
                 )
-            from simulate.models import CallExecution, TestExecution
-
             job.state = HostedHarnessJob.State.CANCELED
             job.current_stage = HostedHarnessJob.State.CANCELED
             job.terminal_at = timezone.now()
@@ -4599,6 +4708,8 @@ class HostedHarnessGateway:
                 )
             return job
 
+        if self._provider_error is not None:
+            raise self._provider_error
         # Hang up the PSTN leg before any provider call. Reconnecting to or
         # deleting a remote sandbox can take tens of seconds, while Stop must
         # disconnect the caller promptly. This pass is best effort because the
@@ -4640,7 +4751,7 @@ class HostedHarnessGateway:
                     # but not this shell's own command line. An unbracketed `pkill -f`
                     # can terminate its invoking shell before cleanup reaches deletion.
                     "pkill -TERM -f '[f]i.alk.harness.hosted_entrypoint' || true",
-                    timeout=30,
+                    timeout=_CANCEL_SIGNAL_TIMEOUT_SECONDS,
                 )
             except Exception:
                 logger.exception(
@@ -4662,6 +4773,9 @@ class HostedHarnessGateway:
                 ]
             )
 
+        # The guest seals the call in flight with what it kept before its sandbox goes; off the request path only.
+        if await_seal:
+            self._await_guest_seal(attempt)
         return self._delete_and_record(
             attempt,
             # Re-run after sandbox termination to close the create/delete race. Do
@@ -4669,6 +4783,45 @@ class HostedHarnessGateway:
             # verified. A transient failure is retried through SandboxNotFound.
             after_provider_cleanup=lambda: cleanup_hosted_phone_rooms(job),
         )
+
+    def _await_guest_seal(self, attempt: HostedHarnessAttempt) -> None:
+        """Wait, bounded, until every call of this job still in flight has its receipt or the attempt's terminal
+        event arrived. Never raises; a retried cancel never waits twice."""
+
+        def in_flight() -> bool:
+            # Pending too: a call under way may read pending until its "scenario started" event arrives with the receipt.
+            return HostedHarnessExecution.objects.filter(
+                job_id=attempt.job_id,
+                call_execution__status__in=(
+                    CallExecution.CallStatus.PENDING,
+                    CallExecution.CallStatus.ONGOING,
+                ),
+                receipt__isnull=True,
+            ).exists()
+
+        try:
+            if not in_flight():
+                return
+            key = f"hosted-cancel-seal:{attempt.id}"
+            try:
+                if cache.get(key):
+                    return
+                cache.set(key, True, timeout=3600)
+            except Exception:  # noqa: BLE001 - any cache backend's failure; the seal still gets its wait
+                # Without the cache a retry may wait again.
+                logger.warning(
+                    "hosted_cancel_seal_cache_unavailable attempt=%s", attempt.id
+                )
+            deadline = time.monotonic() + _cancel_seal_seconds()
+            while time.monotonic() < deadline:
+                attempt.refresh_from_db(fields=["terminal_event_received"])
+                # Not `terminal_stage`: cancel itself sets it to "canceled" before this wait.
+                if attempt.terminal_event_received or not in_flight():
+                    return
+                time.sleep(_CANCEL_SEAL_POLL_SECONDS)
+            logger.warning("hosted_cancel_seal_timeout attempt=%s", attempt.id)
+        except Exception:
+            logger.exception("hosted cancel seal wait failed attempt=%s", attempt.id)
 
     def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
         # An infrastructure/connectivity failure is worth a fresh attempt while
@@ -4766,8 +4919,8 @@ class HostedHarnessGateway:
                     attempt.provider_ref,
                 )
                 return None
-            kept = self._keep_delivered_results(attempt)
-            if not kept:
+            results_kept = self._keep_delivered_results(attempt)
+            if not results_kept:
                 attempt.terminal_stage = "failed"
                 attempt.terminal_failure = {
                     "domain": "infrastructure",
@@ -4795,7 +4948,7 @@ class HostedHarnessGateway:
             try:
                 return self._delete_and_record(
                     attempt,
-                    retry_pending=not kept
+                    retry_pending=not results_kept
                     and self._should_retry(attempt, "infrastructure"),
                 )
             except SandboxConflictError:
@@ -4974,6 +5127,11 @@ class HostedHarnessGateway:
                     "process_logs": observation.get("process_logs", ""),
                 },
             }
+            if exit_code == 78 and kept is None:
+                # The cause belongs to the guest's own failure; one the platform set stays as set.
+                attempt.terminal_failure["cause"] = closed_failure_cause(
+                    observation.get("failure_cause")
+                )
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
                 update_fields=[

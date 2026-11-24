@@ -1,21 +1,27 @@
-from typing import Any
+import operator
+from functools import reduce
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
 from django.db.models import (
+    BooleanField,
     Case,
     CharField,
     Count,
+    Exists,
     F,
     OuterRef,
     Q,
     QuerySet,
     Subquery,
+    Value,
     When,
     Window,
 )
 from django.db.models.fields.json import KT
 from django.db.models.functions import Coalesce, RowNumber
 
+from simulate.constants.agent_filters import AGENT_SOURCE_VALUES
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
@@ -26,10 +32,34 @@ from simulate.models import (
 from simulate.selectors.runs import user_executions
 from simulate.services.harness_environment import environment_name, run_summaries
 
+if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
+
 ENVIRONMENTS_PER_ROW = 5
 
+_OBSERVE_LINKED = Q(
+    observability_provider__enabled=True,
+    observability_provider__deleted=False,
+    observability_provider__project__deleted=False,
+)
+_ENVIRONMENT_CONDITIONS = {
+    "with": Q(_in_environment=True),
+    "without": Q(_in_environment=False),
+}
+_OBSERVE_CONDITIONS = {"linked": Q(_observed=True), "not_linked": Q(_observed=False)}
+_FILTER_CONDITIONS = {
+    "agent_type": lambda value: Q(agent_type=value),
+    "source": lambda value: Q(_source__in=AGENT_SOURCE_VALUES[value]),
+    "environments": _ENVIRONMENT_CONDITIONS.__getitem__,
+    "observe": _OBSERVE_CONDITIONS.__getitem__,
+}
 
-def _environment_jobs() -> QuerySet[HostedHarnessJob]:
+
+class _JobOwner(TypedDict):
+    _owner: Any
+
+
+def _environment_jobs() -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
     # An environment of a deleted test is gone from the page, so it is not
     # counted, as recent runs leave its runs out. One not yet given a test
     # still holds the agent through the version it pins.
@@ -44,7 +74,7 @@ def _environment_jobs() -> QuerySet[HostedHarnessJob]:
     )
 
 
-def _environments() -> QuerySet[HostedHarnessJob]:
+def _environments() -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
     return _environment_jobs().filter(_owner=OuterRef("pk"))
 
 
@@ -73,6 +103,7 @@ def annotate_agent_rows(
     )
     return queryset.annotate(
         _agent_kind=Subquery(stored_setups.values("agent_kind")[:1]),
+        _version_source_kind=Subquery(version_source_kinds[:1]),
         _build_source_kind=Coalesce(
             Subquery(source_kinds[:1]),
             Subquery(version_source_kinds[:1]),
@@ -94,17 +125,46 @@ def annotate_agent_rows(
             ),
             0,
         ),
+        _in_environment=Exists(environments),
     ).annotate(
         _source=Case(
             When(_agent_kind="source", then=F("_build_source_kind")),
+            When(
+                _agent_kind__isnull=True,
+                _version_source_kind__in=[
+                    HarnessAgentVersionRuntime.SourceKind.GITHUB,
+                    HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
+                ],
+                then=F("_version_source_kind"),
+            ),
             When(
                 Q(provider__isnull=True) | Q(provider=""),
                 then=F("_build_source_kind"),
             ),
             default=F("provider"),
             output_field=CharField(),
-        )
+        ),
+        _observed=Case(
+            When(
+                _agent_kind="source",
+                production_project__deleted=False,
+                then=Value(True),
+            ),
+            When(_agent_kind="source", then=Value(False)),
+            When(_OBSERVE_LINKED, then=Value(True)),
+            default=Value(False),
+            output_field=BooleanField(),
+        ),
     )
+
+
+def filter_agent_rows(
+    queryset: QuerySet[AgentDefinition], filters: dict[str, list[str]]
+) -> QuerySet[AgentDefinition]:
+    for field, condition in _FILTER_CONDITIONS.items():
+        if values := filters.get(field):
+            queryset = queryset.filter(reduce(operator.or_, map(condition, values)))
+    return queryset
 
 
 def environment_refs(agents: list[AgentDefinition]) -> dict[UUID, list[dict[str, str]]]:
@@ -144,7 +204,7 @@ def observe_project(agent: AgentDefinition, kind: str | None) -> dict[str, str] 
         project = agent.production_project
         if project is None or project.deleted:
             return None
-    elif observability_on(agent):
+    elif observability_on(agent) and agent.observability_provider is not None:
         project = agent.observability_provider.project
     else:
         return None

@@ -98,6 +98,7 @@ from simulate.services.hosted_sandbox import (
     SandboxNotFoundError,
     SandboxProviderError,
 )
+from simulate.tests.hosted_job_payloads import hosted_job_payload as _payload
 from simulate.tests.test_agent_setup_service import source_agent
 from tfc.ee_loader import has_ee
 
@@ -773,52 +774,6 @@ def test_resolved_egress_cap_applies_after_wildcard_minimization(settings):
     assert "example.com" not in domains
     assert len(domains) == 20
     _validate_resolved_egress_domains(domains)
-
-
-def _payload():
-    return {
-        "schema_version": "futureagi.harness-job.v1",
-        "source": {
-            "kind": "github",
-            "repository": "future-agi/reference-agent",
-            "ref": "main",
-            "commit_sha": "a" * 40,
-            "visibility": "private",
-            "installation_id": "installation-1",
-        },
-        "agent": {"connector": "vapi", "config": {}, "secret_refs": {}},
-        "scenario_count": 1,
-        "seed": 1,
-        "runtime": {
-            "isolation": "dedicated_vm",
-            "cpu_units": 2,
-            "memory_mb": 4096,
-            "parallelism": 1,
-            "concurrency_weight": 1,
-            "max_duration_seconds": 600,
-            "network_policy": "live",
-        },
-        "security": {
-            "untrusted_source": True,
-            "read_only_source": True,
-            "allow_privileged": False,
-            "allow_host_runtime_control": False,
-            "allowed_egress_domains": ["agent.example.com"],
-        },
-        "retry": {
-            "max_infrastructure_attempts": 2,
-            "initial_backoff_seconds": 1,
-            "max_backoff_seconds": 15,
-            "retryable_domains": ["infrastructure", "connectivity"],
-        },
-        "artifacts": {
-            "level": "full",
-            "retention_days": 30,
-            "allow_bundle_download": True,
-            "max_artifact_bytes": 1024,
-        },
-        "metadata": {},
-    }
 
 
 def test_authoring_archive_resolves_uploaded_source_by_explicit_key(tmp_path, settings):
@@ -1938,6 +1893,24 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
     assert job.attempts.count() == 1
 
 
+_ENTRYPOINTS = (
+    "python -m fi.alk.harness.hosted_authoring_entrypoint ",
+    "python -m fi.alk.harness.hosted_entrypoint ",
+)
+
+
+def assert_only_the_entrypoints_are_harness_steps(steps):
+    """In every chain the steps that start an agent-learning-kit entrypoint, and no others, are
+    harness steps, and the run's entrypoint is the last one: without the grant it would run every
+    customer process as one fixed user, without a word."""
+    assert steps[-1].harness
+    assert steps[-1].command.startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    for step in steps:
+        assert step.harness == any(entry in step.command for entry in _ENTRYPOINTS), (
+            step.command
+        )
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("unrestricted", [False, True])
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
@@ -2013,6 +1986,18 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    # Only the two agent-learning-kit entrypoints may run each customer process as its own user:
+    # the bundle author between them holds no such means.
+    request = client.sandbox.process.session_request
+    assert_only_the_entrypoints_are_harness_steps(request.steps)
+    harness = [step.command for step in request.steps if step.harness]
+    assert len(harness) == 2
+    assert harness[0].startswith("if [ ! -f /work/authoring/contract.json ]; then ")
+    assert "python -m fi.alk.harness.hosted_authoring_entrypoint " in harness[0]
+    assert harness[1].startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    assert [step for step in request.steps if "bundle_author_v2" in step.command] == [
+        step for step in request.steps if not step.harness
+    ]
     assert (
         client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
         == "gemini-3.7-flash"
@@ -2889,10 +2874,25 @@ def test_reconcile_waits_when_daytona_deletion_is_already_in_progress(
     assert attempt.terminal_failure["code"] == "sandbox_unreachable"
 
 
+_NO_FILE = object()  # an older guest image writes no cause file
+
+
 @pytest.mark.django_db
-@pytest.mark.parametrize("exit_code", [3, 78])
+@pytest.mark.parametrize(
+    "exit_code,guest_cause,stored",
+    [
+        (3, _NO_FILE, None),
+        (78, _NO_FILE, "unknown"),
+        (78, None, "unknown"),
+        (78, "agent_exited_before_ready", "agent_exited_before_ready"),
+        (78, "chat_target_timeout", "chat_target_timeout"),
+        (78, "dependency_not_ready_in_time", "dependency_not_ready_in_time"),
+        (78, "RuntimeError: a held-back case", "unknown"),
+        (78, ["agent_exited_before_ready"], "unknown"),
+    ],
+)
 def test_reconcile_terminal_and_authoring_exits_never_retry(
-    organization, monkeypatch, exit_code
+    organization, monkeypatch, exit_code, guest_cause, stored
 ):
     from simulate.services.hosted_harness import record_cleanup
 
@@ -2927,18 +2927,60 @@ def test_reconcile_terminal_and_authoring_exits_never_retry(
 
     with acquire:
         attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
-    monkeypatch.setattr(
-        gateway, "inspect", lambda _: {"exit_code": exit_code, "logs": ""}
-    )
+    observation = {"exit_code": exit_code, "logs": ""}
+    if guest_cause is not _NO_FILE:
+        observation["failure_cause"] = guest_cause
+    monkeypatch.setattr(gateway, "inspect", lambda _: observation)
     assert gateway.reconcile_completed(attempt).state != (
         HostedHarnessJob.State.RETRY_WAIT
     )
     assert captured["retry_pending"] is False
 
+    attempt.refresh_from_db()
+    assert (attempt.terminal_failure or {}).get("cause") == stored
     if exit_code == 78:
-        attempt.refresh_from_db()
         assert attempt.terminal_failure["domain"] == "environment"
         assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
+
+
+@pytest.mark.parametrize(
+    "exit_code,result,cause",
+    [
+        (0, '{"cause": "agent_not_ready_in_time"}', "agent_not_ready_in_time"),
+        (0, '{"cause": null}', None),
+        (1, "", None),  # an older guest image wrote no file
+        (0, "not json", None),
+        (0, '["agent_exited_before_ready"]', None),
+    ],
+)
+def test_guest_failure_cause_is_a_bounded_read_that_never_raises(
+    exit_code, result, cause
+):
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(exit_code=exit_code, result=result)
+
+    sandbox = SimpleNamespace(process=SimpleNamespace(exec=run))
+    attempt = SimpleNamespace(id="attempt-1")
+
+    assert HostedHarnessGateway._guest_failure_cause(attempt, sandbox) == cause
+    assert commands == ["head -c 512 /run/futureagi/failure-cause.json 2>/dev/null"]
+
+
+def test_guest_failure_cause_reads_none_when_the_provider_fails():
+    def run(command, **kwargs):
+        raise TimeoutError("toolbox unavailable")
+
+    sandbox = SimpleNamespace(process=SimpleNamespace(exec=run))
+
+    assert (
+        HostedHarnessGateway._guest_failure_cause(
+            SimpleNamespace(id="attempt-1"), sandbox
+        )
+        is None
+    )
 
 
 def _refusal(**overrides):
@@ -3216,6 +3258,68 @@ def test_reconcile_keeps_a_failure_the_platform_set_over_a_crash_exit(
     assert attempt.terminal_failure["code"] == "subfolder_ignored"
     assert job.failure["code"] == "subfolder_ignored"
     assert job.state == HostedHarnessJob.State.FAILED
+
+
+@pytest.mark.django_db
+def test_a_failure_the_platform_set_takes_no_guest_cause_at_exit_78(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import (
+        _fail_attempt_from_platform,
+        record_cleanup,
+    )
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-cause")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    monkeypatch.setattr(
+        gateway,
+        "_delete_and_record",
+        lambda attempt, *, retry_pending=False: record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        ),
+    )
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    _fail_attempt_from_platform(
+        attempt,
+        stage="understanding_agent",
+        code="subfolder_ignored",
+        message="the harness read the repository root",
+    )
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {
+            "exit_code": 78,
+            "logs": "",
+            "failure_cause": "agent_exited_before_ready",
+        },
+    )
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # The platform's failure keeps its own words: a guest cause would replace them on every reader.
+    assert attempt.terminal_failure["code"] == "subfolder_ignored"
+    assert "cause" not in attempt.terminal_failure
+    assert "cause" not in job.failure
 
 
 def test_read_failure_file_tells_absent_from_malformed():
@@ -4318,6 +4422,13 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
         == "/work/builder-cost.json"
     )
     assert client.deleted is False
+    # What the builder writes after the lock-down stays the harness's own: the workspace is
+    # closed before chat starts, and chat writes with a private umask.
+    prepare = next(
+        call for call in client.sandbox.process.exec_calls if "/work/authoring" in call
+    )
+    assert "chmod -R go-rwx /work/authoring" in prepare
+    assert client.sandbox.process.session_request.command.startswith("umask 077 && ")
 
 
 @pytest.mark.django_db

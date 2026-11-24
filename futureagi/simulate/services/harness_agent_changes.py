@@ -137,8 +137,8 @@ def watched_sources(
     *, repository: str | None = None, definition_id: Any = None
 ) -> list[WatchedSource]:
     """Live, pinned, built environments whose effective default agent version is a
-    public GitHub source, and connected agents on a GitHub source (private ones
-    too, read through their installation) with no such environment; optionally
+    GitHub source, and connected agents on a GitHub source with no such
+    environment; a private source is read through its installation. Optionally
     only those on ``repository`` (any case)."""
     jobs = HostedHarnessJob.no_workspace_objects.filter(
         environment__isnull=True,
@@ -163,7 +163,6 @@ def watched_sources(
             | Q(agent_version__harness_runtime__source__repository__iexact=repository)
         )
     found = []
-    private = 0
     for job in jobs.order_by("created_at"):
         connected = agent_definition_owner(job) == "connected"
         if not connected and _busy(job):
@@ -175,9 +174,6 @@ def watched_sources(
         built = (job.payload or {}).get("source") or {}
         access = (facts.agent_payload or {}).get("source_access") or {}
         visibility = access.get("visibility") or built.get("visibility")
-        if visibility == "private" and not connected:
-            private += 1
-            continue
         name = str(source.get("repository") or "")
         stored_ref = str(source.get("ref") or "")
         if not safe_repository(name) or _PINNED_REF.fullmatch(stored_ref):
@@ -217,8 +213,6 @@ def watched_sources(
                 installation_id=_private_installation(visibility, access, built),
             )
         )
-    if private:
-        logger.info("harness_agent_watch_private_skipped count=%d", private)
     watched = {one.definition_id for one in found if one.connected}
     found.extend(
         one
@@ -670,6 +664,8 @@ def _observe_one(
         )
         .filter(id=watched.environment_id, environment__isnull=True, deleted=False)
         .first()
+        if watched.environment_id is not None
+        else None
     )
     if environment is None or environment.agent_version_id != (
         watched.parent_version_id
@@ -697,15 +693,17 @@ def _observe_one(
         or environment.agent_version
     )
     first_new = next_version_number(parent.agent_definition_id)
-    # The GitHub App installation the repository was connected through: without it a
-    # fix on the new version cannot open a pull request.
-    installation_id = (
+    # The GitHub App installation the repository was connected through: a private
+    # source is read through it, and without it a fix on the new version cannot open
+    # a pull request.
+    access = (
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_version_id=parent.id
         )
-        .values_list("agent_payload__source_access__installation_id", flat=True)
+        .values_list("agent_payload__source_access", flat=True)
         .first()
-    )
+    ) or {}
+    installation_id = access.get("installation_id")
     # No transaction or lock around it: its activation takes the environment's lock
     # after releasing the definition's.
     version = create_agent_version(
@@ -717,7 +715,9 @@ def _observe_one(
             "repository": watched.repository,
             "ref": watched.ref,
             "commit_sha": head,
-            "visibility": "public",
+            "visibility": "private"
+            if access.get("visibility") == "private"
+            else "public",
             "repository_id": watched.repository_id,
             **({"installation_id": installation_id} if installation_id else {}),
         },
@@ -968,7 +968,7 @@ def receive_push(
     return dict(counts)
 
 
-def validate_public_github_source(
+def validate_github_source(
     payload: Mapping[str, Any],
     *,
     organization_id: Any = None,
@@ -976,26 +976,39 @@ def validate_public_github_source(
     lookup: bool = True,
     required: bool = False,
 ) -> int | None:
-    """Refuse a new environment on a private or unknown GitHub repository: only
-    public ones are watched. The repository is read with the workspace's credential.
-    GitHub not answering never blocks a creation, unless ``required``: then an
-    unchecked repository is refused, saying why. Without ``lookup`` only what the
-    payload says is checked. Returns GitHub's id for the repository when it was
-    looked up."""
+    """Refuse a new environment on a GitHub repository the watcher could not read:
+    a private one needs its installation, and a public one must exist. A public
+    repository is read with the workspace's credential, a private one through its
+    installation. GitHub not answering never blocks a public creation, unless
+    ``required``: then an unchecked repository is refused, saying why. Without
+    ``lookup`` only what the payload says is checked. Returns GitHub's id for the
+    repository when it was looked up."""
     source = payload.get("source") or {}
     if source.get("kind") != "github":
         return None
+    repository = str(source.get("repository") or "")
+    if source.get("visibility") == "private":
+        installation_id = str(source.get("installation_id") or "")
+        if not installation_id:
+            raise HostedHarnessError(
+                "github_installation_not_connected",
+                "Connect GitHub in Settings > Integrations before building from a"
+                " private repository",
+                status_code=422,
+            )
+        if not lookup:
+            return None
+        from simulate.services.agent_connect import installation_repository_id
+
+        return installation_repository_id(installation_id, repository)
     private = HostedHarnessError(
         "github_private_unsupported",
-        "Private GitHub repositories can't be versioned yet; use a public repository"
-        " or upload the folder",
+        "That repository is private; choose Private and connect GitHub in"
+        " Settings > Integrations",
         status_code=422,
     )
-    if source.get("visibility") == "private":
-        raise private
     if not lookup:
         return None
-    repository = str(source.get("repository") or "")
     found = None
     if safe_repository(repository):
         with read_credential(organization_id, workspace_id) as credential:
