@@ -65,13 +65,14 @@ function AddButton({
   contained = false,
   locked = false,
   short = false,
+  lockTip = LOCK_TOOLTIP,
 }) {
   return (
     <CustomTooltip
       show
       arrow
       size="small"
-      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.addComingSoon}
+      title={locked ? lockTip : SCENARIOS_COPY.addComingSoon}
     >
       <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
         <Button
@@ -90,6 +91,7 @@ function AddButton({
   );
 }
 AddButton.propTypes = {
+  lockTip: PropTypes.string,
   onClick: PropTypes.func,
   contained: PropTypes.bool,
   locked: PropTypes.bool,
@@ -98,17 +100,28 @@ AddButton.propTypes = {
 
 // Shown when the environment has no scenarios at all — rare, since they are
 // normally derived when the environment is built.
-function RoutePlaceholder({ onAdd, locked = false }) {
+function RoutePlaceholder({ onAdd, locked = false, lockTip }) {
   return (
     <EmptyState
       icon="solar:widget-add-linear"
       title={SCENARIOS_COPY.emptyTitle}
       body={SCENARIOS_COPY.emptyBody}
-      action={<AddButton onClick={onAdd} contained locked={locked} />}
+      action={
+        <AddButton
+          onClick={onAdd}
+          contained
+          locked={locked}
+          lockTip={lockTip}
+        />
+      }
     />
   );
 }
-RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
+RoutePlaceholder.propTypes = {
+  lockTip: PropTypes.string,
+  onAdd: PropTypes.func,
+  locked: PropTypes.bool,
+};
 
 // Scenarios tab body. The scenarios are already here — derived when the
 // environment is built — so the page leads with them: one toolbar (search,
@@ -120,6 +133,7 @@ export default function ScenariosStep({
   envState,
   patch,
   locked = false,
+  lockReason = null,
   onStartRun,
   runDialogOpen = false,
   canRun = false,
@@ -142,10 +156,10 @@ export default function ScenariosStep({
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
   const { canEdit } = useSimulationAccess();
-  const rowsLocked = locked || !canEdit;
-  const rowsLockTooltip = locked
-    ? LOCK_TOOLTIP
-    : WORKSPACE_COPY.viewer.scenarios;
+  const held = locked || Boolean(lockReason);
+  const lockTip = lockReason || LOCK_TOOLTIP;
+  const rowsLocked = held || !canEdit;
+  const rowsLockTooltip = held ? lockTip : WORKSPACE_COPY.viewer.scenarios;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -518,7 +532,11 @@ export default function ScenariosStep({
           body="Something went wrong loading this environment's scenarios. Try again."
         />
       ) : !hasScenarios ? (
-        <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
+        <RoutePlaceholder
+          onAdd={() => setAdding(true)}
+          locked={held}
+          lockTip={lockTip}
+        />
       ) : (
         <ClickAwayListener onClickAway={handleClickAway}>
           <Box
@@ -590,7 +608,8 @@ export default function ScenariosStep({
                       <AddButton
                         onClick={() => setAdding(true)}
                         contained
-                        locked={locked}
+                        locked={held}
+                        lockTip={lockTip}
                         short
                       />
                     </>
@@ -748,6 +767,7 @@ export default function ScenariosStep({
 }
 
 ScenariosStep.propTypes = {
+  lockReason: PropTypes.string,
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE.isRequired,
   patch: PropTypes.func.isRequired,

@@ -20,6 +20,7 @@ import ActorRelations from "./ActorRelations";
 import ActorRow from "./ActorRow";
 import ActorSideGroups from "./ActorSideGroups";
 import ActorsSkeleton from "./ActorsSkeleton";
+import CustomTooltip from "src/components/tooltip";
 import AddActorMenu from "./AddActorMenu";
 import { ACTORS_COPY } from "./actors.constants";
 
@@ -32,7 +33,12 @@ const OUTLINED = {
 };
 
 // Edits go to the draft; a version changes only when the draft is saved.
-export default function WorldActorsPanel({ envId, locked = false }) {
+export default function WorldActorsPanel({
+  envId,
+  locked = false,
+  lockReason = null,
+}) {
+  const held = Boolean(lockReason);
   const { data, isPending, isError, refetch } = useActors(envId);
   const { data: detail } = useQuery(harnessEnvironmentQuery(envId));
   const personas = detail?.overview?.personas_count;
@@ -152,7 +158,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
         onRemove={() => remove(actor)}
         loudChannels={loudChannels}
         deleting={actor.id === deletingId}
-        busy={edit.isPending}
+        busy={edit.isPending || held}
+        busyReason={lockReason}
       />
     ));
 
@@ -187,11 +194,15 @@ export default function WorldActorsPanel({ envId, locked = false }) {
           {C.intro}
         </Typography>
         {!locked && (
-          <AddActorMenu
-            label={C.add}
-            disabled={edit.isPending}
-            onPick={addOn}
-          />
+          <CustomTooltip show arrow size="small" title={lockReason || ""}>
+            <Box component="span" sx={{ display: "inline-flex" }}>
+              <AddActorMenu
+                label={C.add}
+                disabled={edit.isPending || held}
+                onPick={addOn}
+              />
+            </Box>
+          </CustomTooltip>
         )}
       </Stack>
       <Stack spacing={1} sx={{ mb: 2, "&:empty": { display: "none" } }}>
@@ -238,7 +249,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
                           size="small"
                           variant="outlined"
                           sx={OUTLINED}
-                          disabled={accept.isPending}
+                          disabled={accept.isPending || held}
                           onClick={() =>
                             once(accept, { policy: point.policy, revision })
                           }
@@ -306,7 +317,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
             fields={data.limit_fields}
             models={data.actor_models}
             locked={locked}
-            busy={limits.isPending}
+            busy={limits.isPending || held}
             error={limits.error}
             onSave={(next, done) =>
               once(limits, { limits: next, revision }, { onSuccess: done })
@@ -368,4 +379,5 @@ export default function WorldActorsPanel({ envId, locked = false }) {
 WorldActorsPanel.propTypes = {
   envId: PropTypes.string.isRequired,
   locked: PropTypes.bool,
+  lockReason: PropTypes.string,
 };

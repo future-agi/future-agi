@@ -16,7 +16,12 @@ import SettingsPanel from "./settings/SettingsPanel";
 import VersionsPanel from "./versions/VersionsPanel";
 import ImprovementsPanel from "./improvements/ImprovementsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
-import { WORKSPACE_TABS } from "./workspace.constants";
+import TabWaiting from "./TabWaiting";
+import {
+  TAB_WAITING_COPY,
+  WORKSPACE_COPY,
+  WORKSPACE_TABS,
+} from "./workspace.constants";
 
 // The shared rail + body switch. One instance serves the route workspace and
 // the build page's in-place swap at 7/7, so it stays presentational: the active
@@ -57,6 +62,7 @@ export default function WorkspacePanels({
   canRun = false,
   runBlockedReason,
   contractChat = null,
+  tabWaits = {},
 }) {
   const navigate = useNavigate();
   const {
@@ -125,7 +131,19 @@ export default function WorkspacePanels({
     return counts[badge] ?? 0;
   };
 
+  const buildLock =
+    env?.buildStatus === "building"
+      ? WORKSPACE_COPY.buildLock.building
+      : env?.buildStatus === "failed"
+        ? WORKSPACE_COPY.buildLock.stopped
+        : null;
+
   const renderBody = () => {
+    const wait = tabWaits[current.id];
+    if (wait)
+      return (
+        <TabWaiting tabId={current.id} tabLabel={current.label} wait={wait} />
+      );
     switch (current.id) {
       case "world":
         return (
@@ -148,7 +166,7 @@ export default function WorkspacePanels({
           />
         );
       case "actors":
-        return <ActorsTab env={env} locked={locked} />;
+        return <ActorsTab env={env} locked={locked} lockReason={buildLock} />;
       case "scenarios":
         return (
           <ScenariosStep
@@ -156,6 +174,7 @@ export default function WorkspacePanels({
             envState={envState}
             patch={patch}
             locked={locked}
+            lockReason={buildLock}
             onFork={onFork}
             onStartRun={onStartRun}
             runDialogOpen={runDialogOpen}
@@ -213,6 +232,7 @@ export default function WorkspacePanels({
             backedWorld={overviewWorld}
             onFork={onFork}
             buildMode={buildMode}
+            waits={tabWaits}
           />
         );
     }
@@ -234,39 +254,51 @@ export default function WorkspacePanels({
           variant="scrollable"
           scrollButtons={false}
         >
-          {tabs.map((t) => (
-            <Tab
-              key={t.id}
-              value={t.id}
-              label={
-                t.hint ? (
-                  <Tooltip
-                    title={t.hint}
-                    describeChild
-                    arrow
-                    placement="bottom"
-                    enterDelay={400}
-                    enterNextDelay={200}
-                    slotProps={{ tooltip: { sx: { maxWidth: 320 } } }}
-                  >
-                    <span>
-                      <WorkspaceTabLabel
-                        label={t.label}
-                        count={t.badge ? badgeCount(t.badge) : null}
-                        gaps={gapsByTab?.[t.id]}
-                      />
-                    </span>
-                  </Tooltip>
-                ) : (
-                  <WorkspaceTabLabel
-                    label={t.label}
-                    count={t.badge ? badgeCount(t.badge) : null}
-                    gaps={gapsByTab?.[t.id]}
-                  />
-                )
-              }
-            />
-          ))}
+          {tabs.map((t) => {
+            const wait = tabWaits[t.id];
+            const tip = wait ? TAB_WAITING_COPY.tabTip(wait) : t.hint;
+            const label = (
+              <Box
+                component="span"
+                sx={
+                  wait?.now
+                    ? { color: "text.primary", fontWeight: 500 }
+                    : wait
+                      ? { color: "text.tertiary" }
+                      : undefined
+                }
+              >
+                <WorkspaceTabLabel
+                  label={t.label}
+                  count={t.badge && !wait ? badgeCount(t.badge) : null}
+                  gaps={wait ? null : gapsByTab?.[t.id]}
+                />
+              </Box>
+            );
+            return (
+              <Tab
+                key={t.id}
+                value={t.id}
+                label={
+                  tip ? (
+                    <Tooltip
+                      title={tip}
+                      describeChild
+                      arrow
+                      placement="bottom"
+                      enterDelay={400}
+                      enterNextDelay={200}
+                      slotProps={{ tooltip: { sx: { maxWidth: 320 } } }}
+                    >
+                      <span>{label}</span>
+                    </Tooltip>
+                  ) : (
+                    label
+                  )
+                }
+              />
+            );
+          })}
         </CustomTabs>
       </Box>
 
@@ -292,6 +324,7 @@ WorkspacePanels.propTypes = {
     }),
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
     actorsTab: PropTypes.oneOf(["edit", "list"]),
+    buildStatus: PropTypes.string,
   }).isRequired,
   envState: PropTypes.shape({
     agent: PropTypes.shape({ name: PropTypes.string }),
@@ -333,6 +366,13 @@ WorkspacePanels.propTypes = {
   canRun: PropTypes.bool,
   // Why Run is unavailable, for the Scenarios selection bar's disabled Run.
   runBlockedReason: PropTypes.string,
+  tabWaits: PropTypes.objectOf(
+    PropTypes.shape({
+      phase: PropTypes.string.isRequired,
+      now: PropTypes.bool,
+      stopped: PropTypes.bool,
+    }),
+  ),
   contractChat: PropTypes.shape({
     send: PropTypes.func,
     busy: PropTypes.bool,
