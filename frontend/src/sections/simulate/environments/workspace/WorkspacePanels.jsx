@@ -16,6 +16,7 @@ import SettingsPanel from "./settings/SettingsPanel";
 import VersionsPanel from "./versions/VersionsPanel";
 import ImprovementsPanel from "./improvements/ImprovementsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
+import { BUILD_STATUS } from "../myEnvironments.constants";
 import TabWaiting from "./TabWaiting";
 import {
   TAB_WAITING_COPY,
@@ -132,9 +133,9 @@ export default function WorkspacePanels({
   };
 
   const buildLock =
-    env?.buildStatus === "building"
+    env?.buildStatus === BUILD_STATUS.BUILDING
       ? WORKSPACE_COPY.buildLock.building
-      : env?.buildStatus === "failed"
+      : env?.buildStatus === BUILD_STATUS.FAILED
         ? WORKSPACE_COPY.buildLock.stopped
         : null;
 

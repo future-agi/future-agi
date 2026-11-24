@@ -88,9 +88,11 @@ const BEFORE_FIRST_STEP = new Set([
   "acquiring_source",
 ]);
 
-export function stepOfStage(stage) {
-  if (BEFORE_FIRST_STEP.has(stage)) return BUILD_STEPS[0];
-  return BUILD_STEPS.find((step) => step.stage === stage) || null;
+export function stepOfStage(stage, { readsAgent = true } = {}) {
+  const step = BEFORE_FIRST_STEP.has(stage)
+    ? BUILD_STEPS[0]
+    : BUILD_STEPS.find((one) => one.stage === stage) || null;
+  return step && !readsAgent && step.no < 2 ? BUILD_STEPS[1] : step;
 }
 
 export const phaseOfStep = (step) =>
@@ -115,7 +117,7 @@ export function stoppedStep(status, { events, outputs, designApproved } = {}) {
     step = stoppedAt >= 0 ? stepOfStage(stages[stoppedAt]) : null;
   } else return null;
   step = step || producedStep(outputs) || BUILD_STEPS[0];
-  return designApproved && step.no < 2 ? stepNo(2) : step;
+  return stepOfStage(step.stage, { readsAgent: !designApproved });
 }
 
 const plural = (n, one, many = `${one}s`) =>
@@ -188,10 +190,9 @@ export function keptLine(step, counts = {}, designApproved = false) {
         : `The world and its ${plural(counts.tools || 0, "tool")} are kept`,
     );
   else if (designApproved) parts.push("Your design is kept");
-  else parts.push("Nothing you set up was lost");
   if (done("scenarios") && counts.scenarios)
     parts.push(`its ${plural(counts.scenarios, "scenario")} too`);
-  return `${parts.join(", and ")}.`;
+  return parts.length ? `${parts.join(", and ")}.` : "";
 }
 
 export const spentLine = (credits) =>
@@ -230,7 +231,10 @@ export function stopCase(status, step) {
   if (status?.stage === "canceled") return "canceled";
   const failure = status?.failure || {};
   if (failure.domain === "infrastructure") return "ours";
-  if (step.phase === "checks") return "checks";
+  if (step.phase === "checks")
+    return step.stage === "connecting_agent" || failure.domain === "agent"
+      ? "checks"
+      : "checksOther";
   if (step.phase === "scenarios") return "scenarios";
   return "world";
 }
@@ -241,16 +245,16 @@ export const rejectedTool = (failure) =>
   REJECTED_TOOL.exec(failure?.message || "")?.[1] || null;
 
 export function stopSentence(status, step) {
-  const kase = stopCase(status, step);
+  const kind = stopCase(status, step);
   const words = BUILD_STOPPED_COPY.sentence;
-  if (kase === "checks")
+  if (kind === "checks")
     return failureHeadline(status?.failure) || words.checks;
   if (
-    (kase === "world" || kase === "scenarios") &&
+    (kind === "world" || kind === "scenarios") &&
     step.stage === "validating_environment"
   ) {
     const tool = rejectedTool(status?.failure);
     return tool ? words.toolUntruthful(tool) : words.worldCheck;
   }
-  return words[kase];
+  return words[kind];
 }

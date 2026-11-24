@@ -71,7 +71,7 @@ export const GAP_AREA_TO_TAB = {
 export const WORKSPACE_COPY = {
   buildLock: {
     building: "Available once the build finishes.",
-    stopped: "Finish the build first: try again from the strip at the top.",
+    stopped: "The build has to finish first. The strip at the top says how.",
   },
   back: "All environments",
   live: "Ready",
@@ -167,12 +167,6 @@ export const WORKSPACE_COPY = {
   },
   // Banner shown while the derivation is still in flight — the panels below are
   // loading and this explains why.
-  building: {
-    title: "Environment is still being built",
-    progress: (done, total) => `${done} of ${total} steps done.`,
-    deriving: "Scenarios and personas are still deriving.",
-    tail: "You can leave and come back. This page will fill in as each stage lands.",
-  },
   // The strip under the header: the environment / agent version pairing when
   // versioning is on, else the agent version under test; stated, not selected.
   versionBar: {
@@ -653,14 +647,9 @@ export const BUILD_STOPPED_COPY = {
     world: "The world couldn't be written for every use case.",
     scenarios: "Some use cases got no scenario that passed all three checks.",
     checks: "Couldn't reach your agent.",
+    checksOther: "The release checks didn't finish.",
     ours: "An issue occurred while building. Nothing you set up was lost.",
     canceled: "You stopped the build before it finished.",
-  },
-  fix: "Fix with the builder",
-  fixDraft: {
-    world:
-      "Make every tool answer only from the world, and refuse when there's no match",
-    scenarios: "Rewrite the use cases that got no scenario",
   },
   checkConnection: "Check the connection",
   retry: {
@@ -696,7 +685,7 @@ export const TAB_WAITING_COPY = {
 
 export const STOPPED_NOTE_COPY = {
   text: (step) => `Not written. The build stopped at ${step}.`,
-  tip: (reason) => `${reason} Try again from the strip at the top.`,
+  tip: (reason) => `${reason} The strip at the top says what to do next.`,
   why: "Why it stopped",
 };
 

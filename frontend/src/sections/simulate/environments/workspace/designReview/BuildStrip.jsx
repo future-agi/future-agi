@@ -34,7 +34,7 @@ export default function BuildStrip({ name, stage, startedAt, readsAgent }) {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  const step = stepOfStage(stage);
+  const step = stepOfStage(stage, { readsAgent });
   const phase = phaseOfStep(step);
   const started = startedAt ? Date.parse(startedAt) : NaN;
   return (

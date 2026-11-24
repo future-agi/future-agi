@@ -260,7 +260,7 @@ export default function EnvironmentWorkspace() {
   const jobStatus = jobQuery.data?.status;
   const jobEvents = jobQuery.data?.events;
   const readsAgent = !env?.designApproved;
-  const liveStep = building ? stepOfStage(buildStage) : null;
+  const liveStep = building ? stepOfStage(buildStage, { readsAgent }) : null;
   const stopStep = buildFailed
     ? stoppedStep(jobStatus, {
         events: jobEvents,
@@ -428,7 +428,6 @@ export default function EnvironmentWorkspace() {
     );
   }
 
-  // A sample environment with no job behind it keeps the old build stage.
   if (!backed && (building || buildFailed)) {
     return (
       <Box

@@ -37,8 +37,8 @@ const linkSx = {
   verticalAlign: "baseline",
 };
 
-function logOf(kase, failure) {
-  if (kase === "canceled") return C.canceledLog;
+function logOf(kind, failure) {
+  if (kind === "canceled") return C.canceledLog;
   return [failure?.stage, failure?.code, failure?.message]
     .filter(Boolean)
     .join("\n");
@@ -53,17 +53,15 @@ export default function BuildStoppedStrip({
   readsAgent,
   designApproved,
   agentId,
-  onFix,
 }) {
   const [open, setOpen] = useState(false);
   const { canEdit } = useSimulationAccess();
   const retry = useRetryBuild(envId);
-  const kase = stopCase(status, step);
+  const kind = stopCase(status, step);
   const failure = status?.failure;
   const retryFrom = status?.retry_from || null;
-  const log = logOf(kase, failure);
+  const log = logOf(kind, failure);
   const spent = spentLine(credits);
-  const fixDraft = C.fixDraft[kase];
   const onRetry = () =>
     retry.mutate(undefined, {
       onError: (error) =>
@@ -84,7 +82,7 @@ export default function BuildStoppedStrip({
     <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
       <Box
         data-testid="build-stop-strip"
-        data-case={kase}
+        data-case={kind}
         sx={{
           border: "1px solid",
           borderColor: "divider",
@@ -135,17 +133,7 @@ export default function BuildStoppedStrip({
               )}
             </Typography>
           </Box>
-          {fixDraft && onFix && canEdit && (
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => onFix(fixDraft)}
-              sx={secondarySx}
-            >
-              {C.fix}
-            </Button>
-          )}
-          {kase === "checks" && agentId && (
+          {kind === "checks" && agentId && (
             <Button
               size="small"
               variant="outlined"
@@ -257,5 +245,4 @@ BuildStoppedStrip.propTypes = {
   readsAgent: PropTypes.bool,
   designApproved: PropTypes.bool,
   agentId: PropTypes.string,
-  onFix: PropTypes.func,
 };

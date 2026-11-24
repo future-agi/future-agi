@@ -42,12 +42,6 @@ const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
 );
 const { emptyEnvState } = await import("../../store/envState");
 const { seedFromTemplate } = await import("../helpers/seedEnvState");
-const { PIPELINE_CHECKS_COPY } = await import(
-  "../../buildEnvironment/build.constants"
-);
-const { INFRASTRUCTURE_LINE } = await import(
-  "../../buildEnvironment/failureWords"
-);
 const { SAVE_GRACE_MS } = await import(
   "src/api/simulate-environments/environment"
 );
@@ -456,9 +450,8 @@ describe("EnvironmentWorkspace route shell", () => {
     await user.click(row);
 
     // The row opens the designer-style RunDetail as its own full page: its
-    // identity header names the ordinal + agent version and the run status.
+    // identity header names the ordinal + agent version.
     expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
-    expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/dashboard/simulate/environments/job-done/runs/rt1/ex1",
     );
@@ -786,13 +779,15 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/job-build");
 
-    // The build pipeline + deriving hero render where the workspace tabs will be,
-    // reading the same ["harness-job", id] poll the env resolves from.
-    expect(
-      await screen.findByText(PIPELINE_CHECKS_COPY.heading),
-    ).toBeInTheDocument();
-    // The hero shows a neutral skeleton (no derived world yet).
-    expect(screen.getByText("0 tools")).toBeInTheDocument();
+    // The workspace tabs render with the build strip above them, naming the
+    // phase and step from the same ["harness-job", id] poll the env resolves from.
+    const strip = await screen.findByTestId("build-strip");
+    expect(strip).toHaveTextContent(
+      "Building environment Building Environment · Writing the world · Generating environment · 2 of 12",
+    );
+    // A tab the build has not written yet waits for it.
+    await userEvent.setup().click(screen.getByRole("tab", { name: /Scenarios/ }));
+    expect(await screen.findByTestId("tab-skeleton-scenarios")).toBeInTheDocument();
     // Run stays disabled until the job goes Live.
     expect(
       screen.getByRole("button", { name: /Run simulation/ }),
@@ -817,14 +812,14 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/job-failed");
 
-    // The header pill reads Failed (not Building) — but the build layout (chat +
-    // pipeline) stays, with the pipeline showing the failure rather than a
-    // dead-end error page. An infrastructure failure reads as ours, not the agent's.
-    expect(await screen.findByText("Failed")).toBeInTheDocument();
+    // The header pill and the stop strip both read Build stopped (not Building),
+    // and an infrastructure failure reads as ours, not the agent's.
+    const strip = await screen.findByTestId("build-stop-strip");
+    expect(strip).toHaveAttribute("data-case", "ours");
+    expect(screen.getAllByText(BUILD_STOPPED_COPY.badge)).toHaveLength(2);
     expect(screen.queryByText("Building")).toBeNull();
-    expect(screen.getByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
-    expect(screen.getAllByText(INFRASTRUCTURE_LINE)).toHaveLength(2);
-    expect(screen.getByText(BUILD_STOPPED_COPY.badge)).toBeInTheDocument();
+    expect(strip).toHaveTextContent(BUILD_STOPPED_COPY.sentence.ours);
+    expect(strip).toHaveTextContent("Stopped at Understanding agent");
   });
 
   it("swaps the build experience for the workspace in place when the job completes", async () => {
@@ -844,16 +839,14 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/job-build");
 
-    // It starts on the build pipeline...
-    expect(
-      await screen.findByText(PIPELINE_CHECKS_COPY.heading),
-    ).toBeInTheDocument();
+    // It starts with the build strip...
+    expect(await screen.findByTestId("build-strip")).toBeInTheDocument();
     // ...and the placeholder env state is NOT seeded while building, so the real
     // derived world (not the building-time generated pool) wins once it lands.
     expect(useEnvironmentsStore.getState().byEnv["job-build"]).toBeUndefined();
 
     // ...then the job completes: Run enables (the harness bridge is live) and the
-    // build pipeline is gone — the workspace took over in place, same url.
+    // build strip is gone — the workspace took over in place, same url.
     currentJob = COMPLETED_BUILD_JOB;
     await waitFor(
       () =>
@@ -862,7 +855,7 @@ describe("EnvironmentWorkspace route shell", () => {
         ).toBeEnabled(),
       { timeout: 6000 },
     );
-    expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
+    expect(screen.queryByTestId("build-strip")).toBeNull();
     // Env state is seeded now (from the completed job), not before.
     expect(useEnvironmentsStore.getState().byEnv["job-build"]).toBeDefined();
     expect(screen.getByTestId("location")).toHaveTextContent(

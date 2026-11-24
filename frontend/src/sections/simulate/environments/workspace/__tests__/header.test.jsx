@@ -7,7 +7,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import WorkspaceHeader from "../WorkspaceHeader";
 import LivePill from "../LivePill";
 import EnvVersionPin from "../EnvVersionPin";
-import SystemBanners from "../SystemBanners";
 import VersionBar from "../VersionBar";
 
 // The versions query is stubbed: each test sets the response it wants here,
@@ -133,9 +132,9 @@ describe("LivePill", () => {
     expect(screen.getByText("Building")).toBeInTheDocument();
   });
 
-  it("shows a static Failed for a terminal-failed build (not Building/Ready)", () => {
+  it("shows a static Build stopped for a terminal-failed build (not Building/Ready)", () => {
     render(<LivePill env={{ buildStatus: "failed" }} />);
-    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText("Build stopped")).toBeInTheDocument();
     expect(screen.queryByText("Ready")).toBeNull();
     expect(screen.queryByText("Building")).toBeNull();
   });
@@ -143,7 +142,7 @@ describe("LivePill", () => {
   it.each([
     [{ buildStatus: "building", status: "finalizing" }, "Finalizing"],
     [{ buildStatus: "building", status: "cancelling" }, "Cancelling"],
-    [{ buildStatus: "failed", status: "cancelled" }, "Cancelled"],
+    [{ buildStatus: "failed", status: "cancelled" }, "Build stopped"],
   ])("labels %o as %s, not Building or Failed", (env, label) => {
     render(<LivePill env={env} />);
     expect(screen.getByText(label)).toBeInTheDocument();
@@ -430,23 +429,6 @@ describe("EnvVersionPin", () => {
     const items = screen.getAllByTestId("env-version-item");
     expect(items[2]).toHaveTextContent("Unnumbered version");
     expect(items[2]).toHaveTextContent("discarded");
-  });
-});
-
-describe("SystemBanners", () => {
-  it("renders the building banner from the env build status", () => {
-    render(
-      <SystemBanners
-        env={{ ...ENV, buildStatus: "building", buildProgress: { done: 5, total: 7 } }}
-      />
-    );
-    expect(screen.getByText("Environment is still being built")).toBeInTheDocument();
-    expect(screen.getByText(/5 of 7 steps done/)).toBeInTheDocument();
-  });
-
-  it("renders nothing on a ready environment", () => {
-    const { container } = render(<SystemBanners env={ENV} />);
-    expect(container).toBeEmptyDOMElement();
   });
 });
 

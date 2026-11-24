@@ -210,9 +210,8 @@ TheirPart.propTypes = {
 };
 
 export function WhatTheySee({ actor, view }) {
-  const name = actor.name || S.they;
   return (
-    <SpecCard title={S.whatTheySee(name)}>
+    <SpecCard title={S.whatTheySee(actor.name)}>
       {view.unused_reason && (
         <SpecRow label={S.note}>{view.unused_reason}</SpecRow>
       )}
@@ -260,7 +259,7 @@ WhatTheySee.propTypes = {
 
 export function WhatTheySeeSkeleton({ actor }) {
   return (
-    <SpecCard title={S.whatTheySee(actor.name || S.they)}>
+    <SpecCard title={S.whatTheySee(actor.name)}>
       {[
         ["56%", 1],
         ["44%", 2],

@@ -45,8 +45,7 @@ export const ACTORS_COPY = {
 
   spec: {
     theirPart: "Their part",
-    whatTheySee: (name) => `What ${name} sees`,
-    they: "they",
+    whatTheySee: (name) => (name ? `What ${name} sees` : "What they see"),
     tests: "Tests",
     howTheyJoin: "How they join",
     whenTheyComeIn: "When they come in",
@@ -118,18 +117,13 @@ export const ACTORS_COPY = {
     remove: "Remove",
     removeNamed: (name) => `Remove ${name}`,
     empty: "No actors yet. Add one, or ask the builder chat.",
-    mayDo: "May do",
-    nothing: "Nothing in the world",
     notInWorld: "not an action of this world",
-    sees: "Sees",
     neverSees: "Never sees",
-    comesIn: "Comes in",
     comesInDifferently: (n) =>
       `Comes in differently in ${n} scenario${n === 1 ? "" : "s"}`,
     loudnessShare: (ratio) =>
       `${Math.round(ratio * 100)}% as loud as the caller`,
     loudnessAutomatic: "Loudness automatic",
-    ifNoAnswer: "If they do not answer",
     graderMaterial: "Grader material",
     othersPrivate: (fields, count) =>
       `What the ${count === 1 ? "other actor keeps" : `${count} other actors each keep`} to themselves: ${fields}`,
