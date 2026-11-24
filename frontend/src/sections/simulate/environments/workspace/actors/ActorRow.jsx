@@ -5,43 +5,17 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { useActorView } from "src/api/simulate-environments/versions";
-import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import { ACTORS_COPY } from "./actors.constants";
+import { TheirPart, WhatTheySee, WhatTheySeeSkeleton } from "./ActorSpecCards";
 
 const C = ACTORS_COPY.worldActors;
-const CHANNEL_LABELS = ACTORS_COPY.callActors.channels;
 // Only as wide as its text so the tooltip sits over the text.
 const ONE_LINE = {
   display: "inline-block",
   maxWidth: "100%",
   verticalAlign: "top",
 };
-
-function summary(actor, loudChannels) {
-  return [
-    actor.channel && (CHANNEL_LABELS[actor.channel] || actor.channel),
-    actor.channel &&
-      loudChannels.includes(actor.channel) &&
-      (actor.loudness_ratio
-        ? C.loudnessShare(actor.loudness_ratio)
-        : C.loudnessAutomatic),
-    `${C.mayDo}: ${
-      actor.permissions.length
-        ? actor.permissions
-            .map((one) =>
-              one.in_world ? one.action : `${one.action} (${C.notInWorld})`,
-            )
-            .join(", ")
-        : C.nothing
-    }`,
-    `${C.comesIn}: ${actor.when_label}`,
-    `${C.ifNoAnswer}: ${actor.fallback.label}`,
-    ACTORS_COPY.callActors.scenarios(actor.scenarios),
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
 
 export default function ActorRow({
   envId,
@@ -53,6 +27,7 @@ export default function ActorRow({
   loudChannels,
   deleting,
   busy,
+  busyReason = null,
 }) {
   const [open, setOpen] = useState(false);
   // Off while removing so the removed actor's view is not refetched.
@@ -65,11 +40,6 @@ export default function ActorRow({
     enabled: open && !deleting,
   });
 
-  const quiet = {
-    typography: "s3",
-    color: "text.secondary",
-    wordBreak: "break-word",
-  };
   return (
     <Box>
       <Stack
@@ -180,7 +150,12 @@ export default function ActorRow({
           </Typography>
           {!locked && (
             <>
-              <CustomTooltip show size="small" arrow title={C.edit}>
+              <CustomTooltip
+                show
+                size="small"
+                arrow
+                title={busyReason || C.edit}
+              >
                 <span>
                   <IconButton
                     size="small"
@@ -196,7 +171,12 @@ export default function ActorRow({
                   </IconButton>
                 </span>
               </CustomTooltip>
-              <CustomTooltip show size="small" arrow title={C.remove}>
+              <CustomTooltip
+                show
+                size="small"
+                arrow
+                title={busyReason || C.remove}
+              >
                 <span>
                   <IconButton
                     size="small"
@@ -217,59 +197,28 @@ export default function ActorRow({
         </Stack>
       </Stack>
       <Collapse in={open} unmountOnExit>
-        <Typography
+        <Box
           sx={{
-            typography: "s2",
-            color: "text.secondary",
-            wordBreak: "break-word",
             pl: 6,
             pr: 1.5,
-            pb: 1,
+            pb: 1.5,
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+            gap: 1.5,
+            alignItems: "start",
           }}
         >
-          {summary(actor, loudChannels)}
-        </Typography>
-        {viewLoading && <ContentSkeleton variant="panel" sx={{ pl: 5 }} />}
-        {viewFailed && !view && (
-          <ErrorState
-            title={C.viewFailedTitle}
-            detail={C.loadFailed}
-            onRetry={() => retryView()}
-          />
-        )}
-        {view && (
-          <Stack spacing={0.75} sx={{ pl: 6.5, pr: 1.5, pb: 1.5 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              {C.sees}
-            </Typography>
-            {view.unused_reason && (
-              <Typography sx={quiet}>{view.unused_reason}</Typography>
-            )}
-            {view.sees.map((one) => (
-              <Typography key={one.input} sx={quiet}>
-                {`${C.inputs[one.input] || one.input}: `}
-                {one.text || (
-                  <Box component="span" sx={{ color: "text.disabled" }}>
-                    {C.notSet}
-                  </Box>
-                )}
-              </Typography>
-            ))}
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              {C.neverSees}
-            </Typography>
-            {view.never_sees.grader.length > 0 && (
-              <Typography
-                sx={quiet}
-              >{`${C.graderMaterial}: ${view.never_sees.grader.join(", ")}`}</Typography>
-            )}
-            {view.never_sees.others.map((one) => (
-              <Typography key={one.fields.join(", ")} sx={quiet}>
-                {C.othersPrivate(one.fields.join(", "), one.count)}
-              </Typography>
-            ))}
-          </Stack>
-        )}
+          <TheirPart actor={actor} loudChannels={loudChannels} />
+          {viewLoading && <WhatTheySeeSkeleton actor={actor} />}
+          {viewFailed && !view && (
+            <ErrorState
+              title={C.viewFailedTitle}
+              detail={C.loadFailed}
+              onRetry={() => retryView()}
+            />
+          )}
+          {view && <WhatTheySee actor={actor} view={view} />}
+        </Box>
       </Collapse>
     </Box>
   );
@@ -285,4 +234,5 @@ ActorRow.propTypes = {
   loudChannels: PropTypes.arrayOf(PropTypes.string),
   deleting: PropTypes.bool,
   busy: PropTypes.bool,
+  busyReason: PropTypes.string,
 };

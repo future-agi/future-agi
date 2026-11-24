@@ -43,6 +43,29 @@ export const ACTORS_COPY = {
     scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
   },
 
+  spec: {
+    theirPart: "Their part",
+    whatTheySee: (name) => `What ${name} sees`,
+    they: "they",
+    tests: "Tests",
+    howTheyJoin: "How they join",
+    whenTheyComeIn: "When they come in",
+    actions: "Actions they may take",
+    onlyTalk: "None, they only talk",
+    voice: "Voice",
+    canApprove: "Can approve",
+    answersWithin: (seconds) =>
+      seconds >= 60
+        ? `answers within ${Math.round(seconds / 60)} min`
+        : `answers within ${Math.round(seconds)} s`,
+    ifNoAnswer: "If they don't answer",
+    traits: "Traits",
+    note: "Note",
+    graderAlways: "The evaluator's expected answers, hidden checks and scoring",
+    hiddenTask: "The scenario's hidden task, unless it is told",
+    othersAlways: "What other actors keep to themselves",
+    loadingLabels: ["Knows", "Can do", "Never sees"],
+  },
   worldActors: {
     unresolved: {
       title: "Needs your decision",
