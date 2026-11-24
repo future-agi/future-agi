@@ -67,9 +67,35 @@ def newcombe_interval(
 
 
 def verdict(
-    passed: int, trials: int, other_passed: int, other_trials: int
+    passed: int,
+    trials: int,
+    other_passed: int,
+    other_trials: int,
+    undecided: int = 0,
+    other_undecided: int = 0,
 ) -> tuple[str, tuple[float, float] | None]:
-    """The current run (``passed``/``trials``) against the other, and the interval."""
+    """The current run (``passed``/``trials``) against the other, and the interval. Undecided trials could have gone
+    either way: a regression holds only with every undecided trial read in its favour (the current run's as passes,
+    the other's as failures), an improvement only with every one read against it; otherwise it is inconclusive."""
+    if undecided or other_undecided:
+        outcome, interval = verdict(passed, trials, other_passed, other_trials)
+        if outcome == REGRESSED:
+            bound = verdict(
+                passed + undecided,
+                trials + undecided,
+                other_passed,
+                other_trials + other_undecided,
+            )[0]
+            return (REGRESSED if bound == REGRESSED else INCONCLUSIVE), interval
+        if outcome == IMPROVED:
+            bound = verdict(
+                passed,
+                trials + undecided,
+                other_passed + other_undecided,
+                other_trials + other_undecided,
+            )[0]
+            return (IMPROVED if bound == IMPROVED else INCONCLUSIVE), interval
+        return outcome, interval
     if not trials or not other_trials:
         return INCONCLUSIVE, None
     difference = passed / trials - other_passed / other_trials
@@ -135,10 +161,11 @@ class ScenarioTrials:
         for one in sub_goals or []:
             if isinstance(one, Mapping) and one.get("name"):
                 self.sub_goals.add(str(one["name"]))
-        # A trial that errored on the agent's own failure (it stalled, it hung up) ran: it is the agent's failure.
-        agents = isinstance(failure, Mapping) and failure.get("domain") == "agent"
+        # A trial sealed on a failure ran: the agent's (it stalled, it hung up) fails it, ours (the judge left a check
+        # open, the simulator broke) leaves it undecided, counted beside the decided ones, never dropped as unrun.
+        sealed = isinstance(failure, Mapping) and bool(failure.get("domain"))
         unrun = call_outcome in _UNRUN_OUTCOMES and not (
-            call_outcome == "error" and agents
+            call_outcome == "error" and sealed
         )
         outcome = None if unrun else trial_passed(sub_goals, harness_status, failure)
         if outcome is not None:
@@ -231,7 +258,12 @@ def scenario_pairs(
                 now.sub_goals | then.sub_goals, digests, against_digests
             )
             outcome, interval = verdict(
-                now.passed, now.decided, then.passed, then.decided
+                now.passed,
+                now.decided,
+                then.passed,
+                then.decided,
+                now.undecided,
+                then.undecided,
             )
             pair.update(
                 band=CRITERIA_CHANGED if changed else PAIRED,
