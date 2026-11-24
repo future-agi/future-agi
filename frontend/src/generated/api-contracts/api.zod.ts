@@ -47761,6 +47761,12 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         .describe(
           "The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
         ),
+      reason_by_key: zod
+        .record(zod.string(), zod.string().min(1))
+        .optional()
+        .describe(
+          "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`.",
+        ),
     }),
     reasons: zod
       .record(zod.string(), zod.string().min(1))
@@ -48361,6 +48367,12 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           .optional()
           .describe(
             "The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+          ),
+        reason_by_key: zod
+          .record(zod.string(), zod.string().min(1))
+          .optional()
+          .describe(
+            "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`.",
           ),
       }),
       reasons: zod
@@ -71145,6 +71157,12 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             .optional()
             .describe(
               "The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+            ),
+          reason_by_key: zod
+            .record(zod.string(), zod.string().min(1))
+            .optional()
+            .describe(
+              "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`.",
             ),
         }),
         reasons: zod

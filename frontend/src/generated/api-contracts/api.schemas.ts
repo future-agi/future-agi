@@ -22792,6 +22792,11 @@ export type HarnessRunHeldBackApiBy = { [key: string]: number };
  */
 export type HarnessRunHeldBackApiByKey = { [key: string]: string };
 
+/**
+ * Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`.
+ */
+export type HarnessRunHeldBackApiReasonByKey = { [key: string]: string };
+
 export interface HarnessRunHeldBackApi {
   /** @minimum 0 */
   count: number;
@@ -22803,6 +22808,8 @@ export interface HarnessRunHeldBackApi {
   by: HarnessRunHeldBackApiBy;
   /** The row each listed case is counted under in `by`, by its key; its words are in `reasons`. */
   by_key?: HarnessRunHeldBackApiByKey;
+  /** Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`. */
+  reason_by_key?: HarnessRunHeldBackApiReasonByKey;
 }
 
 /**

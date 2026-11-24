@@ -141021,6 +141021,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        reason_by_key: {
+          title: "Reason by key",
+          description:
+            "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
       },
     },
     HarnessCapabilityAffected: {
