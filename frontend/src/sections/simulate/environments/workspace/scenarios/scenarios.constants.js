@@ -6,15 +6,17 @@
 // agent is asked to do (Goal), the caller (Persona), or the first step
 // (Sub-goal) — not by the derivation kind they fell out of.
 
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { subTasksFor } from "src/api/simulate-environments/_fixtures/contract";
 
-// Table row height, as the Display menu names it: how many lines a text
-// cell shows and how many sub-goals are listed. 0 lines and Infinity show all.
+// Table row height, as the Display menu names it: the least a row takes (as
+// the trace tables do, so short texts change too), how many lines a text cell
+// shows and how many sub-goals are listed. 0 lines and Infinity show all.
 export const ROW_HEIGHTS = {
-  Short: { lines: 3, subTasks: 3 },
-  Medium: { lines: 5, subTasks: 5 },
-  Large: { lines: 8, subTasks: 8 },
-  "Extra large": { lines: 0, subTasks: Infinity },
+  Short: { height: ROW_HEIGHT.twoLine, lines: 3, subTasks: 3 },
+  Medium: { height: 80, lines: 5, subTasks: 5 },
+  Large: { height: 100, lines: 8, subTasks: 8 },
+  "Extra large": { height: 150, lines: 0, subTasks: Infinity },
 };
 
 // Toolbar buttons are the theme's small secondary buttons; this only keeps a

@@ -474,7 +474,7 @@ export default function ScenarioTable({
                       : undefined
                   }
                   sx={{
-                    height: ROW_HEIGHT.twoLine,
+                    height: limits.height,
                     ...(onOpen && {
                       cursor: "pointer",
                       "&:focus-visible": {

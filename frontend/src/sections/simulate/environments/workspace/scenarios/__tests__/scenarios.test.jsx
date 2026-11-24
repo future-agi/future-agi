@@ -178,11 +178,23 @@ describe("ScenariosStep", () => {
       within(panel).getByRole("combobox", { name: "Group by" }),
     ).toBeInTheDocument();
     expect(within(panel).queryByRole("option")).toBeNull();
-    fireEvent.click(within(panel).getByRole("tab", { name: "Large" }));
-    expect(within(panel).getByRole("tab", { name: "Large" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    // Every setting changes the row, however short its texts are.
+    const rowHeight = () =>
+      getComputedStyle(document.querySelector("tbody tr[aria-label^='Open ']"))
+        .height;
+    expect(rowHeight()).toBe("48px");
+    for (const [name, height] of [
+      ["Medium", "80px"],
+      ["Large", "100px"],
+      ["Extra large", "150px"],
+    ]) {
+      fireEvent.click(within(panel).getByRole("tab", { name }));
+      expect(within(panel).getByRole("tab", { name })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(rowHeight()).toBe(height);
+    }
     closeDisplay();
   });
 
