@@ -17,6 +17,7 @@ import {
   useScenarioValidation,
   useValidateScenarios,
 } from "src/api/simulate-environments/scenariosHooks";
+import { refusalText } from "../evals/refusalText";
 import { LIFECYCLE_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 
 const COPY = LIFECYCLE_COPY.validate;
@@ -105,7 +106,7 @@ export default function ValidateScenariosButton({
       }
       setValidationJobId(result.job_id ?? null);
     } catch (error) {
-      setMessage(error?.message ?? null);
+      setMessage(refusalText(error, COPY.startFailed));
     }
   };
 

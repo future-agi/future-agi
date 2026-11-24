@@ -80,7 +80,7 @@ export default function SourceCompareDialog({
   return (
     <ClosableDialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
-        {COPY.title(data?.from_version ?? "", data?.to_version ?? "")}
+        {COPY.title(data?.from_version, data?.to_version)}
       </DialogTitle>
       <DialogContent>
         {isLoading && (

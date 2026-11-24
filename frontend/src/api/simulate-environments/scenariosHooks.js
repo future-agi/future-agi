@@ -269,6 +269,7 @@ export function useSourceChanges(envId, versionId, { enabled = true } = {}) {
   return useQuery({
     queryKey: [...harnessScenariosListKey(envId), "source-changes", versionId],
     queryFn: () => getSourceChanges(envId, versionId),
+    meta: { errorHandled: true },
     enabled: Boolean(enabled && envId && versionId),
   });
 }

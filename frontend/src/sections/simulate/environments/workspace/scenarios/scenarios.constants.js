@@ -111,6 +111,7 @@ export const LIFECYCLE_COPY = {
     rowHint: "Being proved now. Its state updates when Validate finishes.",
     failed: (reason) =>
       `Validate didn't finish${reason ? `: ${reason.replace(/\.$/, "")}` : ""}. Nothing changed; scenarios keep their state.`,
+    startFailed: "Couldn't start the validation. Try again.",
     tryAgain: "Try again",
   },
   archive: {
@@ -124,6 +125,8 @@ export const LIFECYCLE_COPY = {
     restoredLive: "Restored. It runs again.",
     restoredHeld: "Restored, but held back. Its Status says why.",
     restoredDraft: "Restored into the unsaved changes. Save to run it.",
+    archiveFailed: "Couldn't archive it. Try again.",
+    restoreFailed: "Couldn't restore it. Try again.",
     errors: {
       scenario_unsaved:
         "This scenario only exists in the unsaved changes. Remove it instead.",
@@ -136,7 +139,10 @@ export const LIFECYCLE_COPY = {
     line: (version) =>
       `A rule or file it cites changed in environment v${version}.`,
     compare: "Compare",
-    title: (from, to) => `What changed between environment v${from} and v${to}`,
+    title: (from, to) =>
+      from && to
+        ? `What changed between environment v${from} and v${to}`
+        : "What changed",
     rule: "Rule",
     before: (version) => `Before (v${version})`,
     after: (version) => `After (v${version})`,

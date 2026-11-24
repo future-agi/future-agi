@@ -6,13 +6,14 @@ import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { ARCHIVE_REASON_MAX } from "src/api/simulate-environments/scenarios";
 import { useArchiveScenario } from "src/api/simulate-environments/scenariosHooks";
+import { refusalText } from "../evals/refusalText";
 import { LIFECYCLE_COPY } from "./scenarios.constants";
 import { isRunnable } from "./lifecycleView";
 
 const COPY = LIFECYCLE_COPY.archive;
 
-// The request layer hands back the server's error body itself.
-const errorText = (error) => COPY.errors[error?.error] ?? error?.message;
+const errorText = (error, fallback) =>
+  COPY.errors[error?.error] ?? refusalText(error, fallback);
 
 // Archive (with an optional note) or Restore one scenario. `onChanged` gets the scenario's new lifecycle.
 export default function ArchiveScenarioButton({ envId, row, onChanged }) {
@@ -42,7 +43,10 @@ export default function ArchiveScenarioButton({ envId, row, onChanged }) {
       if (held) said = COPY.restoredHeld;
       enqueueSnackbar(said, { variant: held ? "warning" : "success" });
     } catch (error) {
-      enqueueSnackbar(errorText(error), { variant: "error" });
+      enqueueSnackbar(
+        errorText(error, restore ? COPY.restoreFailed : COPY.archiveFailed),
+        { variant: "error" },
+      );
     }
   };
 

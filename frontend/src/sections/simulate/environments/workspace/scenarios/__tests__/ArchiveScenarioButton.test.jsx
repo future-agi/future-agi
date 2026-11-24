@@ -59,6 +59,21 @@ describe("ArchiveScenarioButton", () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 
+  it("never shows a transport error's own words", async () => {
+    const user = userEvent.setup();
+    restoreScenario.mockRejectedValue({ message: "Network Error" });
+    renderButton({ row: row("archived") });
+
+    await user.click(screen.getByRole("button", { name: "Restore" }));
+
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Couldn't restore it. Try again.",
+        { variant: "error" },
+      ),
+    );
+  });
+
   it.each([
     ["active", "Restored. It runs again.", "success"],
     ["draft", "Restored, but held back. Its Status says why.", "warning"],

@@ -9,6 +9,7 @@ import {
   isVersioningDisabled,
   useRetryAgentVersion,
 } from "src/api/simulate-environments/versions";
+import { refusalText } from "../../evals/refusalText";
 import ReadinessLine from "./ReadinessLine";
 import { lineSx, spinner } from "./readinessStyles";
 import { READY_TO_RUN_COPY as COPY } from "./readiness.constants";
@@ -127,7 +128,7 @@ export default function ReadyToRunSection({
   else if (alreadyChecked) noteState = "alreadyChecked";
   const note = stateText(
     noteState,
-    refusal ? refusal.message || refusal.detail : view.stateReason,
+    refusal ? refusalText(refusal, "") : view.stateReason,
   );
 
   return (

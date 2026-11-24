@@ -174,6 +174,15 @@ describe("ValidateScenariosButton", () => {
     expect(getScenarioValidation).not.toHaveBeenCalled();
   });
 
+  it("never shows a transport error's own words", async () => {
+    validateScenarios.mockRejectedValue({ message: "Network Error" });
+    renderButton();
+    await pressWhenReady("Validate cases not yet proved");
+    expect(
+      await screen.findByText("Couldn't start the validation. Try again."),
+    ).toBeInTheDocument();
+  });
+
   it("says a finished validation recorded no results", async () => {
     getScenarioValidation.mockResolvedValue({
       state: "finished",

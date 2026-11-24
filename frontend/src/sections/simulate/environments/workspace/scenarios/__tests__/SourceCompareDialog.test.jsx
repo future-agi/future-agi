@@ -67,6 +67,24 @@ describe("Source changed", () => {
     ).toBeInTheDocument();
   });
 
+  it("names no versions while it can't read them, and says the failure once", async () => {
+    getSourceChanges.mockRejectedValueOnce({ statusCode: 500 });
+    const { client } = renderWithClient(
+      <LifecycleSection envId="env-1" lifecycle={lifecycle} Row={Row} />,
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Compare" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByText("Couldn't read the change. Try again."),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("What changed")).toBeInTheDocument();
+    // The dialog says it, so the app-wide error toast stays quiet.
+    const [read] = client.getQueryCache().getAll();
+    expect(read.options.meta).toEqual({ errorHandled: true });
+  });
+
   it("offers no Compare when nothing it cites changed", () => {
     renderWithClient(
       <LifecycleSection
