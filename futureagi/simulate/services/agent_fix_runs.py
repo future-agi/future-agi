@@ -675,19 +675,42 @@ def refuse_outside_the_epoch(
         environment_id=candidate.fix_run.environment_id,
         created_at__lte=candidate.fix_run.created_at,
     ).count()
+    raise _not_outside_the_epoch(candidate, number)
+
+
+def _not_outside_the_epoch(
+    candidate: AgentFixCandidate, number: int
+) -> HostedHarnessError:
+    """The refusal for a candidate that is not its Epoch's winner, in words that say where
+    the candidate is: still being checked, passed but not picked, or refused."""
     named = f"This version is Candidate {candidate.attempt} of Epoch {number}"
-    if ships_only_with_a_reason(candidate):
-        raise HostedHarnessError(
-            "fix_candidate_needs_override",
-            f"{named}, whose checks refused it. To make it the default, open Epoch"
-            f" {number} and ship it there with a reason.",
-            status_code=409,
-        )
-    raise HostedHarnessError(
-        "fix_candidate_not_shippable",
-        f"{named}, whose checks refused it, so it can't be made the default.",
-        status_code=409,
+    ships = ships_only_with_a_reason(candidate)
+    checking = candidate.fix_run.state in AgentFixRun.ACTIVE_STATES or (
+        candidate.outcome == AgentFixCandidate.Outcome.PENDING
+        and candidate.verdict is None
     )
+    if checking:
+        code = "fix_candidate_still_checking"
+        message = f"{named}, which is still checking it. Wait for the Epoch to finish."
+    elif candidate.outcome != AgentFixCandidate.Outcome.REJECTED:
+        code = "fix_candidate_not_picked"
+        passed = f"{named}, whose checks passed, but Epoch {number} picked another"
+        message = (
+            f"{passed} candidate. To make it the default, open Epoch {number} and ship"
+            " it there."
+            if ships
+            else f"{passed} candidate, so it can't be made the default."
+        )
+    elif ships:
+        code = "fix_candidate_needs_override"
+        message = (
+            f"{named}, whose checks refused it. To make it the default, open Epoch"
+            f" {number} and ship it there with a reason."
+        )
+    else:
+        code = "fix_candidate_not_shippable"
+        message = f"{named}, whose checks refused it, so it can't be made the default."
+    return HostedHarnessError(code, message, status_code=409)
 
 
 def record_override(candidate: AgentFixCandidate, *, reason: str, user: Any) -> None:

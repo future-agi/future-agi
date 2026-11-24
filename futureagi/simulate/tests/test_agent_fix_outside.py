@@ -1651,6 +1651,54 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
 
         _refused(_move(browser_client, uploaded, copy.id), refused_by)
 
+    def test_a_candidate_still_being_checked_says_so(self, browser_client, planted):
+        AgentFixRun.no_workspace_objects.filter(id=planted.id).update(
+            state=State.RUNNING
+        )
+        AgentFixCandidate.no_workspace_objects.filter(fix_run=planted).update(
+            outcome="pending", verdict=None
+        )
+
+        response = _move(
+            browser_client,
+            planted.environment,
+            planted.candidates.get().agent_version_id,
+        )
+
+        assert response.status_code == 409, response.content
+        assert (response.json()["error"], response.json()["message"]) == (
+            "fix_candidate_still_checking",
+            "This version is Candidate 1 of Epoch 1, which is still checking it. Wait"
+            " for the Epoch to finish.",
+        )
+
+    def test_a_candidate_that_passed_but_was_not_picked_says_so(
+        self, browser_client, planted
+    ):
+        verdict = _verdict(HELD)
+        verdict.update(
+            accepted=True,
+            must_pass_regressions=[],
+            tiers=[{**tier, "status": "passed"} for tier in verdict["tiers"]],
+        )
+        AgentFixCandidate.no_workspace_objects.filter(fix_run=planted).update(
+            outcome="finalist", verdict=verdict
+        )
+
+        response = _move(
+            browser_client,
+            planted.environment,
+            planted.candidates.get().agent_version_id,
+        )
+
+        # The Epoch's ship route ships a finalist that is not its winner neither way.
+        assert response.status_code == 409, response.content
+        assert (response.json()["error"], response.json()["message"]) == (
+            "fix_candidate_not_picked",
+            "This version is Candidate 1 of Epoch 1, whose checks passed, but Epoch 1"
+            " picked another candidate, so it can't be made the default.",
+        )
+
     @pytest.mark.parametrize("made_by", ["no-epoch", "winner"])
     def test_any_other_version_moves(self, browser_client, planted, made_by):
         candidate = planted.candidates.get()
