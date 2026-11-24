@@ -128,6 +128,51 @@ class HarnessConversationBlockingInputSerializer(serializers.Serializer):
     )
 
 
+class HarnessConversationWindowSerializer(serializers.Serializer):
+    oldest_sequence = serializers.IntegerField(
+        allow_null=True,
+        help_text="The oldest sequence in this read; read what came before it with `before` set to it.",
+    )
+    has_older = serializers.BooleanField(
+        help_text="Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+    )
+
+
+class HarnessConversationHistorySerializer(serializers.Serializer):
+    messages = HarnessConversationWindowSerializer()
+    events = HarnessConversationWindowSerializer()
+
+
+class HarnessConversationHistoryQuerySerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("messages", "events"))
+    before = serializers.IntegerField(
+        min_value=1, help_text="Read the items just before this sequence."
+    )
+
+
+class HarnessConversationHistoryPageSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("messages", "events"))
+    items = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="Messages or events, oldest first, in the same shape as a conversation read's.",
+    )
+    oldest_sequence = serializers.IntegerField(allow_null=True)
+    has_older = serializers.BooleanField()
+
+
+class HarnessJobReadQuerySerializer(serializers.Serializer):
+    messages_after = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text="Only the builder chat messages newer than this sequence; all recent ones when absent.",
+    )
+    events_after = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text="Only the builder chat events newer than this sequence; all recent ones when absent.",
+    )
+
+
 class HarnessConversationReadSerializer(serializers.Serializer):
     conversation_id = serializers.UUIDField()
     job_id = serializers.UUIDField()
@@ -138,6 +183,9 @@ class HarnessConversationReadSerializer(serializers.Serializer):
     messages = HarnessConversationMessageSerializer(many=True)
     events = HarnessConversationEventReadSerializer(many=True)
     event_watermark = serializers.IntegerField(min_value=0)
+    history = HarnessConversationHistorySerializer(
+        help_text="Where `messages` and `events` start, and whether older ones can be read with the history read."
+    )
     runtime = HarnessConversationRuntimeSerializer()
 
 

@@ -2640,3 +2640,71 @@ def test_a_resumed_turn_keeps_the_question_it_asks_again(organization):
     )
 
     assert conversation.blocking_input is not None
+
+
+@pytest.mark.django_db
+def test_a_conversation_read_pages_back_and_a_poll_carries_only_what_is_new(
+    organization, monkeypatch
+):
+    from simulate.services import hosted_harness_conversation as conversations
+
+    monkeypatch.setattr(conversations, "EVENT_LIMIT", 3)
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-history"
+    )
+    for number in range(1, 6):
+        enqueue_message(
+            job, content=f"m{number}", client_request_id=f"history-{number}"
+        )
+    conversation = job.conversation
+
+    newest = serialize_conversation(conversation)
+    assert [item["sequence"] for item in newest["messages"]] == [3, 4, 5]
+    assert newest["history"]["messages"] == {"oldest_sequence": 3, "has_older": True}
+
+    older = conversations.conversation_history(conversation, kind="messages", before=3)
+    assert [item["sequence"] for item in older["items"]] == [1, 2]
+    assert older["has_older"] is False and older["oldest_sequence"] == 1
+
+    poll = serialize_conversation(conversation, messages_after=4)
+    assert [item["sequence"] for item in poll["messages"]] == [5]
+    assert poll["history"]["messages"]["has_older"] is False
+
+    behind = serialize_conversation(conversation, messages_after=1)
+    assert [item["sequence"] for item in behind["messages"]] == [3, 4, 5]
+    assert behind["history"]["messages"] == {"oldest_sequence": 3, "has_older": True}
+
+
+@pytest.mark.django_db
+def test_the_job_read_and_the_history_read_page_the_builder_chat_over_the_api(
+    organization, workspace, auth_client, monkeypatch
+):
+    from simulate.services import hosted_harness_conversation as conversations
+
+    monkeypatch.setattr(conversations, "EVENT_LIMIT", 3)
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="conversation-history-api",
+        workspace=workspace,
+    )
+    for number in range(1, 6):
+        enqueue_message(job, content=f"m{number}", client_request_id=f"api-{number}")
+    base = f"/simulate/api/harness-jobs/{job.id}"
+
+    full = auth_client.get(f"{base}/").json()["conversation"]
+    assert [item["sequence"] for item in full["messages"]] == [3, 4, 5]
+    assert full["history"]["messages"] == {"oldest_sequence": 3, "has_older": True}
+
+    poll = auth_client.get(f"{base}/", {"messages_after": 4}).json()["conversation"]
+    assert [item["sequence"] for item in poll["messages"]] == [5]
+
+    page = auth_client.get(
+        f"{base}/conversation/history/", {"kind": "messages", "before": 3}
+    )
+    assert page.status_code == 200
+    assert [item["sequence"] for item in page.json()["items"]] == [1, 2]
+    assert page.json()["has_older"] is False
+
+    refused = auth_client.get(f"{base}/conversation/history/", {"kind": "messages"})
+    assert refused.status_code == 400
