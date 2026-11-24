@@ -692,6 +692,15 @@ jobs:
         if: needs.plan.outputs.cold_control != 'success'
         with:
           profile: ${{ inputs.backend_setup || 'baseline' }}
+      - name: Upload the files the fresh migrate touched (observation only)
+        if: ${{ !cancelled() && needs.plan.outputs.cold_control != 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: migrate-inputs
+          path: ${{ runner.temp }}/migrate-inputs/
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 7
       - name: Dump test service logs on failure
         if: failure()
         working-directory: futureagi
