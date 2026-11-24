@@ -530,7 +530,6 @@ class _TraceRootReplayV2:
         """
 
         identities = f"%({prefix}_rollup_trace_identities)s"
-        trace_ids = f"%({prefix}_trace_ids)s"
         project_filter = self.project_filter_sql()
         span_key = (
             "project_id, observation_type, service_name, "
@@ -538,41 +537,28 @@ class _TraceRootReplayV2:
         )
         return f"""
         LEFT ANY JOIN (
-            SELECT
-                trace_rollup_rows.project_id AS trace_rollup_project_id,
-                trace_rollup_rows.trace_id AS trace_rollup_trace_id,
-                toUInt8(1) AS trace_rollup_present,
-                trace_rollup_rows.rollup_cost AS trace_rollup_cost,
-                trace_rollup_rows.usage_cost_unknown AS trace_rollup_cost_unknown,
-                trace_rollup_rows.usage_source_summary_present AS trace_rollup_source_summary_present,
-                trace_rollup_rows.usage_request_count AS trace_rollup_request_count,
-                trace_rollup_rows.rollup_total_tokens AS trace_rollup_total_tokens,
-                trace_rollup_rows.rollup_prompt_tokens AS trace_rollup_prompt_tokens,
-                trace_rollup_rows.rollup_completion_tokens AS trace_rollup_completion_tokens,
-                trace_rollup_rows.rollup_first_llm_model AS first_llm_model,
-                trace_rollup_rows.rollup_first_llm_provider AS first_llm_provider,
-                if(
-                    trace_rollup_rows.rollup_root_has_content,
-                    '',
-                    first_llm_contents.first_llm_input
-                ) AS first_llm_input,
-                if(
-                    trace_rollup_rows.rollup_root_has_content,
-                    '',
-                    first_llm_contents.first_llm_output
-                ) AS first_llm_output
-            FROM (
-                SELECT project_id, trace_id,
-                    usage_metrics.1 AS usage_cost_unknown,
-                    usage_metrics.2 AS rollup_cost,
-                    usage_metrics.3 AS rollup_total_tokens,
-                    usage_metrics.4 AS rollup_prompt_tokens,
-                    usage_metrics.5 AS rollup_completion_tokens,
-                    usage_metrics.6 AS usage_source_summary_present,
-                    usage_metrics.7 AS usage_request_count,
+            WITH
+            (
+                SELECT groupArray(tuple(
+                    project_id, trace_id,
+                    rollup_cost, rollup_total_tokens,
+                    rollup_prompt_tokens, rollup_completion_tokens,
                     rollup_first_llm_model, rollup_first_llm_provider,
-                    rollup_first_llm_key, rollup_root_has_content
+                    rollup_first_llm_key, rollup_root_has_content,
+                    usage_cost_unknown, usage_source_summary_present, usage_request_count
+                ))
                 FROM (
+                    SELECT project_id, trace_id,
+                        usage_metrics.1 AS usage_cost_unknown,
+                        usage_metrics.2 AS rollup_cost,
+                        usage_metrics.3 AS rollup_total_tokens,
+                        usage_metrics.4 AS rollup_prompt_tokens,
+                        usage_metrics.5 AS rollup_completion_tokens,
+                        usage_metrics.6 AS usage_source_summary_present,
+                        usage_metrics.7 AS usage_request_count,
+                        rollup_first_llm_model, rollup_first_llm_provider,
+                        rollup_first_llm_key, rollup_root_has_content
+                    FROM (
                     SELECT
                         project_id,
                         trace_id,
@@ -627,21 +613,18 @@ class _TraceRootReplayV2:
                             latest_span.13 AS latest_usage_coverage,
                             latest_span.14 AS latest_source_summary_present
                         FROM {self.TABLE}
-                        PREWHERE {project_filter}
-                          AND trace_id IN {trace_ids}
-                          AND (toString(project_id), trace_id) IN {identities}
+                        PREWHERE (toString(project_id), trace_id) IN {identities}
+                          AND {project_filter}
                         GROUP BY {span_key}
                     ) AS latest_trace_spans
                     WHERE latest_is_deleted = 0
                     GROUP BY project_id, trace_id
-                ) AS trace_usage_state
-                ARRAY JOIN trace_usage_metrics AS usage_metrics
-            ) AS trace_rollup_rows
-            LEFT ANY JOIN (
-                SELECT
-                    content_key,
-                    latest_content.1 AS first_llm_input,
-                    latest_content.2 AS first_llm_output
+                    ) AS trace_usage_state
+                    ARRAY JOIN trace_usage_metrics AS usage_metrics
+                )
+            ) AS trace_rollup_rows,
+            (
+                SELECT tuple(groupArray(content_key), groupArray(latest_content))
                 FROM (
                     SELECT
                         tuple({span_key}) AS content_key,
@@ -649,13 +632,36 @@ class _TraceRootReplayV2:
                     FROM {self.TABLE}
                     PREWHERE {project_filter}
                       AND observation_type = 'llm'
-                      AND trace_id IN {trace_ids}
                       AND (toString(project_id), trace_id) IN {identities}
-                      AND (input_length > 0 OR output_length > 0)
+                      AND ({span_key}) IN (
+                          SELECT tupleElement(rollup_row, 9)
+                          FROM (SELECT arrayJoin(trace_rollup_rows) AS rollup_row)
+                          WHERE NOT tupleElement(rollup_row, 10)
+                      )
                     GROUP BY {span_key}
                 )
             ) AS first_llm_contents
-              ON trace_rollup_rows.rollup_first_llm_key = first_llm_contents.content_key
+            SELECT
+                tupleElement(rollup_row, 1) AS trace_rollup_project_id,
+                tupleElement(rollup_row, 2) AS trace_rollup_trace_id,
+                toUInt8(1) AS trace_rollup_present,
+                tupleElement(rollup_row, 3) AS trace_rollup_cost,
+                tupleElement(rollup_row, 11) AS trace_rollup_cost_unknown,
+                tupleElement(rollup_row, 12) AS trace_rollup_source_summary_present,
+                tupleElement(rollup_row, 13) AS trace_rollup_request_count,
+                tupleElement(rollup_row, 4) AS trace_rollup_total_tokens,
+                tupleElement(rollup_row, 5) AS trace_rollup_prompt_tokens,
+                tupleElement(rollup_row, 6) AS trace_rollup_completion_tokens,
+                tupleElement(rollup_row, 7) AS first_llm_model,
+                tupleElement(rollup_row, 8) AS first_llm_provider,
+                arrayElement(
+                    tupleElement(first_llm_contents, 2),
+                    indexOf(tupleElement(first_llm_contents, 1),
+                            tupleElement(rollup_row, 9))
+                ) AS first_llm_content,
+                tupleElement(first_llm_content, 1) AS first_llm_input,
+                tupleElement(first_llm_content, 2) AS first_llm_output
+            FROM (SELECT arrayJoin(trace_rollup_rows) AS rollup_row)
         ) AS trace_rollup
           ON latest_physical_roots.project_id = trace_rollup.trace_rollup_project_id
          AND latest_physical_roots.trace_id = trace_rollup.trace_rollup_trace_id
