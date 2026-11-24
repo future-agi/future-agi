@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
 from django.db.models import (
+    Case,
     Count,
     JSONField,
     OuterRef,
@@ -26,6 +27,7 @@ from django.db.models import (
     Q,
     QuerySet,
     Subquery,
+    When,
 )
 from django.db.models.fields.json import KeyTransform
 from django.db.models.functions import Coalesce
@@ -55,6 +57,7 @@ from simulate.models import (
 )
 from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.environment_documents import (
+    RUN_CONTRACT_VERSION,
     contract_data,
     registration_key,
     row_stage_output,
@@ -166,9 +169,17 @@ def with_version_contract(
     """The list's jobs with the contract each default version records it runs with, read in the same query. Only
     the list reads it: every other read of a job never touches a version's documents."""
     return queryset.annotate(
-        version_contract=Coalesce(
-            KeyTransform("run_contract", "environment_version__documents"),
-            KeyTransform("contract", "environment_version__documents"),
+        version_contract=Case(
+            # A run contract only this revision of the reading recorded, as every other reader takes it.
+            When(
+                environment_version__documents__run_contract_version=RUN_CONTRACT_VERSION,
+                then=Coalesce(
+                    KeyTransform("run_contract", "environment_version__documents"),
+                    KeyTransform("contract", "environment_version__documents"),
+                    output_field=JSONField(),
+                ),
+            ),
+            default=KeyTransform("contract", "environment_version__documents"),
             output_field=JSONField(),
         )
     )

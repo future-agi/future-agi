@@ -474,6 +474,16 @@ jobs:
         if: matrix.group == 1 && matrix.suite == 'main'
         run: uv run --no-sync python -I .ci/test_collected_ids.py PluginProtocolTest RecordTest
 
+      - name: Check capability fixtures before the legacy EE decorator (one process)
+        if: matrix.group == 1 && matrix.suite == 'main'
+        run: |
+          uv run pytest -v -n 0 -o usefixtures=check_capability_isolation \
+            'tfc/capabilities/tests/test_enforcement_matrix.py::TestExpiredDeniesLockedFeatures::test_unlocked_feature_allowed_when_expired[optimization]' \
+            ee/usage/tests/test_license.py::TestUnifiedFeatureCheck::test_cloud_uses_plan_resolver \
+            tfc/capabilities/tests/test_blank_org_id.py::test_none_org_id_still_denies \
+            tfc/capabilities/tests/test_service_license_states.py::TestCloudResolverFailure::test_cloud_denies_paid_feature_when_org_id_missing \
+            tfc/tests/test_ee_gating.py::TestRequireEEFeatureDecorator::test_sync_fn_passes_in_ee
+
       - name: Collect the eligible inventory without sharding
         if: matrix.group == 1
         env:
