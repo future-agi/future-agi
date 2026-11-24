@@ -420,6 +420,14 @@ jobs:
         with:
           profile: ${{ inputs.backend_setup || 'baseline' }}
 
+      - name: Record the running service containers (observation only)
+        # Which image each service runs, read from the running containers by
+        # their own image IDs: no pull, no registry. It rides the collected-ids
+        # artifact and no verdict reads it. The script bounds all its reads to
+        # 60 s, so this timeout is only a backstop.
+        timeout-minutes: 2
+        run: python3 -I .ci/service_receipt.py "$RUNNER_TEMP/shard-receipt/services.json"
+
       - name: Fetch this run's pinned Temporal archive
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
