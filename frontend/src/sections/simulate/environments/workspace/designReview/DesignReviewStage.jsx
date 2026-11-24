@@ -83,7 +83,7 @@ function RuleEditor({ rule, busy, onSave, onCancel }) {
   const [text, setText] = useState(rule.text);
   const trimmed = text.trim();
   const save = () => {
-    if (trimmed && trimmed !== rule.text) onSave(trimmed);
+    if (!busy && trimmed && trimmed !== rule.text) onSave(trimmed);
   };
   return (
     <Stack
@@ -185,7 +185,8 @@ export default function DesignReviewStage({ envId }) {
       .map((rule) => sourceLabel(rule.source)),
   );
 
-  const commitRemove = ({ kind, item, label, note }) =>
+  const commitRemove = ({ kind, item, label, note }) => {
+    setUndo(null);
     addEdit.mutate(
       { op: "remove", kind, id: item.id },
       {
@@ -198,6 +199,7 @@ export default function DesignReviewStage({ envId }) {
         onError: showError,
       },
     );
+  };
 
   const remove = async (kind, item, label) => {
     const note =
@@ -227,11 +229,13 @@ export default function DesignReviewStage({ envId }) {
     undoEdit.mutate(index, { onError: showError });
   };
 
-  const saveRule = (rule, text) =>
+  const saveRule = (rule, text) => {
+    setUndo(null);
     addEdit.mutate(
       { op: "edit", kind: "rule", id: rule.id, text },
       { onSuccess: () => setEditingRule(null), onError: showError },
     );
+  };
 
   const removeTool = (tool) => remove("tool", tool, tool.name);
   const onApprove = () => approve.mutate(undefined, { onError: showError });
@@ -253,11 +257,14 @@ export default function DesignReviewStage({ envId }) {
           ? { text: REVIEW_COPY.emptyWorld }
           : null;
 
+  const editingOpen = editingRule !== null;
   const approveTip = review.agent_changed
     ? REVIEW_COPY.agentChanged
     : emptyWorld
       ? REVIEW_COPY.emptyWorldTip
-      : "";
+      : editingOpen
+        ? REVIEW_COPY.finishEditing
+        : "";
 
   const approveControl = parked ? (
     <Button
@@ -278,7 +285,11 @@ export default function DesignReviewStage({ envId }) {
               variant="contained"
               color="primary"
               disabled={
-                !canEdit || busy || emptyWorld || Boolean(review.agent_changed)
+                !canEdit ||
+                busy ||
+                editingOpen ||
+                emptyWorld ||
+                Boolean(review.agent_changed)
               }
               onClick={onApprove}
               startIcon={

@@ -36,6 +36,7 @@ export const REVIEW_COPY = {
   approve: "Approve and build",
   continue: "Continue",
   approved: "Approved. The build is running from this design.",
+  finishEditing: "Save or cancel the rule you're changing first.",
   emptyWorldTip:
     "Tell the builder what the agent works with first. There is nothing to build yet.",
   emptyWorld:
