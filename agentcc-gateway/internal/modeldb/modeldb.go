@@ -2,6 +2,7 @@ package modeldb
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +42,7 @@ type ModelInfo struct {
 // Constructed once, swapped atomically on hot-reload.
 type ModelDB struct {
 	models     map[string]*ModelInfo
+	free       map[string]bool // lookup-only index; never exposed by general catalogue operations
 	byProvider map[string][]*ModelInfo
 	// priceOverridden holds the ids whose price comes from a config override,
 	// so a lookup across several names can rank an operator's price above a
@@ -50,6 +52,16 @@ type ModelDB struct {
 
 // New creates a ModelDB from bundled data merged with config overrides.
 func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *ModelDB {
+	// The legacy constructor also accepts an arbitrary replacement table. Do not
+	// attach bundled declarations to a different catalogue.
+	var zero priceDeclarations
+	if reflect.ValueOf(bundled).Pointer() == reflect.ValueOf(BundledModels).Pointer() {
+		zero = bundledZero
+	}
+	return newWithZero(bundled, overrides, zero)
+}
+
+func newWithZero(bundled map[string]*ModelInfo, overrides map[string]ModelOverride, zero priceDeclarations) *ModelDB {
 	models := make(map[string]*ModelInfo, len(bundled)+len(overrides))
 
 	// Deep-copy bundled data.
@@ -87,7 +99,19 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 		sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 	}
 
-	return &ModelDB{models: models, byProvider: byProvider, priceOverridden: priceOverridden}
+	free := make(map[string]bool, len(zero))
+	for key, d := range zero {
+		free[key] = d.free
+	}
+	for key, ov := range overrides {
+		d, known := zero[key]
+		if !known && ov.Mode != "" && mapMode(ov.Mode) != ModeChat && mapMode(ov.Mode) != ModeEmbedding {
+			free[key] = false
+		} else if ov.Pricing != nil && (known || bundled[key] == nil) {
+			free[key] = declaresFree(d.raw, ov.Pricing)
+		}
+	}
+	return &ModelDB{models: models, byProvider: byProvider, priceOverridden: priceOverridden, free: free}
 }
 
 // Get returns model info by ID. Tries exact match, then strips "provider/"
@@ -111,6 +135,26 @@ func (db *ModelDB) Get(id string) (*ModelInfo, bool) {
 		}
 	}
 	return nil, false
+}
+
+// StatedFree consults exact entries only, after monetary lookups have missed.
+// A provider-specific declaration (including a non-free one) wins over a
+// bare key. Never strip a namespace or use a different entry's final segment.
+func (db *ModelDB) StatedFree(model, provider, table string) bool {
+	// Do not look past an exact key already selected in the monetary table.
+	if key := db.PriceKey(model, provider, table); db.models[key] != nil {
+		return db.free[key]
+	}
+	for _, name := range []string{provider, table, tableProviderNames[provider]} {
+		if name == "" {
+			continue
+		}
+		key := name + "/" + model
+		if free, exists := db.free[key]; exists || db.models[key] != nil {
+			return free
+		}
+	}
+	return db.free[model]
 }
 
 // PriceKey is the key the price table lists a model under.

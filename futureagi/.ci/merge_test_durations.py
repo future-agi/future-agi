@@ -10,8 +10,9 @@ reported (its shard failed before the upload, or the test was deselected).
     merge_test_durations.py PLAN SHARD_FILE [SHARD_FILE ...] > .test_durations
     merge_test_durations.py --compact [--whole PART] PLAN SHARD_FILE [...]
 
-Without options the result holds every test. That is what the timings job
-saves for the next runs' plan, and it is the exact input: pytest-split gives a
+Without options the result holds every measured test but the few with an id
+longer than MAX_ID_LENGTH (below). That is what the timings job saves for the
+next runs' plan, and it is the closest input: pytest-split gives a
 test WITHOUT a time the average of its suite's known times. In a suite with a
 few very long tests that average is many seconds, thousands of near-instant
 tests then carry weight they do not have, and the shard that holds a very
@@ -27,8 +28,9 @@ Metrics suite, the one with the very long tests, is exact there too. For the
 main suite both forms gave the same split in that replay.
 
 Times are rounded to a tenth of a millisecond, and a test whose id is longer
-than MAX_ID_LENGTH is left out (a few generated parameter ids are hundreds of
-kilobytes long).
+than MAX_ID_LENGTH is left out in both forms: a few generated parameter ids
+are hundreds of kilobytes long, and one of them would be most of the file.
+pytest-split plans each of them with its suite's average time, not its own.
 
 Standard library only.
 """
