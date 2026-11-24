@@ -567,10 +567,32 @@ describe("step rows", () => {
     ]);
   });
 
-  it("omits lines whose data has not arrived", () => {
+  it("omits counts that have not arrived, and says what Checking does before its plan", () => {
     const rows = stepRows(byId("fix-unknown-identity"));
     expect(rows[0].lines).toEqual([]);
-    expect(rows[3].lines).toEqual([]);
+    expect(rows[3].lines).toEqual([
+      "Checks the best candidate on scenarios it never saw and on the must-pass scenarios",
+    ]);
+    // A queued epoch has no plan yet either: its Checking row is never blank.
+    const queued = stepRows(byId("fix-queued"));
+    expect(queued.find((r) => r.id === "verify").lines).toEqual([
+      "Checks the best candidate on scenarios it never saw and on the must-pass scenarios",
+    ]);
+  });
+
+  it("says a ceilings rejection in the group heading's words", () => {
+    const fix = structuredClone(byId("fix-no-improvement"));
+    fix.candidates = [fix.candidates[0]];
+    fix.candidates[0].verdict.tiers = [
+      { name: "static", status: "passed", detail: "" },
+      { name: "ceilings", status: "failed", detail: "" },
+    ];
+    expect(headline(fix)).toBe(
+      "No safe improvement: the only candidate went over the reply-time or cost limit.",
+    );
+    expect(candidateGroups(fix).map((g) => g.label)).toEqual([
+      "Went over the reply-time or cost limit",
+    ]);
   });
 
   it("is diagnosing until the diagnosis or a candidate arrives, then proposing", () => {

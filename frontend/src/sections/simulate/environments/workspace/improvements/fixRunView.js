@@ -564,7 +564,8 @@ const NO_SAFE_WHY = {
     missed: "held up over repeat runs",
     one: "didn't hold up over repeat runs",
   },
-  ceilings: { did: "went over the cost or latency limit" },
+  // The same words as the candidates' group heading.
+  ceilings: { did: "went over the reply-time or cost limit" },
   "model-lock": { did: "called a model outside the approved list" },
 };
 
@@ -875,7 +876,11 @@ function stepLines(id, fix, state) {
       ];
     return plan ? [searchCount(plan, candidates)] : [];
   }
-  if (!plan) return [];
+  // Before the plan, what the stage does, without its counts.
+  if (!plan)
+    return [
+      "Checks the best candidate on scenarios it never saw and on the must-pass scenarios",
+    ];
   // Must-pass holds every other scenario too, so it is larger than the
   // protected count the launch form showed; name both.
   const kept = plan.protected
