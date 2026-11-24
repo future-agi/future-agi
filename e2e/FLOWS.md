@@ -1856,6 +1856,31 @@
 
 - the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
 
+### GW-E2E-023 — request logs tell an unpriced request apart from a free and a priced one
+
+**Goal:** Someone reading the gateway Request Logs can tell a request whose model has no price apart from a request that really cost $0 and from a priced one, in the table and in the request drawer
+
+**Spec:** `flows/gateway/unpriced-request-cost.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision an organization of the test's own, an org provider on the managed mock listing an unpriced, a zero-priced and gpt-4o-mini model, an org config pricing only the zero model at 0, and an org API key
+2. wait for the gateway to hold the pushed org config
+3. send one real chat completion per model with the org key
+4. open Request Logs and read the Cost cell of each of the three rows
+5. hover the Unpriced chip and read its tooltip
+6. open each request's drawer and read its Cost
+
+**Backend state verified:**
+
+- the gateway answers all three completions with HTTP 200, a request id and the requested model
+- PG agentcc_request_log holds exactly the three request ids: unpriced cost 0 with cost_source unpriced, free cost 0 with no cost_source, gpt-4o-mini cost above 0 with cost_source catalogue, all status 200
+- the request-logs list and detail endpoints return the same three request IDs, costs and cost sources as the stored rows
+- the table shows Unpriced with the explanatory tooltip only for the unpriced row, $0.00 for the free row and the formatted API cost for gpt-4o-mini
+- each request drawer shows the same Cost as its table row
+
 ### GW-E2E-024 — Add/Edit Provider saves only the models the user picked or typed
 
 **Goal:** A platform engineer adds and then edits a provider, and only the models they deliberately picked or typed are saved: hovering a listed model and clicking away neither selects it nor drops a selected one, and a typed model ID is kept, trimmed and once, whether they click away or press Save directly
