@@ -1194,6 +1194,11 @@ def change_agent_source(
                 status_code=422,
                 details={"piece": "agent"},
             )
+        if make_default:
+            # Imported here: the Epoch's services import this module.
+            from simulate.services.agent_fix_runs import refuse_outside_the_epoch
+
+            refuse_outside_the_epoch(archive_artifact_id=archive_artifact_id)
         return _made(
             parent,
             environment,

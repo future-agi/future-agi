@@ -1355,6 +1355,10 @@ def _move_agent_default(
         return locked
     if (current.id if current is not None else None) != expected_default_id:
         raise _conflict("agent", current)
+    # Imported here: the Epoch's services import this module.
+    from simulate.services.agent_fix_runs import refuse_outside_the_epoch
+
+    refuse_outside_the_epoch(agent_version_id=version_id)
     version = AgentVersion.no_workspace_objects.get(id=version_id)
     move_agent(locked, version, moved=hand_move(user, version.id))
     schedule_environment_nudge(

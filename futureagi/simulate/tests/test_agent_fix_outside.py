@@ -26,6 +26,7 @@ from conftest import WorkspaceAwareAPIClient
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    AgentVersion,
     CallExecution,
     HostedHarnessJob,
 )
@@ -57,6 +58,7 @@ from simulate.tests.test_agent_fix_services import (
     _fix_run,
     _receipts,
     _run,
+    _runtime,
     _tree,
 )
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixtures
@@ -66,7 +68,12 @@ from simulate.tests.test_agent_fix_services import environment as environment
 from simulate.tests.test_agent_fix_services import source_run as source_run
 from simulate.tests.test_agent_fix_services import temporal as temporal
 from simulate.tests.test_agent_fix_services import versioning_on as versioning_on
-from simulate.tests.test_harness_agent_versions import _passing
+from simulate.tests.test_harness_agent_source_api import _archive
+from simulate.tests.test_harness_agent_versions import (
+    _environment,
+    _passing,
+    _preflight,
+)
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
@@ -1481,3 +1488,109 @@ class TestNoHeldBackCaseInAnyRead:
 
         assert detail["request"]["held_back_scenario_keys"] == [HELD]
         assert HELD_ONLY_SUB_GOAL in detail["request"]["failing_sub_goals"]
+
+
+ENVIRONMENTS = "/simulate/api/harness-environments"
+# The planted Epoch is the environment's first, and its candidate its first attempt.
+NEEDS_OVERRIDE = (
+    "This version is Candidate 1 of Epoch 1, whose checks refused it. To make it the"
+    " default, open Epoch 1 and ship it there with a reason."
+)
+EVERY_CALLER = pytest.mark.parametrize(
+    "client",
+    ["key_client", "auth_client", "browser_client"],
+    ids=["api-key", "mcp", "session"],
+)
+
+
+def _move(client, environment, version_id):
+    return client.post(
+        f"{ENVIRONMENTS}/{environment.id}/versions/agent/{version_id}/default/",
+        {"expected_default_id": str(environment.agent_version_id)},
+        format="json",
+    )
+
+
+def _candidate_archive(fix_run):
+    candidate = fix_run.candidates.get()
+    return str(_runtime(candidate.agent_version_id).source["archive_artifact_id"])
+
+
+def _refused(response):
+    assert response.status_code == 409, response.content
+    assert (response.json()["error"], response.json()["message"]) == (
+        "fix_candidate_needs_override",
+        NEEDS_OVERRIDE,
+    )
+
+
+class TestARefusedCandidateShipsOnlyInItsEpoch:
+    """A candidate the Epoch ships only on a person's reason is made the default only by
+    the Epoch's own ship route: no move, pin or upload does it, whoever asks."""
+
+    @EVERY_CALLER
+    def test_moving_it_is_refused(self, request, planted, client):
+        environment = planted.environment
+        before = environment.agent_version_id
+
+        response = _move(
+            request.getfixturevalue(client),
+            environment,
+            planted.candidates.get().agent_version_id,
+        )
+
+        _refused(response)
+        environment.refresh_from_db()
+        assert environment.agent_version_id == before
+
+    @EVERY_CALLER
+    def test_uploading_its_tree_as_the_default_is_refused(
+        self, request, planted, user, workspace, storage, client
+    ):
+        uploaded = _uploaded_environment(user, workspace, storage)
+
+        response = request.getfixturevalue(client).post(
+            f"{ENVIRONMENTS}/{uploaded.id}/versions/agent/",
+            {"archive_artifact_id": _candidate_archive(planted), "make_default": True},
+            format="json",
+        )
+
+        _refused(response)
+
+    def test_a_copy_uploaded_to_move_later_is_refused_at_the_move(
+        self, browser_client, planted, user, workspace, storage
+    ):
+        uploaded = _uploaded_environment(user, workspace, storage)
+        made = browser_client.post(
+            f"{ENVIRONMENTS}/{uploaded.id}/versions/agent/",
+            {"archive_artifact_id": _candidate_archive(planted), "make_default": False},
+            format="json",
+        )
+        assert made.status_code == 202, made.content
+        copy = AgentVersion._base_manager.get(id=made.json()["agent_version"]["id"])
+        assert _preflight(copy).status == "passed"
+
+        _refused(_move(browser_client, uploaded, copy.id))
+
+    @pytest.mark.parametrize("made_by", ["no-epoch", "winner"])
+    def test_any_other_version_moves(self, browser_client, planted, made_by):
+        candidate = planted.candidates.get()
+        if made_by == "winner":
+            AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+                outcome="winner"
+            )
+        else:
+            AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).delete()
+
+        response = _move(
+            browser_client, planted.environment, candidate.agent_version_id
+        )
+
+        assert response.status_code == 200, response.content
+        planted.environment.refresh_from_db()
+        assert planted.environment.agent_version_id == candidate.agent_version_id
+
+
+def _uploaded_environment(user, workspace, storage):
+    """An environment whose agent is an uploaded folder, so an upload can replace it."""
+    return _environment(user, workspace, "uploaded-env", storage, edit=_archive)

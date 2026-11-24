@@ -8,12 +8,14 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from model_hub.models.develop_dataset import Row
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    HarnessAgentVersionRuntime,
     HarnessSuiteMember,
     HostedHarnessJob,
     HostedHarnessScenario,
@@ -610,7 +612,7 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
                 status_code=422,
             )
         return
-    if not overridable_regressions(candidate):
+    if not ships_only_with_a_reason(candidate):
         raise HostedHarnessError(
             "fix_candidate_not_proven",
             "only the epoch's winner can ship; a candidate only the must-pass check"
@@ -622,6 +624,55 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
             "fix_override_reason_required",
             "this candidate regressed on its must-pass check: give the reason to ship it",
             status_code=422,
+        )
+
+
+def ships_only_with_a_reason(candidate: AgentFixCandidate) -> bool:
+    """Whether the Epoch ships this candidate only on a person's reason: not its winner,
+    and refused by its must-pass check alone (require_shippable)."""
+    return candidate.outcome != AgentFixCandidate.Outcome.WINNER and bool(
+        overridable_regressions(candidate)
+    )
+
+
+def refuse_outside_the_epoch(
+    *, agent_version_id: Any = None, archive_artifact_id: Any = None
+) -> None:
+    """Refuse to make the default, anywhere but its Epoch's ship route, a version that is
+    a candidate the Epoch ships only on a person's reason, or an upload of the same
+    archive. A person ships it there, with the reason; no key, agent or move does."""
+    match = Q(pk__in=[])
+    if agent_version_id is not None:
+        match |= Q(agent_version_id=agent_version_id)
+        source = (
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version_id=agent_version_id
+            )
+            .values_list("source", flat=True)
+            .first()
+        )
+        archive_artifact_id = (source or {}).get("archive_artifact_id")
+    if archive_artifact_id:
+        match |= Q(
+            agent_version__harness_runtime__source__archive_artifact_id=str(
+                archive_artifact_id
+            )
+        )
+    for candidate in AgentFixCandidate.no_workspace_objects.filter(
+        match
+    ).select_related("fix_run"):
+        if not ships_only_with_a_reason(candidate):
+            continue
+        number = AgentFixRun.no_workspace_objects.filter(
+            environment_id=candidate.fix_run.environment_id,
+            created_at__lte=candidate.fix_run.created_at,
+        ).count()
+        raise HostedHarnessError(
+            "fix_candidate_needs_override",
+            f"This version is Candidate {candidate.attempt} of Epoch {number}, whose"
+            f" checks refused it. To make it the default, open Epoch {number} and ship"
+            " it there with a reason.",
+            status_code=409,
         )
 
 
