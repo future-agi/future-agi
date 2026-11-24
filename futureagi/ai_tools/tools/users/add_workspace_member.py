@@ -30,77 +30,37 @@ class AddWorkspaceMemberTool(BaseTool):
     def execute(
         self, params: AddWorkspaceMemberInput, context: ToolContext
     ) -> ToolResult:
+        from rest_framework.exceptions import APIException, NotFound
 
-        from accounts.models.user import User
-        from accounts.models.workspace import (
-            OrganizationRoles,
-            Workspace,
-            WorkspaceMembership,
+        from accounts.services.legacy_role_assignments import (
+            RoleWorkspaceNotFound,
+            assign_role,
         )
 
-        org = context.organization
         actor = context.user
-
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-            OrganizationRoles.MEMBER,
-        ]:
-            return ToolResult.error(
-                "You do not have permission to add workspace members. "
-                "Only Owner, Admin, or Member roles can add members to workspaces.",
-                error_code="PERMISSION_DENIED",
-            )
-
-        # Validate workspace
         try:
-            workspace = Workspace.objects.get(
-                id=params.workspace_id, organization=org, is_active=True
+            target_user, workspace, changes = assign_role(
+                actor=actor,
+                organization=context.organization,
+                target_user_id=params.user_id,
+                role=params.role,
+                workspace_id=params.workspace_id,
+                workspace_only=True,
             )
-        except Workspace.DoesNotExist:
+        except RoleWorkspaceNotFound:
             return ToolResult.not_found("Workspace", str(params.workspace_id))
-
-        # Validate user
-        try:
-            target_user = User.objects.get(id=params.user_id, organization=org)
-        except User.DoesNotExist:
+        except NotFound:
             return ToolResult.not_found("User", str(params.user_id))
-
-        # Check for soft-deleted membership
-        existing_deleted = WorkspaceMembership.all_objects.filter(
-            workspace=workspace,
-            user=target_user,
-            deleted=True,
-        ).first()
-
-        if existing_deleted:
-            existing_deleted.deleted = False
-            existing_deleted.is_active = True
-            existing_deleted.role = params.role
-            existing_deleted.invited_by = actor
-            existing_deleted.save()
-            action = "re-added"
-        else:
-            membership, created = (
-                WorkspaceMembership.no_workspace_objects.get_or_create(
-                    workspace=workspace,
-                    user=target_user,
-                    defaults={
-                        "role": params.role,
-                        "invited_by": actor,
-                        "is_active": True,
-                    },
-                )
+        except APIException as exc:
+            return ToolResult.error(
+                str(exc.detail),
+                error_code=(
+                    "PERMISSION_DENIED"
+                    if exc.status_code == 403
+                    else "VALIDATION_ERROR"
+                ),
             )
-            if created:
-                action = "added"
-            else:
-                old_role = membership.role
-                membership.role = params.role
-                membership.is_active = True
-                membership.save()
-                action = f"updated (role changed from {old_role})"
+        action = changes["action"]
 
         info = key_value_block(
             [
