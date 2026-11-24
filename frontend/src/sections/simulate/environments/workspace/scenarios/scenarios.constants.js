@@ -104,6 +104,8 @@ export const LIFECYCLE_COPY = {
     elsewhere: "Another validation is running. Validate this one when it ends.",
     nothing: "Nothing to validate",
     saveWaits: "Save waits until it finishes.",
+    // Why the tab's two buttons are held.
+    heldHint: "A validation is running. Validate again when it finishes.",
     rowValidating: "Validating",
     rowHint: "Being proved now. Its state updates when Validate finishes.",
     failed: (reason) =>

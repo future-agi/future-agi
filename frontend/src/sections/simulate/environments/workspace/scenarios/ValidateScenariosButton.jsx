@@ -134,14 +134,14 @@ export default function ValidateScenariosButton({
           ? COPY.tryAgain
           : label;
 
+  let hint = reproveAll ? COPY.reproveAllHint : "";
+  if (nothing) hint = live?.message || "";
+  // A scenario's own button says it beside itself.
+  else if (running && !scoped) hint = COPY.heldHint;
+
   return (
     <Stack direction="row" alignItems="center" spacing={1}>
-      <Tooltip
-        arrow
-        title={
-          nothing ? live?.message || "" : reproveAll ? COPY.reproveAllHint : ""
-        }
-      >
+      <Tooltip arrow describeChild title={hint}>
         <span>
           <Button
             size="small"

@@ -126,9 +126,16 @@ describe("ValidateScenariosButton", () => {
     });
     renderButton();
     await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalledTimes(1));
+    const button = screen.getByRole("button", {
+      name: "Validate cases not yet proved",
+    });
+    expect(button).toBeDisabled();
+    await userEvent.setup().hover(button.parentElement);
     expect(
-      screen.getByRole("button", { name: "Validate cases not yet proved" }),
-    ).toBeDisabled();
+      await screen.findByText(
+        "A validation is running. Validate again when it finishes.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("holds a scenario's button while another validation runs, after its own ended", async () => {
