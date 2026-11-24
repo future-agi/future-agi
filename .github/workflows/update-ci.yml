@@ -147,14 +147,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: update-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ ((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && github.run_id || 'candidate' }}
+  group: update-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ ((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # The complete diff selects ordinary jobs; Real rehearsals have a separate
   # label/tooling/boot-input decision and never gate a merge group.
   changes:
-    if: ${{ !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) }}
+    if: ${{ !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) }}
     name: Update-relevant changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -228,8 +228,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - id: labels
         # The labels the pull request has now, not the ones it had when the
-        # event fired. Adding update-rehearsal or e2e-standalone starts this
-        # workflow again; any other label starts a run with no jobs.
+        # event fired. Adding update-rehearsal starts this workflow again. Any
+        # other label starts a run with no jobs, e2e-standalone included: it
+        # only sets the plan's E2E fields (any, forced_standalone), which no
+        # job here reads, so it must not cancel a running Real rehearsal.
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -258,7 +260,7 @@ jobs:
 
   safety:
     needs: changes
-    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
+    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     name: Unattended update layout and environment
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -294,7 +296,7 @@ jobs:
 
   unit:
     needs: changes
-    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
+    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     name: unit (Python ${{ matrix.python }})
     # Python 3.9 (the oldest bin/update supports) has setup-python builds for
     # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
@@ -353,7 +355,7 @@ jobs:
 
   compose:
     needs: changes
-    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
+    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     name: compose versions
     # Python 3.9 (the oldest bin/update supports) has setup-python builds for
     # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
@@ -384,7 +386,7 @@ jobs:
   # suite's prefix and is removed at the end, so the suites run side by side.
   e2e:
     needs: changes
-    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
+    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     name: e2e (${{ matrix.suite }}, Compose ${{ matrix.compose }})
     # Python 3.9 (the oldest bin/update supports) has setup-python builds for
     # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
@@ -430,7 +432,7 @@ jobs:
   automatic-upgrade:
     name: Real automatic latest-stable to PR and cold restore
     needs: changes
-    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && (needs.changes.outputs.upgrade == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && github.event_name != 'pull_request' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
+    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && (needs.changes.outputs.upgrade == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && github.event_name != 'pull_request' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:
@@ -609,7 +611,7 @@ jobs:
   automatic-a-b-c:
     name: Real one-opt-in v1.53.0 to v1.54.0 to v1.55.0
     needs: changes
-    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && (needs.changes.outputs.abc == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && github.event_name != 'pull_request' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
+    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && (needs.changes.outputs.abc == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && github.event_name != 'pull_request' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:
@@ -699,7 +701,7 @@ jobs:
 
   daemon-storage:
     needs: changes
-    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
+    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     # Setup and admission need image-store capacity. The non-root installation
     # user cannot read a rootful daemon's /var/lib/docker, so this exercises the
     # fixed daemon-side helper in minutes instead of after a full qualification.
@@ -726,7 +728,7 @@ jobs:
 
   backup:
     needs: changes
-    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
+    if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     name: Native vendor cold backup and crash-restore matrices
     runs-on: ubuntu-24.04
     timeout-minutes: 90
