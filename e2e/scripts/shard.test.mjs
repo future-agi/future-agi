@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -23,10 +25,13 @@ import {
 } from "../lib/shard.ts";
 import { grepInvertPattern } from "../lib/quarantine.ts";
 import {
+  API_TRIES,
   annotation,
   checkParity,
   fileDurations,
   checkStackImages,
+  ghDownload,
+  ghJson,
   readRuntimeSkips,
   receiptArtifact,
   runDate,
@@ -329,6 +334,88 @@ test("each shard's receipts come from the attempt that ran it", () => {
     () => shardAttempts("distributed", 3, [...first, job(2, 3, 1)]),
     /inconsistent/,
   );
+});
+
+// Run 45334240608: a paginated read came back cut short ("unexpected end of
+// JSON input") and the verdict failed with every shard green.
+const CUT = "unexpected end of JSON input";
+const fakeGh = (...results) => {
+  const calls = [];
+  const run = (command, args, options) => {
+    calls.push([command, ...args]);
+    const [status, out, err] = results.shift();
+    if (options.stdio && out) writeSync(options.stdio[1], out);
+    return { status, stdout: options.stdio ? null : out, stderr: err };
+  };
+  return { run, calls };
+};
+
+test("an API read cut short or failing for a moment is read again from scratch", () => {
+  const sleeps = [];
+  const { run, calls } = fakeGh(
+    [1, "", CUT],
+    [0, '[{"jobs": [1,', ""],
+    [0, '[{"jobs": [1]}]', ""],
+  );
+  const sleep = (ms) => sleeps.push(ms);
+  assert.deepEqual(ghJson(["--paginate", "--slurp", "x"], { run, sleep }), [
+    { jobs: [1] },
+  ]);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0], ["gh", "api", "--paginate", "--slurp", "x"]);
+  assert.deepEqual(sleeps, [2000, 4000]);
+});
+
+test("other API errors fail at once; retries are bounded and fail closed", () => {
+  const notFound = fakeGh([1, "", "gh: Not Found (HTTP 404)"]);
+  assert.throws(
+    () => ghJson(["x"], { run: notFound.run, sleep: () => {} }),
+    /Not Found \(HTTP 404\), after 1 tries/,
+  );
+  assert.equal(notFound.calls.length, 1);
+  for (const bad of [
+    [1, "", CUT],
+    [1, "", "HTTP 502: Bad Gateway"],
+    [0, "[{", ""],
+  ]) {
+    const always = fakeGh(...Array(API_TRIES).fill(bad));
+    const sleeps = [];
+    assert.throws(
+      () => ghJson(["x"], { run: always.run, sleep: (ms) => sleeps.push(ms) }),
+      new RegExp(`after ${API_TRIES} tries`),
+    );
+    assert.equal(always.calls.length, API_TRIES);
+    assert.deepEqual(sleeps, [2000, 4000, 8000]);
+  }
+});
+
+test("a download cut short is fetched again until it matches its digest", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "gh-download-"));
+  try {
+    const file = path.join(dir, "artifact.zip");
+    const whole = "whole archive";
+    const sha = (data) => createHash("sha256").update(data).digest("hex");
+    const digest = `sha256:${sha(whole)}`;
+    const hash = (target) => sha(readFileSync(target));
+    const sleep = () => {};
+    const { run, calls } = fakeGh(
+      [1, "", CUT],
+      [0, "whole arch", ""],
+      [0, whole, ""],
+    );
+    ghDownload(["a/zip"], file, digest, { run, sleep, hash });
+    assert.equal(readFileSync(file, "utf8"), whole);
+    assert.equal(calls.length, 3);
+    // It fails closed after the tries and leaves no mismatching file.
+    const short = fakeGh(...Array(API_TRIES).fill([0, "whole arch", ""]));
+    assert.throws(
+      () => ghDownload(["a/zip"], file, digest, { run: short.run, sleep, hash }),
+      new RegExp(`does not match ${digest}, after ${API_TRIES} tries`),
+    );
+    assert.equal(existsSync(file), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a receipt is exactly one unexpired artifact", () => {
