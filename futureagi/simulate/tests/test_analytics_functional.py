@@ -687,12 +687,14 @@ class TestRunResultsV3Views:
             update_fields=["output_type_normalized", "choice_scores"]
         )
         pass_fail_eval_config.config = {
+            "required": True,
             "run_config": {
                 "reverse_output": reverse,
                 "pass_threshold": threshold,
-            }
+            },
         }
         pass_fail_eval_config.save(update_fields=["config"])
+        call_expected = "failed" if expected == "failed" else "passed"
         call = CallExecution.objects.create(
             test_execution=test_execution,
             scenario=scenario,
@@ -709,18 +711,18 @@ class TestRunResultsV3Views:
         )
         assert (
             call_outcome(call, {str(pass_fail_eval_config.id): pass_fail_eval_config})
-            == expected
+            == call_expected
         )
         assert (
             run_calls_queryset(test_execution).get(pk=call.pk).result_outcome
-            == expected
+            == call_expected
         )
 
         base = f"/simulate/v3/test-executions/{test_execution.id}"
         rows_response = auth_client.get(f"{base}/calls/")
         assert rows_response.status_code == 200
         row = rows_response.json()["results"][0]
-        assert row["outcome"] == expected
+        assert row["outcome"] == call_expected
         if expected_score is None:
             assert row["evaluations"][0]["score"] is None
         else:
@@ -729,8 +731,12 @@ class TestRunResultsV3Views:
             True if expected == "passed" else False if expected == "failed" else None
         )
 
+        assert row["required_evals_failed"] == (
+            ["Quality Gate"] if expected == "failed" else []
+        )
+
         filtered = auth_client.get(
-            f"{base}/calls/", {"filters": json.dumps({"status": [expected]})}
+            f"{base}/calls/", {"filters": json.dumps({"status": [call_expected]})}
         )
         assert filtered.status_code == 200
         assert filtered.json()["count"] == 1
@@ -738,7 +744,7 @@ class TestRunResultsV3Views:
         analytics = auth_client.get(f"{base}/analytics/")
         assert analytics.status_code == 200
         body = analytics.json()
-        assert body["summary"]["outcomes"][expected] == 1
+        assert body["summary"]["outcomes"][call_expected] == 1
         evaluation = next(
             item
             for item in body["evaluations"]
@@ -777,7 +783,8 @@ class TestRunResultsV3Views:
             update_fields=["output_type_normalized", "choice_scores"]
         )
         pass_fail_eval_config.config = {
-            "run_config": {"choice_scores": {"Good": 0.0}, "pass_threshold": 0.5}
+            "required": True,
+            "run_config": {"choice_scores": {"Good": 0.0}, "pass_threshold": 0.5},
         }
         pass_fail_eval_config.save(update_fields=["config"])
         call = CallExecution.objects.create(
@@ -1516,7 +1523,7 @@ class TestRunResultsV3Views:
             }
         ]
 
-    def test_a_failed_eval_on_a_call_with_no_scored_sub_goal_still_reads_failed(
+    def test_a_failed_harness_eval_leaves_a_call_with_no_scored_sub_goal_unscored(
         self, auth_client, test_execution, analytics_call_executions
     ):
         call = analytics_call_executions[0]
@@ -1544,9 +1551,10 @@ class TestRunResultsV3Views:
         row = next(
             item for item in response.json()["results"] if item["id"] == str(call.id)
         )
-        assert row["outcome"] == "failed"
+        assert row["outcome"] == "no_score"
+        assert row["evaluations"][0]["passed"] is False
 
-    def test_a_passing_eval_scores_a_call_whose_sub_goals_did_not_apply(
+    def test_a_passing_harness_eval_leaves_a_call_whose_sub_goals_did_not_apply_unscored(
         self, auth_client, test_execution, analytics_call_executions
     ):
         call = analytics_call_executions[0]
@@ -1573,9 +1581,9 @@ class TestRunResultsV3Views:
         ).json()["results"]
 
         assert next(row for row in rows if row["id"] == str(call.id))["outcome"] == (
-            "passed"
+            "no_score"
         )
-        assert str(call.id) in {row["id"] for row in passed}
+        assert str(call.id) not in {row["id"] for row in passed}
 
     def test_calls_rows_expose_scoring_states(
         self, auth_client, test_execution, scenario
@@ -1667,7 +1675,13 @@ class TestRunResultsV3Views:
                 )
             }
 
-        empty = {"type": "", "value": None, "score": None, "passed": None}
+        empty = {
+            "type": "",
+            "value": None,
+            "score": None,
+            "passed": None,
+            "required": False,
+        }
         assert _scoring(scoring) == {
             "scoring_status": "pending",
             "csat_status": "pending",

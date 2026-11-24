@@ -33,7 +33,7 @@ from simulate.services.run_results_v3_queries import (
             {"output": False},
             {"harness_outcome_status": "passed"},
             "completed",
-            "failed",
+            "passed",
         ),
         ({"output": False}, {}, "running", "inconclusive"),
         ({"output": False}, {}, "failed", "error"),
