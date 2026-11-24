@@ -19,10 +19,10 @@ test('SIM-E2E-017: the Tools card shows each tool\'s inputs with units, what it 
     steps: ['seed a built, versioned Environment whose contract records each tool\'s fields and one tool that '
               + 'reaches production (e2e/lib/harness_environment_seed.py)',
             'read the environment (GET harness-environments/<id>/)', 'open the World & tools tab',
-            'expand lookup_order', 'find issue_refund under Unsupported'],
+            'open lookup_order in the tool drawer', 'find issue_refund under Unsupported'],
     backendChecks: ['the contract section names issue_refund production-only',
                     'lookup_order returns status and total'],
-    browserChecks: ['lookup_order reads "Reads only" and its returned fields with units',
+    browserChecks: ['the lookup_order drawer shows what it reads, its returned fields with units and its reset',
                     'issue_refund is listed under Unsupported, never under Simulated'],
   }),
 }, async ({ page, actor }, testInfo) => {
@@ -42,10 +42,11 @@ test('SIM-E2E-017: the Tools card shows each tool\'s inputs with units, what it 
   await test.step('browser: a tool\'s contract, and Unsupported for the production-only one', async () => {
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=world`);
     await page.getByRole('button', { name: 'Show the contract of lookup_order' }).click({ timeout: UI_READY });
-    await expect(page.getByText('status: string')).toBeVisible({ timeout: UI_READY });
-    await expect(page.getByText('total: integer, cents, USD')).toBeVisible();
-    await expect(page.getByText('Reads only')).toBeVisible();
-    await expect(page.getByText('Reset to the seeded records before each trial').first()).toBeVisible();
+    await expect(page.getByText('status (string), total (integer, cents, USD)')).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByText('Reads', { exact: true })).toBeVisible();
+    await expect(page.getByText("None of the world's tables")).toBeVisible();
+    await expect(page.getByText('Restored to the seed before every trial')).toBeVisible();
+    await page.keyboard.press('Escape');
     const refund = { name: 'Show the contract of issue_refund' };
     await expect(page.getByRole('group', { name: 'Unsupported' }).getByRole('button', refund)).toBeVisible();
     await expect(page.getByRole('group', { name: 'Simulated' }).getByRole('button', refund)).toHaveCount(0);
