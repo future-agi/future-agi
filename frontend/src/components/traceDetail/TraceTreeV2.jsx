@@ -972,15 +972,6 @@ const TraceTreeV2 = ({
                 flexShrink: 0,
               }}
             />
-            <Typography
-              noWrap
-              variant="s3"
-              sx={{ color: "text.secondary", fontWeight: 500, flexShrink: 0 }}
-            >
-              {traceIssues.length > 1
-                ? `Issue ${activeIssueIdx + 1} of ${traceIssues.length}`
-                : "Issue"}
-            </Typography>
             <CustomTooltip
               show={Boolean(activeIssue.title)}
               title={activeIssue.title || ""}
@@ -994,6 +985,14 @@ const TraceTreeV2 = ({
                 variant="s1"
                 sx={{ color: "text.primary", flex: 1, minWidth: 0 }}
               >
+                <Box
+                  component="span"
+                  sx={{ color: "text.secondary", fontWeight: 500, mr: 0.625 }}
+                >
+                  {traceIssues.length > 1
+                    ? `Issue ${activeIssueIdx + 1} of ${traceIssues.length}:`
+                    : "Issue:"}
+                </Box>
                 {activeIssue.title}
               </Typography>
             </CustomTooltip>

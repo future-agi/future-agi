@@ -638,7 +638,7 @@ export default function ErrorFeedFilters({
           <OutlinedInput
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search issues"
+            placeholder="Search errors"
             size="small"
             startAdornment={
               <InputAdornment position="start">

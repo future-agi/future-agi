@@ -645,7 +645,7 @@ function TraceList({ traces, selectedIndex, onSelect, filterQuery = "", loading 
         const spanCount = deep?.telemetry?.span_count ?? null;
         const pathLabel = deep
           ? `${deep.origin_alias}${deep.symptom_alias && deep.symptom_alias !== deep.origin_alias ? ` → ${deep.symptom_alias}` : ""}`
-          : String(t.id || "").slice(0, 8);
+          : String(t.id || "");
         const promptPreview = t.evidence?.input || t.short_request || t.id;
 
         return (
@@ -696,7 +696,12 @@ function TraceList({ traces, selectedIndex, onSelect, filterQuery = "", loading 
                 <Typography
                   typography="s3"
                   color={isSelected ? "text.primary" : "text.secondary"}
-                  sx={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", flexShrink: 0 }}
+                  noWrap
+                  sx={{
+                    fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                    maxWidth: deep ? "none" : 78,
+                    flexShrink: deep ? 0 : 1,
+                  }}
                 >
                   {pathLabel}
                 </Typography>

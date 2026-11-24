@@ -128892,7 +128892,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Active cluster id",
           type: "string",
           minLength: 1,
-          "x-nullable": true,
         },
       },
     },

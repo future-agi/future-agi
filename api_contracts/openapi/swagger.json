@@ -195043,8 +195043,7 @@
                 "active_cluster_id": {
                     "title": "Active cluster id",
                     "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
+                    "minLength": 1
                 }
             }
         },

@@ -9,7 +9,6 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Collapse,
   Divider,
   Drawer,
   FormControl,
@@ -269,19 +268,6 @@ function AlertRuleForm({ rule, draft, onClose }) {
     draft?.cooldown ?? config.cooldown_seconds ?? 3600,
   );
   const [fieldErrors, setFieldErrors] = useState({});
-  const advancedFilterCount =
-    sources.length +
-    statuses.length +
-    issueCategories.length +
-    issueGroups.length;
-  const [showAdvanced, setShowAdvanced] = useState(advancedFilterCount > 0);
-  const hasAdvancedError = Boolean(
-    fieldErrors.sources ||
-      fieldErrors.statuses ||
-      fieldErrors.issueCategories ||
-      fieldErrors.issueGroups,
-  );
-  const advancedOpen = showAdvanced || hasAdvancedError;
   const channelsQuery = useSlackChannels(effectiveConnectionId);
   const {
     hasNextPage,
@@ -350,13 +336,6 @@ function AlertRuleForm({ rule, draft, onClose }) {
       setName(preset.name);
     }
     setFieldErrors({});
-  };
-
-  const toggleSeverity = (sev) => {
-    setSeverities((prev) =>
-      prev.includes(sev) ? prev.filter((s) => s !== sev) : [...prev, sev],
-    );
-    clearFieldError("severities");
   };
 
   const onTriggerChange = (value) => {
@@ -846,11 +825,11 @@ function AlertRuleForm({ rule, draft, onClose }) {
                       error={Boolean(fieldErrors.connection)}
                     >
                       <InputLabel id="workspace-label" shrink>
-                        Workspace
+                        Slack workspace
                       </InputLabel>
                       <Select
                         labelId="workspace-label"
-                        label="Workspace"
+                        label="Slack workspace"
                         displayEmpty
                         value={effectiveConnectionId}
                         onChange={(e) => {
@@ -1144,11 +1123,11 @@ function AlertRuleForm({ rule, draft, onClose }) {
                 error={Boolean(fieldErrors.triggerValue)}
               >
                 <InputLabel id="severity-trigger-label" shrink>
-                  Minimum severity
+                  Severity
                 </InputLabel>
                 <Select
                   labelId="severity-trigger-label"
-                  label="Minimum severity"
+                  label="Severity"
                   value={triggerValue}
                   onChange={(e) => {
                     setTriggerValue(e.target.value);
@@ -1186,74 +1165,6 @@ function AlertRuleForm({ rule, draft, onClose }) {
                 helperText={fieldErrors.triggerValue}
               />
             )}
-
-            {/* Severity toggle buttons */}
-            <Stack gap={0.6}>
-              <Stack direction="row" alignItems="center" justifyContent="space-between">
-                <Typography typography="s3" color="text.secondary">
-                  Severities
-                </Typography>
-                <Typography typography="s3" color="text.tertiary">
-                  {severities.length === 0 ? "Any severity" : labels(severities)}
-                </Typography>
-              </Stack>
-              <Stack direction="row" gap={0.75} flexWrap="wrap">
-                {SEVERITIES.map((sev) => {
-                  const active = severities.includes(sev);
-                  const dotColor =
-                    sev === "critical"
-                      ? "status.danger.solid"
-                      : sev === "high"
-                        ? "status.warning.solid"
-                        : sev === "medium"
-                          ? "text.secondary"
-                          : "text.disabled";
-                  return (
-                    <Box
-                      key={sev}
-                      component="button"
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => toggleSeverity(sev)}
-                      sx={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 0.6,
-                        px: 1.1,
-                        py: 0.45,
-                        borderRadius: "6px",
-                        border: "1px solid",
-                        borderColor: active ? "text.primary" : "divider",
-                        bgcolor: active ? "action.selected" : "transparent",
-                        color: active ? "text.primary" : "text.secondary",
-                        fontSize: "12px",
-                        fontWeight: active ? 600 : 500,
-                        fontFamily: "inherit",
-                        cursor: "pointer",
-                        transition: "border-color 120ms, background-color 120ms",
-                        "&:hover": {
-                          borderColor: active ? "text.primary" : "text.secondary",
-                        },
-                      }}
-                    >
-                      <Box
-                        component="span"
-                        sx={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: "50%",
-                          bgcolor: dotColor,
-                        }}
-                      />
-                      {optionLabel(sev)}
-                    </Box>
-                  );
-                })}
-              </Stack>
-              {fieldErrors.severities && (
-                <FormHelperText error>{fieldErrors.severities}</FormHelperText>
-              )}
-            </Stack>
           </Stack>
 
           <Divider />
@@ -1304,151 +1215,130 @@ function AlertRuleForm({ rule, draft, onClose }) {
             </FormControl>
           </Stack>
 
-          {/* Optional filters */}
-          <Box
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "8px",
-              overflow: "hidden",
-            }}
-          >
-            <Box
-              component="button"
-              type="button"
-              aria-expanded={advancedOpen}
-              onClick={() => setShowAdvanced((v) => !v)}
-              sx={{
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                border: 0,
-                px: 1.5,
-                py: 1,
-                fontFamily: "inherit",
-                textAlign: "left",
-                cursor: "pointer",
-                bgcolor: "action.hover",
-                "&:hover": { bgcolor: "action.selected" },
-              }}
-            >
-              <Stack direction="row" alignItems="center" gap={0.75}>
-                <Iconify
-                  icon="solar:filter-linear"
-                  width={14}
-                  sx={{ color: "text.secondary" }}
-                />
-                <Typography typography="s2" fontWeight={500} color="text.primary">
-                  More filters
-                </Typography>
-                <Typography typography="s3" color="text.secondary">
-                  {advancedFilterCount > 0
-                    ? `· ${advancedFilterCount} active`
-                    : "· Optional (source, status, category)"}
-                </Typography>
-              </Stack>
-              <Iconify
-                icon={
-                  advancedOpen
-                    ? "solar:alt-arrow-up-linear"
-                    : "solar:alt-arrow-down-linear"
-                }
-                width={16}
-                sx={{ color: "text.secondary" }}
-              />
-            </Box>
+          <Divider />
 
-            <Collapse in={advancedOpen}>
-              <Stack spacing={1.5} sx={{ p: 1.5, borderTop: 1, borderColor: "divider" }}>
-                {fieldErrors.filters && (
-                  <FormHelperText error>{fieldErrors.filters}</FormHelperText>
+          {/* Step 4: Optional filters */}
+          <Stack spacing={1.5}>
+            <SectionTitle
+              step="3"
+              title="If the issue matches"
+              subtitle="Leave blank to match any source, severity, status, category, or group."
+            />
+            {fieldErrors.filters && (
+              <FormHelperText error>{fieldErrors.filters}</FormHelperText>
+            )}
+            <Stack direction={{ xs: "column", sm: "row" }} gap={1.25}>
+              <FormControl
+                size="small"
+                sx={{ flex: 1, minWidth: 0 }}
+                error={Boolean(fieldErrors.sources)}
+              >
+                <InputLabel id="source-label" shrink>
+                  Sources
+                </InputLabel>
+                <Select
+                  multiple
+                  labelId="source-label"
+                  label="Sources"
+                  displayEmpty
+                  value={sources}
+                  onChange={setMulti(setSources, "sources")}
+                  renderValue={(values) =>
+                    values.length ? labels(values) : placeholder("Any source")
+                  }
+                >
+                  {SOURCES.map((value) => (
+                    <MenuItem key={value} value={value}>
+                      {optionLabel(value)}
+                    </MenuItem>
+                  ))}
+                </Select>
+                {fieldErrors.sources && (
+                  <FormHelperText>{fieldErrors.sources}</FormHelperText>
                 )}
-                <Stack direction={{ xs: "column", sm: "row" }} gap={1.25}>
-                  <FormControl
-                    size="small"
-                    sx={{ flex: 1, minWidth: 0 }}
-                    error={Boolean(fieldErrors.sources)}
-                  >
-                    <InputLabel id="source-label" shrink>
-                      Sources
-                    </InputLabel>
-                    <Select
-                      multiple
-                      labelId="source-label"
-                      label="Sources"
-                      displayEmpty
-                      value={sources}
-                      onChange={setMulti(setSources, "sources")}
-                      renderValue={(values) =>
-                        values.length ? labels(values) : placeholder("Any source")
-                      }
-                    >
-                      {SOURCES.map((value) => (
-                        <MenuItem key={value} value={value}>
-                          {optionLabel(value)}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                    {fieldErrors.sources && (
-                      <FormHelperText>{fieldErrors.sources}</FormHelperText>
-                    )}
-                  </FormControl>
-                  <FormControl
-                    size="small"
-                    sx={{ flex: 1, minWidth: 0 }}
-                    error={Boolean(fieldErrors.statuses)}
-                  >
-                    <InputLabel id="status-filter-label" shrink>
-                      Status
-                    </InputLabel>
-                    <Select
-                      multiple
-                      labelId="status-filter-label"
-                      label="Status"
-                      displayEmpty
-                      value={statuses}
-                      onChange={setMulti(setStatuses, "statuses")}
-                      renderValue={(values) =>
-                        values.length ? labels(values) : placeholder("Any status")
-                      }
-                    >
-                      {["escalating", "for_review", "acknowledged", "resolved"].map(
-                        (value) => (
-                          <MenuItem key={value} value={value}>
-                            {optionLabel(value)}
-                          </MenuItem>
-                        ),
-                      )}
-                    </Select>
-                    {fieldErrors.statuses && (
-                      <FormHelperText>{fieldErrors.statuses}</FormHelperText>
-                    )}
-                  </FormControl>
-                </Stack>
-                <TagFilter
-                  label="Issue categories"
-                  example="Timeout"
-                  value={issueCategories}
-                  onChange={(value) => {
-                    setIssueCategories(value);
-                    clearFieldError("issueCategories");
-                  }}
-                  error={fieldErrors.issueCategories}
-                />
-                <TagFilter
-                  label="Issue groups"
-                  example="Tool Failures"
-                  value={issueGroups}
-                  onChange={(value) => {
-                    setIssueGroups(value);
-                    clearFieldError("issueGroups");
-                  }}
-                  error={fieldErrors.issueGroups}
-                />
-              </Stack>
-            </Collapse>
-          </Box>
+              </FormControl>
+              <FormControl
+                size="small"
+                sx={{ flex: 1, minWidth: 0 }}
+                error={Boolean(fieldErrors.severities)}
+              >
+                <InputLabel id="severity-filter-label" shrink>
+                  Severity filter
+                </InputLabel>
+                <Select
+                  multiple
+                  labelId="severity-filter-label"
+                  label="Severity filter"
+                  displayEmpty
+                  value={severities}
+                  onChange={setMulti(setSeverities, "severities")}
+                  renderValue={(values) =>
+                    values.length ? labels(values) : placeholder("Any severity")
+                  }
+                >
+                  {SEVERITIES.map((value) => (
+                    <MenuItem key={value} value={value}>
+                      {optionLabel(value)}
+                    </MenuItem>
+                  ))}
+                </Select>
+                {fieldErrors.severities && (
+                  <FormHelperText>{fieldErrors.severities}</FormHelperText>
+                )}
+              </FormControl>
+              <FormControl
+                size="small"
+                sx={{ flex: 1, minWidth: 0 }}
+                error={Boolean(fieldErrors.statuses)}
+              >
+                <InputLabel id="status-filter-label" shrink>
+                  Status
+                </InputLabel>
+                <Select
+                  multiple
+                  labelId="status-filter-label"
+                  label="Status"
+                  displayEmpty
+                  value={statuses}
+                  onChange={setMulti(setStatuses, "statuses")}
+                  renderValue={(values) =>
+                    values.length ? labels(values) : placeholder("Any status")
+                  }
+                >
+                  {["escalating", "for_review", "acknowledged", "resolved"].map(
+                    (value) => (
+                      <MenuItem key={value} value={value}>
+                        {optionLabel(value)}
+                      </MenuItem>
+                    ),
+                  )}
+                </Select>
+                {fieldErrors.statuses && (
+                  <FormHelperText>{fieldErrors.statuses}</FormHelperText>
+                )}
+              </FormControl>
+            </Stack>
+            <TagFilter
+              label="Issue categories"
+              example="Timeout"
+              value={issueCategories}
+              onChange={(value) => {
+                setIssueCategories(value);
+                clearFieldError("issueCategories");
+              }}
+              error={fieldErrors.issueCategories}
+            />
+            <TagFilter
+              label="Issue groups"
+              example="Tool Failures"
+              value={issueGroups}
+              onChange={(value) => {
+                setIssueGroups(value);
+                clearFieldError("issueGroups");
+              }}
+              error={fieldErrors.issueGroups}
+            />
+          </Stack>
         </Stack>
       </Box>
 

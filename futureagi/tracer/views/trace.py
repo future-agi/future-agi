@@ -5939,7 +5939,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     row["issues"] = issues_by_trace.get(
                         str(row.get("trace_id") or ""), []
                     )
-            except (DatabaseError, LookupError, ValueError, TypeError) as exc:
+            except (DatabaseError, LookupError, ValueError, TypeError, RuntimeError) as exc:
                 logger.warning(
                     "trace_list_error_feed_enrichment_failed",
                     project_id=str(project_id) if project_id else None,

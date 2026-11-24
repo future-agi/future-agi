@@ -177,7 +177,7 @@ describe("TraceTreeV2 All vs Key path ordering and defaults", () => {
     );
 
     fireEvent.click(
-      screen.getByText("Truncated tool output causes hallucinated balance"),
+      screen.getByText(/Truncated tool output causes hallucinated balance/),
     );
     fireEvent.click(
       screen.getByText(/Missing retry after rate-limit warning/),

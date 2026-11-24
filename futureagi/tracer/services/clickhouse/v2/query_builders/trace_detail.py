@@ -595,8 +595,9 @@ def retrieve_trace_detail_ch(
             )
             if issues:
                 result["issues"] = issues
-                result["active_cluster_id"] = active_cluster_id
-        except (DatabaseError, LookupError, ValueError, TypeError) as exc:
+                if active_cluster_id:
+                    result["active_cluster_id"] = active_cluster_id
+        except (DatabaseError, LookupError, ValueError, TypeError, RuntimeError) as exc:
             logger.warning(
                 "trace_detail_error_feed_enrichment_failed",
                 trace_id=str(trace_id),

@@ -9,8 +9,12 @@ from clickhouse_driver.errors import ServerException
 
 from tracer.services.grouping.context import rank_f6_occurrences
 from tracer.services.grouping.feature_store import (
+    LSH_EXACT_FALLBACK_THRESHOLD,
+    MAX_LSH_CANDIDATES,
     MAX_QUERY_BYTES,
     GroupingFeatureStore,
+    _expand_lsh_probe_keys,
+    lsh_bucket_sql,
     nearest_sql,
 )
 
@@ -260,3 +264,105 @@ def test_nearest_candidates_name_an_oversized_statement():
             candidates=[{"view": "semantics", "feature_digest": "b" * 64}],
             limit=40,
         )
+
+
+def test_lsh_probe_expansion_generates_exact_and_1bit_hamming_neighbors():
+    keys = [f"semantics:{t}:0" for t in range(8)]
+    expanded = _expand_lsh_probe_keys("semantics", keys)
+    # 8 tables * (1 exact + 8 1-bit flips) = 72 unique keys
+    assert len(expanded) == 72
+    assert "semantics:0:0" in expanded
+    assert "semantics:0:1" in expanded
+    assert "semantics:0:128" in expanded
+    # Ignores keys from other views or malformed inputs
+    assert _expand_lsh_probe_keys("task", keys + ["bad:key"]) == []
+
+
+def test_large_project_narrows_candidates_via_f6_grouping_buckets():
+    seed_digest = _digest("seed:semantics")
+    near_digest = _digest("near:semantics")
+    mid_digest = _digest("mid:semantics")
+    ineligible_digest = _digest("ineligible:semantics")
+    total_candidates = LSH_EXACT_FALLBACK_THRESHOLD + 25
+    features = {
+        seed_digest: ("seed", "semantics", _vector(1.0, 0.0)),
+        near_digest: ("near", "semantics", _vector(0.99, 0.14)),
+        mid_digest: ("mid", "semantics", _vector(0.8, 0.6)),
+    }
+    candidates = [
+        {"view": "semantics", "feature_digest": near_digest},
+        {"view": "semantics", "feature_digest": mid_digest},
+    ]
+    for i in range(total_candidates - 2):
+        d = _digest(f"bg:{i}")
+        features[d] = (f"bg-{i}", "semantics", _vector(0.0, 1.0))
+        candidates.append({"view": "semantics", "feature_digest": d})
+
+    class _BucketAndNearestClient:
+        def __init__(self):
+            self.calls = []
+
+        def execute_read(self, sql, params, settings=None):
+            self.calls.append((sql, params, settings))
+            if sql == lsh_bucket_sql():
+                return [(near_digest,), (ineligible_digest,), (mid_digest,)], [], 0
+            # Verify nearest_sql received ONLY eligible bucket-narrowed digests!
+            assert set(params["candidates"]) == {near_digest, mid_digest}
+            return [("seed", "near", 0.01), ("seed", "mid", 0.2)], [], 0
+
+    client = _BucketAndNearestClient()
+    result = GroupingFeatureStore(client).candidate_occurrences(
+        organization_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        pending=[
+            {
+                "view": "semantics",
+                "feature_digest": seed_digest,
+                "bucket_keys": [f"semantics:{t}:42" for t in range(8)],
+            }
+        ],
+        candidates=candidates,
+        limit=2,
+    )
+    assert result == {("seed", "semantics"): ["near", "mid"]}
+    assert len(client.calls) == 2
+    assert client.calls[0][0] == lsh_bucket_sql()
+    assert len(client.calls[0][1]["buckets"]) == 72
+    assert client.calls[1][0] == nearest_sql(1)
+
+
+def test_huge_project_stays_bounded_even_when_bucket_hits_are_sparse():
+    seed_digest = _digest("seed:semantics")
+    near_digest = _digest("near:semantics")
+    candidates = [{"view": "semantics", "feature_digest": near_digest}] + [
+        {"view": "semantics", "feature_digest": _digest(f"huge:{i}")}
+        for i in range(MAX_LSH_CANDIDATES + 5)
+    ]
+
+    class _HugeClient:
+        def __init__(self):
+            self.calls = []
+
+        def execute_read(self, sql, params, settings=None):
+            self.calls.append((sql, params))
+            if sql == lsh_bucket_sql():
+                return [(near_digest,)], [], 0
+            assert params["candidates"] == (near_digest,)
+            return [("seed", "near", 0.01)], [], 0
+
+    client = _HugeClient()
+    result = GroupingFeatureStore(client).candidate_occurrences(
+        organization_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        pending=[
+            {
+                "view": "semantics",
+                "feature_digest": seed_digest,
+                "bucket_keys": [f"semantics:{t}:7" for t in range(8)],
+            }
+        ],
+        candidates=candidates,
+        limit=40,
+    )
+    assert result == {("seed", "semantics"): ["near"]}
+    assert len(client.calls) == 2

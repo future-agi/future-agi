@@ -1202,7 +1202,7 @@ class TraceDetailResultSerializer(serializers.Serializer):
     capture_coverage = CaptureCoverageSerializer(required=False)
     graph = serializers.JSONField()
     issues = TraceErrorFeedIssueSerializer(many=True, required=False)
-    active_cluster_id = serializers.CharField(required=False, allow_null=True)
+    active_cluster_id = serializers.CharField(required=False)
 
 
 class TraceDetailResponseSerializer(serializers.Serializer):

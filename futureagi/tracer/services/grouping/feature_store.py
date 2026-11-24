@@ -22,8 +22,44 @@ MAX_BUCKETS_PER_FEATURE = 8
 # Digest IN-lists are substituted into the SQL text (~68 bytes each), so one
 # statement per view needs room for every candidate of a large project.
 MAX_QUERY_BYTES = 16 * 1024 * 1024
+# Small/medium projects stay 100% exact single-statement scan; larger projects
+# narrow candidates through the primary-indexed f6_grouping_buckets LSH table
+# first so ClickHouse never hits MAX_QUERY_BYTES on Colektia-scale workloads.
+LSH_EXACT_FALLBACK_THRESHOLD = 2000
+MAX_LSH_CANDIDATES = 20000
 SOURCE_DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 HEX_DIGEST = re.compile(r"^[a-f0-9]{64}$")
+BUCKET_KEY_RE = re.compile(r"^(semantics|task):([0-7]):(\d{1,3})$")
+
+
+def _expand_lsh_probe_keys(view: str, bucket_keys: Sequence[str]) -> list[str]:
+    """Return exact + 1-bit Hamming neighbor LSH bucket keys for multi-probe recall."""
+    probes: set[str] = set()
+    for raw in bucket_keys:
+        if not isinstance(raw, str):
+            continue
+        match = BUCKET_KEY_RE.fullmatch(raw)
+        if not match or match.group(1) != view:
+            continue
+        table = int(match.group(2))
+        sig = int(match.group(3))
+        if not 0 <= sig <= 255:
+            continue
+        probes.add(f"{view}:{table}:{sig}")
+        for bit in range(8):
+            probes.add(f"{view}:{table}:{sig ^ (1 << bit)}")
+    return sorted(probes)
+
+
+def lsh_bucket_sql() -> str:
+    """Primary-indexed LSH candidate narrowing ranked by multi-table collisions."""
+    return f"""SELECT feature_digest
+FROM {BUCKET_TABLE}
+WHERE organization_id = %(org)s AND project_id = %(project)s
+  AND view = %(view)s AND bucket_key IN %(buckets)s
+GROUP BY feature_digest
+ORDER BY count() DESC, feature_digest ASC
+LIMIT %(bucket_limit)s"""
 
 
 def nearest_sql(pending_count: int) -> str:
@@ -329,6 +365,7 @@ class GroupingFeatureStore:
         if limit < 1:
             raise ValueError("candidate limit must be positive")
         digests = defaultdict(lambda: ([], []))
+        pending_buckets: dict[str, set[str]] = defaultdict(set)
         for side, rows in ((0, pending), (1, candidates)):
             for row in rows:
                 if row["view"] not in {"semantics", "task"} or not HEX_DIGEST.fullmatch(
@@ -336,10 +373,40 @@ class GroupingFeatureStore:
                 ):
                     raise ValueError("invalid candidate feature receipt")
                 digests[row["view"]][side].append(row["feature_digest"])
+                if side == 0:
+                    row_buckets = row.get("bucket_keys")
+                    if isinstance(row_buckets, (list, tuple)):
+                        pending_buckets[row["view"]].update(
+                            _expand_lsh_probe_keys(row["view"], row_buckets)
+                        )
         nearest = defaultdict(list)
         for view, (pending_digests, candidate_digests) in sorted(digests.items()):
             if not pending_digests or not candidate_digests:
                 continue
+            scoped_candidates = candidate_digests
+            probe_keys = sorted(pending_buckets.get(view, ()))
+            if len(candidate_digests) > LSH_EXACT_FALLBACK_THRESHOLD and probe_keys:
+                bucket_rows = self.client.execute_read(
+                    lsh_bucket_sql(),
+                    {
+                        "org": organization_id,
+                        "project": project_id,
+                        "view": view,
+                        "buckets": tuple(probe_keys),
+                        "bucket_limit": MAX_LSH_CANDIDATES * 2,
+                    },
+                    settings={"max_query_size": MAX_QUERY_BYTES},
+                )[0]
+                eligible_set = set(candidate_digests)
+                narrowed = [
+                    row[0]
+                    for row in bucket_rows
+                    if row and row[0] in eligible_set
+                ][:MAX_LSH_CANDIDATES]
+                if len(narrowed) >= limit or len(candidate_digests) > MAX_LSH_CANDIDATES:
+                    if not narrowed:
+                        continue
+                    scoped_candidates = narrowed
             try:
                 rows = self.client.execute_read(
                     nearest_sql(len(set(pending_digests))),
@@ -348,7 +415,7 @@ class GroupingFeatureStore:
                         "project": project_id,
                         "view": view,
                         "pending": tuple(pending_digests),
-                        "candidates": tuple(candidate_digests),
+                        "candidates": tuple(scoped_candidates),
                         "limit": limit,
                     },
                     settings={"max_query_size": MAX_QUERY_BYTES},

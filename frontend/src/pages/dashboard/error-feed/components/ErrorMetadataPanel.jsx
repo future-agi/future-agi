@@ -1214,6 +1214,9 @@ export default function ErrorMetadataPanel({ error }) {
         <Section title="Details">
           <Stack gap={0.7}>
             {fixLayerLabel && <MetaRow label="Fix layer" value={fixLayerLabel} />}
+            {sidebar?.ai_metadata?.trace_id && (
+              <MetaRow label="Trace ID" value={sidebar.ai_metadata.trace_id} />
+            )}
             <MetaRow
               label="First seen"
               value={error.firstSeenHuman ?? humanizeTime(error.first_seen)}

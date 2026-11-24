@@ -13,8 +13,11 @@ from tracer.models.trace_error_analysis import (
     TraceErrorGroup,
 )
 from tracer.models.trace_investigation import (
+    TraceInvestigationAttempt,
     TraceInvestigationAttribution,
     TraceInvestigationFinding,
+    TraceInvestigationGroupingStatus,
+    TraceInvestigationJob,
     TraceInvestigationReport,
     TraceInvestigationSource,
 )
@@ -57,21 +60,47 @@ class TestTraceErrorFeedQueries:
             unique_traces=1,
         )
 
+        job = TraceInvestigationJob.no_workspace_objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            trace_id=trace_id,
+            not_before=now,
+        )
+        attempt = TraceInvestigationAttempt.no_workspace_objects.create(
+            job=job,
+            generation=1,
+            worker_id="worker-test-1",
+            engine_version="omega-ef-v20.9",
+            lease_token_digest="0" * 64,
+            lease_expires_at=now,
+            read_cutoff=now,
+            memory_snapshot_id="mem-1",
+            memory_digest="sha256:" + "0" * 64,
+        )
         report = TraceInvestigationReport.no_workspace_objects.create(
             organization=organization,
             workspace=workspace,
             project=observe_project,
             trace_id=trace_id,
             source=TraceInvestigationSource.OMEGA,
-            engine_version="omega-ef-v20.9",
+            job=job,
+            attempt=attempt,
+            idempotency_key=f"inv:{trace_id}:1",
             contract_version="omega-investigation/v1",
             execution_status="completed",
             outcome="failure",
+            coverage_scope="full_trace",
+            observed_span_count=3,
+            read_complete=True,
+            future_arrivals_known=False,
+            model_calls=2,
+            input_tokens=100,
+            output_tokens=50,
+            cost_status="settled",
+            grouping_status=TraceInvestigationGroupingStatus.COMPLETED,
             is_current=True,
             recorded_at=now,
-            read_cutoff=now,
-            memory_snapshot_id="mem-1",
-            memory_digest="sha256:" + "0" * 64,
             evidence_digest="sha256:" + "1" * 64,
             result_digest="sha256:" + "2" * 64,
         )
