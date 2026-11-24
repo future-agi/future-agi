@@ -19796,8 +19796,7 @@ export const AgentFixCandidateDetailApiOutcome = {
 export interface AgentFixCandidateWordingApi {
   headline: string;
   must_pass: string;
-  /** @minLength 1 */
-  changes: string;
+  changes: string | null;
   caveats: string[];
 }
 

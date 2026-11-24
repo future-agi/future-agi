@@ -39578,7 +39578,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
         .object({
           headline: zod.string(),
           must_pass: zod.string(),
-          changes: zod.string().min(1),
+          changes: zod.union([zod.string().min(1), zod.null()]),
           caveats: zod.array(zod.string().min(1)),
         })
         .optional(),

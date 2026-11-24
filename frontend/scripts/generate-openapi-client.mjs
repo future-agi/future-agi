@@ -132,6 +132,8 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixRunDetail: EPOCH_NULLABLE_REFS,
   AgentFixCandidate: ["verdict"],
   AgentFixOverride: ["by"],
+  // A candidate whose patch could not be read has no change line.
+  AgentFixCandidateWording: ["changes"],
 };
 
 function isAgentFixIssueSchema(name) {
@@ -168,7 +170,10 @@ function withNullableFields(name, schema) {
         `${name}.${field} is not in the spec; update the nullable list`,
       );
     }
-    properties[field] = { anyOf: [properties[field], { type: "null" }] };
+    // A scalar's own x-nullable may already have made it a null union above.
+    if (!properties[field].anyOf?.some((one) => one.type === "null")) {
+      properties[field] = { anyOf: [properties[field], { type: "null" }] };
+    }
   }
   return { ...(isAgentFixIssueSchema(name) ? definition : schema), properties };
 }
