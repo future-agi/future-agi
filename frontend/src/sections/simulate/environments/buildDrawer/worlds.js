@@ -1,20 +1,6 @@
 /*
-  Prebuilt worlds as the design's drawer shows them, read from the templates list.
-  A world is offered for the agent type it was built for; worlds for agents we
-  don't build (coding, simulation) aren't listed.
+  What the ready environments' browser filters and labels by.
 */
-
-const TYPE_OF_AGENT = {
-  voice_platform: "voice",
-  chat_webhook: "chat",
-  api_agent: "chat",
-  mcp_agent: "chat",
-  browser_agent: "computer",
-  game_agent: "computer",
-  coding_agent: null,
-  sim_agent: null,
-};
-const TYPE_LABEL = { voice: "Voice", chat: "Chat", computer: "Computer use" };
 
 const DOMAIN_LABEL = {
   ecommerce: "E-commerce",
@@ -30,36 +16,8 @@ const DOMAIN_LABEL = {
   support: "Support",
   sales: "Sales",
 };
-const domainLabelOf = (d) =>
+export const domainLabelOf = (d) =>
   DOMAIN_LABEL[d] || (d ? d.charAt(0).toUpperCase() + d.slice(1) : "Other");
-
-/** The templates as worlds, most used first. */
-export function worldsFrom(templates = []) {
-  return templates
-    .map((t) => {
-      const type =
-        t.agentType in TYPE_OF_AGENT ? TYPE_OF_AGENT[t.agentType] : "chat";
-      if (!type) return null;
-      return {
-        id: t.id,
-        name: t.name,
-        tagline: t.tagline,
-        type,
-        typeLabel: TYPE_LABEL[type],
-        domain: t.domain || "other",
-        domainLabel: domainLabelOf(t.domain),
-        tools: (t.tools || []).length,
-        tables: (t.seed?.tables || []).length,
-        popularity: t.popularity || 0,
-        template: t,
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.popularity - a.popularity);
-}
-
-/** Computer use worlds can't be built for yet: listed, not opened. */
-export const isSoonWorld = (world) => world.type === "computer";
 
 /** The agents a world is for: voice agents for a voice world, else chat ones. */
 export const modalityOfWorld = (world) =>
@@ -92,15 +50,3 @@ export const WORLD_TYPES = [
     soon: true,
   },
 ];
-
-export { domainLabelOf };
-
-/** Three up front, a different agent type first where there is one; computer use is never featured. */
-export function featuredWorlds(worlds) {
-  const open = worlds.filter((w) => w.type !== "computer");
-  const seen = new Set();
-  const firsts = open.filter((w) =>
-    seen.has(w.type) ? false : seen.add(w.type),
-  );
-  return [...firsts, ...open.filter((w) => !firsts.includes(w))].slice(0, 3);
-}

@@ -4,12 +4,11 @@ import {
   render as baseRender,
   fireEvent,
   screen,
-  waitFor,
   within,
 } from "src/utils/test-utils";
 
 /*
-  The starts in Build environment: from scratch, from code, prebuilt worlds,
+  The starts in Build environment: from scratch, from code,
   the SaaS sandbox, an MCP world and your agents. None has an API yet, so each
   shows its whole design and its last step only says it's UI only.
 */
@@ -212,97 +211,6 @@ describe.skip("Build from code", () => {
     expect(
       screen.getByText(/Build an environment for my refund agent/),
     ).toBeInTheDocument();
-  });
-});
-
-describe.skip("Prebuilt worlds", () => {
-  it("opens a world: try it now with the template's own counts", async () => {
-    render();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Open Customer Support Line" }),
-    );
-    expect(
-      within(header()).getByText("Customer Support Line"),
-    ).toBeInTheDocument();
-    expect(within(header()).getByText("Voice")).toBeInTheDocument();
-    expect(within(header()).getByText("UI only")).toBeInTheDocument();
-    // 500 + 200 + 85 + 340 seeded rows, 8 tools, 6 rules, 4 evaluations.
-    expect(screen.getByText("1,125 seeded rows")).toBeInTheDocument();
-    expect(screen.getByText("8 the world answers")).toBeInTheDocument();
-    expect(screen.getByText("6 graded on every run")).toBeInTheDocument();
-    expect(
-      screen.getByText(/scenarios, already proven, and 4 evaluations/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("The world never touches production."),
-    ).toBeInTheDocument();
-    click("Try it now");
-    expectUiOnlyToast();
-  });
-
-  it("uses a world with one of your agents of its type, in Future AGI or on your machine", async () => {
-    render();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Open Customer Support Line" }),
-    );
-    fireEvent.click(
-      screen.getByRole("radio", { name: "Use it with your agent" }),
-    );
-    expect(
-      screen.getByRole("radio", { name: "Billing line" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("radio", { name: "Returns chat" })).toBeNull();
-    expect(button("Build environment")).toBeDisabled();
-    fireEvent.click(screen.getByRole("radio", { name: "Billing line" }));
-    click("Build environment");
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue(
-      "Billing line environment",
-    );
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-
-    fireEvent.click(screen.getByRole("radio", { name: "On your machine" }));
-    expect(
-      screen.getByText(
-        'fai env init billing-line-customer-support-line --world env-voice-support --agent "Billing line" --version v3 --scenarios 10',
-      ),
-    ).toBeInTheDocument();
-    click("Open the build");
-    expectUiOnlyToast();
-  });
-
-  it("browses every world, filters them, and goes back where it came from", async () => {
-    render();
-    // Nine worlds the fixture offers for voice, chat or computer use, and the sandbox.
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Browse all 10" }),
-    );
-    expect(screen.getByText("Prebuilt worlds")).toBeInTheDocument();
-    expect(screen.getByText("10 of 10 worlds")).toBeInTheDocument();
-    const worlds = screen.getByRole("list", { name: "Prebuilt worlds" });
-    expect(
-      within(worlds).getByRole("listitem", { name: "SaaS sandbox" }),
-    ).toBeInTheDocument();
-    // Computer use worlds are listed but can't be opened yet.
-    expect(button("Open Browser")).toBeDisabled();
-
-    const search = screen.getByRole("textbox", { name: "Search worlds" });
-    fireEvent.change(search, { target: { value: "nothing-like-this" } });
-    expect(screen.getByText("No world matches")).toBeInTheDocument();
-    click("Clear filters");
-    expect(search).toHaveValue("");
-
-    fireEvent.change(search, { target: { value: "banking" } });
-    expect(screen.getByText("1 of 10 worlds")).toBeInTheDocument();
-    click("Open Retail Banking Assistant");
-    expect(
-      within(header()).getByText("Retail Banking Assistant"),
-    ).toBeInTheDocument();
-    click("Back to prebuilt worlds");
-    expect(screen.getByText("Prebuilt worlds")).toBeInTheDocument();
-    click("Back to build environment");
-    expect(screen.getByText("Build environment")).toBeInTheDocument();
   });
 });
 
