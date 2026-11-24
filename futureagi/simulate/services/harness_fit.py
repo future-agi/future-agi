@@ -52,6 +52,10 @@ logger = structlog.get_logger(__name__)
 # A suggestion or a policy check is kept a day per agent profile and world: neither changes
 # unless one of them does, and both digests are in the key.
 _CACHE_SECONDS = 24 * 60 * 60
+# This call is made inside a request, so it is kept short and made by one request at a time
+# (`_one_at_a_time`): a second cold request is answered from names instead of waiting too.
+_MODEL_SECONDS = 20
+_FLIGHT_SECONDS = 2 * _MODEL_SECONDS + 5
 
 # Verbs that say what a tool does; two tools that read alike share one of these groups.
 _VERBS = (
@@ -213,7 +217,7 @@ def _ask_model(task: str, material: dict[str, Any]) -> dict[str, Any]:
                 f"{url}/v1/chat/completions",
                 json=body,
                 headers={"Authorization": f"Bearer {key}"},
-                timeout=90,
+                timeout=_MODEL_SECONDS,
             )
         except httpx.TransportError:
             if attempt == 2:
@@ -226,6 +230,22 @@ def _ask_model(task: str, material: dict[str, Any]) -> dict[str, Any]:
     response.raise_for_status()
     text = response.json()["choices"][0]["message"]["content"]
     return json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip()))
+
+
+class _Busy(Exception):
+    """Another request is already asking the model this question."""
+
+
+def _one_at_a_time(key: str, task: str, material: dict[str, Any]) -> dict[str, Any]:
+    """`_ask_model`, by one request at a time per cache key: concurrent cold requests do not
+    each hold a worker on the same call. The others raise `_Busy` and answer without the model;
+    the next request after this one finds its answer cached."""
+    if not cache.add(f"{key}:asking", 1, _FLIGHT_SECONDS):
+        raise _Busy
+    try:
+        return _ask_model(task, material)
+    finally:
+        cache.delete(f"{key}:asking")
 
 
 _PAIRING_TASK = (
@@ -262,7 +282,8 @@ def model_pairing(
     found = cache.get(key)
     if found is None:
         try:
-            answer = _ask_model(
+            answer = _one_at_a_time(
+                key,
                 _PAIRING_TASK,
                 {
                     "world_tools": [_describe(tool) for tool in world_tools],
@@ -271,7 +292,14 @@ def model_pairing(
             )
             found = [one for one in answer.get("pairs") or [] if isinstance(one, dict)]
             cache.set(key, found, _CACHE_SECONDS)
-        except (HostedHarnessError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        except (
+            _Busy,
+            HostedHarnessError,
+            httpx.HTTPError,
+            KeyError,
+            ValueError,
+            TypeError,
+        ):
             logger.warning("harness_fit_pairing_by_names", world=world_digest)
             return suggested_pairing(agent["tools"], world_tools)
     names = {tool["name"] for tool in agent["tools"]}
@@ -314,7 +342,8 @@ def release_conflicts(suite, agent_version) -> dict[str, Any]:
         if not agent["instructions"]:
             return {"checked": True, "conflicts": []}
         try:
-            answer = _ask_model(
+            answer = _one_at_a_time(
+                key,
                 _CONFLICTS_TASK,
                 {
                     "rules": [
@@ -327,7 +356,14 @@ def release_conflicts(suite, agent_version) -> dict[str, Any]:
                 one for one in answer.get("conflicts") or [] if isinstance(one, dict)
             ]
             cache.set(key, found, _CACHE_SECONDS)
-        except (HostedHarnessError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        except (
+            _Busy,
+            HostedHarnessError,
+            httpx.HTTPError,
+            KeyError,
+            ValueError,
+            TypeError,
+        ):
             logger.warning(
                 "harness_fit_conflicts_unchecked", world=_world_digest(suite)
             )
@@ -350,19 +386,83 @@ def release_conflicts(suite, agent_version) -> dict[str, Any]:
     return {"checked": True, "conflicts": conflicts}
 
 
+def _world_tools(suite) -> list[dict[str, Any]]:
+    return list({t["name"]: t for r in _chain(suite) for t in r.tools}.values())
+
+
+def resolved_pairing(
+    suite,
+    agent_version,
+    edits: dict[str, str | None] | None = None,
+    *,
+    agent: dict[str, Any] | None = None,
+) -> dict[str, str | None]:
+    """The complete pairing, every world tool onto one of the agent's or onto none: the
+    suggestion with the person's `edits` applied. This one map is what the fit shows, what the
+    adaptation stores and what the binding is held to.
+
+    Every edit is checked: its world tool is the world's, its agent tool is the agent's, and no
+    agent tool is given to two world tools (a binding admits each agent tool once). An agent
+    tool the person gives to one world tool is taken from the world tool the suggestion had put
+    it on."""
+    agent = agent or agent_of(agent_version)
+    names = {tool["name"] for tool in agent["tools"]}
+    paired = model_pairing(agent, _world_tools(suite), _world_digest(suite))
+    edits = dict(edits or {})
+    problems = [
+        f"{world!r} is not one of this world's tools"
+        for world in edits
+        if world not in paired
+    ]
+    problems += [
+        f"{world}: {agent_tool!r} is not one of the agent's tools"
+        for world, agent_tool in edits.items()
+        if agent_tool is not None and agent_tool not in names
+    ]
+    given = [agent_tool for agent_tool in edits.values() if agent_tool]
+    problems += [
+        f"{agent_tool} is paired with more than one world tool"
+        for agent_tool in sorted(set(given))
+        if given.count(agent_tool) > 1
+    ]
+    if problems:
+        raise _error("pairing_invalid", "; ".join(problems), 400)
+    for world, agent_tool in paired.items():
+        if world not in edits and agent_tool in given:
+            paired[world] = None
+    paired.update({world: edits[world] for world in edits})
+    return paired
+
+
+def _frozen_pairing(
+    stored: Any, world_tools: list[dict[str, Any]], names: set[str]
+) -> dict[str, str | None] | None:
+    """The complete pairing an adaptation stored, when it still names exactly this world's
+    tools and the agent's; None for an adaptation stored before pairings were complete."""
+    if not isinstance(stored, dict) or set(stored) != {t["name"] for t in world_tools}:
+        return None
+    if any(value is not None and value not in names for value in stored.values()):
+        return None
+    return dict(stored)
+
+
 def release_fit(
-    suite, agent_version, pairing: dict[str, str | None] | None = None
+    suite,
+    agent_version,
+    pairing: dict[str, str | None] | None = None,
+    *,
+    frozen: bool = False,
 ) -> dict[str, Any]:
-    """The pairing table, the cases it can measure and the agent's platform actions; a
-    `pairing` the person edited replaces the suggestion for the tools it names."""
+    """The pairing table, the cases it can measure and the agent's platform actions. `pairing`
+    is the person's edits over the suggestion (`resolved_pairing`), or, with `frozen`, the
+    complete map an adaptation stored, shown as it was reviewed and never suggested again."""
     agent = agent_of(agent_version)
     agent_tools, platform_actions = agent["tools"], agent["platform_actions"]
-    world_tools = list({t["name"]: t for r in _chain(suite) for t in r.tools}.values())
+    world_tools = _world_tools(suite)
     names = {tool["name"] for tool in agent_tools}
-    paired = model_pairing(agent, world_tools, _world_digest(suite))
-    for world, agent_tool in (pairing or {}).items():
-        if world in paired and (agent_tool is None or agent_tool in names):
-            paired[world] = agent_tool
+    paired = (_frozen_pairing(pairing, world_tools, names) if frozen else None) or (
+        resolved_pairing(suite, agent_version, pairing, agent=agent)
+    )
     reached = {world for world, agent_tool in paired.items() if agent_tool}
     scenarios = _solution_tools(
         suite.object_key, json.dumps(suite.manifest, sort_keys=True)
@@ -465,7 +565,9 @@ def adaptation_design(job) -> dict[str, Any]:
                 suite.object_key, json.dumps(suite.manifest, sort_keys=True)
             )
         ],
-        "fit": release_fit(suite, agent_version, adaptation.get("pairing")),
+        "fit": release_fit(
+            suite, agent_version, adaptation.get("pairing"), frozen=True
+        ),
         "conflicts": release_conflicts(suite, agent_version),
         "check": question.get("data") if asked else None,
     }

@@ -18,6 +18,7 @@ from simulate.services.harness_environment import status_for
 from simulate.services.harness_fit import (
     release_conflicts,
     release_fit,
+    resolved_pairing,
     suggested_pairing,
 )
 from simulate.services.hosted_harness import (
@@ -233,20 +234,63 @@ class TestReleaseFit:
     def test_a_pairing_the_person_changes_is_counted_again(
         self, retail, shopmate, fitted
     ):
-        fit = release_fit(
-            retail,
-            shopmate,
-            {"cancel_order": None, "get_order": "get_order", "nope": "cancel"},
-        )
+        fit = release_fit(retail, shopmate, {"cancel_order": None})
 
         rows = {row["world"]: row for row in fit["rows"]}
         assert rows["cancel_order"]["kind"] == "missing"
-        # A tool the agent doesn't have is not a pairing.
         assert rows["get_order"]["agent"] == "order_details"
         assert {case["key"] for case in fit["unmeasured"]} == {
             "verify-then-cancel",
             "reply-by-email",
         }
+
+    @pytest.mark.parametrize(
+        "edits, said",
+        [
+            ({"nope": "cancel"}, "'nope' is not one of this world's tools"),
+            ({"get_order": "get_order"}, "'get_order' is not one of the agent's tools"),
+            (
+                {"get_order": "cancel", "get_order_invoice": "cancel"},
+                "cancel is paired with more than one world tool",
+            ),
+        ],
+        ids=["unknown-world-tool", "not-an-agent-tool", "one-agent-tool-twice"],
+    )
+    def test_an_edit_that_names_no_real_pair_is_refused(
+        self, retail, shopmate, fitted, edits, said
+    ):
+        with pytest.raises(HostedHarnessError) as refused:
+            release_fit(retail, shopmate, edits)
+
+        assert refused.value.code == "pairing_invalid"
+        assert refused.value.status_code == 400
+        assert said in str(refused.value)
+
+    def test_the_resolved_pairing_is_complete_and_gives_each_agent_tool_once(
+        self, retail, shopmate, fitted
+    ):
+        suggested = resolved_pairing(retail, shopmate)
+        assert set(suggested) == {tool["name"] for tool in WORLD}
+        assert suggested["cancel_order"] == "cancel"
+
+        # Given to another world tool, the agent's tool leaves the one it was suggested for.
+        moved = resolved_pairing(retail, shopmate, {"cancel_return": "cancel"})
+        assert moved["cancel_return"] == "cancel" and moved["cancel_order"] is None
+        paired = [tool for tool in moved.values() if tool]
+        assert len(paired) == len(set(paired))
+
+    def test_a_stored_pairing_is_shown_as_reviewed_and_never_suggested_again(
+        self, retail, shopmate, fitted, monkeypatch
+    ):
+        stored = resolved_pairing(retail, shopmate, {"cancel_order": None})
+
+        def never(*_arguments):
+            raise AssertionError("a stored pairing is not suggested again")
+
+        monkeypatch.setattr(harness_fit, "model_pairing", never)
+        fit = release_fit(retail, shopmate, stored, frozen=True)
+
+        assert {row["world"]: row["agent"] for row in fit["rows"]} == stored
 
     def test_the_model_pairs_tools_by_what_they_do(
         self, retail, shopmate, fitted, monkeypatch
@@ -550,24 +594,48 @@ def test_review_the_design_reads_the_ready_world_and_the_pairing(
     assert body["check"] == {"total": 4, "scorable": 3}
 
 
-@pytest.mark.django_db
-def test_an_adaptation_in_review_is_listed_awaiting_approval(
-    auth_client, organization, retail, shopmate
-):
-    review = _reviewed(organization, retail, shopmate)
-    run = _adaptation(organization, mode="run")
-
+def _listed(auth_client, status):
     response = auth_client.get(
-        "/simulate/api/harness-environments/", {"status": "awaiting_approval"}
+        "/simulate/api/harness-environments/", {"status": status}
     )
-
     assert response.status_code == 200, response.content
     body = response.json()
     body = body.get("result", body)
-    ids = [row["id"] for row in body["results"]]
-    assert str(review.id) in ids
-    assert str(run.id) not in ids
-    assert body["status_counts"]["awaiting_approval"] >= 1
+    return [row["id"] for row in body["results"]], body["status_counts"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_an_adaptation_is_listed_awaiting_approval_once_the_approval_is_asked(
+    auth_client, organization, retail, shopmate
+):
+    """Until the approval question is open the mapping is still being checked: the list says
+    building, as the design says checking, and Approve has nothing to answer."""
+    review = _reviewed(organization, retail, shopmate)
+    run = _adaptation(organization, mode="run")
+
+    awaiting, counts = _listed(auth_client, "awaiting_approval")
+    assert str(review.id) not in awaiting and counts["awaiting_approval"] == 0
+    assert status_for(review) == "building"
+    assert str(review.id) in _listed(auth_client, "building")[0]
+
+    _ask(review, APPROVAL)
+
+    awaiting, counts = _listed(auth_client, "awaiting_approval")
+    assert str(review.id) in awaiting and str(run.id) not in awaiting
+    assert counts["awaiting_approval"] == 1
+    assert status_for(review) == "awaiting_approval"
+    assert str(review.id) not in _listed(auth_client, "building")[0]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_another_question_from_the_builder_is_not_the_approval(
+    auth_client, organization, retail, shopmate
+):
+    review = _reviewed(organization, retail, shopmate)
+    _ask(review, "Should cancel take a reason?")
+
+    assert status_for(review) == "building"
+    assert str(review.id) not in _listed(auth_client, "awaiting_approval")[0]
 
 
 @pytest.mark.django_db
@@ -739,3 +807,219 @@ def test_a_release_run_composes_with_its_binding_proof(organization, monkeypatch
     assert (
         "--binding-proof" not in harness_releases.release_launch_for(run).bundle_command
     )
+
+
+# --- the connection given with an adaptation --------------------------------------------------
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "agent",
+    [
+        # Another Retell agent than the version's own.
+        {"connector": "retell_chat", "config": {"agent_id": "agent_other"}},
+        # Another provider.
+        {"connector": "vapi", "config": {"assistant_id": "agent_shopmate"}},
+        {"connector": "retell_chat", "config": {}},
+    ],
+    ids=["another-target", "another-provider", "no-target"],
+)
+def test_a_connection_to_another_provider_agent_is_refused(shopmate, agent):
+    from simulate.services.harness_releases import check_agent_connection
+
+    with pytest.raises(HostedHarnessError) as refused:
+        check_agent_connection(shopmate, agent)
+
+    assert refused.value.code == "agent_connection_mismatch"
+    assert refused.value.status_code == 409
+
+
+@pytest.mark.django_db
+def test_a_connection_to_the_versions_own_provider_agent_is_taken(shopmate):
+    from simulate.services.harness_releases import check_agent_connection
+
+    for connector in ("retell", "retell_chat"):
+        check_agent_connection(
+            shopmate, {"connector": connector, "config": {"agent_id": "agent_shopmate"}}
+        )
+
+
+@pytest.mark.django_db
+def test_an_adaptation_for_one_version_through_another_agents_connection_is_refused(
+    auth_client, organization, retail, shopmate, fitted
+):
+    response = auth_client.post(
+        f"{ADAPTATIONS}/",
+        {
+            "suite_id": str(retail.id),
+            "agent_version_id": str(shopmate.id),
+            "agent": {
+                "connector": "retell_chat",
+                "mode": "provider_import",
+                "config": {"agent_id": "agent_other"},
+            },
+            "name": "Retail",
+            "idempotency_key": f"adapt-{uuid.uuid4()}",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 409, response.content
+    assert "agent_connection_mismatch" in response.content.decode()
+
+
+# --- the proof a tool-routed composition is accepted with -------------------------------------
+
+SHA = "sha256:" + "b" * 64
+BOUND_AGENT = {"agent_version_id": "v1", "connector": "retell_chat"}
+
+
+def _routed_binding():
+    document = {
+        "schema_version": "futureagi.agent-binding.v1",
+        "agent": {**BOUND_AGENT, "provider_target_id": "t1", "provider_digest": SHA},
+        "environment": {"digest": "sha256:" + "e" * 64},
+        "mode": "tool_routed",
+        "agent_tools": [],
+        "tools": [],
+        "fixtures": {},
+        "aliases": {},
+        "rendering": {},
+        "prompt_changes": [],
+    }
+    return {**document, "digest": canonical_digest(document)}
+
+
+def _proof(binding, **statuses):
+    return {
+        "schema_version": "futureagi.binding-proof.v1",
+        "binding": {"digest": binding["digest"]},
+        "suite": {"digest": "sha256:" + "s" * 64},
+        "environment": binding["environment"],
+        "passed": True,
+        "scenarios": {
+            key: {"status": status, "reason": "", "adversarial": {}}
+            for key, status in statuses.items()
+        },
+    }
+
+
+def _accepted(binding, proof, keys=("a", "b")):
+    from simulate.services.harness_releases import _checked_binding
+
+    return _checked_binding(
+        binding,
+        agent=BOUND_AGENT,
+        target_id="t1",
+        environment_digest=binding["environment"]["digest"],
+        suite_digest="sha256:" + "s" * 64,
+        proof=proof,
+        scenario_keys=set(keys),
+    )
+
+
+def test_a_proof_that_covers_exactly_the_suite_is_accepted():
+    binding = _routed_binding()
+
+    assert _accepted(binding, _proof(binding, a="proved", b="unscorable")) == binding
+
+
+@pytest.mark.parametrize(
+    "statuses",
+    [
+        {"a": "proved"},
+        {"a": "proved", "b": "unscorable", "c": "proved"},
+        {"a": "proved", "b": "failed"},
+        {"a": "unscorable", "b": "unscorable"},
+    ],
+    ids=[
+        "a-case-left-out",
+        "a-case-the-suite-lacks",
+        "a-failed-case",
+        "nothing-proved",
+    ],
+)
+def test_a_proof_that_is_not_of_exactly_this_suite_is_refused(statuses):
+    binding = _routed_binding()
+
+    with pytest.raises(HostedHarnessError) as refused:
+        _accepted(binding, _proof(binding, **statuses))
+
+    assert refused.value.code == "binding_unproved"
+
+
+def test_a_run_manifest_freezes_the_digest_of_the_proof_the_platform_holds():
+    from simulate.services.harness_releases import _frozen_proof, proof_digest
+
+    binding = _routed_binding()
+    proof = _proof(binding, a="proved", b="unscorable")
+    composition = {"binding": binding, "binding_proof": proof}
+
+    frozen = _frozen_proof(composition)
+
+    assert frozen == {"binding_proof": {"digest": proof_digest(proof)}}
+    # Any edit to a status is another proof.
+    edited = _proof(binding, a="proved", b="proved")
+    assert _frozen_proof({"binding": binding, "binding_proof": edited}) != frozen
+    # A canonical composition has no proof and freezes none.
+    assert _frozen_proof({"binding": {**binding, "mode": "canonical"}}) == {}
+
+
+def test_a_proof_file_that_is_not_the_one_the_result_names_is_refused(
+    tmp_path, monkeypatch
+):
+    """The adaptation's control process records the digest of the proof it made. A proof file
+    with a status edited after that, its references intact, is not that proof."""
+    import json
+
+    from simulate.services import harness_releases
+
+    binding = _routed_binding()
+    proof = _proof(binding, a="proved", b="unscorable")
+    result = {
+        "schema_version": harness_releases.ADAPTATION_RESULT_SCHEMA,
+        "status": "completed",
+        "suite": {"digest": "sha256:" + "s" * 64, "derived": False},
+        "binding_proof": {"digest": harness_releases.proof_digest(proof)},
+        "alignment": {},
+    }
+    edited = _proof(binding, a="proved", b="proved")
+    for name, body in (
+        ("result.json", result),
+        ("binding.json", binding),
+        ("binding-proof.json", edited),
+    ):
+        (tmp_path / name).write_text(json.dumps(body))
+    suite = type("Suite", (), {"digest": "sha256:" + "s" * 64, "name": "retail"})()
+    job = type(
+        "Job",
+        (),
+        {
+            "organization": object(),
+            "payload": {
+                "metadata": {
+                    "adaptation": {
+                        "suite": {"digest": suite.digest},
+                        "agent_version_id": "v1",
+                    }
+                }
+            },
+        },
+    )()
+    monkeypatch.setattr(harness_releases, "_visible", lambda *args: suite)
+    monkeypatch.setattr(
+        harness_releases.AgentVersion.no_workspace_objects,
+        "filter",
+        lambda **kwargs: type("Found", (), {"first": lambda self: object()})(),
+    )
+
+    def never(*args, **kwargs):
+        raise AssertionError("an unanchored proof must not become a composition")
+
+    monkeypatch.setattr(harness_releases, "create_composition", never)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_releases._adapt(job, tmp_path)
+
+    assert refused.value.code == "binding_unproved"
+    assert "not the proof the adaptation's result names" in str(refused.value)

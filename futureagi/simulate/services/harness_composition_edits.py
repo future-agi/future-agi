@@ -39,6 +39,7 @@ from simulate.services.harness_releases import (
     _visible,
     archive_files,
     composition_of,
+    proof_digest,
     scenario_documents,
 )
 from simulate.services.hosted_harness import HostedHarnessError
@@ -178,7 +179,17 @@ def _applied(
         environment_digest=environment_digest,
         suite_digest=suite["digest"],
         proof=proof,
+        scenario_keys={str(entry["key"]) for entry in suite.get("scenarios") or []},
     )
+    # The change records the digest of the proof it sealed (agent-learning-kit's
+    # `prepare_change`): a proof file that is not that proof is refused.
+    sealed = (summary.get("binding_proof") or {}).get("digest")
+    if proof is not None and sealed and proof_digest(proof) != sealed:
+        raise _error(
+            "composition_change_invalid",
+            "binding-proof.json is not the proof the change names",
+            422,
+        )
     release = _visible(HarnessEnvironmentRelease, organization, environment_digest)
     if release is None:
         raise _error(

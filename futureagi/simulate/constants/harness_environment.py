@@ -7,6 +7,10 @@ from typing import Literal
 # The list's status-pill states; the pipeline's finer stage travels alongside as ``stage``.
 # An adaptation in review is awaiting approval until the person approves its design.
 STATUS_AWAITING_APPROVAL = "awaiting_approval"
+# How agent-learning-kit's adaptation workbench opens its approval question (`approval_question`).
+# The question being open is what "awaiting approval" means: before it, the mapping is still
+# being checked and there is nothing to approve.
+ADAPTATION_APPROVAL_PREFIX = "Use this binding for "
 STATUS_BUILDING = "building"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"

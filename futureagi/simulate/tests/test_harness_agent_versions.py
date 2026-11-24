@@ -2769,7 +2769,7 @@ class TestErrorTrackerScrubbing:
                 "secret_value",
             ),
             HostedHarnessProvider.rerun_saved: ("environment_values", "secret_value"),
-            HostedHarnessProvider.create: ("secret_values",),
+            HostedHarnessProvider._submit: ("secret_values",),
             staged_files_view: ("secret_content", "secret_document"),
         }
         for function, names in holders.items():
