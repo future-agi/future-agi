@@ -64,6 +64,13 @@ PRODUCERS = {
     },
 }
 AGGREGATE = {"backend": "Backend Tests Pass", "e2e": "E2E Tests Pass"}
+# A receipt's scope: did the suite run with the private package? E2E never
+# uses it; Backend CI runs without it in merge groups and Retarget proof.
+SCOPES = {"backend": frozenset({"internal", "oss"}), "e2e": frozenset({"oss"})}
+OSS_BACKEND = (
+    "The backend proof ran the OSS scope; internal EE suites were not re-run"
+    " against this base."
+)
 RECEIPT_JOB = "Record the tested merge candidate"
 IDENTITY_POLLS = 12
 IDENTITY_SECONDS = 10
@@ -261,7 +268,8 @@ def read_receipt(gh, repo, run_id, name):
 
 
 def check_run(gh, repo, pr, now, kind, prefix, run):
-    """(True, "") when this run proved the current candidate for `kind`."""
+    """(True, scope) when this run proved the current candidate for `kind`,
+    else (False, why)."""
     jobs = pages(
         gh.json,
         f"/repos/{repo}/actions/runs/{run['id']}/jobs?filter=all&per_page=100",
@@ -300,11 +308,13 @@ def check_run(gh, repo, pr, now, kind, prefix, run):
     for key, value in expected.items():
         if receipt.get(key) != value:
             return False, f"it tested {key} {receipt.get(key)!r}; now {value!r}"
-    return True, ""
+    if receipt.get("scope") not in SCOPES[kind]:
+        return False, f"it recorded scope {receipt.get('scope')!r}"
+    return True, receipt["scope"]
 
 
 def evidence(gh, repo, pr, now):
-    """({kind: run id}, [rejections], whether a producer run is still going)."""
+    """({kind: (run id, scope)}, [rejections], whether a producer is still going)."""
     runs = [
         run
         for run in pages(
@@ -321,7 +331,7 @@ def evidence(gh, repo, pr, now):
             pending = pending or run.get("status") != "completed"
             proved, why = check_run(gh, repo, pr, now, kind, paths[run["path"]], run)
             if proved:
-                found[kind] = run["id"]
+                found[kind] = (run["id"], why)
                 break
             rejected.append(f"{kind} run {run['id']}: {why}")
     return found, rejected, pending
@@ -374,11 +384,13 @@ def decide(gh, *, repo, pr, base_changed, sleep=time.sleep):
         f" {now['tip'][:12]} (tree {now['merge_tree'][:12]})"
     )
     if len(found) == len(PRODUCERS):
+        (backend, scope), (e2e, _) = found["backend"], found["e2e"]
         return 0, [
             title.format("notice")
-            + f"Backend CI run {found['backend']} and E2E CI run {found['e2e']}"
-            f" tested {proved}. This is proved against the base tip at this run,"
-            " not at merge time: the base can move after it."
+            + f"Backend CI run {backend} and E2E CI run {e2e} tested {proved}."
+            + (f" {OSS_BACKEND}" if scope == "oss" else "")
+            + " This is proved against the base tip at this run, not at merge"
+            " time: the base can move after it."
         ]
     missing = ", ".join(kind for kind in PRODUCERS if kind not in found)
     why = "; ".join(rejected[:6]) or "no producer run for this head"

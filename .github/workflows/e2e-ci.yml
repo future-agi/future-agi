@@ -911,6 +911,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           KIND: e2e
+          # Whether the suite ran with the private package ("internal") or
+          # without it ("oss", as merge groups and Retarget proof do). E2E never uses it.
+          SCOPE: oss
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -923,8 +926,8 @@ jobs:
           jq -n --arg kind "$KIND" --argjson pr "$PR" --arg head "$HEAD_SHA" --arg base_ref "$BASE_REF" \
             --arg base_sha "$(jq -r '.parents[0].sha' <<<"$commit")" --arg merge_sha "$GITHUB_SHA" \
             --arg merge_tree "$(jq -r '.commit.tree.sha' <<<"$commit")" \
-            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
-            '{schema: 1, kind: $kind, pr: $pr, head_sha: $head, base_ref: $base_ref, base_sha: $base_sha,
+            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --arg scope "$SCOPE" \
+            '{schema: 1, kind: $kind, scope: $scope, pr: $pr, head_sha: $head, base_ref: $base_ref, base_sha: $base_sha,
               merge_sha: $merge_sha, merge_tree: $merge_tree, run_id: $run_id, run_attempt: $run_attempt}' \
             | tee "$RUNNER_TEMP/ci-candidate/receipt.json"
       - uses: actions/upload-artifact@v4

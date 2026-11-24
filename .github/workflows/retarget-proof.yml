@@ -12,7 +12,9 @@ name: Retarget proof
 # Their jobs appear as "retarget-backend / ..." and "retarget-e2e / ...",
 # never as a required check name, and each records the candidate it tested for
 # the "CI ran on this base" check (ci-base-gate.yml). Like a merge group, the
-# backend leg runs without the private package: no secrets are forwarded.
+# backend leg runs without the private package (scope "oss"): no secrets are
+# forwarded, and the internal EE suites are not re-run. It never runs for a
+# fork's pull request.
 #
 # A title or body edit starts this workflow with every job skipped: it is not
 # required, so that skipped run hides nothing, and it cancels nothing. The
@@ -42,9 +44,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
+          # No proof for a fork's pull request: nothing here may pass for it.
+          if [[ $HEAD_REPO != "$GITHUB_REPOSITORY" ]]; then
+            echo "::error::Retarget proof does not run for pull requests from forks. Push a commit, or close and reopen the pull request, so its own Backend CI and E2E CI test the new base."
+            exit 1
+          fi
           parents=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '[.parents[].sha] | join(" ")')
           tip=$(gh api "repos/$GITHUB_REPOSITORY/branches/$(jq -rn --arg b "$BASE_REF" '$b | @uri')" --jq .commit.sha)
           if [[ $parents == "$tip $HEAD_SHA" ]]; then

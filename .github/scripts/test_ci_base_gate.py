@@ -150,6 +150,11 @@ class State:
         body = {
             "schema": 1,
             "kind": kind,
+            # A same-repo pull request's own Backend CI runs with the private
+            # package; Retarget proof's and every E2E run do not.
+            "scope": "internal"
+            if kind == "backend" and run["path"].endswith("/backend-ci.yml")
+            else "oss",
             "pr": int(PR),
             "head_sha": self.head,
             "base_ref": self.pull["base"]["ref"],
@@ -519,6 +524,32 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertEqual(sleeps, [gate.EVIDENCE_SECONDS])
 
+    def test_the_verdict_says_when_the_backend_proof_ran_the_oss_scope(self):
+        state = State().succeeded()
+        state.receipt("backend")
+        state.receipt("e2e")
+        code, text, _ = judge(state)
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("OSS scope", text)
+        state.receipt("backend", scope="oss")
+        code, text, _ = judge(state)
+        self.assertEqual(code, 0, text)
+        self.assertIn(gate.OSS_BACKEND, text)
+        proof = state.proof_run()  # Retarget proof: always the OSS scope.
+        state.receipt("backend", at=proof)
+        state.receipt("e2e", at=proof)
+        self.assertIn(gate.OSS_BACKEND, judge(state)[1])
+
+    def test_an_unknown_or_missing_scope_is_rejected(self):
+        for kind, scope in (("backend", "ee"), ("backend", None), ("e2e", "internal")):
+            with self.subTest(kind=kind, scope=scope):
+                state = State().succeeded()
+                state.receipt(kind, scope=scope)
+                state.receipt("e2e" if kind == "backend" else "backend")
+                code, text, _ = judge(state)
+                self.assertEqual(code, 1, text)
+                self.assertIn(f"it recorded scope {scope!r}", text)
+
 
 class AttemptTests(unittest.TestCase):
     """Re-run failed jobs: run 45140763390 (E2E CI, three attempts), recorded."""
@@ -717,6 +748,16 @@ class WorkflowTests(unittest.TestCase):
         candidate = re.search(r"(?ms)^  candidate:\n(.*?)(?=^  \S|\Z)", text)[1]
         self.assertIn("    if: ${{ github.event.changes.base }}\n", candidate)
         self.assertIn('[[ $parents == "$tip $HEAD_SHA" ]]', candidate)
+        # A fork's pull request gets no proof: the check fails, never passes.
+        self.assertIn('if [[ $HEAD_REPO != "$GITHUB_REPOSITORY" ]]; then', candidate)
+        self.assertIn("does not run for pull requests from forks", candidate)
+        # No path forwards a secret: the callee declares none to receive.
+        for called in ("backend-ci.yml", "e2e-ci.yml"):
+            text_called = self.text(called)
+            call = text_called.split("  workflow_call:\n", 1)[1].split(
+                "\n  workflow_dispatch:", 1
+            )[0]
+            self.assertNotIn("secrets", call.split("\n  schedule:", 1)[0])
         for kind, called in (("backend", "backend-ci.yml"), ("e2e", "e2e-ci.yml")):
             job = re.search(rf"(?ms)^  retarget-{kind}:\n(.*?)(?=^  \S|\Z)", text)[1]
             with self.subTest(kind=kind):
@@ -753,6 +794,8 @@ class WorkflowTests(unittest.TestCase):
                     f"name: ci-candidate-{kind}-attempt-${{{{ github.run_attempt }}}}",
                     job,
                 )
+                self.assertIn('--arg scope "$SCOPE"', job)
+                self.assertIn("scope: $scope", job)
                 # Default (read) permissions; the e2e workflow pins its count.
                 self.assertNotIn("    permissions:", job)
                 # The required aggregate never waits for it.

@@ -676,6 +676,10 @@ class CandidateScope(unittest.TestCase):
             ("pull_request", "", [], "false", "Backend CI"),
             # Retarget proof forwards no secrets: an OSS run, like the queue.
             ("pull_request", "base/repo", [], "false", "Retarget proof"),
+            ("pull_request", "fork/repo", [], "false", "Retarget proof"),
+            # Unchanged: dev/main pushes, dispatches and schedules are internal.
+            ("workflow_dispatch", "", [], "true", "Backend CI"),
+            ("schedule", "", [], "true", "Backend CI"),
             (
                 "merge_group",
                 "",
