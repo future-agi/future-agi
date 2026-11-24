@@ -472,6 +472,7 @@ def test_provider_import_authoring_gets_only_the_matching_target_key():
     assert material == {"RETELL_API_KEY": "retell-target-secret"}
     assert _provider_egress_domains({"RETELL_API_KEY": "opaque"}) == {
         "api.retellai.com",
+        "turn.retellai.com",
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
     }
@@ -706,6 +707,7 @@ def test_retell_connector_includes_default_livekit_cloud_egress(settings):
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
         "api.retellai.com",
+        "turn.retellai.com",
     }
 
 
@@ -722,6 +724,7 @@ def test_retell_job_allowlists_platform_simulator_livekit_signaling_and_turn(set
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
         "api.retellai.com",
+        "turn.retellai.com",
         "livekit-eu.futureagi.com",
         "coturn.turn-eu.futureagi.com",
         "turn-eu.futureagi.com",
