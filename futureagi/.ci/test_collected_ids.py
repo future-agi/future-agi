@@ -858,6 +858,34 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             self.assertTrue(checker.malformed_inventory(bad), bad)
 
 
+class JobPrefixTest(unittest.TestCase):
+    """The shard job names a run's receipts are looked up under."""
+
+    def test_without_a_caller_prefix_today_s_names_hold(self):
+        self.assertEqual(checker.job_prefix({"GITHUB_EVENT_NAME": "pull_request"}), "")
+        self.assertEqual(checker.job_prefix({"GITHUB_EVENT_NAME": "push"}), "")
+        self.assertEqual(
+            checker.job_prefix({"GITHUB_EVENT_NAME": "merge_group"}), "backend / "
+        )
+        # The workflow passes the input even when nobody set it.
+        self.assertEqual(
+            checker.job_prefix(
+                {"GITHUB_EVENT_NAME": "merge_group", "BACKEND_JOB_PREFIX": ""}
+            ),
+            "backend / ",
+        )
+
+    def test_a_caller_s_prefix_is_used_and_must_be_a_job_name(self):
+        env = {"GITHUB_EVENT_NAME": "pull_request"}
+        self.assertEqual(
+            checker.job_prefix({**env, "BACKEND_JOB_PREFIX": "retarget-backend / "}),
+            "retarget-backend / ",
+        )
+        for bad in ("retarget-backend", " / ", "a / b / ", "x/ ", "x\n / "):
+            with self.subTest(prefix=bad), self.assertRaises(ValueError):
+                checker.job_prefix({**env, "BACKEND_JOB_PREFIX": bad})
+
+
 class ProducerIdentityTest(unittest.TestCase):
     def test_partial_rerun_needs_the_latest_success_for_each_leg(self):
         matrix = json.dumps(

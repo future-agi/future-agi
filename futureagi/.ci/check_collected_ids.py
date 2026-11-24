@@ -622,6 +622,21 @@ def verify_artifact(artifact, repo):
     return receipt, records, collection, inventory
 
 
+def job_prefix(environ):
+    """How this run's job names are prefixed: "<caller job> / " when called.
+
+    A caller passes it (Retarget proof: "retarget-backend / "). Without one,
+    today's names hold: queue runs call backend-ci through the job named
+    "backend", and direct runs have no prefix.
+    """
+    prefix = environ.get("BACKEND_JOB_PREFIX", "")
+    if prefix:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]* / ", prefix):
+            raise ValueError(f"invalid job prefix {prefix!r}")
+        return prefix
+    return "backend / " if environ["GITHUB_EVENT_NAME"] == "merge_group" else ""
+
+
 def verify_run():
     run_id, repo = os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_REPOSITORY"]
     root = f"repos/{repo}/actions/runs/{run_id}"
@@ -629,8 +644,7 @@ def verify_run():
     wanted = {f"collected-ids-{leg['suite']}-{leg['group']}": leg for leg in legs}
     if not wanted or len(wanted) != len(legs):
         raise ValueError("empty or duplicated matrix")
-    # Queue runs call backend-ci through the explicitly named reusable job.
-    prefix = "backend / " if os.environ["GITHUB_EVENT_NAME"] == "merge_group" else ""
+    prefix = job_prefix(os.environ)
     by_job = collections.defaultdict(list)
     for job in pages(root + "/jobs?filter=all&per_page=100", "jobs"):
         by_job[job["name"]].append(job)
