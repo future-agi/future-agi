@@ -264,7 +264,9 @@ class TestAfterReading:
 
         with (
             patch(SIDE_ROW, return_value=runtime),
-            patch(STORED, return_value=copy.deepcopy(CONTRACT)),
+            patch(
+                STORED, return_value={**copy.deepcopy(CONTRACT), "reading_inputs": {}}
+            ),
         ):
             opened = open_review_after_reading(str(job.id), commit_sha=COMMIT)
 
@@ -520,6 +522,46 @@ class TestHostedReading:
         assert outcome.status == "stored"
         run.assert_called_once()
         assert store.call_args.kwargs["replace"] is True
+
+    def test_a_reading_keeps_the_design_another_reading_stored_meanwhile(
+        self, vapi_runtime
+    ):
+        reading = (None, {}, copy.deepcopy(CONTRACT), None)
+        reads = []
+
+        def stored(key):
+            reads.append(key)
+            if len(reads) == 1:
+                return copy.deepcopy(CONTRACT)
+            return {**CONTRACT, "reading_inputs": {"profile_digest": "sha256:a"}}
+
+        with (
+            patch(
+                "simulate.services.agent_contracts.version_contract_key",
+                return_value="agent-contracts/stored.json",
+            ),
+            patch(
+                "simulate.services.agent_contracts.read_contract", side_effect=stored
+            ),
+            patch("simulate.services.agent_reading_sandbox.require_harness_authoring"),
+            patch(
+                "simulate.services.agent_reading_sandbox._pinned_profile",
+                return_value=b'{"provider": "vapi"}\n',
+            ),
+            patch(
+                "simulate.services.agent_reading_sandbox.run_reading",
+                return_value=reading,
+            ),
+            patch(
+                "simulate.services.agent_reading_sandbox.store_version_contract",
+                return_value=True,
+            ) as store,
+            patch("simulate.services.harness_evals.briefing_evals", return_value=[]),
+        ):
+            outcome = read_version_contract(vapi_runtime.agent_version_id)
+
+        assert outcome.status == "stored"
+        store.assert_not_called()
 
 
 class TestSeededProviderBuild:

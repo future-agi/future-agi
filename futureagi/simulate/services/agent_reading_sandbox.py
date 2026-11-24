@@ -693,25 +693,44 @@ def _store_contract_reading(
         return _store_reading(
             runtime, definition, agent, contract, spend, document_only=True
         )
-    if not store_version_contract(
-        organization_id=runtime.organization_id,
-        agent_version_id=runtime.agent_version_id,
-        contract=contract,
-        replace=True,
-    ):
-        return ReadOutcome(
-            "failed",
-            code="agent_contract_not_stored",
-            message="The agent's design couldn't be kept. Try again.",
-            retryable=True,
-            spend=spend,
+    from simulate.services.agent_contracts import stored_read_contract
+
+    with transaction.atomic():
+        list(
+            HarnessAgentVersionRuntime.no_workspace_objects.select_for_update()
+            .filter(id=runtime.id)
+            .values_list("id", flat=True)
         )
+        if stored_read_contract(runtime.agent_version_id) is not None:
+            logger.info(
+                "agent_contract_kept",
+                agent_version_id=str(runtime.agent_version_id),
+                source_kind=str(runtime.source_kind),
+            )
+            return ReadOutcome("stored", spend=spend)
+        if not store_version_contract(
+            organization_id=runtime.organization_id,
+            agent_version_id=runtime.agent_version_id,
+            contract=contract,
+            replace=True,
+        ):
+            return _contract_not_stored(spend)
     logger.info(
         "agent_contract_read",
         agent_version_id=str(runtime.agent_version_id),
         source_kind=str(runtime.source_kind),
     )
     return ReadOutcome("stored", spend=spend)
+
+
+def _contract_not_stored(spend: dict[str, Any] | None) -> ReadOutcome:
+    return ReadOutcome(
+        "failed",
+        code="agent_contract_not_stored",
+        message="The agent's design couldn't be kept. Try again.",
+        retryable=True,
+        spend=spend,
+    )
 
 
 def _bill(
@@ -838,11 +857,8 @@ def _store_reading(
                 spend=spend,
             )
         _store_required_names(locked, contract)
-    store_version_contract(
-        organization_id=runtime.organization_id,
-        agent_version_id=runtime.agent_version_id,
-        contract=contract,
-    )
+    if not _keep_contract(runtime, contract) and document_only:
+        return _contract_not_stored(spend)
     logger.info(
         "agent_reading_stored",
         agent_version_id=str(runtime.agent_version_id),
@@ -851,6 +867,24 @@ def _store_reading(
         tools=len(document.get("tools") or []),
     )
     return ReadOutcome("stored", spend=spend)
+
+
+def _keep_contract(
+    runtime: HarnessAgentVersionRuntime, contract: dict[str, Any]
+) -> bool:
+    from simulate.services.agent_contracts import version_contract_key
+
+    if store_version_contract(
+        organization_id=runtime.organization_id,
+        agent_version_id=runtime.agent_version_id,
+        contract=contract,
+    ) or version_contract_key(runtime.agent_version_id):
+        return True
+    logger.warning(
+        "agent_reading_contract_not_stored",
+        agent_version_id=str(runtime.agent_version_id),
+    )
+    return False
 
 
 def _store_required_names(

@@ -289,6 +289,28 @@ class TestApprovedSeed:
 
 @pytest.mark.django_db
 @pytest.mark.usefixtures("review_on")
+class TestOpenReviewAfterReading:
+    def test_a_reading_that_left_no_record_fails_instead_of_opening(
+        self, user, workspace, django_capture_on_commit_callbacks
+    ):
+        runtime = _runtime()
+        job = _reading(user, workspace, runtime, django_capture_on_commit_callbacks)
+
+        with (
+            patch(SIDE_ROW, return_value=runtime),
+            patch(STORED, return_value=copy.deepcopy(CONTRACT)),
+        ):
+            opened = open_review_after_reading(str(job.id))
+
+        assert opened == "failed"
+        job.refresh_from_db()
+        assert job.state == HostedHarnessJob.State.FAILED
+        assert job.failure["code"] == "agent_design_missing"
+        assert stored_review(job)["status"] == READING_FAILED
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("review_on")
 class TestReadingThatDies:
     def test_the_last_attempt_keeps_the_readings_message_and_retry_rule(
         self,

@@ -415,7 +415,7 @@ def open_review_after_reading(
     retryable: bool = False,
     commit_sha: str = "",
 ) -> str:
-    from simulate.services.agent_contracts import stored_version_contract
+    from simulate.services.agent_contracts import stored_read_contract
     from simulate.services.harness_agent_versions import _side_row
 
     with transaction.atomic():
@@ -425,7 +425,7 @@ def open_review_after_reading(
         job, review = waiting
         runtime = _side_row(review.get("agent_version_id"))
         contract = (
-            stored_version_contract(runtime.agent_version_id)
+            stored_read_contract(runtime.agent_version_id)
             if runtime is not None
             else None
         )
