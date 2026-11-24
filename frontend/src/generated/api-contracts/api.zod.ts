@@ -58322,6 +58322,8 @@ export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderCallI
 
 export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderEndReasonMax = 255;
 
+export const simulateApiHarnessAttemptsResultsBodyCallDuplicateCommitsMin = 0;
+
 export const simulateApiHarnessAttemptsResultsBodyFailureStageMax = 64;
 
 export const simulateApiHarnessAttemptsResultsBodyFailureCodeMax = 128;
@@ -58507,6 +58509,10 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
           )
           .optional(),
       })
+      .optional(),
+    duplicate_commits: zod
+      .number()
+      .min(simulateApiHarnessAttemptsResultsBodyCallDuplicateCommitsMin)
       .optional(),
   }),
   failure: zod.object({

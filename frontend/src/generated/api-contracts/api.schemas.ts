@@ -26223,6 +26223,8 @@ export interface HarnessCallApi {
   stop_reason?: string;
   script_completed?: boolean;
   target_metrics?: HarnessTargetMetricsApi;
+  /** @minimum 0 */
+  duplicate_commits?: number;
 }
 
 export type HarnessFailureApiDomain =
