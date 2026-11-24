@@ -7,6 +7,8 @@ name: CI base gate
 # It reads the pull request, its runs and their receipts, and judges again on
 # every pull request event. It never writes or copies another check. A green
 # verdict is proof against the base tip at its last run, not at merge time.
+# Receipts come from the producing runs' own workflows (the pull request's
+# merge commit), so it has the same trust as the required checks.
 # See .github/scripts/ci_base_gate.py.
 #
 # Only the repository owner can make it required on main, and only after this

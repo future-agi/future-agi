@@ -67,6 +67,7 @@ class State:
         self.blobs = {}
         self.pulls = []  # Later reads of the pull request, if they change.
         self.calls = []
+        self.paged = False  # Serve artifact lists one item per page.
 
     def succeeded(self):
         """This head's producers, as the earlier head's real successful runs.
@@ -90,15 +91,57 @@ class State:
             run for run in self.runs if run["path"] == ".github/workflows/" + path
         )
 
-    def receipt(self, kind, conclusion="success", members=None, **changes):
-        """Attach a CONSTRUCTED receipt (and its job) to this head's producer."""
-        run = self.producer(kind)
-        attempt = changes.pop("attempt", 1)
+    def proof_run(self):
+        """A CONSTRUCTED Retarget proof run for this head, newer than the rest.
+
+        Its jobs carry the callers' prefixes, as the queue's do ("backend /
+        ..."): "retarget-backend / ..." and "retarget-e2e / ...".
+        """
+        run = {
+            "id": max(run["id"] for run in self.runs) + 1,
+            "name": "Retarget proof",
+            "path": ".github/workflows/retarget-proof.yml",
+            "event": "pull_request",
+            "head_sha": self.head,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+        }
+        self.runs.append(run)
         self.jobs[run["id"]] = [
-            job for job in self.jobs[run["id"]] if job["name"] != gate.RECEIPT_JOB
+            {
+                "name": "retarget candidate is current",
+                "conclusion": "success",
+                "run_attempt": 1,
+            },
+            {
+                "name": "retarget-backend / Backend Tests Pass",
+                "conclusion": "success",
+                "run_attempt": 1,
+            },
+            {
+                "name": "retarget-e2e / E2E Tests Pass",
+                "conclusion": "success",
+                "run_attempt": 1,
+            },
+        ]
+        return run
+
+    def receipt(self, kind, /, conclusion="success", members=None, at=None, **changes):
+        """Attach a CONSTRUCTED receipt (and its job) to a producer run.
+
+        `at` is the run (default: this head's direct producer); `changes`
+        override fields of the receipt body.
+        """
+        run = at or self.producer(kind)
+        prefix = gate.PRODUCERS[kind][run["path"]]
+        attempt = changes.pop("attempt", 1)
+        name = prefix + gate.RECEIPT_JOB
+        self.jobs[run["id"]] = [
+            job for job in self.jobs.get(run["id"], []) if job["name"] != name
         ] + [
             {
-                "name": gate.RECEIPT_JOB,
+                "name": name,
                 "status": "completed",
                 "conclusion": conclusion,
                 "run_attempt": attempt,
@@ -119,14 +162,19 @@ class State:
         }
         out = io.BytesIO()
         with zipfile.ZipFile(out, "w") as archive:
-            for name in members or ["receipt.json"]:
-                archive.writestr(name, json.dumps(body))
+            for member in members or ["receipt.json"]:
+                archive.writestr(member, json.dumps(body))
         blob = out.getvalue()
-        url = f"https://api.github.com/repos/{REPO}/actions/artifacts/{run['id']}/zip"
+        url = f"https://api.github.com/repos/{REPO}/actions/artifacts/{run['id']}-{kind}/zip"
         self.blobs[url] = blob
+        artifact = f"ci-candidate-{kind}-attempt-{attempt}"
         self.artifacts[run["id"]] = [
+            item
+            for item in self.artifacts.get(run["id"], [])
+            if item["name"] != artifact
+        ] + [
             {
-                "name": f"ci-candidate-{kind}-attempt-{attempt}",
+                "name": artifact,
                 "expired": False,
                 "digest": "sha256:" + hashlib.sha256(blob).hexdigest(),
                 "archive_download_url": url,
@@ -142,7 +190,8 @@ class State:
         if path == f"{root}/pulls/{PR}":
             pull = self.pulls.pop(0) if self.pulls else self.pull
             return copy.deepcopy(pull), ""
-        if path == f"{root}/branches/{self.pull['base']['ref']}":
+        if path.startswith(f"{root}/branches/"):
+            # One recorded base branch, whatever the pull request names.
             return copy.deepcopy(self.branch), ""
         if path.startswith(f"{root}/commits/"):
             return copy.deepcopy(self.commit), ""
@@ -150,12 +199,26 @@ class State:
             return copy.deepcopy(self.timeline), ""
         if path.startswith(f"{root}/actions/runs?head_sha="):
             return {"workflow_runs": copy.deepcopy(self.runs)}, ""
-        match = re.fullmatch(rf"{root}/actions/runs/(\d+)/(jobs|artifacts)\?.*", path)
+        match = re.fullmatch(
+            rf"(?:https://api\.github\.com)?{root}/actions/runs/(\d+)/(jobs|artifacts)\?(.*)",
+            path,
+        )
         if match:
-            run_id, what = int(match[1]), match[2]
+            run_id, what, query = int(match[1]), match[2], match[3]
             if what == "jobs":
                 return {"jobs": copy.deepcopy(self.jobs.get(run_id, []))}, ""
-            return {"artifacts": copy.deepcopy(self.artifacts.get(run_id, []))}, ""
+            items = copy.deepcopy(self.artifacts.get(run_id, []))
+            if not self.paged or len(items) < 2:
+                return {"artifacts": items}, ""
+            # One artifact per page, linked the way GitHub links pages.
+            page = int(re.search(r"page=(\d+)", query)[1]) if "page=" in query else 1
+            link = (
+                f"<https://api.github.com{root}/actions/runs/{run_id}/artifacts"
+                f'?per_page=100&page={page + 1}>; rel="next"'
+                if page < len(items)
+                else ""
+            )
+            return {"artifacts": items[page - 1 : page]}, link
         raise AssertionError(f"unexpected API path {path}")
 
     def download(self, url):
@@ -241,7 +304,10 @@ class VerdictTests(unittest.TestCase):
                 state = State().succeeded()
                 state.receipt("backend", **change)
                 state.receipt("e2e")
-                self.assertEqual(judge(state)[0], 1)
+                code, text, _ = judge(state)
+                self.assertEqual(code, 1, text)
+                key = next(iter(change))
+                self.assertIn(f"it tested {key} {change[key]!r}", text)
 
     def test_a_skipped_producer_is_rejected(self):
         state = State().succeeded()
@@ -300,11 +366,51 @@ class VerdictTests(unittest.TestCase):
         state = State().succeeded()
         state.receipt("backend")
         state.receipt("e2e")
-        moved = copy.deepcopy(state.pull)
-        moved["head"]["sha"] = "3" * 40
-        state.pulls = [copy.deepcopy(state.pull), moved] + [moved] * gate.IDENTITY_POLLS
+        real = state.json
+        reads = {"pull": 0}
+
+        def json(path):
+            if path.endswith(f"/pulls/{PR}"):
+                reads["pull"] += 1
+                if reads["pull"] == 2:
+                    # Constructed: the base gained a commit while it was judged,
+                    # and GitHub re-merged the head onto it (a coherent state).
+                    newer = "5" * 40
+                    state.branch["commit"]["sha"] = newer
+                    state.commit["parents"][0]["sha"] = newer
+            return real(path)
+
+        state.json = json
         code, text, _ = judge(state)
         self.assertEqual(code, 1, text)
+        self.assertIn("moved while it was judged", text)
+
+    def test_moving_onto_main_while_judged_is_judged_as_main(self):
+        state = State().succeeded()
+        real = state.json
+        reads = {"pull": 0}
+
+        def json(path):
+            if path.endswith(f"/pulls/{PR}"):
+                reads["pull"] += 1
+                if reads["pull"] >= 2:
+                    pull, link = real(path)
+                    pull["base"]["ref"] = "main"
+                    return pull, link
+            return real(path)
+
+        state.json = json
+        # Guarded is main; the first read was dev, a later one main.
+        code, text, _ = judge(state, guarded="main")
+        self.assertEqual(code, 1, text)
+        self.assertIn("::error", text)
+
+    def test_an_uncomputed_merge_into_another_base_only_warns(self):
+        state = State("timeline-4332.json")
+        state.pull["mergeable"] = None
+        code, text, _ = judge(state, guarded="main")
+        self.assertEqual(code, 0, text)
+        self.assertIn("::warning", text)
 
     def test_the_base_advancing_after_a_pass_makes_it_stale(self):
         state = State().succeeded()
@@ -360,6 +466,103 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertEqual(sleeps, [gate.EVIDENCE_SECONDS])
 
+    def test_a_retarget_proof_run_proves_both_kinds(self):
+        state = State().succeeded()  # Its direct runs recorded nothing.
+        proof = state.proof_run()
+        state.receipt("backend", at=proof)
+        state.receipt("e2e", at=proof)
+        state.paged = True  # Both receipts, one per page of the list.
+        code, text, _ = judge(state)
+        self.assertEqual(code, 0, text)
+        self.assertIn(
+            f"Backend CI run {proof['id']} and E2E CI run {proof['id']}", text
+        )
+        self.assertTrue(any("&page=2" in call for call in state.calls))
+
+    def test_a_rejected_newer_run_does_not_hide_a_valid_older_one(self):
+        state = State().succeeded()
+        state.receipt("backend")
+        state.receipt("e2e")
+        proof = state.proof_run()  # Newer, but its suites failed.
+        for job in state.jobs[proof["id"]]:
+            job["conclusion"] = "failure"
+        code, text, _ = judge(state)
+        self.assertEqual(code, 0, text)
+        self.assertTrue(
+            any(f"/actions/runs/{proof['id']}/jobs?" in call for call in state.calls)
+        )
+
+    def test_producers_that_never_finish_fail_after_the_wait(self):
+        state = State().succeeded()
+        for run in state.runs:
+            run["status"] = "in_progress"
+        code, text, sleeps = judge(state)
+        self.assertEqual(code, 1, text)
+        self.assertEqual(sleeps, [gate.EVIDENCE_SECONDS] * gate.EVIDENCE_POLLS)
+
+    def test_a_failed_poll_while_waiting_counts_as_pending(self):
+        state = State().succeeded()
+        real = state.json
+        polls = {"n": 0}
+
+        def json(path):
+            if "/actions/runs?head_sha=" in path:
+                polls["n"] += 1
+                if polls["n"] == 1:
+                    raise urllib.error.URLError("connection reset")
+                state.receipt("backend")
+                state.receipt("e2e")
+            return real(path)
+
+        state.json = json
+        code, text, sleeps = judge(state)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(sleeps, [gate.EVIDENCE_SECONDS])
+
+
+class AttemptTests(unittest.TestCase):
+    """Re-run failed jobs: run 45140763390 (E2E CI, three attempts), recorded."""
+
+    JOBS = load("rerun-45140763390/jobs.json")["jobs"]
+
+    def test_a_job_copied_into_later_attempts_belongs_to_its_first(self):
+        latest, attempt = gate.producing_attempt(self.JOBS, "e2e (distributed, 1/6)")
+        self.assertEqual((latest["run_attempt"], attempt), (3, 1))
+
+    def test_a_re_run_job_belongs_to_the_attempt_that_ran_it(self):
+        latest, attempt = gate.producing_attempt(self.JOBS, "e2e (distributed, 2/6)")
+        self.assertEqual((latest["conclusion"], attempt), ("success", 3))
+        latest, attempt = gate.producing_attempt(self.JOBS, "E2E Tests Pass")
+        self.assertEqual((latest["conclusion"], attempt), ("success", 3))
+
+    def test_absent_or_inconsistent_copies_prove_nothing(self):
+        self.assertEqual(gate.producing_attempt(self.JOBS, "no such job"), (None, None))
+        copied = [
+            dict(job, run_attempt=4)
+            for job in self.JOBS
+            if job["name"] == "e2e (distributed, 1/6)" and job["run_attempt"] == 3
+        ]
+        gap = [
+            job
+            for job in self.JOBS
+            if not (job["name"] == "e2e (distributed, 1/6)" and job["run_attempt"] == 2)
+        ] + copied
+        with self.assertRaises(ValueError):
+            gate.producing_attempt(gap, "e2e (distributed, 1/6)")
+
+    def test_the_receipt_is_read_from_the_attempt_that_wrote_it(self):
+        state = State().succeeded()
+        run = state.receipt("backend", attempt=1)
+        state.receipt("e2e")
+        # Re-run failed jobs: attempt 2 copies the receipt job unchanged.
+        jobs = state.jobs[run["id"]]
+        recorded = next(job for job in jobs if job["name"] == gate.RECEIPT_JOB)
+        jobs.append(dict(recorded, run_attempt=2))
+        for job in [job for job in jobs if job["name"] == "Backend Tests Pass"]:
+            jobs.append(dict(job, run_attempt=2))
+        code, text, _ = judge(state)
+        self.assertEqual(code, 0, text)
+
 
 class ReceiptIntegrityTests(unittest.TestCase):
     def test_a_digest_mismatch_is_rejected(self):
@@ -388,6 +591,58 @@ class ReceiptIntegrityTests(unittest.TestCase):
         state.receipt("e2e")
         state.artifacts[run["id"]][0]["expired"] = True
         self.assertEqual(judge(state)[0], 1)
+
+    def test_a_receipt_that_is_not_an_object_is_rejected(self):
+        state = State().succeeded()
+        run = state.receipt("backend")
+        state.receipt("e2e")
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as archive:
+            archive.writestr("receipt.json", "[1, 2]")
+        url = state.artifacts[run["id"]][0]["archive_download_url"]
+        state.blobs[url] = out.getvalue()
+        state.artifacts[run["id"]][0]["digest"] = (
+            "sha256:" + hashlib.sha256(state.blobs[url]).hexdigest()
+        )
+        code, text, _ = judge(state)
+        self.assertEqual(code, 1, text)
+        self.assertIn("holds no receipt object", text)
+
+    def test_reads_retry_transient_failures_only(self):
+        pauses = []
+        tries = iter(
+            [
+                urllib.error.HTTPError("u", 502, "Bad Gateway", None, None),
+                urllib.error.URLError("reset"),
+                "ok",
+            ]
+        )
+
+        def read():
+            value = next(tries)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        self.assertEqual(gate.with_retries(read, pauses.append), "ok")
+        self.assertEqual(pauses, [1, 2])
+        with self.assertRaises(urllib.error.HTTPError):
+            gate.with_retries(
+                lambda: (_ for _ in ()).throw(
+                    urllib.error.HTTPError("u", 404, "Not Found", None, None)
+                ),
+                pauses.append,
+            )
+        self.assertEqual(pauses, [1, 2])
+
+    def test_the_download_opener_follows_no_redirect(self):
+        github = gate.GitHub("secret-token")
+        self.assertTrue(
+            any(isinstance(h, gate._NoRedirect) for h in github.bare.handlers)
+        )
+        self.assertIsNone(
+            gate._NoRedirect().redirect_request(None, None, 302, "", {}, "x")
+        )
 
     def test_a_download_never_forwards_the_token(self):
         github = gate.GitHub("secret-token")
@@ -459,9 +714,13 @@ class WorkflowTests(unittest.TestCase):
             [("actions", "read"), ("contents", "read"), ("packages", "read")],
         )
         self.assertNotIn("secrets", text.split("\njobs:\n", 1)[1])
+        candidate = re.search(r"(?ms)^  candidate:\n(.*?)(?=^  \S|\Z)", text)[1]
+        self.assertIn("    if: ${{ github.event.changes.base }}\n", candidate)
+        self.assertIn('[[ $parents == "$tip $HEAD_SHA" ]]', candidate)
         for kind, called in (("backend", "backend-ci.yml"), ("e2e", "e2e-ci.yml")):
             job = re.search(rf"(?ms)^  retarget-{kind}:\n(.*?)(?=^  \S|\Z)", text)[1]
             with self.subTest(kind=kind):
+                self.assertIn("    needs: candidate\n", job)
                 self.assertIn(f"    name: retarget-{kind}\n", job)
                 self.assertIn("    if: ${{ github.event.changes.base }}\n", job)
                 self.assertIn(f"    uses: ./.github/workflows/{called}\n", job)
@@ -494,6 +753,8 @@ class WorkflowTests(unittest.TestCase):
                     f"name: ci-candidate-{kind}-attempt-${{{{ github.run_attempt }}}}",
                     job,
                 )
+                # Default (read) permissions; the e2e workflow pins its count.
+                self.assertNotIn("    permissions:", job)
                 # The required aggregate never waits for it.
                 block = re.search(rf"(?ms)^  {aggregate}:\n(.*?)(?=^  \S|\Z)", text)[1]
                 self.assertNotIn("candidate-receipt", block)

@@ -899,14 +899,13 @@ jobs:
   candidate-receipt:
     # Not part of the required check: records which merge candidate this run
     # tested, for the "CI ran on this base" check (.github/scripts/ci_base_gate.py).
-    # Only when the suite ran and passed; its failure never changes the verdict.
+    # Only on pull requests whose suite was selected, ran and passed; its own
+    # failure never changes the required verdict. Default permissions (read).
     name: Record the tested merge candidate
     needs: [changes, e2e-tests]
     if: ${{ github.event_name == 'pull_request' && needs.e2e-tests.result == 'success' && needs.changes.outputs.any == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
     steps:
       - name: Read the merge candidate this run tested
         env:

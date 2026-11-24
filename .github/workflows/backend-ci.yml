@@ -167,9 +167,11 @@ jobs:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           # The merge-group event does not attest to the provenance of every member.
+          # A call from Retarget proof forwards no secrets: like a merge group,
+          # it runs without the private package (GITHUB_WORKFLOW is the caller's).
           internal=false
           case "$GITHUB_EVENT_NAME" in
-            pull_request) if [[ -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
+            pull_request) if [[ $GITHUB_WORKFLOW == "Backend CI" && -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
             push|workflow_dispatch|schedule) internal=true ;;
           esac
           echo "internal=$internal" >> "$GITHUB_OUTPUT"
@@ -1015,14 +1017,13 @@ jobs:
   candidate-receipt:
     # Not part of the required check: records which merge candidate this run
     # tested, for the "CI ran on this base" check (.github/scripts/ci_base_gate.py).
-    # Only when the suite ran and passed; its failure never changes the verdict.
+    # Only on pull requests whose suite was selected, ran and passed; its own
+    # failure never changes the required verdict. Default permissions (read).
     name: Record the tested merge candidate
     needs: [changes, backend-tests]
     if: ${{ github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
     steps:
       - name: Read the merge candidate this run tested
         env:

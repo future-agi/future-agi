@@ -2,35 +2,43 @@
   "total_count": 4,
   "jobs": [
     {
+      "completed_at": "2026-11-24T01:25:38Z",
       "conclusion": "cancelled",
       "id": 138146391892,
       "name": "changes",
       "run_attempt": 1,
       "run_id": 45304953643,
+      "started_at": "2026-11-24T01:25:37Z",
       "status": "completed"
     },
     {
+      "completed_at": "2026-11-24T01:25:44Z",
       "conclusion": "failure",
       "id": 138146397899,
       "name": "E2E Tests Pass",
       "run_attempt": 1,
       "run_id": 45304953643,
+      "started_at": "2026-11-24T01:25:41Z",
       "status": "completed"
     },
     {
+      "completed_at": "2026-11-24T01:25:38Z",
       "conclusion": "cancelled",
       "id": 138146399136,
       "name": "e2e (${{ matrix.stack }}, ${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }})",
       "run_attempt": 1,
       "run_id": 45304953643,
+      "started_at": "2026-11-24T01:25:38Z",
       "status": "completed"
     },
     {
+      "completed_at": "2026-11-24T01:25:38Z",
       "conclusion": "cancelled",
       "id": 138146400068,
       "name": "e2e report (${{ matrix.stack }})",
       "run_attempt": 1,
       "run_id": 45304953643,
+      "started_at": "2026-11-24T01:25:38Z",
       "status": "completed"
     }
   ]

@@ -3,19 +3,22 @@
 Backend CI and E2E CI start only on opened, synchronize and reopened: a run
 for an edit or a label would become their newest suite and hide their
 required checks. So a retarget starts neither. Retarget proof
-(retarget-proof.yml) runs both, unchanged, when a pull request's base really
-changes, and every Backend CI or E2E CI run that tested a pull request records
-the merge candidate it tested (artifact ci-candidate-<kind>-attempt-<n>).
+(retarget-proof.yml) calls both when a pull request's base really changes and
+GitHub delivered that edit with a merge onto the new base's tip; its backend
+leg runs without the private package, as a merge group does. Every Backend CI
+or E2E CI run whose suite was selected, ran and passed on a pull request
+records the merge candidate it tested (artifact
+ci-candidate-<kind>-attempt-<n>).
 
 For a retargeted pull request into main this check passes only when, read
 from the API now:
 
 - GitHub's merge candidate is the head H merged onto the current tip T of
   the base B (parents [T, H]); and
-- a Backend CI and an E2E CI producer each succeeded and recorded that same
-  pull request, head, base, base tip and merge tree. A receipt from another
-  pull request on the same head, from an older base tip, from a run whose
-  required aggregate was skipped, or that is missing, does not count.
+- a Backend CI and an E2E CI producer job each succeeded and recorded that
+  same pull request, head, base, base tip and merge tree. A receipt from
+  another pull request on the same head, from an older base tip, from a run
+  whose required aggregate was skipped, or that is missing, does not count.
 
 It re-reads the pull request after judging and fails closed if anything
 moved. It only reads; it never writes or copies a check. A green verdict
@@ -23,11 +26,18 @@ means the candidate was proved against the base tip at its last run, not at
 merge time: the base can move after it. A pull request that was never
 retargeted passes, since its own Backend CI and E2E CI ran on its base.
 Into other bases it passes and says what it would require into main.
+
+Trust: a receipt is written by the producing run's own workflow, which for a
+pull request comes from that pull request's merge commit, as the required
+checks do. So this check has the same trust as the required checks: it
+rejects honest runs of other pull requests, older bases and skipped suites,
+not a writer who changes the workflows on their own branch.
 """
 
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -61,6 +71,16 @@ IDENTITY_SECONDS = 10
 EVIDENCE_POLLS = 120
 EVIDENCE_SECONDS = 60
 MAX_PAGES = 30
+# One API read: this many tries for a transient failure, backing off.
+TRIES = 4
+TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
+# Read or network failures: the verdict fails closed on them.
+READ_ERRORS = (
+    urllib.error.URLError,
+    http.client.HTTPException,
+    OSError,
+    ValueError,
+)
 
 
 class Unknown(Exception):
@@ -72,11 +92,29 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def transient(exc):
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in TRANSIENT_STATUS
+    return isinstance(exc, (urllib.error.URLError, http.client.HTTPException, OSError))
+
+
+def with_retries(read, pause=time.sleep):
+    for attempt in range(TRIES):
+        try:
+            return read()
+        except READ_ERRORS as exc:
+            if attempt == TRIES - 1 or not transient(exc):
+                raise
+        pause(2**attempt)
+    raise AssertionError("unreachable")
+
+
 class GitHub:
     """Read-only REST access. Artifact downloads never forward the token."""
 
-    def __init__(self, token):
+    def __init__(self, token, pause=time.sleep):
         self.token = token
+        self.pause = pause
         self.bare = urllib.request.build_opener(_NoRedirect)
 
     def _request(self, url):
@@ -91,20 +129,27 @@ class GitHub:
 
     def json(self, path):
         url = path if path.startswith("https://") else API + path
-        with urllib.request.urlopen(self._request(url), timeout=30) as response:
-            return json.load(response), response.headers.get("Link", "")
+
+        def read():
+            with urllib.request.urlopen(self._request(url), timeout=30) as response:
+                return json.load(response), response.headers.get("Link", "")
+
+        return with_retries(read, self.pause)
 
     def download(self, url):
-        try:
-            with self.bare.open(self._request(url), timeout=60) as response:
+        def read():
+            try:
+                with self.bare.open(self._request(url), timeout=60) as response:
+                    return response.read()
+            except urllib.error.HTTPError as redirect:
+                location = redirect.headers.get("Location")
+                if redirect.code not in (301, 302, 303, 307, 308) or not location:
+                    raise
+            # The signed storage URL needs no token; do not send it there.
+            with urllib.request.urlopen(location, timeout=60) as response:
                 return response.read()
-        except urllib.error.HTTPError as redirect:
-            location = redirect.headers.get("Location")
-            if redirect.code not in (301, 302, 303, 307, 308) or not location:
-                raise
-        # The signed storage URL needs no token; do not send it there.
-        with urllib.request.urlopen(location, timeout=60) as response:
-            return response.read()
+
+        return with_retries(read, self.pause)
 
 
 def pages(fetch, path, key=None):
@@ -120,10 +165,15 @@ def pages(fetch, path, key=None):
     raise Unknown(f"more than {MAX_PAGES} pages at {path}")
 
 
-def identity(gh, repo, pr, sleep):
-    """The pull request's live head, base and GitHub's merge candidate."""
+def identity(gh, repo, pr, sleep, bases):
+    """The pull request's live head, base and GitHub's merge candidate.
+
+    Every base ref read is added to `bases` before anything can fail, so the
+    caller knows which base it was judging even when this raises.
+    """
     for attempt in range(IDENTITY_POLLS + 1):
         pull, _ = gh.json(f"/repos/{repo}/pulls/{pr}")
+        bases.add(pull["base"]["ref"])
         if pull.get("state") != "open":
             raise Unknown("the pull request is not open")
         head, base = pull["head"]["sha"], pull["base"]["ref"]
@@ -159,6 +209,33 @@ def retargeted(gh, repo, pr, base_changed):
     return any(event.get("event") in BASE_EVENTS for event in timeline)
 
 
+def producing_attempt(jobs, name):
+    """(latest job, attempt that produced its artifacts) for a job name.
+
+    "Re-run failed jobs" copies a job that is not re-run into the new attempt
+    with its original start and end times and no new artifacts. Its artifacts
+    belong to the earliest of the consecutive copies of its latest run.
+    """
+    runs = sorted(
+        (job for job in jobs if job.get("name") == name),
+        key=lambda job: job["run_attempt"],
+        reverse=True,
+    )
+    if not runs:
+        return None, None
+    latest = runs[0]
+    copies = [
+        job["run_attempt"]
+        for job in runs
+        if job.get("started_at") == latest.get("started_at")
+        and job.get("completed_at") == latest.get("completed_at")
+    ]
+    first = min(copies)
+    if sorted(copies) != list(range(first, latest["run_attempt"] + 1)):
+        raise ValueError(f"inconsistent copies of {name}")
+    return latest, first
+
+
 def read_receipt(gh, repo, run_id, name):
     artifacts = [
         artifact
@@ -177,32 +254,37 @@ def read_receipt(gh, repo, run_id, name):
     with zipfile.ZipFile(io.BytesIO(blob)) as archive:
         if archive.namelist() != ["receipt.json"]:
             raise ValueError(f"artifact {name} holds {archive.namelist()}")
-        return json.loads(archive.read("receipt.json"))
+        receipt = json.loads(archive.read("receipt.json"))
+    if not isinstance(receipt, dict):
+        raise ValueError(f"artifact {name} holds no receipt object")
+    return receipt
 
 
 def check_run(gh, repo, pr, now, kind, prefix, run):
     """(True, "") when this run proved the current candidate for `kind`."""
     jobs = pages(
         gh.json,
-        f"/repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100",
+        f"/repos/{repo}/actions/runs/{run['id']}/jobs?filter=all&per_page=100",
         "jobs",
     )
-    aggregate = [job for job in jobs if job.get("name") == prefix + AGGREGATE[kind]]
-    if len(aggregate) != 1 or aggregate[0].get("conclusion") != "success":
-        state = aggregate[0].get("conclusion") if len(aggregate) == 1 else "absent"
+    try:
+        aggregate, _ = producing_attempt(jobs, prefix + AGGREGATE[kind])
+        recorded, attempt = producing_attempt(jobs, prefix + RECEIPT_JOB)
+    except ValueError as exc:
+        return False, str(exc)
+    if aggregate is None or aggregate.get("conclusion") != "success":
+        state = aggregate.get("conclusion") if aggregate else "absent"
         return False, f"{AGGREGATE[kind]} is {state or 'still running'}"
-    recorded = [job for job in jobs if job.get("name") == prefix + RECEIPT_JOB]
-    if len(recorded) != 1 or recorded[0].get("conclusion") != "success":
+    if recorded is None or recorded.get("conclusion") != "success":
         return (
             False,
             "it recorded no merge candidate (the suite did not run, or not yet)",
         )
-    attempt = recorded[0]["run_attempt"]
     try:
         receipt = read_receipt(
             gh, repo, run["id"], f"ci-candidate-{kind}-attempt-{attempt}"
         )
-    except (ValueError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
+    except (ValueError, zipfile.BadZipFile) as exc:
         return False, str(exc)
     expected = {
         "schema": 1,
@@ -255,34 +337,36 @@ FIX = (
 def decide(gh, *, repo, pr, base_changed, sleep=time.sleep):
     """(exit code, annotation lines) for this pull request now."""
     title = "::{} title=CI ran on this base::"
-    guarded = True  # Until the base is known, fail closed.
+    bases = set()  # Every base ref read; any read of main means guarded.
+
+    def guarded():
+        return not bases or GUARDED_BASE in bases
+
     try:
-        now = identity(gh, repo, pr, sleep)
-        guarded = now["base_ref"] == GUARDED_BASE
+        now = identity(gh, repo, pr, sleep, bases)
         if not retargeted(gh, repo, pr, base_changed):
             return 0, [
                 title.format("notice")
                 + "The base never changed, so this pull request's own Backend CI"
                 " and E2E CI ran on it."
             ]
-        polls = EVIDENCE_POLLS if guarded else 0
+        polls = EVIDENCE_POLLS if guarded() else 0
         for attempt in range(polls + 1):
-            found, rejected, pending = evidence(gh, repo, pr, now)
+            try:
+                found, rejected, pending = evidence(gh, repo, pr, now)
+            except READ_ERRORS:
+                # A failed poll counts as still pending, except the last.
+                if attempt == polls:
+                    raise
+                found, rejected, pending = {}, [], True
             if len(found) == len(PRODUCERS) or not pending or attempt == polls:
                 break
             sleep(EVIDENCE_SECONDS)
-        if identity(gh, repo, pr, sleep) != now:
+        if identity(gh, repo, pr, sleep, bases) != now:
             raise Unknown("the pull request or its base moved while it was judged")
-    except (
-        Unknown,
-        urllib.error.URLError,
-        OSError,
-        ValueError,
-        KeyError,
-        TypeError,
-    ) as exc:
+    except (Unknown, KeyError, TypeError, AttributeError, *READ_ERRORS) as exc:
         text = f"Could not prove the merge candidate: {exc}."
-        if guarded:
+        if guarded():
             return 1, [title.format("error") + text]
         return 0, [title.format("warning") + text]
     proved = (
@@ -302,7 +386,7 @@ def decide(gh, *, repo, pr, base_changed, sleep=time.sleep):
         f"The base changed, and no successful {missing} run tested {proved}"
         f" ({why}). {FIX}"
     )
-    if guarded:
+    if guarded():
         return 1, [title.format("error") + text]
     return 0, [
         title.format("notice")

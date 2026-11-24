@@ -670,15 +670,31 @@ class CandidateScope(unittest.TestCase):
             "      - id: shards"
         )[0]
         script = textwrap.dedent(selector.split("        run: |\n")[1])
-        for event, head_repo, members, wanted in (
-            ("pull_request", "base/repo", [], "true"),
-            ("pull_request", "fork/repo", [], "false"),
-            ("pull_request", "", [], "false"),
-            ("merge_group", "", ["base/repo", "base/repo"], "false"),
-            ("merge_group", "", ["base/repo", "fork/repo"], "false"),
-            ("push", "", [], "true"),
+        for event, head_repo, members, wanted, caller in (
+            ("pull_request", "base/repo", [], "true", "Backend CI"),
+            ("pull_request", "fork/repo", [], "false", "Backend CI"),
+            ("pull_request", "", [], "false", "Backend CI"),
+            # Retarget proof forwards no secrets: an OSS run, like the queue.
+            ("pull_request", "base/repo", [], "false", "Retarget proof"),
+            (
+                "merge_group",
+                "",
+                ["base/repo", "base/repo"],
+                "false",
+                "Backend merge queue",
+            ),
+            (
+                "merge_group",
+                "",
+                ["base/repo", "fork/repo"],
+                "false",
+                "Backend merge queue",
+            ),
+            ("push", "", [], "true", "Backend CI"),
         ):
-            with self.subTest(event=event, members=members, head=head_repo):
+            with self.subTest(
+                event=event, members=members, head=head_repo, caller=caller
+            ):
                 # Both group compositions produce the same GitHub event shape:
                 # the head is a synthetic ref, not the provenance of its members.
                 payload = (
@@ -699,6 +715,7 @@ class CandidateScope(unittest.TestCase):
                     env=dict(
                         os.environ,
                         GITHUB_EVENT_NAME=event,
+                        GITHUB_WORKFLOW=caller,
                         GITHUB_REPOSITORY="base/repo",
                         PR_HEAD_REPO=head_repo,
                         GITHUB_EVENT_PATH=str(Path("event").resolve()),
