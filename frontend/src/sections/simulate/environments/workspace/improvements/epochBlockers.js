@@ -10,12 +10,35 @@ const openEnvironment = (envId) => ({
   href: environments.detail(envId),
 });
 
-// A page that fixes it.
+// Only a new environment's build saves the agent versions an epoch works on.
+const buildEnvironment = () => ({
+  label: "Build an environment",
+  href: environments.root,
+});
+
+// A page that fixes it. `refusal` is the server's whole answer, for one that names
+// what to open.
 const ACTIONS = {
   environment_not_built: openEnvironment,
   environment_build_failed: openEnvironment,
   environment_update_failed: openEnvironment,
   environment_updating: openEnvironment,
+  // Its next step is a rebuild, on the environment's page.
+  conversation_workspace_not_ready: openEnvironment,
+  environment_agent_unversioned: buildEnvironment,
+  drafts_unavailable: buildEnvironment,
+  fix_variations_source_moved: (envId) => ({
+    label: "Open its runs",
+    href: environments.workspaceTab(envId, "runs"),
+  }),
+  // The other issue's page shows its epoch starting.
+  issue_epoch_measuring: (envId, refusal) =>
+    refusal?.cluster_id
+      ? {
+          label: "Open that issue",
+          href: paths.dashboard.errorFeed.detail(refusal.cluster_id),
+        }
+      : null,
   fix_draft_open: (envId) => ({
     label: "Review unsaved changes",
     href: environments.workspaceTab(envId, "scenarios"),
@@ -38,12 +61,13 @@ const ACTIONS = {
   }),
 };
 
-// No page fixes these: one sentence on what to do, under the server's reason.
+// What to do, in one sentence under the server's reason when it doesn't say.
 const HINTS = {
+  // Only a self-hosted deployment runs with them off; its operator turns them on.
   fix_unavailable: "Ask your Future AGI admin to turn on agent versions.",
   // With versions on, only an environment made before they were kept has none.
   drafts_unavailable:
-    "It was made before versions were kept: ask your Future AGI admin to save its versions.",
+    "Build a new environment from the same upload or GitHub repository, then Run Epoch there.",
   fix_agent_not_editable:
     "Pick an environment whose agent is uploaded or from GitHub.",
   fix_targets_too_few:
@@ -51,9 +75,10 @@ const HINTS = {
 };
 
 // The link that fixes the blocker, or null.
-export const blockerAction = (code, envId) => ACTIONS[code]?.(envId) ?? null;
+export const blockerAction = (code, envId, refusal) =>
+  ACTIONS[code]?.(envId, refusal) ?? null;
 
-// What to do when no page fixes it, or null.
+// What to do, or null.
 export const blockerHint = (code) => HINTS[code] ?? null;
 
 // How the winner ships, in words, before launch. A pull request that can't open
@@ -86,7 +111,8 @@ export function heldBackOf(options, targets) {
 }
 
 export const HELD_BACK_PENDING = {
-  variations: "The cases held back to prove the fix are chosen after the variations are written.",
+  variations:
+    "The cases held back to prove the fix are chosen after the variations are written.",
   edited:
     "You changed the cases to fix, so the ones held back to prove the fix are chosen from them when the epoch starts.",
 };

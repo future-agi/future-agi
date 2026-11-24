@@ -48,10 +48,17 @@ const DEFAULTS = {
   reply_latency_margin_pct: 25,
   cost_margin_pct: 25,
 };
+// As the server plans it: with none picked, one of the caller's can run it.
 const plan = (environment) => ({
   issue: { cluster_id: CLUSTER, project_id: PROJECT, title: "Quotes a fare" },
   environment,
-  blocked: null,
+  blocked: environment
+    ? null
+    : {
+        code: "environment_not_picked",
+        message: "Pick the environment that tests this issue's agent.",
+      },
+  ship: environment ? { path: "make_default", blocked: null } : null,
   sample: {
     unit: "trace",
     picks: [pick(1, "example"), pick(2, "cited")],
@@ -61,12 +68,14 @@ const plan = (environment) => ({
   issue_scenarios: { held: 4, limit: 36 },
   defaults: DEFAULTS,
 });
-const envRow = (id, name, sourceKind) => ({
+// The server says which ones Run Epoch can pick; a hosted agent never.
+const envRow = (id, name, sourceKind, pickable = true) => ({
   id,
   name,
   source_kind: sourceKind,
   agent_type: "chat",
   status: "completed",
+  epoch_pickable: pickable,
 });
 const parts = { transcript: { status: "present", reason: "", turns: [] } };
 const evidenceCase = (id, status, duplicateOf = null) => ({
@@ -135,7 +144,7 @@ const answer = (url, config) => {
       data: {
         results: [
           envRow(ENV, "Support line", "github"),
-          envRow(VOICE_ENV, "Phone line", "provider"),
+          envRow(VOICE_ENV, "Phone line", "provider", false),
         ],
       },
     });
@@ -298,12 +307,19 @@ describe("RunEpochDrawer: the plan", () => {
   });
 
   it("lists an environment still building, so the plan can say what to do once it's picked", async () => {
+    // The server's answers for an only environment still building, with no agent
+    // version yet: pickable, and a plan with none picked asks to pick one.
     const reads = answer;
     api.get.mockImplementation((url, config) =>
       url === "/simulate/api/harness-environments/"
         ? Promise.resolve({
             data: {
-              results: [{ ...envRow(ENV, "Support line", "github"), status: "queued" }],
+              results: [
+                {
+                  ...envRow(ENV, "Support line", "github"),
+                  status: "building",
+                },
+              ],
             },
           })
         : reads(url, config),
@@ -311,6 +327,50 @@ describe("RunEpochDrawer: the plan", () => {
     renderDrawer();
     const list = await screen.findByTestId("epoch-environments");
     expect(within(list).getByText("Support line")).toBeInTheDocument();
+  });
+
+  it("lists only the environments the server says Run Epoch can pick", async () => {
+    const reads = answer;
+    api.get.mockImplementation((url, config) =>
+      url === "/simulate/api/harness-environments/"
+        ? Promise.resolve({
+            data: {
+              results: [
+                envRow(ENV, "Support line", "github"),
+                // A GitHub source whose agent runs elsewhere: the server says no.
+                envRow(VOICE_ENV, "Mirror line", "github", false),
+              ],
+            },
+          })
+        : reads(url, config),
+    );
+    renderDrawer();
+    const list = await screen.findByTestId("epoch-environments");
+    expect(within(list).getByText("Support line")).toBeInTheDocument();
+    expect(within(list).queryByText("Mirror line")).toBeNull();
+  });
+
+  it("says an environment with no saved agent version needs a new one, and links to build it", async () => {
+    plans.none = {
+      ...plans[ENV],
+      blocked: {
+        code: "environment_agent_unversioned",
+        message: "This environment has no saved version of its agent.",
+      },
+      ship: null,
+    };
+    renderDrawer();
+    expect(
+      await screen.findByText(
+        "This environment has no saved version of its agent.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Build an environment" }),
+    ).toHaveAttribute("href", "/dashboard/simulate/environments");
+    // Nothing to ship from an agent with no version: no row says how.
+    expect(screen.queryByText("Ships as")).toBeNull();
+    expect(screen.getByTestId("epoch-draft-scenarios")).toBeDisabled();
   });
 
   it("says the environment is still being built and links to it, and drafts nothing", async () => {
@@ -345,10 +405,9 @@ describe("RunEpochDrawer: the plan", () => {
     renderDrawer();
     // Until a pull request can open, the winner ships as a patch.
     expect(await screen.findByText("A patch to download")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Connect GitHub" })).toHaveAttribute(
-      "href",
-      "/dashboard/settings/integrations",
-    );
+    expect(
+      screen.getByRole("link", { name: "Connect GitHub" }),
+    ).toHaveAttribute("href", "/dashboard/settings/integrations");
     // A pull request it can't open yet does not stop drafting.
     expect(screen.getByTestId("epoch-draft-scenarios")).toBeEnabled();
   });
@@ -492,4 +551,44 @@ describe("RunEpochDrawer: the review", () => {
       `/dashboard/simulate/environments/${ENV}?tab=scenarios`,
     );
   });
+
+  it.each([
+    [
+      "issue_epoch_measuring",
+      { cluster_id: "S-OTHER-1" },
+      "Open that issue",
+      "/dashboard/error-feed/S-OTHER-1",
+    ],
+    [
+      "conversation_workspace_not_ready",
+      {},
+      "Open the environment",
+      `/dashboard/simulate/environments/${ENV}`,
+    ],
+    [
+      "fix_variations_source_moved",
+      {},
+      "Open its runs",
+      `/dashboard/simulate/environments/${ENV}?tab=runs`,
+    ],
+  ])(
+    "links a %s refusal to where it is fixed",
+    async (code, details, label, href) => {
+      api.post.mockRejectedValue({
+        statusCode: 409,
+        error: code,
+        message: "Refused.",
+        retryable: false,
+        ...details,
+      });
+      const user = userEvent.setup();
+      renderDrawer();
+      await user.click(await screen.findByTestId("epoch-run"));
+      expect(await screen.findByText("Refused.")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: label })).toHaveAttribute(
+        "href",
+        href,
+      );
+    },
+  );
 });

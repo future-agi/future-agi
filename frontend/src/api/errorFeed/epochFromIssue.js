@@ -135,18 +135,16 @@ export function useIssueEpochPlan(
   });
 }
 
-// An epoch runs only on a code agent: one uploaded or from GitHub. The plan refuses
-// any other with its reason; the picker lists only these. One still building, or
-// whose build failed, is listed too: once picked, the plan says what to do.
-const CODE_SOURCES = new Set(["github", "archive"]);
+// An epoch runs only on a code agent: one uploaded or from GitHub. The server says
+// which environments those are (`epoch_pickable`), as the plan decides it; one not
+// ready yet is listed too, and once picked the plan says what to do.
 const PICKER_PAGE = 100;
 
 export function useCodeAgentEnvironments({ enabled }) {
   return useQuery({
     queryKey: ["agent-fix-issue-environments"],
     queryFn: () => listHarnessEnvironments({ page: 1, limit: PICKER_PAGE }),
-    select: (data) =>
-      (data?.results ?? []).filter((env) => CODE_SOURCES.has(env.source_kind)),
+    select: (data) => (data?.results ?? []).filter((env) => env.epoch_pickable),
     enabled,
     meta: { errorHandled: true },
   });

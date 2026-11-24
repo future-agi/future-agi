@@ -631,7 +631,7 @@ function runFailure(error, environmentId) {
   const failure = fixErrorOf(error);
   if (failure.code !== "issue_scenarios_limit") {
     const hint = blockerHint(failure.code);
-    const next = blockerAction(failure.code, environmentId);
+    const next = blockerAction(failure.code, environmentId, refusalOf(error));
     return (
       <Alert
         severity="error"

@@ -84,17 +84,19 @@ async function stubApi(page: Page, ids: Ids) {
     route.fulfill({ json: { status: true, result: { data: [issueRow], total: 1, limit: 25, offset: 0 } } }),
   );
   // The environments list (HarnessEnvironmentListResponseSerializer): one GitHub
-  // agent's environment and one hosted agent's, which the picker must leave out.
-  const envRow = (id: string, name: string, sourceKind: string) => ({
+  // agent's environment and one hosted agent's, which the server says Run Epoch can't
+  // pick and the picker must leave out.
+  const envRow = (id: string, name: string, sourceKind: string, pickable: boolean) => ({
     id, name, description: null, domain: null, source_kind: sourceKind, agent_type: 'chat',
     status: 'completed', stage: 'completed', scenario_count: 12, sub_goals_count: null,
-    tools_count: null, runs_count: 1, last_updated: null, created_at: '2026-11-10T09:00:00Z', last_run: null,
+    tools_count: null, runs_count: 1, agent_version: null, agent_policy: 'follow',
+    last_updated: null, created_at: '2026-11-10T09:00:00Z', last_run: null, epoch_pickable: pickable,
   });
   await page.route(endsWith('/simulate/api/harness-environments/'), (route) =>
     route.fulfill({
       json: {
         count: 2, next: null, previous: null, total_pages: 1, current_page: 1,
-        results: [envRow(ENV_ID, ENV_NAME, 'github'), envRow(randomUUID(), 'Phone line', 'provider')],
+        results: [envRow(ENV_ID, ENV_NAME, 'github', true), envRow(randomUUID(), 'Phone line', 'provider', false)],
       },
     }),
   );

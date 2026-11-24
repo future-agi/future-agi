@@ -342,6 +342,56 @@ describe("LaunchFixDialog", () => {
     );
   });
 
+  it.each([
+    [
+      "fix_variations_source_moved",
+      "Open its runs",
+      `${paths.dashboard.simulate.environments.detail("env-1")}?tab=runs`,
+    ],
+    [
+      "conversation_workspace_not_ready",
+      "Open the environment",
+      paths.dashboard.simulate.environments.detail("env-1"),
+    ],
+  ])(
+    "opens where a %s refusal of the variations is fixed",
+    async (code, label, href) => {
+      const base = fixtureLaunchOptions("te-run-6");
+      pinOptions({
+        ...base,
+        suggested: {
+          ...base.suggested,
+          target_scenario_keys: base.suggested.target_scenario_keys.slice(0, 5),
+        },
+        variations_blocked: { code, message: "Variations can't be written." },
+      });
+      renderDialog();
+      expect(
+        await screen.findByText("Variations can't be written."),
+      ).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: label }));
+      expect(navigate).toHaveBeenCalledWith(href);
+    },
+  );
+
+  it("shows no Ships as row for an agent Epoch can't change", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "fix_agent_not_editable",
+        message: "Epoch can change an uploaded or GitHub agent.",
+      },
+      ship: null,
+    });
+    renderDialog();
+    expect(
+      await screen.findByText("Epoch can change an uploaded or GitHub agent.", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ships as")).toBeNull();
+  });
+
   it("offers no draft link when the variations are not needed", async () => {
     const base = fixtureLaunchOptions("te-run-6");
     pinOptions({
@@ -420,7 +470,8 @@ describe("LaunchFixDialog", () => {
       ...fixtureLaunchOptions("te-run-6"),
       blocked: {
         code: "environment_updating",
-        message: "This environment is updating. Run Epoch once the update finishes.",
+        message:
+          "This environment is updating. Run Epoch once the update finishes.",
       },
     });
     renderDialog();
@@ -453,10 +504,9 @@ describe("LaunchFixDialog", () => {
     expect(
       screen.queryByText("A pull request on the agent's repository"),
     ).toBeNull();
-    expect(screen.getByRole("link", { name: "Connect GitHub" })).toHaveAttribute(
-      "href",
-      paths.dashboard.settings.integrations,
-    );
+    expect(
+      screen.getByRole("link", { name: "Connect GitHub" }),
+    ).toHaveAttribute("href", paths.dashboard.settings.integrations);
     expect(screen.getByRole("button", { name: "Run Epoch" })).toBeEnabled();
   });
 
