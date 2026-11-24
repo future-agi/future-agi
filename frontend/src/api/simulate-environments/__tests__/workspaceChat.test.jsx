@@ -75,6 +75,24 @@ describe("useWorkspaceChat (real)", () => {
   });
   afterEach(() => clearScenarioSelection());
 
+  it("keeps the events already held when a send answers with fewer", async () => {
+    const event = (sequence) => ({ event_id: `e${sequence}`, sequence });
+    const { result, client } = renderChat(
+      conversationWith({ events: [event(1), event(2)] }),
+    );
+    sendHarnessConversationMessage.mockResolvedValue(
+      conversationWith({ events: [event(2), event(3)] }),
+    );
+    await act(async () => result.current.send("hi"));
+    await waitFor(() =>
+      expect(
+        client
+          .getQueryData(["harness-job", "job-1"])
+          .conversation.events.map((one) => one.sequence),
+      ).toEqual([1, 2, 3]),
+    );
+  });
+
   it("projects turns from the polled conversation", () => {
     const { result } = renderChat(
       conversationWith({

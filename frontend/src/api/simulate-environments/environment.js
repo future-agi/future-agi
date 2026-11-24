@@ -1,5 +1,9 @@
 import { useCallback, useMemo, useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  replaceEqualDeep,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { getHarnessJob } from "src/api/harness/harness";
 import { getHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
 import { harnessDetailToEnvironment } from "src/api/simulate-environments/harnessDetail";
@@ -17,7 +21,7 @@ import {
   jobStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { usePrebuiltEnvironments } from "./prebuilt";
-import { conversationInFlight } from "./conversationProjection";
+import { conversationInFlight, mergeEvents } from "./conversationProjection";
 import { environmentVersionsKey, refreshDrafts } from "./versions";
 
 // The §6 environment-detail endpoint is implemented on the backend branch but not
@@ -69,9 +73,29 @@ const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
 // workspace never settles on its "not found" state.
 const isJobNotFound = (error) => errorStatus(error) === 404;
 
+// Every answer written to the job keeps the chat events already held for its
+// conversation, whether it came from a poll or a send.
+const keepChatEvents = (held, job) => {
+  const conversation = job?.conversation;
+  const before = held?.conversation;
+  if (
+    !before ||
+    !conversation ||
+    before.conversation_id !== conversation.conversation_id
+  ) {
+    return replaceEqualDeep(held, job);
+  }
+  const events = mergeEvents(before.events, conversation.events);
+  return replaceEqualDeep(held, {
+    ...job,
+    conversation: { ...conversation, events },
+  });
+};
+
 export const harnessJobQuery = (envId, { enabled = true } = {}) => ({
   queryKey: ["harness-job", envId],
   queryFn: () => getHarnessJob(envId),
+  structuralSharing: keepChatEvents,
   enabled: Boolean(envId) && enabled,
   retry: (failureCount, error) => !isJobNotFound(error) && failureCount < 3,
   refetchInterval: (query) =>

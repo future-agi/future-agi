@@ -20,6 +20,7 @@ const {
   stageOutputsToWorld,
   harnessEnvState,
   canRunHeader,
+  harnessJobQuery,
   jobRefetchInterval,
   SAVE_GRACE_MS,
 } = await import("../environment");
@@ -650,6 +651,57 @@ describe("useEnvironment keeps the versions current", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("harnessJobQuery", () => {
+  const events = (from, to) =>
+    Array.from({ length: to - from + 1 }, (_, i) => ({
+      event_id: `e${from + i}`,
+      sequence: from + i,
+    }));
+  const answer = (conversation) => ({
+    status: { stage: "completed" },
+    conversation: { conversation_id: "c1", messages: [], ...conversation },
+  });
+  // What the cache holds after the server answers each of these in turn.
+  const held = async (...answers) => {
+    const client = new QueryClient();
+    const query = { ...harnessJobQuery("env-1"), staleTime: 0 };
+    for (const one of answers) {
+      getHarnessJob.mockResolvedValueOnce(one);
+      await client.fetchQuery(query);
+    }
+    const { conversation } = client.getQueryData(query.queryKey);
+    return conversation?.events.map((one) => one.sequence);
+  };
+
+  it("keeps the chat events a later poll no longer sends", async () => {
+    expect(
+      await held(
+        answer({ events: events(1, 3) }),
+        answer({ events: events(3, 5) }),
+        answer({ events: [] }),
+      ),
+    ).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("starts over when events were missed, rather than leave a gap", async () => {
+    expect(
+      await held(
+        answer({ events: events(1, 3) }),
+        answer({ events: events(7, 9) }),
+      ),
+    ).toEqual([7, 8, 9]);
+  });
+
+  it("drops the held events with the conversation they belong to", async () => {
+    expect(
+      await held(
+        answer({ events: events(1, 3) }),
+        answer({ conversation_id: "c2", events: events(2, 2) }),
+      ),
+    ).toEqual([2]);
   });
 });
 

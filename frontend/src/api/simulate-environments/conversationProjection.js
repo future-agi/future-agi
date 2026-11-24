@@ -67,6 +67,27 @@ function finalizeRunningSteps(steps) {
   }
 }
 
+/**
+ * The chat events held and the ones just received, as one list in order. The
+ * server numbers a conversation's events one by one and never changes one, so
+ * lists that touch or overlap join. Newer ones that don't touch what is held
+ * replace it, so the list never has a gap.
+ */
+export function mergeEvents(held = [], incoming = []) {
+  if (!held.length) return incoming;
+  if (!incoming.length) return held;
+  if (incoming[0].sequence > held[held.length - 1].sequence + 1) {
+    return incoming;
+  }
+  if (incoming[incoming.length - 1].sequence < held[0].sequence - 1) {
+    return held;
+  }
+  const bySequence = new Map(
+    [...held, ...incoming].map((event) => [event.sequence, event]),
+  );
+  return [...bySequence.values()].sort((a, b) => a.sequence - b.sequence);
+}
+
 export function projectConversation(conversation) {
   if (!conversation) return [];
   const messages = Array.isArray(conversation.messages)
@@ -336,7 +357,8 @@ export function projectConversation(conversation) {
   }
 
   turns.forEach((t, ti) => {
-    if (!t.id) t.id = `turn-${ti}`;
+    // By its first step, not its place: older events add turns above it.
+    if (!t.id) t.id = `turn-${t.steps?.[0]?.id ?? ti}`;
     (t.steps || []).forEach((s, si) => {
       if (!s.id) s.id = `${t.id}-s${si}`;
     });
