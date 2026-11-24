@@ -37,9 +37,9 @@ import LaunchLimits, {
   SurfacesRow,
 } from "src/sections/simulate/environments/workspace/improvements/LaunchLimits";
 import {
-  SHIP_PATH,
   blockerAction,
   blockerHint,
+  shipHeadline,
 } from "src/sections/simulate/environments/workspace/improvements/epochBlockers";
 import { fixName } from "src/sections/simulate/environments/workspace/improvements/fixRunView";
 import { costLimitOf } from "src/sections/simulate/environments/workspace/improvements/launchFormView";
@@ -298,7 +298,7 @@ function ShipsAsRow({ ship }) {
   const next = ship.blocked ? blockerAction(ship.blocked.code) : null;
   return (
     <Row k="Ships as">
-      <Typography sx={{ typography: "s2" }}>{SHIP_PATH[ship.path]}</Typography>
+      <Typography sx={{ typography: "s2" }}>{shipHeadline(ship)}</Typography>
       {ship.blocked ? (
         <Typography
           sx={{ typography: "s3", color: "text.secondary" }}

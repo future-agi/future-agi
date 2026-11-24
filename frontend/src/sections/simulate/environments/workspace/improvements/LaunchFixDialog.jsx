@@ -34,10 +34,10 @@ import {
 } from "./launchFormView";
 import {
   HELD_BACK_PENDING,
-  SHIP_PATH,
   blockerAction,
   blockerHint,
   heldBackOf,
+  shipHeadline,
 } from "./epochBlockers";
 
 // Screen 1 of Fix my agent v0: one read (launch-options) prefills it, one
@@ -302,7 +302,7 @@ export default function LaunchFixDialog({
             {ship ? (
               <Row k="Ships as">
                 <Typography sx={{ typography: "s2" }}>
-                  {SHIP_PATH[ship.path]}
+                  {shipHeadline(ship)}
                 </Typography>
                 {ship.blocked ? (
                   <Stack

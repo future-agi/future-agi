@@ -123,7 +123,12 @@ function normalizeHostStatusSchema(schema) {
 // writes x-nullable beside no $ref, so the nullable ones are named here.
 const EPOCH_NULLABLE_REFS = ["issue", "report", "failure", "plan", "diagnosis"];
 const AGENT_FIX_ISSUE_NULLABLE_REFS = {
-  AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios"],
+  // With no environment picked the plan has no ship readiness.
+  AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios", "ship"],
+  // A pull request that can open has no reason it can't.
+  AgentFixShipReadiness: ["blocked"],
+  // A launch nothing refuses has neither refusal.
+  AgentFixLaunchOptions: ["blocked", "variations_blocked"],
   AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
   AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
   // The epoch an issue's page opens: before it ends it has no report, and only a

@@ -56,11 +56,17 @@ export const blockerAction = (code, envId) => ACTIONS[code]?.(envId) ?? null;
 // What to do when no page fixes it, or null.
 export const blockerHint = (code) => HINTS[code] ?? null;
 
-// How the winner ships, in words, before launch.
-export const SHIP_PATH = {
+// How the winner ships, in words, before launch. A pull request that can't open
+// now ships as a patch; the server's reason says what a pull request needs.
+const SHIP_PATH = {
   pull_request: "A pull request on the agent's repository",
   make_default: "A new version of the agent, made the default when you choose",
 };
+
+export const shipHeadline = (ship) =>
+  ship.path === "pull_request" && ship.blocked
+    ? "A patch to download"
+    : SHIP_PATH[ship.path];
 
 // The cases held back to prove the fix, as the launch form shows them: the keys
 // the server picked for the suggested targets, or why there are none to show.

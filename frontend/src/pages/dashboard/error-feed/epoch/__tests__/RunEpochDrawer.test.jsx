@@ -343,9 +343,8 @@ describe("RunEpochDrawer: the plan", () => {
       },
     };
     renderDrawer();
-    expect(
-      await screen.findByText("A pull request on the agent's repository"),
-    ).toBeInTheDocument();
+    // Until a pull request can open, the winner ships as a patch.
+    expect(await screen.findByText("A patch to download")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Connect GitHub" })).toHaveAttribute(
       "href",
       "/dashboard/settings/integrations",

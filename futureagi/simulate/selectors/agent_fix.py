@@ -1550,13 +1550,12 @@ def environment_state_blocker(
 # patch, which exists only once there is a winner.
 _SHIP_BEFORE_LAUNCH = {
     "fix_github_not_connected": "This agent version isn't connected through the Future"
-    " AGI GitHub App, so the winner comes as a patch to download, not a pull request."
-    " To get pull requests, connect GitHub, update the agent from its repository, and"
-    " run Epoch on the new version.",
-    "fix_github_commit_unknown": "The commit this run checked out isn't known, so the"
-    " winner comes as a patch to download, not a pull request.",
-    "github_repository_invalid": "The agent's repository name can't be read, so the"
-    " winner comes as a patch to download, not a pull request.",
+    " AGI GitHub App. To get pull requests, connect GitHub, update the agent from its"
+    " repository, and run Epoch on the new version.",
+    "fix_github_commit_unknown": "The commit this run checked out isn't known, so a"
+    " pull request can't be opened from it.",
+    "github_repository_invalid": "The agent's repository name can't be read, so a pull"
+    " request can't be opened.",
 }
 
 

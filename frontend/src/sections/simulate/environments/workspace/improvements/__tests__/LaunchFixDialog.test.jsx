@@ -448,14 +448,29 @@ describe("LaunchFixDialog", () => {
       },
     });
     renderDialog();
+    // A pull request that can't open yet: the winner ships as a patch until then.
+    expect(await screen.findByText("A patch to download")).toBeInTheDocument();
     expect(
-      await screen.findByText("A pull request on the agent's repository"),
-    ).toBeInTheDocument();
+      screen.queryByText("A pull request on the agent's repository"),
+    ).toBeNull();
     expect(screen.getByRole("link", { name: "Connect GitHub" })).toHaveAttribute(
       "href",
       paths.dashboard.settings.integrations,
     );
     expect(screen.getByRole("button", { name: "Run Epoch" })).toBeEnabled();
+  });
+
+  it("says the winner ships as a pull request when one can open, with nothing to connect", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      ship: { path: "pull_request", blocked: null },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText("A pull request on the agent's repository"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("epoch-ship-blocked")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Connect GitHub" })).toBeNull();
   });
 
   it("disables a part the agent cannot change", async () => {
