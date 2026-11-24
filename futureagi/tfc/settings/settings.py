@@ -1283,6 +1283,17 @@ HARNESS_SEED_CONTRACT_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes")
 # How long one reading of an agent, or one scan for the agents in a source, may run.
 ALK_HOSTED_READING_TIMEOUT = int(os.getenv("ALK_HOSTED_READING_TIMEOUT", "2400"))
+
+
+def _reading_call_limit() -> int:
+    """Most model calls one reading of an agent may make, its readers' calls included.
+    Empty, zero, a negative number or anything but a whole number means 60, so a bad
+    value never stops settings import."""
+    limit = _admission_env_int("ALK_HOSTED_READING_MAX_MODEL_CALLS", 60)
+    return limit if limit > 0 else 60
+
+
+ALK_HOSTED_READING_MAX_MODEL_CALLS = _reading_call_limit()
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Link, Stack, Typography } from "@mui/material";
+import { Box, Link, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { Callout, Count, GridTable, Section } from "./trialChangesParts";
 import {
@@ -17,9 +17,23 @@ import { RecordsSection } from "./RecordChange";
 // Same insets as the Transcript tab in the drawer.
 const ROOT_SX = { px: 2, pt: 1.25, pb: 2 };
 
-export default function TrialChangesPanel({ trialState }) {
+export default function TrialChangesPanel({
+  trialState,
+  underWay = false,
+  sharedOnly = false,
+}) {
+  if (sharedOnly)
+    return (
+      <Stack spacing={2} sx={ROOT_SX}>
+        <SharedRecords trialState={trialState} />
+      </Stack>
+    );
   if (!trialState)
-    return <Typography sx={{ ...quiet, p: 2 }}>{C.notRecorded}</Typography>;
+    return (
+      <Typography sx={{ ...quiet, p: 2 }}>
+        {underWay ? C.collecting : C.notRecorded}
+      </Typography>
+    );
   if (trialState.recorded === false)
     return (
       <Typography sx={{ ...quiet, p: 2 }}>{trialState.why_label}</Typography>
@@ -29,7 +43,48 @@ export default function TrialChangesPanel({ trialState }) {
 
 TrialChangesPanel.propTypes = {
   trialState: PropTypes.object,
+  // A call still running: its World state is still being collected.
+  underWay: PropTypes.bool,
+  // Actors are off: only the records the call's participants shared.
+  sharedOnly: PropTypes.bool,
 };
+
+// Records more than one participant called, shown whether or not the trial changed anything.
+function SharedRecords({ trialState }) {
+  const shared = trialState?.shared_records || [];
+  if (!shared.length) return null;
+  return (
+    <Box data-testid="shared-records">
+      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        {C.sharedHeading}
+      </Typography>
+      {shared.map((record) => (
+        <Box key={record.key}>
+          <Typography sx={{ ...quiet, fontWeight: 600 }}>
+            {C.sharedRecord(record)}
+          </Typography>
+          {record.actions.map((action, index) => (
+            <Typography key={`${record.key}-${index}`} sx={quiet}>
+              {C.sharedAction(action, action.name)}
+            </Typography>
+          ))}
+          {C.sharedRecordCut[record.truncation] && (
+            <Typography sx={quiet}>
+              {C.sharedRecordCut[record.truncation]}
+            </Typography>
+          )}
+          <Typography sx={quiet}>
+            {C.committedWrites(record.committed_writes)}
+          </Typography>
+        </Box>
+      ))}
+      {trialState.shared_records_truncated && (
+        <Typography sx={quiet}>{C.sharedTruncated}</Typography>
+      )}
+    </Box>
+  );
+}
+SharedRecords.propTypes = { trialState: PropTypes.object };
 
 function WorldState({ trialState }) {
   const changes = trialState.state_changes;
@@ -110,6 +165,7 @@ function WorldState({ trialState }) {
         {callouts}
         {!unreadable && <Typography sx={quiet}>{C.empty}</Typography>}
         {records && <RecordsSection records={records} outside={outside} />}
+        <SharedRecords trialState={trialState} />
       </Stack>
     );
   return (
@@ -118,6 +174,7 @@ function WorldState({ trialState }) {
       {callouts}
       {changes.length > 0 && <CallsSection changes={changes} />}
       {records && <RecordsSection records={records} outside={outside} />}
+      <SharedRecords trialState={trialState} />
       <TrialDecisions approvals={approvals} decisions={decisions} />
       {preRun.length > 0 && <PreRunSection entries={preRun} />}
       {usage.length > 0 && (
