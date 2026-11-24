@@ -421,3 +421,33 @@ def test_a_trial_that_ended_on_a_failure_of_ours_is_never_the_agent_s_failure(do
     graded = graded_receipt(ours, ["crm_discount_applied"])
 
     assert receipt_outcome_status(graded) == "errored"
+
+
+def test_a_double_commit_keeps_the_trial_failed_beside_an_unverified_check():
+    from simulate.serializers.hosted_harness import HarnessCallSerializer
+    from simulate.services.hosted_harness_ingestion import graded_receipt
+
+    call = {
+        "started_at": "2026-01-01T00:00:00.000Z",
+        "ended_at": "2026-01-01T00:00:01.000Z",
+        "duration_ms": 1000,
+        "turns": 1,
+        "duplicate_commits": 1,
+    }
+    # The platform keeps the field when it reads the receipt.
+    read = HarnessCallSerializer(data=call)
+    assert read.is_valid(), read.errors
+    assert read.validated_data["duplicate_commits"] == 1
+    twice = {
+        **_RUN4_RECEIPT,
+        "sub_goals": [
+            {**one, "held": True, "verdict": "pass"}
+            for one in _RUN4_RECEIPT["sub_goals"]
+        ],
+        "call": call,
+    }
+
+    assert (
+        receipt_outcome_status(graded_receipt(twice, ["crm_discount_applied"]))
+        == "failed"
+    )

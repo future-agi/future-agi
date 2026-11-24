@@ -1385,10 +1385,14 @@ def graded_receipt(body: dict[str, Any], unverified: list[str]) -> dict[str, Any
     sub_goals = graded_sub_goals(body.get("sub_goals") or [], unverified)
     status = body.get("status")
     failure = body.get("failure") if isinstance(body.get("failure"), dict) else None
+    call = body.get("call") if isinstance(body.get("call"), dict) else {}
     if status in ("passed", "failed") and sub_goals != list(
         body.get("sub_goals") or []
     ):
-        if failure is not None:
+        if call.get("duplicate_commits"):
+            # The world applied a write twice after the agent's answer was lost: the agent's failure.
+            status = "failed"
+        elif failure is not None:
             status = status if failure.get("domain") == "agent" else "errored"
         else:
             failing = any(
