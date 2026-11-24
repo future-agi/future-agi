@@ -137,8 +137,9 @@ export function UseReleaseDialog({ release, open, onClose }) {
   const [name, setName] = useState(release?.name || "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  // One key per dialog, so a retried click cannot start a second adaptation.
-  const [idempotencyKey] = useState(harnessIdempotencyKey);
+  // One key per dialog, so a retried click cannot start a second adaptation. A key already spent
+  // on another choice is replaced.
+  const [idempotencyKey, setIdempotencyKey] = useState(harnessIdempotencyKey);
 
   const ready =
     Boolean(suiteId && version?.id && name.trim()) && !submitting;
@@ -156,8 +157,10 @@ export function UseReleaseDialog({ release, open, onClose }) {
         idempotency_key: idempotencyKey,
       });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
-      navigate(paths.dashboard.simulate.harness.detail(job.job.job_id));
+      navigate(paths.dashboard.simulate.environments.detail(job.job.job_id));
     } catch (requestError) {
+      if (requestError?.error === "idempotency_conflict")
+        setIdempotencyKey(harnessIdempotencyKey());
       setError(errorMessage(requestError));
       setSubmitting(false);
     }
@@ -260,7 +263,7 @@ export function HostedAgentDialog({ release, open, onClose }) {
   const [model, setModel] = useState(HOSTED_AGENT_MODELS[0].value);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [idempotencyKey] = useState(harnessIdempotencyKey);
+  const [idempotencyKey, setIdempotencyKey] = useState(harnessIdempotencyKey);
   const ready =
     Boolean(suiteId && name.trim() && instructions.trim()) && !submitting;
 
@@ -278,6 +281,8 @@ export function HostedAgentDialog({ release, open, onClose }) {
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
       navigate(paths.dashboard.simulate.environments.detail(created.id));
     } catch (requestError) {
+      if (requestError?.error === "idempotency_conflict")
+        setIdempotencyKey(harnessIdempotencyKey());
       setError(errorMessage(requestError));
       setSubmitting(false);
     }

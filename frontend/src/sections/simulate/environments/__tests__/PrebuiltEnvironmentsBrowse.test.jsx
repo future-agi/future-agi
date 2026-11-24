@@ -21,11 +21,6 @@ vi.mock("src/api/harness/releases", () => ({
 
 vi.mock("src/api/harness/harness", () => ({
   harnessIdempotencyKey: () => "key-1",
-  storeHarnessSecretValues: async () => ({
-    secret_refs: {
-      RETELL_API_KEY: { manager: "platform-vault", key: "ref-1" },
-    },
-  }),
 }));
 
 vi.mock("src/components/run-tests/common", () => ({
@@ -123,7 +118,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
       }),
     );
     expect(createHarnessAdaptation.mock.calls[0][0]).not.toHaveProperty("agent");
-    expect(navigate).toHaveBeenCalledWith(expect.stringContaining("job-1"));
+    expect(navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/job-1",
+    );
   });
 
   it("says there is nothing to adopt when no environment is released", () => {
