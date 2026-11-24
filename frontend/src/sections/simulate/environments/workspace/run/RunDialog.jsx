@@ -21,7 +21,6 @@ import {
   useRunPlan,
   useSuiteMembers,
 } from "src/api/simulate-environments/versions";
-import { useRunningScenarioValidation } from "src/api/simulate-environments/scenariosHooks";
 import { useReadiness } from "src/api/simulate-environments/readiness";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
@@ -167,11 +166,6 @@ export default function RunDialog({
   );
   // From a Re-check click until the server says it is checking, Run waits too.
   const [sendingCheck, setSendingCheck] = useState(false);
-  // Runs wait while a scenario validation runs on the environment.
-  const { data: runningValidation } = useRunningScenarioValidation(
-    open && versioned ? env?.id : null,
-  );
-  const validating = Boolean(runningValidation?.job_id);
   const refusedPlan = planRefusal(plan.error);
   const planFailed =
     plan.isError &&
@@ -225,7 +219,6 @@ export default function RunDialog({
   const blockedTools = plan.data ? plan.data.blocked_tools : [];
   if (!blocked && plan.data && !plan.data.runnable)
     blocked = COPY.allBlocked(blockedTools.map((entry) => entry.tool));
-  if (!blocked && validating) blocked = COPY.validating;
   // With `next` set, a run of unproved cases starts their check or runs them unvalidated, so it isn't held.
   if (
     !blocked &&

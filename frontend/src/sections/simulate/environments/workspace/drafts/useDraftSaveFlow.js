@@ -8,6 +8,7 @@ import {
   useSaveDrafts,
   useValidateDrafts,
 } from "src/api/simulate-environments/versions";
+import { useRunningScenarioValidation } from "src/api/simulate-environments/scenariosHooks";
 import { refusalText } from "../evals/refusalText";
 import { DRAFTS_COPY as COPY } from "../workspace.constants";
 
@@ -48,6 +49,10 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
   const discard = useDiscardDraft(env?.id);
   const validate = useValidateDrafts(env?.id);
   const saveValidated = useSaveCandidates(env?.id);
+  // The server refuses a Save, never a run, while scenarios are validated on the saved versions.
+  const { data: running } = useRunningScenarioValidation(
+    enabled && reviewEnabled && drafts?.any ? env?.id : null,
+  );
 
   // A refusal is about the drafts it was sent for, so it goes when they change. draft_changed stays: it asks to
   // review the drafts it refetched.
@@ -116,6 +121,7 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
     validationState,
     validating,
     canSaveValidated,
+    scenariosValidating: Boolean(running?.job_id),
     pending,
     savePending: save.isPending || saveValidated.isPending,
     discardPending: discard.isPending,

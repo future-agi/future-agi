@@ -62,7 +62,7 @@ const setFlow = (changes, overrides = {}) => {
 const renderDrawer = (props = {}) => {
   const onSaved = vi.fn();
   const onClose = vi.fn();
-  render(
+  const { unmount } = render(
     <ReviewChangesDrawer
       open
       env={{ id: "env-1", versioning: { enabled: true } }}
@@ -71,7 +71,7 @@ const renderDrawer = (props = {}) => {
       {...props}
     />,
   );
-  return { onSaved, onClose };
+  return { onSaved, onClose, unmount };
 };
 
 beforeEach(() => {
@@ -189,6 +189,31 @@ describe("ReviewChangesDrawer", () => {
     );
     expect(flow.onSaveValidated).not.toHaveBeenCalled();
   });
+
+  it.each([true, false])(
+    "holds Save, not Validate, while scenarios are validated (needs Validate: %s)",
+    (needsValidate) => {
+      setFlow([change({ decision: "accepted" })], {
+        needsValidate,
+        canSaveValidated: needsValidate,
+        scenariosValidating: true,
+      });
+      const { unmount } = renderDrawer();
+      expect(
+        screen.getByRole("button", {
+          name: /^Save.*Save waits until it finishes\./,
+        }),
+      ).toHaveAttribute("aria-disabled", "true");
+      unmount();
+      setFlow([change({ decision: "accepted" })], {
+        scenariosValidating: true,
+      });
+      renderDrawer();
+      expect(
+        screen.getByRole("button", { name: "Validate" }),
+      ).not.toHaveAttribute("aria-disabled");
+    },
+  );
 
   it("holds a validated Save until the version has a name", async () => {
     const user = userEvent.setup();

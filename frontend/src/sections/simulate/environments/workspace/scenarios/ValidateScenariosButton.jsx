@@ -117,7 +117,7 @@ export default function ValidateScenariosButton({
   let said = null;
   if (!quiet) {
     said = message || ended || (elsewhere ? COPY.elsewhere : null);
-    if (running && !said) said = COPY.blocked;
+    if (running && !said) said = COPY.saveWaits;
   }
 
   // Proofs are recorded only when the validation ends, so while it runs the status says how many it is proving,

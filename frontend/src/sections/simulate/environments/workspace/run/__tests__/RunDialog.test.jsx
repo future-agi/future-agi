@@ -12,9 +12,8 @@ const state = {
   plans: {},
   members: {},
   drafts: null,
-  // The readiness selection for the picks, and the scenario validation running, if any.
+  // The readiness selection for the picks.
   selection: undefined,
-  running: undefined,
 };
 const PLAN_OK = {
   warnings: [],
@@ -85,14 +84,6 @@ vi.mock("src/api/simulate-environments/readiness", () => ({
   })),
   useRecheck: vi.fn(() => ({ mutate: vi.fn(), reset, isPending: false })),
 }));
-
-vi.mock(
-  "src/api/simulate-environments/scenariosHooks",
-  async (importOriginal) => ({
-    ...(await importOriginal()),
-    useRunningScenarioValidation: vi.fn(() => ({ data: state.running })),
-  }),
-);
 
 const { default: RunDialog } = await import("../RunDialog");
 const { useReadiness } = await import(
@@ -169,7 +160,6 @@ describe("RunDialog", () => {
     state.drafts = null;
     state.versionsError = undefined;
     state.selection = undefined;
-    state.running = undefined;
   });
 
   it("asks the plan about the scenarios this run takes", () => {
@@ -1041,7 +1031,6 @@ describe("RunDialog", () => {
       state.selection = undefined;
       state.report = undefined;
       state.cases = undefined;
-      state.running = undefined;
     });
 
     it("says how many run, why the rest are held back, and runs that many", async () => {
@@ -1116,17 +1105,6 @@ describe("RunDialog", () => {
       expect(readinessAsked()).toBe(false);
       renderDialog();
       expect(readinessAsked()).toBe(true);
-    });
-
-    it("holds the run while a scenario validation runs", () => {
-      state.running = { job_id: "val-1" };
-      renderDialog();
-      expect(
-        screen.getByText(
-          "A validation is running. Runs are blocked until it finishes.",
-        ),
-      ).toBeInTheDocument();
-      expect(runButton()).toBeDisabled();
     });
 
     it("holds the run when every picked scenario is held back", () => {

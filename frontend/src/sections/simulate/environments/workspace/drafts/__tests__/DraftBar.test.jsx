@@ -57,6 +57,14 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   };
 });
 
+vi.mock(
+  "src/api/simulate-environments/scenariosHooks",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useRunningScenarioValidation: () => ({ data: state.running }),
+  }),
+);
+
 const { default: DraftBar } = await import("../DraftBar");
 const { DRAFTS_COPY } = await import("../../workspace.constants");
 

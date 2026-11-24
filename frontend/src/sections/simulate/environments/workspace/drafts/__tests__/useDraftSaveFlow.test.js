@@ -23,6 +23,14 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
   };
 });
 
+vi.mock(
+  "src/api/simulate-environments/scenariosHooks",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useRunningScenarioValidation: () => ({ data: state.running }),
+  }),
+);
+
 const { default: useDraftSaveFlow } = await import("../useDraftSaveFlow");
 
 const ENV = { id: "env-1", versioning: { enabled: true } };
@@ -45,6 +53,13 @@ describe("useDraftSaveFlow", () => {
     const flow = renderHook(() => useDraftSaveFlow(ENV)).result.current;
     expect(flow.needsValidate).toBe(false);
     expect(flow.pending).toBe(false);
+  });
+
+  it("says when scenarios are being validated, which Save waits for", () => {
+    expect(flowFor(null).scenariosValidating).toBe(false);
+    state.running = { job_id: "val-1" };
+    expect(flowFor(null).scenariosValidating).toBe(true);
+    state.running = undefined;
   });
 
   it("holds every button while the check runs", () => {

@@ -527,7 +527,6 @@ export const RUN_DIALOG_COPY = {
   hideWhich: "Hide",
   changedTitle: "Changed since proved",
   changedHint: "Validate them before relying on the results.",
-  validating: "A validation is running. Runs are blocked until it finishes.",
   allHeld: "Every picked scenario is held back, so nothing would run.",
   starting: "Starting…",
 };
@@ -583,6 +582,8 @@ export const DRAFTS_COPY = {
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
     validation_required: "Validate these reviewed changes, then save them.",
+    validation_running:
+      "Scenarios are being validated. Save again when it finishes.",
     scenario_index_mismatch:
       "A scenario's entry in the suite list doesn't match the scenario itself. Ask chat to fix that scenario, then save again.",
     change_depends_on_rejected:
@@ -750,6 +751,8 @@ export const REVIEW_COPY = {
   nameLabel: (optional) =>
     optional ? "Name this version (optional)" : "Name this version",
   nameNeeded: "Name the version to save it.",
+  scenariosValidating:
+    "Scenarios are being validated. Save waits until it finishes.",
   nameTooLong: (max) => `Use ${max} characters or fewer.`,
   namePlaceholder: "For example: Refund window from the 2026 policy",
   discardAll: "Discard all",

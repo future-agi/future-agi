@@ -93,7 +93,7 @@ describe("ValidateScenariosButton", () => {
       await screen.findByRole("button", { name: "Validating 3 scenarios" }),
     ).toBeDisabled();
     expect(
-      screen.getByText("Runs are blocked until it finishes."),
+      screen.getByText("Save waits until it finishes."),
     ).toBeInTheDocument();
     expect(getScenarioValidation).toHaveBeenCalledWith("env-1", "val-9");
     expect(validateScenarios).not.toHaveBeenCalled();

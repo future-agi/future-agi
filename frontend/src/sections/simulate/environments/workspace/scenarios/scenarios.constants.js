@@ -86,7 +86,7 @@ export const LIFECYCLE_COPY = {
     reproveConfirmTitle: (n) =>
       n > 0 ? `Re-prove all ${n} scenarios?` : "Re-prove every scenario?",
     reproveConfirmBody:
-      "Each one is proved again in a test sandbox, including the ones already proved. Runs are blocked until it finishes. It doesn't start a paid run.",
+      "Each one is proved again in a test sandbox, including the ones already proved. Save waits until it finishes. It doesn't start a paid run.",
     done: (proved, total) =>
       Number.isInteger(total) && total > 0
         ? `Validation finished · proved ${proved} of ${total}`
@@ -94,7 +94,7 @@ export const LIFECYCLE_COPY = {
     noResults: "Validation finished but recorded no results. Try again.",
     elsewhere: "Another validation is running. Validate this one when it ends.",
     nothing: "Nothing to validate",
-    blocked: "Runs are blocked until it finishes.",
+    saveWaits: "Save waits until it finishes.",
     rowValidating: "Validating",
     failed: (reason) =>
       `Validate didn't finish${reason ? `: ${reason.replace(/\.$/, "")}` : ""}. Nothing changed; scenarios keep their state.`,

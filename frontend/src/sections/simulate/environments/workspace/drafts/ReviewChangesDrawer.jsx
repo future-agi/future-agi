@@ -166,6 +166,8 @@ export default function ReviewChangesDrawer({
   else if (counts.undecided) heldReason = COPY.saveWaiting(counts.undecided);
   else if (!counts.accepted) heldReason = COPY.saveAllRejected;
   else if (flow.stale) heldReason = flow.stale;
+  else if (ready && flow.scenariosValidating)
+    heldReason = COPY.scenariosValidating;
   else if (ready && nameTooLong) heldReason = COPY.nameTooLong(NAME_LIMIT);
   else if (ready && !direct && !name.trim()) heldReason = COPY.nameNeeded;
 
