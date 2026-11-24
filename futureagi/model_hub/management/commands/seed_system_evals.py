@@ -40,7 +40,10 @@ logger = structlog.get_logger(__name__)
 # retrievals no longer push AP past 1.0.
 # 34: retrieval evals normalize scalar references and hypotheses as single items.
 # 37: install citation_quality on existing catalogs.
-SYSTEM_EVALS_VERSION = 37
+# 38: link checks validate URL format only, without DNS or network requests
+# (shipped on main as version 33 in v1.59.0; renumbered above dev's 37 so
+# installs at 33, 34 or 37 re-seed and pick up every change).
+SYSTEM_EVALS_VERSION = 38
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any

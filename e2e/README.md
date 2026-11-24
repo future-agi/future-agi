@@ -33,16 +33,20 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The distributed harness starts the dedicated `code-executor` and sets
-`CODE_EXECUTOR_LOCAL_FALLBACK=false`; it never executes evaluator code in a worker.
-`EVAL-E2E-016` uses the shipped templates and an owned HTTP listener. The executor
-only joins internal Docker networks, with no default route. `allowed.example`
-resolves to the listener at public-numbered `11.23.0.10` **inside that network**,
-not on the internet. `private.example` resolves to its private interface and is
-operator-listed to prove that admission cannot override the public-IP rule.
-The listener never makes outbound requests. Its loopback-only journal is at
-`http://127.0.0.1:28082/requests?prefix=...` (`E2E_LINK_CANARY_URL` in attach mode).
-Redirects point only to that owned private interface. No real third party is contacted.
+Both harness stacks start the dedicated `code-executor` and set
+`CODE_EXECUTOR_LOCAL_FALLBACK=false`; they never execute evaluator code in a worker.
+`EVAL-E2E-016` uses the shipped templates to check link format entirely offline.
+Owned HTTP listeners remain only as negative witnesses: both complete journals must
+stay empty after every browser submission and the Temporal harness task. The executor
+only joins internal Docker networks, with no default route. `allowed.example` and
+`worker-allowed.example` resolve to the listeners at public-numbered `11.23.0.10`
+and `11.23.0.11` **inside those networks**, not on the internet; `private.example`
+resolves to the first listener's private interface. These aliases and local redirects
+make an accidental destination request observable without contacting a real third party.
+The listeners never make outbound requests. Their loopback-only journals are at
+`http://127.0.0.1:28082/requests` and `http://127.0.0.1:28083/requests`
+(`E2E_LINK_CANARY_URL` and `E2E_LINK_WORKER_CANARY_URL` in attach mode).
+The browser's local-only request guard remains in place as an additional boundary.
 
 Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
 `http://localhost:28081/messages`. They seed issue transitions through the authenticated
