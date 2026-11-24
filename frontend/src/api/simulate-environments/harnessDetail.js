@@ -233,11 +233,15 @@ export function harnessDetailToEnvironment(detail) {
     dataStore: contract?.data_store || null,
     toolEntrypoints: contract?.tool_entrypoints || null,
     toolStatus: contract?.tool_status,
+    // An open draft's contract, which runs do not use until it is saved.
+    contractFromDraft: Boolean(contract?.from_draft),
     faultTargets: contract?.fault_targets,
     worldTables: world?.tables,
     worldTotalRows: world?.total_rows,
     // `edit`, `list` or null (tab hidden).
     actorsTab: detail.actors_tab,
+    // The workers the app's source declares; a run shows which took part.
+    workers: contract?.workers || null,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     systemPrompt: contract?.system_prompt || null,
     systemPromptOrigin: contract?.system_prompt_origin || null,

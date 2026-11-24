@@ -26,6 +26,7 @@ import {
 import CodeCard from "./code/CodeCard";
 import { ConnectTracesDrawer } from "./AgentNextSteps";
 import { observeProjectPath } from "./observeProject";
+import ParticipantsCard from "./ParticipantsCard";
 import ObservabilityToggle, {
   ObservabilityToggleSkeleton,
 } from "./ObservabilityToggle";
@@ -432,6 +433,9 @@ export default function AgentDefinitionTab() {
             ))
           : configuration}
       </Card>
+      {version?.participants ? (
+        <ParticipantsCard participants={version.participants} />
+      ) : null}
       {!agent || (isCode && stored.isLoading) ? (
         <ObservabilityToggleSkeleton />
       ) : (
@@ -439,7 +443,11 @@ export default function AgentDefinitionTab() {
           <ObservabilityToggle agent={agent} isCode={isCode} />
         )
       )}
-      <Section title="Links" loading={!agent} rows={links} />
+      <Section
+        title="Links"
+        loading={!agent || (isCode && stored.isLoading)}
+        rows={links}
+      />
       {isCode && versionId && (
         <CodeCard
           agentId={agentId}

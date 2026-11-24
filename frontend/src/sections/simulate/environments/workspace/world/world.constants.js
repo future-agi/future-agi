@@ -3,6 +3,7 @@ export const MONO = "ui-monospace, Menlo, monospace";
 export const TOOLS_CARD_COPY = {
   title: (n) => `Tools · ${n}`,
   subtitle: "The tools the agent declares, and where each one runs",
+  draft: "Draft: not used by runs until saved",
   groupCount: (n) => (n === 1 ? "1 tool" : `${n} tools`),
   expand: (name) => `Show the contract of ${name}`,
 };

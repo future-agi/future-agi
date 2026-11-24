@@ -144,6 +144,7 @@ def test_v3_detail_uses_explicit_csat_for_existing_score_fields(csat):
         ),
         patch("simulate.views.run_results_v3.build_eval_configs_map", return_value={}),
         patch("simulate.views.run_results_v3.function_calls", return_value=[]),
+        patch("simulate.views.run_results_v3.earlier_attempts", return_value=[]),
         patch(
             "simulate.views.run_results_v3.CallExecutionDetailSerializer"
         ) as serializer,

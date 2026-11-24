@@ -203,8 +203,24 @@ describe("TraceTable — sub-goal verdicts", () => {
               {
                 ...row("a1"),
                 subGoalResults: [
-                  { name: "pin_verified", passed: true },
-                  { name: "exact_greeting", passed: false },
+                  {
+                    name: "pin_verified",
+                    passed: true,
+                    display_name: "pin_verified",
+                  },
+                  {
+                    name: "exact_greeting",
+                    passed: false,
+                    display_name: "exact_greeting",
+                  },
+                  {
+                    name: "read_only",
+                    display_name: "read_only (Order-lookup worker)",
+                    passed: false,
+                    subject: "worker:order_lookup",
+                    subject_kind: "worker",
+                    worker_id: "order_lookup",
+                  },
                 ],
               },
             ],
@@ -215,7 +231,8 @@ describe("TraceTable — sub-goal verdicts", () => {
     );
     const cells = activeRow().querySelectorAll("td");
     expect(cells[cells.length - 1]).toHaveTextContent(
-      /pin_verified.*exact_greeting/,
+      // A worker's own check reads as the server names it, with the worker's name, never its id.
+      /pin_verified.*exact_greeting.*read_only \(Order-lookup worker\)/,
     );
   });
 
@@ -233,6 +250,7 @@ describe("TraceTable — sub-goal verdicts", () => {
                 ...row("a1"),
                 subGoalResults: verdicts.map((passed) => ({
                   name: "Verify identity",
+                  display_name: "Verify identity",
                   passed,
                 })),
               },
@@ -283,9 +301,21 @@ describe("TraceTable — sub-goal verdicts", () => {
                 ...row("a1"),
                 status: "failed",
                 subGoalResults: [
-                  { name: "Verify identity", passed: true },
-                  { name: "Create refund", passed: false },
-                  { name: "Send confirmation", passed: null },
+                  {
+                    name: "Verify identity",
+                    passed: true,
+                    display_name: "Verify identity",
+                  },
+                  {
+                    name: "Create refund",
+                    passed: false,
+                    display_name: "Create refund",
+                  },
+                  {
+                    name: "Send confirmation",
+                    passed: null,
+                    display_name: "Send confirmation",
+                  },
                 ],
               },
             ],
@@ -331,17 +361,20 @@ describe("TraceTable — sub-goal verdicts", () => {
                 subGoalResults: [
                   {
                     name: "Refund row",
+                    display_name: "Refund row",
                     passed: false,
                     evidence: ["world_state", "tool_calls"],
                   },
                   {
                     name: "Polite",
+                    display_name: "Polite",
                     passed: null,
                     result: "unmeasured",
                     evidence: ["transcript"],
                   },
                   {
                     name: "Refund once",
+                    display_name: "Refund once",
                     passed: null,
                     result: "unmeasured",
                     reason:
@@ -447,8 +480,12 @@ describe("TraceTable — group row while its calls run", () => {
     {
       ...call("g1", "completed"),
       subGoalResults: [
-        { name: "pin_verified", passed: true },
-        { name: "exact_greeting", passed: null },
+        { name: "pin_verified", passed: true, display_name: "pin_verified" },
+        {
+          name: "exact_greeting",
+          passed: null,
+          display_name: "exact_greeting",
+        },
       ],
     },
   ];
@@ -903,7 +940,9 @@ describe("TraceTable skipped scenarios", () => {
             status: "error",
             durationMs: null,
             outcomeReason: "actors are switched off",
-            subGoalResults: [{ name: "noticed", passed: null }],
+            subGoalResults: [
+              { name: "noticed", passed: null, display_name: "noticed" },
+            ],
           },
         ],
         columns: new Set(["callDetails"]),
@@ -924,7 +963,12 @@ describe("TraceTable calls with no pass or fail", () => {
             status: "no_score",
             outcomeReason: "2 not applicable, 1 inconclusive",
             subGoalResults: [
-              { name: "noticed", passed: null, result: "not_applicable" },
+              {
+                name: "noticed",
+                passed: null,
+                result: "not_applicable",
+                display_name: "noticed",
+              },
             ],
           },
         ],
@@ -945,7 +989,9 @@ describe("TraceTable calls with no pass or fail", () => {
             ...row("in"),
             status: "unmeasured",
             outcomeReason: "The deciding moment cannot be heard.",
-            subGoalResults: [{ name: "booked", passed: true }],
+            subGoalResults: [
+              { name: "booked", passed: true, display_name: "booked" },
+            ],
           },
         ],
         columns: new Set(["callDetails"]),
@@ -967,6 +1013,7 @@ describe("TraceTable calls with no pass or fail", () => {
             subGoalResults: [
               {
                 name: "noticed",
+                display_name: "noticed",
                 passed: null,
                 result: "not_applicable",
                 reason: "The roommate never spoke",

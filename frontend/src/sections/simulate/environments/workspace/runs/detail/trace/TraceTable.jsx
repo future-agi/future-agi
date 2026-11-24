@@ -34,6 +34,7 @@ import {
   neutralCheckboxSx,
   pinnedLeftSx,
   REQUIRED_EVAL_COPY,
+  subGoalLabel,
 } from "./traceTable.constants";
 import {
   SubTasksCell,
@@ -430,7 +431,7 @@ export default function TraceTable({
             onClick={() => onOpen(t)}
           >
             <SubTasksCell
-              subTasks={(t.subGoalResults || []).map((goal) => goal.name)}
+              subTasks={(t.subGoalResults || []).map(subGoalLabel)}
             />
           </TableCell>
         )}

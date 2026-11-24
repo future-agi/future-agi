@@ -54,9 +54,10 @@ class TraceSessionOverlay(BaseModel):
     the identity the deterministic id is computed from.
     """
 
-    objects = PgResponseBaseManager()
-    all_objects = PgResponseAllManager()
-    no_workspace_objects = PgResponseNoWorkspaceManager()
+    # django-stubs makes BaseModel's managers ClassVars; overriding them is intended.
+    objects = PgResponseBaseManager()  # type: ignore[misc]
+    all_objects = PgResponseAllManager()  # type: ignore[misc]
+    no_workspace_objects = PgResponseNoWorkspaceManager()  # type: ignore[misc]
 
     trace_session_id = models.UUIDField(db_index=True)  # soft id, not a FK
     project_id = models.UUIDField(db_index=True)

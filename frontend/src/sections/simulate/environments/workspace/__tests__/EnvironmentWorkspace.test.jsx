@@ -856,9 +856,11 @@ describe("EnvironmentWorkspace route shell", () => {
         ),
       { timeout: 6000 },
     );
-    expect(
-      screen.getByRole("button", { name: /Run simulation/ }),
-    ).toBeDisabled();
+    const runButtons = screen.getAllByRole("button", {
+      name: /Run simulation/,
+    });
+    expect(runButtons.length).toBeGreaterThan(0);
+    runButtons.forEach((button) => expect(button).toBeDisabled());
   }, 15000);
 
   it("swaps the build experience for the workspace in place when the job completes", async () => {

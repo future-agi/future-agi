@@ -142,9 +142,9 @@ import type {
   AgentVersionCompatibilityResponseApi,
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
+  AgentVersionDetailResponseApi,
   AgentVersionListResponseApi,
   AgentVersionProductionResponseApi,
-  AgentVersionResponseApi,
   AgentVersionRestoreResponseApi,
   AgentccAPIKeyApi,
   AgentccAnalyticsCostBreakdown200,
@@ -291,6 +291,8 @@ import type {
   CallWebsocketErrorResponseApi,
   CallWebsocketRequestApi,
   CallWebsocketResponseApi,
+  CallWorkersPendingApi,
+  CallWorkersResponseApi,
   CancelTestExecutionResponseApi,
   CapabilitiesResponseApi,
   CellErrorLocalizerResponseApi,
@@ -1370,8 +1372,10 @@ import type {
   SimulateScenariosListParams,
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
+  SimulateV3CallExecutionWorkersParams,
   SimulateV3TestExecutionCallsParams,
   SimulateV3TestExecutionTracesParams,
+  SimulateV3TestExecutionTrialRoutesParams,
   SimulationEvidenceRequestApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
@@ -1623,6 +1627,7 @@ import type {
   TracerUsersListParams,
   TracesTabApiResponseApi,
   TrendsTabApiResponseApi,
+  TrialRoutesResponseApi,
   TriggerAnalysisApi,
   TwoFactorChallengeTokenApi,
   TwoFactorPasskeyVerifyRequestApi,
@@ -56919,6 +56924,20 @@ export const getSimulateAgentDefinitionsListUrl = (
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
+    const explodeParameters = [
+      "agent_type",
+      "source",
+      "environments",
+      "observe",
+    ];
+
+    if (Array.isArray(value) && explodeParameters.includes(key)) {
+      value.forEach((v) => {
+        normalizedParams.append(key, v === null ? "null" : v.toString());
+      });
+      return;
+    }
+
     if (Array.isArray(value)) {
       value
         .filter((item) => item !== undefined && item !== null)
@@ -57719,7 +57738,7 @@ export const simulateAgentDefinitionsVersionsCreateCreate = async (
 };
 
 export type simulateAgentDefinitionsVersionsReadResponse200 = {
-  data: AgentVersionResponseApi;
+  data: AgentVersionDetailResponseApi;
   status: 200;
 };
 
@@ -73699,6 +73718,82 @@ export const simulateV3CallExecutionDetail = async (
   );
 };
 
+export type simulateV3CallExecutionWorkersResponse200 = {
+  data: CallWorkersResponseApi;
+  status: 200;
+};
+
+export type simulateV3CallExecutionWorkersResponse202 = {
+  data: CallWorkersPendingApi;
+  status: 202;
+};
+
+export type simulateV3CallExecutionWorkersResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateV3CallExecutionWorkersResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 204>;
+};
+
+export type simulateV3CallExecutionWorkersResponseSuccess = (
+  | simulateV3CallExecutionWorkersResponse200
+  | simulateV3CallExecutionWorkersResponse202
+  | simulateV3CallExecutionWorkersResponse204
+) & {
+  headers: ApiResponseHeaders;
+};
+export type simulateV3CallExecutionWorkersResponseError =
+  simulateV3CallExecutionWorkersResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateV3CallExecutionWorkersResponse =
+  | simulateV3CallExecutionWorkersResponseSuccess
+  | simulateV3CallExecutionWorkersResponseError;
+
+export const getSimulateV3CallExecutionWorkersUrl = (
+  callExecutionId: string,
+  params?: SimulateV3CallExecutionWorkersParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/call-executions/${callExecutionId}/workers/?${stringifiedParams}`
+    : `/simulate/v3/call-executions/${callExecutionId}/workers/`;
+};
+
+/**
+ * Which of a multi-agent app's participants did what in this trial, read from the traces the app sent.
+ */
+export const simulateV3CallExecutionWorkers = async (
+  callExecutionId: string,
+  params?: SimulateV3CallExecutionWorkersParams,
+  options?: RequestInit,
+): Promise<simulateV3CallExecutionWorkersResponse> => {
+  return apiMutator<simulateV3CallExecutionWorkersResponse>(
+    getSimulateV3CallExecutionWorkersUrl(callExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateV3TestExecutionAnalyticsResponse200 = {
   data: RunAnalyticsV3ResponseApi;
   status: 200;
@@ -73951,6 +74046,69 @@ export const simulateV3TestExecutionTraces = async (
 ): Promise<simulateV3TestExecutionTracesResponse> => {
   return apiMutator<simulateV3TestExecutionTracesResponse>(
     getSimulateV3TestExecutionTracesUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionTrialRoutesResponse200 = {
+  data: TrialRoutesResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionTrialRoutesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionTrialRoutesResponseSuccess =
+  simulateV3TestExecutionTrialRoutesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateV3TestExecutionTrialRoutesResponseError =
+  simulateV3TestExecutionTrialRoutesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateV3TestExecutionTrialRoutesResponse =
+  | simulateV3TestExecutionTrialRoutesResponseSuccess
+  | simulateV3TestExecutionTrialRoutesResponseError;
+
+export const getSimulateV3TestExecutionTrialRoutesUrl = (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTrialRoutesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/trial-routes/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/trial-routes/`;
+};
+
+/**
+ * One scenario's trials in the run lined up by who asked whom, and the first step where they went different ways.
+ */
+export const simulateV3TestExecutionTrialRoutes = async (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTrialRoutesParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionTrialRoutesResponse> => {
+  return apiMutator<simulateV3TestExecutionTrialRoutesResponse>(
+    getSimulateV3TestExecutionTrialRoutesUrl(testExecutionId, params),
     {
       ...options,
       method: "GET",

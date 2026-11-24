@@ -573,50 +573,96 @@ class CandidateScope(unittest.TestCase):
                 flags = plan("pull_request", tested, base, head, "qualified")["flags"]
                 self.assertTrue(all(flags.values()), missing)
 
-    def test_retargets_replan_and_metadata_edits_never_issue_protected_names(self):
-        edit = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)"
-
-        def labelled_except(*labels):
-            # A label the workflow does not read is metadata too: its run has no jobs.
-            return (
-                "(("
-                + edit
-                + ") || (github.event.action == 'labeled' && "
-                + " && ".join(
-                    f"github.event.label.name != '{label}'" for label in labels
-                )
-                + "))"
-            )
-
-        for workflow, check, types, metadata in (
-            ("backend-ci", "Backend", "edited", edit),
-            ("e2e-ci", "E2E", "edited, labeled", labelled_except("e2e-standalone")),
-            (
-                "update-ci",
-                None,
-                "edited, labeled",
-                labelled_except("update-rehearsal", "e2e-standalone"),
-            ),
+    def test_required_workflows_start_only_on_code_events(self):
+        # A run for any other activity type (a body or title edit, a label)
+        # becomes its workflow's newest suite for the head commit, and GitHub
+        # then ignores the older suite's required check, so the PR cannot be
+        # enqueued (#4332, #4001). These workflows therefore never start on
+        # one, and nothing in them depends on such an event.
+        for workflow, job, check in (
+            ("backend-ci", "backend-tests", "Backend Tests Pass"),
+            ("e2e-ci", "e2e-tests", "E2E Tests Pass"),
+            ("python-lint", "python-lint-pass", "Python Lint Pass"),
         ):
             text = (SCRIPTS.parent / "workflows" / (workflow + ".yml")).read_text()
-            self.assertIn(
-                "  pull_request:\n    types: [opened, synchronize, reopened, "
-                + types
-                + "]",
-                text,
-            )
-            self.assertIn(metadata + " && github.run_id || 'candidate'", text)
-            guard = metadata if metadata.startswith("((") else "(" + metadata + ")"
-            self.assertIn("  changes:\n    if: ${{ !" + guard + " }}", text)
-            if metadata != edit:
-                # No job keeps the narrower guard, so a stray label starts none.
-                self.assertNotIn("!(" + edit + ")", text)
-            if check:
-                self.assertIn(
-                    metadata + f" && '{check} metadata edit' || '{check} Tests Pass'",
+            with self.subTest(workflow=workflow):
+                self.assertRegex(
                     text,
+                    r"(?m)^  pull_request:\n(?:    #.*\n)*"
+                    r"    types: \[opened, synchronize, reopened\]\n",
                 )
-                self.assertIn("always() && !" + guard, text)
+                for expression in (
+                    "github.event.action",
+                    "github.event.changes",
+                    "github.event.label",
+                    "metadata edit",
+                ):
+                    self.assertNotIn(expression, text)
+                block = re.search(
+                    rf"(?ms)^  {job}:\n(.*?)(?=^  [a-z0-9_-]+:\n|\Z)", text
+                )[1]
+                self.assertRegex(block, rf"(?m)^    name: {check}( #.*)?$")
+                self.assertIn("    if: ${{ always() }}\n", block)
+                suffix = (
+                    "-candidate"
+                    if workflow == "python-lint"
+                    else "-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}"
+                )
+                self.assertRegex(text, rf"(?m)^  group: .*{re.escape(suffix)}$")
+
+    def test_only_retarget_proof_runs_leave_the_candidate_group(self):
+        # Pull request and merge-group runs, direct or through the merge
+        # queue's call, keep today's "candidate" group, so one run per PR is
+        # active and a newer push cancels the older one. Only Retarget proof's
+        # calls get a group of their own: they never cancel, and are never
+        # cancelled by, a pull request's real runs.
+        expression = (
+            "github.workflow == 'Retarget proof' && github.run_id || 'candidate'"
+        )
+
+        def suffix(workflow_name, run_id):
+            # GitHub's && and || return operand values, like Python's.
+            return (workflow_name == "Retarget proof" and run_id) or "candidate"
+
+        for name in ("Backend CI", "E2E CI", "Backend merge queue"):
+            self.assertEqual(suffix(name, "45079002539"), "candidate", name)
+        self.assertEqual(suffix("Retarget proof", "45079002539"), "45079002539")
+        for workflow in ("backend-ci", "e2e-ci"):
+            text = (SCRIPTS.parent / "workflows" / (workflow + ".yml")).read_text()
+            with self.subTest(workflow=workflow):
+                self.assertEqual(text.count(expression), 1)
+                self.assertIn(
+                    "    inputs:\n      job_prefix:\n",
+                    text.split("  workflow_call:\n", 1)[1],
+                )
+                # Empty by default: today's job names hold.
+                block = text.split("      job_prefix:\n", 1)[1].split(
+                    "\n    outputs:", 1
+                )[0]
+                self.assertIn('        default: ""', block)
+        proof = (SCRIPTS.parent / "workflows/retarget-proof.yml").read_text()
+        self.assertIn("name: Retarget proof\n", proof)
+
+    def test_update_ci_metadata_events_start_no_jobs(self):
+        # Update CI is not required and still starts on edits and labels:
+        # update-rehearsal starts the Real rehearsals. Any other label,
+        # e2e-standalone included (it only sets the plan's E2E fields, which
+        # no job here reads), and a title or body edit start a run with no jobs.
+        edit = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)"
+        metadata = (
+            "(("
+            + edit
+            + ") || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal'))"
+        )
+        text = (SCRIPTS.parent / "workflows/update-ci.yml").read_text()
+        self.assertIn(
+            "  pull_request:\n    types: [opened, synchronize, reopened, edited, labeled]",
+            text,
+        )
+        self.assertIn(metadata + " && github.run_id || 'candidate'", text)
+        self.assertIn("  changes:\n    if: ${{ !" + metadata + " }}", text)
+        # No job keeps a narrower guard, so a stray label starts none.
+        self.assertNotIn("!(" + edit + ")", text)
 
     def test_private_overlay_is_not_selected_from_merge_group_heads(self):
         workflow = (SCRIPTS.parent / "workflows/backend-ci.yml").read_text()
@@ -624,15 +670,35 @@ class CandidateScope(unittest.TestCase):
             "      - id: shards"
         )[0]
         script = textwrap.dedent(selector.split("        run: |\n")[1])
-        for event, head_repo, members, wanted in (
-            ("pull_request", "base/repo", [], "true"),
-            ("pull_request", "fork/repo", [], "false"),
-            ("pull_request", "", [], "false"),
-            ("merge_group", "", ["base/repo", "base/repo"], "false"),
-            ("merge_group", "", ["base/repo", "fork/repo"], "false"),
-            ("push", "", [], "true"),
+        for event, head_repo, members, wanted, caller in (
+            ("pull_request", "base/repo", [], "true", "Backend CI"),
+            ("pull_request", "fork/repo", [], "false", "Backend CI"),
+            ("pull_request", "", [], "false", "Backend CI"),
+            # Retarget proof forwards no secrets: an OSS run, like the queue.
+            ("pull_request", "base/repo", [], "false", "Retarget proof"),
+            ("pull_request", "fork/repo", [], "false", "Retarget proof"),
+            # Unchanged: dev/main pushes, dispatches and schedules are internal.
+            ("workflow_dispatch", "", [], "true", "Backend CI"),
+            ("schedule", "", [], "true", "Backend CI"),
+            (
+                "merge_group",
+                "",
+                ["base/repo", "base/repo"],
+                "false",
+                "Backend merge queue",
+            ),
+            (
+                "merge_group",
+                "",
+                ["base/repo", "fork/repo"],
+                "false",
+                "Backend merge queue",
+            ),
+            ("push", "", [], "true", "Backend CI"),
         ):
-            with self.subTest(event=event, members=members, head=head_repo):
+            with self.subTest(
+                event=event, members=members, head=head_repo, caller=caller
+            ):
                 # Both group compositions produce the same GitHub event shape:
                 # the head is a synthetic ref, not the provenance of its members.
                 payload = (
@@ -653,6 +719,7 @@ class CandidateScope(unittest.TestCase):
                     env=dict(
                         os.environ,
                         GITHUB_EVENT_NAME=event,
+                        GITHUB_WORKFLOW=caller,
                         GITHUB_REPOSITORY="base/repo",
                         PR_HEAD_REPO=head_repo,
                         GITHUB_EVENT_PATH=str(Path("event").resolve()),
@@ -739,6 +806,56 @@ class CandidateScope(unittest.TestCase):
         result = run_loader(published, candidate)
         self.assertEqual(result["backend"], "true")
         self.assertEqual(json.loads(result["scope"])["policy_base"], published)
+
+
+    def test_pull_request_plans_from_the_merge_base_tip_not_a_stale_event_base(self):
+        # GitHub keeps base.sha at the base tip of the PR's last base sync, while
+        # refs/pull/N/merge is built on the current tip. Plan from that tip.
+        driver = bootstrap("backend-ci.yml")
+        self.write(".github/scripts/ci_scope.py", (SCRIPTS / "ci_scope.py").read_text())
+        stale = self.commit()
+        self.git("checkout", "-q", "-b", "feature")
+        self.write("feature-file")
+        head = self.commit()
+        self.git("checkout", "-q", "dev")
+        self.write("later-dev-file")
+        tip = self.commit()
+        self.git("merge", "-q", "--no-ff", "--no-edit", "feature")
+        merge = self.git("rev-parse", "HEAD")
+
+        def run(base, head_sha):
+            with tempfile.TemporaryDirectory() as temp:
+                output = Path(temp) / "outputs"
+                env = dict(
+                    os.environ,
+                    BASE_SHA=base,
+                    HEAD_SHA=head_sha,
+                    CI_SCOPE_MODE="qualified",
+                    GITHUB_SHA=merge,
+                    GITHUB_EVENT_NAME="pull_request",
+                    GITHUB_OUTPUT=str(output),
+                    RUNNER_TEMP=temp,
+                )
+                done = subprocess.run(["bash", "-ec", driver], env=env, capture_output=True)
+                if done.returncode:
+                    return None
+                return dict(line.split("=", 1) for line in output.read_text().splitlines())
+
+        for base in (stale, tip):
+            result = run(base, head)
+            self.assertIsNotNone(result, base)
+            planned = json.loads(result["scope"])
+            self.assertEqual(planned["policy_base"], tip)
+            # Only the PR's own change, not what dev gained since the stale base.
+            self.assertEqual(planned["path_count"], 1)
+        # The head must be the merge's second parent, and the event base an
+        # ancestor of its first parent.
+        self.assertIsNone(run(stale, tip))
+        self.git("checkout", "-q", "--orphan", "unrelated")
+        self.write("unrelated-file")
+        unrelated = self.commit()
+        self.git("checkout", "-q", "--detach", merge)
+        self.assertIsNone(run(unrelated, head))
 
 
 if __name__ == "__main__":

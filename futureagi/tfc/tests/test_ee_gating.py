@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 from rest_framework import status as drf_status
 
+from tfc.capabilities import testing as capability_testing
 from tfc.capabilities.registry import PAID_FEATURES
 from tfc.ee_gating import (
     EE_FEATURES_OSS,
@@ -29,6 +30,8 @@ from tfc.ee_gating import (
     require_ee_feature,
 )
 from tfc.ee_loader import has_ee
+
+check_capability_isolation = capability_testing.check_capability_isolation
 
 # ── FeatureUnavailable ────────────────────────────────────────────────────
 
@@ -276,8 +279,17 @@ class TestRequireEEFeatureDecorator:
         def endpoint():
             return "ok"
 
-        with patch("tfc.ee_gating.is_oss", return_value=False):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.has_feature_unified",
+                return_value=True,
+            ) as has_feature,
+        ):
             assert endpoint() == "ok"
+        has_feature.assert_called_once_with("", "optimization")
 
 
 # ── Stubs ─────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ export default function ToolsCard({
   openTool,
   onOpenTool,
   removal,
+  fromDraft = false,
   sx,
 }) {
   const groups = groupToolsByStatus(tools);
@@ -24,7 +25,7 @@ export default function ToolsCard({
     <SectionCard
       roomy
       title={T.title(tools.length)}
-      subtitle={T.subtitle}
+      subtitle={fromDraft ? `${T.subtitle} · ${T.draft}` : T.subtitle}
       sx={sx}
     >
       {groups.map((group, index) => {
@@ -76,8 +77,8 @@ export default function ToolsCard({
                 const open = openTool === tool.tool;
                 const Row = onOpenTool ? ButtonBase : Box;
                 return (
+                  <Box key={tool.tool}>
                   <Row
-                    key={tool.tool}
                     {...(onOpenTool && {
                       onClick: () => onOpenTool(tool),
                       "aria-label": T.expand(tool.tool),
@@ -151,6 +152,21 @@ export default function ToolsCard({
                       </ViewerLock>
                     )}
                   </Row>
+                  {tool.status_reason && (
+                    <Typography
+                      data-testid="tool-status-reason"
+                      sx={{
+                        typography: "s3",
+                        color: "text.subtitle",
+                        px: 2,
+                        pl: onOpenTool ? 5 : 2,
+                        pb: 1,
+                      }}
+                    >
+                      {tool.status_reason}
+                    </Typography>
+                  )}
+                  </Box>
                 );
               })}
             </Stack>
@@ -167,6 +183,7 @@ ToolsCard.propTypes = {
       tool: PropTypes.string.isRequired,
       status: PropTypes.string,
       description: PropTypes.string,
+      status_reason: PropTypes.string,
     }),
   ).isRequired,
   openTool: PropTypes.string,
@@ -175,5 +192,6 @@ ToolsCard.propTypes = {
     onRemove: PropTypes.func.isRequired,
     blockedReason: PropTypes.string,
   }),
+  fromDraft: PropTypes.bool,
   sx: PropTypes.object,
 };

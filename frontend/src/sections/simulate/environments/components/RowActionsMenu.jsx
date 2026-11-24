@@ -6,7 +6,6 @@ import {
   ENV_STATUS,
   ROW_ACTION_LABEL,
   BUILDING_TOOLTIP,
-  DELETE_TONE,
 } from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 import useSimulationAccess from "../hooks/useSimulationAccess";
@@ -95,13 +94,13 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
           }}
           sx={{ typography: "s2" }}
         >
-          <ListItemIcon sx={{ ...ICON_SX, color: DELETE_TONE.main }}>
+          <ListItemIcon sx={ICON_SX}>
             <Iconify icon="solar:trash-bin-trash-linear" width={16} />
           </ListItemIcon>
           <ListItemText
             primary={ROW_ACTION_LABEL.delete}
             primaryTypographyProps={{
-              sx: { typography: "s2", color: DELETE_TONE.main },
+              sx: { typography: "s2" },
             }}
           />
         </MenuItem>

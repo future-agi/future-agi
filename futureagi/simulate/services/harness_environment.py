@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
@@ -23,6 +24,7 @@ from django.db.models import (
     Case,
     Count,
     Exists,
+    JSONField,
     OuterRef,
     Prefetch,
     Q,
@@ -32,7 +34,7 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.fields.json import KT
+from django.db.models.fields.json import KT, KeyTransform
 from django.db.models.functions import Coalesce, Lower, NullIf, Trim
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
@@ -48,6 +50,7 @@ from simulate.constants.harness_environment import (
     STATUS_RUNNING,
     ActorsTab,
 )
+from simulate.constants.hosted_harness import WORKER_ENFORCEMENT_LABELS
 from simulate.models import (
     AgentVersion,
     HarnessEnvironmentVersion,
@@ -58,10 +61,13 @@ from simulate.models import (
     RunTest,
     TestExecution,
 )
+from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.environment_documents import (
+    RUN_CONTRACT_VERSION,
     contract_data,
     registration_key,
     row_stage_output,
+    version_contract,
 )
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.selectors.stage_outputs import stage_output
@@ -77,7 +83,7 @@ from simulate.services.harness_scenarios import (
 )
 from simulate.services.run_outcome import outcome_fields, receipt_outcome_counts
 from simulate.services.run_reliability_v3 import trial_passes
-from simulate.types import ContractCallActor
+from simulate.types import ContractCallActor, ContractWorker, worker_enforcement
 
 if TYPE_CHECKING:
     from simulate.services.harness_actor_rules import ActorRecord, ActorRules
@@ -196,6 +202,8 @@ def filter_for_list(
     if status:
         queryset = queryset.filter(_status_q(status))
     if agent_type:
+        if "version_contract" not in queryset.query.annotations:
+            queryset = with_version_contract(queryset)
         queryset = (
             queryset.annotate(
                 list_connector=Coalesce(
@@ -203,6 +211,7 @@ def filter_for_list(
                     Value(""),
                     output_field=TextField(),
                 ),
+                list_version_modality=Lower(Trim(KT("version_contract__modality"))),
             )
             .annotate(
                 list_is_voice=Case(
@@ -250,19 +259,51 @@ def _voice_q() -> Q:
             {"kind": "contract", "data": {"modality": AGENT_TYPE_VOICE}}
         ]
     )
-    contract_says_voice = Exists(voice_contract) | (
+    snapshot_says_voice = Exists(voice_contract) | (
         ~Exists(contracts) & legacy_voice_contract
     )
+    has_version_contract = Q(version_contract__isnull=False) & ~Q(version_contract={})
+    contract_says_voice = (
+        has_version_contract & Q(list_version_modality=AGENT_TYPE_VOICE)
+    ) | (~has_version_contract & snapshot_says_voice)
     return Q(list_connector__in=_VOICE_CONNECTORS) | (
         Q(list_connector__in=("", "auto")) & contract_says_voice
     )
 
 
-def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
-    """One list row. Safe to call on a job that has never finished building."""
+def with_version_contract(
+    queryset: QuerySet[HostedHarnessJob],
+) -> QuerySet[HostedHarnessJob]:
+    """The list's jobs with the contract each default version records it runs with, read in the same query. Only
+    the list reads it: every other read of a job never touches a version's documents."""
+    return queryset.annotate(
+        version_contract=Case(
+            # A run contract only this revision of the reading recorded, as every other reader takes it.
+            When(
+                environment_version__documents__run_contract_version=RUN_CONTRACT_VERSION,
+                then=Coalesce(
+                    KeyTransform("run_contract", "environment_version__documents"),
+                    KeyTransform("contract", "environment_version__documents"),
+                    output_field=JSONField(),
+                ),
+            ),
+            default=KeyTransform("contract", "environment_version__documents"),
+            output_field=JSONField(),
+        )
+    )
+
+
+def environment_row(
+    job: HostedHarnessJob, contract: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """One list row. Safe to call on a job that has never finished building. ``contract``: the one the default
+    version runs with, when the caller has it; a listed row reads the one its version records."""
     from simulate.services.harness_agent_versions import environment_policy
 
-    contract = _secret_safe(contract_data(job))
+    if contract is None:
+        listed = getattr(job, "version_contract", None)
+        contract = listed if isinstance(listed, dict) and listed else contract_data(job)
+    contract = _secret_safe(contract)
     runs_count = getattr(job, "simulation_run_count", None)
     if runs_count is None:
         runs_count = user_environment_runs(job).count()
@@ -589,6 +630,8 @@ _CONTRACT_FIELDS = (
     "runtime_dependencies",
     "implementation",
     "tool_entrypoints",
+    # The workers the app's source declares (id, name, tools, allowed tools, binding, address variable, process).
+    "workers",
     "data_store",
     "data_schema",
     "data_schema_columns",
@@ -637,7 +680,8 @@ def environment_detail(
     A section is ``None`` until the stage that produces it has finished, so a
     caller can tell "not built yet" from "built with nothing in it".
     """
-    evidence = _environment_evidence(job)
+    working, from_draft = working_contract(job)
+    evidence = replace(_environment_evidence(job), contract=_secret_safe(working))
     contract = evidence.contract
     environment = evidence.environment
     scenario_docs = evidence.scenarios
@@ -673,7 +717,7 @@ def environment_detail(
     )
     personas = _personas(scenarios)
     selected = _selected_evals(job)
-    overview = environment_row(job)
+    overview = environment_row(job, version_contract(job))
     overview.update(
         {
             # The detail read already has the verified catalogue in hand, so the
@@ -698,6 +742,9 @@ def environment_detail(
         rules=rules,
         cast=actor_cast,
     )
+    if contract_section is not None:
+        # An open draft's contract: shown here, used by no run until it is saved.
+        contract_section["from_draft"] = from_draft
     detail = {
         "id": str(job.id),
         "overview": overview,
@@ -754,6 +801,15 @@ def _environment_evidence(job: HostedHarnessJob) -> EnvironmentEvidence:
     return EnvironmentEvidence(**values)
 
 
+def working_contract(job: HostedHarnessJob) -> tuple[dict[str, Any], bool]:
+    """The working copy's contract, and whether it is an open draft's: the draft's, which runs do not use until it
+    is saved, else the default version's, as its build sealed it."""
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    draft = fresh_draft(job, "environment")
+    return version_contract(job, draft), draft is not None
+
+
 def environment_actor_side(
     job: HostedHarnessJob,
 ) -> tuple[list[ActorRecord], ActorRules]:
@@ -784,25 +840,20 @@ def edit_fault_side(
 
     Unreadable files fall back to the environment's contract and no cast, logged; the targets are None when the
     contract says nothing of the door."""
-    from simulate.services.harness_actor_rules import (
-        actor_rules,
-        cast_records,
-        read_json,
-    )
+    from simulate.services.harness_actor_rules import actor_rules, cast_records
     from simulate.services.harness_tool_reach import door_targets
     from simulate.services.harness_versioning import drafts
     from simulate.services.hosted_harness import HostedHarnessError
 
     try:
         files, _ = drafts.edit_side(job, "environment")
-        contract = read_json(files, "contract.json") or contract_data(job)
         cast = cast_records(files)
-        return door_targets(contract, actor_rules(files), cast), cast
+        return door_targets(working_contract(job)[0], actor_rules(files), cast), cast
     except (S3Error, HTTPError, HostedHarnessError):
         logger.exception(
             "fault_targets_environment_files_unreadable", job_id=str(job.id)
         )
-        return door_targets(contract_data(job), actor_rules({}), []), []
+        return door_targets(working_contract(job)[0], actor_rules({}), []), []
 
 
 def _names_actors(call_actors: object, scenario_docs: object) -> bool:
@@ -1162,6 +1213,12 @@ def _contract_section(
         }
     if evidence.tool_certification is not None:
         section["tool_certification"] = evidence.tool_certification.get("tools", [])
+    declared = contract.get("workers")
+    section["workers"] = [
+        _contract_worker(one)
+        for one in (declared if isinstance(declared, list) else [])
+        if isinstance(one, dict) and one.get("id")
+    ]
     section["amendments"] = _amendments(contract.get("amendments"))
     section["sub_goals"] = _catalogue_entries(evidence.sub_goals)
     goal_names = {goal["name"] for goal in section["sub_goals"]}
@@ -1308,6 +1365,57 @@ def _max_turns(docs: Any) -> int | None:
         if isinstance(doc, dict) and isinstance(doc.get("max_turns"), int)
     ]
     return max(budgets) if budgets else None
+
+
+def _contract_worker(worker: dict[str, Any]) -> ContractWorker:
+    """A declared worker, its allowed tools kept only when narrower than the tools its code holds."""
+    tools = [str(one) for one in worker.get("tools") or [] if isinstance(one, str)]
+    allowed = worker.get("allowed_tools")
+    allowed = [str(one) for one in allowed] if isinstance(allowed, list) else []
+    narrower = bool(allowed) and any(tool not in allowed for tool in tools)
+    binding = worker.get("binding")
+    raw_name = worker.get("name")
+    name = raw_name if isinstance(raw_name, str) else ""
+    out: ContractWorker = {
+        "id": str(worker["id"]),
+        "display_name": name.strip() or str(worker["id"]),
+        "tools": tools,
+        "allowed_tools": allowed if narrower else [],
+        "tools_shown": allowed if narrower else tools,
+        "binding": binding if binding in ("separate", "shared") else "not_declared",
+        # No trial here: a separate worker's hold is not known until one shows it.
+        "enforcement": (enforcement := worker_enforcement(binding)),
+        "enforcement_label": WORKER_ENFORCEMENT_LABELS[enforcement],
+    }
+    if isinstance(worker.get("name"), str):
+        out["name"] = worker["name"]
+    if isinstance(worker.get("address_env"), str):
+        out["address_env"] = worker["address_env"]
+    if isinstance(worker.get("process"), str):
+        out["process"] = worker["process"]
+    return out
+
+
+def version_participants(version: AgentVersion) -> list[ContractWorker]:
+    """The workers the newest environment built for this agent version declares, as its Workers card shows them;
+    empty when no environment was built for it or its app declares none."""
+    built = (
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            agent_version=version,
+            organization_id=version.organization_id,
+            status=VersionStatus.ACTIVE,
+        )
+        .order_by("-created_at")
+        .only("documents")
+        .first()
+    )
+    contract = (built.documents or {}).get("contract") if built is not None else None
+    declared = contract.get("workers") if isinstance(contract, dict) else None
+    return [
+        _contract_worker(one)
+        for one in (declared if isinstance(declared, list) else [])
+        if isinstance(one, dict) and one.get("id")
+    ]
 
 
 def _amendments(value: Any) -> list[dict[str, str]]:

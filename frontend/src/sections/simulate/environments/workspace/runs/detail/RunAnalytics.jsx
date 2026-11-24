@@ -139,6 +139,7 @@ const OUTCOMES = [
   { key: "passed", label: "Passed", role: "success" },
   { key: "failed", label: "Failed", role: "danger" },
   { key: "error", label: "Error", role: "warning" },
+  { key: "cancelled", label: STATUS_META.cancelled.label, role: "neutral" },
   { key: "inconclusive", label: "Inconclusive", role: "neutral" },
   { key: "no_score", label: STATUS_META.no_score.label, role: "neutral" },
 ];
@@ -665,8 +666,10 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           rows={dashboard.use_case_risk}
           xKey="scenario"
           series={OUTCOMES.filter(
+            // No score and Cancelled appear only in a run that has them.
             (outcome) =>
-              outcome.key !== "no_score" || summary.outcomes?.no_score,
+              !["no_score", "cancelled"].includes(outcome.key) ||
+              summary.outcomes?.[outcome.key],
           )}
           horizontal
           height={330}

@@ -194,6 +194,7 @@ export default function WorldPanel({ env, envState, graphData, chat = null }) {
             openTool={openTool}
             onOpenTool={onOpenTool}
             removal={removal}
+            fromDraft={Boolean(env?.contractFromDraft)}
             sx={{ mb: 2 }}
           />
         )
@@ -237,6 +238,7 @@ WorldPanel.propTypes = {
     toolStatus: PropTypes.arrayOf(PropTypes.object),
     worldTables: PropTypes.arrayOf(PropTypes.object),
     worldTotalRows: PropTypes.number,
+    contractFromDraft: PropTypes.bool,
     dataSchemaColumns: PropTypes.object,
     baseEnvironment: PropTypes.oneOfType([
       PropTypes.object,

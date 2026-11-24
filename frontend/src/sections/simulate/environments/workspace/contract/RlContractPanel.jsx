@@ -9,6 +9,7 @@ import { WORKSPACE_COPY } from "../workspace.constants";
 import { Label } from "./ContractPart";
 import ContractListCard from "./ContractListCard";
 import ContractEditDialog from "./ContractEditDialog";
+import WorkersCard from "./WorkersCard";
 import { contractInstruction } from "./contractInstructions";
 import {
   CONTRACT_COPY,
@@ -132,6 +133,10 @@ export default function RlContractPanel({
           onRemove={open("useCase", "remove")}
           sx={{ mb: 2 }}
         />
+      )}
+
+      {env?.workers?.length > 0 && (
+        <WorkersCard workers={env.workers} sx={{ mb: 2 }} />
       )}
 
       <SectionCard roomy title={EC.title} subtitle={EC.subtitle} sx={{ mb: 2 }}>
@@ -272,6 +277,7 @@ RlContractPanel.propTypes = {
     ruleDetails: PropTypes.arrayOf(PropTypes.object),
     useCaseDetails: PropTypes.arrayOf(PropTypes.object),
     subGoals: PropTypes.arrayOf(PropTypes.object),
+    workers: PropTypes.arrayOf(PropTypes.object),
     endConditions: PropTypes.shape({
       max_turns: PropTypes.number,
       max_duration_seconds: PropTypes.number,

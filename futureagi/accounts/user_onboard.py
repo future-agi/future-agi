@@ -1052,7 +1052,19 @@ Include a brief note explaining how your answer connects to the context.
         raise
 
 
+def _demo_publication_table_ready():
+    """False only while an old install migrates through accounts.0020, before
+    accounts.0029 creates the publication outbox. accounts.0030 then queues
+    every demo trace created without a publication row."""
+    from django.db import connection
+
+    from accounts.models.demo_seed import DemoTracePublication
+
+    return DemoTracePublication._meta.db_table in connection.introspection.table_names()
+
+
 def create_demo_traces_and_spans(organization_id, user_id=None, *, publish=True):
+    publish = publish and _demo_publication_table_ready()
     try:
         organization = Organization.objects.get(id=organization_id)
 

@@ -248,8 +248,7 @@ describe("useEnvironment resolution order", () => {
     expect(result.current.env).toBeNull();
   });
 
-  it("resolves a template id from the prebuilt catalogue", async () => {
-    getHarnessJob.mockRejectedValue(notFoundError());
+  it("resolves a prebuilt template without a job or environment request", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useEnvironment("env-voice-support"), {
       wrapper: Wrapper,
@@ -257,6 +256,8 @@ describe("useEnvironment resolution order", () => {
 
     await waitFor(() => expect(result.current.source).toBe("template"));
     expect(result.current.env.id).toBe("env-voice-support");
+    expect(getHarnessJob).not.toHaveBeenCalled();
+    expect(getHarnessEnvironment).not.toHaveBeenCalled();
   });
 });
 
@@ -352,10 +353,10 @@ describe("harnessJobToEnvironment", () => {
     expect(env.buildProgress.total).toBeGreaterThan(0);
   });
 
-  // "running" is past connecting_agent in the pipeline, so the world is derived
-  // and the build experience must give way to the workspace.
-  it("reads a running job as a built environment, not one still building", () => {
-    expect(harnessJobToEnvironment(RUNNING_JOB).env.buildStatus).toBe("ready");
+  it("reads a running job as still building, through the release checks", () => {
+    expect(harnessJobToEnvironment(RUNNING_JOB).env.buildStatus).toBe(
+      "building",
+    );
   });
 
   it("marks a terminal-failed job as failed (not building) and carries the failure", () => {

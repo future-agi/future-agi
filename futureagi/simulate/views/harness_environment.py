@@ -133,6 +133,7 @@ from simulate.services.harness_environment import (
     eval_modality,
     filter_for_list,
     status_counts,
+    with_version_contract,
 )
 from simulate.services.harness_provider import (
     _usage_limit_response,
@@ -1470,7 +1471,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         query = request.validated_query_data
         jobs = filter_for_list(
-            self._queryset(request),
+            with_version_contract(self._queryset(request)),
             search=query.get("search"),
             status=query.get("status"),
             agent_type=query.get("agent_type"),

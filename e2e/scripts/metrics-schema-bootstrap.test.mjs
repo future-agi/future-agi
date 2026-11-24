@@ -23,7 +23,10 @@ test('the E2E stack applies the whole packaged Metrics ClickHouse schema before 
   assert.ok(!job.command.includes('--force'));
   const files = job.command.slice(job.command.indexOf('--files') + 1);
   const packaged = (await readdir(schemaDir)).filter(name => /^\d{3}_.*\.sql$/.test(name)).sort();
-  const metrics = packaged.filter(name => Number(name.slice(0, 3)) >= 28 && Number(name.slice(0, 3)) <= 38);
+  // 028_reconcile_metadata_dictionaries.sql (from main, v1.59.0) shares the 028
+  // prefix but repairs trace/user/session dictionaries; it is not a Metrics file.
+  const metrics = packaged.filter(name => Number(name.slice(0, 3)) >= 28 && Number(name.slice(0, 3)) <= 38
+    && name !== '028_reconcile_metadata_dictionaries.sql');
   assert.equal(metrics.length, 11);
   // 028 alters tracer_eval_logger_v2 (011), whose materialized view writes 009's rollup.
   assert.deepEqual(files, ['009_per_eval_rollup.sql', '011_eval_logger_v2.sql', ...metrics]);

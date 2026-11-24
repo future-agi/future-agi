@@ -88,6 +88,19 @@ export function ParticipantActions({ one }) {
         />
       </Box>,
     );
+  if (one.refused_actions?.length)
+    lines.push(
+      <Box key="x" data-testid="refused-attempts">
+        <Typography sx={{ ...quiet, fontWeight: 600 }}>
+          {C.refusedHeading}
+        </Typography>
+        {one.refused_actions.map((refused, index) => (
+          <Typography key={`${refused.action}-${index}`} sx={quiet}>
+            {C.refusedAttempt(refused)}
+          </Typography>
+        ))}
+      </Box>,
+    );
   if (one.no_change && !one.committed_actions?.length)
     lines.push(
       <Typography key="n" sx={quiet}>

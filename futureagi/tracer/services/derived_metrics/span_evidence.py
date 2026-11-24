@@ -58,7 +58,7 @@ def require_retirement_evidence(
     from tracer.services.derived_metrics.retention import _proposal_rows
     from tracer.services.derived_metrics.storage import BUCKET_TOTALS, RETIRED_PARTS
 
-    dirty = ()
+    dirty: tuple[datetime, ...] = ()
     if draft is not None:
         if draft.parent_manifest_id != head.id:
             raise MetricStateConflict("span evidence proposal has a different parent")
@@ -77,7 +77,8 @@ def require_retirement_evidence(
     for definition in definitions:
         if definition.level != "span":
             continue
-        counts, params = [], {}
+        counts: list[str] = []
+        params: dict[str, object] = {}
         for table, alias in (
             (FIELD_VALUES, "live"),
             (BUCKET_TOTALS, "total"),
@@ -181,7 +182,7 @@ def _bucket_runs(dirty):
     Each run is a half-open [first, last + 15 min) window: exactly the union of
     its quarters' windows, never a skipped (clean) quarter between them.
     """
-    runs = []
+    runs: list[tuple[datetime, datetime, int]] = []
     for at in sorted(dirty):
         if runs and runs[-1][1] == at and runs[-1][2] < MAX_RUN_QUARTERS:
             runs[-1] = (runs[-1][0], at + QUARTER, runs[-1][2] + 1)

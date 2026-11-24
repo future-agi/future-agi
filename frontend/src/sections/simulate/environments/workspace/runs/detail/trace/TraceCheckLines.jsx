@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Box, Link, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { CHECK_LINE_COPY as C } from "./traceTable.constants";
+import { CHECK_LINE_COPY as C, subGoalLabel } from "./traceTable.constants";
 
 const SHOWN = 3;
 
@@ -51,7 +51,7 @@ function subGoalItem(goal, index) {
           : "inconclusive";
   return {
     key: `goal-${goal.name}-${index}`,
-    name: goal.name,
+    name: subGoalLabel(goal) || goal.name,
     state,
     detail: [
       goal.evidence?.length ? evidenceLabel(goal.evidence) : null,

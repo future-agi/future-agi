@@ -623,6 +623,40 @@ def test_receipt_projects_actual_call_end_time_and_duration():
     call.save.assert_called_once()
 
 
+@pytest.mark.parametrize("status", ["errored", "failed", "skipped"])
+def test_a_receipt_with_no_call_data_still_ends_the_call_so_its_worker_read_is_due(
+    status,
+):
+    """A failed or stopped trial whose receipt carries no call: its end is recorded, so `/workers/` answers pending
+    until its read has run, never "no workers"."""
+    registration = MagicMock()
+    call = registration.call_execution
+    call.call_metadata = {}
+    call.completed_at = None
+    body = {
+        "status": status,
+        "call": None,
+        "sub_goals": [],
+        "evaluations": [],
+        "failure": {
+            "code": "user_canceled",
+            "message": "Stopped",
+            "domain": "platform_sync",
+        },
+    }
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion."
+            "HostedHarnessArtifact.no_workspace_objects"
+        ) as artifacts,
+        patch("simulate.services.hosted_harness_ingestion.transaction.on_commit"),
+    ):
+        artifacts.filter.return_value.order_by.return_value.last.return_value = None
+        _apply_receipt_to_call(registration, body)
+
+    assert call.completed_at is not None
+
+
 @pytest.mark.parametrize("script_completed", [True, False])
 def test_call_receipt_accepts_explicit_script_completion(script_completed):
     call = {
@@ -1025,7 +1059,7 @@ def test_job_idempotency_cannot_cross_workspaces(organization, workspace):
 
 @pytest.mark.django_db
 def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
-    organization, workspace
+    organization, workspace, django_capture_on_commit_callbacks
 ):
     job, _ = create_hosted_job(
         organization,
@@ -1093,13 +1127,21 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
         "failure": None,
     }
     receipt["digest"] = canonical_digest(receipt)
-    result = client.post(
-        f"{BASE}/{capability.attempt.id}/results/",
-        receipt,
-        format="json",
-        **headers,
-    )
+    with (
+        patch("simulate.tasks.alk_sim.record_call_workers.apply_async") as read_workers,
+        patch("simulate.services.alk_simulate_ingestion._dispatch_csat_once"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        result = client.post(
+            f"{BASE}/{capability.attempt.id}/results/",
+            receipt,
+            format="json",
+            **headers,
+        )
     assert result.status_code == 200, result.content
+    # Which worker did what is read once the call's spans have had time to arrive.
+    [scheduled] = read_workers.call_args_list
+    assert scheduled.kwargs["start_delay"].total_seconds() > 0
 
     job.refresh_from_db()
     assert job.run_test.workspace == workspace
@@ -2283,3 +2325,80 @@ def test_scenario_receipt_manifest_and_cleanup_finalize_platform_rows(organizati
     assert finalized.current_stage == "completed"
     finalized.test_execution.refresh_from_db()
     assert finalized.test_execution.status == "completed"
+
+
+@pytest.mark.django_db
+def test_a_trial_that_ended_without_completing_its_call_still_gets_its_worker_read(
+    organization, workspace, django_capture_on_commit_callbacks
+):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="worker-read-skipped",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    headers = _headers(capability)
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Workspace outcome",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "discount-request",
+                    "name": "Customer",
+                    "situation": "Requests a discount",
+                    "outcome": "Agent follows policy",
+                }
+            ],
+        },
+        format="json",
+        **headers,
+    )
+    assert provision.status_code == 200, provision.content
+    provisioned = provision.json()["result"]
+    begin = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["discount-request"],
+        },
+        format="json",
+        **headers,
+    )
+    assert begin.status_code == 200, begin.content
+    scenario = provisioned["scenarios"][0]
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "discount-request",
+        "scenario_id": scenario["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": None,
+        "status": "skipped",
+        "sub_goals": [],
+        "evaluations": [],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    with (
+        patch("simulate.tasks.alk_sim.record_call_workers.apply_async") as read_workers,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        result = client.post(
+            f"{BASE}/{capability.attempt.id}/results/",
+            receipt,
+            format="json",
+            **headers,
+        )
+    assert result.status_code == 200, result.content
+    # A worker's end state is what the trial's ending made it, so a call that did not complete is read too.
+    [scheduled] = read_workers.call_args_list
+    assert scheduled.kwargs["start_delay"].total_seconds() == 35

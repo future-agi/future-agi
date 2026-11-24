@@ -4,6 +4,7 @@ import { enqueueSnackbar } from "notistack";
 import { render, screen, within } from "src/utils/test-utils";
 import useSimulationAccess from "../../../hooks/useSimulationAccess";
 import RlContractPanel from "../RlContractPanel";
+import { WORKERS_COPY } from "../workers.constants";
 
 vi.mock("../../../hooks/useSimulationAccess", () => ({ default: vi.fn() }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
@@ -296,5 +297,61 @@ describe("RlContractPanel", () => {
   it("disables the actions until the environment is ready", () => {
     renderPanel({ chat: liveChat({ live: false }) });
     expect(screen.getByRole("button", { name: /Add use case/ })).toBeDisabled();
+  });
+});
+
+describe("Participants card", () => {
+  // As the API serves them: a non-null channel and the tools each may use.
+  const workers = [
+    {
+      id: "order_lookup",
+      name: "Order-lookup worker",
+      display_name: "Order-lookup worker",
+      tools: ["get_order", "list_refunds", "update_order_status"],
+      allowed_tools: ["get_order", "list_refunds"],
+      tools_shown: ["get_order", "list_refunds"],
+      binding: "separate",
+      enforcement: "unknown",
+      enforcement_label:
+        "Not confirmed yet: no run has shown this participant's own calls",
+    },
+    {
+      id: "refund",
+      name: "Refund worker",
+      display_name: "Refund worker",
+      tools: ["list_refunds", "issue_refund"],
+      allowed_tools: [],
+      tools_shown: ["list_refunds", "issue_refund"],
+      binding: "not_declared",
+      enforcement: "not_enforced",
+      enforcement_label:
+        "Limits can't be enforced: this participant runs inside the app, so its calls can't be told apart",
+    },
+  ];
+
+  it("lists each declared worker with its served channel and only the tools it may use", () => {
+    renderPanel({ env: { ...env, workers } });
+    const rows = screen.getAllByTestId("declared-worker");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText("get_order")).toBeTruthy();
+    expect(within(rows[0]).queryByText("update_order_status")).toBeNull();
+    // No channel is claimed for a worker whose contract entry does not say.
+    expect(rows[1]).not.toHaveTextContent(WORKERS_COPY.binding.shared);
+    expect(rows[1]).toHaveTextContent(WORKERS_COPY.binding.not_declared);
+  });
+
+  it("calls them Participants, as the agent and the call drawers do, in product words", () => {
+    renderPanel({ env: { ...env, workers } });
+    expect(screen.getByText("Participants")).toBeInTheDocument();
+    expect(screen.getByText("2 participants")).toBeInTheDocument();
+    const rows = screen.getAllByTestId("declared-worker");
+    expect(rows[0]).toHaveTextContent("Own connection");
+    expect(rows[1]).toHaveTextContent("Connection not declared");
+    expect(screen.queryByText(/channel/i)).toBeNull();
+  });
+
+  it("hides the workers card when the contract declares none", () => {
+    renderPanel();
+    expect(screen.queryByTestId("declared-workers")).toBeNull();
   });
 });
