@@ -954,7 +954,8 @@ def _execute_snapshot(run_id, *, store=None, policy=None):
     scope = scope_for(run)
     with serialized_project(scope.project):
         run.refresh_from_db()
-        if run.status == "running" and run.lease_expires_at > timezone.now():
+        # A running capture always holds a lease; keep failing loudly if not.
+        if run.status == "running" and run.lease_expires_at > timezone.now():  # type: ignore[operator]
             return
         if (
             run.status not in {"queued", "running"}
@@ -1015,6 +1016,8 @@ def _execute_snapshot(run_id, *, store=None, policy=None):
                 run.pin.manifest if run.pin else None,
                 policy or _policy,
             )
+            if run.pin is None:  # Already rejected by _assert_retained.
+                raise MetricStateConflict("expired capture")
             connection.assert_visible(run.pin.manifest)
             purge_run(
                 connection,
@@ -1064,9 +1067,12 @@ def _execute_snapshot(run_id, *, store=None, policy=None):
             private_logger.exception("metric_snapshot_capture_failed", exc)
         finally:
             with serialized_project(scope.project):
-                if DerivedMetricRun.objects.filter(
-                    pk=run.id, attempt_id=run.attempt_id
-                ).exists():
+                if (
+                    run.pin_id is not None
+                    and DerivedMetricRun.objects.filter(
+                        pk=run.id, attempt_id=run.attempt_id
+                    ).exists()
+                ):
                     MetricGenerationPin.objects.filter(pk=run.pin_id).delete()
 
 
@@ -1086,9 +1092,10 @@ def delete_snapshot(metric, snapshot_id, user):
                 else "cleanup_pending"
             }
         DerivedMetricRun.mark_snapshot_deleted(run.id, user_id=user.id)
-        MetricGenerationPin.objects.filter(pk=run.pin_id).update(
-            invalidated_at=timezone.now(), invalidation_reason="erased"
-        )
+        if run.pin_id is not None:
+            MetricGenerationPin.objects.filter(pk=run.pin_id).update(
+                invalidated_at=timezone.now(), invalidation_reason="erased"
+            )
         request = _intent(
             organization_id=metric.organization_id,
             project_id=metric.project_id,

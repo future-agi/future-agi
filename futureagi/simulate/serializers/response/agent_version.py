@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
+from simulate.serializers.harness_environment import HarnessEnvironmentWorkerSerializer
 from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.agent_setup import agent_summary
 from tfc.permissions.utils import cached_is_read_only_user
@@ -310,6 +311,25 @@ class AgentVersionRestoreResponseSerializer(serializers.Serializer):
     message = serializers.CharField(read_only=True)
     agent = serializers.DictField(read_only=True)
     version = AgentVersionResponseSerializer(read_only=True)
+
+
+class AgentVersionDetailResponseSerializer(AgentVersionResponseSerializer):
+    """The version detail, with the workers its newest built environment declares (Agent > Definition > Participants)."""
+
+    participants = serializers.SerializerMethodField()
+
+    class Meta(AgentVersionResponseSerializer.Meta):
+        fields = [*AgentVersionResponseSerializer.Meta.fields, "participants"]
+        read_only_fields = fields
+
+    @swagger_serializer_method(
+        serializer_or_field=HarnessEnvironmentWorkerSerializer(many=True)
+    )
+    def get_participants(self, obj):
+        # Imported here: the environment service reaches this module back through the run results.
+        from simulate.services.harness_environment import version_participants
+
+        return version_participants(obj)
 
 
 class AgentVersionChangeResponseSerializer(serializers.Serializer):
