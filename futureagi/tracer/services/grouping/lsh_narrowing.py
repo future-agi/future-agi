@@ -61,7 +61,7 @@ def narrow_candidates_with_lsh(
     client: ClickHouseClient,
     organization_id: uuid.UUID,
     project_id: uuid.UUID,
-    pending: Sequence[Mapping[str, Any]],
+    pending: Sequence[Any],
     candidates: Sequence[dict[str, Any]],
     limit: int,
 ) -> list[dict[str, Any]]:
@@ -78,9 +78,11 @@ def narrow_candidates_with_lsh(
         candidates_by_view[str(item["view"])].append(item)
 
     probes_by_view: dict[str, set[str]] = defaultdict(set)
-    for row in pending:
-        view = str(row["view"])
-        raw_buckets = row.get("bucket_keys")
+    for pending_row in pending:
+        if not isinstance(pending_row, Mapping):
+            continue
+        view = str(pending_row["view"])
+        raw_buckets = pending_row.get("bucket_keys")
         if isinstance(raw_buckets, (list, tuple)):
             probes_by_view[view].update(expand_lsh_probe_keys(view, raw_buckets))
 
@@ -108,10 +110,10 @@ def narrow_candidates_with_lsh(
 
         matched: list[dict[str, Any]] = []
         seen_digests: set[str] = set()
-        for row in bucket_rows:
-            if not row:
+        for bucket_row in bucket_rows:
+            if not bucket_row:
                 continue
-            digest = str(row[0])
+            digest = str(bucket_row[0])
             if digest in seen_digests or digest not in by_digest:
                 continue
             seen_digests.add(digest)
