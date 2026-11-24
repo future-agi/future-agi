@@ -578,6 +578,14 @@ export function validateContractedResponse(response) {
   );
   if (!endpoint) return { ok: true, skipped: true };
 
+  // An empty 204 has no body to check, whatever success schema the endpoint declares.
+  if (
+    Number(response?.status) === 204 &&
+    (response.data == null || response.data === "")
+  ) {
+    return { ok: true, skipped: true, endpoint };
+  }
+
   const schema = responseSchemaFor(endpoint, response?.status);
   const mediaSchema =
     endpoint.contract.operationId === "getAttachmentMedia"
