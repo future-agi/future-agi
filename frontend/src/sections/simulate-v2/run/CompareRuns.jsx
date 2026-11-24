@@ -79,7 +79,7 @@ import CompareActions, {
 import CompareGrid from "./CompareGrid";
 import CompareSummary from "./CompareSummary";
 import CompareVerdict from "./CompareVerdict";
-import OutcomeChip from "./CompareOutcome";
+import { OutcomeLine } from "./CompareOutcome";
 import { csatOf } from "./traceTableHelpers";
 import RuleChangeDialog from "../components/RuleChangeDialog";
 import { agentSourceOf } from "../_mock/agentRegistry";
@@ -1585,12 +1585,24 @@ function TableView({
                 {...clickable(() => onOpen(row))}
               >
                 <Box minWidth={0}>
-                  <Stack direction="row" alignItems="center" spacing={0.75}>
-                    <OutcomeChip pair={row.pair} />
-                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                      {row.title}
-                    </Typography>
-                  </Stack>
+                  {/* Title on its own line, full width; the pair and what
+                      moved sit quietly under it (no chip beside the title). */}
+                  <Typography
+                    noWrap
+                    title={row.title}
+                    sx={{ typography: "s2", fontWeight: 600 }}
+                  >
+                    {row.title}
+                  </Typography>
+                  <OutcomeLine
+                    pair={row.pair}
+                    extra={
+                      view.rowHeight !== "large" &&
+                      typeof row.persona?.name === "string"
+                        ? row.persona.name
+                        : null
+                    }
+                  />
                   {view.rowHeight === "large" && (
                     <Typography
                       sx={{

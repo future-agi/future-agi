@@ -13,6 +13,7 @@ import {
 import { alpha, useTheme } from "@mui/material/styles";
 import {
   Box,
+  ButtonBase,
   Stack,
   Typography,
   Button,
@@ -764,7 +765,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
   const gates = useRoleGates();
   const rerun = (
     ids,
-    { mode = "now", agent = null, toolReplay = null } = {},
+    { mode = "now", agent = null, toolReplay = null, trials = null } = {},
   ) =>
     !gates.canRun
       ? enqueueSnackbar(gates.runReason, { variant: "info" })
@@ -774,7 +775,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           navigate(
             runPlanHref(envId, {
               only: ids || [],
-              trials: sourceRun?.repeats || 3,
+              trials: trials || sourceRun?.repeats || 3,
               agent: snap
                 ? agent || sourceRun.agentVersion
                 : agent || undefined,
@@ -2912,6 +2913,81 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   unmeasured tasks — with those filtered in and nothing failing,
                   `shown` is non-empty but zero groups render. Detect that and
                   show a real empty state instead of a blank table. */}
+                {/* Flaky scenarios (Chintan's PR #61 designs B and D): say what
+                  it means and offer the one useful next step — the same
+                  scenarios again with more trials, so each one settles. */}
+                {statusCounts.mixed > 0 &&
+                  !candidate &&
+                  !trialMeta &&
+                  (statusChip === "all" || statusChip === "mixed") &&
+                  (() => {
+                    const n = statusCounts.mixed;
+                    const more = Math.max(5, (sourceRun?.repeats || 3) + 2);
+                    const ids = [
+                      ...new Set(
+                        tasks
+                          .filter(
+                            (t) => !t.pulled && statusBucket(t) === "mixed",
+                          )
+                          .map((t) => t.scenarioId || t.id),
+                      ),
+                    ];
+                    return (
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={1}
+                        sx={{ mb: 1.5, flexWrap: "wrap", rowGap: 0.5 }}
+                      >
+                        <Iconify
+                          icon="solar:shuffle-linear"
+                          width={14}
+                          sx={{ color: "status.warning.solid", flexShrink: 0 }}
+                        />
+                        <Typography
+                          sx={{ typography: "s2", color: "text.secondary" }}
+                        >
+                          {/* The count narrows the table to the Flaky chip. */}
+                          <ButtonBase
+                            onClick={() => setStatusChip("mixed")}
+                            disabled={statusChip === "mixed"}
+                            sx={{
+                              typography: "s2",
+                              verticalAlign: "baseline",
+                              color:
+                                statusChip === "mixed"
+                                  ? "text.primary"
+                                  : "primary.main",
+                              fontWeight: 500,
+                              "&:hover": { textDecoration: "underline" },
+                            }}
+                          >
+                            {`${n} scenario${n === 1 ? "" : "s"}`}
+                          </ButtonBase>
+                          {` ${n === 1 ? "passes" : "pass"} in some trials and fail${n === 1 ? "s" : ""} in others — the agent isn't consistent on ${n === 1 ? "it" : "them"}.`}
+                        </Typography>
+                        <Button
+                          size="small"
+                          variant="text"
+                          onClick={() =>
+                            rerun(ids, {
+                              mode: canSnapshot ? "snapshot" : "now",
+                              trials: more,
+                            })
+                          }
+                          sx={{
+                            px: 0.75,
+                            minWidth: 0,
+                            typography: "s2",
+                            fontWeight: 500,
+                            color: "primary.main",
+                          }}
+                        >
+                          {`Run ${n === 1 ? "it" : "them"} again with ${more} trials`}
+                        </Button>
+                      </Stack>
+                    );
+                  })()}
                 {/* Test invalid twice: pulled from this run, flagged for review,
                   and left out of every count — a small group of its own. */}
                 {groupBy === "member" && entryMember && (

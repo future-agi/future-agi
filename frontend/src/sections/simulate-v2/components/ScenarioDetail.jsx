@@ -42,6 +42,7 @@ import { assumptionOf } from "../_mock/scenarioProvenance";
 import { callerCastOf, subActorsOf } from "../_mock/subActors";
 import { roleOf } from "../_mock/actors";
 import TestConditionRow from "./TestConditionRow";
+import { VERDICT_TONE } from "./primitives";
 import { ScenarioRowContext } from "../workspace/scenarios/scenarioRowContext";
 import { clickable, focusRing } from "./clickable";
 import { scenarioTitle } from "../_mock/scenarios";
@@ -814,6 +815,27 @@ function DrawerSheet({
         />
       </Box>
 
+      {/* Its trials run by run (Chintan's PR #61 design A): one row per run,
+          latest first, one dot per trial — each opens that trial's call. */}
+      {history.some((h) => h.samples?.length > 1) && (
+        <Part title="Trials by run">
+          {[...history]
+            .reverse()
+            .filter((h) => h.samples?.length)
+            .map((h) => (
+              <TrialRunRow
+                key={h.runId}
+                h={h}
+                onOpen={(i) =>
+                  navigate(
+                    `${paths.dashboard.simulate.simulationRun(env.id, h.runId)}?call=${encodeURIComponent(h.taskId)}&trial=${i + 1}`,
+                  )
+                }
+              />
+            ))}
+        </Part>
+      )}
+
       {/* Three layers kept apart (scenarios.md): what the agent sees, the
           simulated customer's hidden instruction, and the hidden marking. */}
       <Part title="What the agent sees">
@@ -1334,6 +1356,71 @@ WrongWayRow.propTypes = {
   examples: PropTypes.array,
   none: PropTypes.string,
 };
+
+/* One run's trials of this scenario: the run, a dot per trial (click opens
+   that trial's call), and how many passed. */
+function TrialRunRow({ h, onOpen }) {
+  const passed = h.samples.filter((s) => s === "passed").length;
+  const word = { passed: "Passed", failed: "Failed", flaky: "Flaky" }[h.status];
+  return (
+    <Box
+      className="sr"
+      sx={{
+        display: "grid",
+        gridTemplateColumns: "124px minmax(0, 1fr) auto",
+        alignItems: "center",
+        columnGap: 2,
+        px: 1.75,
+        py: 0.875,
+      }}
+    >
+      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        {h.name}
+      </Typography>
+      <Stack direction="row" alignItems="center" spacing={0.5}>
+        {h.samples.map((s, i) => {
+          const tone = VERDICT_TONE[s] || VERDICT_TONE.unmeasured;
+          return (
+            <Tooltip
+              key={i}
+              arrow
+              title={`Trial ${i + 1} · ${tone.label} — open its call`}
+            >
+              <Box
+                component="button"
+                type="button"
+                onClick={() => onOpen(i)}
+                aria-label={`${h.name}, trial ${i + 1}, ${tone.label}`}
+                sx={{
+                  p: 0,
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  border: 0,
+                  cursor: "pointer",
+                  bgcolor: tone.color,
+                  "&:hover": { outline: "2px solid", outlineColor: "divider" },
+                  ...focusRing,
+                }}
+              />
+            </Tooltip>
+          );
+        })}
+      </Stack>
+      <Typography
+        sx={{
+          typography: "s2",
+          color: "text.secondary",
+          fontVariantNumeric: "tabular-nums",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {`${passed} of ${h.samples.length} passed${word ? ` · ${word}` : ""}`}
+      </Typography>
+    </Box>
+  );
+}
+TrialRunRow.propTypes = { h: PropTypes.object, onOpen: PropTypes.func };
 
 /* The run history as small dots, oldest first — the run's name and result on hover. */
 function RunDots({ history }) {

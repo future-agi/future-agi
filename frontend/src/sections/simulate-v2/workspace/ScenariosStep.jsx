@@ -651,6 +651,8 @@ export default function ScenariosStep({
       .filter((r) => r.finishedAt && !r.synthetic)
       .slice(-8);
     const byScenario = new Map();
+    /* Each run's trials of the scenario, and the call that opens them. */
+    const trialsByScenario = new Map();
     /* The latest run each scenario was in — its sub-goals column reads it. */
     const latestTask = new Map();
     runs.forEach((r, i) =>
@@ -659,18 +661,26 @@ export default function ScenariosStep({
         if (!byScenario.has(key))
           byScenario.set(key, new Array(runs.length).fill(null));
         byScenario.get(key)[i] = t.pulled ? "unscored" : t.status;
+        if (!trialsByScenario.has(key))
+          trialsByScenario.set(key, new Array(runs.length).fill(null));
+        trialsByScenario.get(key)[i] = t.pulled
+          ? null
+          : { samples: t.samples || null, taskId: t.id };
         latestTask.set(key, { task: t, name: `Run ${r.ordinal}`, runId: r.id });
       }),
     );
-    return { runs, byScenario, latestTask };
+    return { runs, byScenario, trialsByScenario, latestTask };
   }, [env, envState]);
   const historyOf = (row) => {
     if (!runHistory.runs.length) return null;
     const statuses = runHistory.byScenario.get(row.id) || [];
+    const trials = runHistory.trialsByScenario.get(row.id) || [];
     return runHistory.runs.map((r, i) => ({
       runId: r.id,
       name: `Run ${r.ordinal}`,
       status: statuses[i] || null,
+      samples: trials[i]?.samples || null,
+      taskId: trials[i]?.taskId || null,
     }));
   };
   const latestOf = (row) => runHistory.latestTask.get(row.id) || null;

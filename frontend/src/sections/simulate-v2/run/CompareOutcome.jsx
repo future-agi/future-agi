@@ -93,3 +93,51 @@ export default function OutcomeChip({ pair }) {
   );
 }
 OutcomeChip.propTypes = { pair: PropTypes.object };
+
+/**
+ * The same tag as one quiet line under the scenario's title (the compare
+ * table): "Exact · passed → flaky · Rachel Greene". No tinted chip, so the
+ * title keeps the full width; the flip is red only for an exact regression.
+ */
+export function OutcomeLine({ pair, extra = null }) {
+  const meta = pair ? PAIR_CLASSES[pair.cls] : null;
+  if (!meta && !extra) return null;
+  const moved = meta?.inDelta && pair.flip && pair.flip.kind !== "same";
+  const bad = pair?.cls === "exact" && pair.flip?.kind === "regressed";
+  const tip = meta
+    ? [
+        meta.tip,
+        ...(pair.reasons || []).filter((r) => !/^Only in the/.test(r)),
+        moved ? `Baseline ${pair.flip.a}, now ${pair.flip.b}.` : null,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : "";
+  return (
+    <Tooltip arrow title={tip} placement="bottom-start">
+      <Typography
+        noWrap
+        sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
+      >
+        {meta?.short}
+        {moved && (
+          <>
+            {" · "}
+            <Box
+              component="span"
+              sx={{
+                color: bad ? "status.danger.fg" : "text.secondary",
+                fontWeight: 500,
+              }}
+            >
+              {pair.flip.text}
+            </Box>
+          </>
+        )}
+        {(pair?.criteria || []).length > 0 && " · criteria changed"}
+        {extra && `${meta ? " · " : ""}${extra}`}
+      </Typography>
+    </Tooltip>
+  );
+}
+OutcomeLine.propTypes = { pair: PropTypes.object, extra: PropTypes.string };

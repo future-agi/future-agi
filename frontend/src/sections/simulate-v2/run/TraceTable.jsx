@@ -30,7 +30,6 @@ import { subTasksFor } from "../_mock/contract";
 import {
   subGoalResultsOf,
   rollupLine,
-  subGoalBasisOf,
   MARK_NOTE,
 } from "../_mock/scenarioSubGoals";
 import { neutralCheckboxSx } from "../components/primitives";
@@ -564,10 +563,14 @@ export default function TraceTable({
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
   /* Which evals to render, in order. Any not explicitly hidden shows. */
-  const shownEvals = useMemo(
-    () => visibleEvals(visible, evals),
-    [visible, evals],
-  );
+  /* Required evaluations are marked on their column (header and a failing
+     cell), not listed again inside the row. */
+  const shownEvals = useMemo(() => {
+    const req = new Set(requiredEvalIds(envState?.evals || []));
+    return visibleEvals(visible, evals).map((e) =>
+      req.has(e.id) ? { ...e, required: true } : e,
+    );
+  }, [visible, evals, envState]);
   const showEvals = shownEvals.length > 0;
 
   const allOn = tasks.length > 0 && tasks.every((t) => selected.has(t.id));
@@ -835,8 +838,21 @@ export default function TraceTable({
                   spacing={0.75}
                   sx={{ mb: 0.125 }}
                 >
-                  <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
-                    {variantLabel(t.id)}
+                  {/* What the scenario is, as the row's title; its kind
+                      ("Adversarial") moves to the status line. */}
+                  <Typography
+                    title={t.summary || undefined}
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 600,
+                      maxWidth: 440,
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {t.summary || variantLabel(t.id)}
                   </Typography>
                   {t.critical &&
                     (() => {
@@ -895,19 +911,12 @@ export default function TraceTable({
                       );
                     })()}
                 </Stack>
-                {t.summary && (
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      color: "text.secondary",
-                      mb: 0.375,
-                      maxWidth: 340,
-                    }}
-                  >
-                    {t.summary}
-                  </Typography>
-                )}
-                <Stack direction="row" alignItems="center" spacing={0.75}>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.75}
+                  sx={{ mt: 0.25 }}
+                >
                   <VerdictLabel task={t} outcome={outcome} />
                   <TrialDots samples={t.samples} />
                   <Box
@@ -918,8 +927,11 @@ export default function TraceTable({
                       bgcolor: "text.disabled",
                     }}
                   />
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    {`${((t.durationMs || 0) / 1000).toFixed(1)}s ${env?.surface === "voice" ? "call" : "conversation"}`}
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.tertiary" }}
+                  >
+                    {`${((t.durationMs || 0) / 1000).toFixed(1)}s${t.summary ? ` · ${variantLabel(t.id)}` : ""}`}
                   </Typography>
                 </Stack>
                 <SubGoalsSummary
@@ -1123,7 +1135,7 @@ export default function TraceTable({
                 </Box>
               </Tooltip>
             ) : r ? (
-              <Score result={r} />
+              <Score result={r} required={!!e.required} />
             ) : e.adhoc && e.errorIds?.has(t.id) ? (
               /* The judge didn't answer: not a score, not zero, not a pass
                  or a fail. */
@@ -1364,6 +1376,7 @@ export default function TraceTable({
                        as "not part of this eval run" rather than "this
                        scenario failed the grader". */
                     partial={e.adhoc ? e.includedIds?.size : 0}
+                    required={!!e.required}
                     rescoring={rescoringEvalId === e.id}
                     onEdit={onEditEval ? () => onEditEval(e) : null}
                     onRerun={onRerunEval ? () => onRerunEval(e) : null}
@@ -1505,8 +1518,28 @@ function GroupHeaderRow({
         {group.repeated ? `${group.passed}/${group.measured}` : `${group.pct}%`}
       </Box>
       {group.repeated
-        ? ` passed every trial${flakyN ? ` · ${flakyN} flaky` : ""}`
+        ? " passed every trial"
         : ` passed ${group.passed}/${group.measured}`}
+      {/* Flaky carries the Flaky chip's dot, so it reads at a glance. */}
+      {group.repeated && flakyN > 0 && (
+        <>
+          {" · "}
+          <Box
+            component="span"
+            sx={{
+              display: "inline-block",
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              bgcolor: "status.warning.solid",
+              verticalAlign: "middle",
+              mr: 0.5,
+              mb: "1px",
+            }}
+          />
+          {`${flakyN} flaky`}
+        </>
+      )}
     </Typography>
   );
   /* Member groups also say what that member fails at most. */
@@ -1895,7 +1928,15 @@ GroupHeaderRow.propTypes = {
    column only: re-run just this eval (re-score its cells, no full simulation)
    or delete the whole column. The trigger appears on hover so the header stays
    clean. */
-function EvalHeadCell({ name, partial, onEdit, onRerun, onHide, rescoring }) {
+function EvalHeadCell({
+  name,
+  partial,
+  required = false,
+  onEdit,
+  onRerun,
+  onHide,
+  rescoring,
+}) {
   const [anchor, setAnchor] = useState(null);
   const hasActions = !!(onEdit || onRerun || onHide);
   return (
@@ -1916,6 +1957,23 @@ function EvalHeadCell({ name, partial, onEdit, onRerun, onHide, rescoring }) {
       >
         {name}
       </Typography>
+      {required && (
+        <Tooltip
+          arrow
+          title="Required — a failing score fails the conversation, even when every sub-goal held"
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              flexShrink: 0,
+              cursor: "default",
+            }}
+          >
+            Required
+          </Typography>
+        </Tooltip>
+      )}
       {partial > 0 && (
         <Tooltip
           arrow
@@ -2048,6 +2106,7 @@ function EvalHeadCell({ name, partial, onEdit, onRerun, onHide, rescoring }) {
   );
 }
 EvalHeadCell.propTypes = {
+  required: PropTypes.bool,
   name: PropTypes.string,
   partial: PropTypes.number,
   onEdit: PropTypes.func,
@@ -2377,59 +2436,46 @@ function SubGoalsSummary({ task, env, envState, basis = null }) {
   const missed = rows.filter((r) => r.status !== "met");
   /* A sub-actor who didn't come in: listed with the rest, in no count. */
   const list = expanded ? [...rows, ...notApplicable] : missed;
-  /* Evaluations, listed like the sub-goals under their own header (Dileep,
-     24 Nov). A failed required one fails the conversation, so it shows
-     even when the row is folded; the rest only under Show all. */
-  const required = new Set(requiredEvalIds(envState?.evals || []));
-  const evalRows = (task.evalResults || []).filter(
-    (e) => e && typeof e.passed === "boolean",
+  /* Evaluations aren't listed here: the Evaluations columns already show
+     each score, and a required one is marked on its column. The reason
+     line names a required evaluation that failed the conversation. */
+  /* The verdict is already on the line above (VerdictLabel), so this line
+     only gives the reason — "Failed — " isn't said twice. How it was judged
+     moves into the count's tooltip. */
+  const reason = rollupLine(rollup).replace(
+    /^(Failed|Passed|Unmeasured) — /,
+    "",
   );
-  const evalList = expanded
-    ? evalRows
-    : evalRows.filter((e) => !e.passed && required.has(e.id));
-  const headed = evalList.length > 0;
-  const verdictIcon = {
-    failed: "solar:close-linear",
-    inconclusive: "solar:question-circle-linear",
-    passed: "solar:check-linear",
-  }[rollup.verdict];
-  const verdictColor = {
-    failed: "status.danger.fg",
-    inconclusive: "text.tertiary",
-    passed: "status.success.fg",
-  }[rollup.verdict];
+  const reasonText = reason.charAt(0).toUpperCase() + reason.slice(1);
+  const judged = basis
+    ? basis.judged
+      ? "Judged from the conversation."
+      : "Checked against the end state and tool calls."
+    : "";
 
   return (
-    <Stack spacing={0.125} sx={{ mt: 0.75 }}>
-      <Stack direction="row" alignItems="center" spacing={0.5}>
-        <Iconify
-          icon={verdictIcon}
-          width={12}
-          sx={{ color: verdictColor, flexShrink: 0 }}
-        />
+    <Box sx={{ mt: 0.75 }}>
+      <Stack direction="row" alignItems="baseline" spacing={0.75}>
         <Typography
           noWrap
-          sx={{ typography: "s3", color: "text.secondary", fontWeight: 600 }}
+          sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}
         >
-          {rollupLine(rollup)}
+          {reasonText}
         </Typography>
-        <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-          {`· ${met} of ${rows.length} sub-goals met`}
-        </Typography>
-        {basis && (
-          <Tooltip arrow title={basis.note}>
-            <Typography
-              noWrap
-              sx={{
-                typography: "s3",
-                color: "text.tertiary",
-                cursor: "default",
-              }}
-            >
-              {`· ${basis.judged ? "judged from the conversation" : "checked against end state and tool calls"}`}
-            </Typography>
-          </Tooltip>
-        )}
+        <Tooltip arrow title={[judged, basis?.note].filter(Boolean).join(" ")}>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              flexShrink: 0,
+              cursor: "default",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {`· ${met}/${rows.length} sub-goals met`}
+          </Typography>
+        </Tooltip>
         <ButtonBase
           aria-expanded={expanded}
           onClick={(e) => {
@@ -2440,6 +2486,7 @@ function SubGoalsSummary({ task, env, envState, basis = null }) {
             typography: "s3",
             color: "primary.main",
             fontWeight: 500,
+            flexShrink: 0,
             "&:hover": { textDecoration: "underline" },
             ...focusRing,
           }}
@@ -2447,150 +2494,24 @@ function SubGoalsSummary({ task, env, envState, basis = null }) {
           {expanded ? "Hide" : "Show all"}
         </ButtonBase>
       </Stack>
-      {headed && list.length > 0 && <CellHeader>Sub-goals</CellHeader>}
-      {list.map((r) => (
-        <Stack
-          key={r.key}
-          direction="row"
-          alignItems="center"
-          spacing={0.5}
-          sx={{ pl: 2 }}
-        >
-          <Tooltip
-            arrow
-            title={MARK_NOTE[r.mark === "critical" ? "critical" : "supporting"]}
-          >
-            <Typography
-              sx={{
-                typography: "s3",
-                fontWeight: 600,
-                color: r.mark === "critical" ? "text.primary" : "text.disabled",
-                width: 10,
-                flexShrink: 0,
-                fontFamily: "ui-monospace, Menlo, monospace",
-                fontSize: 12,
-              }}
-            >
-              {r.mark === "critical" ? "C" : "S"}
-            </Typography>
-          </Tooltip>
-          <Typography
-            noWrap
-            title={r.text}
-            sx={{
-              typography: "s3",
-              color: "text.secondary",
-              maxWidth: SUBGOAL_LINE_MAX,
-            }}
-          >
-            {r.text}
-          </Typography>
-          {(() => {
-            /* What this one was checked against — per sub-goal, since a
-               sealed run still judges a "said it" sub-goal from the words. */
-            const b = subGoalBasisOf(r, basis, env);
-            return (
-              b && (
-                <Tooltip arrow title={b.label}>
-                  <Iconify
-                    icon={b.icon}
-                    width={12}
-                    sx={{ color: "text.disabled", flexShrink: 0 }}
-                  />
-                </Tooltip>
-              )
-            );
-          })()}
-          {r.status === "met" && (
-            <Iconify
-              icon="solar:check-linear"
-              width={12}
-              sx={{ color: "status.success.fg", flexShrink: 0 }}
+      {list.length > 0 && (
+        <Stack spacing={0.25} sx={{ mt: 0.5 }}>
+          {list.map((r) => (
+            <CheckLine
+              key={r.key}
+              status={r.status}
+              text={r.text}
+              tag={r.mark === "critical" ? "critical" : null}
+              tip={
+                r.status === "not-applicable"
+                  ? `Not applicable — ${r.subActorName || "the sub-actor"} did not come in`
+                  : MARK_NOTE[r.mark === "critical" ? "critical" : "supporting"]
+              }
             />
-          )}
-          {r.status === "failed" && (
-            <Iconify
-              icon="solar:close-linear"
-              width={12}
-              sx={{ color: "status.danger.fg", flexShrink: 0 }}
-            />
-          )}
-          {r.status === "not-applicable" && (
-            <Tooltip
-              arrow
-              title={`Not applicable — ${r.subActorName || "the sub-actor"} did not come in`}
-            >
-              <Iconify
-                icon="solar:minus-circle-linear"
-                width={12}
-                sx={{ color: "text.disabled", flexShrink: 0 }}
-              />
-            </Tooltip>
-          )}
-          {r.status === "inconclusive" && (
-            <Tooltip arrow title="Unmeasured — the grader couldn't tell">
-              <Iconify
-                icon="solar:question-circle-linear"
-                width={12}
-                sx={{ color: "text.tertiary", flexShrink: 0 }}
-              />
-            </Tooltip>
-          )}
+          ))}
         </Stack>
-      ))}
-      {headed && <CellHeader>Evaluations</CellHeader>}
-      {evalList.map((e) => {
-        const req = required.has(e.id);
-        return (
-          <Stack
-            key={e.id}
-            direction="row"
-            alignItems="center"
-            spacing={0.5}
-            sx={{ pl: 2 }}
-          >
-            <Typography
-              noWrap
-              sx={{
-                typography: "s3",
-                color: "text.secondary",
-                maxWidth: SUBGOAL_LINE_MAX,
-              }}
-            >
-              {evalDisplayName(e.name) || e.id}
-            </Typography>
-            {req && (
-              <Tooltip
-                arrow
-                title="Required — a failing score fails the conversation"
-              >
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    cursor: "default",
-                  }}
-                >
-                  · Required
-                </Typography>
-              </Tooltip>
-            )}
-            <Iconify
-              icon={e.passed ? "solar:check-linear" : "solar:close-linear"}
-              width={12}
-              sx={{
-                color: e.passed
-                  ? "status.success.fg"
-                  : req
-                    ? "status.danger.fg"
-                    : "text.tertiary",
-                flexShrink: 0,
-              }}
-            />
-          </Stack>
-        );
-      })}
-    </Stack>
+      )}
+    </Box>
   );
 }
 SubGoalsSummary.propTypes = {
@@ -2600,23 +2521,72 @@ SubGoalsSummary.propTypes = {
   basis: PropTypes.object,
 };
 
-/* "Sub-goals" / "Evaluations" over their lists in the Run details cell. */
-function CellHeader({ children }) {
+const CHECK_ICON = {
+  met: { icon: "solar:check-linear", color: "status.success.fg" },
+  failed: { icon: "solar:close-linear", color: "status.danger.fg" },
+  inconclusive: {
+    icon: "solar:question-circle-linear",
+    color: "text.tertiary",
+  },
+  "not-applicable": {
+    icon: "solar:minus-circle-linear",
+    color: "text.disabled",
+  },
+};
+
+/* One check — a sub-goal or an evaluation: the result first so the column
+   scans, the text, then "critical" / "required" as a quiet word. A failed
+   evaluation that isn't required is grey: it doesn't change the result. */
+function CheckLine({ status, text, tag = null, tip = "", quietFail = false }) {
+  const ic = CHECK_ICON[status] || CHECK_ICON.inconclusive;
   return (
-    <Typography
-      sx={{
-        typography: "s3",
-        color: "text.tertiary",
-        fontWeight: 500,
-        pl: 2,
-        pt: 0.375,
-      }}
-    >
-      {children}
-    </Typography>
+    <Tooltip arrow placement="bottom-start" title={tip}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        sx={{ minWidth: 0, cursor: "default" }}
+      >
+        <Iconify
+          icon={ic.icon}
+          width={13}
+          sx={{
+            color: quietFail ? "text.tertiary" : ic.color,
+            flexShrink: 0,
+          }}
+        />
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            color:
+              status === "failed" && !quietFail
+                ? "text.primary"
+                : "text.secondary",
+            minWidth: 0,
+            maxWidth: SUBGOAL_LINE_MAX,
+          }}
+        >
+          {text}
+        </Typography>
+        {tag && (
+          <Typography
+            sx={{ typography: "s3", color: "text.disabled", flexShrink: 0 }}
+          >
+            {tag}
+          </Typography>
+        )}
+      </Stack>
+    </Tooltip>
   );
 }
-CellHeader.propTypes = { children: PropTypes.node };
+CheckLine.propTypes = {
+  status: PropTypes.string,
+  text: PropTypes.string,
+  tag: PropTypes.string,
+  tip: PropTypes.string,
+  quietFail: PropTypes.bool,
+};
 
 function Field({ icon, label, value }) {
   if (value == null || value === "") return null;
@@ -2655,9 +2625,11 @@ Field.propTypes = {
   value: PropTypes.any,
 };
 
-function Score({ result }) {
+function Score({ result, required = false }) {
   const bgcolor = interpolateColorBasedOnScore(result.score, 1);
   const failed = result.passed === false;
+  /* A failing required evaluation is what failed the conversation. */
+  const failsIt = failed && required;
   /* Error localization exists for any score under 100%, but the marker only
      shows where the eval failed — on a passing 86% it read as a problem. The
      tooltip still offers "where it lost points" on click. */
@@ -2669,6 +2641,11 @@ function Score({ result }) {
       arrow
       title={
         <Box>
+          {failsIt && (
+            <Box sx={{ fontWeight: 600, mb: 0.5 }}>
+              Required — this failure fails the conversation.
+            </Box>
+          )}
           {result.reason && <Box>{result.reason}</Box>}
           <Box sx={{ mt: result.reason ? 0.75 : 0, fontWeight: 600 }}>
             {failed
@@ -2700,10 +2677,18 @@ function Score({ result }) {
             typography: "s2",
             fontWeight: 600,
             fontVariantNumeric: "tabular-nums",
+            color: failsIt ? "status.danger.fg" : "text.primary",
           }}
         >
           {Math.round(result.score * 100)}%
         </Typography>
+        {failsIt && (
+          <Iconify
+            icon="solar:close-linear"
+            width={13}
+            sx={{ color: "status.danger.fg", flexShrink: 0 }}
+          />
+        )}
         {marked && (
           <Iconify
             className="el-target"
@@ -2720,4 +2705,4 @@ function Score({ result }) {
     </Tooltip>
   );
 }
-Score.propTypes = { result: PropTypes.object };
+Score.propTypes = { result: PropTypes.object, required: PropTypes.bool };

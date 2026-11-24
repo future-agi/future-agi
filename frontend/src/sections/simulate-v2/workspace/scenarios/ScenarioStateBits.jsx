@@ -365,73 +365,126 @@ TextAction.propTypes = {
 
 /*
   Critical or supporting, per sub-goal. A failed critical one fails the
-  scenario; a failed supporting one only lowers its score. Read-only, it is
-  just the word.
+  conversation; a failed supporting one is reported and never fails it.
+  One word in a quiet column — not a two-part switch, which read as tabs —
+  and a small menu that says what each means where you choose. Read-only,
+  it is just the word.
 */
+const MARKS = [
+  {
+    id: "critical",
+    label: "Critical",
+    note: "Must hold, or the conversation fails",
+  },
+  {
+    id: "supporting",
+    label: "Supporting",
+    note: "Reported; never fails it on its own",
+  },
+];
+
 export function MarkToggle({ value, onChange, disabled = false }) {
+  const [anchor, setAnchor] = useState(null);
+  const current = MARKS.find((m) => m.id === value) || MARKS[1];
+  const word = {
+    typography: "s3",
+    fontWeight: current.id === "critical" ? 600 : 500,
+    color: current.id === "critical" ? "text.primary" : "text.tertiary",
+  };
   if (disabled || !onChange) {
     return (
-      <Typography
-        sx={{
-          typography: "s3",
-          fontWeight: value === "critical" ? 600 : 500,
-          color: value === "critical" ? "text.primary" : "text.tertiary",
-          flexShrink: 0,
-        }}
-      >
-        {value === "critical" ? "Critical" : "Supporting"}
-      </Typography>
+      <Typography sx={{ ...word, flexShrink: 0 }}>{current.label}</Typography>
     );
   }
   return (
-    <Stack
-      direction="row"
-      onClick={(e) => e.stopPropagation()}
-      sx={{
-        flexShrink: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "4px",
-        p: "1px",
-      }}
-    >
-      {["critical", "supporting"].map((m) => {
-        const on = value === m;
-        return (
-          <Tooltip
-            key={m}
-            arrow
-            title={
-              m === "critical"
-                ? "Fails the scenario if it isn't met"
-                : "Only lowers the score if it isn't met"
-            }
-          >
-            <ButtonBase
-              type="button"
-              aria-pressed={on}
-              onClick={() => !on && onChange(m)}
-              sx={{
-                p: 0,
-                px: 0.75,
-                height: 20,
-                border: 0,
-                borderRadius: "4px",
-                font: "inherit",
-                typography: "s3",
-                fontWeight: on ? 600 : 500,
-                cursor: on ? "default" : "pointer",
-                color: on ? "text.primary" : "text.tertiary",
-                bgcolor: on ? "action.selected" : "transparent",
-                "&:hover": on ? undefined : { color: "text.primary" },
-              }}
-            >
-              {m === "critical" ? "Critical" : "Supporting"}
-            </ButtonBase>
-          </Tooltip>
-        );
-      })}
-    </Stack>
+    <>
+      <ButtonBase
+        type="button"
+        aria-haspopup="menu"
+        aria-label={`${current.label} — change`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setAnchor(e.currentTarget);
+        }}
+        sx={{
+          ...word,
+          /* A small select: bordered box, fixed width so the column lines
+             up, the value on the left and the chevron on the right. */
+          flexShrink: 0,
+          width: 112,
+          height: 26,
+          px: 1,
+          justifyContent: "space-between",
+          border: "1px solid",
+          borderColor: anchor ? "text.primary" : "divider",
+          borderRadius: "6px",
+          bgcolor: "background.paper",
+          "&:hover": { borderColor: "text.disabled" },
+        }}
+      >
+        {current.label}
+        <Iconify
+          icon="solar:alt-arrow-down-linear"
+          width={14}
+          sx={{ color: "text.tertiary" }}
+        />
+      </ButtonBase>
+      <Popover
+        open={!!anchor}
+        anchorEl={anchor}
+        onClose={() => setAnchor(null)}
+        onClick={(e) => e.stopPropagation()}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{
+          paper: { sx: { mt: 0.5, py: 0.5, width: 260, borderRadius: "8px" } },
+        }}
+      >
+        <Stack role="menu">
+          {MARKS.map((m) => {
+            const on = m.id === current.id;
+            return (
+              <ButtonBase
+                key={m.id}
+                role="menuitemradio"
+                aria-checked={on}
+                onClick={() => {
+                  setAnchor(null);
+                  if (!on) onChange(m.id);
+                }}
+                sx={{
+                  px: 1.5,
+                  py: 0.75,
+                  gap: 1,
+                  justifyContent: "flex-start",
+                  alignItems: "flex-start",
+                  textAlign: "left",
+                  "&:hover": { bgcolor: "action.hover" },
+                }}
+              >
+                <Iconify
+                  icon="solar:check-linear"
+                  width={14}
+                  sx={{
+                    mt: "3px",
+                    flexShrink: 0,
+                    color: on ? "text.primary" : "transparent",
+                  }}
+                />
+                <Box>
+                  <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+                    {m.label}
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {m.note}
+                  </Typography>
+                </Box>
+              </ButtonBase>
+            );
+          })}
+        </Stack>
+      </Popover>
+    </>
   );
 }
 MarkToggle.propTypes = {

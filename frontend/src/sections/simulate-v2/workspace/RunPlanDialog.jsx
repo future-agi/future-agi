@@ -1100,6 +1100,22 @@ export default function RunPlanDialog({
                   >
                     {`= ${estimate.trials} ${unit}${estimate.trials === 1 ? "" : "s"}`}
                   </Box>
+                  {/* How many repeats a decision needs (Chintan's PR #61
+                      design D): one is a quick read; flaky shows from 3. */}
+                  <Box
+                    component="span"
+                    sx={{
+                      width: "100%",
+                      typography: "s3",
+                      color: "text.tertiary",
+                    }}
+                  >
+                    {Number(attempts) <= 1
+                      ? "With 1 repeat you can't tell if a scenario is flaky — passes sometimes, fails other times. Use 3 or more."
+                      : Number(attempts) < 3
+                        ? "Use 3 or more repeats to tell a flaky scenario from one that always fails."
+                        : `Each scenario runs ${Number(attempts)} times, so the ones that pass only sometimes (flaky) show up.`}
+                  </Box>
                 </Stack>
               )}
             </Stack>

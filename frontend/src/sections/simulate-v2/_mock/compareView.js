@@ -39,8 +39,15 @@ const flipKind = (row) =>
 export const isExactRegression = (row) =>
   row.pair?.cls === "exact" && row.pair.flip?.kind === "regressed";
 
+/* Passed every trial on the baseline, passes only some now (Chintan's PR #61
+   designs C and D). Still a regression — some trials fail — so every gate
+   and count that reads "regressed" keeps it; only its name differs. */
+const becameFlaky = (row) =>
+  flipKind(row) === "regressed" && row.pair?.flip?.b === "flaky";
+
 const FLIP_LABEL = {
   regressed: "Passed → failed",
+  flaky: "Became flaky",
   improved: "Failed → passed",
   moved: "Moved otherwise",
   same: "Unchanged",
@@ -65,6 +72,7 @@ export const filterFields = (evals = []) => [
     type: "enum",
     choices: [
       "Passed → failed",
+      "Became flaky",
       "Failed → passed",
       "Moved otherwise",
       "Flaky",
@@ -191,7 +199,10 @@ const rowMatchesToken = (row, token, evals) => {
   switch (field) {
     case "movement":
       return enumResult(
-        [FLIP_LABEL[flipKind(row)], row.flaky && "Flaky"].filter(Boolean),
+        [
+          FLIP_LABEL[becameFlaky(row) ? "flaky" : flipKind(row)],
+          row.flaky && "Flaky",
+        ].filter(Boolean),
       );
     case "pair":
       return enumResult(row.pair ? PAIR_CLASSES[row.pair.cls]?.label : null);
@@ -629,9 +640,10 @@ export const OUTSIDE_BANDS = {
   removed: { label: "Removed", note: "Only in the older run" },
 };
 
-const FLIP_ORDER = ["regressed", "improved", "moved", "same"];
+const FLIP_ORDER = ["regressed", "flaky", "improved", "moved", "same"];
 const FLIP_WORDS = {
   regressed: "passed → failed",
+  flaky: "became flaky",
   improved: "failed → passed",
   moved: "moved otherwise",
   same: "unchanged",
@@ -646,8 +658,10 @@ export const pairGroups = (rows) => {
   const groups = [];
   FLIP_ORDER.forEach((flip) =>
     inside.forEach((cls) => {
+      /* "Became flaky" is a regression shown in its own group. */
+      const shownFlip = (r) => (becameFlaky(r) ? "flaky" : flipKind(r));
       const members = rows.filter(
-        (r) => (r.pair?.cls || "exact") === cls && flipKind(r) === flip,
+        (r) => (r.pair?.cls || "exact") === cls && shownFlip(r) === flip,
       );
       if (members.length) {
         groups.push({
@@ -657,6 +671,11 @@ export const pairGroups = (rows) => {
           ...(cls === "exact" &&
             flip === "regressed" && {
               note: "Regressions — passed on the baseline, fail now",
+              tone: "bad",
+            }),
+          ...(cls === "exact" &&
+            flip === "flaky" && {
+              note: "Passed every trial on the baseline; now passes some and fails others",
               tone: "bad",
             }),
         });
@@ -701,14 +720,27 @@ export const bandRows = (rows, { group, regressionsFirst, groupFn }) => {
     grouped = [{ ...grouped[0], label: "In the delta" }];
   }
   return [
-    ...(top.length
+    /* Regressions split in two: failed now, and became flaky (passed every
+       trial on the baseline, only some now). Both stay regressions. */
+    ...(top.filter((r) => !becameFlaky(r)).length
       ? [
           {
             id: "band-regressions",
             label: "Regressions",
             note: "Passed on the baseline, fail now — exact pairs first",
             tone: "bad",
-            rows: top,
+            rows: top.filter((r) => !becameFlaky(r)),
+          },
+        ]
+      : []),
+    ...(top.filter(becameFlaky).length
+      ? [
+          {
+            id: "band-became-flaky",
+            label: "Became flaky",
+            note: "Passed every trial on the baseline; now passes some and fails others",
+            tone: "bad",
+            rows: top.filter(becameFlaky),
           },
         ]
       : []),
