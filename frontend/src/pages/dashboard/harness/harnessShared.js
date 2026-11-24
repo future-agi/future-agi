@@ -347,17 +347,6 @@ export const percent = (rate) =>
   typeof rate === "number" && Number.isFinite(rate)
     ? `${Math.round(rate * 100)}%`
     : "\u2014";
-
-// StatusChip infers its state from the string it is given, and "completed" matches
-// neither "pass" nor "ok". Map the stages explicitly: the terminal outcomes get
-// pass/error/canceled, and everything still in flight reads running.
-export const stageStatus = (stage) => {
-  if (stage === "completed") return STATUS_TYPES.PASS;
-  if (stage === "failed") return STATUS_TYPES.ERROR;
-  if (stage === "canceled") return STATUS_TYPES.CANCELED;
-  return STATUS_TYPES.RUNNING;
-};
-
 // credentials.detected_connectors is how ALK reports what the submitted source talks to.
 // It is lexical detection over the source files, so it is multi-valued and a voice agent
 // that also serves HTTP reports both — check for a voice transport before falling back to chat.
