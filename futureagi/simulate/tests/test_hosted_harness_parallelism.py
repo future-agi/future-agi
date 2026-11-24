@@ -23,6 +23,7 @@ from simulate.models import HostedHarnessEvent, HostedHarnessJob, HostedHarnessR
 from simulate.serializers.harness_job import HarnessJobCreateSerializer
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
+    begin_scenarios,
     canonical_digest,
     clamp_parallelism,
     create_hosted_job,
@@ -1073,18 +1074,32 @@ def test_a_run_s_trials_are_counted_by_their_execution_keys(organization):
             ],
         },
     )
-    # Each trial runs as an execution with its own hashed key, which its events and receipt name.
+    first.attempt.job.refresh_from_db()
+    begin_scenarios(
+        first.attempt,
+        {
+            "operation": "begin",
+            "run_test_id": str(first.attempt.job.run_test_id),
+            "scenario_keys": ["scenario-1", "scenario-2"],
+        },
+    )
+    # Each trial runs as an execution with its own hashed key, which its events and receipt name, and its call hangs
+    # off the execution, not the authored scenario.
     for index, registration in enumerate(
         HostedHarnessScenario.no_workspace_objects.filter(job=job).order_by(
             "scenario_key"
         )
     ):
+        call = registration.call_execution
+        HostedHarnessScenario.no_workspace_objects.filter(id=registration.id).update(
+            call_execution=None
+        )
         HostedHarnessExecution.no_workspace_objects.create(
             job=job,
             source_scenario=registration,
             execution_key=f"9f2c{index}e1a",
             trial_index=0,
-            call_execution=registration.call_execution,
+            call_execution=call,
         )
         HostedHarnessEvent.no_workspace_objects.create(
             attempt=first.attempt,

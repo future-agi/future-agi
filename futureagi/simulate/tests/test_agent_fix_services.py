@@ -1527,7 +1527,7 @@ class TestCheckRunStatus:
                     "sub_goals": [{"name": "refunded", "held": None}],
                 },
                 "error",
-                "the judge decided nothing on refunded",
+                "the trial ended errored",
                 {},
             ),
         ],
