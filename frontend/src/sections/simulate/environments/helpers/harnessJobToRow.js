@@ -116,8 +116,8 @@ const sent = (obj, key) =>
   obj && Object.hasOwn(obj, key) ? obj[key] : NOT_PROVIDED;
 
 const lastRunOf = (run) => {
-  if (!run || run.pass_rate == null) return null;
-  return { rate: run.pass_rate, ordinal: run.run_number ?? null };
+  if (!run) return null;
+  return { rate: run.pass_rate ?? null, ordinal: run.run_number ?? null };
 };
 
 const versionLabelOf = (version) =>

@@ -195,6 +195,26 @@ describe("MyEnvironmentsTable", () => {
     expect(row.getByText("Not run yet")).toBeInTheDocument();
   });
 
+  it("reads an environment whose last run has no rate yet as run, not Not run yet", async () => {
+    listHarnessEnvironments.mockResolvedValue({
+      ...HARNESS_ENVS,
+      results: HARNESS_ENVS.results.map((env) =>
+        env.id === "job-billing"
+          ? { ...env, last_run: { run_number: 2, pass_rate: null } }
+          : env,
+      ),
+    });
+    renderTab();
+    await screen.findByText("Billing Chat Agent");
+
+    expect(
+      within(rowFor("Repo Triage Bot")).getByText("Not run yet"),
+    ).toBeInTheDocument();
+    const billing = within(rowFor("Billing Chat Agent"));
+    expect(billing.getAllByText("-").length).toBeGreaterThan(0);
+    expect(billing.queryByText("Not run yet")).toBeNull();
+  });
+
   it("shows the empty state when the environments list resolves empty", async () => {
     listHarnessEnvironments.mockResolvedValue({ results: [] });
     renderTab();

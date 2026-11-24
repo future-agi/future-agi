@@ -326,10 +326,10 @@ describe("harnessEnvToRow, design columns", () => {
     expect(row.lastRun).toEqual({ rate: 75, ordinal: 4 });
   });
 
-  it("shows no rate when the API has none", () => {
+  it("keeps a run without a rate as a run, so it never reads as not run", () => {
     expect(
       harnessEnvToRow({ ...base, last_run: run({ pass_rate: null }) }).lastRun,
-    ).toBeNull();
+    ).toEqual({ rate: null, ordinal: 4 });
     expect(harnessEnvToRow({ ...base, last_run: null }).lastRun).toBeNull();
   });
 });
