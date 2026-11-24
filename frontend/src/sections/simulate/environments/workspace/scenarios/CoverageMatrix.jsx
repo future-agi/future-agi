@@ -2,19 +2,8 @@ import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
-  Box,
-  Stack,
-  Typography,
-  TextField,
-  MenuItem,
-  Tooltip,
-  CircularProgress,
-  Table,
-  TableBody,
-  TableHead,
-  TableRow,
-  TableCell,
-  Button,
+  Box, Stack, Typography, TextField, MenuItem, Tooltip, CircularProgress,
+  Table, TableBody, TableHead, TableRow, TableCell, Button,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
@@ -23,6 +12,7 @@ import { ROW_HEIGHT } from "src/theme/sizes";
 import { useScenarioCoverage } from "src/api/simulate-environments/scenariosHooks";
 import { scenarioToolbarButtonSx } from "./scenarios.constants";
 import WorkflowProof from "./WorkflowProof";
+
 
 // The five rare-catastrophic overlays that must be present regardless of
 // sampling (server naming). "Forced" in the header summary counts these.
@@ -64,12 +54,7 @@ export default function CoverageMatrix({
   const [colAxis, setColAxis] = useState(undefined);
   const [open, setOpen] = useState(defaultOpen);
 
-  const { data, isError, isPending, refetch } = useScenarioCoverage(jobId, {
-    search,
-    filters,
-    rowAxis,
-    colAxis,
-  });
+  const { data, isError, isPending, refetch } = useScenarioCoverage(jobId, { search, filters, rowAxis, colAxis });
 
   const axes = data?.axes ?? [];
   const perAxis = useMemo(() => data?.per_axis ?? [], [data]);
@@ -112,9 +97,8 @@ export default function CoverageMatrix({
 
   // Forced: the five rare-catastrophic overlays present in the overlay axis.
   const overlayCounts = perAxis.find((a) => a.axis === "overlay")?.counts ?? {};
-  const forcedPresent = FORCED_OVERLAYS.filter(
-    (f) => (overlayCounts[f.id] ?? 0) > 0,
-  );
+  const forcedPresent = FORCED_OVERLAYS.filter((f) => (overlayCounts[f.id] ?? 0) > 0);
+
 
   const forcedRatio = forcedPresent.length / FORCED_OVERLAYS.length;
   const pairsPct = Math.round(pairsRatio * 100);
@@ -123,9 +107,7 @@ export default function CoverageMatrix({
 
   const helpContent = (
     <Box sx={{ p: 0.5, maxWidth: 380 }}>
-      <Typography
-        sx={{ typography: "s3", fontWeight: "fontWeightMedium", mb: 0.5 }}
-      >
+      <Typography sx={{ typography: "s3", fontWeight: "fontWeightMedium", mb: 0.5 }}>
         What this panel answers
       </Typography>
       <Typography sx={{ typography: "s3", mb: 1.5 }}>
@@ -135,40 +117,21 @@ export default function CoverageMatrix({
         </Box>
       </Typography>
 
-      <Typography
-        sx={{ typography: "s3", fontWeight: "fontWeightMedium", mb: 0.75 }}
-      >
+      <Typography sx={{ typography: "s3", fontWeight: "fontWeightMedium", mb: 0.75 }}>
         Three numbers at a glance
       </Typography>
       <Typography component="ul" sx={{ typography: "s3", pl: 2, mb: 1.5 }}>
-        <li>
-          <Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>
-            Axes
-          </Box>{" "}
-          - how many of the coverage axes the suite actually varies (more than
-          one level).
-        </li>
-        <li>
-          <Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>
-            Pairs
-          </Box>{" "}
-          - of the two axes shown below, what fraction of the observed
-          combinations are covered.
-        </li>
-        <li>
-          <Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>
-            Forced
-          </Box>{" "}
-          - how many of the five dangerous must-have overlays are present.
-        </li>
+        <li><Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>Axes</Box> - how many of the coverage axes the suite actually varies (more than one level).</li>
+        <li><Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>Pairs</Box> - of the two axes shown below, what fraction of the observed combinations are covered.</li>
+        <li><Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>Forced</Box> - how many of the five dangerous must-have overlays are present.</li>
       </Typography>
 
       <Typography sx={{ typography: "s3" }}>
-        Empty red cells in the grid below are the actual gaps. They name a
-        combination nothing in the suite tests yet.
+        Empty red cells in the grid below are the actual gaps. They name a combination nothing in the suite tests yet.
       </Typography>
     </Box>
   );
+
 
   // A failed request must read as an error and a first load as loading, never
   // as a zero-coverage summary (which would falsely say the suite covers nothing).
@@ -176,22 +139,10 @@ export default function CoverageMatrix({
   let mark = <Iconify icon="solar:chart-square-linear" width={14} />;
   if (isError) {
     label = "Coverage couldn't load";
-    mark = (
-      <Iconify
-        icon="solar:danger-triangle-linear"
-        width={14}
-        sx={{ color: "status.danger.solid" }}
-      />
-    );
+    mark = <Iconify icon="solar:danger-triangle-linear" width={14} sx={{ color: "status.danger.solid" }} />;
   } else if (isPending) {
     label = "Loading coverage";
-    mark = (
-      <CircularProgress
-        size={10}
-        thickness={6}
-        sx={{ color: "text.subtitle" }}
-      />
-    );
+    mark = <CircularProgress size={10} thickness={6} sx={{ color: "text.subtitle" }} />;
   }
 
   return (
@@ -203,9 +154,7 @@ export default function CoverageMatrix({
         show
         arrow
         size="small"
-        title={
-          open || isError || isPending ? "" : summary.replaceAll(", ", " · ")
-        }
+        title={open || isError || isPending ? "" : summary.replaceAll(", ", " · ")}
       >
         <Button
           aria-label={label}
@@ -226,12 +175,7 @@ export default function CoverageMatrix({
       {/* Wide enough for the pairwise grid; the body scrolls under a fixed header. */}
       <SideDrawer open={open} onClose={close} width={880}>
         {isError ? (
-          <Stack
-            alignItems="center"
-            justifyContent="center"
-            spacing={1}
-            sx={{ height: "100%", px: 2 }}
-          >
+          <Stack alignItems="center" justifyContent="center" spacing={1} sx={{ height: "100%", px: 2 }}>
             <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
               Couldn&apos;t load coverage.
             </Typography>
@@ -241,22 +185,10 @@ export default function CoverageMatrix({
           </Stack>
         ) : (
           <Stack sx={{ height: "100%" }}>
-            <Box
-              sx={{
-                px: 3,
-                py: 2,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                flexShrink: 0,
-              }}
-            >
+            <Box sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
               <Box>
                 <Stack direction="row" alignItems="center" spacing={0.75}>
-                  <Typography
-                    sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}
-                  >
-                    Coverage
-                  </Typography>
+                  <Typography sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>Coverage</Typography>
                   <Tooltip
                     arrow
                     title={helpContent}
@@ -267,12 +199,7 @@ export default function CoverageMatrix({
                   >
                     <Box
                       component="span"
-                      sx={{
-                        display: "inline-flex",
-                        cursor: "help",
-                        color: "text.subtitle",
-                        "&:hover": { color: "text.primary" },
-                      }}
+                      sx={{ display: "inline-flex", cursor: "help", color: "text.subtitle", "&:hover": { color: "text.primary" } }}
                       aria-label="What is coverage?"
                     >
                       <Iconify icon="solar:info-circle-linear" width={15} />
@@ -284,16 +211,8 @@ export default function CoverageMatrix({
                 </Typography>
               </Box>
               <Stack direction="row" spacing={3} sx={{ mt: 1.5 }}>
-                <SummaryStat
-                  label="Axes"
-                  value={`${variedAxes}/${perAxis.length}`}
-                  color={toneColor(axesRatio)}
-                />
-                <SummaryStat
-                  label="Pairs"
-                  value={`${pairsPct}%`}
-                  color={toneColor(pairsRatio)}
-                />
+                <SummaryStat label="Axes" value={`${variedAxes}/${perAxis.length}`} color={toneColor(axesRatio)} />
+                <SummaryStat label="Pairs" value={`${pairsPct}%`} color={toneColor(pairsRatio)} />
                 <SummaryStat
                   label="Forced"
                   value={`${forcedPresent.length}/${FORCED_OVERLAYS.length}`}
@@ -308,24 +227,17 @@ export default function CoverageMatrix({
               />
               {/* Per-axis table — how many distinct levels each axis varied, and the
                   levels themselves with their counts. */}
-              <Table
-                size="small"
-                sx={{
-                  "& .MuiTableCell-root": {
-                    borderBottom: "1px solid",
-                    borderColor: "divider",
-                    py: 0,
-                  },
-                }}
-              >
+              <Table size="small" sx={{
+                "& .MuiTableCell-root": {
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  py: 0,
+                },
+              }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={headerCellSx} width={220}>
-                      Axis
-                    </TableCell>
-                    <TableCell sx={headerCellSx} width={110} align="right">
-                      Levels
-                    </TableCell>
+                    <TableCell sx={headerCellSx} width={220}>Axis</TableCell>
+                    <TableCell sx={headerCellSx} width={110} align="right">Levels</TableCell>
                     <TableCell sx={headerCellSx}>Covered levels</TableCell>
                   </TableRow>
                 </TableHead>
@@ -333,32 +245,18 @@ export default function CoverageMatrix({
                   {perAxis.map((a) => {
                     const levelNames = Object.keys(a.counts || {});
                     return (
-                      <TableRow
-                        key={a.axis}
-                        hover
-                        sx={{ height: ROW_HEIGHT.default }}
-                      >
+                      <TableRow key={a.axis} hover sx={{ height: ROW_HEIGHT.default }}>
                         <TableCell>
-                          <Typography
-                            sx={{ typography: "s1", color: "text.primary" }}
-                          >
+                          <Typography sx={{ typography: "s1", color: "text.primary" }}>
                             {axisLabel(a.axis)}
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
-                          <Typography
-                            sx={{
-                              typography: "s1",
-                              fontWeight: "fontWeightMedium",
-                              fontVariantNumeric: "tabular-nums",
-                              color:
-                                a.levels > 1
-                                  ? "text.primary"
-                                  : "status.danger.fg",
-                              minWidth: 36,
-                              textAlign: "right",
-                            }}
-                          >
+                          <Typography sx={{
+                            typography: "s1", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
+                            color: a.levels > 1 ? "text.primary" : "status.danger.fg",
+                            minWidth: 36, textAlign: "right",
+                          }}>
                             {a.levels}
                           </Typography>
                         </TableCell>
@@ -366,19 +264,9 @@ export default function CoverageMatrix({
                           <Typography
                             sx={{ typography: "s3", color: "text.subtitle" }}
                             noWrap
-                            title={levelNames
-                              .map(
-                                (lvl) =>
-                                  `${levelLabel(lvl)} (${a.counts[lvl]})`,
-                              )
-                              .join(" · ")}
+                            title={levelNames.map((lvl) => `${levelLabel(lvl)} (${a.counts[lvl]})`).join(" · ")}
                           >
-                            {levelNames
-                              .map(
-                                (lvl) =>
-                                  `${levelLabel(lvl)} · ${a.counts[lvl]}`,
-                              )
-                              .join("   ")}
+                            {levelNames.map((lvl) => `${levelLabel(lvl)} · ${a.counts[lvl]}`).join("   ")}
                           </Typography>
                         </TableCell>
                       </TableRow>
@@ -388,89 +276,42 @@ export default function CoverageMatrix({
               </Table>
 
               {/* Forced overlays */}
-              <Box
-                sx={{
-                  px: 3,
-                  py: 1.5,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <Stack
-                  direction="row"
-                  alignItems="baseline"
-                  spacing={1}
-                  sx={{ mb: 1 }}
-                >
-                  <Typography
-                    sx={{
-                      typography: "m3",
-                      fontWeight: "fontWeightMedium",
-                      color: "text.primary",
-                    }}
-                  >
+              <Box sx={{ px: 3, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
+                <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 1 }}>
+                  <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary" }}>
                     Forced overlays
                   </Typography>
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
                     Must be present regardless of sampling
                   </Typography>
                   <Box sx={{ flex: 1 }} />
-                  <Typography
-                    sx={{
-                      typography: "s1",
-                      fontWeight: "fontWeightMedium",
-                      fontVariantNumeric: "tabular-nums",
-                      color:
-                        forcedPresent.length < FORCED_OVERLAYS.length
-                          ? "status.danger.fg"
-                          : "text.primary",
-                    }}
-                  >
+                  <Typography sx={{
+                    typography: "s1", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
+                    color: forcedPresent.length < FORCED_OVERLAYS.length ? "status.danger.fg" : "text.primary",
+                  }}>
                     {forcedPresent.length}/{FORCED_OVERLAYS.length}
                   </Typography>
                 </Stack>
-                <Box
-                  sx={{
-                    display: "grid",
-                    gridTemplateColumns: {
-                      xs: "1fr",
-                      sm: "1fr 1fr",
-                      md: "1fr 1fr 1fr",
-                    },
-                    rowGap: 0.75,
-                    columnGap: 3,
-                  }}
-                >
+                <Box sx={{
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "1fr 1fr 1fr" },
+                  rowGap: 0.75, columnGap: 3,
+                }}>
                   {FORCED_OVERLAYS.map((f) => {
                     const present = (overlayCounts[f.id] ?? 0) > 0;
                     return (
-                      <Stack
-                        key={f.id}
-                        direction="row"
-                        alignItems="center"
-                        spacing={1}
-                      >
-                        <Box
-                          sx={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            bgcolor: present
-                              ? "status.success.solid"
-                              : "transparent",
-                            border: "1px solid",
-                            borderColor: present
-                              ? "status.success.solid"
-                              : "text.disabled",
-                            flexShrink: 0,
-                          }}
-                        />
-                        <Typography
-                          sx={{
-                            typography: "s1",
-                            color: present ? "text.primary" : "text.subtitle",
-                          }}
-                        >
+                      <Stack key={f.id} direction="row" alignItems="center" spacing={1}>
+                        <Box sx={{
+                          width: 8, height: 8, borderRadius: "50%",
+                          bgcolor: present ? "status.success.solid" : "transparent",
+                          border: "1px solid",
+                          borderColor: present ? "status.success.solid" : "text.disabled",
+                          flexShrink: 0,
+                        }} />
+                        <Typography sx={{
+                          typography: "s1",
+                          color: present ? "text.primary" : "text.subtitle",
+                        }}>
                           {f.label}
                         </Typography>
                       </Stack>
@@ -481,47 +322,20 @@ export default function CoverageMatrix({
 
               {/* Pairwise heatmap */}
               <Box sx={{ px: 3, py: 1.5 }}>
-                <Stack
-                  direction="row"
-                  alignItems="center"
-                  spacing={1.5}
-                  sx={{ mb: 1.5 }}
-                >
-                  <Typography
-                    sx={{
-                      typography: "m3",
-                      fontWeight: "fontWeightMedium",
-                      color: "text.primary",
-                    }}
-                  >
-                    Pairwise · {axisLabel(activeRowAxis)} ×{" "}
-                    {axisLabel(activeColAxis)}
+                <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
+                  <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary" }}>
+                    Pairwise · {axisLabel(activeRowAxis)} × {axisLabel(activeColAxis)}
                   </Typography>
                   <Box sx={{ flex: 1 }} />
-                  <AxisPick
-                    label="Rows"
-                    value={activeRowAxis}
-                    onChange={setRowAxis}
-                    options={axes}
-                    exclude={activeColAxis}
-                    labelOf={axisLabel}
-                  />
-                  <AxisPick
-                    label="Columns"
-                    value={activeColAxis}
-                    onChange={setColAxis}
-                    options={axes}
-                    exclude={activeRowAxis}
-                    labelOf={axisLabel}
-                  />
+                  <AxisPick label="Rows" value={activeRowAxis} onChange={setRowAxis} options={axes} exclude={activeColAxis} labelOf={axisLabel} />
+                  <AxisPick label="Columns" value={activeColAxis} onChange={setColAxis} options={axes} exclude={activeRowAxis} labelOf={axisLabel} />
                 </Stack>
                 <Box sx={{ overflowX: "auto" }}>
                   <Box
                     sx={{
                       display: "grid",
                       gridTemplateColumns: `minmax(140px, max-content) repeat(${columns.length}, minmax(72px, 1fr))`,
-                      gap: 0.5,
-                      minWidth: "max-content",
+                      gap: 0.5, minWidth: "max-content",
                     }}
                   >
                     <Box />
@@ -529,11 +343,8 @@ export default function CoverageMatrix({
                       <Typography
                         key={c}
                         sx={{
-                          typography: "s3",
-                          fontWeight: "fontWeightMedium",
-                          color: "text.subtitle",
-                          textAlign: "center",
-                          pb: 0.5,
+                          typography: "s3", fontWeight: "fontWeightMedium", color: "text.subtitle",
+                          textAlign: "center", pb: 0.5,
                         }}
                       >
                         {levelLabel(c)}
@@ -542,50 +353,31 @@ export default function CoverageMatrix({
 
                     {rows.map((r) => (
                       <Box key={r} sx={{ display: "contents" }}>
-                        <Typography
-                          sx={{
-                            typography: "s1",
-                            fontWeight: "fontWeightMedium",
-                            alignSelf: "center",
-                            pr: 1.5,
-                          }}
-                        >
+                        <Typography sx={{
+                          typography: "s1", fontWeight: "fontWeightMedium", alignSelf: "center",
+                          pr: 1.5,
+                        }}>
                           {levelLabel(r)}
                         </Typography>
                         {columns.map((c) => {
                           const n = cellAt(r, c);
-                          const t =
-                            maxCell > 1
-                              ? (n - 1) / (maxCell - 1)
-                              : n > 0
-                                ? 1
-                                : 0;
+                          const t = maxCell > 1 ? (n - 1) / (maxCell - 1) : (n > 0 ? 1 : 0);
                           const opacity = n ? 0.08 + 0.22 * t : 0;
                           return (
                             <Tooltip
-                              key={c}
-                              arrow
-                              title={
-                                n
-                                  ? `${n} scenario${n === 1 ? "" : "s"} - ${levelLabel(r)} × ${levelLabel(c)}`
-                                  : `Empty - ${levelLabel(r)} × ${levelLabel(c)}`
-                              }
+                              key={c} arrow
+                              title={n
+                                ? `${n} scenario${n === 1 ? "" : "s"} - ${levelLabel(r)} × ${levelLabel(c)}`
+                                : `Empty - ${levelLabel(r)} × ${levelLabel(c)}`}
                             >
                               <Box
                                 sx={{
-                                  height: 40,
-                                  borderRadius: 1,
-                                  display: "grid",
-                                  placeItems: "center",
+                                  height: 40, borderRadius: 1, display: "grid", placeItems: "center",
                                   border: "1px solid",
                                   // Covered cells ramp one data-palette hue by count;
                                   // a gap is a status, so it takes the danger tokens.
                                   borderColor: n
-                                    ? (th) =>
-                                        alpha(
-                                          th.palette.data[0],
-                                          0.12 + 0.2 * t,
-                                        )
+                                    ? (th) => alpha(th.palette.data[0], 0.12 + 0.2 * t)
                                     : "status.danger.border",
                                   borderStyle: n ? "solid" : "dashed",
                                   bgcolor: n
@@ -595,12 +387,8 @@ export default function CoverageMatrix({
                               >
                                 <Typography
                                   sx={{
-                                    typography: "s1",
-                                    fontWeight: "fontWeightMedium",
-                                    fontVariantNumeric: "tabular-nums",
-                                    color: n
-                                      ? "text.primary"
-                                      : "status.danger.fg",
+                                    typography: "s1", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
+                                    color: n ? "text.primary" : "status.danger.fg",
                                   }}
                                 >
                                   {n || "-"}
@@ -647,24 +435,16 @@ function SummaryStat({ label, value, color }) {
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
         {label}
       </Typography>
-      <Typography
-        sx={{
-          typography: "s1",
-          fontWeight: "fontWeightMedium",
-          fontVariantNumeric: "tabular-nums",
-          color: color || "text.primary",
-        }}
-      >
+      <Typography sx={{
+        typography: "s1", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
+        color: color || "text.primary",
+      }}>
         {value}
       </Typography>
     </Stack>
   );
 }
-SummaryStat.propTypes = {
-  label: PropTypes.string,
-  value: PropTypes.string,
-  color: PropTypes.string,
-};
+SummaryStat.propTypes = { label: PropTypes.string, value: PropTypes.string, color: PropTypes.string };
 
 // Traffic-light tone for a 0..1 ratio — one function so every place tiers on the
 // same thresholds.
@@ -675,30 +455,16 @@ function toneColor(ratio) {
   return "status.success.fg";
 }
 
-function AxisPick({
-  label,
-  value,
-  onChange,
-  options,
-  exclude,
-  labelOf = humanize,
-}) {
+function AxisPick({ label, value, onChange, options, exclude, labelOf = humanize }) {
   return (
     <TextField
-      select
-      size="small"
-      label={label}
-      value={value || ""}
+      select size="small" label={label} value={value || ""}
       onChange={(e) => onChange(e.target.value)}
       sx={{ minWidth: 140 }}
     >
-      {options
-        .filter((a) => a !== exclude)
-        .map((a) => (
-          <MenuItem key={a} value={a}>
-            {labelOf(a)}
-          </MenuItem>
-        ))}
+      {options.filter((a) => a !== exclude).map((a) => (
+        <MenuItem key={a} value={a}>{labelOf(a)}</MenuItem>
+      ))}
     </TextField>
   );
 }

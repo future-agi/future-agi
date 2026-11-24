@@ -636,7 +636,9 @@ describe("older messages", () => {
         top: 9876,
         behavior: "smooth",
       });
-      expect(enqueueSnackbar.mock.calls).toEqual([[said, { variant: "info" }]]);
+      expect(enqueueSnackbar.mock.calls).toEqual([
+        [said, { variant: "warning" }],
+      ]);
     });
 
     it.each([

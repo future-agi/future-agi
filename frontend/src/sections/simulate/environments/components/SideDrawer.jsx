@@ -22,7 +22,14 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
  * focus trap, and only the close button or Escape closes it. It gets a container of its own because a modal hides
  * everything else in its container from screen readers.
  */
-export default function SideDrawer({ open, onClose, width = 480, keepMounted = false, beside = false, children }) {
+export default function SideDrawer({
+  open,
+  onClose,
+  width = 480,
+  keepMounted = false,
+  beside = false,
+  children,
+}) {
   const [host, setHost] = useState(null);
   const covered = useDrawerCovered(open);
   // Nothing keeps focus in a drawer beside the page: a button that disables itself when pressed drops it to the body,
@@ -30,7 +37,8 @@ export default function SideDrawer({ open, onClose, width = 480, keepMounted = f
   useEffect(() => {
     if (!beside || !open || covered) return undefined;
     const onKeyDown = (event) => {
-      if (event.key !== "Escape" || document.activeElement !== document.body) return;
+      if (event.key !== "Escape" || document.activeElement !== document.body)
+        return;
       onClose?.(event);
     };
     document.addEventListener("keydown", onKeyDown);

@@ -9,9 +9,7 @@ import CoverageMatrix from "../CoverageMatrix";
 vi.mock("src/api/simulate-environments/scenariosHooks", () => ({
   useScenarioCoverage: vi.fn(),
 }));
-const { useScenarioCoverage } = await import(
-  "src/api/simulate-environments/scenariosHooks"
-);
+const { useScenarioCoverage } = await import("src/api/simulate-environments/scenariosHooks");
 
 beforeEach(() => {
   useScenarioCoverage.mockReset();
@@ -22,9 +20,7 @@ describe("CoverageMatrix", () => {
   it("sits as one toolbar button that names the summary, with the breakdown closed", () => {
     render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
     expect(
-      screen.getByRole("button", {
-        name: /^Coverage: Axes 8\/8, Pairs \d+%, Forced 5\/5$/,
-      }),
+      screen.getByRole("button", { name: /^Coverage: Axes 8\/8, Pairs \d+%, Forced 5\/5$/ }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Destructive / irreversible")).toBeNull();
   });
@@ -53,13 +49,7 @@ describe("CoverageMatrix", () => {
   });
 
   it("passes the search + filters through to the coverage hook", () => {
-    render(
-      <CoverageMatrix
-        jobId="job-1"
-        search="ride"
-        filters={{ "persona.accent": ["Canadian"] }}
-      />,
-    );
+    render(<CoverageMatrix jobId="job-1" search="ride" filters={{ "persona.accent": ["Canadian"] }} />);
     expect(useScenarioCoverage).toHaveBeenCalledWith(
       "job-1",
       expect.objectContaining({
@@ -82,15 +72,9 @@ describe("CoverageMatrix", () => {
     // Without this, a failed request renders 0/8 axes and 0% pairs — falsely
     // telling the user their suite covers nothing.
     const refetch = vi.fn();
-    useScenarioCoverage.mockReturnValue({
-      data: undefined,
-      isError: true,
-      refetch,
-    });
+    useScenarioCoverage.mockReturnValue({ data: undefined, isError: true, refetch });
     render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Coverage couldn't load" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Coverage couldn't load" }));
     expect(screen.getByText(/Couldn't load coverage/i)).toBeInTheDocument();
     expect(screen.queryByText("8/8")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));

@@ -152,14 +152,7 @@ export function TruncTooltip({ title, children }) {
       arrow
       enterDelay={300}
       title={
-        <Box
-          sx={{
-            typography: "s3",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            maxWidth: 460,
-          }}
-        >
+        <Box sx={{ typography: "s3", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 460 }}>
           {title}
         </Box>
       }
@@ -202,23 +195,14 @@ ClampCell.propTypes = { text: PropTypes.string, lines: PropTypes.number };
 export function SubTasksCell({ subTasks, limit = 3 }) {
   const list = normaliseSubTasks(subTasks);
   if (!list.length) {
-    return (
-      <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
-        -
-      </Typography>
-    );
+    return <Typography sx={{ typography: "s1", color: "text.subtitle" }}>-</Typography>;
   }
   const fullList = list.map((st, i) => `${i + 1}. ${st.label}`).join("\n");
   return (
     <TruncTooltip title={fullList}>
       <Stack spacing={0.375}>
         {list.slice(0, limit).map((st, i) => (
-          <Stack
-            key={st.id}
-            direction="row"
-            spacing={0.75}
-            alignItems="flex-start"
-          >
+          <Stack key={st.id} direction="row" spacing={0.75} alignItems="flex-start">
             <Typography
               sx={{
                 typography: "s1",
@@ -229,18 +213,13 @@ export function SubTasksCell({ subTasks, limit = 3 }) {
             >
               {i + 1}.
             </Typography>
-            <Typography
-              noWrap
-              sx={{ typography: "s1", color: "text.secondary", minWidth: 0 }}
-            >
+            <Typography noWrap sx={{ typography: "s1", color: "text.secondary", minWidth: 0 }}>
               {st.label}
             </Typography>
           </Stack>
         ))}
         {list.length > limit && (
-          <Typography
-            sx={{ typography: "s3", color: "text.subtitle", pl: 1.75 }}
-          >
+          <Typography sx={{ typography: "s3", color: "text.subtitle", pl: 1.75 }}>
             + {list.length - limit} more
           </Typography>
         )}
@@ -248,7 +227,4 @@ export function SubTasksCell({ subTasks, limit = 3 }) {
     </TruncTooltip>
   );
 }
-SubTasksCell.propTypes = {
-  subTasks: PropTypes.arrayOf(SUB_TASK_SHAPE),
-  limit: PropTypes.number,
-};
+SubTasksCell.propTypes = { subTasks: PropTypes.arrayOf(SUB_TASK_SHAPE), limit: PropTypes.number };

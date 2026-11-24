@@ -15,7 +15,8 @@ import { useReadinessCases } from "src/api/simulate-environments/readiness";
 import { fToNow } from "src/utils/format-time";
 import { isAgentFix } from "./readinessView";
 import { READY_TO_RUN_COPY as COPY } from "./readiness.constants";
-import { lineSx, spinner } from "./readinessStyles";
+import Spinner from "./Spinner";
+import { lineSx } from "./readinessStyles";
 
 const gridSx = {
   display: "grid",
@@ -220,7 +221,7 @@ export default function ReadinessLine({
                     size="small"
                     variant={agentFix ? "outlined" : "contained"}
                     disabled={checking}
-                    startIcon={inFlight ? spinner : null}
+                    startIcon={inFlight ? <Spinner /> : null}
                     onClick={
                       fix.recheck.scope === "agent" ? onRetryAgent : onRecheck
                     }

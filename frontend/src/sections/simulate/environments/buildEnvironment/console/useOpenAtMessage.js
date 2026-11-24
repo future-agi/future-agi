@@ -43,7 +43,7 @@ export default function useOpenAtMessage({
     const openAtLatest = (why) => {
       setAsked(null);
       handlers.current.onLatest();
-      if (why) enqueueSnackbar(why, { variant: "info" });
+      if (why) enqueueSnackbar(why, { variant: "warning" });
     };
     const { failed, missing } = CONSOLE_COPY.search;
     if (!id || !count) openAtLatest();

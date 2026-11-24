@@ -156,8 +156,7 @@ export default function RunDialog({
       open &&
       versioned &&
       Boolean(data) &&
-      (runAll ||
-        (!(membersWanted && !memberKeys) && selectionKeys.length > 0)),
+      (runAll || (!(membersWanted && !memberKeys) && selectionKeys.length > 0)),
   });
   const selection = readiness.data?.selection;
   const readyView = useMemo(

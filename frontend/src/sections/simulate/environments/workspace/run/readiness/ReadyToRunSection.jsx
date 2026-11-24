@@ -11,7 +11,8 @@ import {
 } from "src/api/simulate-environments/versions";
 import { refusalText } from "../../evals/refusalText";
 import ReadinessLine from "./ReadinessLine";
-import { lineSx, spinner } from "./readinessStyles";
+import Spinner from "./Spinner";
+import { lineSx } from "./readinessStyles";
 import { READY_TO_RUN_COPY as COPY } from "./readiness.constants";
 
 const boxSx = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
@@ -151,7 +152,7 @@ export default function ReadyToRunSection({
           size="small"
           variant="outlined"
           disabled={checking}
-          startIcon={checking ? spinner : null}
+          startIcon={checking ? <Spinner /> : null}
           onClick={() => runRecheck()}
           sx={{ py: 0, flexShrink: 0 }}
         >

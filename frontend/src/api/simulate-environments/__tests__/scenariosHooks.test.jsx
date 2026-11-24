@@ -4,9 +4,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/api/simulate-environments/scenarios", async () => {
-  const actual = await vi.importActual(
-    "src/api/simulate-environments/scenarios",
-  );
+  const actual = await vi.importActual("src/api/simulate-environments/scenarios");
   return {
     ...actual,
     listScenarios: vi.fn(),
@@ -48,19 +46,11 @@ wrapper.propTypes = { children: PropTypes.node };
 
 beforeEach(() => {
   listScenarios.mockReset();
-  listScenarios.mockImplementation((jobId, params) =>
-    queryScenarioFixture(params),
-  );
+  listScenarios.mockImplementation((jobId, params) => queryScenarioFixture(params));
   amendScenarios.mockReset();
   amendScenarios.mockResolvedValue({ receipts: [] });
   scenarioCoverage.mockReset();
-  scenarioCoverage.mockResolvedValue({
-    per_axis: [],
-    rows: [],
-    columns: [],
-    cells: [],
-    axes: [],
-  });
+  scenarioCoverage.mockResolvedValue({ per_axis: [], rows: [], columns: [], cells: [], axes: [] });
 });
 
 describe("useHarnessScenarios", () => {
@@ -78,12 +68,7 @@ describe("useHarnessScenarios", () => {
 
   it("maps the raw response through toPage into rows/total/pageCount/fields", async () => {
     const { result } = renderHook(
-      () =>
-        useHarnessScenarios({
-          jobId: "job-1",
-          pageSize: 25,
-          groupBy: "accent",
-        }),
+      () => useHarnessScenarios({ jobId: "job-1", pageSize: 25, groupBy: "accent" }),
       { wrapper },
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -125,12 +110,9 @@ describe("useHarnessScenarios", () => {
   });
 
   it("stays disabled without a jobId", () => {
-    const { result } = renderHook(
-      () => useHarnessScenarios({ jobId: undefined }),
-      {
-        wrapper,
-      },
-    );
+    const { result } = renderHook(() => useHarnessScenarios({ jobId: undefined }), {
+      wrapper,
+    });
     expect(result.current.fetchStatus).toBe("idle");
     expect(listScenarios).not.toHaveBeenCalled();
   });
@@ -151,35 +133,24 @@ describe("useHarnessScenarios", () => {
 
 describe("useAmendScenarios", () => {
   it("posts the amend body and invalidates the scenarios prefix (list + coverage)", async () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const spy = vi.spyOn(client, "invalidateQueries");
     const clientWrapper = ({ children }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     );
     clientWrapper.propTypes = { children: PropTypes.node };
 
-    const body = {
-      rework: true,
-      changes: [{ op: "drop", scenarios: ["a", "b"] }],
-    };
-    const { result } = renderHook(() => useAmendScenarios("job-1"), {
-      wrapper: clientWrapper,
-    });
+    const body = { rework: true, changes: [{ op: "drop", scenarios: ["a", "b"] }] };
+    const { result } = renderHook(() => useAmendScenarios("job-1"), { wrapper: clientWrapper });
     result.current.mutate(body);
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(amendScenarios).toHaveBeenCalledWith("job-1", body);
     // Invalidating the list prefix hits both the list pages and the coverage key
     // (coverage is nested under it).
-    expect(spy).toHaveBeenCalledWith({
-      queryKey: ["harness-scenarios", "job-1"],
-    });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["harness-scenarios", "job-1"] });
     // The workspace reads the scenario count from the environment detail.
-    expect(spy).toHaveBeenCalledWith({
-      queryKey: ["harness-environment", "job-1"],
-    });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["harness-environment", "job-1"] });
     // An edit records a new scenario version, so the version list refreshes too;
     // only the list, since a saved version's own diff and scenarios never change.
     expect(spy).toHaveBeenCalledWith({
@@ -202,21 +173,15 @@ describe("useAmendScenarios", () => {
 
 describe("useScenarioCoverage", () => {
   it("nests the coverage key under the list prefix so an amend invalidate reaches it", () => {
-    const key = harnessScenarioCoverageKey("job-1", {
-      search: "x",
-      rowAxis: "task",
-    });
+    const key = harnessScenarioCoverageKey("job-1", { search: "x", rowAxis: "task" });
     expect(key.slice(0, 2)).toEqual(["harness-scenarios", "job-1"]);
     expect(key[2]).toBe("coverage");
   });
 
   it("sends row_axis / col_axis only when set, so the server default stands", async () => {
-    const { result } = renderHook(
-      () => useScenarioCoverage("job-1", { search: "" }),
-      {
-        wrapper,
-      },
-    );
+    const { result } = renderHook(() => useScenarioCoverage("job-1", { search: "" }), {
+      wrapper,
+    });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const params = scenarioCoverage.mock.calls[0][1];
     expect(params).not.toHaveProperty("row_axis");
@@ -245,9 +210,7 @@ describe("useScenarioCoverage", () => {
   });
 
   it("stays disabled without a jobId", () => {
-    const { result } = renderHook(() => useScenarioCoverage(undefined), {
-      wrapper,
-    });
+    const { result } = renderHook(() => useScenarioCoverage(undefined), { wrapper });
     expect(result.current.fetchStatus).toBe("idle");
     expect(scenarioCoverage).not.toHaveBeenCalled();
   });

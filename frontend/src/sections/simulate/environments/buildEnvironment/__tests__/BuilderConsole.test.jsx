@@ -148,7 +148,15 @@ describe("BuilderConsole", () => {
     });
 
     it("doesn't snap back to the latest while a scroll to an earlier message is still near the bottom", () => {
-      render(<BuilderConsole turns={[{ id: "u1", role: "user", text: "Add 12 orders" }, toolTurn(1)]} running={false} />);
+      render(
+        <BuilderConsole
+          turns={[
+            { id: "u1", role: "user", text: "Add 12 orders" },
+            toolTurn(1),
+          ]}
+          running={false}
+        />,
+      );
       scrollList(1500);
       scrollTo.mockClear();
       act(() => focusBuilderChat("u1"));

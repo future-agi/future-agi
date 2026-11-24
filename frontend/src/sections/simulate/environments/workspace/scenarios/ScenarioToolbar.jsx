@@ -19,19 +19,11 @@ const SEARCH_OWN_ROW = "@container (max-width: 599px)";
 // read the same filtered, grouped rows. The "N of M · Clear" readout sits with
 // the results, in the list's footer, not here.
 export default function ScenarioToolbar({
-  query,
-  onQueryChange,
-  view,
-  onViewChange,
-  groupBy,
-  onGroupByChange,
-  groupings = [],
-  filterFields,
-  filters,
-  onApplyFilters,
-  filterCount,
-  rowHeight = "Short",
-  onRowHeightChange,
+  query, onQueryChange,
+  view, onViewChange,
+  groupBy, onGroupByChange, groupings = [],
+  filterFields, filters, onApplyFilters, filterCount,
+  rowHeight = "Short", onRowHeightChange,
   actions,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
@@ -44,13 +36,8 @@ export default function ScenarioToolbar({
           and the controls wrap beneath it, the actions staying right-aligned. */}
       <Box sx={{ containerType: "inline-size" }}>
         <Stack
-          role="toolbar"
-          aria-label="Scenarios"
-          direction="row"
-          alignItems="center"
-          columnGap={0.5}
-          rowGap={1}
-          flexWrap="wrap"
+          role="toolbar" aria-label="Scenarios"
+          direction="row" alignItems="center" columnGap={0.5} rowGap={1} flexWrap="wrap"
           sx={{ pb: 1.5 }}
         >
           <TextField
@@ -60,27 +47,15 @@ export default function ScenarioToolbar({
             placeholder={SCENARIOS_COPY.searchPlaceholder}
             InputProps={{
               startAdornment: (
-                <Box
-                  sx={{
-                    pr: 0.75,
-                    pl: 0.25,
-                    display: "flex",
-                    color: "text.subtitle",
-                  }}
-                >
+                <Box sx={{ pr: 0.75, pl: 0.25, display: "flex", color: "text.subtitle" }}>
                   <Iconify icon="solar:magnifer-linear" width={14} />
                 </Box>
               ),
             }}
             sx={{
-              flex: 1,
-              minWidth: 200,
-              maxWidth: 420,
-              mr: 0.5,
+              flex: 1, minWidth: 200, maxWidth: 420, mr: 0.5,
               [SEARCH_OWN_ROW]: {
-                flexBasis: "100%",
-                maxWidth: "none",
-                mr: 0,
+                flexBasis: "100%", maxWidth: "none", mr: 0,
               },
             }}
           />
@@ -92,8 +67,7 @@ export default function ScenarioToolbar({
             startIcon={<Iconify icon="solar:filter-linear" width={16} />}
             sx={scenarioToolbarButtonSx}
           >
-            {SCENARIOS_COPY.filterLabel}
-            {filterCount ? ` (${filterCount})` : ""}
+            {SCENARIOS_COPY.filterLabel}{filterCount ? ` (${filterCount})` : ""}
           </Button>
           <Button
             size="small"
@@ -118,12 +92,7 @@ export default function ScenarioToolbar({
             rowHeight={rowHeight}
             onRowHeightChange={onRowHeightChange}
           />
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1}
-            sx={{ ml: "auto" }}
-          >
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ ml: "auto" }}>
             {actions}
           </Stack>
         </Stack>

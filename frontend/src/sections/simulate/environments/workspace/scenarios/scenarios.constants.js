@@ -236,24 +236,15 @@ export const deriveUseCase = (row) => {
   }
   if (id.includes("-rule-")) {
     const short = title.split(/[.:]/)[0].slice(0, 42).trim();
-    return {
-      id: `rule:${short.toLowerCase()}`,
-      label: short || "Rule enforcement",
-    };
+    return { id: `rule:${short.toLowerCase()}`, label: short || "Rule enforcement" };
   }
   if (id.includes("-trap-")) {
     const table = title.split(":")[0].trim();
-    if (table)
-      return {
-        id: `trap:${table.toLowerCase()}`,
-        label: `${humanize(table)} data`,
-      };
+    if (table) return { id: `trap:${table.toLowerCase()}`, label: `${humanize(table)} data` };
     return { id: "trap:other", label: "Data traps" };
   }
-  if (id.includes("-adversarial-"))
-    return { id: `adv:${title.toLowerCase()}`, label: title || "Adversarial" };
-  if (id.includes("-edge-"))
-    return { id: `edge:${title.toLowerCase()}`, label: title || "Edge case" };
+  if (id.includes("-adversarial-")) return { id: `adv:${title.toLowerCase()}`, label: title || "Adversarial" };
+  if (id.includes("-edge-")) return { id: `edge:${title.toLowerCase()}`, label: title || "Edge case" };
   return { id: "other", label: "Other" };
 };
 
@@ -271,10 +262,7 @@ export const groupKeyOf = (row, mode, env) => {
     const subs = subTasksFor(row, env);
     const first = subs?.[0]?.label;
     if (!first) return { id: "subgoal:none", label: "No sub-goals" };
-    const slug = first
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+    const slug = first.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     return { id: `subgoal:${slug}`, label: first };
   }
   return deriveUseCase(row);
@@ -284,8 +272,7 @@ export const groupScenarios = (rows, mode = "goal", env) => {
   const buckets = new Map();
   (rows || []).forEach((r) => {
     const key = groupKeyOf(r, mode, env);
-    if (!buckets.has(key.id))
-      buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
+    if (!buckets.has(key.id)) buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
     buckets.get(key.id).rows.push(r);
   });
   // Bigger groups first — the tail of one-off adversarial/edge titles shouldn't

@@ -10,6 +10,7 @@ import {
   useMediaQuery,
   useTheme,
 } from "@mui/material";
+import { visuallyHidden } from "@mui/utils";
 import { enqueueSnackbar } from "notistack";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -39,17 +40,6 @@ import {
   suggestedName,
 } from "./reviewView";
 
-const visuallyHidden = {
-  border: 0,
-  clip: "rect(0 0 0 0)",
-  height: "1px",
-  margin: -1,
-  overflow: "hidden",
-  padding: 0,
-  position: "absolute",
-  whiteSpace: "nowrap",
-  width: "1px",
-};
 const cardSx = {
   border: "1px solid",
   borderColor: "divider",
