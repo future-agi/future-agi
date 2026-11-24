@@ -561,3 +561,32 @@ def test_compare_counts_an_agent_that_stalled_as_a_failed_trial_and_our_failure_
         {"domain": "simulator", "code": "caller_off_script"},
     )
     assert (ours.side()["trials"], ours.side()["undecided"]) == (0, 0)
+
+
+def test_a_trial_the_agent_itself_errored_reads_failed_in_the_row_the_scan_and_the_pass_rate():
+    from simulate.models import CallExecution
+    from simulate.services.run_reliability_v3 import trial_pass_from
+    from simulate.services.run_results_v3 import call_outcome
+    from simulate.services.run_results_v3_scan import _outcome
+
+    def call(domain):
+        return CallExecution(
+            status=CallExecution.CallStatus.COMPLETED,
+            call_metadata={
+                "harness_outcome_status": "errored",
+                "hosted_harness_receipt": {
+                    "status": "errored",
+                    "failure": {"domain": domain},
+                },
+            },
+        )
+
+    assert call_outcome(call("agent"), {}) == "failed"
+    assert call_outcome(call("simulator"), {}) == "error"
+    assert (
+        _outcome("completed", "errored", None, None, None, agent_failed=True)
+        == "failed"
+    )
+    assert _outcome("completed", "errored", None, None, None) == "error"
+    # One pass and three stalls: 25%, never 100%.
+    assert trial_pass_from({"passed": 1, "failed": 3}, 0)["trials_evaluated"] == 4

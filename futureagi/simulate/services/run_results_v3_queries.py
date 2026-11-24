@@ -931,6 +931,12 @@ def run_calls_queryset(
                 then=Value("error"),
             ),
             When(status__in=list(CANCELLED_CALL_STATUSES), then=Value("cancelled")),
+            # The trial ended on the agent's own failure (it stalled, it hung up): the agent failed it.
+            When(
+                Q(call_metadata__harness_outcome_status__in=list(HARNESS_ERROR))
+                & Q(call_metadata__hosted_harness_receipt__failure__domain="agent"),
+                then=Value("failed"),
+            ),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),
