@@ -21,6 +21,8 @@ and ``django.server`` to the SDK's ignored loggers for the rest of the process,
 so a capture test must not expect events from those two loggers.
 """
 
+import io
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -33,14 +35,36 @@ from tfc.logging.sentry import _get_before_send
 TEST_DSN = "https://public@example.test/1"
 
 
+class MemoryWire(Transport):
+    """Snapshot the complete serialized envelope as well as its decoded items."""
+
+    def __init__(self):
+        super().__init__()
+        self.raw = []
+        self.items = []
+
+    def capture_envelope(self, envelope):
+        packet = envelope.serialize()
+        self.raw.append(packet)
+        wire = io.BytesIO(packet)
+        headers = json.loads(wire.readline())
+        while line := wire.readline():
+            item = json.loads(line)
+            body = wire.read(item["length"])
+            assert len(body) == item["length"] and wire.read(1) == b"\n"
+            self.items.append((headers, item["type"], json.loads(body)))
+
+
 class EnvelopeTransport(Transport):
     """Keeps every error event the client would send, as the JSON it would send."""
 
     def __init__(self):
         super().__init__()
         self.events = []
+        self.envelopes = []
 
     def capture_envelope(self, envelope):
+        self.envelopes.append(envelope)
         for item in envelope.items:
             if item.headers.get("type") == "event":
                 self.events.append(item.payload.json)

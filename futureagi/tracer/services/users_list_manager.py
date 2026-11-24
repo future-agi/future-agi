@@ -444,38 +444,32 @@ def _users_attr_enrichment_query(
             argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
             argMax(start_time, _version) AS latest_start_time,
             argMax(
-                tuple(
-                    multiIf(
-                        notEmpty(JSONExtractRaw(attributes_extra, attribute_key)),
-                            JSONExtractRaw(attributes_extra, attribute_key),
-                        mapContains(attrs_bool, attribute_key),
-                            if(attrs_bool[attribute_key] != 0, 'true', 'false'),
-                        mapContains(attrs_number, attribute_key),
+                multiIf(
+                    attributes_extra NOT IN ('', '{{}}', 'null')
+                        AND notEmpty(JSONExtractRaw(attributes_extra, attribute_key)),
+                        tuple('json', JSONExtractRaw(attributes_extra, attribute_key)),
+                    mapContains(attrs_bool, attribute_key),
+                        tuple(
+                            'boolean',
+                            if(attrs_bool[attribute_key] != 0, 'true', 'false')
+                        ),
+                    mapContains(attrs_number, attribute_key),
+                        tuple(
+                            'number',
                             if(
                                 isFinite(attrs_number[attribute_key]),
                                 toString(attrs_number[attribute_key]),
                                 'null'
-                            ),
-                        mapContains(attrs_string, attribute_key),
-                            toJSONString(attrs_string[attribute_key]),
-                        ''
-                    )
+                            )
+                        ),
+                    mapContains(attrs_string, attribute_key),
+                        tuple('string', toJSONString(attrs_string[attribute_key])),
+                    tuple('', '')
                 ),
                 _version
-            ).1 AS latest_attribute_value_json,
-            argMax(
-                tuple(
-                    multiIf(
-                        notEmpty(JSONExtractRaw(attributes_extra, attribute_key)),
-                            'json',
-                        mapContains(attrs_bool, attribute_key), 'boolean',
-                        mapContains(attrs_number, attribute_key), 'number',
-                        mapContains(attrs_string, attribute_key), 'string',
-                        ''
-                    )
-                ),
-                _version
-            ).1 AS latest_attribute_value_type,
+            ) AS latest_attribute_pair,
+            latest_attribute_pair.2 AS latest_attribute_value_json,
+            latest_attribute_pair.1 AS latest_attribute_value_type,
             argMax(is_deleted, _version) AS latest_is_deleted
         FROM spans
         ARRAY JOIN %(requested_attribute_keys)s AS attribute_key

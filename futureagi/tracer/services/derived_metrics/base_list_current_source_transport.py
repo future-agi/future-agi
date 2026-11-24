@@ -35,15 +35,15 @@ class _OneShotPool(PoolManager):
             raise SourceUnavailable("source transport lacks terminal acknowledgement")
         self.expected_query_id = None
 
-    def request(self, method, url, **kwargs):
+    def request(self, method, url, *args, **kwargs):
         if self.expected_query_id is None:
-            return super().request(method, url, **kwargs)
+            return super().request(method, url, *args, **kwargs)
         if self.started:
             # The driver may call again after RemoteDisconnected. Do not send.
             raise SourceUnavailable("ambiguous source send cannot be replayed")
         self.started = True
         kwargs.update(retries=False, redirect=False, preload_content=False)
-        response = super().request(method, url, **kwargs)
+        response = super().request(method, url, *args, **kwargs)
         try:
             body = response.read(4097)
             if (

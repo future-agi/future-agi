@@ -51,8 +51,10 @@ def test_a_bug_is_not_read_as_a_storage_outage(read):
 def test_fault_targets_fall_back_to_the_environment_s_own_contract():
     with (
         patch("simulate.services.harness_versioning.drafts.edit_side", _storage_down),
+        # The contract the environment's working copy runs with.
         patch(
-            "simulate.services.harness_environment.contract_data", return_value=CONTRACT
+            "simulate.services.harness_environment.working_contract",
+            return_value=(CONTRACT, False),
         ),
     ):
         targets, cast = edit_fault_side(JOB)

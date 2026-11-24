@@ -1698,7 +1698,9 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
     },
     "tracer.services.clickhouse.v2.query_builders.session_detail": {
-        "_LIVE_SESSION_SPANS": filed(BY_ID_ALONE, why="session detail by session id"),
+        "_LIVE_SESSION_SPANS_TEMPLATE": filed(
+            BY_ID_ALONE, why="session detail by session id"
+        ),
     },
     "tracer.services.clickhouse.v2.query_builders.session_list": {
         (
@@ -2733,7 +2735,12 @@ _RUN_SCOPE_CALLERS = frozenset(
     }
 )
 _RUN_TRACES_CALLERS = frozenset(
-    {"simulate/services/run_traces_v3.py", "simulate/views/run_results_v3.py"}
+    {
+        "simulate/services/run_traces_v3.py",
+        "simulate/views/run_results_v3.py",
+        # The worker record reads the traces of the one call it records, at most MAX_TRACES of them.
+        "simulate/services/harness_workers.py",
+    }
 )
 # A fix reads its own check runs' and its source run's model calls.
 _RUN_USAGE_CALLERS = frozenset(
