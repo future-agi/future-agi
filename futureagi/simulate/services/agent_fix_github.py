@@ -38,6 +38,7 @@ from simulate.selectors.agent_fix_wording import (
     FixNames,
     candidate_wording,
     changed_files,
+    flaky_protected,
     must_pass_check,
     percent,
     plural,
@@ -506,26 +507,16 @@ def _why_section(candidate: AgentFixCandidate) -> str:
 
 
 def _risks_section(
-    candidate: AgentFixCandidate, wording: CandidateWording, review: EvalReview | None
+    candidate: AgentFixCandidate,
+    wording: CandidateWording,
+    review: EvalReview | None,
+    names: FixNames,
 ) -> str:
     """What the checks could not hold this change to, or flagged without refusing it: the
-    epoch page's caveats, word for word, then the flaky protected cases and the evals."""
-    lines = [f"- {_text(caveat)}" for caveat in wording.caveats]
-    # Each protected case once, by its name, or by its key when the engine sent none.
-    flaky: dict[str, list[dict]] = {}
-    for row in (candidate.fix_run.report or {}).get("flaky_protected") or []:
-        flaky.setdefault(str(row.get("key")), []).append(row)
-    for key, rows in flaky.items():
-        name = _text(next((row["name"] for row in rows if row.get("name")), key))
-        checks = ", ".join(
-            f"its “{_text(row.get('sub_goal'))}” check passed {_text(row.get('passed'))}"
-            f" of {_text(row.get('runs'))} runs"
-            for row in rows
-        )
-        lines.append(
-            f"- Protected case “{name}” is flaky on the current version, so this epoch"
-            f" wasn't held to it: {checks}."
-        )
+    epoch page's caveats, word for word, then the flaky protected scenarios and the evals.
+    No scenario key or check id is ever said."""
+    flaky = flaky_protected(candidate.fix_run.report or {}, names)
+    lines = [f"- {_text(line)}" for line in [*wording.caveats, *flaky]]
     evals = _evals_note(candidate, review) if review is not None else ""
     if not lines and not evals:
         return "### What could still go wrong\n\nNothing the checks flagged."
@@ -645,7 +636,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
             ),
             _files_section(files, wording),
             _why_section(candidate),
-            _risks_section(candidate, wording, review),
+            _risks_section(candidate, wording, review, names),
             _evidence_origin(candidate),
             _notes_section(candidate),
         )

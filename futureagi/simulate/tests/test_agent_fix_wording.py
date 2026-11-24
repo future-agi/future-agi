@@ -272,6 +272,80 @@ class TestOneWording:
         load.assert_not_called()
 
 
+class TestNoIdsInThePullRequest:
+    def test_flaky_noise_and_a_regression_are_said_by_name_only(
+        self, source_run, storage, named
+    ):
+        fix_run, candidate = _winner(
+            source_run,
+            storage,
+            noise=[f"{_SLUG}: slot_unavailable_handled", "refund: asks"],
+        )
+        tiers = [
+            {**tier, "status": "failed"} if tier["name"] == "must-pass" else tier
+            for tier in _TIERS
+        ]
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            report={
+                "flaky_protected": [
+                    {
+                        "key": _SLUG,
+                        "sub_goal": "slot_unavailable_handled",
+                        "passed": 2,
+                        "runs": 3,
+                    },
+                    {
+                        "key": "late-booking",
+                        "sub_goal": "polite",
+                        "passed": 1,
+                        "runs": 3,
+                    },
+                    {"key": "refund", "sub_goal": "asks", "passed": 1, "runs": 3},
+                ]
+            }
+        )
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=AgentFixCandidate.Outcome.REJECTED,
+            override_reason="The check is being retired.",
+            verdict={
+                **candidate.verdict,
+                "accepted": False,
+                "must_pass_regressions": ["late-booking: confirms"],
+                "tiers": tiers,
+            },
+        )
+        candidate = AgentFixCandidate.no_workspace_objects.select_related(
+            "fix_run"
+        ).get(id=candidate.id)
+
+        body = _body(candidate, _DONE)
+
+        # The regression, the noise and the flaky scenarios, each by name.
+        assert (
+            "- Must-pass scenario “Late booking”: its check “Confirms the new time”\n"
+            in body
+        )
+        assert (
+            "- Must-pass scenario “Reschedule out of hours”: its check “Says the slot is"
+            " unavailable and offers another” passed less often" in body
+        )
+        assert (
+            "- Protected scenario “Reschedule out of hours” is flaky on the current"
+            " version, so this epoch wasn't held to it: its check “Says the slot is"
+            " unavailable and offers another” passed 2 of 3 runs." in body
+        )
+        assert (
+            "- Protected scenario “Late booking” is flaky on the current version, so"
+            " this epoch wasn't held to it: a check passed 1 of 3 runs." in body
+        )
+        assert (
+            "- 1 protected scenario is flaky on the current version, so this epoch"
+            " wasn't held to it." in body
+        )
+        for raw in (*_RAW, "“polite”", "“confirms”", "confirms:"):
+            assert raw not in body
+
+
 class TestMustPassWords:
     _PASSED = [VerdictTier(name="must-pass", status="passed")]
     _FAILED = [VerdictTier(name="must-pass", status="failed")]

@@ -219,6 +219,50 @@ def must_pass_check(check: str, names: FixNames) -> str | None:
     return f"{named}: its check “{what}”" if what else named
 
 
+def flaky_protected(report: dict, names: FixNames) -> list[str]:
+    """The protected scenarios the current version is flaky on, so the fix was not held
+    to them: each once by its name, with what each check checks and how often it passed.
+    A check with no words reads as a check; scenarios with no name are only counted."""
+    rows: dict[str, list[dict]] = {}
+    for row in report.get("flaky_protected") or []:
+        rows.setdefault(str(row.get("key")), []).append(row)
+    said, unnamed = [], 0
+    for key, checks in rows.items():
+        # The engine names a row from the same inventory, so its name is the fallback.
+        name = names.scenarios.get(key) or next(
+            (str(row["name"]).strip() for row in checks if row.get("name")), ""
+        )
+        if not name:
+            unnamed += 1
+            continue
+        held = ", ".join(
+            f"{_check_words(row, names)} passed {row.get('passed')} of"
+            f" {row.get('runs')} runs"
+            for row in checks
+        )
+        said.append(
+            f"Protected scenario “{name}” is flaky on the current version, so this"
+            f" epoch wasn't held to it: {held}."
+        )
+    if unnamed:
+        scenarios = (
+            "1 protected scenario is"
+            if unnamed == 1
+            else f"{unnamed} protected scenarios are"
+        )
+        it = "it" if unnamed == 1 else "them"
+        said.append(
+            f"{scenarios} flaky on the current version, so this epoch wasn't held to"
+            f" {it}."
+        )
+    return said
+
+
+def _check_words(row: dict, names: FixNames) -> str:
+    what = names.checks.get(str(row.get("sub_goal")))
+    return f"its check “{what}”" if what else "a check"
+
+
 def caveats(
     candidate: AgentFixCandidate, review: EvalReview | None, names: FixNames
 ) -> list[str]:

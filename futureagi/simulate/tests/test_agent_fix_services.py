@@ -4056,15 +4056,18 @@ class TestPullRequestDescription:
         )
         # No cost was measured, so nothing says how one is.
         assert "Measured automatically" not in body
-        # A protected case reads once, by its name, and by its key only without one.
+        # A protected scenario reads once, by its name; one without a name is only
+        # counted. Never a key or a check's id.
         assert (
-            "- Protected case “case-2” is flaky on the current version, so this epoch"
-            " wasn't held to it: its “refunded” check passed 2 of 3 runs, its “polite”"
-            " check passed 1 of 3 runs." in body
+            "- Protected scenario “Refund a late order” is flaky on the current"
+            " version, so this epoch wasn't held to it:" in body
         )
-        assert body.count("Protected case “case-2”") == 1
-        assert "- Protected case “Refund a late order” is flaky" in body
-        assert "case-4" not in body
+        assert (
+            "- 1 protected scenario is flaky on the current version, so this epoch"
+            " wasn't held to it." in body
+        )
+        for raw in ("case-2", "case-4", "“refunded”", "“polite”", "“apologised”"):
+            assert raw not in body
 
     def test_every_check_the_engine_records_reads_as_the_fix_page_names_it(self):
         _check_label = agent_fix_github._check_label
