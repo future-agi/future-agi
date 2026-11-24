@@ -1941,6 +1941,7 @@ def test_every_reason_a_case_can_be_held_for_names_who_holds_it():
         ("validation_unavailable", "ours"),
         ("not_validated", "unproved"),
         ("apply_failed", "unproved"),
+        ("tool_not_on_agent", "unproved"),
         ("not_solvable", "proof_failed"),
         ("archived", None),
         (None, None),
