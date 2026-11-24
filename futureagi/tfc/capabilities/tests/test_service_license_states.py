@@ -22,7 +22,6 @@ from tfc.licensing.types import (
     LicenseType,
 )
 
-
 check_capability_isolation = capability_testing.check_capability_isolation
 preserve_capability_service = capability_testing.preserve_capability_service
 

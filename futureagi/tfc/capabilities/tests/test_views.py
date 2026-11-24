@@ -20,7 +20,6 @@ from tfc.licensing.types import (
     LicenseType,
 )
 
-
 preserve_capability_service = capability_testing.preserve_capability_service
 
 
