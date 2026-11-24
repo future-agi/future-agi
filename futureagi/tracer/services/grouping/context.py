@@ -21,6 +21,7 @@ from tracer.queries.grouping import (
 )
 from tracer.services.grouping.control import GroupingConflict
 from tracer.services.grouping.feature_store import GroupingFeatureStore
+from tracer.services.grouping.lsh_narrowing import narrow_candidates_with_lsh
 from tracer.services.grouping.sampling import (
     MAX_ISSUE_EVIDENCE_MEMBERS,
     membership_binding,
@@ -189,12 +190,20 @@ def build_claim_context(
                     for item in eligible_receipts
                     if str(item["finding__cluster_id"]) not in skip
                 ]
+            scoped_candidates = narrow_candidates_with_lsh(
+                client=store.client,
+                organization_id=scope.organization_id,
+                project_id=scope.project_id,
+                pending=rows,
+                candidates=candidates,  # type: ignore[arg-type]  # .values() rows are plain dicts
+                limit=limit,
+            )
             nearest.update(
                 store.candidate_occurrences(
                     organization_id=scope.organization_id,
                     project_id=scope.project_id,
                     pending=rows,
-                    candidates=candidates,  # type: ignore[arg-type]  # .values() rows are plain dicts
+                    candidates=scoped_candidates,
                     limit=limit,
                 )
             )
