@@ -16,6 +16,7 @@ import FixFinishedView, { FinishedActions } from "./FixFinishedView";
 import FixChangesTab from "./FixChangesTab";
 import FixCostTab from "./FixCostTab";
 import FixScenariosTab from "./FixScenariosTab";
+import OutsideAttemptVerdict from "./OutsideAttemptVerdict";
 
 // One page for a fix: it follows a running one and, once it ends, becomes the
 // place to decide on it. The read polls while the fix is live, so the finished
@@ -62,6 +63,7 @@ export default function FixRunPage({ envId, fixId, runTestId }) {
         }
       />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        <OutsideAttemptVerdict fix={fix} />
         {live ? (
           <FixRunningView fix={fix} runTestId={runTestId} />
         ) : (

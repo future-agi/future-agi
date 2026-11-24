@@ -16,8 +16,11 @@ import {
   patchFileName,
 } from "src/api/simulate-environments/fixRuns";
 
+import { useCodingAgentAttemptsEnabled } from "src/api/simulate-environments/codingAgent";
+
 import { downloadText } from "./downloadText";
 import { fixName, winnerOf } from "./fixRunView";
+import useCopyForCodingAgent from "./useCopyForCodingAgent";
 
 const exportFileName = (fix) =>
   `${fixName(fix).toLowerCase().replace(/\s+/g, "-")}.json`;
@@ -28,6 +31,8 @@ export default function EpochMoreMenu({ fix }) {
   const [anchor, setAnchor] = useState(null);
   const winner = fix.state === "ready" ? winnerOf(fix) : null;
   const close = () => setAnchor(null);
+  const codingAgent = useCodingAgentAttemptsEnabled();
+  const brief = useCopyForCodingAgent(fix.source_run_id);
 
   const copyId = async () => {
     close();
@@ -59,7 +64,25 @@ export default function EpochMoreMenu({ fix }) {
     );
   };
 
+  const copyForCodingAgent = () => {
+    close();
+    brief.copy();
+  };
+
   const items = [
+    ...(codingAgent
+      ? [
+          {
+            label: "Copy for coding agent",
+            hint: fix.source_run_id
+              ? "A prompt for Claude Code, Cursor or Codex to fix this run"
+              : "Only an epoch started from a run has a brief to copy",
+            icon: "solar:clipboard-text-linear",
+            onClick: copyForCodingAgent,
+            disabled: !fix.source_run_id,
+          },
+        ]
+      : []),
     {
       label: "Copy epoch ID",
       hint: "To quote it to support or in the API",
@@ -88,7 +111,10 @@ export default function EpochMoreMenu({ fix }) {
       <IconButton
         size="small"
         aria-label="More actions"
-        onClick={(e) => setAnchor(e.currentTarget)}
+        onClick={(e) => {
+          setAnchor(e.currentTarget);
+          if (codingAgent) brief.prefetch();
+        }}
       >
         <Iconify icon="solar:menu-dots-bold" width={16} />
       </IconButton>

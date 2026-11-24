@@ -14,8 +14,10 @@ import {
   isNotFound,
   useEnvironmentFixRuns,
 } from "src/api/simulate-environments/fixRuns";
+import { isOutsideAttempt } from "src/api/simulate-environments/codingAgent";
 
 import FixStatusChip from "./FixStatusChip";
+import { isUncountedAttempt } from "./attemptVerdictView";
 import {
   STATE_LABEL,
   fixName,
@@ -55,6 +57,26 @@ function HandOff({ fix }) {
 }
 HandOff.propTypes = { fix: PropTypes.object.isRequired };
 
+// The agent the epoch changed, and, for an attempt a person's own coding agent made,
+// that it came from there. Its verdict is on the Epoch's page. Only a deployment with
+// coding-agent attempts on has such an epoch, so the mark needs no setting of its own.
+// A failed attempt with no verdict shares its number with the next one, which the
+// platform numbers the same since this one did not count.
+const attemptLabel = (fix) => {
+  const label = `Attempt ${fix.request.outside_candidate.number} from your coding agent`;
+  return isUncountedAttempt(fix) ? `${label}, not counted` : label;
+};
+
+function AgentLine({ fix }) {
+  const agent = `${fix.agent.name} · v${fix.agent.version_number}`;
+  return (
+    <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+      {isOutsideAttempt(fix) ? `${attemptLabel(fix)} · ${agent}` : agent}
+    </Typography>
+  );
+}
+AgentLine.propTypes = { fix: PropTypes.object.isRequired };
+
 const columns = [
   {
     id: "name",
@@ -67,9 +89,7 @@ const columns = [
         <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
           {fixName(fix)}
         </Typography>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-          {`${fix.agent.name} · v${fix.agent.version_number}`}
-        </Typography>
+        <AgentLine fix={fix} />
       </Box>
     ),
   },

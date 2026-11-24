@@ -115,7 +115,10 @@ def _attempt_scope(
     by_scenario = {one.key: one.failing_sub_goals for one in ran if one.key in failing}
     if not by_scenario:
         raise HostedHarnessError(
-            "fix_targets_passed", "nothing failed in this run", status_code=422
+            "fix_targets_passed",
+            "Nothing failed in this run, so there is nothing to fix. Pick a run with"
+            " failing cases.",
+            status_code=422,
         )
     usage = source_run_usage(source_run)
     seen = models_called(usage)

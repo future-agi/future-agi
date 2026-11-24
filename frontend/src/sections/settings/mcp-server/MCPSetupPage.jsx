@@ -5,6 +5,7 @@ import SvgColor from "src/components/svg-color";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useMCPConfig } from "src/api/mcp";
 import ClientSetupGuide from "./ClientSetupGuide";
+import CodingAgentSetup from "./CodingAgentSetup";
 import ToolGroupSelector from "./ToolGroupSelector";
 
 export default function MCPSetupPage() {
@@ -82,6 +83,9 @@ export default function MCPSetupPage() {
 
       {/* Setup Guide (hero — URL + IDE tabs + how it works) */}
       <ClientSetupGuide config={config} />
+
+      {/* A person's own coding agent fixing failed runs (Epoch attempts) */}
+      <CodingAgentSetup />
 
       {/* Tool Groups */}
       <ToolGroupSelector config={config} />
