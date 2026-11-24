@@ -46,4 +46,14 @@ describe("readinessView", () => {
     expect(isAgentFix({ type: "preflight" })).toBe(true);
     expect(isAgentFix({ type: "recheck", category: "recheck" })).toBe(false);
   });
+
+  it("counts every scenario nothing can grade, past the ones the report lists", () => {
+    const { grading } = readinessView({
+      selection: {
+        requested: 1103,
+        grading: { gradable: 3, not_gradable: [{ key: "a" }], truncated: true },
+      },
+    });
+    expect(grading).toEqual({ gradable: 3, notGradable: 1100 });
+  });
 });

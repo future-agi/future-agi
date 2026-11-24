@@ -70,7 +70,7 @@ export function readinessView(report) {
     "unchecked";
   const rowsById = new Map((report?.rows || []).map((row) => [row.id, row]));
   const lines = (report?.areas || []).map((area) => areaLine(area, rowsById));
-  const grading = report?.selection?.grading || {};
+  const { requested = 0, grading } = report?.selection || {};
   return {
     state,
     stateReason: validation.error?.reason ?? null,
@@ -87,8 +87,9 @@ export function readinessView(report) {
       .filter((line) => line.status === "supported")
       .map((line) => line.area),
     grading: {
-      gradable: grading.gradable ?? 0,
-      notGradable: grading.not_gradable?.length ?? 0,
+      gradable: grading?.gradable ?? 0,
+      // The report lists only some of the rest.
+      notGradable: grading ? requested - grading.gradable : 0,
     },
   };
 }
