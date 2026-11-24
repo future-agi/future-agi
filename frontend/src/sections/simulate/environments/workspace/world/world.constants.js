@@ -236,6 +236,7 @@ export const WORLD_CARD_COPY = {
 };
 
 export const TOOL_DRAWER_COPY = {
+  codePending: "The code shows here once the build writes this tool.",
   remove: "Remove from the world",
   removeTitle: (name) => `Remove ${name}?`,
   removeContent:

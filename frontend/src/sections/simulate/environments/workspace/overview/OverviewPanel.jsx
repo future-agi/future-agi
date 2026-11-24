@@ -33,6 +33,7 @@ import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { DependsOnCard, SeededDataCard, StartingDataCard } from "./WorldCards";
 import ConnectOnlyWorld from "../world/ConnectOnlyWorld";
 import { hasNoWorld } from "../world/world.constants";
+import useApprovedDesign from "./useApprovedDesign";
 
 /**
  * What this environment is.
@@ -60,15 +61,19 @@ const dependsFromContract = (dependencies) =>
   }));
 
 export default function OverviewPanel({
-  env,
+  env: builtEnv,
   envState,
   onGo,
   agentConnected,
   locked = false,
   buildMode,
-  counts,
+  counts: builtCounts,
   backedWorld,
 }) {
+  const { env, fromDesign } = useApprovedDesign(builtEnv);
+  const counts = fromDesign
+    ? { ...builtCounts, hardRules: env.rules.length }
+    : builtCounts;
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
   // Agent versions are managed on real data, so only while versioning is on.
   const canManageVersions = !locked && Boolean(env.versioning?.enabled);

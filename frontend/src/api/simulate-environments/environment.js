@@ -272,6 +272,22 @@ const overlayDefined = (base, extra) => {
   return merged;
 };
 
+const EARLY_DETAIL_FIELDS = [
+  "testSubject",
+  "agentPolicy",
+  "source",
+  "agentMode",
+];
+
+const withEarlyDetail = (env, detailEnv) => {
+  if (!env || !detailEnv || env === detailEnv) return env;
+  const early = {};
+  EARLY_DETAIL_FIELDS.forEach((key) => {
+    if (detailEnv[key] != null) early[key] = detailEnv[key];
+  });
+  return { ...env, ...early };
+};
+
 // Resolve an environment id to its record. Order: an adopted client env in the
 // store, then the harness backend, then the prebuilt template catalogue. An
 // unknown id whose harness fetch 404s (and that no template claims) is notFound.
@@ -405,7 +421,7 @@ export function useEnvironment(envId) {
     const base = harness?.env ?? {};
     const merged = detailReady
       ? overlayDefined(base, detail.env)
-      : harness?.env ?? detail?.env;
+      : withEarlyDetail(harness?.env ?? detail?.env, detail?.env);
     const env = base.status ? { ...merged, status: base.status } : merged;
 
     // Gate the bootstrap on the detail settling so a slightly-later §6 success is

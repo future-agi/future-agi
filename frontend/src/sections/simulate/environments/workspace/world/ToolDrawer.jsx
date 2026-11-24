@@ -43,7 +43,13 @@ function SpecRow({ label, children }) {
 
 SpecRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
 
-export default function ToolDrawer({ tool, onClose, onRemove, blockedReason }) {
+export default function ToolDrawer({
+  tool,
+  onClose,
+  onRemove,
+  blockedReason,
+  codePending = false,
+}) {
   const args = tool?.arguments || [];
   const returned = tool?.returns || [];
   const changed = tool?.tables?.changed || [];
@@ -179,6 +185,20 @@ export default function ToolDrawer({ tool, onClose, onRemove, blockedReason }) {
             </Box>
           )}
 
+          {!source?.code && codePending && (
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                px: 2.5,
+                py: 1.5,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              {T.codePending}
+            </Typography>
+          )}
           {source?.code && (
             <CodeBlock
               file={
@@ -219,4 +239,5 @@ ToolDrawer.propTypes = {
   onClose: PropTypes.func.isRequired,
   onRemove: PropTypes.func,
   blockedReason: PropTypes.string,
+  codePending: PropTypes.bool,
 };

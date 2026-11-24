@@ -204,6 +204,7 @@ export default function WorldPanel({ env, envState, graphData, chat = null }) {
         onClose={() => setOpenTool(null)}
         onRemove={canRemove ? (tool) => setRemoving(tool.tool) : undefined}
         blockedReason={blockedReason}
+        codePending={isWritingWorld(env)}
       />
 
       <ConfirmDialog

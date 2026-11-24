@@ -43,6 +43,7 @@ import {
 import {
   commonSource,
   isParked,
+  kept,
   tableUsage,
   plannedScenarios,
   sourceLabel,
@@ -155,7 +156,6 @@ export default function DesignReviewStage({ envId }) {
   const busy =
     addEdit.isPending || undoEdit.isPending || approve.isPending || checking;
   const editable = canEdit && waiting;
-  const kept = (items) => (items || []).filter((item) => !item.removed);
   const tables = kept(review.tables);
   const tools = kept(review.tools);
   const rules = kept(review.rules);

@@ -85,3 +85,5 @@ export function approvedBuildSteps(stage) {
     state: index < at ? "done" : index === at ? "running" : "pending",
   }));
 }
+
+export const kept = (items) => (items || []).filter((item) => !item.removed);
