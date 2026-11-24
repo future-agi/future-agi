@@ -104,8 +104,9 @@ describe("media-session exchange response contract", () => {
       status: 204,
       data: "",
     });
-    expect(result.skipped).not.toBe(true);
-    expect(result.ok).toBe(true);
+    // An empty 204 is the matched-endpoint skip: accepted and still named,
+    // unlike an unknown endpoint, which is skipped without an endpoint.
+    expect(result).toMatchObject({ ok: true, skipped: true });
     expect(result.endpoint.template).toBe(
       "/tracer/v1/attachment-media-sessions",
     );
