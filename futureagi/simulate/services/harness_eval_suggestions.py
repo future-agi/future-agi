@@ -47,10 +47,14 @@ def _runtime(config: SimulateEvalConfig) -> dict[str, Any]:
     return config.config if isinstance(config.config, dict) else {}
 
 
+def is_required(config: SimulateEvalConfig) -> bool:
+    return _runtime(config).get(REQUIRED_KEY) is True
+
+
 def eval_requirement(config: SimulateEvalConfig) -> EvalRequirement:
     runtime = _runtime(config)
     return {
-        "required": runtime.get(REQUIRED_KEY) is True,
+        "required": is_required(config),
         "pass_threshold": _threshold(config.eval_template, runtime),
     }
 

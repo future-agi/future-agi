@@ -470,13 +470,19 @@ def _outcome(
         return "error"
     if status != "completed":
         return "inconclusive"
-    if harness_status in _HARNESS_FAILED or failed is True:
+    if harness_status in _HARNESS_FAILED:
         return "failed"
-    if harness_status in _HARNESS_NO_SCORE and passed is not True:
+    if harness_status in _HARNESS_NO_SCORE:
         return "no_score"
-    if errored is True or harness_status in _HARNESS_INCONCLUSIVE:
+    if harness_status in _HARNESS_INCONCLUSIVE:
         return "inconclusive"
-    if harness_status in _HARNESS_PASSED or passed is True:
+    if harness_status in _HARNESS_PASSED:
+        return "passed"
+    if failed is True:
+        return "failed"
+    if errored is True:
+        return "inconclusive"
+    if passed is True:
         return "passed"
     return "inconclusive"
 

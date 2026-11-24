@@ -69,6 +69,7 @@ from simulate.models import (
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.selectors.runs import user_executions
 from simulate.services.call_provider import call_agent_provider_expression
+from simulate.services.harness_eval_suggestions import is_required
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.harness_scenarios import (
     NO_CALL_ACTOR,
@@ -922,13 +923,10 @@ def run_calls_queryset(
                 call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
                 then=Value("failed"),
             ),
-            When(failed_eval, then=Value("failed")),
             When(
-                Q(call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE))
-                & ~passed_eval,
+                call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE),
                 then=Value("no_score"),
             ),
-            When(errored_eval, then=Value("inconclusive")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
                 then=Value("inconclusive"),
@@ -937,6 +935,8 @@ def run_calls_queryset(
                 call_metadata__harness_outcome_status__in=list(HARNESS_PASSED),
                 then=Value("passed"),
             ),
+            When(failed_eval, then=Value("failed")),
+            When(errored_eval, then=Value("inconclusive")),
             When(passed_eval, then=Value("passed")),
             default=Value("inconclusive"),
             output_field=CharField(),
@@ -1733,6 +1733,8 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
                 "missing": summary["total"] - present,
                 "pass_rate": round(passed / measured * 100, 2) if measured else None,
                 "average_score": evaluation_values.get(f"score_{eval_id}"),
+                "required": eval_id in scoring_configs
+                and is_required(scoring_configs[eval_id]),
             }
         )
 
@@ -1740,6 +1742,11 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         queryset.filter(result_outcome__in=["failed", "error"])
         .annotate(
             failure_reason=Case(
+                When(
+                    Q(result_outcome="failed")
+                    & Q(call_metadata__harness_outcome_status__in=list(HARNESS_FAILED)),
+                    then=Value("Task checks failed"),
+                ),
                 When(result_outcome="failed", then=Value("Evaluation failure")),
                 default=Coalesce(
                     NullIf(F("ended_reason"), Value("")),

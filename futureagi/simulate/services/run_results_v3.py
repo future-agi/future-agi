@@ -28,6 +28,7 @@ from simulate.services.call_provider import (
     call_agent_provider,
     call_agent_provider_expression,
 )
+from simulate.services.harness_eval_suggestions import is_required
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_scenarios import (
     authored_scenarios_for_calls,
@@ -214,6 +215,14 @@ def call_outcome(
     if call.status != CallExecution.CallStatus.COMPLETED:
         return "inconclusive"
 
+    if harness_outcome in HARNESS_FAILED:
+        return "failed"
+    if harness_outcome in HARNESS_NO_SCORE:
+        return "no_score"
+    if harness_outcome in HARNESS_INCONCLUSIVE:
+        return "inconclusive"
+    if harness_outcome in HARNESS_PASSED:
+        return "passed"
     verdicts = [
         verdict
         for eval_id, data in iter_live_eval_outputs(
@@ -222,17 +231,10 @@ def call_outcome(
         if (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
-    if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
+    if "failed" in verdicts:
         return "failed"
-    # Platform evals arrive after the receipt; one that passed scores the call.
-    if harness_outcome in HARNESS_NO_SCORE and "passed" not in verdicts:
-        return "no_score"
     if "error" in verdicts:
         return "inconclusive"
-    if harness_outcome in HARNESS_INCONCLUSIVE:
-        return "inconclusive"
-    if harness_outcome in HARNESS_PASSED:
-        return "passed"
     if "passed" in verdicts:
         return "passed"
     return "inconclusive"
@@ -445,6 +447,7 @@ def eval_rows(
                 "passed": verdict,
                 "reason": reason,
                 "status": status,
+                "required": config is not None and is_required(config),
             }
         )
     if scoring is not None:
@@ -462,6 +465,10 @@ def eval_rows(
                     "passed": None,
                     "reason": derived.reason or "",
                     "status": derived.status,
+                    "required": (
+                        eval_id in live_eval_configs
+                        and is_required(live_eval_configs[eval_id])
+                    ),
                 }
             )
     return rows
@@ -855,6 +862,11 @@ def build_call_rows(
                 "sub_goals": [goal["name"] for goal in sub_goal_results],
                 "sub_goal_results": sub_goal_results,
                 "outcome": outcome,
+                "required_evals_failed": [
+                    evaluation["name"]
+                    for evaluation in evaluations
+                    if evaluation["required"] and evaluation["passed"] is False
+                ],
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
                 # Why it was skipped, when the harness gave a reason; why an actor's call is inconclusive; a stopped call.
