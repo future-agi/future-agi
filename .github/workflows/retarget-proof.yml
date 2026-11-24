@@ -7,7 +7,7 @@ name: Retarget proof
 # delivered the edit with a merge of the head onto the base's current tip.
 # GitHub often sends a retarget, its automatic ones included, with the merge
 # from before it; then the "candidate" job fails and nothing else runs: push a
-# commit, or close and reopen, so the pull request's own runs test the new base.
+# commit, so the pull request's own runs test the new base.
 #
 # Their jobs appear as "retarget-backend / ..." and "retarget-e2e / ...",
 # never as a required check name, and each records the candidate it tested for
@@ -32,6 +32,8 @@ permissions:
   actions: read
   # The E2E shards pull the build cache from GHCR.
   packages: read
+  # The called E2E CI reads the pull request's current labels (e2e-standalone).
+  issues: read
 
 jobs:
   candidate:
@@ -50,7 +52,7 @@ jobs:
           set -euo pipefail
           # No proof for a fork's pull request: nothing here may pass for it.
           if [[ $HEAD_REPO != "$GITHUB_REPOSITORY" ]]; then
-            echo "::error::Retarget proof does not run for pull requests from forks. Push a commit, or close and reopen the pull request, so its own Backend CI and E2E CI test the new base."
+            echo "::error::Retarget proof does not run for pull requests from forks. Push a commit so its own Backend CI and E2E CI test the new base."
             exit 1
           fi
           parents=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '[.parents[].sha] | join(" ")')
@@ -59,7 +61,7 @@ jobs:
             echo "This edit's merge commit $GITHUB_SHA is $HEAD_SHA onto $BASE_REF at $tip."
             exit 0
           fi
-          echo "::error::GitHub sent this retarget with merge commit $GITHUB_SHA (parents $parents), not the head $HEAD_SHA on $BASE_REF at $tip. Push a commit, or close and reopen the pull request, so its own Backend CI and E2E CI test the new base."
+          echo "::error::GitHub sent this retarget with merge commit $GITHUB_SHA (parents $parents), not the head $HEAD_SHA on $BASE_REF at $tip. Push a commit so its own Backend CI and E2E CI test the new base."
           exit 1
 
   retarget-backend:
