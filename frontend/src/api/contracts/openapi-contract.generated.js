@@ -118138,6 +118138,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         target_metrics: {
           $ref: "#/definitions/HarnessTargetMetrics",
         },
+        duplicate_commits: {
+          title: "Duplicate commits",
+          type: "integer",
+          minimum: 0,
+        },
       },
       "x-nullable": true,
     },
