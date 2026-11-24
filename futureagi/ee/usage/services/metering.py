@@ -111,6 +111,10 @@ def _get_cached_billing_status(org_id: str) -> str:
     return status
 
 
+# Budget scope priced on the whole invoice rather than a metered dimension.
+TOTAL_SPEND_SCOPE = "total_spend"
+
+
 def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
     """Pre-check: can this org perform this billable action?
 
@@ -205,13 +209,23 @@ def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
                     ),
                 )
 
-    # Check budget pause flag (set by budget enforcement in Phase 4)
-    pause_key = f"pause:{org_id}:{dimension}"
-    if get_redis().get(pause_key):
+    # Check budget pause flags (set by budget enforcement in Phase 4).
+    # A per-dimension budget pauses only its own dimension; a total_spend
+    # budget is written as pause:{org_id}:total_spend and pauses all billable
+    # usage, since no event is ever metered under a "total_spend" dimension.
+    r = get_redis()
+    if r.get(f"pause:{org_id}:{dimension}"):
         return CheckResult(
             allowed=False,
             error_code="BUDGET_PAUSED",
             reason=f"Usage paused — you set a budget limit for {dimension}",
+            dimension=dimension,
+        )
+    if r.get(f"pause:{org_id}:{TOTAL_SPEND_SCOPE}"):
+        return CheckResult(
+            allowed=False,
+            error_code="BUDGET_PAUSED",
+            reason="Usage paused — you set a total spend budget limit",
             dimension=dimension,
         )
 
