@@ -799,6 +799,20 @@ def scenario_lifecycle(
                         "tool_not_on_agent", tool=", ".join(lacking), agent=label
                     ),
                 )
+        elif (
+            agent_tools is not None
+            and agent_tools[0] is not None
+            and view["reason"] == "proved_on_other_agent"
+            and (lacking := sorted(needed.get(key, frozenset()) - agent_tools[0]))
+        ):
+            # Validating with this agent version would not run it: the tool it lacks is the reason, not the version.
+            _demote(
+                view,
+                "tool_not_on_agent",
+                reason_text(
+                    "tool_not_on_agent", tool=", ".join(lacking), agent=agent_tools[1]
+                ),
+            )
         if default and key in failed and view["state"] != "archived":
             _demote(
                 view,

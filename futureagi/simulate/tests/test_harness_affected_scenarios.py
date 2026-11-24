@@ -809,6 +809,47 @@ def test_a_case_held_for_two_reasons_is_counted_once():
     assert set(reasons) == set(by)
 
 
+def test_a_blocked_row_holds_back_only_the_cases_it_blocks():
+    """A missing tool blocks the cases that use it; a case it only reads stale for runs, and a case held for another
+    reason is not held by it, so the run dialog's count names only the cases the tool holds back."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        NOT_VALIDATED_ROW,
+        _held_by,
+    )
+
+    def placed(key, bucket, by):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key),
+            bucket=bucket,
+            by=by,
+            held_by=frozenset({"tool_discovery"}),
+            hold=SimpleNamespace(held=False, reason=None, workers=()),
+        )
+
+    row = {
+        "id": "tool_discovery",
+        "label": "Agent's tools found",
+        "area": "tool_binding",
+        "status": "blocked",
+        "reason": "Not in this agent version: issue_refund",
+        "affected": {"count": 3},
+    }
+
+    held = _held_by(
+        [row],
+        [],
+        [
+            placed("refund", "blocked", ["tool_discovery", NOT_VALIDATED_ROW]),
+            placed("lookup", "blocked", [NOT_VALIDATED_ROW]),
+            placed("status", "stale", ["tool_routing"]),
+        ],
+    )
+
+    assert [(one["id"], one["count"]) for one in held] == [("tool_discovery", 1)]
+
+
 def test_each_listed_held_case_names_the_row_it_is_counted_under():
     """The run plan's list says which case is held for which reason, the same row its counts use; a dropped case
     reads dropped, and a case past the list's cap is counted but not listed."""

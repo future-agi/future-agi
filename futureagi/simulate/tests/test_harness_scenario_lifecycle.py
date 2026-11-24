@@ -1619,6 +1619,42 @@ def test_a_case_whose_reference_needs_a_tool_the_agent_dropped_is_held_until_it_
     assert back[REFUND_KEYS[0]]["state"] == "active"
 
 
+def test_a_case_validated_with_another_agent_version_names_the_tool_this_one_lacks(
+    user, workspace, storage, monkeypatch
+):
+    """Validating with this agent version would not run a case that uses a tool it lacks: the tool is the reason, and
+    the run dialog says so. A case this version can run reads validated with another agent version."""
+    from simulate.services.harness_readiness import selection
+    from simulate.services.harness_readiness.report import resolve_pairing
+
+    environment = _environment(user, workspace, storage, "tool-other-agent")
+    _suite(environment, _ten())
+    built_with = str(environment.agent_version_id)
+    _proofs(
+        environment,
+        {
+            key: {**PROVED, "agent_version_id": built_with}
+            for key in REFUND_KEYS + LOOKUP_KEYS
+        },
+    )
+    agent = _on_agent(environment, monkeypatch, ["lookup_order"])
+
+    views = _views_with(environment, agent)
+    plan = selection.select_for_run(
+        resolve_pairing(environment, agent_version_id=agent.id),
+        keys=[REFUND_KEYS[0], LOOKUP_KEYS[0]],
+        trials=1,
+    )
+
+    assert views[REFUND_KEYS[0]]["reason"] == "tool_not_on_agent"
+    assert views[REFUND_KEYS[0]]["reason_text"] == (
+        f"Needs issue_refund, which agent version v{agent.version_number} doesn't have."
+    )
+    assert views[LOOKUP_KEYS[0]]["reason"] == "proved_on_other_agent"
+    assert plan.view["held_back"]["by_key"][REFUND_KEYS[0]] == "tool_not_on_agent"
+    assert "Needs issue_refund" in plan.view["held_back"]["reason_by_key"][REFUND_KEYS[0]]
+
+
 def test_a_case_proved_by_a_check_that_never_read_the_agent_is_not_active(
     user, workspace, storage, monkeypatch
 ):

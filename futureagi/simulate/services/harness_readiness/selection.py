@@ -407,17 +407,21 @@ def _held_by(
     )
     reasons = _worker_reasons(placed, workers)
     names = {f"worker:{one['worker_id']}": one["name"] for one in workers}
+    # The cases each blocked row holds back: a case it only reads stale or untested for runs, or is held by another.
+    blocking = Counter(
+        row for one in placed if one.bucket == "blocked" for row in set(one.by)
+    )
     held: list[HeldBy] = [
         {
             "id": row["id"],
             "name": row["label"],
             "area": row["area"],
-            "count": row["affected"]["count"],
+            "count": blocking[row["id"]],
             "reason": row["reason"],
             "text": row["reason"] or row["label"],
         }
         for row in rows
-        if row["status"] == "blocked" and row["affected"]["count"] > 0
+        if row["status"] == "blocked" and blocking[row["id"]] > 0
     ]
     held += [
         {
