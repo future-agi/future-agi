@@ -635,6 +635,12 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("TRACE_LIST_ENRICHMENT_CHUNK_SIZE", 100, 1, 500),
             ("TRACE_LIST_ENRICHMENT_MAX_WORKERS", 2, 1, 16),
             ("TRACE_LIST_ANNOTATION_SCORE_SPAN_LIMIT", 50_000, 1, 1_000_000),
+            # Trace detail fails closed (503 span_limit_exceeded) above these
+            # caps rather than return a partial tree. Each span's full content
+            # is held by the worker, so raise them only after measuring it.
+            ("TRACE_DETAIL_MAX_PHYSICAL_SPANS", 1_000, 1, 10_000),
+            ("TRACE_DETAIL_MAX_EVAL_ROWS", 5_000, 1, 50_000),
+            ("TRACE_DETAIL_MAX_ANNOTATION_ROWS", 5_000, 1, 50_000),
             ("VOICE_CONTENT_MAX_QUERY_ATTEMPTS", 64, 1, 1_024),
             ("VOICE_CONTENT_MAX_BATCH_SIZE", 200, 1, 5_000),
             # Page hydration is part of the same request-owned 30-second wall.
