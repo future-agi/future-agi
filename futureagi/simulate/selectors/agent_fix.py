@@ -1500,7 +1500,9 @@ def environment_state_blocker(
     its versions: before that its build is running or did not finish, and after it an
     update (a rebuild, more scenarios, or a re-run of its calls) is. More scenarios run
     the environment again, so its state says so; a settled environment's leftover
-    ``scenario_extend`` marker is not an update."""
+    ``scenario_extend`` marker is not an update. A settled environment with no agent
+    version (made before they were kept, or its version was deleted) gets none from any
+    later step: only a new environment's creation makes one."""
     from simulate.services.harness_versioning import drafts
 
     built = environment.environment_version_id is not None
@@ -1527,6 +1529,14 @@ def environment_state_blocker(
             "This environment's last update didn't finish. Open the environment to run"
             " it again, then Run Epoch.",
             status_code=409,
+        )
+    if environment.agent_version_id is None:
+        return HostedHarnessError(
+            "environment_agent_unversioned",
+            "This environment has no saved version of its agent, so Epoch can't change"
+            " it. Build a new environment from the same upload or GitHub repository,"
+            " then Run Epoch there.",
+            status_code=422,
         )
     if not built:
         # Built before versions were saved: the checks after this one say why.
@@ -1559,20 +1569,35 @@ _SHIP_BEFORE_LAUNCH = {
 }
 
 
+def _agent_runtime(agent_version_id: Any) -> HarnessAgentVersionRuntime | None:
+    return HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id=agent_version_id
+    ).first()
+
+
 def github_ship_source(
-    agent_version_id: Any, run: HostedHarnessJob | None, *, before_run: bool = False
+    agent_version_id: Any, run: HostedHarnessJob | None
 ) -> tuple[str, str, str, str]:
     """The installation, repository, ref and commit a pull request for this GitHub agent
-    version opens from ``run``'s checkout, or the refusal. ``before_run``, before the run a
-    fix starts from exists, reads no commit and gives it back empty."""
-    runtime = HarnessAgentVersionRuntime.no_workspace_objects.filter(
-        agent_version_id=agent_version_id,
-        source_kind=HarnessAgentVersionRuntime.SourceKind.GITHUB,
-    ).first()
-    installation_id = ""
-    if runtime is not None:
-        access = (runtime.agent_payload or {}).get("source_access") or {}
-        installation_id = str(access.get("installation_id") or "")
+    version opens from ``run``'s checkout, or the refusal."""
+    return _pull_request_source(_agent_runtime(agent_version_id), run, before_run=False)
+
+
+def _pull_request_source(
+    runtime: HarnessAgentVersionRuntime | None,
+    run: HostedHarnessJob | None,
+    *,
+    before_run: bool,
+) -> tuple[str, str, str, str]:
+    """``github_ship_source`` from the version's runtime, read once. ``before_run``, before
+    the run a fix starts from exists, reads no commit and gives it back empty."""
+    access = (
+        (runtime.agent_payload or {}).get("source_access") or {}
+        if runtime is not None
+        and runtime.source_kind == HarnessAgentVersionRuntime.SourceKind.GITHUB
+        else {}
+    )
+    installation_id = str(access.get("installation_id") or "")
     if runtime is None or not installation_id:
         raise HostedHarnessError(
             "fix_github_not_connected",
@@ -1600,19 +1625,24 @@ def github_ship_source(
     return installation_id, repository, str(source.get("ref") or ""), commit
 
 
+_SHIP_PATHS: dict[str, ShipPath] = {
+    HarnessAgentVersionRuntime.SourceKind.GITHUB: ShipPath.PULL_REQUEST,
+    HarnessAgentVersionRuntime.SourceKind.ARCHIVE: ShipPath.MAKE_DEFAULT,
+}
+
+
 def ship_readiness(
     agent_version_id: Any, run: HostedHarnessJob | None
-) -> ShipReadiness:
+) -> ShipReadiness | None:
     """How a winner of an epoch on this agent version, from ``run`` or from a run still to
     come (None), would ship: a GitHub agent's as a pull request, with why one couldn't open
-    now; any other's as the default."""
-    if not HarnessAgentVersionRuntime.no_workspace_objects.filter(
-        agent_version_id=agent_version_id,
-        source_kind=HarnessAgentVersionRuntime.SourceKind.GITHUB,
-    ).exists():
-        return ShipReadiness(path=ShipPath.MAKE_DEFAULT)
+    now; an uploaded one's as the default. None for an agent Epoch can't change."""
+    runtime = _agent_runtime(agent_version_id)
+    path = _SHIP_PATHS.get(runtime.source_kind) if runtime else None
+    if path != ShipPath.PULL_REQUEST:
+        return ShipReadiness(path=path) if path else None
     try:
-        github_ship_source(agent_version_id, run, before_run=run is None)
+        _pull_request_source(runtime, run, before_run=run is None)
     except HostedHarnessError as exc:
         return ShipReadiness(
             path=ShipPath.PULL_REQUEST,

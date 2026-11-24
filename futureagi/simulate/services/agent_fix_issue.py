@@ -57,7 +57,7 @@ from simulate.selectors.agent_fix_issue import (
     runnable_cases,
 )
 from simulate.selectors.evidence_import import MAX_SOURCES
-from simulate.services.agent_fix_agents import agent_kind
+from simulate.services.agent_fix_agents import not_editable, pickable_kind
 from simulate.services.agent_fix_engine import dispatch_run
 from simulate.services.agent_fix_runs import launch_fix_run, require_variation_room
 from simulate.services.evidence_drafts import forget, start_drafting
@@ -278,6 +278,8 @@ def _active_epoch_refusal(environment: HostedHarnessJob) -> HostedHarnessError |
             f"An epoch from {issue.cluster_id if issue else 'another issue'} is starting"
             " in this environment. Wait for it, or open it.",
             job_id=str(measuring.id),
+            # Its issue's page shows it.
+            cluster_id=issue.cluster_id if issue else None,
         )
     return None
 
@@ -299,10 +301,13 @@ def _require_launchable(
             " ones.",
             status_code=422,
         )
+    # In environment_blocker's order, as the plan said it.
+    kind = pickable_kind(environment)
+    if kind is None:
+        raise not_editable()
+    kind.require_available()
     if blocked := environment_state_blocker(environment):
         raise blocked
-    kind = agent_kind(environment)
-    kind.require_available()
     if refused := sorted(set(launch.surfaces) - kind.surfaces):
         raise _refused(
             "fix_surface_not_allowed",

@@ -105,6 +105,7 @@ from simulate.services import (
     harness_actor_view,
     harness_actors,
 )
+from simulate.services.agent_fix_agents import with_epoch_pickable
 from simulate.services.evidence_import import (
     TranscriptInput,
     add_to_suite,
@@ -1303,7 +1304,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        jobs = with_version_contract(self._queryset(request))
+        jobs = with_epoch_pickable(with_version_contract(self._queryset(request)))
         agent_definition_id = request.validated_query_data.get("agent_definition_id")
         if agent_definition_id is not None:
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)

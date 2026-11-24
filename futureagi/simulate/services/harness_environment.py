@@ -213,9 +213,23 @@ def environment_rows(jobs: list[HostedHarnessJob]) -> list[dict[str, Any]]:
     ).select_related("agent_version", "run_test")
     last_runs = run_summaries(list(executions))
     return [
-        {**environment_row(job), "last_run": last_runs.get(job.last_execution_id)}
+        {
+            **environment_row(job),
+            "last_run": last_runs.get(job.last_execution_id),
+            "epoch_pickable": _epoch_pickable(job),
+        }
         for job in jobs
     ]
+
+
+def _epoch_pickable(job: HostedHarnessJob) -> bool:
+    """From ``with_epoch_pickable``'s annotation, else read on its own."""
+    listed = getattr(job, "epoch_pickable", None)
+    if listed is not None:
+        return bool(listed)
+    from simulate.services.agent_fix_agents import pickable_kind
+
+    return pickable_kind(job) is not None
 
 
 def version_ref(

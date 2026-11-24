@@ -46,7 +46,12 @@ from simulate.selectors.agent_fix import (
     unsaved_changes,
 )
 from simulate.selectors.evidence_import import import_bundle
-from simulate.services.agent_fix_agents import agent_kind, fixable_environments
+from simulate.services.agent_fix_agents import (
+    agent_kind,
+    not_editable,
+    pickable_environments,
+    pickable_kind,
+)
 from simulate.services.harness_environment import environment_name
 from simulate.services.harness_versioning import drafts
 from simulate.services.hosted_harness import HostedHarnessError
@@ -97,14 +102,18 @@ def live_issue(issue: TraceErrorGroup | None) -> TraceErrorGroup | None:
 
 def environment_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
     """Why an epoch cannot be run from an issue on the environment now; None when it
-    can. Drafting needs the environment built and idle, an agent Epoch can change,
-    and no unsaved changes for the builder to draft over."""
-    if blocked := environment_state_blocker(environment):
-        return blocked
+    can. In launch_blocker's order: an agent Epoch can change, on a deployment that can
+    change it, then the environment built and idle, and no unsaved changes for the
+    builder to draft over."""
+    kind = pickable_kind(environment)
+    if kind is None:
+        return not_editable()
     try:
-        agent_kind(environment).require_available()
+        kind.require_available()
     except HostedHarnessError as exc:
         return exc
+    if blocked := environment_state_blocker(environment):
+        return blocked
     if not drafts.drafts_apply(environment):
         return HostedHarnessError(
             "drafts_unavailable",
@@ -125,7 +134,7 @@ def environment_blocker(environment: HostedHarnessJob) -> HostedHarnessError | N
 def unpicked_blocker(environments: QuerySet[HostedHarnessJob]) -> HostedHarnessError:
     """Why a plan names no environment: none of ``environments`` (the caller's) can run
     an epoch, or one can and none is picked for the issue's project yet."""
-    if fixable_environments(environments.filter(deleted=False)).exists():
+    if pickable_environments(environments.filter(deleted=False)).exists():
         return HostedHarnessError(
             "environment_not_picked",
             "Pick the environment that tests this issue's agent. This project's next"

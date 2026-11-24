@@ -8,7 +8,7 @@ kind is one more class in ``AGENT_KINDS``.
 import io
 from typing import Any, Protocol
 
-from django.db.models import QuerySet
+from django.db.models import Exists, OuterRef, Q, QuerySet
 
 from simulate.models import (
     AgentFixCandidate,
@@ -38,10 +38,12 @@ class AgentKind(Protocol):
 
     def handles(self, environment: HostedHarnessJob) -> bool: ...
 
-    def handled(
+    def pickable(
         self, environments: QuerySet[HostedHarnessJob]
     ) -> QuerySet[HostedHarnessJob]:
-        """The environments among ``environments`` this kind handles, in one query."""
+        """The environments among ``environments`` an epoch can be run on once they are
+        ready: those this kind handles, and those whose own source it would handle that
+        have no agent version yet. In one query."""
         ...
 
     def require_available(self) -> None:
@@ -96,13 +98,20 @@ class VersionedSourceAgent:
             agent_version_id=environment.agent_version_id, source_kind__in=self.EDITABLE
         ).exists()
 
-    def handled(
+    def pickable(
         self, environments: QuerySet[HostedHarnessJob]
     ) -> QuerySet[HostedHarnessJob]:
+        editable = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            source_kind__in=self.EDITABLE
+        ).values("agent_version_id")
+        # With no agent version (still building, or made before they were kept), the
+        # environment's own source says what its agent is.
         return environments.filter(
-            agent_version_id__in=HarnessAgentVersionRuntime.no_workspace_objects.filter(
-                source_kind__in=self.EDITABLE
-            ).values("agent_version_id")
+            Q(agent_version_id__in=editable)
+            | Q(
+                agent_version__isnull=True,
+                payload__source__kind__in=[kind.value for kind in self.EDITABLE],
+            )
         )
 
     def require_available(self) -> None:
@@ -189,23 +198,51 @@ class VersionedSourceAgent:
 AGENT_KINDS: list[AgentKind] = [VersionedSourceAgent()]
 
 
-def fixable_environments(
+def pickable_environments(
     environments: QuerySet[HostedHarnessJob],
 ) -> QuerySet[HostedHarnessJob]:
-    """The environments among ``environments`` whose agent some kind handles."""
+    """The environments among ``environments`` an epoch can be picked for: an agent some
+    kind handles, with or without its agent version yet."""
     found = environments.none()
     for kind in AGENT_KINDS:
-        found = found | kind.handled(environments)
+        found = found | kind.pickable(environments)
     return found
+
+
+def with_epoch_pickable(
+    environments: QuerySet[HostedHarnessJob],
+) -> QuerySet[HostedHarnessJob]:
+    """``environments`` annotated ``epoch_pickable``, in the same query."""
+    return environments.annotate(
+        epoch_pickable=Exists(
+            pickable_environments(
+                HostedHarnessJob.no_workspace_objects.filter(id=OuterRef("id"))
+            )
+        )
+    )
+
+
+def pickable_kind(environment: HostedHarnessJob) -> AgentKind | None:
+    """The kind an epoch on ``environment`` would run as, read without its agent version;
+    None for an agent no kind can change."""
+    one = HostedHarnessJob.no_workspace_objects.filter(id=environment.id)
+    for kind in AGENT_KINDS:
+        if kind.pickable(one).exists():
+            return kind
+    return None
+
+
+def not_editable() -> HostedHarnessError:
+    return HostedHarnessError(
+        "fix_agent_not_editable",
+        "Epoch can change an uploaded or GitHub agent; this agent's prompt and tools"
+        " run outside Future AGI",
+        status_code=422,
+    )
 
 
 def agent_kind(environment: HostedHarnessJob) -> AgentKind:
     for kind in AGENT_KINDS:
         if kind.handles(environment):
             return kind
-    raise HostedHarnessError(
-        "fix_agent_not_editable",
-        "Epoch can change an uploaded or GitHub agent; this agent's prompt and tools"
-        " run outside Future AGI",
-        status_code=422,
-    )
+    raise not_editable()

@@ -1520,6 +1520,35 @@ def test_the_list_reads_observe_projects_without_a_query_per_agent(
         assert len(_rows(auth_client)) == 4
 
 
+@pytest.mark.django_db
+def test_the_list_says_which_environments_epoch_can_pick_without_a_query_per_row(
+    auth_client, organization, workspace, django_assert_max_num_queries
+):
+    agent = _agent(organization, workspace, "Epoch picks")
+    _environment(agent, 1, kind="github")
+    with CaptureQueriesContext(connection) as one_row:
+        _list(auth_client, agent)
+    # Uploaded and GitHub, with no agent version yet; a hosted agent never.
+    _environment(agent, 2, kind="archive")
+    _environment(agent, 3, kind="provider")
+    _environment(agent, 4, kind="remote")
+
+    with django_assert_max_num_queries(len(one_row.captured_queries)):
+        rows = _list(auth_client, agent)
+    assert {row["name"]: row["epoch_pickable"] for row in rows} == {
+        "env-1": True,
+        "env-2": True,
+        "env-3": False,
+        "env-4": False,
+    }
+
+
+def _list(client, agent):
+    response = client.get(ENVIRONMENTS, {"agent_definition_id": str(agent.id)})
+    assert response.status_code == status.HTTP_200_OK, response.content
+    return response.json()["results"]
+
+
 def test_an_agent_version_cannot_be_deleted(auth_client, organization, workspace):
     agent = _agent(organization, workspace, "kept")
     version = agent.create_version(description="p", commit_message="v1")

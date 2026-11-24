@@ -141,7 +141,8 @@ class AgentFixIssuePlanSerializer(serializers.Serializer):
     open_job_id = serializers.UUIDField(allow_null=True)
     issue_scenarios = AgentFixIssueScenariosSerializer(allow_null=True)
     defaults = AgentFixIssueDefaultsSerializer()
-    # How the epoch's winner would ship; null with no environment.
+    # How the epoch's winner would ship; null with no environment, before its agent has
+    # a version, and for an agent Epoch can't change.
     ship = AgentFixShipReadinessSerializer(allow_null=True)
 
 

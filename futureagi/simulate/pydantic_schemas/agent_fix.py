@@ -504,4 +504,5 @@ class LaunchOptions(BaseModel):
     # them: empty below the fewest it holds any back from, None when the epoch first
     # writes variations, since the held-back cases are picked with them.
     held_back_scenario_keys: list[str] | None
-    ship: ShipReadiness
+    # None for an agent Epoch can't change.
+    ship: ShipReadiness | None

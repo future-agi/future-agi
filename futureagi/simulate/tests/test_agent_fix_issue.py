@@ -39,7 +39,7 @@ from simulate.pydantic_schemas.agent_fix_issue import (
     IssueLaunch,
 )
 from simulate.selectors import agent_fix_issue as reads
-from simulate.selectors.agent_fix import launch_blocker
+from simulate.selectors.agent_fix import launch_blocker, variations_blocker
 from simulate.services import agent_fix_issue as jobs
 from simulate.services import harness_usage
 from simulate.services.evidence_drafts import _proposal, scenario_key_for
@@ -623,6 +623,33 @@ class TestRunEpoch:
             job.evidence_import.cases.exclude(id=kept.id).get().id: "discarded",
         }
 
+    def test_an_environment_whose_update_failed_refuses_the_run_before_the_baseline(
+        self, environment, issue, user
+    ):
+        job, _case = _in_review(environment, issue, user)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            state="failed"
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            jobs.run_issue_job(job, case_ids=_kept(job), launch=LAUNCH, user=user)
+
+        assert refused.value.code == "environment_update_failed"
+        job.refresh_from_db()
+        assert job.baseline_run_id is None
+
+    def test_variations_are_refused_while_the_environment_s_update_failed(
+        self, environment, source_run
+    ):
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            state="failed"
+        )
+        source_run.refresh_from_db()
+
+        refused = variations_blocker(source_run)
+
+        assert refused is not None and refused.code == "environment_update_failed"
+
     # With the floor at 2 and both drafts kept, the epoch writes variations only if
     # one passes, which the baseline has not shown yet: its checks run first anyway.
     def test_a_builder_that_cannot_write_variations_is_named_before_the_baseline(
@@ -1109,6 +1136,79 @@ class TestApi:
 
         # No run has checked a commit out yet, so none is asked for.
         assert body["ship"] == {"path": "pull_request", "blocked": None}
+
+    def _plan(self, auth_client, issue, environment=None):
+        traces = _members(issue, 3)
+        query = {"cluster_id": issue.cluster_id, "project_id": str(issue.project_id)}
+        if environment is not None:
+            query["environment_id"] = str(environment.id)
+        with _roots(_sdk(traces)):
+            response = auth_client.get(f"{ISSUES}/plan/", query)
+        assert response.status_code == 200, response.content
+        return response.json()
+
+    def _pickable(self, auth_client, environment):
+        """The environment's row on the environments list the picker reads."""
+        response = auth_client.get("/simulate/api/harness-environments/")
+        assert response.status_code == 200, response.content
+        rows = {row["id"]: row for row in response.json()["results"]}
+        return rows[str(environment.id)]["epoch_pickable"]
+
+    @staticmethod
+    def _source(environment, kind, **columns):
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={**environment.payload, "source": {"kind": kind}}, **columns
+        )
+        environment.refresh_from_db()
+
+    @pytest.mark.parametrize("kind", ["github", "archive"])
+    def test_an_environment_made_before_agent_versions_is_listed_and_says_what_to_do(
+        self, auth_client, environment, issue, kind
+    ):
+        # Completed with no versions at all, as one made before they were kept.
+        self._source(environment, kind, agent_version=None, environment_version=None)
+
+        assert self._pickable(auth_client, environment) is True
+        body = self._plan(auth_client, issue, environment)
+
+        assert body["blocked"]["code"] == "environment_agent_unversioned"
+        assert body["ship"] is None
+        # With none picked, it is one the person can pick.
+        unpicked = self._plan(auth_client, issue)
+        assert unpicked["blocked"]["code"] == "environment_not_picked"
+
+    def test_an_only_environment_still_building_is_picked_then_said_to_be_building(
+        self, auth_client, environment, issue
+    ):
+        self._source(
+            environment,
+            "github",
+            state="running",
+            agent_version=None,
+            environment_version=None,
+        )
+
+        assert self._pickable(auth_client, environment) is True
+        assert self._plan(auth_client, issue)["blocked"]["code"] == (
+            "environment_not_picked"
+        )
+        picked = self._plan(auth_client, issue, environment)
+        assert picked["blocked"]["code"] == "environment_not_built"
+
+    @pytest.mark.parametrize("kind", ["provider", "remote"])
+    def test_an_agent_epoch_cannot_change_is_not_listed_and_ships_nothing(
+        self, auth_client, environment, issue, kind
+    ):
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=environment.agent_version_id
+        ).update(source_kind="provider")
+        self._source(environment, kind)
+
+        assert self._pickable(auth_client, environment) is False
+        picked = self._plan(auth_client, issue, environment)
+        assert picked["blocked"]["code"] == "fix_agent_not_editable"
+        assert picked["ship"] is None
+        assert self._plan(auth_client, issue)["blocked"]["code"] == "environment_none"
 
     def test_the_status_read_spans_projects(
         self, auth_client, environment, issue, user

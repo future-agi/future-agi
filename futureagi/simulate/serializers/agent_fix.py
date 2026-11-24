@@ -700,4 +700,6 @@ class AgentFixLaunchOptionsSerializer(serializers.Serializer):
         " launch picks them: empty when too few fail to hold any back, null when the"
         " Epoch first writes variations, since they are picked with the variations.",
     )
-    ship = AgentFixShipReadinessSerializer()
+    ship = AgentFixShipReadinessSerializer(
+        allow_null=True, help_text="Null for an agent Epoch can't change."
+    )

@@ -1355,6 +1355,8 @@ class TestUserApi:
             ("github", None, "a" * 40, ("pull_request", "fix_github_not_connected")),
             ("github", "42", None, ("pull_request", "fix_github_commit_unknown")),
             ("github", "42", "a" * 40, ("pull_request", None)),
+            # An agent Epoch can't change ships nothing: no row says how.
+            ("provider", None, None, None),
         ],
     )
     def test_launch_options_say_how_the_winner_ships(
@@ -1379,8 +1381,9 @@ class TestUserApi:
             {"source_run_id": str(source_run.test_execution_id)},
         ).json()
 
-        blocked = options["ship"]["blocked"]
-        assert (options["ship"]["path"], blocked and blocked["code"]) == ship
+        said = options["ship"]
+        blocked = said and said["blocked"]
+        assert (said and (said["path"], blocked and blocked["code"])) == ship
         # Before launch there is no patch yet: the words don't offer it as the way out.
         assert not blocked or "download the patch instead" not in blocked["message"]
 
