@@ -41,6 +41,7 @@ import {
   runLimitsOf,
 } from "../_mock/runLimits";
 import { currentAgentVersion, currentEnvVersion } from "../_mock/versions";
+import { validatingOf } from "../_mock/validating";
 import ReadyToRun, { KnownLimits } from "../compat/ReadyToRun";
 import { StatusDot } from "../components/primitives";
 import { readinessOf } from "../_mock/readiness";
@@ -876,6 +877,12 @@ export default function RunPlanDialog({
                   </TextField>
                 ) : (
                   <Box component="span">{currentEnvLabel}</Box>
+                )}
+                {/* Validate holds only Save — a run goes on the saved version. */}
+                {validatingOf(envState) && (
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    Validate is running — this run uses the saved version
+                  </Typography>
                 )}
               </Stack>
               <Stack direction="row" spacing={1} alignItems="center">

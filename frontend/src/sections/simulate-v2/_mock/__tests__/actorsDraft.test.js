@@ -8,6 +8,8 @@ import {
   createActorPatch,
   savedCastOf,
   worldActionsOf,
+  approvesOf,
+  approvalActionsOf,
   NOT_A_WORLD_ACTION,
 } from "../actors";
 import { actorEventsOf } from "../actorEvents";
@@ -49,8 +51,6 @@ const manager = {
   traits: [],
   knowledge: ["The card policy"],
   actions: ["approve_freeze_card", "teleport"],
-  canApprove: true,
-  approvalScope: "Card freezes",
 };
 
 describe("a Manager added to the draft", () => {
@@ -61,15 +61,14 @@ describe("a Manager added to the draft", () => {
   it("is read back with its permissions and view", () => {
     const m = castOf(env, es1).find((a) => a.id === "manager");
     expect(m).toBeTruthy();
-    expect(m.canApprove).toBe(true);
-    expect(m.actions).toContain("approve_freeze_card");
+    /* No approver flag: holding an approval action makes them one. */
+    expect(approvesOf(m)).toBe(true);
+    expect(approvalActionsOf(m)).toEqual(["approve_freeze_card"]);
     const view = actorViewOf(m, { env, envState: es1, cast: castOf(env, es1) });
     expect(view.sees.find((r) => r.label === "Can do").text).toBe(
       "approve_freeze_card",
     );
-    expect(view.sees.find((r) => r.label === "Can approve").text).toBe(
-      "Card freezes",
-    );
+    expect(view.sees.some((r) => r.label === "Can approve")).toBe(false);
     expect(view.never.join(" ")).toMatch(
       /expected answers, hidden checks and scoring/,
     );
@@ -165,5 +164,22 @@ describe("actor events in a transcript", () => {
         task: { ...task, steps: [{}] },
       }),
     ).toEqual([]);
+  });
+});
+
+describe("approval without a flag", () => {
+  it("offers approvals.change and reads an older Can approve save as holding it", () => {
+    const names = worldActionsOf(env, {}).map((a) => a.name);
+    expect(names).toContain("approvals.change");
+    expect(approvalActionsOf({ canApprove: true })).toEqual([
+      "approvals.change",
+    ]);
+    expect(approvesOf({ actions: ["freeze_card"] })).toBe(false);
+  });
+
+  it("never lets another company's agent approve", () => {
+    expect(
+      approvesOf({ kind: "external-agent", actions: ["approvals.change"] }),
+    ).toBe(false);
   });
 });

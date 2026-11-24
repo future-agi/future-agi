@@ -45,7 +45,7 @@ import {
   settleValidating,
   validateLeftMs,
   validatingOf,
-  validatingRunBlock,
+  validatingSaveBlock,
 } from "../_mock/validating";
 import { currentUser } from "../_mock/scenarioProvenance";
 import { importChatOf } from "../_mock/importReview";
@@ -1162,7 +1162,7 @@ export default function EnvironmentWorkspace() {
     const done = settleValidating({ env, envState, patch: storePatch });
     if (done && !done.failed && !done.review && done.count)
       enqueueSnackbar(
-        `Validated ${done.count} scenario${done.count === 1 ? "" : "s"} on ${envLabelOf(env, envState)}`,
+        `Validated ${done.count} scenario${done.count === 1 ? "" : "s"} on environment ${currentEnvSnapshot(env, envState)?.envLabel || envLabelOf(env, envState, currentEnvVersion(env, envState)?.label)}`,
         { variant: "success" },
       );
   };
@@ -1501,10 +1501,10 @@ export default function EnvironmentWorkspace() {
   /* Any blocking gap holds the run — readiness covers the common ones; the
      inbox may hold others (a Live tool with no safe target, consent). */
   const firstBlockingGap = allGaps.find((g) => g.status === "blocking");
-  /* A Validate in progress holds every run until it finishes. It lands here,
-     on the environment page, so it ends on time whichever tab is open. */
+  /* A Validate in progress holds only Save — runs use the last saved
+     version, so they start anytime. It lands on the environment page, so it
+     ends on time whichever tab is open. */
   const validatingNow = validatingOf(envState);
-  const validateHolds = !!validatingNow;
   const runBlockedReason = (() => {
     /* An older version is read-only — runs go on the version in use. */
     if (!gates.canRun) return gates.runReason;
@@ -1512,7 +1512,6 @@ export default function EnvironmentWorkspace() {
     if (buildStopped) return stoppedRunReason(envState.versionBuild);
     if (versionBuilding)
       return `Environment ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)} is building — runs start when ready`;
-    if (validateHolds) return validatingRunBlock(validatingNow);
     if (!readiness.ready) return readiness.reason;
     if (firstBlockingGap) return `${firstBlockingGap.title} — see Needs input`;
     if (runnable === 0) {
@@ -1528,8 +1527,7 @@ export default function EnvironmentWorkspace() {
     runnable > 0 &&
     !firstBlockingGap &&
     !viewingOlder &&
-    !versionBuilding &&
-    !validateHolds;
+    !versionBuilding;
 
   /*
     The one thing standing between this environment and a run, as a banner
@@ -4067,16 +4065,31 @@ export default function EnvironmentWorkspace() {
                   >
                     {`Run environment ${savedLabel}`}
                   </Button>
-                  <Button
-                    size="small"
-                    variant="contained"
-                    color="primary"
-                    onClick={() => choose(true)}
+                  {/* Validate holds only Save: the saved version can still run. */}
+                  <Tooltip
+                    arrow
+                    title={
+                      validatingNow && !reviewCountsOf(pending).undecided
+                        ? validatingSaveBlock(validatingNow)
+                        : ""
+                    }
                   >
-                    {reviewCountsOf(pending).undecided
-                      ? "Review the edits first"
-                      : `Save as ${cost?.label || "new version"} and run`}
-                  </Button>
+                    <span>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="primary"
+                        disabled={
+                          !!validatingNow && !reviewCountsOf(pending).undecided
+                        }
+                        onClick={() => choose(true)}
+                      >
+                        {reviewCountsOf(pending).undecided
+                          ? "Review the edits first"
+                          : `Save as ${cost?.label || "new version"} and run`}
+                      </Button>
+                    </span>
+                  </Tooltip>
                 </>
               }
             />

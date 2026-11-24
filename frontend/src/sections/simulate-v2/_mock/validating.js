@@ -2,7 +2,8 @@
   Validate in progress (Karthik's review, 23 Nov, points 8 and 12). The
   backend can say which scenarios Validate is proving and how many, not how
   many are done, so the UI says "Validating 12 scenarios" — never "N of M".
-  Runs are blocked while it runs. It lives on the environment's state, so it
+  Only Save waits for it (Karthik, 24 Nov): runs use the last saved version,
+  so they can start anytime. It lives on the environment's state, so it
   survives leaving the page and coming back.
 
   envState.validating = { ids: [scenario ids], startedAt, from: "reprove" | "review" }
@@ -21,9 +22,9 @@ export const validatingOf = (envState) => envState?.validating || null;
 export const validatingLabel = (v) =>
   v ? `Validating ${v.ids.length} scenario${v.ids.length === 1 ? "" : "s"}` : "";
 
-/** Why Run simulation is off while Validate runs. */
-export const validatingRunBlock = (v) =>
-  v ? `${validatingLabel(v)} — runs start once it finishes.` : null;
+/** Why Save is off while Validate runs. Runs are not held. */
+export const VALIDATE_SAVE_WAIT = "Save waits until Validate finishes";
+export const validatingSaveBlock = (v) => (v ? VALIDATE_SAVE_WAIT : null);
 
 /** Start: patch is the env-state patcher (useEnvState().patch). */
 export const startValidating = (patch, ids, from, extra = {}) =>
@@ -62,7 +63,7 @@ export const validateLeftMs = (v) =>
 
 /*
   Lands a Validate that has had its time, whatever tab is open: the
-  environment page calls this, so runs stay blocked until it really ends.
+  environment page calls this, so Save waits until it really ends.
   Re-proving: the rows as they stand now are proved again (anything removed
   meanwhile is skipped). From the review drawer: the change list it passed
   for is recorded. Returns what happened, for the toast, or null.

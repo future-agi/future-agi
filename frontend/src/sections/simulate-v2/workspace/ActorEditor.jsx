@@ -12,8 +12,6 @@ import {
   TextField,
   MenuItem,
   Chip,
-  Switch,
-  FormControlLabel,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CopyCommandButton from "../components/CopyCommandButton";
@@ -36,6 +34,10 @@ import {
   sideOf,
   roleOf,
   mayApprove,
+  isApprovalAction,
+  approvalActionsOf,
+  KIND_OPTIONS,
+  kindValueOf,
   callerKindsFor,
   arrivalsFor,
   worldActionsOf,
@@ -61,7 +63,7 @@ const formOf = (actor, { voiceEnv, surface }) => {
     kind:
       side === "caller"
         ? callerKinds.find((k) => k.id === actor?.kind)?.id || callerKinds[0].id
-        : actor?.kind || "person",
+        : kindValueOf(actor),
     id: actor?.id || "",
     name: actor?.name || "",
     role: actor?.role || (actor?.id ? roleOf(actor) : ""),
@@ -76,10 +78,17 @@ const formOf = (actor, { voiceEnv, surface }) => {
     fallback: actor?.fallback || "silent",
     behaviour: actor?.behaviour || "cooperative",
     knowledge: (actor?.knowledge || []).join("\n"),
-    actions: [...new Set([...(actor?.actions || []), ...(actor?.tools || [])])],
+    /* An older save's Can approve flag comes in as approvals.change. */
+    actions: [
+      ...new Set([
+        ...(actor?.actions || []),
+        ...(actor?.tools || []),
+        ...approvalActionsOf(actor),
+      ]),
+    ],
     sources: actor?.sources || [],
-    canApprove: !!actor?.canApprove,
-    approvalScope: actor?.approvalScope || "",
+    /* Kind (optional), as on dev — a caller-side actor's kind is how they join. */
+    actorKind: kindValueOf(actor),
     arrival:
       actor?.arrival ||
       (side === "caller" ? (voiceEnv ? "answers" : "first-turn") : ""),
@@ -99,9 +108,9 @@ const formOf = (actor, { voiceEnv, surface }) => {
 /*
   What the world contract doesn't allow this actor (world.md): a write tool
   changes the customer's records and is the agent's to run, so an actor can
-  approve it but not hold it; an outside company's agent can't authorise a
-  change here; and approving needs something that writes. Shown before
-  saving, with the way out; Save stays off until none is left.
+  approve it (approve_<tool>) but not hold it; and another company's agent
+  can't authorise a change here, so it can't hold an approval action. Shown
+  before saving, with the way out; Save stays off until none is left.
 */
 const permissionConflictsOf = (form, actions) => {
   const writes = actions.filter((a) => a.effect === "write").map((a) => a.name);
@@ -110,23 +119,20 @@ const permissionConflictsOf = (form, actions) => {
     .filter((t) => writes.includes(t))
     .map((t) => ({
       id: `tool-${t}`,
-      text: `${t} changes the customer's records, so only the agent can run it.${form.canApprove ? ` ${who} can approve it instead.` : ""}`,
+      text: `${t} changes the customer's records, so only the agent can run it. Give ${who} approve_${t} instead.`,
       fix: "Remove",
       apply: (f) => ({ ...f, actions: f.actions.filter((x) => x !== t) }),
     }));
-  if (form.canApprove && !mayApprove(form))
+  const approvals = form.actions.filter(isApprovalAction);
+  if (approvals.length && !mayApprove({ ...form, kind: form.actorKind }))
     out.push({
       id: "approve-external",
       text: `${who} belongs to another company, so its "approved" can't authorise a change in this world.`,
-      fix: "Turn off",
-      apply: (f) => ({ ...f, canApprove: false }),
-    });
-  else if (form.canApprove && writes.length === 0)
-    out.push({
-      id: "approve-nothing",
-      text: "No tool in this world writes anything, so there is nothing to approve.",
-      fix: "Turn off",
-      apply: (f) => ({ ...f, canApprove: false }),
+      fix: "Remove",
+      apply: (f) => ({
+        ...f,
+        actions: f.actions.filter((x) => !isApprovalAction(x)),
+      }),
     });
   return out;
 };
@@ -228,11 +234,11 @@ function ActorForm({
     (s) => s.inEnv && !s.archived,
   );
   const others = cast.filter((a) => a.id !== actor?.id);
-  /* How a caller-side actor joins the call. A world actor has no kind to
-     pick — it did nothing in a run (#23); what they may do is the actions
-     and Can approve below. */
+  /* How a caller-side actor joins the call. Kind (optional) sits under it,
+     as on dev. Approving is an approval action under World actions they may
+     take — there is no approver flag to save (Karthik, 24 Nov). */
   const joins = caller ? callerKindsFor(voiceEnv ? "voice" : "chat") : [];
-  const approvable = mayApprove(form);
+  const approver = !caller && form.actions.some(isApprovalAction);
 
   const onName = (e) => {
     const name = e.target.value;
@@ -251,7 +257,10 @@ function ActorForm({
   const fields = {
     id: form.id,
     side: form.side,
-    kind: form.kind,
+    /* World actors keep Kind in kind (seeded ones already do); a
+       caller-side actor's kind is how they join, so its Kind is actorKind. */
+    kind: caller ? form.kind : form.actorKind,
+    ...(caller && { actorKind: form.actorKind }),
     name: form.name.trim(),
     role: form.role.trim(),
     blurb: form.blurb.trim(),
@@ -273,8 +282,9 @@ function ActorForm({
     behaviour: form.behaviour,
     knowledge: lines(form.knowledge),
     sources: form.sources,
-    canApprove: !caller && form.canApprove,
-    approvalScope: !caller && form.canApprove ? form.approvalScope.trim() : "",
+    /* The retired Can approve flag is cleared on save. */
+    canApprove: undefined,
+    approvalScope: undefined,
     actions: caller ? [] : form.actions,
     goal: form.goal.trim(),
     agreesTo: form.agreesTo.trim(),
@@ -398,6 +408,31 @@ function ActorForm({
             ))}
           </TextField>
         )}
+        {/* Kind (optional), as on dev: names what they are. */}
+        <TextField
+          select
+          size="small"
+          label="Kind (optional)"
+          value={form.actorKind}
+          onChange={set("actorKind")}
+          SelectProps={{
+            displayEmpty: true,
+            renderValue: (v) =>
+              KIND_OPTIONS.find((k) => k.id === v)?.label || "Not set",
+          }}
+          InputLabelProps={{ shrink: true }}
+          inputProps={{ "aria-label": "Kind (optional)" }}
+          fullWidth
+        >
+          <MenuItem value="" sx={{ typography: "s2", color: "text.tertiary" }}>
+            Not set
+          </MenuItem>
+          {KIND_OPTIONS.map((k) => (
+            <MenuItem key={k.id} value={k.id} sx={{ typography: "s2" }}>
+              {k.label}
+            </MenuItem>
+          ))}
+        </TextField>
         <TextField
           size="small"
           label="Name"
@@ -575,7 +610,7 @@ function ActorForm({
 
         {!caller && (
           <Box>
-            <Label>Actions they may take</Label>
+            <Label>World actions they may take</Label>
             {worldActions.length === 0 && unknown.length === 0 ? (
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                 This environment has no actions yet — add tools on the Tools
@@ -629,43 +664,16 @@ function ActorForm({
                 ))}
               </Stack>
             )}
-            {/* Another company's agent can't authorise a change here, so
-                the switch stays off for it (a saved "on" shows as a conflict). */}
-            <Tooltip
-              arrow
-              placement="top-start"
-              title={
-                approvable || form.canApprove
-                  ? ""
-                  : "Another company's agent — its \"approved\" can't authorise a change in this world."
-              }
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", mb: 1 }}
             >
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    checked={form.canApprove}
-                    disabled={!approvable && !form.canApprove}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, canApprove: e.target.checked }))
-                    }
-                  />
-                }
-                label={
-                  <Typography sx={{ typography: "s2" }}>Can approve</Typography>
-                }
-              />
-            </Tooltip>
-            {form.canApprove && (
+              {mayApprove({ ...form, kind: form.actorKind })
+                ? "To have them approve, give them an approval action, such as approvals.change. A Needs approval first condition names it."
+                : "Another company's agent — its \"approved\" can't authorise a change in this world, so it can't hold an approval action."}
+            </Typography>
+            {/* How an approver answers, once they hold an approval action. */}
+            {approver && (
               <Stack spacing={1.25} sx={{ mt: 1 }}>
-                <TextField
-                  size="small"
-                  label="What they can approve"
-                  value={form.approvalScope}
-                  onChange={set("approvalScope")}
-                  fullWidth
-                  placeholder="Discounts up to 20%"
-                />
                 <Stack direction="row" spacing={1}>
                   <TextField
                     size="small"

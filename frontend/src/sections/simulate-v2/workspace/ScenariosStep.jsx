@@ -255,7 +255,7 @@ function ValidateStatusLine({ validating, failed, onRetry }) {
         sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
       >
         {validating
-          ? `${validatingLabel(validating)} — runs are blocked until it finishes`
+          ? `${validatingLabel(validating)} — Save waits until it finishes; runs use the saved version`
           : `Validate didn't finish — ${failed.message}. Nothing changed; scenarios keep their state.`}
       </Typography>
       {!validating && onRetry && (
@@ -1426,8 +1426,9 @@ export default function ScenariosStep({
     );
   };
   /* Validate takes a while: it is held on the environment's state
-     (envState.validating) while it runs — runs are blocked, the rows being
-     proved say Validating — and lands after VALIDATE_MS. The environment
+     (envState.validating) while it runs — Save waits, runs go on the saved
+     version, the rows being proved say Validating — and lands after
+     VALIDATE_MS. The environment
      page lands it (settleValidating), so it finishes on time on any tab. */
   const startValidate = (rows, from) => {
     if (!rows.length || validating || ro) return;
@@ -2810,7 +2811,8 @@ export default function ScenariosStep({
                         sx={{ typography: "s2", color: "text.secondary" }}
                       >
                         Every scenario is validated again, including proved
-                        ones. Runs are blocked until it finishes.
+                        ones. Save waits until it finishes; runs use the saved
+                        version.
                       </Typography>
                     }
                     action={

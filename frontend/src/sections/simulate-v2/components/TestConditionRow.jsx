@@ -2,12 +2,15 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { Button, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import {
+  APPROVAL_MISSING,
   CALLS,
   CONDITIONS,
+  approvalActionsForConditions,
   conditionLabelOf,
   conditionSupportOf,
   isRetiredKind,
   kindLabelOf,
+  needsApprovalAction,
   normalizeCondition,
 } from "../_mock/testConditions";
 
@@ -20,7 +23,7 @@ const KIND_NOTE = {
   unavailable: "The tool can't be reached at all — every attempt fails fast.",
   error: "The tool answers, with an error instead of a result.",
   permission:
-    "The tool refuses until someone approves — the agent has to ask for it.",
+    "The tool refuses until the approval action is recorded — the agent has to ask for it.",
 };
 
 /*
@@ -39,19 +42,24 @@ export default function TestConditionRow({
   const [editing, setEditing] = useState(false);
   const [tool, setTool] = useState(current?.tool || tools[0] || "");
   const [kind, setKind] = useState(current?.kind || CONDITIONS[0].kind);
-  /* "first" | "every" | "nth", with the number kept beside it. */
-  const [call, setCall] = useState(
-    typeof current?.call === "number" ? "nth" : current?.call || "first",
-  );
-  const [nth, setNth] = useState(
-    typeof current?.call === "number" ? String(current.call) : "2",
+  /* One call number — never every call. An older "every" save opens on
+     call 1, the call it always hit first. */
+  const [call, setCall] = useState(current?.call || 1);
+  /* "Needs approval first" names the approval action that records it. */
+  const approvalActions = approvalActionsForConditions(env, envState);
+  const [approval, setApproval] = useState(
+    current?.approval ||
+      (approvalActions.length === 1 ? approvalActions[0] : ""),
   );
   const support = conditionSupportOf(env, envState);
   /* A kind saved before the five: shown as it was, not offered again. */
   const retired = isRetiredKind(kind);
-  const n = Number(nth);
-  const nthOk = Number.isInteger(n) && n >= 2 && n <= 99;
-  const savedCall = call === "nth" ? n : call;
+  const needsApproval = needsApprovalAction(kind);
+  const approvalMissing = needsApproval && !approval;
+  /* A saved call beyond the list stays pickable. */
+  const callOptions = CALLS.some((c) => c.id === call)
+    ? CALLS
+    : [...CALLS, { id: call, label: `Call ${call}` }];
 
   if (!editing)
     return (
@@ -137,39 +145,81 @@ export default function TestConditionRow({
         <TextField
           select
           size="small"
-          label="Which call"
+          label="On which call"
           value={call}
-          onChange={(e) => setCall(e.target.value)}
-          sx={{ minWidth: 150 }}
+          onChange={(e) => setCall(Number(e.target.value))}
+          inputProps={{ "aria-label": "On which call" }}
+          sx={{ minWidth: 120 }}
         >
-          {CALLS.map((c) => (
+          {callOptions.map((c) => (
             <MenuItem key={c.id} value={c.id}>
               {c.label}
             </MenuItem>
           ))}
         </TextField>
-        {call === "nth" && (
+        {needsApproval && (
           <TextField
+            select
             size="small"
-            type="number"
-            label="Call number"
-            value={nth}
-            onChange={(e) => setNth(e.target.value)}
-            error={!nthOk}
-            inputProps={{ min: 2, max: 99, "aria-label": "Call number" }}
-            sx={{ width: 110 }}
-          />
+            label="Approval it needs"
+            value={approval}
+            onChange={(e) => setApproval(e.target.value)}
+            error={approvalMissing}
+            SelectProps={{
+              displayEmpty: true,
+              renderValue: (v) => v || "Pick an action",
+            }}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ "aria-label": "Approval it needs" }}
+            sx={{
+              minWidth: 200,
+              "& .MuiSelect-select": {
+                fontFamily: "ui-monospace, Menlo, monospace",
+              },
+            }}
+          >
+            {approvalActions.length === 0 && (
+              <MenuItem value="" disabled>
+                This environment has no approval actions
+              </MenuItem>
+            )}
+            {approvalActions.map((a) => (
+              <MenuItem
+                key={a}
+                value={a}
+                sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}
+              >
+                {a}
+              </MenuItem>
+            ))}
+            {approval && !approvalActions.includes(approval) && (
+              <MenuItem value={approval} disabled>
+                {`${approval} (not an action of this world)`}
+              </MenuItem>
+            )}
+          </TextField>
         )}
         <Button
           size="small"
           variant="contained"
           color="primary"
-          disabled={!tool || retired || (call === "nth" && !nthOk)}
-          title={retired ? "Pick one of the conditions on offer" : ""}
+          disabled={!tool || retired || approvalMissing}
+          title={
+            retired
+              ? "Pick one of the conditions on offer"
+              : approvalMissing
+                ? APPROVAL_MISSING
+                : ""
+          }
           onClick={() => {
             onChange({
               ...row,
-              testCondition: { tool, kind, call: savedCall },
+              testCondition: {
+                tool,
+                kind,
+                call,
+                ...(needsApproval && { approval }),
+              },
             });
             setEditing(false);
           }}
@@ -200,15 +250,13 @@ export default function TestConditionRow({
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
         {retired
           ? "This condition is no longer offered — pick one of the five to save."
-          : `${KIND_NOTE[kind] || ""} ${
-              call === "every"
-                ? "Every call to it fails this way."
-                : call === "nth"
-                  ? nthOk
-                    ? `Calls before number ${n} behave normally.`
-                    : "Call number is 2 or more."
+          : approvalMissing
+            ? `${APPROVAL_MISSING}.`
+            : `${KIND_NOTE[kind] || ""} ${
+                call > 1
+                  ? `Only call ${call} fails; the calls before and after behave normally.`
                   : "Only the first call fails; later ones behave normally."
-            }`.trim()}
+              }${current?.wasEvery ? " It was saved as every call, which isn't run — it now hits one call." : ""}`.trim()}
       </Typography>
     </Stack>
   );

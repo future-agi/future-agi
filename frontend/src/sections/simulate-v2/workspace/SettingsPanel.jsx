@@ -60,6 +60,7 @@ import {
   scenariosInSet,
 } from "../_mock/versions";
 import { twinById, resolveSeedPromptToJson } from "../_mock/twins";
+import { validatingOf, validatingSaveBlock } from "../_mock/validating";
 import TwinLogo from "./../components/TwinLogo";
 import { envLabelOf, pendingCostOf } from "../_mock/envVersionKinds";
 import {
@@ -224,7 +225,7 @@ export default function SettingsPanel({
                 arrow
                 title={
                   pending.length
-                    ? ""
+                    ? validatingSaveBlock(validatingOf(envState)) || ""
                     : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.envLabel || shown(pinned.label)}.`
                 }
               >
@@ -232,7 +233,11 @@ export default function SettingsPanel({
                   <Button
                     variant="outlined"
                     size="small"
-                    disabled={!pending.length}
+                    disabled={
+                      !pending.length ||
+                      (!!validatingOf(envState) &&
+                        !reviewCountsOf(pending).undecided)
+                    }
                     onClick={() =>
                       /* Changes still waiting for Accept or Reject go to the review first. */
                       reviewCountsOf(pending).undecided

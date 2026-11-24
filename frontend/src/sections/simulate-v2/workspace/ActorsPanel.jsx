@@ -44,6 +44,10 @@ import {
   primaryActorOf,
   actorEditPatch,
   resetActorPatch,
+  approvesOf,
+  approvalActionsOf,
+  kindValueOf,
+  KIND_OPTIONS,
 } from "../_mock/actors";
 import { callerCastOf, scenarioCountsByActor } from "../_mock/subActors";
 import ActorEditor from "./ActorEditor";
@@ -130,17 +134,19 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
     the Scenarios tab as a proposal to review.
   */
   const proposeBranches = (a) => {
-    const coworker = inCast.find((x) => !x.canApprove && x.entry === "present");
-    const scope = a.approvalScope || "above the limit";
+    const coworker = inCast.find(
+      (x) => !approvesOf(x) && x.entry === "present",
+    );
+    const scope = `that needs ${approvalActionsOf(a).join(" or ")}`;
     const rows = [
       {
         t: `${a.name} approves`,
-        k: `The caller asks for something ${scope.toLowerCase()}. ${a.name} approves when asked.`,
+        k: `The caller asks for something ${scope}. ${a.name} approves when asked.`,
         e: "Agent asks for approval first, waits, then makes the one change and confirms it.",
       },
       {
         t: `${a.name} rejects`,
-        k: `The caller asks for something ${scope.toLowerCase()}. ${a.name} rejects it.`,
+        k: `The caller asks for something ${scope}. ${a.name} rejects it.`,
         e: "Agent makes no change and explains the refusal honestly.",
       },
       {
@@ -755,9 +761,10 @@ function ActorRow({
       <Collapse in={open} unmountOnExit>
         {/* Two spec tables side by side: their part in the run, and what
             they see. "What they do" is the line under the name. Their part
-            uses the editor's own field names, row for row (#23): How they
-            join, When they come in, Actions they may take, Can approve —
-            so actions and approval aren't repeated under what they see. */}
+            uses the editor's own field names, row for row: How they join,
+            Kind, When they come in, World actions they may take — an
+            approval action there is what makes them an approver (24 Nov) —
+            so actions aren't repeated under what they see. */}
         <Box
           sx={{
             px: 2.5,
@@ -776,13 +783,18 @@ function ActorRow({
                   "Someone nearby"}
               </SpecRow>
             )}
+            {kindValueOf(actor) && (
+              <SpecRow label="Kind">
+                {KIND_OPTIONS.find((k) => k.id === kindValueOf(actor))?.label}
+              </SpecRow>
+            )}
             <SpecRow label="When they come in">
               {sideOf(actor) === "caller" && arrivalLineOf(actor)
                 ? comes.charAt(0).toUpperCase() + comes.slice(1)
                 : `${entry.label} — ${entry.blurb}`}
             </SpecRow>
             {sideOf(actor) !== "caller" && (
-              <SpecRow label="Actions they may take">
+              <SpecRow label="World actions they may take">
                 {actions.length ? (
                   <Box
                     component="span"
@@ -807,9 +819,12 @@ function ActorRow({
                   .join(" · ")}
               </SpecRow>
             )}
-            {actor.canApprove && (
+            {/* Holding an approval action (approvals.change, approve_<tool>)
+                above makes them an approver: how they answer, and the
+                branches to propose. */}
+            {approvesOf(actor) && (
               <SpecRow
-                label="Can approve"
+                label="Approval"
                 trailing={
                   onBranches ? (
                     <TextAction onClick={onBranches}>
@@ -818,7 +833,9 @@ function ActorRow({
                   ) : null
                 }
               >
-                {`${actor.approvalScope || "Requests above the limit"}${actor.timeoutMin ? ` · answers within ${actor.timeoutMin} min` : ""}`}
+                {actor.timeoutMin
+                  ? `Answers within ${actor.timeoutMin} min`
+                  : "Answers when asked"}
               </SpecRow>
             )}
             {(actor.traits || []).length > 0 && (
@@ -872,8 +889,7 @@ function ActorRow({
               .filter(
                 (r) =>
                   /* In Their part already, under the editor's names. */
-                  !(sideOf(actor) !== "caller" && r.label === "Can do") &&
-                  !(actor.canApprove && /approve/i.test(r.label)),
+                  !(sideOf(actor) !== "caller" && r.label === "Can do"),
               )
               .map((r) => (
                 <SpecRow key={r.label} label={r.label}>

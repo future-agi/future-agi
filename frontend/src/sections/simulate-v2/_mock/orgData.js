@@ -30,6 +30,11 @@ import {
 import { currentUser } from "./scenarioProvenance";
 import { ORG_SOURCES, kbFileOf } from "./kbCatalog";
 import { personalDataOf } from "./dataMapping";
+import { APPROVAL_ACTION } from "./actors";
+
+/* Approving is an action an actor holds: add approvals.change once. */
+const withApproval = (actions = []) =>
+  actions.includes(APPROVAL_ACTION) ? actions : [...actions, APPROVAL_ACTION];
 
 export { ORG_SOURCES };
 
@@ -875,7 +880,6 @@ export const dataProposalOf = (
       ref: `${s.name} · ${placeOf(s, p.page)}`,
       excerpt: p.text,
     };
-    const scope = `Refunds over $${p.approval.above}`;
     const existing = cast.find((a) => /supervisor/i.test(a.name));
     items.push({
       id: `actor-${s.id}-${p.id}`,
@@ -884,7 +888,7 @@ export const dataProposalOf = (
         ? `Actor: ${existing.name} approves refunds over $${p.approval.above}`
         : `Actor: a Supervisor who approves refunds over $${p.approval.above}`,
       detail: existing
-        ? `Updates the ${existing.name} already in the cast: approval scope becomes “${scope}”.`
+        ? `Updates the ${existing.name} already in the cast: given ${APPROVAL_ACTION}, brought in when the agent asks to refund more than $${p.approval.above}.`
         : "Joins when the agent asks to refund more than the cap; approves or declines, and declines if no one answers in 3 minutes.",
       cite,
       existingId: existing?.id || null,
@@ -897,13 +901,13 @@ export const dataProposalOf = (
         modalities: ["voice", "chat"],
         traits: ["brisk"],
         trigger: `The agent asks to refund more than $${p.approval.above}`,
-        canApprove: true,
-        approvalScope: scope,
+        /* Approving is an action they're given, not a flag. */
+        actions: [APPROVAL_ACTION],
         timeoutMin: 3,
         fallback: "reject",
         knowledge: [`${s.name}`],
       },
-      editable: { field: "approvalScope", label: "Approval scope" },
+      editable: { field: "trigger", label: "What brings them in" },
     });
     const tool = tools.find(
       (t) => /refund/.test(t) && /issue|create|process|make/.test(t),
@@ -1043,8 +1047,7 @@ const actorPartOf = (envState, items, edits, cast) => {
         a.id === i.existingId
           ? {
               ...a,
-              canApprove: true,
-              approvalScope: fields.approvalScope,
+              actions: withApproval(a.actions),
               trigger: fields.trigger,
             }
           : a,
@@ -1054,8 +1057,10 @@ const actorPartOf = (envState, items, edits, cast) => {
         ...actorEdits,
         [i.existingId]: {
           ...(actorEdits[i.existingId] || {}),
-          canApprove: true,
-          approvalScope: fields.approvalScope,
+          actions: withApproval(
+            actorEdits[i.existingId]?.actions ||
+              cast.find((a) => a.id === i.existingId)?.actions,
+          ),
           trigger: fields.trigger,
           editedAt: new Date().toISOString(),
         },

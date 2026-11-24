@@ -69,10 +69,11 @@ export const BEHAVIOURS = [
   external agents are simulated; sub-agents are your agent's real workers —
   listed with the cast because they act in the same world, never simulated.
 
-  23 Nov (#23): the kind is no longer picked in the actor editor — a run
-  never read it. What an actor may do is its actions and Can approve. The
-  kind stays on seeded and saved actors, where it names what they are and
-  keeps one rule: an external agent can't approve (mayApprove).
+  24 Nov (Karthik): there is no approver flag in the backend. An actor
+  approves by being given an approval action (approvals.change, approve_<tool>)
+  under World actions they may take; a "Needs approval first" condition names
+  that action. Kind is back as on dev — optional, it names what they are and
+  keeps one rule: another company's agent can't approve (mayApprove).
 */
 export const ACTOR_KINDS = [
   {
@@ -183,10 +184,41 @@ export const LOUDNESS = [
   { id: "loud", label: "Loud" },
 ];
 
+/* Kind (optional), as dev's actor editor has it. "external-agent" keeps the
+   id seeded actors already use. */
+export const KIND_OPTIONS = [
+  { id: "person", label: "A person" },
+  { id: "approver", label: "An approver" },
+  { id: "external-agent", label: "Another agent" },
+  { id: "system", label: "A system" },
+];
+/** The Kind field's value: kind on a world actor, actorKind on a caller-side one (whose kind is how they join). */
+export const kindValueOf = (a) =>
+  sideOf(a) === "caller"
+    ? a?.actorKind || ""
+    : KIND_OPTIONS.some((k) => k.id === a?.kind)
+      ? a.kind
+      : "";
+
+/** An approval action: approvals.change, or approve_<tool> for a tool that writes. */
+export const isApprovalAction = (name) =>
+  /^approve_/.test(String(name || "")) ||
+  /^approvals\./.test(String(name || ""));
+/** The generic approval action every world has. */
+export const APPROVAL_ACTION = "approvals.change";
+/**
+ * The approval actions an actor holds. An older save that still carries the
+ * retired Can approve flag reads as holding approvals.change.
+ */
+export const approvalActionsOf = (a) => {
+  const held = (a?.actions || []).filter(isApprovalAction);
+  return held.length || !a?.canApprove ? held : [APPROVAL_ACTION];
+};
+
 /** A short label for what they are: "approver", "colleague", "someone nearby". */
 export const roleOf = (a) =>
   a?.role ||
-  (a?.canApprove
+  (approvesOf(a)
     ? "approver"
     : a?.kind === "external-agent"
       ? "external system"
@@ -194,7 +226,13 @@ export const roleOf = (a) =>
         "person");
 
 /** Whether this actor's "approved" can count here: never another company's agent. */
-export const mayApprove = (a) => a?.kind !== "external-agent";
+export const mayApprove = (a) =>
+  a?.kind !== "external-agent" && a?.actorKind !== "external-agent";
+
+/** Whether this actor approves: it holds an approval action and may approve. */
+export function approvesOf(a) {
+  return mayApprove(a) && approvalActionsOf(a).length > 0;
+}
 
 export const actorKindOf = (a) =>
   ACTOR_KINDS.find((k) => k.id === (a?.kind || "person")) ||
@@ -268,7 +306,6 @@ export const ACTOR_LIBRARY = [
     pressure: "competing",
     modalities: ["voice", "chat"],
     traits: ["talks over", "plausible", "persistent"],
-    canApprove: false,
     knowledge: ["The user's plan, and their own preference"],
     version: "v2",
     versions: [
@@ -301,8 +338,7 @@ export const ACTOR_LIBRARY = [
     modalities: ["voice", "chat"],
     traits: ["brisk", "wants the summary first"],
     trigger: "The agent escalates or asks for an exception",
-    canApprove: true,
-    approvalScope: "Refunds and discounts up to the policy cap",
+    actions: [APPROVAL_ACTION],
     timeoutMin: 3,
     fallback: "silent",
     knowledge: [
@@ -337,8 +373,7 @@ export const ACTOR_LIBRARY = [
     traits: ["procedural", "slow to answer"],
     activatedBy: "act-supervisor",
     trigger: "The supervisor sends on a request above the refund cap",
-    canApprove: true,
-    approvalScope: "Anything above the refund cap",
+    actions: [APPROVAL_ACTION],
     timeoutMin: 5,
     fallback: "reject",
     knowledge: ["The order and its payment history"],
@@ -364,7 +399,6 @@ export const ACTOR_LIBRARY = [
     pressure: "extraction",
     modalities: ["voice"],
     traits: ["helpful", "not authorised", "never has the security answers"],
-    canApprove: false,
     knowledge: [
       "The account holder's name and address — never the security answers",
     ],
@@ -449,7 +483,6 @@ export const ACTOR_LIBRARY = [
     pressure: "competing",
     modalities: ["chat", "voice"],
     traits: ["machine-fast", "persistent", "never tires"],
-    canApprove: false,
     knowledge: ["Its customer's booking reference and preferred times"],
     version: "v1",
     versions: [{ label: "v1", createdAt: iso(2), note: "First draft." }],
@@ -472,7 +505,6 @@ export const ACTOR_LIBRARY = [
     pressure: "gatekeeper",
     modalities: ["chat"],
     traits: ["templated", "deflects", "slow to escalate"],
-    canApprove: false,
     knowledge: ["The supplier's order record — not the caller's account"],
     timeoutMin: 4,
     fallback: "silent",
@@ -539,10 +571,9 @@ export const ACTOR_EDIT_FIELDS = [
   "knowledge",
   "sources",
   "tools",
-  "canApprove",
-  "approvalScope",
   "behaviour",
   "kind",
+  "actorKind",
   /* TH-8927 / PR #3698 */
   "role",
   "side",
@@ -792,7 +823,7 @@ export const relationsOf = (
 /**
  * What an actor sees before a run: the facts it's given, the sources it may
  * read (an evaluator-only reference never — it would hand over the answer),
- * the actions it may take, and whether it can approve.
+ * the actions it may take — approving is one of them.
  */
 export const actorContextOf = (actor, envState) => {
   const sources = (envState?.sources || []).filter((s) =>
@@ -805,9 +836,15 @@ export const actorContextOf = (actor, envState) => {
       allowed: s.visibility !== "evaluator",
     })),
     /* Actions picked in the editor, and tools an older cast listed. */
-    tools: [...new Set([...(actor.actions || []), ...(actor.tools || [])])],
-    canApprove: !!actor.canApprove && mayApprove(actor),
-    approvalScope: actor.approvalScope || "",
+    tools: [
+      ...new Set([
+        ...(actor.actions || []),
+        ...(actor.tools || []),
+        ...approvalActionsOf(actor),
+      ]),
+    ],
+    /* Approval is an action they hold, never a separate flag. */
+    approvals: approvesOf(actor) ? approvalActionsOf(actor) : [],
   };
 };
 
@@ -833,6 +870,17 @@ export const worldActionsOf = (env, envState) => {
       kind: "approval",
       tool: t.name,
     })),
+    /* The generic approval action, once the world has any tool. */
+    ...(tools.length
+      ? [
+          {
+            name: APPROVAL_ACTION,
+            desc: "Approve or decline a change the agent asks for",
+            effect: "approval",
+            kind: "approval",
+          },
+        ]
+      : []),
   ];
 };
 /** An action the world doesn't have is marked so, in the row and the picker. */
@@ -842,7 +890,11 @@ export const isWorldAction = (name, env, envState) =>
 /** An actor's permitted actions with whether this world has each. */
 export const actorActionsOf = (actor, env, envState) => {
   const have = new Set(worldActionsOf(env, envState).map((a) => a.name));
-  return (actor?.actions || []).map((name) => ({
+  /* An older save's Can approve reads as holding approvals.change. */
+  const names = [
+    ...new Set([...(actor?.actions || []), ...approvalActionsOf(actor)]),
+  ];
+  return names.map((name) => ({
     name,
     known: have.has(name),
   }));
@@ -885,9 +937,6 @@ export const actorViewOf = (actor, { env, envState, cast = [] } = {}) => {
             ? "Speaks; takes no action in the world"
             : "No actions in the world",
       },
-      ...(ctx.canApprove
-        ? [{ label: "Can approve", text: ctx.approvalScope || "requests" }]
-        : []),
     ],
     never: [
       "The evaluator's expected answers, hidden checks and scoring",

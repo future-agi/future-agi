@@ -1525,7 +1525,7 @@ function injectToolFaults({ seed, sc, callLog, toolFaults, stage }) {
  * it is drawn the same way as a fault profile. Mutates the call log.
  */
 function applyTestCondition({ seed, sc, callLog, stage }) {
-  const { tool, kind, commit, call = "first" } = sc.testCondition;
+  const { tool, kind, commit, call = 1 } = sc.testCondition;
   /* Older saves: "Approval refused" reads as needing approval; a timeout
      with commit "after" is a lost answer (the five backend kinds, 23 Nov). */
   const base =
@@ -1535,10 +1535,11 @@ function applyTestCondition({ seed, sc, callLog, stage }) {
         ? "after_commit"
         : kind;
   if (!RECOVERY[base]) return null;
-  /* Which call it hits: the first, every one, or call number N. */
+  /* Which call it hits: one call number. An older "first" or "every" save
+     reads as call 1 (the backend fails one chosen call, never every call). */
   const ofTool = callLog.calls.filter((x) => x.name === tool);
   const n = Number(call) >= 2 ? Number(call) : 1;
-  while (ofTool.length < (call === "every" ? 1 : n)) {
+  while (ofTool.length < n) {
     const c = {
       id: `${sc.id}-condition-${ofTool.length + 1}`,
       name: tool,
@@ -1551,7 +1552,7 @@ function applyTestCondition({ seed, sc, callLog, stage }) {
     callLog.calls.push(c);
     ofTool.push(c);
   }
-  const targets = call === "every" ? ofTool : [ofTool[n - 1]];
+  const targets = [ofTool[n - 1]];
   const v = unit(`${seed}:${sc.id}:condition`);
   let cum = 0;
   const outcome = (RECOVERY[base].find(([, p]) => {
@@ -1559,8 +1560,7 @@ function applyTestCondition({ seed, sc, callLog, stage }) {
     return v < cum;
   }) || RECOVERY[base][RECOVERY[base].length - 1])[0];
   const c = targets[0];
-  const which =
-    call === "every" ? " (every call)" : n > 1 ? ` (call ${n})` : "";
+  const which = n > 1 ? ` (call ${n})` : "";
   let note = faultNote(c.name, base, outcome, stage, c.wrote);
   if (kind === "approval_refused")
     note = note.replace(

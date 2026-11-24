@@ -19,6 +19,7 @@ import { onOpenReviewChanges } from "./reviewChangesBus";
 import { reviewCountsOf } from "../_mock/editReview";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { currentEnvSnapshot, snapshotOfWorld } from "../_mock/envSnapshot";
+import { validatingOf, validatingSaveBlock } from "../_mock/validating";
 import useEnvViewAs from "./useEnvViewAs";
 
 /**
@@ -59,6 +60,8 @@ export default function VersionBar({
     ? envVersionNameOf(envState, agentV.label, env?.id).main
     : null;
   const pending = pendingEnvChanges(envState);
+  /* "Save waits until Validate finishes" while one runs, else null. */
+  const saveWait = validatingSaveBlock(validatingOf(envState));
   const snap = viewAs ? null : currentEnvSnapshot(env, envState);
   const cost = pendingCostOf(env, envState);
   /* The environment and scenario versions runs use — "environment v2 ·
@@ -261,28 +264,35 @@ export default function VersionBar({
               )}
             </Button>
             {canEdit && pending.length > 0 && (
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() =>
-                  undecided
-                    ? setEditsAnchor(true)
-                    : onSave
-                      ? onSave()
-                      : patch(saveEnvChangesPatch(env, envState))
-                }
-                sx={{
-                  minWidth: 0,
-                  flexShrink: 0,
-                  whiteSpace: "nowrap",
-                  color: "text.primary",
-                  borderColor: "divider",
-                }}
-              >
-                {undecided
-                  ? "Review and save"
-                  : `Save environment ${cost?.label}`}
-              </Button>
+              /* Validate holds Save only; Review and save still opens the
+                 review, where Save waits too. */
+              <Tooltip arrow title={saveWait || ""}>
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={!!saveWait && !undecided}
+                    onClick={() =>
+                      undecided
+                        ? setEditsAnchor(true)
+                        : onSave
+                          ? onSave()
+                          : patch(saveEnvChangesPatch(env, envState))
+                    }
+                    sx={{
+                      minWidth: 0,
+                      flexShrink: 0,
+                      whiteSpace: "nowrap",
+                      color: "text.primary",
+                      borderColor: "divider",
+                    }}
+                  >
+                    {undecided
+                      ? "Review and save"
+                      : `Save environment ${cost?.label}`}
+                  </Button>
+                </span>
+              </Tooltip>
             )}
           </Stack>
         )}

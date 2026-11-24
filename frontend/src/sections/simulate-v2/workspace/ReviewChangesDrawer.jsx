@@ -835,9 +835,9 @@ export default function ReviewChangesDrawer({
                     ? `Accept or reject the ${counts.undecided} change${counts.undecided === 1 ? "" : "s"} still waiting first.`
                     : !counts.accepted
                       ? "Every change is rejected — Discard all puts the world back."
-                      : needsCheck
-                        ? checkState === "running"
-                          ? "Saves once Validate finishes."
+                      : needsCheck || otherValidate
+                        ? checkState === "running" || otherValidate
+                          ? "Save waits until Validate finishes."
                           : "Validate the affected scenarios first."
                         : cost?.text || ""
                 }
@@ -848,7 +848,10 @@ export default function ReviewChangesDrawer({
                     variant="contained"
                     color="primary"
                     disabled={
-                      !!counts.undecided || !counts.accepted || needsCheck
+                      !!counts.undecided ||
+                      !counts.accepted ||
+                      needsCheck ||
+                      !!otherValidate
                     }
                     onClick={() => {
                       onSave(shownName.trim());

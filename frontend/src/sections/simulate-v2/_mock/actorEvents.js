@@ -72,7 +72,7 @@ export const actorEventsOf = ({ env, envState, task }) => {
         after: where(h, count),
         action,
         outcome,
-        args: { action, request: tool, scope: actor.approvalScope || null },
+        args: { action, request: tool },
         result:
           outcome === "Committed"
             ? { status: "approved", by: actor.id }

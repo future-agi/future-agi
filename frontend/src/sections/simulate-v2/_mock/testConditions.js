@@ -7,10 +7,18 @@
   answer is its own kind, not a sub-choice of a timeout: the call ran — a
   write landed — and only the answer never came back.
 
-  Saved on the scenario: row.testCondition = { tool, kind, call }, with
-  call "first" (the default) | "every" | a call number (2, 3…).
+  Saved on the scenario: row.testCondition = { tool, kind, call, approval },
+  with call a call number (1, 2, 3…) — a condition fails the tool on one
+  chosen call, never on every call (Karthik, 24 Nov) — and approval the
+  approval action that records it, which "Needs approval first" must name
+  or the backend refuses the save.
+
+  Older saves: "first" reads as call 1. "every" has no backend meaning; it
+  reads as call 1 too — the call it always hit first — and says it was
+  saved as every call until it is saved again.
 */
 import { replicationOf } from "./replication";
+import { worldActionsOf } from "./actors";
 
 export const CONDITIONS = [
   { kind: "timeout", label: "Times out before it runs" },
@@ -30,12 +38,27 @@ const RETIRED = {
   approval_refused: "Approval refused",
 };
 
-/** Which call it hits: the first (default), every one, or call number N. */
-export const CALLS = [
-  { id: "first", label: "First call" },
-  { id: "every", label: "Every call" },
-  { id: "nth", label: "Call number…" },
-];
+/** Which call it hits: one call number. Offered up to MAX_CALL. */
+export const MAX_CALL = 10;
+export const CALLS = Array.from({ length: MAX_CALL }, (_, i) => ({
+  id: i + 1,
+  label: `Call ${i + 1}`,
+}));
+
+/** The kind that needs an approval action named. */
+export const needsApprovalAction = (kind) => kind === "permission";
+
+/**
+ * The environment's approval actions a "Needs approval first" condition can
+ * name: approvals.change and approve_<tool> for each tool that writes.
+ */
+export const approvalActionsForConditions = (env, envState) =>
+  worldActionsOf(env, envState)
+    .filter((a) => a.kind === "approval")
+    .map((a) => a.name);
+
+export const APPROVAL_MISSING =
+  "Pick the approval action that records it — the save is refused without one";
 
 /** A saved condition as the five kinds read it; old shapes mapped across. */
 export const normalizeCondition = (c) => {
@@ -47,24 +70,22 @@ export const normalizeCondition = (c) => {
         ? "permission"
         : c.kind;
   const n = Number(c.call);
-  const call =
-    c.call === "every"
-      ? "every"
-      : Number.isInteger(n) && n > 1
-        ? n
-        : "first";
-  return { tool: c.tool, kind, call };
+  const call = Number.isInteger(n) && n >= 1 ? n : 1;
+  return {
+    tool: c.tool,
+    kind,
+    call,
+    approval: c.approval || null,
+    /* Saved as "every call" before calls were one number. */
+    ...(c.call === "every" && { wasEvery: true }),
+  };
 };
 
 /** A kind that's no longer offered — kept as saved, shown under its old name. */
 export const isRetiredKind = (kind) => !!RETIRED[kind];
 
 export const callLabelOf = (call) =>
-  call === "every"
-    ? "every call"
-    : typeof call === "number" && call > 1
-      ? `call ${call}`
-      : "first call";
+  `call ${Number.isInteger(Number(call)) && Number(call) >= 1 ? Number(call) : 1}`;
 
 /** A kind's name, offered or retired. */
 export const kindLabelOf = (kind) =>
@@ -73,7 +94,14 @@ export const kindLabelOf = (kind) =>
 export const conditionLabelOf = (raw) => {
   const c = normalizeCondition(raw);
   if (!c) return null;
-  return `${c.tool} · ${kindLabelOf(c.kind).toLowerCase()} · ${callLabelOf(c.call)}`;
+  return [
+    c.tool,
+    kindLabelOf(c.kind).toLowerCase(),
+    needsApprovalAction(c.kind) && c.approval,
+    `${callLabelOf(c.call)}${c.wasEvery ? " (saved as every call)" : ""}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 };
 
 /**

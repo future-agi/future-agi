@@ -13,7 +13,7 @@
   actor). A person's decision is kept on the environment
   (`envState.approvalDecisions[taskId]`).
 */
-import { castOf, FALLBACKS } from "./actors";
+import { castOf, FALLBACKS, approvesOf, approvalActionsOf } from "./actors";
 import { hashSeed } from "./runStream";
 
 const BRANCHES = [
@@ -27,14 +27,15 @@ const BRANCHES = [
 /** The approval in one conversation, or null when nobody in the cast approves or nothing was written. */
 export const approvalOf = ({ env, envState, task }) => {
   const cast = castOf(env, envState);
-  const approver = cast.find((a) => a.canApprove);
+  /* The approver is whoever holds an approval action — there is no flag. */
+  const approver = cast.find((a) => approvesOf(a));
   if (!approver) return null;
   const calls = task?.callLog?.calls || [];
   const write = calls.find((c) => c.wrote) || null;
   if (!write) return null;
   const h = hashSeed(`${task.id}:approval`);
   const branch = BRANCHES[h % BRANCHES.length];
-  const coworker = cast.find((a) => !a.canApprove && a.entry === "present");
+  const coworker = cast.find((a) => !approvesOf(a) && a.entry === "present");
   const person = envState?.approvalDecisions?.[task.id] || null;
   const decision =
     branch === "person"
@@ -64,7 +65,7 @@ export const approvalOf = ({ env, envState, task }) => {
       at: 0,
       who: lead,
       kind: "ask",
-      text: `Asked for something only ${approver.name} can approve (${approver.approvalScope || "above the limit"}).`,
+      text: `Asked for something only ${approver.name} can approve (${approvalActionsOf(approver).join(", ")}).`,
     },
   ];
   let t = 2.1;
@@ -112,7 +113,7 @@ export const approvalOf = ({ env, envState, task }) => {
   const decided = {
     approved: {
       who: approver.name,
-      text: `Approved — ${approver.approvalScope || "within their authority"}.`,
+      text: `Approved — recorded with ${approvalActionsOf(approver)[0]}.`,
     },
     rejected: { who: approver.name, text: "Rejected." },
     "no-response": {

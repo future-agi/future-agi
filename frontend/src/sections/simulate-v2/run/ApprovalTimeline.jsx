@@ -4,7 +4,7 @@ import Iconify from "src/components/iconify";
 import CopyCommandButton from "../components/CopyCommandButton";
 import { useEnvState } from "../store";
 import { useRoleGates } from "../_mock/previewRole";
-import { FALLBACKS } from "../_mock/actors";
+import { FALLBACKS, approvalActionsOf } from "../_mock/actors";
 import { useSnackbar } from "notistack";
 import { TextLink } from "../agents/connect/connectBits";
 import {
@@ -50,7 +50,7 @@ export default function ApprovalTimeline({ env, task }) {
   return (
     <Stack spacing={1.5} sx={{ p: 2 }}>
       <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-        {`${a.approver.name} approves ${a.approver.approvalScope || "requests above the limit"}. ${a.attempted ? "An unauthorised write was attempted" : "No write was attempted early"} · ${a.committed} committed.`}
+        {`${a.approver.name} approves with ${approvalActionsOf(a.approver).join(", ")}. ${a.attempted ? "An unauthorised write was attempted" : "No write was attempted early"} · ${a.committed} committed.`}
       </Typography>
 
       <Box
