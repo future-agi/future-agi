@@ -54636,7 +54636,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         candidates: {
           type: "array",
           items: {
-            $ref: "#/definitions/AgentFixCandidate",
+            $ref: "#/definitions/AgentFixCandidateDetail",
           },
         },
         started_at: {
@@ -54668,6 +54668,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Eval grading",
           type: "string",
           enum: ["none", "pending", "done", "incomplete"],
+          readOnly: true,
+        },
+        flaky_protected_text: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
           readOnly: true,
         },
       },
@@ -101575,6 +101583,74 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentFixCandidateDetail: {
+      required: [
+        "attempt",
+        "agent_version_id",
+        "version_number",
+        "verdict",
+        "pull_request_url",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        attempt: {
+          title: "Attempt",
+          type: "integer",
+          maximum: 32767,
+          minimum: 0,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["pending", "rejected", "finalist", "winner"],
+        },
+        verdict: {
+          $ref: "#/definitions/AgentFixVerdict",
+        },
+        check_runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
+        override: {
+          $ref: "#/definitions/AgentFixOverride",
+        },
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        wording: {
+          $ref: "#/definitions/AgentFixCandidateWording",
+        },
+      },
+    },
     AgentFixEvalWarning: {
       required: [
         "name",
@@ -131417,6 +131493,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           "x-nullable": true,
+        },
+      },
+    },
+    AgentFixCandidateWording: {
+      required: ["headline", "must_pass", "changes", "caveats"],
+      type: "object",
+      properties: {
+        headline: {
+          title: "Headline",
+          type: "string",
+        },
+        must_pass: {
+          title: "Must pass",
+          type: "string",
+        },
+        changes: {
+          title: "Changes",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        caveats: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
