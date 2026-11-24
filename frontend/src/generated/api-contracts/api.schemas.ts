@@ -19535,6 +19535,7 @@ export interface AgentFixEpochIssueApi {
   /** @minLength 1 */
   cluster_id: string;
   project_id: string;
+  title: string | null;
 }
 
 export interface AgentFixCheckRunApi {
@@ -19612,6 +19613,8 @@ export interface AgentFixRunApi {
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
+  /** Run from an Error Feed issue, even once the issue is gone. */
+  readonly from_issue?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
@@ -19813,6 +19816,8 @@ export interface AgentFixRunDetailApi {
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
+  /** Run from an Error Feed issue, even once the issue is gone. */
+  readonly from_issue?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];

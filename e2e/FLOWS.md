@@ -1205,7 +1205,7 @@
 
 **Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
 
-**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:130`
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:131`
 
 **Tags:** —
 
@@ -1231,7 +1231,7 @@
 - the create POST body is exactly the issue, project, environment and the picks after the swap
 - the run POST body is exactly the kept scenario and the review's launch rows at their defaults
 - the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
-- the epoch page's breadcrumb is the issue's cluster id linking to the issue, and it survives a reload
+- the epoch page's breadcrumb is the environment linking to the environment, then Epochs linking to its Epochs tab, the header reads "From issue: <title>" linking to the issue, and both survive a reload
 - the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue

@@ -38882,10 +38882,15 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
             job_id: zod.string().uuid(),
             cluster_id: zod.string().min(1),
             project_id: zod.string().uuid(),
+            title: zod.union([zod.string().min(1), zod.null()]),
           }),
           zod.null(),
         ])
         .optional(),
+      from_issue: zod
+        .boolean()
+        .optional()
+        .describe("Run from an Error Feed issue, even once the issue is gone."),
       check_runs: zod
         .array(
           zod.object({
@@ -39446,10 +39451,15 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
         job_id: zod.string().uuid(),
         cluster_id: zod.string().min(1),
         project_id: zod.string().uuid(),
+        title: zod.union([zod.string().min(1), zod.null()]),
       }),
       zod.null(),
     ])
     .optional(),
+  from_issue: zod
+    .boolean()
+    .optional()
+    .describe("Run from an Error Feed issue, even once the issue is gone."),
   check_runs: zod
     .array(
       zod.object({
@@ -39911,10 +39921,15 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
         job_id: zod.string().uuid(),
         cluster_id: zod.string().min(1),
         project_id: zod.string().uuid(),
+        title: zod.union([zod.string().min(1), zod.null()]),
       }),
       zod.null(),
     ])
     .optional(),
+  from_issue: zod
+    .boolean()
+    .optional()
+    .describe("Run from an Error Feed issue, even once the issue is gone."),
   check_runs: zod
     .array(
       zod.object({
