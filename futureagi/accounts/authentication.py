@@ -243,6 +243,20 @@ def is_coding_agent_key(request) -> bool:
     return org_api_key is not None and org_api_key.type == "coding_agent"
 
 
+def is_browser_session(request) -> bool:
+    """Whether ``request`` authenticated as a person's signed-in session: the JWT branch of
+    ``APIKeyAuthentication``, whose ``request.auth`` is the token. An allowlist, so a new
+    way in, a subclass included, is not a session: an API key's ``request.auth`` is None,
+    and an MCP call is forced in (``ForcedAuthentication``) with none either."""
+    authenticator = getattr(request, "successful_authenticator", None)
+    return (
+        type(authenticator) is APIKeyAuthentication
+        and isinstance(getattr(request, "auth", None), str)
+        and bool(request.auth)
+        and getattr(request, "org_api_key", None) is None
+    )
+
+
 class APIKeyAuthentication(BaseAuthentication):
     def authenticate_header(self, request):
         return "ApiKey"

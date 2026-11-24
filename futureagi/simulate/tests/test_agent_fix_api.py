@@ -21,6 +21,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from accounts.models import Organization, Workspace
+from conftest import WorkspaceAwareAPIClient
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
@@ -105,6 +106,22 @@ PLATFORM_KEY = "platform-harness-key"
 def entitled():
     with patch("simulate.views.agent_fix.check_ee_feature") as gate:
         yield gate
+
+
+@pytest.fixture
+def browser_client(api_client, user, workspace):
+    """A person's signed-in session, with the JWT the web app sends: the one caller an
+    Epoch's read names its held-back cases to, so the Epoch page can mark them."""
+    token = api_client.post(
+        "/accounts/token/",
+        {"email": user.email, "password": "testpassword123"},
+        format="json",
+    ).json()["access"]
+    client = WorkspaceAwareAPIClient()
+    client.set_workspace(workspace)
+    client.defaults["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+    yield client
+    client.stop_workspace_injection()
 
 
 def _armed(fix_run, *, expires_in=timedelta(hours=1)):
@@ -564,7 +581,7 @@ class TestEngineCalls:
         assert fix_run.stage == "Diagnose"
 
     def test_a_progress_report_s_step_plan_diagnosis_and_tiers_reach_the_read(
-        self, api_client, auth_client, source_run
+        self, api_client, browser_client, source_run
     ):
         fix_run = _armed(_fix_run(source_run))
         candidate = _candidate(fix_run)
@@ -630,7 +647,7 @@ class TestEngineCalls:
         )
 
         assert response.status_code == 200, response.content
-        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+        read = browser_client.get(f"{BASE}/{fix_run.id}/").json()
         assert (
             read["step"],
             read["plan"]["baseline_spread_pts"],
@@ -2476,7 +2493,7 @@ class TestUserApi:
         ids=["unmetered", "metered"],
     )
     def test_an_older_engines_ceilings_read_its_cost_as_unknown_unless_metered(
-        self, auth_client, source_run, github, metered, status, parts
+        self, browser_client, source_run, github, metered, status, parts
     ):
         detail = "cost not measurable; latency 32.6s (baseline 55.4s, ceiling 3600s)"
         tiers = [
@@ -2489,7 +2506,7 @@ class TestUserApi:
         )
         stored = AgentFixCandidate.no_workspace_objects.get(id=candidate.id).verdict
 
-        [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+        [shown] = browser_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
 
         assert shown["verdict"]["tiers"][-1] == {
             "name": "ceilings",
@@ -3255,7 +3272,7 @@ class TestEngineMemory:
         assert read["ending"] == "no_improvement"
 
     def test_a_report_from_before_flaky_protected_reads_as_none(
-        self, api_client, auth_client, source_run
+        self, api_client, browser_client, source_run
     ):
         fix_run = _armed(_fix_run(source_run))
         self._report(
@@ -3266,7 +3283,7 @@ class TestEngineMemory:
             report={k: v for k, v in fix_run.report.items() if k != "flaky_protected"}
         )
 
-        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        read = browser_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
         assert read["flaky_protected"] == []
         assert read["summary"] == "nothing held up"
 

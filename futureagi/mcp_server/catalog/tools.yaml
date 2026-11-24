@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 128
+expected_tool_count: 130
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -601,6 +601,18 @@ tools:
     access: write
     idempotent: false
     open_world: true
+    entitlement: fix_my_agent
+  - name: get_epoch_coding_agent_brief
+    group: epoch
+    description: Return what your coding agent needs to fix a finished run itself, with source_run_id the run's test execution ID. It lists the failing cases, the agent's files, the rules for a change, the attempts left, and instructions to follow. Submit the change with `fagi epoch submit`, then read get_epoch_attempt_verdict.
+    operation: {method: GET, path: "/simulate/api/agent-fix-runs/coding-agent-brief/"}
+    access: read
+    entitlement: fix_my_agent
+  - name: get_epoch_attempt_verdict
+    group: epoch
+    description: Return the verdict on a fix your coding agent submitted, by the attempt's Epoch ID. It gives its state, each check's status, the detail of the static and target checks, and its must-pass regressions. Poll it until the attempt has ended.
+    operation: {method: GET, path: "/simulate/api/agent-fix-runs/{id}/verdict/"}
+    access: read
     entitlement: fix_my_agent
   - name: get_epoch_candidate_patch
     group: epoch

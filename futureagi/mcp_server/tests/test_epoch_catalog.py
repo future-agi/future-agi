@@ -49,6 +49,8 @@ EPOCH = [
     ("launch_epoch", "POST", EPOCHS),
     ("stop_epoch", "POST", EPOCHS + "{id}/stop/"),
     ("retry_epoch", "POST", EPOCHS + "{id}/retry/"),
+    ("get_epoch_coding_agent_brief", "GET", EPOCHS + "coding-agent-brief/"),
+    ("get_epoch_attempt_verdict", "GET", EPOCHS + "{id}/verdict/"),
     ("get_epoch_candidate_patch", "GET", CANDIDATE + "patch/"),
     ("make_epoch_candidate_default", "POST", CANDIDATE + "make-default/"),
     ("open_epoch_candidate_pull_request", "POST", CANDIDATE + "pull-request/"),

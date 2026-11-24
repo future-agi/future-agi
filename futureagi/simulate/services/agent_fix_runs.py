@@ -33,6 +33,7 @@ from simulate.selectors.agent_fix import (
     default_max_minutes,
     eval_review,
     fewest_failing_cases,
+    is_outside_attempt,
     is_retryable,
     launch_blocker,
     measured_automatically,
@@ -245,7 +246,7 @@ def launch_fix_run(
     if variations:
         # The builder's turn that writes the variations bills as authoring.
         require_harness_authoring(str(environment.organization_id))
-    return _create_fix_run(
+    return create_fix_run(
         source_run,
         base_version_id=base_version_id,
         request=request.model_dump(mode="json"),
@@ -333,7 +334,7 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
         )
         if not is_retryable(locked):
             raise _retry_refused(locked)
-        return _create_fix_run(
+        return create_fix_run(
             source_run,
             base_version_id=original.base_agent_version_id,
             request=original.request,
@@ -349,7 +350,9 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
 def _retry_refused(fix_run: AgentFixRun) -> HostedHarnessError:
     """Why Retry does not start this fix again, as is_retryable decided it."""
     after = " Run a new epoch from the run's Debug failures."
-    if fix_run.state != AgentFixRun.State.FAILED:
+    if is_outside_attempt(fix_run):
+        message = "Your coding agent's attempt is not retried. Submit a new attempt."
+    elif fix_run.state != AgentFixRun.State.FAILED:
         message = "Only a failed epoch can be retried."
     elif was_the_retry(fix_run):
         message = f"This epoch was the retry.{after}"
@@ -358,7 +361,7 @@ def _retry_refused(fix_run: AgentFixRun) -> HostedHarnessError:
     return HostedHarnessError("fix_not_retryable", message, status_code=409)
 
 
-def _create_fix_run(
+def create_fix_run(
     source_run: HostedHarnessJob,
     *,
     base_version_id: Any,
@@ -366,13 +369,17 @@ def _create_fix_run(
     user: Any,
     suite_version_id: Any = None,
     retried_from: AgentFixRun | None = None,
+    attempt_of: AgentFixRun | None = None,
     engine_notes: dict[str, Any] | None = None,
+    fix_run_id: Any = None,
 ) -> AgentFixRun:
-    """The new fix, its workflow started once it is committed; one active fix per environment."""
+    """The new fix, its workflow started once it is committed; one active fix per environment.
+    ``fix_run_id`` is the id when the caller stored the fix's objects before it exists."""
     environment = source_run.environment
     try:
         with transaction.atomic():
             fix_run = AgentFixRun.no_workspace_objects.create(
+                **({"id": fix_run_id} if fix_run_id is not None else {}),
                 organization_id=environment.organization_id,
                 workspace_id=environment.workspace_id,
                 environment=environment,
@@ -380,6 +387,7 @@ def _create_fix_run(
                 base_agent_version_id=base_version_id,
                 suite_version_id=suite_version_id,
                 retried_from=retried_from,
+                attempt_of=attempt_of,
                 created_by=user,
                 request=request,
                 engine_notes=engine_notes,
@@ -398,6 +406,7 @@ def _create_fix_run(
         fix_run=str(fix_run.id),
         environment=str(environment.id),
         retried_from=str(retried_from.id) if retried_from else None,
+        attempt_of=str(attempt_of.id) if attempt_of else None,
     )
     fix_run.refresh_from_db()
     return fix_run

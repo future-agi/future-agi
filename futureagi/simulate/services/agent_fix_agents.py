@@ -42,8 +42,8 @@ class AgentKind(Protocol):
 
     def base_version_id(self, source_run: HostedHarnessJob) -> Any: ...
 
-    def source_archive(self, fix_run: AgentFixRun) -> bytes:
-        """The agent's editable files as a `source/`-rooted tar.gz."""
+    def source_archive(self, source_run: HostedHarnessJob) -> bytes:
+        """The agent's editable files as the run ran them, as a `source/`-rooted tar.gz."""
         ...
 
     def prepare_candidate(
@@ -99,9 +99,8 @@ class VersionedSourceAgent:
     def base_version_id(self, source_run: HostedHarnessJob) -> Any:
         return source_run.agent_version_id or source_run.environment.agent_version_id
 
-    def source_archive(self, fix_run: AgentFixRun) -> bytes:
-        # The source as the failed run ran it.
-        return HostedSourceAcquirer().acquire(fix_run.source_run)[0]
+    def source_archive(self, source_run: HostedHarnessJob) -> bytes:
+        return HostedSourceAcquirer().acquire(source_run)[0]
 
     def prepare_candidate(
         self, fix_run: AgentFixRun, files: dict[str, bytes], attempt: int

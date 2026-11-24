@@ -1135,6 +1135,11 @@ ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
 # "Fix my agent": the improvement engine runs in its own E2B template, built on the hosted ALK
 # template (the svc-control user and /opt/alk-venv the E2B bootstrap expects).
 AGENT_FIX_E2B_TEMPLATE_REFERENCE = os.getenv("AGENT_FIX_E2B_TEMPLATE_REFERENCE", "")
+# A person's own coding agent submits a fix that an Epoch verifies. Turn it on together with
+# an engine template that runs verify mode; off, its routes answer 404.
+AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED = os.getenv(
+    "AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED", "false"
+).lower() in ("true", "1", "yes")
 AGENT_FIX_ENGINE_COMMAND = os.getenv(
     "AGENT_FIX_ENGINE_COMMAND", "node /opt/agent-improvement/platform-entry.mjs"
 )

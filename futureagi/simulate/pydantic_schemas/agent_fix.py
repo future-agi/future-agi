@@ -24,6 +24,10 @@ VARIATIONS_PER_CASE = 3
 MARGIN_PCT_DEFAULT = 25
 MARGIN_PCT_MAX = 1000
 ALLOWED_MODELS_MAX = 50
+# Outside attempts a source run takes: its held-back split is seeded by its id, so the cap
+# counts attempts on the run, however they are linked.
+OUTSIDE_ATTEMPTS_MAX = 4
+OUTSIDE_SUMMARY_MAX = 2000
 
 
 class Surface(StrEnum):
@@ -69,6 +73,16 @@ class FixEvidence(BaseModel):
     # it became.
     source_ids: list[str]
     scenario_keys: list[str]
+
+
+class OutsideCandidate(BaseModel):
+    """A fix a person's own coding agent submitted. With it the engine runs verify mode:
+    no Diagnose, no proposer and no model calls, only the verdict on the submitted tree."""
+
+    # The coding agent's own words for its change, shown on the attempt and the PR.
+    summary: str = Field(max_length=OUTSIDE_SUMMARY_MAX)
+    # This attempt's number among the outside attempts on the source run.
+    number: int = Field(ge=1, le=OUTSIDE_ATTEMPTS_MAX)
 
 
 class FixRequest(BaseModel):
@@ -119,6 +133,8 @@ class FixRequest(BaseModel):
     # Derived at launch, never asked: the evidence imports that added any target to the suite.
     # Empty when the fix did not start from evidence.
     evidence: list[FixEvidence] = Field(default_factory=list)
+    # Set when the fix verifies a tree a person's own coding agent submitted.
+    outside_candidate: OutsideCandidate | None = None
 
 
 class InventoryScenario(BaseModel):
@@ -484,3 +500,61 @@ class LaunchOptions(BaseModel):
     blocked: LaunchBlocked | None = None
     # Set when a launch that writes variations would be refused, with the reason.
     variations_blocked: LaunchBlocked | None = None
+
+
+class CodingAgentTarget(BaseModel):
+    """A failing case a person's own coding agent is asked to fix. Never a held-back one."""
+
+    key: str
+    name: str
+    failing_sub_goals: list[str]
+
+
+class OutsideAttempts(BaseModel):
+    used: int
+    max: int
+
+
+class CodingAgentBrief(BaseModel):
+    """What a person's own coding agent reads to fix a failed run, then submit its tree.
+    Nothing in it names a held-back case."""
+
+    source_run: LaunchSourceRun
+    environment: LaunchEnvironment
+    agent: AgentIdentity
+    # The commit a GitHub agent's change must build on; "" for an uploaded agent.
+    base_commit: str
+    # The agent's files as the run ran them: the submitted tree holds each it keeps,
+    # changed or not, and may add new ones. One left out is deleted.
+    files: list[str]
+    targets: list[CodingAgentTarget]
+    protected_scenario_keys: list[str]
+    failures: list[CheckRecord]
+    attempts: OutsideAttempts
+    blocked: LaunchBlocked | None = None
+    # The prompt the coding agent follows, in markdown.
+    instructions: str
+
+
+class AttemptTier(BaseModel):
+    name: str
+    status: str
+    # The static and target tiers' only: the others are named, not shown.
+    detail: str = ""
+
+
+class AttemptVerdict(BaseModel):
+    """An outside attempt's verdict as its coding agent reads it: tier statuses, and the
+    detail of the tiers it may learn from. Nothing in it names a held-back case."""
+
+    id: str
+    number: int
+    state: str
+    step: FixStep | None
+    ending: Ending | None
+    failure: LaunchBlocked | None
+    summary: str
+    tiers: list[AttemptTier]
+    must_pass_regressions: list[str]
+    patch_available: bool
+    pull_request_url: str

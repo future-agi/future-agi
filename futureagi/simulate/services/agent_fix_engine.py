@@ -39,7 +39,9 @@ from simulate.selectors.agent_fix import (
     committed_usd,
     fix_lineage,
     graded_check_runs,
+    has_winner,
     is_graded_label,
+    is_outside_attempt,
     ran_at,
     worst_case_usd_per_execution,
 )
@@ -88,10 +90,15 @@ def _locked_running(fix_run_id: Any) -> AgentFixRun:
     return locked
 
 
+BASE_SOURCE = "base-source.tar.gz"
+# The tree a person's own coding agent submitted, for an outside attempt.
+SUBMITTED_SOURCE = "submitted-source.tar.gz"
+
+
 def source_archive(fix_run: AgentFixRun) -> bytes:
     """The agent's editable files as the fix started from them: a `source/`-rooted tar.gz,
     kept for the whole fix, so every candidate is compared with the same base."""
-    key = _object_key(fix_run, "base-source.tar.gz")
+    key = _object_key(fix_run, BASE_SOURCE)
     body = _load_if_stored(key)
     if body is None:
         if fix_run.source_run_id is None:
@@ -100,9 +107,66 @@ def source_archive(fix_run: AgentFixRun) -> bytes:
                 "the run this epoch started from was deleted",
                 status_code=409,
             )
-        body = agent_kind(fix_run.environment).source_archive(fix_run)
+        body = run_source_archive(fix_run.source_run)
         _put(key, body, "application/gzip")
     return body
+
+
+def run_source_archive(source_run: HostedHarnessJob) -> bytes:
+    """The agent's editable files as the run ran them, read again from its source."""
+    return agent_kind(source_run.environment).source_archive(source_run)
+
+
+def submitted_archive(fix_run: AgentFixRun) -> bytes | None:
+    """The tree an outside attempt verifies; None for a fix the engine makes itself."""
+    if not is_outside_attempt(fix_run):
+        return None
+    return _load_if_stored(_object_key(fix_run, SUBMITTED_SOURCE))
+
+
+def store_outside_trees(
+    organization_id: Any, fix_run_id: Any, *, base: bytes, submitted: dict[str, bytes]
+) -> None:
+    """Keep an outside attempt's base and submitted tree before its fix exists, so its
+    engine reads the base the submission was checked on. An object no fix points at is
+    harmless."""
+    _put(
+        fix_object_key(organization_id, fix_run_id, BASE_SOURCE),
+        base,
+        "application/gzip",
+    )
+    _put(
+        fix_object_key(organization_id, fix_run_id, SUBMITTED_SOURCE),
+        pack_tree(submitted),
+        "application/gzip",
+    )
+
+
+def pack_tree(files: dict[str, bytes]) -> bytes:
+    """Files by their path from the agent's root, as a `source/`-rooted tar.gz."""
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as archive:
+        for path, data in sorted(files.items()):
+            member = tarfile.TarInfo(f"source/{path}")
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+    return out.getvalue()
+
+
+def candidate_patch(
+    base: dict[str, bytes], files: dict[str, bytes], locked_paths: list[str]
+) -> bytes:
+    """The files' change on the base as a git patch, refusing a change to a locked path
+    and a patch over the size limit."""
+    _refuse_locked_changes(locked_paths, base, files)
+    patch = _patch(base, files)
+    if len(patch) > MAX_PATCH_BYTES:
+        raise HostedHarnessError(
+            "fix_patch_too_large",
+            "the candidate's patch is too large",
+            status_code=413,
+        )
+    return patch
 
 
 def add_candidate(
@@ -112,20 +176,16 @@ def add_candidate(
     and return it with its check status. The same attempt again returns the candidate made
     the first time, checked again if its check never finished."""
     kind = agent_kind(fix_run.environment)
+    # Before the same attempt's candidate is returned: a relaunched verify run sends the
+    # submitted tree again as attempt 1, and gets the candidate it made.
+    _refuse_other_than_submitted(fix_run, attempt, tree)
     candidate = fix_run.candidates.filter(attempt=attempt).first()
     if candidate is None:
         files = archive_files(tree)
         base = archive_files(source_archive(fix_run))
-        _refuse_locked_changes(fix_run, base, files)
         # Made from the tree, not taken from the engine: the patch a user downloads or a
         # pull request ships is the version that was checked.
-        patch = _patch(base, files)
-        if len(patch) > MAX_PATCH_BYTES:
-            raise HostedHarnessError(
-                "fix_patch_too_large",
-                "the candidate's patch is too large",
-                status_code=413,
-            )
+        patch = candidate_patch(base, files, fix_run.request.get("locked_paths") or [])
         # Storage first, outside the fix's lock: an object no candidate points at is
         # harmless, a candidate without its files is not.
         prepared = kind.prepare_candidate(fix_run, files, attempt)
@@ -156,11 +216,32 @@ def add_candidate(
     return candidate, kind.check(candidate.agent_version)
 
 
+def _refuse_other_than_submitted(
+    fix_run: AgentFixRun, attempt: int, tree: bytes
+) -> None:
+    """In an outside attempt, refuse any candidate but the submitted tree as attempt 1. An
+    engine template from before verify mode proposes its own, and stops here."""
+    if not is_outside_attempt(fix_run):
+        return
+    if attempt != 1:
+        raise HostedHarnessError(
+            "fix_outside_attempt_invalid",
+            "this epoch verifies the submitted tree as its first attempt only",
+            status_code=422,
+        )
+    submitted = submitted_archive(fix_run)
+    if submitted is None or archive_files(submitted) != archive_files(tree):
+        raise HostedHarnessError(
+            "fix_outside_tree_mismatch",
+            "this epoch verifies the submitted tree only",
+            status_code=422,
+        )
+
+
 def _refuse_locked_changes(
-    fix_run: AgentFixRun, base: dict[str, bytes], files: dict[str, bytes]
+    locked: list[str], base: dict[str, bytes], files: dict[str, bytes]
 ) -> None:
     """Refuse a candidate whose files differ from the base on any locked path."""
-    locked = fix_run.request.get("locked_paths") or []
     hits = sorted(
         path
         for path in set(base) | set(files)
@@ -293,7 +374,13 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
                 .values_list("graded_for_id", flat=True)
                 .get()
             )
-            if is_graded_label(request.label) and adopted_by != locked.id:
+            # A run an earlier winner graded keeps its grading, and its bill, with that
+            # fix: this one reads the grading through its lineage (graded_check_runs).
+            if (
+                is_graded_label(request.label)
+                and adopted_by != locked.id
+                and not has_winner(adopted_by or finished.fix_run_id)
+            ):
                 # This retry's winner grades it: its evals are new spend, held against
                 # this fix's limit as its own graded runs' are.
                 _require_budget(locked, executions, request.label, read_again=True)
@@ -442,6 +529,9 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
     winner = AgentFixCandidate.no_workspace_objects.get(fix_run=fix_run, id=winner_id)
     base, final = graded_check_runs(fix_run, winner)
     for run in (*base, *final):
+        # A baseline an earlier winner graded is read as it was graded, not paid again.
+        if fix_run.id not in (run.fix_run_id, run.graded_for_id):
+            continue
         execution = run.test_execution
         if execution is None:
             continue
@@ -596,7 +686,11 @@ def _load_if_stored(key: str) -> bytes | None:
 
 
 def _object_key(fix_run: AgentFixRun, name: str) -> str:
-    return f"agent-fix/{fix_run.organization_id}/{fix_run.id}/{name}"
+    return fix_object_key(fix_run.organization_id, fix_run.id, name)
+
+
+def fix_object_key(organization_id: Any, fix_run_id: Any, name: str) -> str:
+    return f"agent-fix/{organization_id}/{fix_run_id}/{name}"
 
 
 def _put(key: str, body: bytes, content_type: str) -> None:

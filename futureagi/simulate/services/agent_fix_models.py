@@ -20,7 +20,7 @@ from django.utils import timezone
 
 from agentcc.services.gateway_client import resolve_gateway_internal_url
 from simulate.models import AgentFixRun
-from simulate.selectors.agent_fix import committed_usd
+from simulate.selectors.agent_fix import committed_usd, is_outside_attempt
 from simulate.services.harness_usage import billed_ai_usd
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import platform_model_gateway
@@ -38,6 +38,14 @@ class ModelReply:
 
 def complete(fix_run: AgentFixRun, body: bytes) -> ModelReply:
     """Forward one chat completion for the fix's engine and meter what it cost."""
+    # Checked first: an engine template from before verify mode calls a model here, and
+    # must stop. A 401 or 403 would read as the platform stopping it, and relaunch it.
+    if is_outside_attempt(fix_run):
+        raise HostedHarnessError(
+            "fix_verify_only_no_models",
+            "this epoch verifies a submitted fix and calls no model",
+            status_code=422,
+        )
     try:
         request = json.loads(body)
     except ValueError as exc:

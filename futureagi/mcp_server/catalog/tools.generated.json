@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "tool_names_sha256": "03bf14677de766e8e34a0a290f1d550ccb660300de650b26986590188f662271",
-  "tool_count": 128,
+  "tool_names_sha256": "b11df0bceba6f54653baf62791a8ac390d51d001d24a543e0c50df7bad05b04b",
+  "tool_count": 130,
   "tools": [
     {
       "name": "whoami",
@@ -10859,6 +10859,89 @@
       },
       "source": {
         "operationId": "simulate_api_agent-fix-runs_retry"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "get_epoch_coding_agent_brief",
+      "description": "Return what your coding agent needs to fix a finished run itself, with source_run_id the run's test execution ID. It lists the failing cases, the agent's files, the rules for a change, the attempts left, and instructions to follow. Submit the change with `fagi epoch submit`, then read get_epoch_attempt_verdict.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source_run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "source_run_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/agent-fix-runs/coding-agent-brief/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "source_run_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_brief"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "get_epoch_attempt_verdict",
+      "description": "Return the verdict on a fix your coding agent submitted, by the attempt's Epoch ID. It gives its state, each check's status, the detail of the static and target checks, and its must-pass regressions. Poll it until the attempt has ended.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/agent-fix-runs/{id}/verdict/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_verdict"
       },
       "entitlement": "fix_my_agent"
     },

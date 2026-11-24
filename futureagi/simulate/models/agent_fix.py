@@ -67,6 +67,15 @@ class AgentFixRun(BaseModel):
         blank=True,
         related_name="retries",
     )
+    # The previous outside attempt on the same source run: a person's own coding agent
+    # submitted the fix this one verifies. Check runs that one finished are reused.
+    attempt_of = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="next_attempts",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

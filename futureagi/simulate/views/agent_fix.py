@@ -1,5 +1,6 @@
 """HTTP surface of "Fix my agent": the user's runs, and the engine's calls from its sandbox."""
 
+from django.conf import settings
 from django.http import HttpResponse
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
@@ -12,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import is_browser_session
 from simulate.authentication import AgentFixEngineAuthentication
 from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import (
@@ -28,11 +30,16 @@ from simulate.selectors.agent_fix import (
     launch_options,
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs
+from simulate.selectors.agent_fix_outside import attempt_verdict, coding_agent_brief
 from simulate.serializers.agent_fix import (
+    AgentFixAttemptVerdictSerializer,
     AgentFixCandidateCreatedSerializer,
     AgentFixCandidateUploadSerializer,
     AgentFixCheckRunCreatedSerializer,
     AgentFixCheckRunRequestSerializer,
+    AgentFixCodingAgentAttemptSerializer,
+    AgentFixCodingAgentBriefQuerySerializer,
+    AgentFixCodingAgentBriefSerializer,
     AgentFixEngineReportSerializer,
     AgentFixEngineStateSerializer,
     AgentFixLaunchOptionsQuerySerializer,
@@ -48,6 +55,7 @@ from simulate.serializers.agent_fix import (
 )
 from simulate.services import agent_fix_engine, agent_fix_models
 from simulate.services.agent_fix_github import open_pull_request
+from simulate.services.agent_fix_outside import submit_outside_attempt
 from simulate.services.agent_fix_runs import (
     launch_fix_run,
     make_candidate_default,
@@ -137,6 +145,21 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             .first()
         )
 
+    def _source_run(self, request, test_execution_id):
+        """A finished run of one of the caller's environments, by its test execution."""
+        return (
+            self._jobs(request)
+            .filter(test_execution_id=test_execution_id, environment__isnull=False)
+            .select_related("environment__environment_version", "environment_version")
+            .first()
+        )
+
+    def _epoch(self, request, fix_run, serializer=AgentFixRunSerializer, **context):
+        """An epoch's read. Only a person's signed-in session sees which cases were held
+        back, so the Epoch page can mark them; a coding agent, the CLI or MCP never."""
+        context.setdefault("held_back_visible", is_browser_session(request))
+        return serializer(fix_run, context=context).data
+
     @validated_request(
         query_serializer=AgentFixListQuerySerializer,
         responses={200: AgentFixRunListSerializer},
@@ -162,7 +185,12 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         )
         return paginator.get_paginated_response(
             AgentFixRunSerializer(
-                page, many=True, context={"issue_links": jobs_of_epochs(page or [])}
+                page,
+                many=True,
+                context={
+                    "issue_links": jobs_of_epochs(page or []),
+                    "held_back_visible": is_browser_session(request),
+                },
             ).data
         )
 
@@ -174,14 +202,8 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     def launch_options(self, request):
         """What the launch form shows and prefills for a finished run, and what would
         refuse the launch now."""
-        source_run = (
-            self._jobs(request)
-            .filter(
-                test_execution_id=request.validated_query_data["source_run_id"],
-                environment__isnull=False,
-            )
-            .select_related("environment__environment_version", "environment_version")
-            .first()
+        source_run = self._source_run(
+            request, request.validated_query_data["source_run_id"]
         )
         if source_run is None:
             return _not_found()
@@ -190,18 +212,80 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         )
 
     @validated_request(
+        query_serializer=AgentFixCodingAgentBriefQuerySerializer,
+        responses={200: AgentFixCodingAgentBriefSerializer},
+    )
+    @action(detail=False, methods=["get"], url_path="coding-agent-brief")
+    def brief(self, request):
+        """What a person's own coding agent reads to fix a finished run: its failing cases,
+        never a held-back one, the agent's files, the rules, and how to submit."""
+        if not settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED:
+            return _not_found()
+        source_run = self._source_run(
+            request, request.validated_query_data["source_run_id"]
+        )
+        if source_run is None:
+            return _not_found()
+        return Response(
+            AgentFixCodingAgentBriefSerializer(coding_agent_brief(source_run)).data
+        )
+
+    @validated_request(
+        request_serializer=AgentFixCodingAgentAttemptSerializer,
+        responses={201: AgentFixRunSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="coding-agent-attempts",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def submit_attempt(self, request):
+        """Submit the tree a person's own coding agent made for a finished run. Future AGI
+        verifies it as a short Epoch that calls no model; read its verdict."""
+        if not settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED:
+            return _not_found()
+        data = request.validated_data
+        source_run = self._source_run(request, data["source_run_id"])
+        if source_run is None:
+            return _not_found()
+        fix_run = submit_outside_attempt(
+            source_run,
+            tree=data["tree"].read(),
+            summary=data["summary"],
+            sent_base_commit=data["base_commit"],
+            locked_paths=data.get("locked_paths"),
+            budget_credits=data.get("budget_credits"),
+            user=request.user,
+        )
+        return Response(
+            self._epoch(
+                request, self._fix_run(request, fix_run.id), held_back_visible=False
+            ),
+            status=status.HTTP_201_CREATED,
+        )
+
+    @validated_request(responses={200: AgentFixAttemptVerdictSerializer})
+    @action(detail=True, methods=["get"])
+    def verdict(self, request, pk=None):
+        """An outside attempt's verdict: each tier's status, the static and target tiers'
+        detail, and its must-pass regressions, none on a held-back case."""
+        if not settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED:
+            return _not_found()
+        fix_run = self._fix_run(request, pk)
+        if fix_run is None:
+            return _not_found()
+        return Response(AgentFixAttemptVerdictSerializer(attempt_verdict(fix_run)).data)
+
+    @validated_request(
         request_serializer=AgentFixLaunchSerializer,
         responses={201: AgentFixRunSerializer},
         reject_unknown_fields=True,
     )
     def create(self, request):
         data = request.validated_data
-        source_run = (
-            self._jobs(request)
-            .filter(test_execution_id=data["source_run_id"], environment__isnull=False)
-            .select_related("environment")
-            .first()
-        )
+        source_run = self._source_run(request, data["source_run_id"])
         if source_run is None:
             return _not_found()
         fix_run = launch_fix_run(
@@ -219,7 +303,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             cost_limit_usd=data.get("cost_limit_usd"),
         )
         return Response(
-            AgentFixRunSerializer(self._fix_run(request, fix_run.id)).data,
+            self._epoch(request, self._fix_run(request, fix_run.id)),
             status=status.HTTP_201_CREATED,
         )
 
@@ -228,7 +312,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         fix_run = self._fix_run(request, pk)
         if fix_run is None:
             return _not_found()
-        return Response(AgentFixRunDetailSerializer(fix_run).data)
+        return Response(self._epoch(request, fix_run, AgentFixRunDetailSerializer))
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
@@ -243,7 +327,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             return _not_found()
         retried = retry_fix_run(fix_run, user=request.user)
         return Response(
-            AgentFixRunSerializer(self._fix_run(request, retried.id)).data,
+            self._epoch(request, self._fix_run(request, retried.id)),
             status=status.HTTP_201_CREATED,
         )
 
@@ -257,7 +341,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         if fix_run is None:
             return _not_found()
         request_stop(fix_run)
-        return Response(AgentFixRunSerializer(self._fix_run(request, pk)).data)
+        return Response(self._epoch(request, self._fix_run(request, pk)))
 
     def _candidate(self, request, pk, candidate_id):
         fix_run = self._fix_run(request, pk)
@@ -365,6 +449,14 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get"])
     def source(self, request, pk=None):
         body = agent_fix_engine.source_archive(self._fix_run)
+        return HttpResponse(body, content_type="application/gzip")
+
+    @action(detail=True, methods=["get"])
+    def submitted(self, request, pk=None):
+        """The tree an outside attempt verifies, `source/`-rooted like ``source``."""
+        body = agent_fix_engine.submitted_archive(self._fix_run)
+        if body is None:
+            return _not_found()
         return HttpResponse(body, content_type="application/gzip")
 
     @validated_request(

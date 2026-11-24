@@ -37526,6 +37526,13 @@ export const SimulateApiAgentFixEngineSourceParams = zod.object({
 });
 
 /**
+ * The tree an outside attempt verifies, `source/`-rooted like ``source``.
+ */
+export const SimulateApiAgentFixEngineSubmittedParams = zod.object({
+  id: zod.string(),
+});
+
+/**
  * The engine's model calls, at the path an OpenAI-compatible client builds from its
 base URL: no trailing slash, so it is routed on its own, not by the router.
  */
@@ -38651,6 +38658,7 @@ export const simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCos
   false;
 export const simulateApiAgentFixRunsListResponseResultsItemRequestMeasuredAutomaticallyDefault =
   false;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestOutsideCandidateNumberMax = 4;
 
 export const simulateApiAgentFixRunsListResponseResultsItemReportOneFlakyProtectedItemPassedMin = 0;
 
@@ -38721,9 +38729,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
         .optional(),
       step: zod
         .union([
-          zod
-            .enum(["variations", "reproduce", "search", "verify", "done"])
-            .describe("A finished fix is done, whatever the engine last said."),
+          zod.enum(["variations", "reproduce", "search", "verify", "done"]),
           zod.null(),
         ])
         .optional(),
@@ -38838,6 +38844,17 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           .default(
             simulateApiAgentFixRunsListResponseResultsItemRequestMeasuredAutomaticallyDefault,
           ),
+        outside_candidate: zod
+          .object({
+            summary: zod.string(),
+            number: zod
+              .number()
+              .min(1)
+              .max(
+                simulateApiAgentFixRunsListResponseResultsItemRequestOutsideCandidateNumberMax,
+              ),
+          })
+          .optional(),
       }),
       spent_credits: zod.number(),
       committed_credits: zod.number(),
@@ -38875,6 +38892,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
       ]),
       retried_from_id: zod.union([zod.string().uuid(), zod.null()]),
       retryable: zod.boolean().optional(),
+      attempt_of_id: zod.union([zod.string().uuid(), zod.null()]),
       limited_validation: zod.boolean().optional(),
       issue: zod
         .union([
@@ -39124,6 +39142,97 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
 });
 
 /**
+ * Submit the tree a person's own coding agent made for a finished run. Future AGI
+verifies it as a short Epoch that calls no model; read its verdict.
+ */
+export const SimulateApiAgentFixRunsSubmitAttemptBody = zod.object({
+  source_run_id: zod.string().uuid(),
+  tree: zod.instanceof(File),
+  summary: zod.string().optional(),
+  base_commit: zod
+    .string()
+    .optional()
+    .describe(
+      "A GitHub agent's change is refused unless this is the brief's base_commit.",
+    ),
+  locked_paths: zod.array().optional(),
+  budget_credits: zod
+    .number()
+    .optional()
+    .describe(
+      "The attempt's limit in credits. Left out, the most its check runs can hold at once: a hold on the budget, not spend.",
+    ),
+});
+
+/**
+ * What a person's own coding agent reads to fix a finished run: its failing cases,
+never a held-back one, the agent's files, the rules, and how to submit.
+ */
+export const SimulateApiAgentFixRunsBriefQueryParams = zod.object({
+  source_run_id: zod.string().uuid(),
+});
+
+export const SimulateApiAgentFixRunsBriefResponse = zod.object({
+  source_run: zod.object({
+    id: zod.string().uuid(),
+    number: zod.number(),
+    state: zod.string().min(1),
+    finished_at: zod.string().min(1),
+  }),
+  environment: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    version: zod.number(),
+  }),
+  agent: zod.object({
+    name: zod.string().min(1),
+    kind: zod.string().min(1),
+    version_id: zod.string().uuid(),
+    version_number: zod.number(),
+    ref: zod.string().min(1),
+  }),
+  base_commit: zod
+    .string()
+    .describe(
+      "The commit a GitHub agent's change must start from; blank for an uploaded agent.",
+    ),
+  files: zod
+    .array(zod.string().min(1))
+    .describe(
+      "The agent's files as the run ran them. The submitted tree holds each one it keeps, changed or not, and may add new files; one left out is deleted.",
+    ),
+  targets: zod.array(
+    zod.object({
+      key: zod.string().min(1),
+      name: zod.string().min(1),
+      failing_sub_goals: zod.array(zod.string().min(1)),
+    }),
+  ),
+  protected_scenario_keys: zod.array(zod.string().min(1)),
+  failures: zod.array(
+    zod.object({
+      scenario_key: zod.string().min(1),
+      trial: zod.number(),
+      sub_goals: zod.record(zod.string(), zod.boolean()),
+      reasons: zod.record(zod.string(), zod.string()),
+      transcript: zod.string(),
+    }),
+  ),
+  attempts: zod.object({
+    used: zod.number(),
+    max: zod.number(),
+  }),
+  blocked: zod.object({
+    code: zod.string().min(1),
+    message: zod.string().min(1),
+  }),
+  instructions: zod
+    .string()
+    .min(1)
+    .describe("The prompt the coding agent follows, in markdown."),
+});
+
+/**
  * What the launch form shows and prefills for a finished run, and what would
 refuse the launch now.
  */
@@ -39251,6 +39360,7 @@ export const simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault =
   false;
 export const simulateApiAgentFixRunsReadResponseRequestMeasuredAutomaticallyDefault =
   false;
+export const simulateApiAgentFixRunsReadResponseRequestOutsideCandidateNumberMax = 4;
 
 export const simulateApiAgentFixRunsReadResponseReportOneFlakyProtectedItemPassedMin = 0;
 
@@ -39314,9 +39424,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     .optional(),
   step: zod
     .union([
-      zod
-        .enum(["variations", "reproduce", "search", "verify", "done"])
-        .describe("A finished fix is done, whatever the engine last said."),
+      zod.enum(["variations", "reproduce", "search", "verify", "done"]),
       zod.null(),
     ])
     .optional(),
@@ -39407,6 +39515,17 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       .default(
         simulateApiAgentFixRunsReadResponseRequestMeasuredAutomaticallyDefault,
       ),
+    outside_candidate: zod
+      .object({
+        summary: zod.string(),
+        number: zod
+          .number()
+          .min(1)
+          .max(
+            simulateApiAgentFixRunsReadResponseRequestOutsideCandidateNumberMax,
+          ),
+      })
+      .optional(),
   }),
   spent_credits: zod.number(),
   committed_credits: zod.number(),
@@ -39444,6 +39563,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   ]),
   retried_from_id: zod.union([zod.string().uuid(), zod.null()]),
   retryable: zod.boolean().optional(),
+  attempt_of_id: zod.union([zod.string().uuid(), zod.null()]),
   limited_validation: zod.boolean().optional(),
   issue: zod
     .union([
@@ -39721,6 +39841,7 @@ export const simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault =
   false;
 export const simulateApiAgentFixRunsStopResponseRequestMeasuredAutomaticallyDefault =
   false;
+export const simulateApiAgentFixRunsStopResponseRequestOutsideCandidateNumberMax = 4;
 
 export const simulateApiAgentFixRunsStopResponseReportOneFlakyProtectedItemPassedMin = 0;
 
@@ -39784,9 +39905,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     .optional(),
   step: zod
     .union([
-      zod
-        .enum(["variations", "reproduce", "search", "verify", "done"])
-        .describe("A finished fix is done, whatever the engine last said."),
+      zod.enum(["variations", "reproduce", "search", "verify", "done"]),
       zod.null(),
     ])
     .optional(),
@@ -39877,6 +39996,17 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
       .default(
         simulateApiAgentFixRunsStopResponseRequestMeasuredAutomaticallyDefault,
       ),
+    outside_candidate: zod
+      .object({
+        summary: zod.string(),
+        number: zod
+          .number()
+          .min(1)
+          .max(
+            simulateApiAgentFixRunsStopResponseRequestOutsideCandidateNumberMax,
+          ),
+      })
+      .optional(),
   }),
   spent_credits: zod.number(),
   committed_credits: zod.number(),
@@ -39914,6 +40044,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
   ]),
   retried_from_id: zod.union([zod.string().uuid(), zod.null()]),
   retryable: zod.boolean().optional(),
+  attempt_of_id: zod.union([zod.string().uuid(), zod.null()]),
   limited_validation: zod.boolean().optional(),
   issue: zod
     .union([
@@ -40056,6 +40187,54 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     .union([zod.string().datetime({ offset: true }), zod.null()])
     .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
+});
+
+/**
+ * An outside attempt's verdict: each tier's status, the static and target tiers'
+detail, and its must-pass regressions, none on a held-back case.
+ */
+export const SimulateApiAgentFixRunsVerdictParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiAgentFixRunsVerdictResponse = zod.object({
+  id: zod.string().uuid(),
+  number: zod.number(),
+  state: zod.enum([
+    "queued",
+    "running",
+    "stopping",
+    "ready",
+    "no_improvement",
+    "not_reproduced",
+    "out_of_budget",
+    "stopped",
+    "failed",
+    "too_few_cases",
+  ]),
+  step: zod.enum(["variations", "reproduce", "search", "verify", "done"]),
+  ending: zod.enum([
+    "ready",
+    "no_improvement",
+    "not_reproduced",
+    "out_of_budget",
+    "failed",
+  ]),
+  failure: zod.object({
+    code: zod.string().min(1),
+    message: zod.string().min(1),
+  }),
+  summary: zod.string(),
+  tiers: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      status: zod.enum(["passed", "failed", "pending", "skipped"]),
+      detail: zod.string(),
+    }),
+  ),
+  must_pass_regressions: zod.array(zod.string().min(1)),
+  patch_available: zod.boolean(),
+  pull_request_url: zod.string(),
 });
 
 /**
