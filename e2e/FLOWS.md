@@ -3100,9 +3100,9 @@
 
 ### OBS-E2E-066 — a recorded voice call and a traced image play and render on the trace for a signed-in user
 
-**Goal:** A developer opens SDK-shaped LiveKit and Pipecat recordings in trace and Voice players, sees an image where the model saw it, and deletes the LiveKit session to revoke its media without affecting Pipecat
+**Goal:** A developer opens SDK-shaped LiveKit and Pipecat recordings in trace and Voice players, follows a call's tool use beside its speech, sees an image where the model saw it, and deletes the LiveKit session to revoke its media without affecting Pipecat
 
-**Spec:** `flows/observe/trace-attachments.spec.ts:257`
+**Spec:** `flows/observe/trace-attachments.spec.ts:284`
 
 **Tags:** —
 
@@ -3110,10 +3110,10 @@
 
 1. create a voice project and an observe project (SDK source, not simulator) and opt both into attachments (operator step, test-image endpoint)
 2. with the org API key, bootstrap an F01 capture session per trace and upload a LiveKit and a Pipecat Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)
-3. send through the collector a LiveKit call (untyped job_entrypoint root with lk.job_id, agent_session child carrying the recording), a Pipecat call (CONVERSATION root carrying the recording) and the model trace
-4. on the https app origin, open the LiveKit trace, select agent_session, seek while paused in Conversation and play its recording to the native end
-5. open the Pipecat trace and play the root's recording to the end with peaks unavailable
-6. revisit the LiveKit recording after its derivative is ready and inspect the waveform while real audio plays
+3. send through the collector a 7 s LiveKit call (untyped job_entrypoint root with lk.job_id and three timed turns, agent_session child carrying the recording, a nested lookup_order tool span), a Pipecat call (CONVERSATION root carrying the recording, a check_inventory tool span, no transcript) and the model trace
+4. on the https app origin, open the LiveKit trace, select agent_session and open Conversation: see lookup_order between the turns around it, seek by clicking turns while paused, select lookup_order to open its span on the right without moving the recording, and play to the native end
+5. open the Pipecat trace and play the root's recording to the end with peaks unavailable, with check_inventory listed under it as background activity
+6. revisit the LiveKit recording after its derivative is ready: see tall waveform bars for the tones and none for silence, move the paused media by clicking turns, and watch the waveform while real audio plays
 7. open the model trace, select the model span, switch to Chat and see the PNG inside user message 2
 8. play the WAV beside turn.audio in Attributes, and download the PDF, which has no inline preview
 9. open each call on the dedicated Voice full-page route and play its Attachment recording to the end
@@ -3123,7 +3123,7 @@
 
 - PG: exactly the five seeded occurrences have their own scope, capture binding, trace/span and placement, ready Attachment-owned verified MIME/length/sha256 equal to the pre-upload ledger, and complete immutable version and storage binding
 - CH spans FINAL: each parent carries exactly the seeded refs, both voice roots remain parentless conversation roots, and stored input plus trace-detail input retain image/PDF fi-attachment occurrence URIs independently of placement and carrier construction
-- API: voice detail projects each call's recording as ready on its own parent span with a 200 ms mixed Ogg/Opus manifest, and the trace detail projects exactly the seeded attachments as ready
+- API: voice detail projects each call's recording as ready on its own parent span with a mixed Ogg/Opus manifest of 7,000 ms (LiveKit) and 200 ms (Pipecat), and the trace detail projects exactly the seeded attachments as ready and carries the tool span's seeded input and output, which Conversation never renders
 - API: the viewer gateway serves all five originals with fixture length/MIME/sha256, recording Range/HEAD and renewal preserve exact bytes, anonymous media is denied and resolve without credentials is 401; a known authorized attachment UUID used as an occurrence is not_found
 - API: the waveform uses the selected peaks grant, its actual gateway bytes and their dimension header; the unavailable-peaks slider remains keyboard operable
 - API: every media request the page made went through the gateway for exactly the three loaded audio occurrences (zero legacy requests)

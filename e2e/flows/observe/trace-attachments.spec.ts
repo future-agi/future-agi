@@ -82,6 +82,33 @@ const CONVERSATION = 'conversation';
 // Validated by the sandbox probe in tracer/tests/test_attachment_media_types.py
 // (48 kHz mono Opus, 0.2 s); the only committed Ogg/Opus the probe is known to accept.
 const RECORDING_OGG = readFileSync(new URL('../../../futureagi/tracer/tests/fixtures/attachments/tone.ogg', import.meta.url));
+// The LiveKit call's recording: synthetic tones, not speech. 48 kHz mono Ogg/Opus from
+// ffmpeg/libopus (as tone.ogg), 7 s: amplitude-modulated bursts at 0.5–1.7, 2.5–4.2 and
+// 4.5–6.2 s with digital silence between; decodes to 336,000 frames (media_worker
+// duration_ms = 7000). Pipecat keeps the 0.2 s tone as the no-peaks control.
+const LIVEKIT_OGG = readFileSync(new URL('../../fixtures/attachments/livekit-call.ogg', import.meta.url));
+const DURATION_MS = { livekit: 7000, pipecat: 200 } as const;
+// The seeded LiveKit call, in ms after it starts. The transcript text is seeded with the
+// trace; it is not recognised from the tones. Each turn states its call offset (which the
+// Voice transcript seeks by) and its wall clock (which tool spans share).
+const TURNS = [
+  { role: 'user', content: 'Is my order on its way?', start: 500, end: 1700 },
+  { role: 'assistant', speaker_name: 'Fulfillment', content: "I'm checking your order.", start: 2500, end: 4200 },
+  { role: 'assistant', speaker_name: 'Fulfillment', content: 'It shipped today.', start: 4500, end: 6200 },
+] as const;
+// traceAI's LiveKit exporter keeps LiveKit's span name and carries the tool's
+// name in attributes (traceai_livekit exporters/base_exporter.py).
+const LOOKUP = { name: 'lookup_order', span: 'function_tool', start: 3000, end: 4000 } as const;
+const INVENTORY = { name: 'check_inventory', start: 1000, end: 1400 } as const;
+// RecordingSeekBar WAVEFORM_BARS and SLOT.
+const WAVEFORM_BARS = 96, BAR_SLOT = 3;
+// Ended, and played at least `min` ms in total: the sum of the played ranges,
+// not where the last one ends.
+const endedAfter = (node: HTMLAudioElement, min: number) => {
+  let ms = 0;
+  for (let i = 0; i < node.played.length; i++) ms += (node.played.end(i) - node.played.start(i)) * 1000;
+  return [node.ended, Math.round(ms) >= min];
+};
 const UI_READY = 60_000;
 
 type Media = { name: string; bytes: Buffer; mime: string; modality: string; direction: 'input' | 'output' | 'mixed';
@@ -91,7 +118,7 @@ type Seeded = Media & { attachmentId: string; occurrenceId: string; uploadId: st
 type SpanAttachment = { reference: { occurrence_id: string; attachment_id: string; mime_type: string; modality: string;
   direction: string; purpose?: string; message_index?: number; part_index?: number; role?: string }; status: string };
 // CH trace_detail.py:_parse_content returns parsed input, not a carrier-helper projection.
-type DetailEntry = { observation_span: { id: string; name: string; input: unknown; attachments?: SpanAttachment[] }; children: DetailEntry[] };
+type DetailEntry = { observation_span: { id: string; name: string; input: unknown; output?: unknown; attachments?: SpanAttachment[] }; children: DetailEntry[] };
 
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const hex = (bytes: number) => randomUUID().replaceAll('-', '').slice(0, bytes * 2);
@@ -258,14 +285,14 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'OBS-E2E-066', area: 'observe',
-    userGoal: 'A developer opens SDK-shaped LiveKit and Pipecat recordings in trace and Voice players, sees an image where the model saw it, and deletes the LiveKit session to revoke its media without affecting Pipecat',
+    userGoal: 'A developer opens SDK-shaped LiveKit and Pipecat recordings in trace and Voice players, follows a call\'s tool use beside its speech, sees an image where the model saw it, and deletes the LiveKit session to revoke its media without affecting Pipecat',
     steps: [
       'create a voice project and an observe project (SDK source, not simulator) and opt both into attachments (operator step, test-image endpoint)',
       'with the org API key, bootstrap an F01 capture session per trace and upload a LiveKit and a Pipecat Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)',
-      'send through the collector a LiveKit call (untyped job_entrypoint root with lk.job_id, agent_session child carrying the recording), a Pipecat call (CONVERSATION root carrying the recording) and the model trace',
-      'on the https app origin, open the LiveKit trace, select agent_session, seek while paused in Conversation and play its recording to the native end',
-      'open the Pipecat trace and play the root\'s recording to the end with peaks unavailable',
-      'revisit the LiveKit recording after its derivative is ready and inspect the waveform while real audio plays',
+      'send through the collector a 7 s LiveKit call (untyped job_entrypoint root with lk.job_id and three timed turns, agent_session child carrying the recording, a nested lookup_order tool span), a Pipecat call (CONVERSATION root carrying the recording, a check_inventory tool span, no transcript) and the model trace',
+      'on the https app origin, open the LiveKit trace, select agent_session and open Conversation: see lookup_order between the turns around it, seek by clicking turns while paused, select lookup_order to open its span on the right without moving the recording, and play to the native end',
+      'open the Pipecat trace and play the root\'s recording to the end with peaks unavailable, with check_inventory listed under it as background activity',
+      'revisit the LiveKit recording after its derivative is ready: see tall waveform bars for the tones and none for silence, move the paused media by clicking turns, and watch the waveform while real audio plays',
       'open the model trace, select the model span, switch to Chat and see the PNG inside user message 2',
       'play the WAV beside turn.audio in Attributes, and download the PDF, which has no inline preview',
       'open each call on the dedicated Voice full-page route and play its Attachment recording to the end',
@@ -274,7 +301,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     backendChecks: [
       'PG: exactly the five seeded occurrences have their own scope, capture binding, trace/span and placement, ready Attachment-owned verified MIME/length/sha256 equal to the pre-upload ledger, and complete immutable version and storage binding',
       'CH spans FINAL: each parent carries exactly the seeded refs, both voice roots remain parentless conversation roots, and stored input plus trace-detail input retain image/PDF fi-attachment occurrence URIs independently of placement and carrier construction',
-      'API: voice detail projects each call\'s recording as ready on its own parent span with a 200 ms mixed Ogg/Opus manifest, and the trace detail projects exactly the seeded attachments as ready',
+      'API: voice detail projects each call\'s recording as ready on its own parent span with a mixed Ogg/Opus manifest of 7,000 ms (LiveKit) and 200 ms (Pipecat), and the trace detail projects exactly the seeded attachments as ready and carries the tool span\'s seeded input and output, which Conversation never renders',
       'API: the viewer gateway serves all five originals with fixture length/MIME/sha256, recording Range/HEAD and renewal preserve exact bytes, anonymous media is denied and resolve without credentials is 401; a known authorized attachment UUID used as an occurrence is not_found',
       'API: the waveform uses the selected peaks grant, its actual gateway bytes and their dimension header; the unavailable-peaks slider remains keyboard operable',
       'API: every media request the page made went through the gateway for exactly the three loaded audio occurrences (zero legacy requests)',
@@ -282,9 +309,10 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  test.setTimeout(900_000);
+  test.setTimeout(960_000);
   // 90s seed + 2*60s ASYNC_JOB + 15s SPAN_VISIBLE + 2*60s voice projection
-  // + 6*60s UI_READY + 3*40s direct API + 75s headroom = 900s. No suite change/retries.
+  // + 6*60s UI_READY + 3*40s direct API + 60s for three 7 s playbacks + 75s headroom = 960s.
+  // No suite change/retries.
   expect(DIAGNOSTICS).toContain(DIAGNOSTIC);
   const api = await request.newContext({ baseURL: E2E.apiUrl });
   const anonymous = await request.newContext({ baseURL: E2E.attachmentsAppUrl, ignoreHTTPSErrors: true });
@@ -294,7 +322,8 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
   try {
     const { suffix, voiceProject, traceProject, livekitTraceId, pipecatTraceId, traceId,
       livekitRoot, livekitSession, pipecatRoot, llmSpan, livekitRecording, pipecatRecording,
-      image, audio, document, traced, userText, expectedMessageInput } = await test.step('seed: original synthetic F01 media and SDK-shaped trees', async () => {
+      image, audio, document, traced, userText, expectedMessageInput,
+      lookupSpan, inventorySpan, toolCanaries } = await test.step('seed: original synthetic F01 media and SDK-shaped trees', async () => {
       const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
       const voiceName = `e2e-att-voice-${suffix}`, traceName = `e2e-att-trace-${suffix}`;
       const jobId = `e2e-att-job-${suffix}`, userText = `e2e-att-user-${suffix}`;
@@ -305,16 +334,19 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       const traceProject = await createProject(actor, traceName);
       const livekitTrace = hex(16), pipecatTrace = hex(16), trace = hex(16);
       const livekitRoot = hex(8), livekitSession = hex(8), pipecatRoot = hex(8), traceRoot = hex(8), llmSpan = hex(8);
+      const lookupSpan = hex(8), inventorySpan = hex(8);
+      // Tool payloads minted for this run: present in span detail, never in Conversation.
+      const toolCanaries = [`e2e-att-tool-in-${suffix}`, `e2e-att-tool-out-${suffix}`] as const;
       const tone = 300 + (Date.now() % 500);
       const colour: [number, number, number] = [Date.now() % 256, 40, 200];
-      const recordingMedia = { bytes: RECORDING_OGG, mime: 'audio/ogg', modality: 'audio', direction: 'mixed' as const,
-        purpose: 'conversation_recording' };
+      const recordingMedia = (bytes: Buffer) => ({ bytes, mime: 'audio/ogg', modality: 'audio', direction: 'mixed' as const,
+        purpose: 'conversation_recording' });
 
       const livekit = await upload(api, actor, voiceName, voiceProject, livekitTrace, [
-        { name: 'livekit-recording', ...recordingMedia, parentSpanId: livekitSession },
+        { name: 'livekit-recording', ...recordingMedia(LIVEKIT_OGG), parentSpanId: livekitSession },
       ]);
       const pipecat = await upload(api, actor, voiceName, voiceProject, pipecatTrace, [
-        { name: 'pipecat-recording', ...recordingMedia, parentSpanId: pipecatRoot },
+        { name: 'pipecat-recording', ...recordingMedia(RECORDING_OGG), parentSpanId: pipecatRoot },
       ]);
       const traced = await upload(api, actor, traceName, traceProject, trace, [
         { name: 'image', bytes: png(colour), mime: 'image/png', modality: 'image', direction: 'input',
@@ -334,6 +366,11 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         ...(parentSpanId ? { parentSpanId } : {}), attributes,
       });
       const resource = (projectName: string) => ({ attributes: [str('project_name', projectName), str('project_type', 'observe')] });
+      // The LiveKit call runs 7 s and ended 3 s ago; offsets are ms after it starts.
+      const callStart = Date.now() - 10_000;
+      const callNs = (ms: number) => String(BigInt(callStart + ms) * 1_000_000n);
+      const timed = (base: OtlpSpan, from: number, to: number): OtlpSpan =>
+        ({ ...base, startTimeUnixNano: callNs(from), endTimeUnixNano: callNs(to) });
       expect(image.attachmentId).not.toBe(image.occurrenceId);
       expect(document.attachmentId).not.toBe(document.occurrenceId);
       // Literal expected content from minted identities, not messages/carriers/placement output.
@@ -353,21 +390,29 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       await sendOtlpExport(api, cfg, { resourceSpans: [{ resource: resource(voiceName), scopeSpans: [{
         scope: { name: 'livekit-agents' }, spans: [
           // No fi.span.kind: the LiveKit SDK marks no root; the collector maps it.
-          // Voice detail reads the call transcript from the conversation root (start times in call seconds).
-          span(livekitTrace, livekitRoot, LIVEKIT_ROOT, [str(LIVEKIT_JOB_ID, jobId), str('session.id', livekitSessionName),
-            str('fi.conversation.transcript', JSON.stringify([
-              {role:'user',content:'Is my order on its way?',start_time_seconds:0},
-              {role:'assistant',speaker_name:'Fulfillment',content:'It shipped today.',start_time_seconds:0.1},
-            ]))]),
-          span(livekitTrace, livekitSession, LIVEKIT_SESSION,
+          // Voice detail reads the call transcript from the conversation root.
+          timed(span(livekitTrace, livekitRoot, LIVEKIT_ROOT, [str(LIVEKIT_JOB_ID, jobId), str('session.id', livekitSessionName),
+            str('fi.conversation.transcript', JSON.stringify(TURNS.map(({ start, end, ...turn }) => ({ ...turn,
+              start_time_seconds: start / 1000, end_time_seconds: end / 1000,
+              timestamp: new Date(callStart + start).toISOString() }))))]), 0, DURATION_MS.livekit),
+          timed(span(livekitTrace, livekitSession, LIVEKIT_SESSION,
             [str('session.id', livekitSessionName), ...carriers(livekit.session, [livekitRecording])], livekitRoot),
-          { ...span(livekitTrace, hex(8), 'lookup_order', [str('fi.span.kind', 'tool'),
-            str('session.id', livekitSessionName)], livekitSession),
-            startTimeUnixNano: String(start + 50_000_000n), endTimeUnixNano: String(start + 85_000_000n) },
+            0, DURATION_MS.livekit),
+          // A tool call while the agent says it is checking the order.
+          timed(span(livekitTrace, lookupSpan, LOOKUP.span, [str('fi.span.kind', 'TOOL'),
+            str('gen_ai.tool.name', LOOKUP.name), str('lk.function_tool.name', LOOKUP.name),
+            str('lk.function_tool.id', `call-${suffix}`),
+            str('session.id', livekitSessionName), str('input.value', JSON.stringify({ order: toolCanaries[0] })),
+            str('output.value', JSON.stringify({ status: toolCanaries[1] }))], livekitSession), LOOKUP.start, LOOKUP.end),
         ] }, {
         scope: { name: 'pipecat' }, spans: [
           span(pipecatTrace, pipecatRoot, PIPECAT_ROOT, [str('fi.span.kind', PIPECAT_KIND), str('gen_ai.span.kind', PIPECAT_KIND),
             str('session.id', pipecatSessionName), ...carriers(pipecat.session, [pipecatRecording])]),
+          // Today's real shape: a traced call with no transcript, only its spans.
+          { ...span(pipecatTrace, inventorySpan, INVENTORY.name, [str('fi.span.kind', 'tool'),
+            str('session.id', pipecatSessionName)], pipecatRoot),
+            startTimeUnixNano: String(start + BigInt(INVENTORY.start) * 1_000_000n),
+            endTimeUnixNano: String(start + BigInt(INVENTORY.end) * 1_000_000n) },
         ] }] }] });
       await sendOtlpExport(api, cfg, { resourceSpans: [{ resource: resource(traceName), scopeSpans: [{
         scope: { name: 'e2e-attachments' }, spans: [
@@ -380,13 +425,14 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       const voiceSeeded = [livekitRecording, pipecatRecording];
       await testInfo.attach('seeded', { contentType: 'application/json', body: JSON.stringify({
         voiceProject, traceProject, livekitTraceId, pipecatTraceId, traceId, livekitRoot, livekitSession, pipecatRoot,
-        traceRoot, llmSpan, jobId, livekitSessionName, pipecatSessionName,
+        traceRoot, llmSpan, jobId, livekitSessionName, pipecatSessionName, lookupSpan, inventorySpan,
+        callStart: new Date(callStart).toISOString(), turns: TURNS, lookup: LOOKUP, inventory: INVENTORY,
         occurrences: [...voiceSeeded, ...traced.seeded].map(({ bytes, ...rest }) => ({ ...rest, sha256: sha256(bytes), size: bytes.length })),
       }) });
 
       return { suffix, voiceProject, traceProject, livekitTraceId, pipecatTraceId, traceId,
         livekitRoot, livekitSession, pipecatRoot, llmSpan, livekitRecording, pipecatRecording,
-        image, audio, document, traced, userText, expectedMessageInput };
+        image, audio, document, traced, userText, expectedMessageInput, lookupSpan, inventorySpan, toolCanaries };
     }, { timeout: 90_000 });
     const allSeeded = [livekitRecording, pipecatRecording, ...traced.seeded];
     const readAll = async () => [
@@ -439,12 +485,14 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     await test.step('API: voice detail projects each call\'s recording on its own parent span', async () => {
       const projection = async (voiceTraceId: string) => (await actor.api.get<VoiceDetail>(VOICE_DETAIL,
         { trace_id: voiceTraceId, project_id: voiceProject })).result.recording_attachment ?? null;
-      const ready = (item: Seeded, voiceTraceId: string) => ({
+      const ready = (item: Seeded, voiceTraceId: string, durationMs: number) => ({
         occurrence_id: item.occurrenceId, state: 'ready', parent: { trace_id: voiceTraceId, span_id: item.parentSpanId },
-        manifest: expect.objectContaining({ duration_ms: 200, layout: 'mixed', codec: 'opus', container: 'ogg' }),
+        manifest: expect.objectContaining({ duration_ms: durationMs, layout: 'mixed', codec: 'opus', container: 'ogg' }),
       });
-      await expect.poll(() => projection(livekitTraceId), { timeout: UI_READY }).toEqual(ready(livekitRecording, livekitTraceId));
-      await expect.poll(() => projection(pipecatTraceId), { timeout: UI_READY }).toEqual(ready(pipecatRecording, pipecatTraceId));
+      await expect.poll(() => projection(livekitTraceId), { timeout: UI_READY })
+        .toEqual(ready(livekitRecording, livekitTraceId, DURATION_MS.livekit));
+      await expect.poll(() => projection(pipecatTraceId), { timeout: UI_READY })
+        .toEqual(ready(pipecatRecording, pipecatTraceId, DURATION_MS.pipecat));
     });
 
     const tracesTab = (projectId: string) => `${E2E.attachmentsAppUrl}/dashboard/observe/${projectId}/llm-tracing?tab=traces`;
@@ -468,8 +516,11 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       return items?.length===1 && items[0].occurrence_id===item.occurrenceId && items[0].representation===representation
         && items[0].parent?.trace_id.replaceAll('-','')===traceKey.replaceAll('-','') && items[0].parent?.span_id===item.parentSpanId;
     };
+    // Spoken turns and the tool row, in Conversation's own list order.
+    const conversationRows = /^(Is my order on its way\?|I'm checking your order\.|It shipped today\.|lookup_order)$/;
     const playRecording = async (drawer: Locator, item: Seeded, name: string) => {
       const live = item===livekitRecording, traceKey = live?livekitTraceId:pipecatTraceId;
+      const durationMs = live ? DURATION_MS.livekit : DURATION_MS.pipecat;
       await expect(drawer.getByRole('button',{name:'Load audio: Mixed recording'})).toHaveCount(0);
       await expect(drawer.getByLabel('Span attachments')).toHaveCount(0);
       // Exercise an optional derivative outage without intercepting any playable grant or audio byte.
@@ -486,21 +537,44 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       await expect(player).toHaveCount(1);
       const slider=panel.getByRole('slider',{name:'Recording position'});
       if(live){
+        // The tool sits between the turns around it on the clock spans and turns share.
+        await expect(panel.getByText(conversationRows))
+          .toHaveText([TURNS[0].content, TURNS[1].content, LOOKUP.name, TURNS[2].content]);
+        const tool = panel.getByRole('button', { exact: true,
+          name: `View span ${LOOKUP.name}, tool call, from 0:03.0 to 0:04.0 after call start` });
+        await expect(tool).toHaveText(`Tool call${LOOKUP.name}0:03.0–0:04.0`);
         // Clicking a transcript turn seeks the recording to that turn, as in Voice Observability.
-        await panel.getByText('It shipped today.',{exact:true}).click();
-        await expect(slider).toHaveValue('0.1');
+        await panel.getByText(TURNS[2].content,{exact:true}).click();
+        await expect(slider).toHaveValue('4.5');
         await expect(play).toBeVisible();
-        await panel.getByText('Is my order on its way?',{exact:true}).click();
-        await expect(slider).toHaveValue('0');
+        await panel.getByText(TURNS[1].content,{exact:true}).click();
+        await expect(slider).toHaveValue('2.5');
+        // The tool row opens its own span on the right and leaves the recording where it is.
+        await expect(drawer.getByText(livekitSession, { exact: true })).toBeVisible();
+        await tool.click();
+        await expect(drawer.getByText(lookupSpan, { exact: true })).toBeVisible();
+        await expect(drawer.getByText(livekitSession, { exact: true })).toHaveCount(0);
+        await expect(panel).toBeVisible();
+        await expect(slider).toHaveValue('2.5');
+        // Its payload stays in span detail (asserted on the API above), never in Conversation.
+        const conversation = await panel.textContent() ?? '';
+        for (const canary of toolCanaries) expect(conversation).not.toContain(canary);
         await snapshot('conversation');
-      } else {await expect(panel.getByTestId('recording-waveform')).toHaveCount(0); await snapshot('seek-bar');}
-      await slider.focus(); await slider.press('End'); await expect(slider).toHaveValue('0.2');
+      } else {
+        await expect(panel.getByTestId('recording-waveform')).toHaveCount(0);
+        // No transcript: the call's tool still shows, timed from the call start.
+        await expect(panel.getByTestId('call-activity-row')).toHaveCount(1);
+        await expect(panel.getByRole('region', { name: 'Background activity', exact: true }).getByRole('button', { exact: true,
+          name: `View span ${INVENTORY.name}, tool call, from 0:01.0 to 0:01.4 after call start` })).toBeVisible();
+        await snapshot('seek-bar');
+      }
+      await slider.focus(); await slider.press('End'); await expect(slider).toHaveValue(String(durationMs / 1000));
       await slider.press('Home'); await expect(slider).toHaveValue('0');
       await play.click();
       await expect.poll(() => player.evaluate((node: HTMLAudioElement) => node.readyState >= 1), { timeout: UI_READY }).toBe(true);
-      await expect.poll(() => player.evaluate((node: HTMLAudioElement) =>
-        [node.ended, node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) >= 150 : false]),
-      { timeout: UI_READY }).toStrictEqual([true, true]);
+      // Native end; a long call must have played close to its whole length.
+      const minPlayedMs = live ? durationMs - 300 : 150;
+      await expect.poll(() => player.evaluate(endedAfter, minPlayedMs), { timeout: UI_READY }).toStrictEqual([true, true]);
       await testInfo.attach(name, { body: await page.screenshot(), contentType: 'image/png' });
       if(!live) await page.unroute(`**${fallbackRoute}`);
       const headers = await browserResolveHeaders(response, E2E.attachmentsAppUrl);
@@ -511,14 +585,19 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
 
     let livekitGrant: Grant = { occurrence_id: '', status: '' };
     let viewerHeaders: Record<string, string> = {};
-    await test.step('UI: the LiveKit call recording on agent_session plays to its end', async () => {
+    await test.step('UI: the LiveKit call recording plays to its end, with its tool call between the turns', async () => {
       const { spans, drawer } = await openTrace(voiceProject, livekitTraceId);
       expect(spans.filter(s => s.attachments?.length).map(s => ({ id: s.id, name: s.name,
         attachments: s.attachments!.map(a => [a.reference.occurrence_id, a.status]) })))
         .toStrictEqual([{ id: livekitSession, name: LIVEKIT_SESSION, attachments: [[livekitRecording.occurrenceId, 'ready']] }]);
+      // Positive control for the payload check in Conversation: span detail carries both.
+      const lookup = spans.filter(s => s.id === lookupSpan);
+      expect(lookup.map(s => s.name)).toStrictEqual([LOOKUP.span]);
+      const payload = JSON.stringify([lookup[0].input, lookup[0].output]);
+      for (const canary of toolCanaries) expect(payload).toContain(canary);
       await drawer.getByText(LIVEKIT_SESSION, { exact: true }).first().click({ timeout: UI_READY });
       ({ grant: livekitGrant, headers: viewerHeaders } = await playRecording(drawer, livekitRecording, 'livekit-player'));
-    }, { timeout: UI_READY });
+    }, { timeout: UI_READY + 30_000 });
 
     const viewer = page.context().request;
     const gateway = (path: string) => `${E2E.attachmentsAppUrl}${path}`;
@@ -532,11 +611,11 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       const whole = await viewer.get(gateway(path));
       expect(whole.status()).toBe(200);
       expect(whole.headers()['content-type']).toBe('audio/ogg');
-      expect(sha256(Buffer.from(await whole.body()))).toBe(sha256(RECORDING_OGG));
+      expect(sha256(Buffer.from(await whole.body()))).toBe(sha256(LIVEKIT_OGG));
       const ranged = await viewer.get(gateway(path), { headers: { Range: 'bytes=0-3' } });
       expect(ranged.status()).toBe(206);
-      expect(ranged.headers()['content-range']).toBe(`bytes 0-3/${RECORDING_OGG.length}`);
-      expect(Buffer.from(await ranged.body()).equals(RECORDING_OGG.subarray(0, 4))).toBe(true);
+      expect(ranged.headers()['content-range']).toBe(`bytes 0-3/${LIVEKIT_OGG.length}`);
+      expect(Buffer.from(await ranged.body()).equals(LIVEKIT_OGG.subarray(0, 4))).toBe(true);
       // Renewal: a fresh resolve mints a new grant for the same occurrence, and the
       // player's next Range continues the same byte timeline from where it left off.
       const renewal = await resolveAs(viewerHeaders, livekitRecording, livekitTraceId);
@@ -547,14 +626,14 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       const renewedPath = renewed.gateway_path!;
       expect(gatewayIds(renewedPath).slice(0, 2))
         .toStrictEqual([viewerHeaders[MEDIA_SESSION_HEADER], livekitRecording.occurrenceId]);
-      const middle = Math.floor(RECORDING_OGG.length / 2);
+      const middle = Math.floor(LIVEKIT_OGG.length / 2);
       const resumed = await viewer.get(gateway(renewedPath), { headers: { Range: `bytes=${middle}-` } });
       expect(resumed.status()).toBe(206);
-      expect(resumed.headers()['content-range']).toBe(`bytes ${middle}-${RECORDING_OGG.length - 1}/${RECORDING_OGG.length}`);
-      expect(Buffer.from(await resumed.body()).equals(RECORDING_OGG.subarray(middle))).toBe(true);
+      expect(resumed.headers()['content-range']).toBe(`bytes ${middle}-${LIVEKIT_OGG.length - 1}/${LIVEKIT_OGG.length}`);
+      expect(Buffer.from(await resumed.body()).equals(LIVEKIT_OGG.subarray(middle))).toBe(true);
       const head = await viewer.head(gateway(renewedPath));
       expect([head.status(), head.headers()['content-type'], head.headers()['content-length']])
-        .toStrictEqual([200, 'audio/ogg', String(RECORDING_OGG.length)]);
+        .toStrictEqual([200, 'audio/ogg', String(LIVEKIT_OGG.length)]);
       const denied = await anonymous.get(path, { headers: { Range: 'bytes=0-3' } });
       expect(denied.status()).toBe(404);
       const unauthenticated = await anonymous.post(F01.resolve(voiceProject), {
@@ -590,13 +669,44 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         expect(descriptor.v).toBe(1);
         expect((await bytes.body()).length).toBe(4*descriptor.channels*descriptor.levels.reduce((sum:number,l:{buckets:number})=>sum+l.buckets,0));
         await expect(panel.getByTestId('recording-waveform')).toBeVisible();
+        // The waveform shows the recording's shape: tall bars for the bursts, nothing for silence.
+        const bars = await panel.getByTestId('recording-waveform').evaluate(svg =>
+          [...svg.querySelectorAll('rect')].map(r => [Number(r.getAttribute('x')), Number(r.getAttribute('height'))]));
+        expect(bars.length).toBeLessThan(WAVEFORM_BARS);
+        // Bar i covers [i, i + 1) slots of the call; judge whole slots kept clear of the
+        // codec's short tails at each tone edge.
+        const slotMs = DURATION_MS.livekit / WAVEFORM_BARS;
+        const slot = (x: number) => Math.floor(x / BAR_SLOT);
+        const inside = (i: number, from: number, to: number) => i * slotMs >= from && (i + 1) * slotMs <= to;
+        // The silence between the first two tones (1.7–2.5 s) draws nothing once the
+        // first tone's decoded tail (to about 1.9 s) has died away.
+        expect(bars.filter(([x]) => inside(slot(x), 2100, 2400))).toStrictEqual([]);
+        // Inside the 2.5–4.2 s tone every slot has a bar well above the 2 px floor.
+        const toneSlots = Array.from({ length: WAVEFORM_BARS }, (_, i) => i).filter(i => inside(i, 2700, 4000));
+        expect(toneSlots.length).toBeGreaterThan(10);
+        expect(bars.filter(([x, h]) => inside(slot(x), 2700, 4000) && h >= 4).map(([x]) => slot(x))).toStrictEqual(toneSlots);
+        // The loudest bar reaches full height (26 of 30).
+        expect(Math.max(...bars.map(([, h]) => h))).toBeGreaterThan(25);
         await slider.focus(); await slider.press('ArrowRight'); expect(Number(await slider.inputValue())).toBeGreaterThan(0);
         await slider.press('Home'); await expect(slider).toHaveValue('0');
+        // A turn click moves the media itself, not just the slider: load, pause, then seek back.
+        await play.click();
+        await expect.poll(() => player.evaluate((n:HTMLAudioElement)=>n.readyState>=1 && n.currentTime>0), { timeout: UI_READY }).toBe(true);
+        await panel.getByRole('button',{name:'Pause recording',exact:true}).click();
+        for (const turn of [TURNS[2], TURNS[1]]) {
+          await panel.getByText(turn.content,{exact:true}).click();
+          await expect(slider).toHaveValue(String(turn.start / 1000));
+          await expect.poll(() => player.evaluate((n:HTMLAudioElement, target:number) =>
+            n.paused && !n.seeking && Math.abs(n.currentTime - target) <= 0.05, turn.start / 1000), { timeout: UI_READY }).toBe(true);
+        }
+        await snapshot('livekit-turn-seek');
         // Slow only the screenshot replay; the duration proof above uses normal speed.
         await player.evaluate((n:HTMLAudioElement)=>{n.defaultPlaybackRate=0.25;n.playbackRate=0.25;});
+        // Resumes from the last turn clicked, so require real progress past it.
+        const beforeReplay = await player.evaluate((n:HTMLAudioElement)=>n.currentTime);
         await play.click();
         await expect(panel.getByRole('button',{name:'Pause recording'})).toBeVisible();
-        await expect.poll(()=>player.evaluate((n:HTMLAudioElement)=>!n.paused && !n.ended && n.currentTime>0),{intervals:[15,25]}).toBe(true);
+        await expect.poll(()=>player.evaluate((n:HTMLAudioElement, from:number)=>!n.paused && !n.ended && n.currentTime>from+0.05, beforeReplay),{intervals:[15,25]}).toBe(true);
         await snapshot('waveform-playing');
     },{timeout:POLL.ASYNC_JOB.timeout + UI_READY});
 
@@ -697,6 +807,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     for (const [callId, item, label] of [
       [livekitTraceId, livekitRecording, 'livekit'], [pipecatTraceId, pipecatRecording, 'pipecat'],
     ] as const) {
+      const minPlayedMs = label === 'livekit' ? DURATION_MS.livekit - 300 : 150;
       await test.step(`UI: ${label} Attachment recording plays on the dedicated Voice page`, async () => {
         const detail = page.waitForResponse(r => new URL(r.url()).pathname === VOICE_DETAIL
           && new URL(r.url()).searchParams.get('trace_id') === callId, { timeout: UI_READY });
@@ -718,11 +829,10 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         await recording.getByRole('button', { name: 'Play recording', exact: true }).click({ timeout: UI_READY });
         await expect.poll(() => player.evaluate((node: HTMLAudioElement) => node.readyState >= 1),
           { timeout: UI_READY }).toBe(true);
-        await expect.poll(() => player.evaluate((node: HTMLAudioElement) =>
-          [node.ended, node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) >= 150 : false]),
-        { timeout: UI_READY }).toStrictEqual([true, true]);
+        await expect.poll(() => player.evaluate(endedAfter, minPlayedMs), { timeout: UI_READY })
+          .toStrictEqual([true, true]);
         await testInfo.attach(`${label}-voice-player`, { body: await page.screenshot(), contentType: 'image/png' });
-      }, { timeout: UI_READY });
+      }, { timeout: UI_READY + 15_000 });
     }
 
     await test.step('API: deleting the LiveKit session denies its media but preserves Pipecat', async () => {
