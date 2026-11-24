@@ -1,7 +1,8 @@
 # ruff: noqa: F811 -- shared isolated fixtures
 """Real physical revision erasure, retirement and immediate read-guard proofs."""
 
-from datetime import timedelta
+from contextlib import ExitStack
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -558,7 +559,7 @@ def test_expiry_publishes_when_a_unit_starts_inside_the_cutoffs_second(
 
 @pytest.mark.django_db(transaction=True)
 def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
-    live_writer, workspace, observe_project
+    retention_writer_at, workspace, observe_project
 ):
     """E1: a continuous cutoff no longer rewrites the head on every pass.
 
@@ -568,16 +569,10 @@ def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
     at the exact cutoff, and a session erasure still removes its rows at once.
     After the interval the next pass retires it.
     """
-    from datetime import UTC, datetime
-
     from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
 
-    writer = live_writer
-    start = datetime(2026, 10, 28, 12, tzinfo=UTC)
-    clock = [start]
-    pin_lease_clock(writer.lease, start)
-    writer.lease.clock = lambda: clock[0]
-    writer.retention_days = lambda: 1
+    start = RETENTION_START
+    writer = retention_writer_at(start)
     definition = definition_for(writer, workspace, observe_project)
     scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
     kwargs = {"start": start - timedelta(days=2), "end": start + timedelta(days=3)}
@@ -589,22 +584,13 @@ def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
             writer, scope, uuid4(), name, sessions[name], at, value, revision=1
         )
 
-    def run(at, name, cursor):
-        if at - clock[0] >= timedelta(minutes=4):
-            # Hours pass between these passes: the last lease has expired, so
-            # the next pass takes a new one, as the scheduler would.
-            grant = MetricProjectRefresh.take_lease(
-                scope.project, holder="e1", ttl=timedelta(minutes=5), now=at
-            )
-            # In place: the lifecycle lock budget holds this lease object.
-            writer.lease.grant, writer.lease.expires_at = grant, grant.expires_at
-        clock[0] = at
+    def run(name, cursor):
         writer.lease.renew()
         return writer.refresh(
             change_for(sessions[name], cursor=cursor),
             [definition],
             scope,
-            as_of=at,
+            as_of=writer.lease.clock(),
             **kwargs,
         )
 
@@ -613,26 +599,29 @@ def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
 
     seed("first", start - timedelta(hours=23), 4)
     seed("second", start - timedelta(hours=20), 6)
-    run(start, "first", 1)
-    head = run(start, "second", 2)
+    run("first", 1)
+    head = run("second", 2)
     assert live(head) == {str(sessions["first"]), str(sessions["second"])}
 
     # +2 h: "first" is past the cutoff and nothing has expired yet: retired now.
+    writer = retention_writer_at(start + timedelta(hours=2))
     seed("third", start + timedelta(hours=1), 8)
-    head = run(start + timedelta(hours=2), "third", 3)
+    head = run("third", 3)
     assert head.published_by.source_ceilings.get("logical_expiry")
     floor = head.published_by.source_ceilings["retention_floor"]
     assert live(head) == {str(sessions["second"]), str(sessions["third"])}
 
     # +6 h: "second" is past the exact cutoff, but within one interval of the
     # last expiry: stored as is (no rewrite), masked for every read.
+    read_at = start + timedelta(hours=6)
+    writer = retention_writer_at(read_at)
     seed("fourth", start + timedelta(hours=5), 2)
-    head = run(start + timedelta(hours=6), "fourth", 4)
+    head = run("fourth", 4)
     assert not head.published_by.source_ceilings.get("logical_expiry")
     assert head.published_by.source_ceilings["retention_floor"] == floor
     assert str(sessions["second"]) in live(head)
     pin = capture_pin(
-        scope.project, consumer_kind="request", ttl=timedelta(minutes=5), now=clock[0]
+        scope.project, consumer_kind="request", ttl=timedelta(minutes=5), now=read_at
     )
     (cell,) = read_field_cells(
         writer.store,
@@ -642,7 +631,7 @@ def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
         definition.version,
         [str(sessions["second"])],
         retention_days=lambda: 1,
-        now=clock[0],
+        now=read_at,
     )
     assert cell["no_value_reason"] == "retention_expired"
     assert cell["value_number"] is None
@@ -668,8 +657,9 @@ def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
         ) == [(0,)]
 
     # One interval after the last expiry, the next pass retires "second".
+    writer = retention_writer_at(start + timedelta(hours=26, minutes=1))
     seed("fifth", start + timedelta(hours=25), 1)
-    head = run(start + timedelta(hours=26, minutes=1), "fifth", 5)
+    head = run("fifth", 5)
     assert head.published_by.source_ceilings.get("logical_expiry")
     assert head.published_by.source_ceilings["retention_floor"] > floor
     assert str(sessions["second"]) not in live(head)
@@ -1011,37 +1001,72 @@ def test_retained_recovery_handoff_survives_interruption_compaction_and_gc(
 # days). The lease's remaining time becomes the lock budget of each write
 # (deletion_protocol._budgeted_row_lock), so it must stay a lease's length.
 POSTGRES_MAX_LOCK_TIMEOUT_MS = 2**31 - 1
+RETENTION_START = datetime(2026, 10, 28, 12, tzinfo=UTC)
 
 
-def pin_lease_clock(lease, at):
-    """Run the lease on the fixture's clock, as if it had been granted at `at`.
+@pytest.fixture
+def retention_writer_at(publication_store, observe_project, workspace):
+    from tracer.services.derived_metrics.deletion_protocol import lifecycle_lock_budget
+    from tracer.services.derived_metrics.lease import DEFAULT_LEASE_TTL, ProjectLease
+    from tracer.services.derived_metrics.refresh import RefreshWriter
 
-    The live lease was granted on the real clock. Pinning only its clock to a
-    fixed past date left its expiry on the real clock, so its remaining time
-    grew with every day since that date and overflowed the lock budget on
-    22 Nov 2026. Its expiry moves with the clock, in place, as run() does for
-    a new grant: the lifecycle lock budget holds this lease object.
-    """
-    from tracer.services.derived_metrics.lease import DEFAULT_LEASE_TTL
+    now = RETENTION_START
+    previous = None
 
-    lease.clock = lambda: at
-    lease.expires_at = at + DEFAULT_LEASE_TTL
-    lease.renew()
-    remaining_ms = lease.remaining_seconds() * 1000
-    assert 0 < remaining_ms <= DEFAULT_LEASE_TTL.total_seconds() * 1000
-    # Well under the Postgres maximum: a thousandth of it is about 36 minutes.
-    assert remaining_ms < POSTGRES_MAX_LOCK_TIMEOUT_MS / 1000
+    def clock():
+        return now
+
+    def acquire(at=RETENTION_START, *, retention_days=1):
+        nonlocal now, previous
+        # Drop only the wrapper: the next actor must take over an expired grant,
+        # not a released row, and must not acquire under its predecessor's budget.
+        budget.close()
+        now = at
+        if previous is not None:
+            row = MetricProjectRefresh.objects.get(project_id=observe_project.id)
+            assert row.lease_token == previous.grant.lease_token
+            assert row.lease_expires_at == previous.expires_at <= now
+
+        grant = MetricProjectRefresh.take_lease(
+            observe_project.id, holder="retention", ttl=DEFAULT_LEASE_TTL, now=clock()
+        )
+        assert grant is not None
+        lease = ProjectLease(grant, clock=clock)
+        releases.callback(lease.release)
+        if previous is not None:
+            assert grant.fencing_epoch == previous.grant.fencing_epoch + 1
+            assert grant.lease_token != previous.grant.lease_token
+        previous = lease
+        budget.enter_context(lifecycle_lock_budget(lease))
+
+        row = MetricProjectRefresh.objects.get(project_id=observe_project.id)
+        expected = at + DEFAULT_LEASE_TTL
+        assert grant.expires_at == lease.expires_at == row.lease_expires_at == expected
+        assert lease.remaining_seconds() == DEFAULT_LEASE_TTL.total_seconds()
+        lease.renew()
+        row.refresh_from_db()
+        assert lease.expires_at == row.lease_expires_at == expected
+        remaining_ms = lease.remaining_seconds() * 1000
+        assert 0 < remaining_ms <= DEFAULT_LEASE_TTL.total_seconds() * 1000
+        # Well under the Postgres maximum: a thousandth of it is about 36 minutes.
+        assert remaining_ms < POSTGRES_MAX_LOCK_TIMEOUT_MS / 1000
+        return RefreshWriter(
+            lease,
+            publication_store,
+            org_id=workspace.organization_id,
+            workspace_id=workspace.id,
+            retention_days=lambda: retention_days,
+        )
+
+    with ExitStack() as releases, ExitStack() as budget:
+        yield acquire
 
 
-def history_fixture(writer, workspace, project, *, finite=True):
+def history_fixture(writer, workspace, project):
     """Event, arrival, evaluation and lease clocks are explicit and independent."""
-    from datetime import UTC, datetime
-
     from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
 
-    now = datetime(2026, 10, 28, 12, tzinfo=UTC)
-    pin_lease_clock(writer.lease, now)
-    writer.retention_days = lambda: 1 if finite else 0
+    now = writer.lease.clock()
     definition = definition_for(writer, workspace, project)
     scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
     session, trace = uuid4(), uuid4()
@@ -1070,13 +1095,13 @@ def anonymous_parts(writer, head):
 
 @pytest.mark.django_db(transaction=True)
 def test_expiry_publication_revokes_recent_anchor_pin_and_queued_snapshot_before_purge(
-    live_writer, workspace, observe_project, monkeypatch
+    retention_writer_at, workspace, observe_project, monkeypatch
 ):
     from tracer.services.derived_metrics import retention
     from tracer.services.derived_metrics.publication import pinned_read
     from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
 
-    writer = live_writer
+    writer = retention_writer_at()
     definition, scope, session, trace, now, recent, old, kwargs, original = (
         history_fixture(writer, workspace, observe_project)
     )
@@ -1193,11 +1218,11 @@ def test_shrink_then_expansion_never_reactivates_expiry_revoked_pins(
 
 @pytest.mark.django_db(transaction=True)
 def test_fresh_earlier_arrival_expires_reopened_conversation_without_retirement(
-    live_writer, workspace, observe_project
+    retention_writer_at, workspace, observe_project
 ):
     from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
 
-    writer = live_writer
+    writer = retention_writer_at()
     definition, scope, session, trace, now, recent, old, kwargs, _ = history_fixture(
         writer, workspace, observe_project
     )
@@ -1235,17 +1260,15 @@ def test_fresh_earlier_arrival_expires_reopened_conversation_without_retirement(
 
 @pytest.mark.django_db(transaction=True)
 def test_fresh_arrival_takeover_stays_in_progress_until_due_settle(
-    live_writer, workspace, observe_project
+    retention_writer_at, workspace, observe_project
 ):
     from tracer.models.derived_metric import MetricRefreshAttempt
     from tracer.services.derived_metrics.changes import ChangeBatch, Dependency
-    from tracer.services.derived_metrics.lease import ProjectLease
-    from tracer.services.derived_metrics.refresh import RefreshWriter
     from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
 
-    writer = live_writer
+    writer = retention_writer_at(retention_days=0)
     definition, scope, session, trace, now, recent, old, kwargs, _ = history_fixture(
-        writer, workspace, observe_project, finite=False
+        writer, workspace, observe_project
     )
     later = recent + timedelta(hours=1)
     seed_span_revision(
@@ -1263,29 +1286,16 @@ def test_fresh_arrival_takeover_stays_in_progress_until_due_settle(
     )
     writer.seal(failed)
     lease_clock = now + timedelta(minutes=6)
-    grant = MetricProjectRefresh.take_lease(
-        scope.project,
-        holder="fresh-takeover",
-        ttl=timedelta(minutes=5),
-        now=lease_clock,
-    )
-    replacement = RefreshWriter(
-        ProjectLease(grant, clock=lambda: lease_clock),
-        writer.store,
-        org_id=writer.org_id,
-        workspace_id=writer.workspace_id,
-        retention_days=lambda: 1,
-    )
+    replacement = retention_writer_at(lease_clock)
     empty = ChangeBatch((), (), (), (), (), {"watermark_ns": 2})
     head = replacement.refresh(empty, [definition], scope, as_of=lease_clock, **kwargs)
     assert current_fields(replacement, head)[0][1] is None
     assert all(r[-1] for r in bucket_rows(replacement, head))
     state, p = committed_rows_select(
-        UNIT_STATE, head, org_id=writer.org_id, project_id=scope.project
+        UNIT_STATE, head, org_id=replacement.org_id, project_id=scope.project
     )
-    assert writer.store.execute(f"SELECT due_at, is_deleted FROM ({state})", p) == [
-        (now + timedelta(minutes=30), 0)
-    ]
+    rows = replacement.store.execute(f"SELECT due_at, is_deleted FROM ({state})", p)
+    assert rows == [(now + timedelta(minutes=30), 0)]
     for tick, cursor in [
         (now + timedelta(minutes=30) - timedelta(seconds=1), 3),
         (now + timedelta(minutes=30), 4),
@@ -1839,13 +1849,13 @@ def test_span_expiry_removes_expired_bucket_and_retired_parts(
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("resume", ["collect_garbage", "finish_pending_expiry"])
 def test_cleanup_recovery_does_not_certify_erasure_with_private_ledgers(
-    live_writer, workspace, observe_project, monkeypatch, resume
+    retention_writer_at, workspace, observe_project, monkeypatch, resume
 ):
     from tracer.models.derived_metric import MetricErasureRequest
     from tracer.services.derived_metrics import retention
     from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
 
-    writer = live_writer
+    writer = retention_writer_at()
     definition, scope, session, trace, now, _, old, kwargs, _ = history_fixture(
         writer, workspace, observe_project
     )

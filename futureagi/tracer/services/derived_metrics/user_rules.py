@@ -105,7 +105,7 @@ def coefficient(value: float) -> int:
     """Exact binary64 coefficient on the 2**-1074 lattice; no float sum."""
     if type(value) not in (int, float) or not math.isfinite(value):
         raise UserRulesUnavailable("corrupt_state")
-    bits = struct.unpack(">Q", struct.pack(">d", value))[0]
+    bits: int = struct.unpack(">Q", struct.pack(">d", value))[0]
     exponent = (bits >> 52) & 2047
     fraction = bits & ((1 << 52) - 1)
     magnitude = fraction if exponent == 0 else ((1 << 52) | fraction) << (exponent - 1)
@@ -504,7 +504,7 @@ def source_query(branch: str, partition: _Range, *, rows=MAX_ROWS, ordered=False
     The only aggregate is a one-immutable-unit argMax across all its revisions.
     Workspace, mutable user/time/status and tombstones are checked AFTER latest.
     """
-    params = {}
+    params: dict[str, object] = {}
     where = "1"
     if partition.depth:
         params.update(ur_mask=partition.mask, ur_bucket=partition.bucket)
@@ -676,6 +676,7 @@ class NativeSource:
                 yield from block
 
     def _page(self, partition, check, *, ordered=False):
+        latest: dict[bytes, Conversation]
         latest, total_bytes, boundary = {}, 0, None
         for branch in self.branches:
             self.guard()
@@ -859,6 +860,7 @@ def reduce_users(source, rule, windows, *, retained_from, consumer=None):
     if not isinstance(windows, Sequence) or not 1 <= len(windows) <= 90:
         raise ValueError("expected 1..90 user windows")
     windows = tuple(windows)
+    ends: list[int]
     starts, ends = [], []
     for window in windows:
         if not isinstance(window, Window):
@@ -889,6 +891,7 @@ def reduce_users(source, rule, windows, *, retained_from, consumer=None):
         source.guard()
         check()
         partition = partitions.pop()
+        states: dict[tuple[int, bytes], tuple[int, RuleState]]
         states, key_bytes = {}, 0
         tentative = [_PointState() for _ in windows]
         unassigned_hash = None

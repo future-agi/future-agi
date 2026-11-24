@@ -159,6 +159,9 @@ def _launch_spec(provider: SandboxRuntimeProvider, labels: dict[str, str]):
         "ALK_READING_MAX_DURATION_SECONDS": str(
             max(60, timeout - _ALK_READING_MARGIN_SECONDS - _COLLECT_SECONDS)
         ),
+        "ALK_READING_MAX_MODEL_CALLS": str(
+            int(getattr(settings, "ALK_HOSTED_READING_MAX_MODEL_CALLS", 60))
+        ),
     }
     return spec, env, material, timeout
 

@@ -38,11 +38,10 @@ module; had only the graph been checked, the widgets could regress alone. Each
 statement is taken from the product builder itself, not re-typed, so a change
 to the emitted SQL reaches this module unaltered.
 
-Everything below is ``EXPLAIN`` only: no rows are read, nothing is written and
-no DDL is issued. The target is still fenced to a loopback ``test_`` database
-on a port that is not one of the operator port-forwards, because a live-CH
-test that quietly defaults to a forwarded production port has happened here
-before.
+On an existing local database the test only reads. On CI it seeds an owned
+copy of the migrated spans table on the verified disposable sidecar. Both
+clients use the shared test-target guard; no test defaults to a forwarded
+production port.
 """
 
 from __future__ import annotations
@@ -50,13 +49,19 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from contextlib import closing
 from datetime import datetime
 from types import SimpleNamespace
 from unittest import mock
 
 import pytest
 
-from conftest import _open_ch_test_http_client
+from conftest import (
+    CH_TEST_SIDECAR_HTTP_PORT_VARIABLE,
+    CH_TEST_SIDECAR_NATIVE_PORT_VARIABLE,
+    _ch_test_owned_database,
+    _open_ch_test_http_client,
+)
 from tracer.services.clickhouse.query_builders.time_series import (
     TimeSeriesQueryBuilder,
 )
@@ -72,7 +77,8 @@ _PLAN_READ_TARGET = re.compile(r"ReadFromMergeTree \(([^)]*)\)")
 _PROJECTION_NOT_USED = "Code: 584."
 
 
-def _client():
+@pytest.fixture(scope="module")
+def plan_client():
     # conftest resolves the HTTP port (no default; a forwarded one is refused
     # with an exception, not an ``assert``), keeps the host to loopback and, on
     # CI's opted-in sidecar, proves the server is the test sidecar.
@@ -82,9 +88,44 @@ def _client():
         pytest.skip("no test ClickHouse configured")
     if not database.lower().lstrip("_").startswith("test_"):
         pytest.skip("test ClickHouse database is not a test_* database")
-    return _open_ch_test_http_client(
-        database=database, connect_timeout=5, send_receive_timeout=30
-    )
+
+    def connect(db):
+        return closing(
+            _open_ch_test_http_client(
+                database=db, connect_timeout=5, send_receive_timeout=30
+            )
+        )
+
+    if not (
+        os.getenv(CH_TEST_SIDECAR_HTTP_PORT_VARIABLE)
+        and os.getenv(CH_TEST_SIDECAR_NATIVE_PORT_VARIABLE)
+    ):
+        with connect(database) as client:
+            yield client
+        return
+
+    # ClickHouse 25.3 requires a literal identifier after CREATE TABLE ... AS.
+    if not (database.isascii() and database.isidentifier()):
+        raise ValueError("invalid test ClickHouse source database identifier")
+
+    # Each CI shard starts with schema only. Clone it so the plan sees the
+    # real projections but neither the fixture nor other tests supply rows to
+    # each other. Multiple base granules collapse into one hourly state.
+    with (
+        _ch_test_owned_database("test_hourly_plan_") as owned,
+        connect(owned) as client,
+    ):
+        client.command(f"CREATE TABLE spans AS `{database}`.spans")
+        client.command(
+            "INSERT INTO spans (project_id, observation_type, start_time, trace_id, id) "
+            "WITH concat('00000000-0000-4000-8000-', leftPad(toString(number), 12, '0')) AS seed_id "
+            "SELECT toUUID('497bed39-73c9-4242-901d-54093ddfa189'), 'span', "
+            "toStartOfHour(now()), seed_id, seed_id FROM numbers(65536)"
+        )
+        assert _aggregate_projection_names(client), (
+            "migrated spans lacks aggregate projections"
+        )
+        yield client
 
 
 def _aggregate_projection_names(client) -> frozenset[str]:
@@ -306,7 +347,7 @@ def _prepared(client):
 
 @pytest.mark.integration
 @pytest.mark.parametrize("site", sorted(_SITES))
-def test_optimiser_selects_a_projection_for_the_shipped_shape(site):
+def test_optimiser_selects_a_projection_for_the_shipped_shape(site, plan_client):
     """The plan the deployed query gets must name an aggregate projection.
 
     Planned with the settings the product actually sends — it sets neither
@@ -315,7 +356,7 @@ def test_optimiser_selects_a_projection_for_the_shipped_shape(site):
     coaxed out of the optimiser by a test-only setting.
     """
 
-    client = _client()
+    client = plan_client
     project_id, window_start, window_end = _prepared(client)
     aggregate = _aggregate_projection_names(client)
 
@@ -331,7 +372,7 @@ def test_optimiser_selects_a_projection_for_the_shipped_shape(site):
 
 @pytest.mark.integration
 @pytest.mark.parametrize("site", sorted(_SITES))
-def test_force_optimize_projection_accepts_the_shipped_shape(site):
+def test_force_optimize_projection_accepts_the_shipped_shape(site, plan_client):
     """The original tripwire, kept, and now told which target it accepted.
 
     ``force_optimize_projection = 1`` raises when no projection is used. That
@@ -339,7 +380,7 @@ def test_force_optimize_projection_accepts_the_shipped_shape(site):
     a normal projection, so the same identity assertion is applied on top.
     """
 
-    client = _client()
+    client = plan_client
     project_id, window_start, window_end = _prepared(client)
     aggregate = _aggregate_projection_names(client)
 
@@ -358,7 +399,9 @@ def test_force_optimize_projection_accepts_the_shipped_shape(site):
 @pytest.mark.integration
 @pytest.mark.parametrize("site", sorted(_SITES))
 @pytest.mark.parametrize("force", [False, True], ids=["default", "forced"])
-def test_plainly_written_aggregates_do_not_reach_the_hourly_states(site, force):
+def test_plainly_written_aggregates_do_not_reach_the_hourly_states(
+    site, force, plan_client
+):
     """The negative control that gives the guard above its meaning.
 
     Take the statement the product emits, tidy it into the plainly-written
@@ -374,7 +417,7 @@ def test_plainly_written_aggregates_do_not_reach_the_hourly_states(site, force):
     the target's identity.
     """
 
-    client = _client()
+    client = plan_client
     project_id, window_start, window_end = _prepared(client)
     aggregate = _aggregate_projection_names(client)
 
