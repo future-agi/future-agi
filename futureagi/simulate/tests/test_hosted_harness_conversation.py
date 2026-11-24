@@ -2642,8 +2642,25 @@ def test_a_resumed_turn_keeps_the_question_it_asks_again(organization):
     assert conversation.blocking_input is not None
 
 
+def _events(conversation, count):
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessConversationEvent
+
+    for number in range(1, count + 1):
+        HostedHarnessConversationEvent.no_workspace_objects.create(
+            event_id=f"{conversation.id}-e{number}",
+            conversation=conversation,
+            sequence=number,
+            kind="stage_changed",
+            payload={},
+            digest="sha256:" + "0" * 64,
+            emitted_at=timezone.now(),
+        )
+
+
 @pytest.mark.django_db
-def test_a_conversation_read_pages_back_and_a_poll_carries_only_what_is_new(
+def test_a_conversation_read_pages_back_and_a_poll_carries_only_new_events(
     organization, monkeypatch
 ):
     from simulate.services import hosted_harness_conversation as conversations
@@ -2657,22 +2674,46 @@ def test_a_conversation_read_pages_back_and_a_poll_carries_only_what_is_new(
             job, content=f"m{number}", client_request_id=f"history-{number}"
         )
     conversation = job.conversation
+    _events(conversation, 8)
 
     newest = serialize_conversation(conversation)
     assert [item["sequence"] for item in newest["messages"]] == [3, 4, 5]
-    assert newest["history"]["messages"] == {"oldest_sequence": 3, "has_older": True}
+    assert [item["sequence"] for item in newest["events"]] == [6, 7, 8]
+    assert newest["history"] == {
+        "messages": {"oldest_sequence": 3, "has_older": True},
+        "events": {"oldest_sequence": 6, "has_older": True},
+    }
+    assert newest["events_has_newer"] is False
 
     older = conversations.conversation_history(conversation, kind="messages", before=3)
-    assert [item["sequence"] for item in older["items"]] == [1, 2]
-    assert older["has_older"] is False and older["oldest_sequence"] == 1
+    assert [item["sequence"] for item in older["messages"]] == [1, 2]
+    assert (
+        older["events"] == []
+        and older["has_older"] is False
+        and older["oldest_sequence"] == 1
+    )
+    earlier = conversations.conversation_history(conversation, kind="events", before=6)
+    assert [item["sequence"] for item in earlier["events"]] == [3, 4, 5]
+    assert earlier["messages"] == [] and earlier["has_older"] is True
 
-    poll = serialize_conversation(conversation, messages_after=4)
-    assert [item["sequence"] for item in poll["messages"]] == [5]
-    assert poll["history"]["messages"]["has_older"] is False
+    # A message changes in place (a streamed reply, its state), so every poll carries the newest messages whole.
+    conversation.messages.filter(sequence=5).update(content="m5, streamed further")
+    poll = serialize_conversation(conversation, events_after=7)
+    assert [item["sequence"] for item in poll["messages"]] == [3, 4, 5]
+    assert poll["messages"][-1]["content"] == "m5, streamed further"
+    assert [item["sequence"] for item in poll["events"]] == [8]
+    assert "events" not in poll["history"] and poll["events_has_newer"] is False
 
-    behind = serialize_conversation(conversation, messages_after=1)
-    assert [item["sequence"] for item in behind["messages"]] == [3, 4, 5]
-    assert behind["history"]["messages"] == {"oldest_sequence": 3, "has_older": True}
+    quiet = serialize_conversation(conversation, events_after=8)
+    assert quiet["events"] == [] and quiet["events_has_newer"] is False
+
+    # A reader behind the window catches up oldest first, never skipping to the newest.
+    behind = serialize_conversation(conversation, events_after=1)
+    assert [item["sequence"] for item in behind["events"]] == [2, 3, 4]
+    assert behind["events_has_newer"] is True
+    caught_up = serialize_conversation(conversation, events_after=4)
+    assert [item["sequence"] for item in caught_up["events"]] == [5, 6, 7]
+    assert caught_up["events_has_newer"] is True
 
 
 @pytest.mark.django_db
@@ -2690,21 +2731,38 @@ def test_the_job_read_and_the_history_read_page_the_builder_chat_over_the_api(
     )
     for number in range(1, 6):
         enqueue_message(job, content=f"m{number}", client_request_id=f"api-{number}")
+    _events(job.conversation, 5)
     base = f"/simulate/api/harness-jobs/{job.id}"
 
     full = auth_client.get(f"{base}/").json()["conversation"]
     assert [item["sequence"] for item in full["messages"]] == [3, 4, 5]
     assert full["history"]["messages"] == {"oldest_sequence": 3, "has_older": True}
 
-    poll = auth_client.get(f"{base}/", {"messages_after": 4}).json()["conversation"]
-    assert [item["sequence"] for item in poll["messages"]] == [5]
+    poll = auth_client.get(f"{base}/", {"events_after": 4}).json()["conversation"]
+    assert [item["sequence"] for item in poll["messages"]] == [3, 4, 5]
+    assert [item["sequence"] for item in poll["events"]] == [5]
+    assert "events" not in poll["history"]
 
     page = auth_client.get(
         f"{base}/conversation/history/", {"kind": "messages", "before": 3}
     )
     assert page.status_code == 200
-    assert [item["sequence"] for item in page.json()["items"]] == [1, 2]
-    assert page.json()["has_older"] is False
+    assert [item["sequence"] for item in page.json()["messages"]] == [1, 2]
+    assert page.json()["events"] == [] and page.json()["has_older"] is False
 
     refused = auth_client.get(f"{base}/conversation/history/", {"kind": "messages"})
     assert refused.status_code == 400
+
+
+def test_the_sandbox_provider_refuses_a_read_of_only_new_events():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_provider import SandboxHarnessProvider
+
+    provider = SandboxHarnessProvider.__new__(SandboxHarnessProvider)
+    answer = provider.retrieve(
+        SimpleNamespace(validated_query_data={"events_after": 3}), "job"
+    )
+
+    assert answer.status_code == 501
+    assert answer.data["error"] == "events_after_not_supported"

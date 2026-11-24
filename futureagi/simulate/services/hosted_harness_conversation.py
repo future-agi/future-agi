@@ -88,20 +88,23 @@ class ConversationCapability:
     document: dict[str, Any]
 
 
-def _window(rows, *, after: int | None, before: int | None = None) -> tuple[list, bool]:
-    """The newest `EVENT_LIMIT` rows past `after` (all when None) and before `before`, oldest first, and whether
-    older ones are left out of it."""
-    if after is not None:
-        rows = rows.filter(sequence__gt=after)
+def _window(rows, *, before: int | None = None) -> tuple[list, bool]:
+    """The newest `EVENT_LIMIT` rows before `before` (all when None), oldest first, and whether older ones are left
+    out of it."""
     if before is not None:
         rows = rows.filter(sequence__lt=before)
     page = list(rows.order_by("-sequence")[: EVENT_LIMIT + 1])
     return list(reversed(page[:EVENT_LIMIT])), len(page) > EVENT_LIMIT
 
 
+def _after(rows, after: int) -> tuple[list, bool]:
+    """The oldest `EVENT_LIMIT` rows past `after`, oldest first, and whether newer ones are left for the next read."""
+    page = list(rows.filter(sequence__gt=after).order_by("sequence")[: EVENT_LIMIT + 1])
+    return page[:EVENT_LIMIT], len(page) > EVENT_LIMIT
+
+
 def _history(rows: list, older: bool) -> dict[str, Any]:
-    """Where a window starts and whether items before it were left out: for a read limited to what is new since a
-    sequence, only new items too many to carry."""
+    """Where a window of the newest items starts and whether items before it were left out."""
     return {
         "oldest_sequence": rows[0].sequence if rows else None,
         "has_older": older,
@@ -111,13 +114,18 @@ def _history(rows: list, older: bool) -> dict[str, Any]:
 def serialize_conversation(
     conversation: HostedHarnessConversation,
     *,
-    messages_after: int | None = None,
     events_after: int | None = None,
 ) -> dict[str, Any]:
-    """The conversation with its newest messages and events. `messages_after` / `events_after` limit each list to
-    what is newer than the sequence the reader already has, so a poll carries only what changed."""
-    messages, older_messages = _window(conversation.messages, after=messages_after)
-    events, older_events = _window(conversation.events, after=events_after)
+    """The conversation with its newest messages and events. Messages change in place (a streamed reply, a state), so
+    every read carries the newest ones whole. Events never change, so `events_after` limits them to the ones past the
+    sequence the reader already has, oldest first, `events_has_newer` saying whether more are left to read.
+    """
+    messages, older_messages = _window(conversation.messages)
+    if events_after is None:
+        events, older_events = _window(conversation.events)
+        newer_events = False
+    else:
+        events, newer_events = _after(conversation.events, events_after)
     job_metadata = (conversation.job.payload or {}).get("metadata") or {}
     lease = HostedHarnessConversationLease.no_workspace_objects.filter(
         conversation=conversation
@@ -143,8 +151,13 @@ def serialize_conversation(
         "event_watermark": conversation.event_acked_through,
         "history": {
             "messages": _history(messages, older_messages),
-            "events": _history(events, older_events),
+            **(
+                {"events": _history(events, older_events)}
+                if events_after is None
+                else {}
+            ),
         },
+        "events_has_newer": newer_events,
         "runtime": {
             "state": lease.state if lease else "cold",
             "warm_until": lease.expires_at.isoformat() if lease else None,
@@ -161,13 +174,14 @@ def conversation_history(
     window a conversation read carries."""
     rows, older = _window(
         conversation.messages if kind == "messages" else conversation.events,
-        after=None,
         before=before,
     )
-    serialize = _serialize_message if kind == "messages" else _serialize_event
     return {
         "kind": kind,
-        "items": [serialize(row) for row in rows],
+        "messages": (
+            [_serialize_message(row) for row in rows] if kind == "messages" else []
+        ),
+        "events": [_serialize_event(row) for row in rows] if kind == "events" else [],
         "oldest_sequence": rows[0].sequence if rows else None,
         "has_older": older,
     }

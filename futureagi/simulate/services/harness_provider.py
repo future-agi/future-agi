@@ -378,7 +378,6 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
 def serialize_job(
     job: HostedHarnessJob,
     *,
-    messages_after: int | None = None,
     events_after: int | None = None,
 ) -> dict[str, Any]:
     from simulate.services.harness_cancel import cancel_status
@@ -596,11 +595,7 @@ def serialize_job(
         "platform": platform,
         "credentials": {"detected_connectors": detected_connectors},
         "conversation": (
-            serialize_conversation(
-                conversation,
-                messages_after=messages_after,
-                events_after=events_after,
-            )
+            serialize_conversation(conversation, events_after=events_after)
             if conversation is not None
             else None
         ),
@@ -1816,13 +1811,7 @@ class HostedHarnessProvider:
                 status=status.HTTP_404_NOT_FOUND,
             )
         query = getattr(request, "validated_query_data", None) or {}
-        return Response(
-            serialize_job(
-                job,
-                messages_after=query.get("messages_after"),
-                events_after=query.get("events_after"),
-            )
-        )
+        return Response(serialize_job(job, events_after=query.get("events_after")))
 
     def conversation_history(self, request, pk) -> Response:
         """The builder chat's messages or events before a sequence, for reading back past a job read's window."""
@@ -3590,6 +3579,16 @@ class SandboxHarnessProvider:
         return Response(_sandbox_preflight_body(request.validated_data, report))
 
     def retrieve(self, request, pk) -> Response:
+        if (getattr(request, "validated_query_data", None) or {}).get(
+            "events_after"
+        ) is not None:
+            return Response(
+                {
+                    "error": "events_after_not_supported",
+                    "message": "reading only new builder chat events is only available on the hosted provider",
+                },
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
         from simulate.services.harness_sandbox import (
             HarnessSandboxRejected,
             HarnessSandboxUnavailable,
