@@ -1041,17 +1041,26 @@ jobs:
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-attachment-sandbox
           bwrap --ro-bind / / --unshare-all --die-with-parent true
       - name: Install backend dependencies
-        run: uv sync --frozen --all-extras
+        # Every extra except pii, without the dev group: neither holds a wheel these
+        # Postgres-only tests need, and both pull en-core-web-sm from GitHub. pytest
+        # comes at the version uv.lock pins for the dev group.
+        run: |
+          uv sync --frozen --no-dev --extra sandbox --extra billing --extra ops --extra gcp \
+            --extra langchain --extra localizer --extra audio --extra ml --extra voice \
+            --extra rabbitmq --extra prompt-opt --extra vectordb --extra dev
+          pin="$(uv export --frozen --only-group dev --no-hashes --no-emit-project | grep -E '^pytest==')"
+          test -n "$pin"
+          uv pip install "$pin"
       - name: Run isolated schema review module
         env:
           ATT_SCHEMA_REVIEW_ISOLATED: "1"
           PG_TEST_DB_PREFIX: test_att_review_schema_ci_
-        run: uv run pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_simplify_review_schema_postgres.py -q
+        run: uv run --no-sync pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_simplify_review_schema_postgres.py -q
       - name: Run completed import binding module
         env:
           ATT_SCHEMA_REVIEW_ISOLATED: "1"
           PG_TEST_DB_PREFIX: test_att_import_binding_
-        run: uv run pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_completed_import_binding_postgres.py -q
+        run: uv run --no-sync pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_completed_import_binding_postgres.py -q
 
   timings:
     # Each shard of a dev push records its tests' times (--store-durations).
