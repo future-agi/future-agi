@@ -486,6 +486,8 @@ def _usage_check(organization: Any, model: str) -> Any:
     try:
         return check_usage(str(organization.id), _get_api_call_type(model))
     except Exception:
+        # Billing is a call out; one that can't answer refuses the launch.
+        logger.exception("ask_usage_check_failed")
         raise LaunchRefused(
             "credit_check_unavailable",
             "Usage can't be checked right now, so the ask wasn't started. "
