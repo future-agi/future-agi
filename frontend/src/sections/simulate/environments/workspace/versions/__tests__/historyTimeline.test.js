@@ -49,7 +49,7 @@ describe("historyTimeline", () => {
     expect(byKey["suite:s2"]).toEqual([]);
   });
 
-  it("badges draft and discarded versions and never calls them latest", () => {
+  it("badges a draft, hides a discarded version, and calls neither latest", () => {
     const entries = timelineEntries(
       toVersions({
         agent: [
@@ -59,10 +59,10 @@ describe("historyTimeline", () => {
         ],
       }),
     );
-    expect(entries.map((e) => e.badges)).toEqual([
-      ["draft"],
-      ["discarded"],
-      ["latest"],
+    expect(entries.map((e) => [e.badges, e.hidden])).toEqual([
+      [["draft"], false],
+      [[], true],
+      [["latest"], false],
     ]);
   });
 

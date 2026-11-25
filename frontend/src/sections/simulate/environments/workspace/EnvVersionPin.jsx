@@ -12,6 +12,7 @@ import Iconify from "src/components/iconify";
 import { fDateTime } from "src/utils/format-time";
 import {
   canMakeDefault,
+  isDiscarded,
   isVersioningDisabled,
   useEnvironmentVersions,
   useMoveDefault,
@@ -39,7 +40,7 @@ export default function EnvVersionPin({ env, onHistory }) {
   const { data, error } = useEnvironmentVersions(env?.id, {
     enabled,
   });
-  const versions = data?.environment || [];
+  const versions = (data?.environment || []).filter((v) => !isDiscarded(v));
   const current = data?.defaults?.environment;
 
   if (!enabled || !data || isVersioningDisabled(error) || !current) {

@@ -407,6 +407,10 @@ const awaitsCheck = (data) =>
   Array.isArray(data?.agent) &&
   data.agent.some((item) => awaitedCheck(versionFromApi(item)));
 
+// The server keeps and sends discarded versions; the History tab and the
+// header's version list leave them out.
+export const isDiscarded = (version) => version?.status === "discarded";
+
 // Only an active version that is not already the default can become it; an
 // agent version only when the server says it can be picked here.
 export const canMakeDefault = (piece, version) =>

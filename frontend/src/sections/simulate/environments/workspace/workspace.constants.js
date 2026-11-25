@@ -371,7 +371,6 @@ export const VERSIONS_COPY = {
       tested: "being tested",
       latest: "latest",
       draft: "draft",
-      discarded: "discarded",
     },
   },
 };
@@ -426,7 +425,7 @@ export const AGENT_VERSIONS_COPY = {
     action: "Discard",
     actionFor: (label) => `Discard ${label}`,
     title: (label) => `Discard ${label}?`,
-    body: "It stays in the history but can no longer be run or made the default.",
+    body: "It stays in this list but can no longer be run or made the default.",
     confirm: "Discard",
     pending: "Discarding…",
     error: "Couldn't discard this version. Try again in a moment.",

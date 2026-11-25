@@ -180,7 +180,6 @@ const VERSIONS = {
     item({
       id: "s1",
       label: "v1",
-      status: "discarded",
       origin: "backfill",
       scenario_count: 3,
     }),
@@ -289,7 +288,6 @@ describe("VersionsPanel", () => {
     expect(row("environment", "v2")).toHaveTextContent(/by Asha/);
     expect(row("environment", "v2")).toHaveTextContent("runs use this");
     expect(row("environment", "v1")).not.toHaveTextContent("runs use this");
-    expect(row("suite", "v1")).toHaveTextContent("discarded");
     expect(row("suite", "v2")).toHaveTextContent("runs use this");
   });
 
@@ -469,6 +467,7 @@ describe("VersionsPanel", () => {
       ...VERSIONS,
       environment: [
         item({ id: "ed", label: null, status: "draft", parent_id: "e2" }),
+        item({ id: "ex", label: null, status: "discarded", parent_id: "e2" }),
         ...VERSIONS.environment,
         item({ id: "e0", label: "v0" }),
       ],
@@ -485,7 +484,8 @@ describe("VersionsPanel", () => {
     await user.click(row("environment", "v2"));
 
     await user.click(screen.getByRole("combobox", { name: "Compared with" }));
-    // The previous version is named once, and a draft says it's unsaved.
+    // The previous version is named once, a draft says it's unsaved, and a
+    // discarded version isn't offered.
     expect(
       screen.getAllByRole("option").map((option) => option.textContent),
     ).toEqual(["Its previous version (v1)", "Unsaved draft", "v0"]);
@@ -948,24 +948,52 @@ describe("VersionsPanel", () => {
     ).toHaveLength(1);
   });
 
-  it("names an unnumbered suite version in its scenarios line", async () => {
+  it("lists no scenarios for an unsaved draft, which the server keeps none for", async () => {
     const user = userEvent.setup();
     state.versions = {
       ...VERSIONS,
       suite: [
-        item({ id: "s9", label: null, status: "draft" }),
+        item({ id: "s9", label: null, status: "draft", parent_id: "s2" }),
         ...VERSIONS.suite,
       ],
     };
-    state.members.s9 = [
-      { scenario_key: "late-delivery", number: 1, name: "Late", use_case: "" },
-    ];
     render(<VersionsPanel env={ENV} />);
     await user.click(row("suite", "Unnumbered version"));
-    expect(
-      screen.getByText("The 1 scenario in Unnumbered version"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/null/)).toBeNull();
+    expect(screen.getByTestId("version-detail")).toBeInTheDocument();
+    expect(screen.queryByText(/scenarios in Unnumbered/)).toBeNull();
+  });
+
+  it("drops a draft from the timeline when it is discarded", async () => {
+    const draft = item({ id: "s9", label: null, status: "draft" });
+    const withSuite = (one) => ({ ...VERSIONS, suite: [one] });
+    state.versions = withSuite(draft);
+    const { rerender } = render(<VersionsPanel env={ENV} />);
+    await userEvent.click(row("suite", "Unnumbered version"));
+
+    state.versions = withSuite({ ...draft, status: "discarded" });
+    rerender(<VersionsPanel env={ENV} />);
+    await waitFor(() =>
+      expect(screen.queryByText(/Unnumbered version/)).toBeNull(),
+    );
+    // Its day goes with it, and the kind reads as empty.
+    expect(screen.queryByTestId("version-detail")).toBeNull();
+    expect(screen.queryByText("Oct 15")).toBeNull();
+    expect(screen.getByText("No scenario versions yet.")).toBeInTheDocument();
+  });
+
+  it("opens nothing for a link to a discarded version", () => {
+    state.versions = {
+      ...VERSIONS,
+      suite: [VERSIONS.suite[0], { ...VERSIONS.suite[1], status: "discarded" }],
+    };
+    window.history.pushState({}, "", "/?tab=versions&version=suite:s1");
+    try {
+      render(<VersionsPanel env={ENV} />);
+      expect(row("suite", "v2")).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByTestId("version-detail")).toBeNull();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
   });
 
   it("shows a skeleton of the History tab while the versions load", () => {
@@ -1090,7 +1118,10 @@ describe("VersionsPanel", () => {
   });
 
   it("starts on a kind that has versions when there is no environment version", () => {
-    state.versions = { ...VERSIONS, environment: [] };
+    state.versions = {
+      ...VERSIONS,
+      environment: [item({ id: "ex", label: null, status: "discarded" })],
+    };
     render(<VersionsPanel env={ENV} />);
     expect(screen.queryByText("No environment versions yet.")).toBeNull();
     expect(screen.getByRole("button", { name: "Agent" })).toHaveAttribute(
@@ -1342,7 +1373,7 @@ describe("VersionsPanel", () => {
       }
     });
 
-    it("offers nothing on a discarded version or an agent version still being checked", async () => {
+    it("offers nothing on an agent version still being checked", async () => {
       const user = userEvent.setup();
       state.versions = {
         ...VERSIONS,
@@ -1358,7 +1389,6 @@ describe("VersionsPanel", () => {
       };
       render(<VersionsPanel env={ENV} />);
 
-      await noMakeDefault(user, "suite", "v1");
       await noMakeDefault(user, "agent", "v5");
     });
 

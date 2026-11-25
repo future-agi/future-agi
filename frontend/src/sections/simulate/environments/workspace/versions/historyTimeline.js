@@ -1,4 +1,7 @@
-import { VERSION_PIECES } from "src/api/simulate-environments/versions";
+import {
+  VERSION_PIECES,
+  isDiscarded,
+} from "src/api/simulate-environments/versions";
 import { fDate } from "src/utils/format-time";
 import { VERSIONS_COPY } from "../workspace.constants";
 
@@ -17,7 +20,6 @@ const badgesOf = (piece, version, latestId) => {
   if (version.isDefault) badges.push(piece === "agent" ? "tested" : "inUse");
   if (version.id === latestId) badges.push("latest");
   if (version.status === "draft") badges.push("draft");
-  if (version.status === "discarded") badges.push("discarded");
   return badges;
 };
 
@@ -51,6 +53,8 @@ export function timelineEntries(data) {
       piece,
       version,
       badges: badgesOf(piece, version, newestActive?.id),
+      // Kept in the list so a row shown while it was a draft can slide shut.
+      hidden: isDiscarded(version),
       originLine: originLineOf(version),
     }));
   });

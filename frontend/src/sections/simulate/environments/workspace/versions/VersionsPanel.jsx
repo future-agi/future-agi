@@ -3,13 +3,16 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Box,
+  Collapse,
   Stack,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import {
   VERSION_PIECES,
+  isDiscarded,
   isVersioningDisabled,
   useEnvironmentVersions,
   useMoveDefault,
@@ -78,7 +81,8 @@ Tile.propTypes = {
 };
 
 // The History tab: every agent, environment and scenario version as one
-// timeline, newest first. A row opens what changed in that version.
+// timeline, newest first, without the discarded ones. A row opens what changed
+// in that version.
 export default function VersionsPanel({ env }) {
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, isLoading, error } = useEnvironmentVersions(env?.id, {
@@ -98,9 +102,10 @@ export default function VersionsPanel({ env }) {
   const [own, setOwn] = useState({ kind: null, picked: null });
   const picked = linkedId ? { piece: linkedPiece, id: linkedId } : own.picked;
   // Environment first, unless it has no versions and another kind does.
-  const startKind = data?.environment?.length
+  const hasRows = (one) => data?.[one]?.some((v) => !isDiscarded(v));
+  const startKind = hasRows("environment")
     ? "environment"
-    : VERSION_PIECES.find((one) => data?.[one]?.length) ?? "environment";
+    : VERSION_PIECES.find(hasRows) ?? "environment";
   const kind =
     linkedKind ??
     (linkedId && VERSION_PIECES.includes(linkedPiece) ? linkedPiece : null) ??
@@ -118,13 +123,18 @@ export default function VersionsPanel({ env }) {
   // Held here so a refusal outlives the refresh that re-renders the row.
   const move = useMoveDefault(env?.id);
   const entries = useMemo(() => timelineEntries(data), [data]);
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const slide = {
+    unmountOnExit: true,
+    timeout: reduceMotion ? 0 : "auto",
+  };
 
   // A row opens only when the reader or a link picks it, and only while the
   // version is still listed.
   const openKey =
     // A hand-edited link may name something that isn't a piece.
     VERSION_PIECES.includes(picked?.piece) &&
-    data?.[picked.piece]?.some((v) => v.id === picked.id)
+    data?.[picked.piece]?.some((v) => v.id === picked.id && !isDiscarded(v))
       ? `${picked.piece}:${picked.id}`
       : null;
   const linkedListed =
@@ -285,7 +295,7 @@ export default function VersionsPanel({ env }) {
             ))}
           </ToggleButtonGroup>
         </Stack>
-        {groups.length === 0 && (
+        {!hasRows(kind) && (
           <Typography
             sx={{
               typography: "s2",
@@ -300,7 +310,11 @@ export default function VersionsPanel({ env }) {
           </Typography>
         )}
         {groups.map((group) => (
-          <Box key={group.key}>
+          <Collapse
+            key={`${kind}:${group.key}`}
+            in={group.entries.some((entry) => !entry.hidden)}
+            {...slide}
+          >
             <Typography
               sx={{
                 typography: "s3",
@@ -316,18 +330,19 @@ export default function VersionsPanel({ env }) {
               {group.label}
             </Typography>
             {group.entries.map((entry) => (
-              <HistoryEntry
-                key={entry.key}
-                entry={entry}
-                envId={env.id}
-                move={move}
-                siblings={data[entry.piece]}
-                defaultId={data.defaults[entry.piece]?.id ?? null}
-                expanded={entry.key === openKey}
-                onToggle={() => pick(entry, entry.key !== openKey)}
-              />
+              <Collapse key={entry.key} in={!entry.hidden} {...slide}>
+                <HistoryEntry
+                  entry={entry}
+                  envId={env.id}
+                  move={move}
+                  siblings={data[entry.piece]}
+                  defaultId={data.defaults[entry.piece]?.id ?? null}
+                  expanded={entry.key === openKey}
+                  onToggle={() => pick(entry, entry.key !== openKey)}
+                />
+              </Collapse>
             ))}
-          </Box>
+          </Collapse>
         ))}
       </Box>
     </>,

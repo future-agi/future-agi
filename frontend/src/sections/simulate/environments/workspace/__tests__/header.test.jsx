@@ -316,7 +316,6 @@ describe("EnvVersionPin", () => {
       environment: [
         item({ id: "e3", label: "v3" }),
         ...VERSIONS.environment,
-        item({ id: "e0", label: "v0", status: "discarded" }),
         item({ id: "e4", label: "v4", status: "draft" }),
       ],
     };
@@ -332,7 +331,6 @@ describe("EnvVersionPin", () => {
       within(items[2]).getByRole("button", { name: "Roll back to v1" }),
     ).toBeInTheDocument();
     expect(within(items[3]).queryByRole("button")).toBeNull();
-    expect(within(items[4]).queryByRole("button")).toBeNull();
   });
 
   it("asks first, then makes the version the default against the default shown", async () => {
@@ -473,13 +471,14 @@ describe("EnvVersionPin", () => {
     );
   });
 
-  it("announces the list it opens and marks draft or discarded versions", async () => {
+  it("announces the list it opens, marks a draft and leaves out a discarded version", async () => {
     const user = userEvent.setup();
     versionsResponse.current = {
       ...VERSIONS,
       environment: [
         ...VERSIONS.environment,
-        item({ id: "e0", label: null, status: "discarded" }),
+        item({ id: "ed", label: null, status: "draft" }),
+        item({ id: "ex", label: "v9", status: "discarded" }),
       ],
     };
     render(<EnvVersionPin env={VERSIONED_ENV} />);
@@ -495,7 +494,8 @@ describe("EnvVersionPin", () => {
     ).toBeInTheDocument();
     const items = screen.getAllByTestId("env-version-item");
     expect(items[2]).toHaveTextContent("Unnumbered version");
-    expect(items[2]).toHaveTextContent("discarded");
+    expect(items[2]).toHaveTextContent("draft");
+    expect(items).toHaveLength(3);
   });
 });
 

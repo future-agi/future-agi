@@ -591,7 +591,7 @@ describe("AgentVersionsPanel", () => {
     await user.click(button("a7", "Discard v7"));
     const dialog = screen.getByRole("dialog", { name: "Discard v7?" });
     expect(dialog).toHaveTextContent(
-      "It stays in the history but can no longer be run or made the default.",
+      "It stays in this list but can no longer be run or made the default.",
     );
     // Cancel asks nothing.
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));

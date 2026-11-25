@@ -15,6 +15,7 @@ import {
 } from "@mui/material";
 import {
   VERSION_PIECES,
+  isDiscarded,
   useSuiteMembers,
   useVersionDiff,
 } from "src/api/simulate-environments/versions";
@@ -110,7 +111,8 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
   // listed again.
   const parent = siblings.find((one) => one.id === version.parentId);
   const others = siblings.filter(
-    (one) => one.id !== version.id && one.id !== parent?.id,
+    (one) =>
+      one.id !== version.id && one.id !== parent?.id && !isDiscarded(one),
   );
   const optionLabel = (one) =>
     one.label ||
@@ -242,7 +244,10 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
           {body()}
         </Box>
       </Stack>
-      {piece === "suite" && <SuiteMembers envId={envId} version={version} />}
+      {/* Only a saved version has its scenarios listed on the server. */}
+      {piece === "suite" && version.status === "active" && (
+        <SuiteMembers envId={envId} version={version} />
+      )}
     </Stack>
   );
 }
