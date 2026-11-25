@@ -860,29 +860,27 @@ def _sized(
 # --- secrets ---------------------------------------------------------------------------
 
 _MASK = "[REDACTED]"
-# A value kept under one of these names is masked whole.
-_SECRET_NAMES = frozenset(
-    {
-        "authorization",
-        "password",
-        "passwd",
-        "secret",
-        "client_secret",
-        "api_key",
-        "apikey",
-        "x_api_key",
-        "token",
-        "access_token",
-        "refresh_token",
-        "auth_token",
-        "private_key",
-    }
+# A value kept under a key holding one of these is masked whole, as the kit's
+# own cleaner does before its grader sees a prompt; so is every header.
+_SECRET_KEY_MARKERS = (
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "api-key",
+    "credential",
+    "authorization",
+    "password",
+    "passphrase",
+    "cookie",
+    "private_key",
 )
+# In text, a secret's name then its value: a quoted value to its closing quote,
+# otherwise to the end of the line (or a comma, semicolon or brace).
 _SECRET_ASSIGNMENT = re.compile(
     r"""(?ix)
-    (["']?(?:authorization|api[_-]?key|secret|token|password)["']?\s*[:=]\s*["']?)
-    (?!bearer\s|\[REDACTED\])
-    [^"',}\s]+
+    (["']?(?:authorization|api[_-]?key|secret|token|password|passphrase)["']?\s*[:=]\s*)
+    (?:"[^"\n]*"|'[^'\n]*'|(?!\[REDACTED\])[^\n,;}"']+)
     """
 )
 # (pattern, replacement): secrets by their shape, wherever they sit in text.
@@ -919,10 +917,7 @@ def _mask(value: Any) -> Any:
             text = pattern.sub(replacement, text)
         return text
     if isinstance(value, Mapping):
-        return {
-            key: _MASK if _secret_value(key, item) else _mask(item)
-            for key, item in value.items()
-        }
+        return {key: _mask_under(key, item) for key, item in value.items()}
     if isinstance(value, list):
         return [_mask(item) for item in value]
     if isinstance(value, tuple):
@@ -930,11 +925,15 @@ def _mask(value: Any) -> Any:
     return value
 
 
-def _secret_value(key: Any, value: Any) -> bool:
-    name = str(key).strip().lower().replace("-", "_")
-    if name not in _SECRET_NAMES or isinstance(value, bool):
-        return False
-    return isinstance(value, int) or (isinstance(value, str) and bool(value))
+def _mask_under(key: Any, value: Any) -> Any:
+    name = str(key).lower()
+    if value is None or value == "" or isinstance(value, bool):
+        return value
+    if any(marker in name for marker in _SECRET_KEY_MARKERS):
+        return _MASK
+    if name == "headers" and isinstance(value, Mapping):
+        return {item: _MASK for item in value}
+    return _mask(value)
 
 
 def _present(
