@@ -206,14 +206,25 @@ describe("LaunchFixDialog", () => {
     expect(screen.queryByText("spec.json")).toBeNull();
   });
 
+  it.each([true, false])("shows diagnosis availability independently of imported targets: %s", async (diagnosisUnavailable) => {
+    renderDialog({ diagnosisUnavailable });
+    await screen.findByText(/Searches for a better/);
+    if (diagnosisUnavailable) {
+      expect(screen.getByText(/No completed diagnosis is available/)).toBeVisible();
+    } else {
+      expect(screen.queryByText(/No completed diagnosis is available/)).toBeNull();
+    }
+  });
+
   it("hides the opening note after swapping cases at the same count", async () => {
     const user = userEvent.setup();
-    renderDialog({ initialTargets: ["authority-claim"], initialNote: "From imported evidence" });
+    renderDialog({ initialTargets: ["authority-claim"], initialNote: "From imported evidence", diagnosisUnavailable: true });
     await screen.findByText("From imported evidence");
     await openPicker(user);
     await user.click(fixCases().getByRole("checkbox", { name: "Authority claim" }));
     await user.click(fixCases().getByRole("checkbox", { name: /outside the return window/ }));
     expect(screen.queryByText("From imported evidence")).toBeNull();
+    expect(screen.getByText(/No completed diagnosis is available/)).toBeVisible();
   });
 
   it.each([

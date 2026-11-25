@@ -910,19 +910,27 @@ describe("RunDetail", () => {
       }
     });
 
-    it.each(["failed", "pending", "not_requested"])(
-      "launches ordinary failing cases without requesting a %s diagnosis",
-      async (status) => {
+    it.each([
+      ["failed", null],
+      ["pending", null],
+      ["not_requested", null],
+      ["failed", "import-1"],
+      ["completed", null],
+      ["completed", "import-1"],
+    ])(
+      "reports diagnosis availability without requesting analysis: %s, import %s",
+      async (status, evidence) => {
         const request = vi.fn();
         useDebugAnalysis.mockReturnValue(debugHook({ ...ANALYSIS, status }, { request }));
         fixLaunchOptions.mockReturnValue({
-          options: { scenarios: [scenario("ordinary", null, true)] },
+          options: { scenarios: [scenario("case", evidence, true)] },
         });
         renderDetail();
         await userEvent.setup().click(screen.getByRole("button", { name: "Run Epoch" }));
         expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
-        expect(screen.getByText(/No diagnosis is required/)).toBeInTheDocument();
-        expect(launchFix.props.initialTargets).toBeUndefined();
+        expect(useDebugAnalysis).toHaveBeenCalledWith("ex1");
+        expect(launchFix.props.diagnosisUnavailable).toBe(status !== "completed");
+        expect(launchFix.props.initialTargets).toEqual(evidence ? ["case"] : undefined);
         expect(request).not.toHaveBeenCalled();
       },
     );

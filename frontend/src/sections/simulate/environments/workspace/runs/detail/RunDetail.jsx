@@ -22,6 +22,7 @@ import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import {
+  useDebugAnalysis,
   useRunDetail,
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
@@ -184,6 +185,8 @@ export default function RunDetail({
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
     enabled: fixAllowed && !!identity && !live && !fixRun,
   });
+  const headerLaunchOpen = fixLaunching && !!fixTargets;
+  const diagnosis = useDebugAnalysis(headerLaunchOpen ? executionId : null);
   const epoch = epochTargets(fixOptions);
   const importedCount = epoch.imported.length;
   const canOfferEpoch =
@@ -456,7 +459,7 @@ export default function RunDetail({
                     keys: importedCount ? epoch.keys : undefined,
                     note: importedCount
                       ? epochTargetsNote(epoch)
-                      : "Starting from failing scenarios. No diagnosis is required.",
+                      : undefined,
                   });
                   setFixLaunching(true);
                 }}
@@ -697,6 +700,10 @@ export default function RunDetail({
           sourceRunId={executionId}
           initialTargets={fixTargets?.keys}
           initialNote={fixTargets?.note}
+          diagnosisUnavailable={
+            headerLaunchOpen && !diagnosis.isLoading && !diagnosis.loadError &&
+            diagnosis.analysis.status !== "completed"
+          }
         />
       )}
 

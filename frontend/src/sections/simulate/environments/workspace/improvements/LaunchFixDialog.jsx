@@ -45,6 +45,7 @@ export default function LaunchFixDialog({
   sourceRunId,
   initialTargets,
   initialNote,
+  diagnosisUnavailable,
 }) {
   const navigate = useNavigate();
   const { options, error: optionsError } = useFixLaunchOptions(sourceRunId, {
@@ -212,6 +213,11 @@ export default function LaunchFixDialog({
               minutes,
             })}
           </Typography>
+          {diagnosisUnavailable && (
+            <Typography sx={{ typography: "s2", color: "text.secondary", mb: 1.5 }}>
+              No completed diagnosis is available for this run. You can still start an epoch.
+            </Typography>
+          )}
           <Box>
             <Row k="Agent">
               <Typography sx={{ typography: "s2" }}>{identity}</Typography>
@@ -378,4 +384,5 @@ LaunchFixDialog.propTypes = {
   sourceRunId: PropTypes.string,
   initialTargets: PropTypes.arrayOf(PropTypes.string),
   initialNote: PropTypes.string,
+  diagnosisUnavailable: PropTypes.bool,
 };
