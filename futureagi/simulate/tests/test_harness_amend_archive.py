@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import tarfile
+from unittest.mock import patch
 
 import pytest
 
@@ -20,6 +21,7 @@ from simulate.services.hosted_harness_gateway import (
     push_scenarios_into_live_sandbox,
 )
 from simulate.tests.test_harness_provider import _v1_payload
+from simulate.tests.test_harness_scenario_amend import _job, _post
 
 NAMES = ("book_ride_airport", "cancel_active_ride", "explain_pin")
 
@@ -574,3 +576,147 @@ def test_an_unversioned_amend_writes_a_new_object_and_keeps_a_pending_extend(
     )
 
     assert run.payload["metadata"]["authoring_object_key"] == new_key
+
+
+def test_two_entries_naming_one_folder_rewrite_nothing():
+    """Each folder is one entry's: a second entry naming the same folder would leave
+    the other folder to be dropped while every entry still looks written."""
+    assert (
+        _rewritten_authoring_archive(
+            _two_folders_sharing_a_name(), [_entry("a"), _entry("a", tests="new")]
+        )
+        is None
+    )
+
+
+def test_an_entry_two_folders_answer_to_rewrites_nothing():
+    """An entry naming no folder, whose key and name two folders share, is either of
+    them: nothing is edited or dropped on that guess."""
+    assert (
+        _rewritten_authoring_archive(
+            _two_folders_sharing_a_name(),
+            [{"name": "refund", "scenario_key": "refund", "tests": "new"}],
+        )
+        is None
+    )
+
+
+def test_folders_differing_only_in_spelling_stay_two():
+    """``Refund-A`` and ``refund_a`` are two folders: a key spelled like both is
+    neither, and a key spelled exactly like one is that one alone."""
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as tar:
+        for folder in ("Refund-A", "refund_a"):
+            data = json.dumps({"instruction": f"call {folder}", "tests": "t"}).encode()
+            member = tarfile.TarInfo(f"scenarios/{folder}/scenario.json")
+            member.size = len(data)
+            tar.addfile(member, io.BytesIO(data))
+    body = out.getvalue()
+
+    assert (
+        _rewritten_authoring_archive(body, [{"scenario_key": "REFUND_A", "tests": "new"}])
+        is None
+    )
+    after = _read(
+        _rewritten_authoring_archive(body, [{"scenario_key": "refund_a", "tests": "new"}])
+    )
+    assert json.loads(after["scenarios/refund_a/scenario.json"])["tests"] == "new"
+    assert not any(path.startswith("scenarios/Refund-A/") for path in after)
+
+
+class _SharedNameSandbox(_Sandbox):
+    def __init__(self):
+        super().__init__(())
+        self.folders = {
+            f"refund_{side}": {
+                "name": "refund",
+                "scenario_key": "refund",
+                "instruction": f"call {side}",
+            }
+            for side in ("a", "b")
+        }
+
+
+def test_a_live_workspace_is_left_alone_when_two_entries_name_one_folder():
+    from simulate.services.hosted_harness_gateway import _push_scenarios_to_sandbox
+
+    sandbox = _SharedNameSandbox()
+
+    with pytest.raises(ValueError):
+        _push_scenarios_to_sandbox(sandbox, [_entry("a"), _entry("a", tests="new")])
+
+    assert (sandbox.removed, sandbox.uploaded) == ([], {})
+
+
+_NUMBERED = [
+    {
+        "name": "refund",
+        "scenario_key": "refund",
+        "folder": "scenarios/refund",
+        "tests": "first",
+    },
+    {
+        "name": "refund",
+        "scenario_key": "refund_2",
+        "folder": "scenarios/refund_2",
+        "tests": "second",
+    },
+]
+
+
+def _amend(user, job, changes):
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=False,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            return_value=None,
+        ) as rewritten,
+    ):
+        response = _post(user, job, changes)
+    assert response.status_code == 200, response.content
+    return response.json()["receipts"], rewritten
+
+
+@pytest.mark.django_db
+def test_dropping_a_numbered_scenario_never_drops_another_sharing_its_name(
+    user, workspace
+):
+    """Scenario 1 is the row numbered 1 and the folder it holds, never whichever
+    scenario last carried its name."""
+    from simulate.models import HostedHarnessScenario
+    from simulate.services.harness_scenarios import index_scenarios
+
+    job = _job(user, workspace, [dict(one) for one in _NUMBERED])
+    index_scenarios(job, [dict(one) for one in _NUMBERED])
+
+    receipts, rewritten = _amend(user, job, [{"op": "drop", "scenario": "1"}])
+
+    assert [(one["outcome"], one["code"]) for one in receipts] == [
+        ("applied", "applied")
+    ]
+    kept = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
+    assert [one["folder"] for one in kept.data] == ["scenarios/refund_2"]
+    assert [one["folder"] for one in rewritten.call_args.args[1]] == [
+        "scenarios/refund_2"
+    ]
+    assert {
+        row.scenario_key: (row.number, row.folder)
+        for row in HostedHarnessScenario.no_workspace_objects.filter(job=job)
+    } == {"refund_2": (2, "scenarios/refund_2")}
+
+
+@pytest.mark.django_db
+def test_a_name_two_scenarios_share_drops_neither(user, workspace):
+    job = _job(user, workspace, [dict(one) for one in _NUMBERED])
+
+    receipts, rewritten = _amend(user, job, [{"op": "drop", "scenario": "refund"}])
+
+    assert [(one["outcome"], one["code"]) for one in receipts] == [
+        ("refused", "scenario_unknown")
+    ]
+    kept = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
+    assert kept.data == _NUMBERED
+    rewritten.assert_not_called()

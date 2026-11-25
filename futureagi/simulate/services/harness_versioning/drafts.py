@@ -57,6 +57,7 @@ from simulate.services.harness_versioning.versions import (
     _stage_outputs,
     environment_change,
     environment_head,
+    folder_name,
     note_revision,
     prepare_pieces,
     require_not_busy,
@@ -912,29 +913,32 @@ def write_suite_edit(
         with_sessions_to_rewrite,
     )
 
-    before = {
-        str(doc.get("scenario_key") or doc.get("name") or ""): doc
-        for doc in suite_documents(sides["suite"])
+    stored = suite_documents(sides["suite"])
+    by_said = {
+        str(doc.get("scenario_key") or doc.get("name") or ""): doc for doc in stored
     }
+
+    def before(doc: Mapping[str, Any]) -> dict[str, Any] | None:
+        # The stored scenario in the folder this one names, when only one is; two
+        # folders may share a key or a name.
+        folder = folder_name(doc.get("folder"))
+        held = [one for one in stored if folder and folder_name(one.get("folder")) == folder]
+        if len(held) == 1:
+            return held[0]
+        return by_said.get(str(doc.get("scenario_key") or doc.get("name") or ""))
+
     # Only the scenarios this edit changes are held to the actor list: one sealed earlier that names an actor the
     # list no longer has runs as a recorded scenario problem, and never blocks an edit to another scenario.
     known = actor_ids(sides["environment"])
     problems = [
         one
         for doc in suite
-        if _edited(
-            doc, before.get(str(doc.get("scenario_key") or doc.get("name") or ""))
-        )
+        if _edited(doc, before(doc))
         for one in actor_reference_problems(doc, known)
     ]
     if problems:
         raise HostedHarnessError("actor_unknown", "; ".join(problems), status_code=400)
-    suite = [
-        with_sessions_to_rewrite(
-            doc, before.get(str(doc.get("scenario_key") or doc.get("name") or ""))
-        )
-        for doc in suite
-    ]
+    suite = [with_sessions_to_rewrite(doc, before(doc)) for doc in suite]
     rewritten = _rewritten_authoring_archive(
         archives.pack_archive(sides["suite"]), suite
     )
