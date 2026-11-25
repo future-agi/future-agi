@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 
 from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import CallExecution, TestExecution
+from simulate.models.harness_versioning import TaskSplit
 from simulate.selectors.call_detail import (
     call_actors,
     comparability,
@@ -55,7 +56,10 @@ from simulate.serializers.call_workers_v3 import (
     TrialRoutesResponseSerializer,
 )
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
-from simulate.serializers.response.run_test import RunVersionLabelSerializer
+from simulate.serializers.response.run_test import (
+    RunReleaseLabelSerializer,
+    RunVersionLabelSerializer,
+)
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
@@ -311,6 +315,17 @@ class RunExecutionSerializer(serializers.Serializer):
     # ``agent_version`` is the version's name; this is the run's agent pin.
     pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
     agent_differs = serializers.BooleanField(required=False, default=False)
+    split = serializers.ChoiceField(
+        choices=TaskSplit.choices,
+        allow_null=True,
+        required=False,
+        help_text="The release split the run ran; null for the scenarios selected.",
+    )
+    release = RunReleaseLabelSerializer(
+        allow_null=True,
+        required=False,
+        help_text="The release of the run's pinned versions; null when none names them.",
+    )
     build_notice = serializers.CharField(
         allow_null=True,
         required=False,
@@ -790,6 +805,8 @@ def _execution_payload(
         "suite_version": pinned.get("suite_version"),
         "pinned_agent_version": pinned.get("agent_version"),
         "agent_differs": bool(pinned.get("agent_differs")),
+        "split": pinned.get("split"),
+        "release": pinned.get("release"),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition

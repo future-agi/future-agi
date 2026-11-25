@@ -799,7 +799,7 @@ class TestBuildRunComparison:
         assert {
             key: value
             for key, value in _compare(execution).items()
-            if key not in ("pairs", "summary", "versions")
+            if key not in ("pairs", "summary", "versions", "comparability")
         } == comparison
 
     def test_without_pairs_a_first_run_is_not_scanned(

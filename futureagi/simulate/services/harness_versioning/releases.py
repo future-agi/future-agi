@@ -30,7 +30,7 @@ from simulate.models.hosted_harness import HostedHarnessJob
 from simulate.selectors.agent_fix import sub_goal_names
 from simulate.services.harness_versioning.drafts import require_no_rebuild
 from simulate.services.harness_versioning.versions import _conflict, _lock_environment
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import HostedHarnessError, ResolvedPins
 from tfc.constants.levels import Level
 from tfc.permissions.utils import get_effective_workspace_level
 
@@ -76,14 +76,18 @@ def _category(use_case: Any) -> str:
 def scorable_tasks_by_suite(suite_version_ids: Iterable[Any]) -> dict[Any, list[Task]]:
     """Each suite version's scenarios that have checks to score them. A member's content
     never changes, so neither do these lists. Only the two keys read leave the database."""
-    members = HarnessSuiteMember.no_workspace_objects.filter(
-        suite_version_id__in=list(suite_version_ids)
-    ).values_list(
-        "suite_version_id",
-        "scenario_id",
-        "scenario_key",
-        "content__use_case",
-        "content__sub_goals",
+    members = (
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id__in=list(suite_version_ids)
+        )
+        .order_by("number")
+        .values_list(
+            "suite_version_id",
+            "scenario_id",
+            "scenario_key",
+            "content__use_case",
+            "content__sub_goals",
+        )
     )
     tasks: dict[Any, list[Task]] = defaultdict(list)
     for suite_version_id, scenario_id, key, use_case, sub_goals in members:
@@ -192,6 +196,45 @@ def _locked_release(environment_version_id: Any, suite_version_id: Any):
         suite_version_id=suite_version_id,
         unlocked_at__isnull=True,
     ).first()
+
+
+def split_scenario_keys(
+    pins: ResolvedPins | None, split: str, scenario_keys: list[str] | None
+) -> list[str]:
+    """The scenarios a run of ``pins`` and ``split`` selects: ``scenario_keys``, each of
+    which must be in the split, or else every scenario of the split in suite order.
+    Only a pair of versions a release locks has splits to run."""
+    release = (
+        _locked_release(pins.environment_version.id, pins.suite_version.id)
+        if pins is not None
+        else None
+    )
+    if release is None:
+        raise HostedHarnessError(
+            "split_needs_release",
+            "Lock a release on these versions to run its train or test split.",
+            status_code=422,
+        )
+    tasks = scorable_tasks(pins.suite_version.id)
+    in_split = set(
+        HarnessTaskSplit.no_workspace_objects.filter(
+            scenario_id__in=[task.scenario_id for task in tasks], split=split
+        ).values_list("scenario_id", flat=True)
+    )
+    keys = [task.key for task in tasks if task.scenario_id in in_split]
+    if not scenario_keys:
+        return keys
+    outside = [key for key in scenario_keys if key not in keys]
+    if outside:
+        raise HostedHarnessError(
+            "split_scenario_outside",
+            ", ".join(outside)
+            + (" is" if len(outside) == 1 else " are")
+            + f" not in the {split} split of release {release.label}.",
+            status_code=422,
+            details={"split": split, "scenario_keys": outside},
+        )
+    return scenario_keys
 
 
 def _plan_lock(job: HostedHarnessJob) -> SplitPlan:

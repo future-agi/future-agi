@@ -324,49 +324,7 @@ RUN_DROPPED_METADATA = (
 )
 
 
-def create_selected_harness_run(
-    environment: HostedHarnessJob,
-    *,
-    scenario_keys: list[str],
-    trials: int,
-    idempotency_key: str,
-    rerun_of: HostedHarnessJob | None = None,
-    picks: VersionPicks | None = None,
-    fix_run: Any = None,
-    seed: int | None = None,
-    parallelism: int | None = None,
-    verify: bool = False,
-    coding_agent_key_id: str | None = None,
-) -> tuple[HostedHarnessJob, bool]:
-    """Freeze and preallocate one selected-scenario Run for an authored environment.
-
-    A rerun of a pinned run (``rerun_of``) keeps that run's pins; ``picks`` win over
-    both, per piece. A ``fix_run`` marks the Run as one of its check runs, and
-    ``verify`` as a verify of the environment's held-back cases. A Run a coding agent
-    asks for (``coding_agent_key_id``) is stamped with its key, and a held-back case
-    in it is refused as an unknown one. ``seed`` and ``parallelism`` replace the
-    environment's; each defaults to what it has.
-    """
-
-    if environment.environment_id is not None:
-        raise HostedHarnessError(
-            "environment_required",
-            "simulation Runs can only be submitted from an authored environment",
-            status_code=409,
-        )
-    if environment.state != HostedHarnessJob.State.COMPLETED:
-        raise HostedHarnessError(
-            "environment_not_ready",
-            "environment authoring must complete before simulations can run",
-            status_code=409,
-        )
-    metadata = dict((environment.payload or {}).get("metadata") or {})
-    if not environment.run_test_id or not metadata.get("authoring_object_key"):
-        raise HostedHarnessError(
-            "environment_snapshot_missing",
-            "environment has no durable validated snapshot",
-            status_code=409,
-        )
+def _check_selection(scenario_keys: list[str], trials: int) -> None:
     if not scenario_keys:
         raise HostedHarnessError(
             "scenario_selection_empty",
@@ -391,6 +349,53 @@ def create_selected_harness_run(
             "run_too_large",
             f"selected scenarios × trials must not exceed {max_executions}",
             status_code=400,
+        )
+
+
+def create_selected_harness_run(
+    environment: HostedHarnessJob,
+    *,
+    scenario_keys: list[str],
+    trials: int,
+    idempotency_key: str,
+    rerun_of: HostedHarnessJob | None = None,
+    picks: VersionPicks | None = None,
+    fix_run: Any = None,
+    seed: int | None = None,
+    parallelism: int | None = None,
+    verify: bool = False,
+    coding_agent_key_id: str | None = None,
+    split: str | None = None,
+) -> tuple[HostedHarnessJob, bool]:
+    """Freeze and preallocate one selected-scenario Run for an authored environment.
+
+    A rerun of a pinned run (``rerun_of``) keeps that run's pins; ``picks`` win over
+    both, per piece. A ``fix_run`` marks the Run as one of its check runs, and
+    ``verify`` as a verify of the environment's held-back cases. A Run a coding agent
+    asks for (``coding_agent_key_id``) is stamped with its key, and a held-back case
+    in it is refused as an unknown one. ``seed`` and ``parallelism`` replace the
+    environment's; each defaults to what it has. A ``split`` runs that split of the
+    release locking the pinned versions: the given scenarios, else all of it.
+    """
+
+    if environment.environment_id is not None:
+        raise HostedHarnessError(
+            "environment_required",
+            "simulation Runs can only be submitted from an authored environment",
+            status_code=409,
+        )
+    if environment.state != HostedHarnessJob.State.COMPLETED:
+        raise HostedHarnessError(
+            "environment_not_ready",
+            "environment authoring must complete before simulations can run",
+            status_code=409,
+        )
+    metadata = dict((environment.payload or {}).get("metadata") or {})
+    if not environment.run_test_id or not metadata.get("authoring_object_key"):
+        raise HostedHarnessError(
+            "environment_snapshot_missing",
+            "environment has no durable validated snapshot",
+            status_code=409,
         )
 
     with transaction.atomic():
@@ -426,6 +431,13 @@ def create_selected_harness_run(
         resolved = resolve_run_pins(
             environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
         )
+        if split is not None:
+            from simulate.services.harness_versioning.releases import (
+                split_scenario_keys,
+            )
+
+            scenario_keys = split_scenario_keys(resolved, split, scenario_keys)
+        _check_selection(scenario_keys, trials)
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
@@ -435,6 +447,7 @@ def create_selected_harness_run(
                 scenario_keys,
                 trials,
                 seed=seed,
+                split=split,
             )
             if replayed is not None:
                 return replayed, False
@@ -677,11 +690,13 @@ def create_selected_harness_run(
             child.environment_version = pins.environment_version
             child.suite_version = pins.suite_version
             child.assembled_bundle = pins.assembled_bundle
+            child.split = split
             pin_fields = [
                 "agent_version",
                 "environment_version",
                 "suite_version",
                 "assembled_bundle",
+                "split",
             ]
         child.save(
             update_fields=[
@@ -1171,9 +1186,10 @@ def _replayed_run(
     scenario_keys: list[str],
     trials: int,
     seed: int | None = None,
+    split: str | None = None,
 ) -> HostedHarnessJob | None:
     """The run an earlier request with this key created, when this one repeats it; a key reused for other versions,
-    scenarios, trials or another seed is refused."""
+    scenarios, trials, another seed or another split is refused."""
     existing = HostedHarnessJob.no_workspace_objects.filter(
         organization_id=environment.organization_id, idempotency_key=idempotency_key
     ).first()
@@ -1201,6 +1217,7 @@ def _replayed_run(
         or metadata.get("selected_scenario_keys") != scenario_keys
         or metadata.get("trials") != trials
         or (seed is not None and existing.seed != seed)
+        or existing.split != split
     ):
         raise HostedHarnessError(
             "idempotency_conflict",

@@ -16,7 +16,11 @@ from rest_framework import serializers
 
 from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import RunTest
-from simulate.serializers.harness_job import RunVersionLabelSerializer
+from simulate.models.harness_versioning import TaskSplit
+from simulate.serializers.harness_job import (
+    RunReleaseLabelSerializer,
+    RunVersionLabelSerializer,
+)
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tracer.serializers.filters import filter_list_field, json_object_field
@@ -196,6 +200,17 @@ class TestExecutionItemResponseSerializer(TrialPassFieldsSerializer):
     pinned_agent_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
     # The run's agent is not the one its environment version was built with.
     agent_differs = serializers.BooleanField(read_only=True)
+    split = serializers.ChoiceField(
+        choices=TaskSplit.choices,
+        read_only=True,
+        allow_null=True,
+        help_text="The release split the run ran; null for the scenarios selected.",
+    )
+    release = RunReleaseLabelSerializer(
+        read_only=True,
+        allow_null=True,
+        help_text="The release of the run's pinned versions; null when none names them.",
+    )
 
 
 class RunTestExecutionsResponseSerializer(serializers.Serializer):

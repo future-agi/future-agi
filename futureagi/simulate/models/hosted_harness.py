@@ -7,6 +7,7 @@ from django.db import models
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
+from simulate.models.harness_versioning import TaskSplit
 from tfc.utils.base_model import BaseModel
 
 # Ceiling on one hosted run; enforced by the DB constraint below and reused by request validation.
@@ -116,6 +117,11 @@ class HostedHarnessJob(BaseModel):
         null=True,
         blank=True,
         related_name="+",
+    )
+    # The release split a run job ran; null for the whole suite. The release is the
+    # one locking its environment and suite versions.
+    split = models.CharField(
+        max_length=8, choices=TaskSplit.choices, null=True, blank=True
     )
     assembled_bundle = models.ForeignKey(
         "simulate.HarnessAssembledBundle",

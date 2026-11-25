@@ -7,6 +7,7 @@ from typing import Any
 from django.conf import settings
 from rest_framework import serializers
 
+from simulate.models.harness_versioning import TaskSplit
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB, MAX_SEED
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
@@ -104,6 +105,14 @@ class RunVersionLabelSerializer(serializers.Serializer):
 
     id = serializers.UUIDField(read_only=True)
     label = serializers.CharField(read_only=True, allow_null=True)
+
+
+class RunReleaseLabelSerializer(serializers.Serializer):
+    """The release of a run's pinned versions, such as "2026.11.1", and whether it
+    still locks them."""
+
+    label = serializers.CharField(read_only=True)
+    locked = serializers.BooleanField(read_only=True)
 
 
 class SecretReferenceSerializer(serializers.Serializer):
@@ -902,10 +911,21 @@ class RunSeedField(serializers.Field[int, Any, str, Any]):
 
 
 class HarnessRunCreateSerializer(serializers.Serializer):
+    # Absent with a split runs every scenario of the split.
     scenario_ids = serializers.ListField(
         child=serializers.CharField(max_length=255),
         allow_empty=False,
         max_length=1000,
+        required=False,
+    )
+    split = serializers.ChoiceField(
+        choices=TaskSplit.choices,
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Run this split of the release that locks the run's versions; absent or null runs the scenarios"
+            " selected."
+        ),
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
     # The run's seed: the same seed draws the same personas and variations again. Absent or null keeps the
@@ -923,6 +943,13 @@ class HarnessRunCreateSerializer(serializers.Serializer):
     environment_version_id = serializers.UUIDField(required=False, allow_null=True)
     suite_version_id = serializers.UUIDField(required=False, allow_null=True)
 
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        if not attrs.get("scenario_ids") and not attrs.get("split"):
+            raise serializers.ValidationError(
+                {"scenario_ids": "Select at least one scenario."}
+            )
+        return attrs
+
 
 class HarnessRunPinnedVersionsSerializer(serializers.Serializer):
     """The versions a run is pinned to; null for a piece it has none of."""
@@ -930,6 +957,15 @@ class HarnessRunPinnedVersionsSerializer(serializers.Serializer):
     agent = RunVersionLabelSerializer(allow_null=True)
     environment = RunVersionLabelSerializer(allow_null=True)
     suite = RunVersionLabelSerializer(allow_null=True)
+    split = serializers.ChoiceField(
+        choices=TaskSplit.choices,
+        allow_null=True,
+        help_text="The release split the run runs; null for the scenarios selected.",
+    )
+    release = RunReleaseLabelSerializer(
+        allow_null=True,
+        help_text="The release of the environment and suite versions; null when none names them.",
+    )
 
 
 class HarnessRunWarningSerializer(serializers.Serializer):

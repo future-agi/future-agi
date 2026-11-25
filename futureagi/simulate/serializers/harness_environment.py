@@ -19,6 +19,7 @@ from simulate.constants.harness_environment import (
 from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.constants.scenario_faults import FAULT_MODES
 from simulate.models import HarnessNudge, HostedHarnessJob
+from simulate.models.harness_versioning import TaskSplit
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
     HarnessAgentConfigChangeSerializer,
@@ -1455,6 +1456,11 @@ class HarnessRunPlanQuerySerializer(serializers.Serializer):
         allow_blank=True,
         help_text="The scenarios the run would select, comma-separated; absent or blank selects every scenario.",
     )
+    split = serializers.ChoiceField(
+        choices=TaskSplit.choices,
+        required=False,
+        help_text="The release split the run would run; absent previews the scenarios selected.",
+    )
 
     def validate_scenario_keys(self, value: str) -> list[str] | None:
         keys = [key.strip() for key in value.split(",") if key.strip()]
@@ -1561,10 +1567,11 @@ class HarnessComparePairSerializer(serializers.Serializer):
 
 class HarnessCompareSummarySerializer(serializers.Serializer):
     paired = serializers.IntegerField()
-    improved = serializers.IntegerField()
-    regressed = serializers.IntegerField()
-    no_meaningful_change = serializers.IntegerField()
-    inconclusive = serializers.IntegerField()
+    # Null when the runs are not comparable, like each pair's verdict.
+    improved = serializers.IntegerField(allow_null=True)
+    regressed = serializers.IntegerField(allow_null=True)
+    no_meaningful_change = serializers.IntegerField(allow_null=True)
+    inconclusive = serializers.IntegerField(allow_null=True)
     criteria_changed = serializers.IntegerField()
     new = serializers.IntegerField()
     not_applicable = serializers.IntegerField()
@@ -1581,6 +1588,18 @@ class HarnessCompareVersionsSerializer(serializers.Serializer):
     against = HarnessRunPinnedVersionsSerializer(allow_null=True)
 
 
+class HarnessComparabilitySerializer(serializers.Serializer):
+    """Whether the verdicts between the two runs mean better or worse."""
+
+    comparable = serializers.BooleanField(
+        help_text="False when either run ran a split and the two differ in release or split; every verdict "
+        "is then null."
+    )
+    reasons = serializers.ListField(
+        child=serializers.ChoiceField(choices=("different_release", "different_split"))
+    )
+
+
 class HarnessCompareSerializer(serializers.Serializer):
     """Two runs of one environment, scenario by scenario."""
 
@@ -1589,6 +1608,7 @@ class HarnessCompareSerializer(serializers.Serializer):
     pairs = HarnessComparePairSerializer(many=True)
     summary = HarnessCompareSummarySerializer()
     versions = HarnessCompareVersionsSerializer()
+    comparability = HarnessComparabilitySerializer()
 
 
 class HarnessSuiteMemberSerializer(serializers.Serializer):

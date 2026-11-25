@@ -22,6 +22,7 @@ from simulate.models import (
     AgentVersion,
     HarnessAgentVersionRuntime,
     HarnessEnvironmentVersion,
+    HarnessRelease,
     HarnessSuiteMember,
     HarnessSuiteVersion,
     HostedHarnessJob,
@@ -157,6 +158,49 @@ def version_refs(
             if suite_version is not None
             else None
         ),
+    }
+
+
+def pair_releases(
+    pairs: Iterable[tuple[Any, Any]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """The release of each (environment version, suite version) pair as ``{label,
+    locked}``: the locked one, else the newest. A pair no release names is absent."""
+    pairs = {(str(env), str(suite)) for env, suite in pairs if env and suite}
+    if not pairs:
+        return {}
+    rows = (
+        HarnessRelease.no_workspace_objects.filter(
+            environment_version_id__in={env for env, _ in pairs},
+            suite_version_id__in={suite for _, suite in pairs},
+        )
+        .order_by("locked_at")
+        .values_list(
+            "environment_version_id", "suite_version_id", "label", "unlocked_at"
+        )
+    )
+    releases: dict[tuple[str, str], dict[str, Any]] = {}
+    for env, suite, label, unlocked_at in rows:
+        pair = (str(env), str(suite))
+        if pair not in pairs or (
+            releases.get(pair, {}).get("locked") and unlocked_at is not None
+        ):
+            continue
+        releases[pair] = {"label": label, "locked": unlocked_at is None}
+    return releases
+
+
+def split_refs(
+    environment_version: Any, suite_version: Any, split: str | None
+) -> dict[str, Any]:
+    """A run's ``split`` and the release of its pinned pair, or ``None``."""
+    pair = (
+        getattr(environment_version, "id", None),
+        getattr(suite_version, "id", None),
+    )
+    return {
+        "split": split,
+        "release": pair_releases([pair]).get(tuple(str(one) for one in pair)),
     }
 
 
@@ -788,12 +832,13 @@ def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]
     Read from the run job's own pins only, never the environment's defaults; an
     unpinned run is absent, so callers show it as before versioning. The newest live
     pinned job wins, as in the run's results. ``agent_differs`` says the run's agent is
-    not the one its environment version was built with.
+    not the one its environment version was built with. ``split`` is the release split
+    the run ran, and ``release`` the release of its pinned pair, read now.
     """
     ids = [one for one in execution_ids if one]
     if not ids:
         return {}
-    rows = (
+    rows = list(
         HostedHarnessJob.no_workspace_objects.filter(test_execution_id__in=ids)
         .exclude(environment_version__isnull=True, suite_version__isnull=True)
         .order_by("created_at")
@@ -807,8 +852,10 @@ def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]
             "agent_version__version_name",
             "agent_version__version_number",
             "environment_version__agent_version_id",
+            "split",
         )
     )
+    releases = pair_releases((row[1], row[3]) for row in rows)
     return {
         str(execution_id): {
             "environment_version": (
@@ -825,6 +872,8 @@ def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]
                 else None
             ),
             "agent_differs": bool(agent_id and built_with and agent_id != built_with),
+            "split": split,
+            "release": releases.get((str(env_id), str(suite_id))),
         }
         for (
             execution_id,
@@ -836,5 +885,6 @@ def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]
             agent_name,
             agent_number,
             built_with,
+            split,
         ) in rows
     }

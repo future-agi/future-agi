@@ -1257,7 +1257,11 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         hidden = _held_back_from(request, job, query.get("suite_version_id"))
         return Response(
             preview_run(
-                job, picks, scenario_keys=query.get("scenario_keys"), hidden=hidden
+                job,
+                picks,
+                scenario_keys=query.get("scenario_keys"),
+                hidden=hidden,
+                split=query.get("split"),
             )
         )
 
@@ -1339,6 +1343,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 "pairs": comparison["pairs"],
                 "summary": comparison["summary"],
                 "versions": comparison["versions"],
+                "comparability": comparison["comparability"],
             }
         )
 

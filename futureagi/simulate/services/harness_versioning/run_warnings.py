@@ -21,8 +21,10 @@ from simulate.services.harness_versioning.read import (
     _agent_label,
     _label,
     _message_label,
+    split_refs,
     version_refs,
 )
+from simulate.services.harness_versioning.releases import split_scenario_keys
 from simulate.services.harness_versioning.versions import versioning_enabled
 from simulate.services.hosted_harness import (
     ResolvedPins,
@@ -31,7 +33,13 @@ from simulate.services.hosted_harness import (
     resolve_run_pins,
 )
 
-_NO_VERSIONS = {"agent": None, "environment": None, "suite": None}
+_NO_VERSIONS = {
+    "agent": None,
+    "environment": None,
+    "suite": None,
+    "split": None,
+    "release": None,
+}
 
 
 def _warning(code: str, message: str, piece: str | None) -> dict[str, Any]:
@@ -222,12 +230,15 @@ def run_warnings(
     return warnings
 
 
-def _versions(pins: ResolvedPins | None) -> dict[str, Any]:
+def _versions(pins: ResolvedPins | None, split: str | None) -> dict[str, Any]:
     if pins is None:
         return dict(_NO_VERSIONS)
-    return version_refs(
-        pins.agent_version, pins.environment_version, pins.suite_version
-    )
+    return {
+        **version_refs(
+            pins.agent_version, pins.environment_version, pins.suite_version
+        ),
+        **split_refs(pins.environment_version, pins.suite_version, split),
+    }
 
 
 def preview_run(
@@ -236,15 +247,19 @@ def preview_run(
     *,
     scenario_keys: list[str] | None = None,
     hidden: tuple[str, ...] = (),
+    split: str | None = None,
 ) -> dict[str, Any]:
     """The versions a run of ``picks`` would use, its warnings, whether its bundle
     is cached (``None`` when the run is not assembled) and ``run_verdict`` for
-    ``scenario_keys``; without versioning only the verdict is filled."""
+    ``scenario_keys``; without versioning only the verdict is filled. A ``split`` the
+    run could not take is refused as the run would refuse it."""
     from simulate.services.harness_tool_reach import run_verdict
 
     pins = resolve_run_pins(environment, picks=picks)
+    if split is not None:
+        scenario_keys = split_scenario_keys(pins, split, scenario_keys)
     return {
-        "versions": _versions(pins),
+        "versions": _versions(pins, split),
         "warnings": run_warnings(environment, pins),
         "bundle_cached": (
             pins.cached if pins is not None and _assembles(pins) else None
@@ -260,7 +275,7 @@ def created_run(environment: HostedHarnessJob, job: HostedHarnessJob) -> dict[st
     pins = job_pins(environment, job)
     assembly = ((job.payload or {}).get("metadata") or {}).get("assembly") or {}
     return {
-        "versions": _versions(pins),
+        "versions": _versions(pins, job.split),
         "warnings": run_warnings(
             environment, pins, failed_before=bool(assembly.get("failed_before"))
         ),
