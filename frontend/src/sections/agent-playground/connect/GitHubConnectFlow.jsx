@@ -34,6 +34,7 @@ import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { parseGitHubInput } from "src/pages/dashboard/harness/requestMapper";
 import { GITHUB_INSTALL_OUTCOMES } from "src/sections/settings/integrations/constants";
 import Field from "src/sections/simulate/environments/components/Field";
+import RuntimePreflight from "src/sections/simulate/environments/panels/RuntimePreflight";
 import { CONNECT_AGENT_PATH, CONNECTED_AGENTS_PATH } from "../agentsTabs";
 import { GITHUB_SOURCE } from "./connectSources";
 import { AgentDetails, FoundAgents, ManualAgent } from "./ConnectAgentSteps";
@@ -48,7 +49,8 @@ import {
   shownEnvValues,
 } from "./connectDraft";
 import { LogoTile, OptionCard, TextLink } from "./connectBits";
-import { MONO } from "./connectStyles";
+import { ACTION_SX, MONO } from "./connectStyles";
+import useConnectPreflight from "./useConnectPreflight";
 
 const INSTALL_PATH = `${paths.dashboard.settings.integrations}?${new URLSearchParams(
   {
@@ -329,12 +331,15 @@ const defaultName = (picked, source) =>
  * find the agents in it, pick one, give it a name and its values, connect. The
  * agent page then shows it being read.
  */
-export default function GitHubConnectFlow({ outcome }) {
+export default function GitHubConnectFlow({ outcome, onComplete, draftKey }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const github = useGitHubConnection({ refetchOnWindowFocus: true });
   const connection = github.data;
-  const [draft] = useState(() => readConnectDraft() || {});
+  const keepsDraft = !onComplete || !!draftKey;
+  const [draft] = useState(
+    () => (keepsDraft && readConnectDraft(undefined, draftKey)) || {},
+  );
   const [mode, setMode] = useState(draft.mode || "app");
   const [repository, setRepository] = useState(draft.repository || null);
   const [branch, setBranch] = useState(draft.branch || "");
@@ -373,12 +378,15 @@ export default function GitHubConnectFlow({ outcome }) {
       name,
       named,
     };
+    if (!keepsDraft) return;
     if (draftHasProgress(next)) {
-      saveConnectDraft(next);
+      saveConnectDraft(next, undefined, draftKey);
     } else {
-      clearConnectDraft();
+      clearConnectDraft(undefined, draftKey);
     }
   }, [
+    keepsDraft,
+    draftKey,
     mode,
     repository,
     branch,
@@ -396,6 +404,7 @@ export default function GitHubConnectFlow({ outcome }) {
   const startScan = useStartScan();
   const scan = useAgentScan(scanId);
   const connect = useConnectAgent();
+  const check = useConnectPreflight();
   const message = GITHUB_INSTALL_OUTCOMES[outcome];
   const { role } = useAuthContext();
   const canInstall =
@@ -448,8 +457,44 @@ export default function GitHubConnectFlow({ outcome }) {
     manual,
   );
   const credentials = credentialsOf(held, selection);
+  const checkedInputs = JSON.stringify([
+    selection,
+    name,
+    credentials.values,
+    credentials.extra,
+  ]);
+  const resetCheck = check.reset;
+  useEffect(() => {
+    resetCheck();
+  }, [checkedInputs, resetCheck]);
+  const checkSource = () => ({
+    kind: "repo",
+    provider: "github",
+    value: scanSource?.repository,
+    ref: scanSource?.ref || "",
+    subfolder: chosenFolder,
+    commitSha: scan.data?.commitSha || "",
+    entry: chosenEntry,
+    visibility: scanSource?.visibility || "public",
+    installationId: scanSource?.installation_id || null,
+    displayName: name.trim(),
+    envValues: shownEnvValues(credentials, envNames),
+  });
 
   const toDetails = () => {
+    if (onComplete) {
+      onComplete({
+        source: {
+          ...scanSource,
+          ...(chosenFolder ? { subfolder: chosenFolder } : {}),
+          ...(scan.data?.commitSha ? { commitSha: scan.data.commitSha } : {}),
+        },
+        entry: chosenEntry,
+        envNames,
+        name: defaultName(manual ? null : picked, scanSource),
+      });
+      return;
+    }
     if (named !== selection) {
       const chosen = manual
         ? { name: "", subfolder: chosenFolder, envNames: [] }
@@ -590,7 +635,7 @@ export default function GitHubConnectFlow({ outcome }) {
         disabled={!source || !canConnect || startScan.isPending}
         onClick={findAgents}
         endIcon={<Iconify icon="solar:magnifer-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Find agents
       </Button>
@@ -641,7 +686,7 @@ export default function GitHubConnectFlow({ outcome }) {
         disabled={!ready}
         onClick={toDetails}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Next
       </Button>
@@ -682,19 +727,33 @@ export default function GitHubConnectFlow({ outcome }) {
             setHeld((prev) => ({ ...credentialsOf(prev, selection), extra }))
           }
         />
+        <RuntimePreflight
+          status={check.status}
+          canRun={!!name.trim() && canConnect}
+          blockedReason={name.trim() ? null : "Name the agent first."}
+          onRun={() => check.run(checkSource())}
+          result={check.result}
+          error={check.error}
+        />
       </>
     );
-    hint = name.trim()
-      ? "We read the agent once it's connected"
-      : "Name the agent";
+    hint = !name.trim()
+      ? "Name the agent"
+      : !check.ready
+        ? check.status === "done" || check.status === "error"
+          ? "Fix what preflight found, then run it again"
+          : "Run preflight first"
+        : "We read the agent once it's connected";
     action = (
       <Button
         variant="contained"
         color="primary"
-        disabled={!name.trim() || !canConnect || connect.isPending}
+        disabled={
+          !name.trim() || !check.ready || !canConnect || connect.isPending
+        }
         onClick={connectAgent}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Connect agent
       </Button>
@@ -744,4 +803,8 @@ export default function GitHubConnectFlow({ outcome }) {
     </Box>
   );
 }
-GitHubConnectFlow.propTypes = { outcome: PropTypes.string };
+GitHubConnectFlow.propTypes = {
+  outcome: PropTypes.string,
+  onComplete: PropTypes.func,
+  draftKey: PropTypes.string,
+};

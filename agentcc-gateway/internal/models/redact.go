@@ -8,28 +8,6 @@ import (
 // redacted replaces a credential wherever one is found.
 const redacted = "REDACTED"
 
-// sensitiveQueryParams are query parameter names whose value is a credential.
-var sensitiveQueryParams = map[string]bool{
-	"key":              true,
-	"api_key":          true,
-	"apikey":           true,
-	"access_token":     true,
-	"token":            true,
-	"password":         true,
-	"secret":           true,
-	"sig":              true,
-	"signature":        true,
-	"x-goog-api-key":   true,
-	"subscription-key": true,
-
-	// Signed URLs: the signature, the credential it names and the session token.
-	"x-amz-signature":      true,
-	"x-amz-credential":     true,
-	"x-amz-security-token": true,
-	"x-goog-signature":     true,
-	"x-goog-credential":    true,
-}
-
 // trailingPunctuation ends a sentence rather than a URL.
 const trailingPunctuation = `.,;:)]}>"'`
 
@@ -77,7 +55,9 @@ func isSchemeByte(b byte) bool {
 }
 
 func isURLTerminator(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '"' || b == '\'' || b == '<' || b == '>' || b == '\\' || b == ','
+	// Commas and apostrophes can occur inside URL components. Leave surrounding
+	// punctuation to redactURL, which separates it only at the end of the token.
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '"' || b == '<' || b == '>' || b == '\\'
 }
 
 // redactURL rewrites one URL with its credentials removed.
@@ -92,31 +72,24 @@ func redactURL(raw string) string {
 	}
 	raw, trailing := raw[:end], raw[end:]
 
+	raw, _, _ = strings.Cut(raw, "#")
 	u, err := url.Parse(raw)
 	if err != nil {
 		return redactUnparseable(raw) + trailing
 	}
 
 	if u.User != nil {
-		if _, set := u.User.Password(); set {
-			u.User = url.UserPassword(u.User.Username(), redacted)
-		}
+		u.User = url.User(redacted)
 	}
 
-	if q := u.Query(); len(q) > 0 {
-		changed := false
-		for name, values := range q {
-			if !sensitiveQueryParams[strings.ToLower(name)] {
-				continue
-			}
+	if u.RawQuery != "" {
+		q := u.Query()
+		for _, values := range q {
 			for i := range values {
 				values[i] = redacted
 			}
-			changed = true
 		}
-		if changed {
-			u.RawQuery = q.Encode()
-		}
+		u.RawQuery = q.Encode()
 	}
 
 	return u.String() + trailing

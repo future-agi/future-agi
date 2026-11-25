@@ -28,6 +28,25 @@ describe("listHarnessEnvironments", () => {
     axios.get.mockClear();
   });
 
+  it("sends search, status and agent type as snake_case params", async () => {
+    await listHarnessEnvironments({
+      page: 1,
+      limit: 25,
+      search: "refund",
+      status: "failed",
+      agentType: "voice",
+    });
+    expect(axios.get).toHaveBeenCalledWith(BASE, {
+      params: {
+        page: 1,
+        limit: 25,
+        search: "refund",
+        status: "failed",
+        agent_type: "voice",
+      },
+    });
+  });
+
   it("filters to one agent's environments when asked", async () => {
     await listHarnessEnvironments({
       page: 1,
