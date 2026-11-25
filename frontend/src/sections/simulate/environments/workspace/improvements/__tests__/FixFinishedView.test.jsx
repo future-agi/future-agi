@@ -102,7 +102,7 @@ const wrap = (ui) => (
 );
 const renderUi = (ui) => render(wrap(ui));
 const renderPage = (fixId) =>
-  renderUi(<FixRunPage envId="env-1" fixId={fixId} />);
+  renderUi(<FixRunPage fixId={fixId} />);
 
 const shipPosts = () =>
   axios.post.mock.calls.filter(([url]) =>

@@ -11,7 +11,6 @@ export default function WorkspaceImprovementDetail() {
   return (
     <FixRunPage
       key={fixId}
-      envId={env.id}
       fixId={fixId}
       runTestId={env.platform?.runTestId}
     />

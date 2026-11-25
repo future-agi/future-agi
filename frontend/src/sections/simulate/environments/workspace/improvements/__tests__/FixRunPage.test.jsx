@@ -69,7 +69,7 @@ function renderPage(fixId, { runTestId } = {}) {
     <QueryClientProvider client={client}>
       <SnackbarProvider>
         <MemoryRouter>
-          <FixRunPage envId="env-1" fixId={fixId} runTestId={runTestId} />
+          <FixRunPage fixId={fixId} runTestId={runTestId} />
         </MemoryRouter>
       </SnackbarProvider>
     </QueryClientProvider>,
@@ -237,6 +237,19 @@ describe("FixRunPage", () => {
     expect(screen.queryByText(/S-1A2B3C4D/)).toBeNull();
     // Nor is the environment named twice.
     expect(screen.getAllByText(/new env/)).toHaveLength(1);
+  });
+
+  it("crumbs the epoch's own environment, the one it names", () => {
+    pin({ environment_id: "env-2" });
+    renderPage("fix-search");
+    expect(screen.getByTestId("epoch-environment-crumb")).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-2",
+    );
+    expect(screen.getByTestId("epoch-epochs-crumb")).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-2?tab=improvements",
+    );
   });
 
   it("links an issue's epoch to its issue by title", () => {
