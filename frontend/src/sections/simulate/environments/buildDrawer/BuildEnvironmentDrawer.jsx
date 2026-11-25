@@ -19,10 +19,12 @@ import {
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import SideDrawer from "../components/SideDrawer";
 import DrawerCatalog from "./DrawerCatalog";
 import ConnectSection from "./ConnectSection";
-import { connectItemsFor } from "./buildDrawerCatalog";
+import { CATALOG_ITEMS, connectItemsFor } from "./buildDrawerCatalog";
+import { AGENT_WAY_PREFIX, clearBuildDrafts } from "./buildDraft";
 import {
   ConnectModeContext,
   ConnectNewAgentContext,
@@ -39,6 +41,7 @@ import { QuietTag } from "./starts/startBits";
 import { SANDBOX_ITEM, SCRATCH_ITEM, worldItem } from "./starts/startItems";
 
 const DRAWER_WIDTH = 960;
+const SHOW_BUILD_FROM_SCRATCH = false;
 
 const CloseButton = forwardRef(function CloseButton(
   { label, onClick, disabled, icon = "solar:close-linear" },
@@ -86,13 +89,21 @@ const titleOf = (layer) =>
  * drawer. While a build is being created nothing closes, so its hand-off
  * to the environment page always runs.
  */
-export default function BuildEnvironmentDrawer({ open, onClose }) {
+export default function BuildEnvironmentDrawer({
+  open,
+  onClose,
+  way = null,
+  onWayChange,
+}) {
   // { kind: "setup", item, at, connect? } or { kind: "connect", modality,
   // onConnected, at }. `at` keys a layer, so opening a way again starts fresh.
   const [layers, setLayers] = useState([]);
   // "catalog", or "worlds" while browsing every prebuilt world.
   const [view, setView] = useState("catalog");
   const [busy, setBusy] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [agentWay, setAgentWay] = useState(null);
+  const [resumeFrom, setResumeFrom] = useState(null);
   // Agents connected from here, which the agent pickers list first.
   const [samples, setSamples] = useState([]);
   const {
@@ -114,7 +125,10 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
     const at = nextAt.current;
     setLayers((ls) => [...ls, { ...layer, at }]);
   }, []);
-  const pick = (it) => push({ kind: "setup", item: it });
+  const pick = (it) => {
+    clearBuildDrafts(it.id);
+    push({ kind: "setup", item: it });
+  };
   const requestConnect = useCallback(
     ({ modality = null, onConnected }) =>
       push({ kind: "connect", modality, onConnected }),
@@ -165,10 +179,19 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
   }, [topAt, count]);
 
   const finish = () => {
+    clearBuildDrafts();
     setLayers([]);
     setView("catalog");
     setSamples([]);
+    setAgentWay(null);
+    setResumeFrom(null);
+    setConfirmDiscard(false);
     onClose();
+  };
+  const requestClose = () => {
+    if (busy) return;
+    if (live.length || agentWay) setConfirmDiscard(true);
+    else finish();
   };
   const back = () => {
     if (busy || !top) return;
@@ -190,9 +213,28 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
     }
     finish();
   };
-  const closeAll = () => {
-    if (!busy) finish();
-  };
+  const closeAll = requestClose;
+
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      resumed.current = false;
+      return;
+    }
+    if (resumed.current) return;
+    resumed.current = true;
+    setResumeFrom(way);
+    const item = way && CATALOG_ITEMS.find((it) => it.id === way);
+    if (item) push({ kind: "setup", item });
+  }, [open, way, push]);
+
+  const setupWay = live.find((l) => l.kind === "setup")?.item?.id || "";
+  const currentWay = setupWay || agentWay || "";
+  useEffect(() => {
+    if (open && resumed.current && currentWay !== (way ?? "")) {
+      onWayChange?.(currentWay);
+    }
+  }, [open, way, currentWay, onWayChange]);
 
   const layerHeader = (layer) => {
     const index = live.indexOf(layer);
@@ -298,16 +340,18 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
             then start from its own world or one of these.
           </Typography>
         </Box>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          onClick={() => pick(SCRATCH_ITEM)}
-          startIcon={<Iconify icon="solar:document-add-linear" width={14} />}
-          sx={{ ...BTN_SX, flexShrink: 0 }}
-        >
-          Build from scratch
-        </Button>
+        {SHOW_BUILD_FROM_SCRATCH && (
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={() => pick(SCRATCH_ITEM)}
+            startIcon={<Iconify icon="solar:document-add-linear" width={14} />}
+            sx={{ ...BTN_SX, flexShrink: 0 }}
+          >
+            Build from scratch
+          </Button>
+        )}
         <CloseButton label="Close" onClick={closeAll} />
       </Stack>
     );
@@ -326,7 +370,18 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
         onOpenSandbox={() => pick(SANDBOX_ITEM)}
       />
     ) : (
-      <DrawerCatalog onPick={pick} onBrowseWorlds={() => setView("worlds")} />
+      <DrawerCatalog
+        onPick={pick}
+        onBrowseWorlds={() => setView("worlds")}
+        resumeAgentId={
+          resumeFrom?.startsWith(AGENT_WAY_PREFIX)
+            ? resumeFrom.slice(AGENT_WAY_PREFIX.length)
+            : null
+        }
+        onAgentDialog={(id) =>
+          setAgentWay(id ? `${AGENT_WAY_PREFIX}${id}` : null)
+        }
+      />
     );
   const scrollSx = { flex: 1, minHeight: 0, overflow: "auto" };
 
@@ -378,7 +433,14 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
       };
 
   return (
-    <SideDrawer open={open} onClose={close} width={DRAWER_WIDTH} hideClose>
+    <SideDrawer
+      open={open}
+      onClose={(_event, reason) =>
+        reason === "backdropClick" ? requestClose() : close()
+      }
+      width={DRAWER_WIDTH}
+      hideClose
+    >
       <ConnectNewAgentContext.Provider value={connectApi}>
         <Box
           ref={stageRef}
@@ -437,10 +499,33 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
           ))}
         </Box>
       </ConnectNewAgentContext.Provider>
+      <ConfirmDialog
+        open={confirmDiscard}
+        onClose={() => setConfirmDiscard(false)}
+        title="Discard this environment?"
+        content={
+          <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
+            Changes will be discarded. What you entered for this environment
+            won&apos;t be kept.
+          </Typography>
+        }
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={finish}
+          >
+            Discard
+          </Button>
+        }
+      />
     </SideDrawer>
   );
 }
 BuildEnvironmentDrawer.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
+  way: PropTypes.string,
+  onWayChange: PropTypes.func,
 };

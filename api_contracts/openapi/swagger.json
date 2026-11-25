@@ -91503,6 +91503,7 @@
                 "created_at",
                 "enabled",
                 "type",
+                "can_switch",
                 "expires_at",
                 "is_expired"
             ],
@@ -91547,6 +91548,10 @@
                     "title": "Type",
                     "type": "string",
                     "minLength": 1
+                },
+                "can_switch": {
+                    "title": "Can switch",
+                    "type": "boolean"
                 },
                 "expires_at": {
                     "title": "Expires at",

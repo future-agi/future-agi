@@ -12,6 +12,7 @@ import {
   useStartScan,
 } from "src/api/agents/agentConnect";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import RuntimePreflight from "src/sections/simulate/environments/panels/RuntimePreflight";
 import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
 import { AgentDetails, FoundAgents } from "./ConnectAgentSteps";
 import { TextLink } from "./connectBits";
@@ -25,7 +26,8 @@ import {
   shownEnvValues,
 } from "./connectDraft";
 import { UPLOAD_SOURCE } from "./connectSources";
-import { MONO } from "./connectStyles";
+import { ACTION_SX, MONO } from "./connectStyles";
+import useConnectPreflight from "./useConnectPreflight";
 import FolderUploadField from "./FolderUploadField";
 
 const WHOLE_UPLOAD = "Connect the uploaded folder anyway";
@@ -37,15 +39,15 @@ const defaultName = (picked, folder) => folder?.name || picked?.name || "";
  * give it a name and its values, connect. The agent page then shows it being
  * read. A reload comes back to the same step; the upload is never sent twice.
  */
-export default function UploadConnectFlow({ onComplete }) {
+export default function UploadConnectFlow({ onComplete, draftKey }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const { role } = useAuthContext();
   const canConnect =
     !!RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
-  const keepsDraft = !onComplete;
+  const keepsDraft = !onComplete || !!draftKey;
   const [draft] = useState(
-    () => (keepsDraft && readConnectDraft(UPLOAD_SOURCE)) || {},
+    () => (keepsDraft && readConnectDraft(UPLOAD_SOURCE, draftKey)) || {},
   );
   const [folder, setFolder] = useState(draft.folder || null);
   const [uploading, setUploading] = useState(false);
@@ -61,16 +63,27 @@ export default function UploadConnectFlow({ onComplete }) {
   const startScan = useStartScan();
   const scan = useAgentScan(scanId);
   const connect = useConnectAgent();
+  const check = useConnectPreflight();
 
   useEffect(() => {
     if (!keepsDraft) return;
     const next = { stage, folder, scanId, picked, manual, name, named };
     if (draftHasProgress(next)) {
-      saveConnectDraft(next, UPLOAD_SOURCE);
+      saveConnectDraft(next, UPLOAD_SOURCE, draftKey);
     } else {
-      clearConnectDraft(UPLOAD_SOURCE);
+      clearConnectDraft(UPLOAD_SOURCE, draftKey);
     }
-  }, [keepsDraft, stage, folder, scanId, picked, manual, name, named]);
+  }, [
+    keepsDraft,
+    draftKey,
+    stage,
+    folder,
+    scanId,
+    picked,
+    manual,
+    name,
+    named,
+  ]);
 
   const source = folder?.sourceId
     ? { kind: "archive", archive_artifact_id: folder.sourceId }
@@ -104,6 +117,24 @@ export default function UploadConnectFlow({ onComplete }) {
   const chosenEntry = manual ? "" : picked?.entry || "";
   const selection = selectionKey(source, scanId, chosenEntry, manual);
   const credentials = credentialsOf(held, selection);
+  const checkedInputs = JSON.stringify([
+    selection,
+    name,
+    credentials.values,
+    credentials.extra,
+  ]);
+  const resetCheck = check.reset;
+  useEffect(() => {
+    resetCheck();
+  }, [checkedInputs, resetCheck]);
+  const checkSource = () => ({
+    kind: "upload",
+    folderName: folder?.name || "",
+    entry: chosenEntry,
+    archive_artifact_id: folder?.sourceId,
+    displayName: name.trim(),
+    envValues: shownEnvValues(credentials, envNames),
+  });
 
   const toDetails = () => {
     if (onComplete) {
@@ -197,7 +228,7 @@ export default function UploadConnectFlow({ onComplete }) {
         disabled={!source || uploading || !canConnect || startScan.isPending}
         onClick={findAgents}
         endIcon={<Iconify icon="solar:magnifer-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Find agents
       </Button>
@@ -243,7 +274,7 @@ export default function UploadConnectFlow({ onComplete }) {
         disabled={!ready}
         onClick={toDetails}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Next
       </Button>
@@ -271,19 +302,33 @@ export default function UploadConnectFlow({ onComplete }) {
             setHeld((prev) => ({ ...credentialsOf(prev, selection), extra }))
           }
         />
+        <RuntimePreflight
+          status={check.status}
+          canRun={!!name.trim() && canConnect}
+          blockedReason={name.trim() ? null : "Name the agent first."}
+          onRun={() => check.run(checkSource())}
+          result={check.result}
+          error={check.error}
+        />
       </>
     );
-    hint = name.trim()
-      ? "We read the agent once it's connected"
-      : "Name the agent";
+    hint = !name.trim()
+      ? "Name the agent"
+      : !check.ready
+        ? check.status === "done" || check.status === "error"
+          ? "Fix what preflight found, then run it again"
+          : "Run preflight first"
+        : "We read the agent once it's connected";
     action = (
       <Button
         variant="contained"
         color="primary"
-        disabled={!name.trim() || !canConnect || connect.isPending}
+        disabled={
+          !name.trim() || !check.ready || !canConnect || connect.isPending
+        }
         onClick={connectAgent}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Connect agent
       </Button>
@@ -333,4 +378,5 @@ export default function UploadConnectFlow({ onComplete }) {
 
 UploadConnectFlow.propTypes = {
   onComplete: PropTypes.func,
+  draftKey: PropTypes.string,
 };

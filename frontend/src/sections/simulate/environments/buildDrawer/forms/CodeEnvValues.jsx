@@ -291,7 +291,11 @@ export default function CodeEnvValues({
                     }
                     placeholder={secret ? "Paste the key" : "Value"}
                     autoComplete={secret ? "new-password" : "off"}
-                    inputProps={{ spellCheck: false, "aria-label": name }}
+                    inputProps={{
+                      spellCheck: false,
+                      "aria-label": name,
+                      "data-testid": `env-value-${name}`,
+                    }}
                     sx={monoInputSx}
                   />
                 </Box>
@@ -334,7 +338,11 @@ export default function CodeEnvValues({
               addName();
             }
           }}
-          inputProps={{ spellCheck: false, "aria-label": "Another name" }}
+          inputProps={{
+            spellCheck: false,
+            "aria-label": "Another name",
+            "data-testid": "env-name-draft",
+          }}
           sx={{ maxWidth: 260, ...monoInputSx }}
         />
         <Button
@@ -348,17 +356,19 @@ export default function CodeEnvValues({
         </Button>
       </Stack>
 
-      <Box sx={{ mt: 1.5 }}>
-        <DrawerEnvValues
-          bare
-          envText=""
-          onEnvText={() => {}}
-          egress={egress}
-          onEgress={onEgress}
-          secretFiles={secretFiles}
-          onSecretFiles={onSecretFiles}
-        />
-      </Box>
+      {onEgress && onSecretFiles && (
+        <Box sx={{ mt: 1.5 }}>
+          <DrawerEnvValues
+            bare
+            envText=""
+            onEnvText={() => {}}
+            egress={egress}
+            onEgress={onEgress}
+            secretFiles={secretFiles}
+            onSecretFiles={onSecretFiles}
+          />
+        </Box>
+      )}
     </Box>
   );
 }
@@ -370,7 +380,7 @@ CodeEnvValues.propTypes = {
   extra: PropTypes.arrayOf(PropTypes.string).isRequired,
   onExtra: PropTypes.func.isRequired,
   egress: PropTypes.string,
-  onEgress: PropTypes.func.isRequired,
+  onEgress: PropTypes.func,
   secretFiles: PropTypes.array,
-  onSecretFiles: PropTypes.func.isRequired,
+  onSecretFiles: PropTypes.func,
 };

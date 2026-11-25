@@ -263,6 +263,11 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     )
     # The files whose rule entries #4296 retired: their suites now run.
     RETIRED = json.loads((CI / "fixtures/runtime-skips-retired.json").read_text())
+    # Since #4296 this file's tests run against the CI ClickHouse sidecar,
+    # which they seed themselves, so "no spans to plan against" cannot happen
+    # on CI: it skipped 0 times in #4296's own run and its landing merge group
+    # (artifact backend-runtime-skips 14893650282). Its rule is gone as well.
+    HOURLY = "tracer/tests/test_hourly_aggregate_state_route_live_ch.py"
     # The measurement date; rules are read as of it so these tests do not age.
     DAY = datetime.date(2026, 11, 22)
 
@@ -376,11 +381,15 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         # skips the tests that import the private package, under its own names.
         # It was measured before #4296 made the retired suites run; their skips
         # there had the same reasons and counts as on the internal run, and
-        # none of those files imports the private package. They are left out
-        # until a merge group after #4296 is measured.
+        # none of those files imports the private package. They are left out,
+        # and so are the hourly-state file's 2 skips (see HOURLY). What is
+        # kept is exactly what #4296's landing merge group measured, file by
+        # file: 274 skips (artifact backend-runtime-skips 14893650282).
         self.assertEqual(self.MEASURED_OSS["total"], 1818)
         retired = set(self.RETIRED["files"])
         self.assertEqual(len(retired), 46)
+        self.assertNotIn(self.HOURLY, retired)
+        retired.add(self.HOURLY)
         kept = {
             **self.MEASURED_OSS,
             "pairs": [
@@ -388,7 +397,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             ],
         }
         dropped = self.MEASURED_OSS["total"] - sum(p["tests"] for p in kept["pairs"])
-        self.assertEqual(dropped, 1542)
+        self.assertEqual(dropped, 1542 + 2)
         error, report, _ = self.report(
             self.measured_rows(kept, runs="oss"),
             files={pair["file"] for pair in kept["pairs"]},
@@ -402,7 +411,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def test_retired_suites_have_no_rule(self):
         # A skip in a file whose suite now runs is unexpected again.
         rules = self.rules()
-        for path in self.RETIRED["files"]:
+        for path in [*self.RETIRED["files"], self.HOURLY]:
             with self.subTest(path=path):
                 self.assertFalse(any(path in rule["files"] for rule in rules))
 
@@ -661,11 +670,30 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertIn("(internal runs) matched nothing", report["rule_problems"][0])
 
     def test_a_varying_rule_is_an_upper_bound_from_the_inventory(self):
-        rules = self.rules()
-        (rule,) = [r for r in rules if "varies" in r]
-        ((path, bound),) = rule["files"].items()
-        self.assertEqual(bound, 8)  # the file's collected tests on 22 Nov
+        # No committed rule varies today: the last one (the hourly-state file)
+        # went once its tests ran on the CI sidecar. The mechanism stays, so
+        # it is exercised with a rule of the same shape.
+        self.assertFalse(any("varies" in rule for rule in self.rules()))
+        path = "tracer/tests/test_shared_table_example.py"
         reason = "Skipped: test ClickHouse has no spans to plan against"
+        rules = self.rules(
+            self.rule_file(
+                [
+                    {
+                        "files": {path: 8},
+                        "varies": "The skip depends on spans other tests leave.",
+                        "reason": f"^{re.escape(reason)}$",
+                        "why": "Earlier tests on the shard decide it.",
+                        "issue": "TH-1",
+                        "owner": "tracer",
+                        "expires": "2027-01-06",
+                    }
+                ]
+            )
+        )
+        (rule,) = rules
+        ((path, bound),) = rule["files"].items()
+        self.assertEqual(bound, 8)
         collected = {path: bound}
         for skipped, unexpected, problems in (
             (0, 0, 0),
@@ -677,6 +705,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             with self.subTest(skipped=skipped):
                 error, report, out = self.report(
                     self.rows([(path, reason)] * skipped),
+                    rules,
                     files={path},
                     collected=collected,
                 )
@@ -687,7 +716,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                     self.assertIn("above its bound 8", report["rule_problems"][0])
         self.assertIn("(of up to 8 collected)", out)
         # The bound is what the inventory collects there, checked on each run.
-        _, report, _ = self.report([], files={path}, collected={path: 9})
+        _, report, _ = self.report([], rules, files={path}, collected={path: 9})
         self.assertEqual(
             report["rule_problems"],
             [
@@ -695,7 +724,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             ],
         )
         # A run that did not schedule the file says nothing about it.
-        _, report, _ = self.report([], files=set(), collected={})
+        _, report, _ = self.report([], rules, files=set(), collected={})
         self.assertEqual(report["rule_problems"], [])
 
     def test_counts_are_judged_only_on_a_complete_run(self):
@@ -829,6 +858,34 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             self.assertTrue(checker.malformed_inventory(bad), bad)
 
 
+class JobPrefixTest(unittest.TestCase):
+    """The shard job names a run's receipts are looked up under."""
+
+    def test_without_a_caller_prefix_today_s_names_hold(self):
+        self.assertEqual(checker.job_prefix({"GITHUB_EVENT_NAME": "pull_request"}), "")
+        self.assertEqual(checker.job_prefix({"GITHUB_EVENT_NAME": "push"}), "")
+        self.assertEqual(
+            checker.job_prefix({"GITHUB_EVENT_NAME": "merge_group"}), "backend / "
+        )
+        # The workflow passes the input even when nobody set it.
+        self.assertEqual(
+            checker.job_prefix(
+                {"GITHUB_EVENT_NAME": "merge_group", "BACKEND_JOB_PREFIX": ""}
+            ),
+            "backend / ",
+        )
+
+    def test_a_caller_s_prefix_is_used_and_must_be_a_job_name(self):
+        env = {"GITHUB_EVENT_NAME": "pull_request"}
+        self.assertEqual(
+            checker.job_prefix({**env, "BACKEND_JOB_PREFIX": "retarget-backend / "}),
+            "retarget-backend / ",
+        )
+        for bad in ("retarget-backend", " / ", "a / b / ", "x/ ", "x\n / "):
+            with self.subTest(prefix=bad), self.assertRaises(ValueError):
+                checker.job_prefix({**env, "BACKEND_JOB_PREFIX": bad})
+
+
 class ProducerIdentityTest(unittest.TestCase):
     def test_partial_rerun_needs_the_latest_success_for_each_leg(self):
         matrix = json.dumps(
@@ -846,6 +903,8 @@ class ProducerIdentityTest(unittest.TestCase):
             "GITHUB_RUN_ID": "100",
             "GITHUB_REPOSITORY": "fixture/repo",
             "GITHUB_SHA": "c" * 40,
+            # Not the runner's own attempt: these listings are attempt-less.
+            "GITHUB_RUN_ATTEMPT": "",
             "SHARDS": matrix,
         }
         common = {
@@ -901,9 +960,52 @@ class ProducerIdentityTest(unittest.TestCase):
             ),
             patch.object(checker, "verify_artifact", side_effect=artifact),
             patch.object(checker, "run_date", return_value=datetime.date(2026, 11, 22)),
+            # A producer the listings do not show is read again after a pause.
+            patch.object(checker.time, "sleep") as slept,
             contextlib.redirect_stdout(io.StringIO()),
         ):
             checker.verify_run()
+            self.assertFalse(slept.called)  # Everything listed: no wait.
+
+            # The listings show shard 2 only from their second read: it
+            # qualifies after one pause. Shown nowhere, it fails closed by name.
+            def lagging(reads):
+                def pages(_, field):
+                    reads.append(field)
+                    if len(reads) > 2:
+                        return jobs if field == "jobs" else artifacts
+                    if field == "jobs":
+                        return [j for j in jobs if j["name"] != "pytest shard 2"]
+                    return artifacts[:1]
+
+                return pages
+
+            with patch.object(checker, "pages", side_effect=lagging([])):
+                checker.verify_run()
+            self.assertEqual([c.args[0] for c in slept.call_args_list], [5])
+            slept.reset_mock()
+            with (
+                # The listings never show shard 2.
+                patch.object(
+                    checker,
+                    "pages",
+                    side_effect=lambda endpoint, field: (
+                        [j for j in jobs if j["name"] != "pytest shard 2"]
+                        if field == "jobs"
+                        else artifacts[:1]
+                    ),
+                ),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "after 90 s of reading, the run's listings still do not show"
+                    " job 'pytest shard 2', artifact collected-ids-main-2",
+                ),
+            ):
+                checker.verify_run()
+            self.assertEqual(
+                [c.args[0] for c in slept.call_args_list], list(checker.SETTLE_PAUSES)
+            )
+            slept.reset_mock()
             with patch.dict(os.environ, GITHUB_EVENT_NAME="merge_group"):
                 with self.assertRaisesRegex(ValueError, "missing producer"):
                     checker.verify_run()
@@ -1028,6 +1130,27 @@ class ProducerIdentityTest(unittest.TestCase):
                         with self.assertRaises((ValueError, KeyError)):
                             checker.verify_artifact(artifact, "repo")
 
+    def test_an_extra_services_receipt_changes_no_verdict(self):
+        # service_receipt.py adds services.json to the same artifact. The
+        # verifier reads named members only, so the result is identical.
+        results = []
+        for extra in (False, True):
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w") as archive:
+                archive.writestr("receipt.json", '{"group":1,"suite":"main"}')
+                archive.writestr("terminal.jsonl", "[]\n")
+                archive.writestr("collected-ids.txt", "some-id\n")
+                archive.writestr("eligible.json", "[]")
+                archive.writestr("inventory-exit.txt", b"0\n")
+                if extra:
+                    archive.writestr("services.json", '{"schema":1,"services":{}}\n')
+            raw = stream.getvalue()
+            artifact = {"id": 1, "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}
+            done = subprocess.CompletedProcess([], 0, stdout=raw, stderr=b"")
+            with patch.object(checker.subprocess, "run", return_value=done):
+                results.append(checker.verify_artifact(artifact, "repo"))
+        self.assertEqual(results[0], results[1])
+
     def test_raw_archive_digest_is_mandatory(self):
         wrong = subprocess.CompletedProcess([], 0, stdout=b"wrong bytes", stderr=b"")
         with (
@@ -1038,6 +1161,328 @@ class ProducerIdentityTest(unittest.TestCase):
             checker.verify_artifact({"id": 1, "digest": "sha256:other"}, "fixture/repo")
         # A wrong digest is fetched again from scratch before failing closed.
         self.assertEqual([c.args[0] for c in slept.call_args_list], [2, 4, 8])
+
+    def test_a_full_rerun_reads_each_shard_s_artifact_from_its_attempt(self):
+        """Run 45532046719, attempt 2 (a full re-run), listed
+        collected-ids-metrics-11 twice: attempt 1's upload (02:54:44Z, inside
+        02:19:38-02:54:51Z) and attempt 2's (03:20:38Z, inside
+        02:57:55-03:20:43Z). Each leg qualifies on its own attempt's artifact
+        and stays exactly-once within that attempt."""
+        matrix = json.dumps(
+            {
+                "include": [
+                    {"suite": "main", "name": "pytest", "group": n} for n in (1, 2)
+                ]
+            }
+        )
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        env = {
+            "RUNNER_TEMP": temp,
+            "GITHUB_STEP_SUMMARY": str(pathlib.Path(temp) / "summary"),
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_RUN_ID": "100",
+            "GITHUB_REPOSITORY": "fixture/repo",
+            "GITHUB_SHA": "c" * 40,
+            "GITHUB_RUN_ATTEMPT": "2",
+            "SHARDS": matrix,
+        }
+        common = {
+            "sha": env["GITHUB_SHA"],
+            "run": "100",
+            "suite": "main",
+            "ee": "oss",
+            "db": "schema",
+            "durations": "0" * 64,
+            "temporal": "1" * 64,
+            "matrix": hashlib.sha256(matrix.encode()).hexdigest(),
+        }
+        windows = {
+            1: ("2026-11-25T02:19:38Z", "2026-11-25T02:54:51Z"),
+            2: ("2026-11-25T02:57:55Z", "2026-11-25T03:20:43Z"),
+        }
+        jobs = [
+            {
+                "name": f"pytest shard {group}",
+                "run_attempt": attempt,
+                "conclusion": "success",
+                "started_at": windows[attempt][0],
+                "completed_at": windows[attempt][1],
+            }
+            for group in (1, 2)
+            for attempt in (1, 2)
+        ]
+        # Shard 1 lists one artifact (attempt 2's); shard 2 lists both.
+        artifacts = [
+            {
+                "name": "collected-ids-main-1",
+                "id": 11,
+                "digest": "sha256:fixture",
+                "created_at": "2026-11-25T03:19:02Z",
+            },
+            {
+                "name": "collected-ids-main-2",
+                "id": 21,
+                "digest": "sha256:fixture",
+                "created_at": "2026-11-25T02:54:44Z",
+            },
+            {
+                "name": "collected-ids-main-2",
+                "id": 22,
+                "digest": "sha256:fixture",
+                "created_at": "2026-11-25T03:20:38Z",
+            },
+        ]
+        receipts = {
+            11: dict(common, group=1, attempt=2),
+            21: dict(common, group=2, attempt=1),
+            22: dict(common, group=2, attempt=2),
+        }
+        rows = {
+            n: [
+                str(n),
+                f"test_{n}",
+                [["setup", "passed"], ["call", "passed"], ["teardown", "passed"]],
+            ]
+            for n in (1, 2)
+        }
+        downloaded = []
+
+        def artifact(a, repo):
+            downloaded.append(a["id"])
+            group = receipts[a["id"]]["group"]
+            return (
+                receipts[a["id"]],
+                [rows[group]],
+                "same-order",
+                [r[:2] + ["pass"] for r in rows.values()] if group == 1 else None,
+            )
+
+        listed = list(artifacts)
+        with (
+            patch.dict(os.environ, env),
+            patch.object(
+                checker,
+                "pages",
+                side_effect=lambda _, field: jobs if field == "jobs" else listed,
+            ),
+            patch.object(checker, "verify_artifact", side_effect=artifact),
+            patch.object(checker, "run_date", return_value=datetime.date(2026, 11, 25)),
+            patch.object(checker.time, "sleep") as slept,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            # Before this change: "the run does not have exactly one artifact
+            # per planned shard".
+            checker.verify_run()
+            self.assertFalse(slept.called)
+            self.assertEqual(sorted(downloaded), [11, 22])
+            self.assertIn(
+                "main/2: attempt 2, artifact 22 sha256:fixture", output.getvalue()
+            )
+
+            # Still exactly once within the attempt: a second artifact from
+            # attempt 2's own window fails.
+            listed = [*artifacts, dict(artifacts[2], id=23)]
+            with self.assertRaisesRegex(
+                ValueError,
+                "main/2: 2 artifacts from the producing attempt 2, not exactly one",
+            ):
+                checker.verify_run()
+
+            # Only attempt 1's artifact listed: the listings wait for attempt
+            # 2's, then fail closed naming it; attempt 1's is never read.
+            listed = [artifacts[0], artifacts[1], dict(artifacts[1], id=24)]
+            downloaded.clear()
+            with self.assertRaisesRegex(ValueError, "artifact collected-ids-main-2"):
+                checker.verify_run()
+            self.assertNotIn(21, downloaded)
+            self.assertNotIn(24, downloaded)
+
+            # One listed artifact is taken as the leg's (no clock comparison
+            # can fail it), so a lone stale one is read: its receipt names
+            # attempt 1, not the producing attempt 2, and the leg fails closed.
+            listed = [artifacts[0], artifacts[1]]
+            slept.reset_mock()
+            with self.assertRaisesRegex(
+                ValueError, "main/2: absent or superseded producer for main/2"
+            ):
+                checker.verify_run()
+            self.assertFalse(slept.called)
+
+    def test_an_artifact_belongs_to_the_job_that_ran_when_it_was_created(self):
+        job = {
+            "started_at": "2026-11-25T02:57:55Z",
+            "completed_at": "2026-11-25T03:20:43Z",
+        }
+        listed = [
+            {"id": 1, "created_at": "2026-11-25T02:54:44Z"},
+            {"id": 2, "created_at": "2026-11-25T03:20:38Z"},
+            {"id": 3, "created_at": "2026-11-25T03:20:45Z"},  # GitHub rounding
+            {"id": 4, "created_at": "2026-11-25T03:21:00Z"},
+            {"id": 5},
+        ]
+        self.assertEqual([a["id"] for a in checker.produced_by(listed, job)], [2, 3])
+        self.assertEqual(
+            checker.produced_by(listed, {"started_at": job["started_at"]}), []
+        )
+        # One listed artifact is the leg's whatever its time: its receipt must
+        # still name the producing attempt.
+        self.assertEqual(checker.shard_artifacts(listed[:1], job), listed[:1])
+        self.assertEqual(checker.shard_artifacts([], job), [])
+
+
+class ListingSettleTest(unittest.TestCase):
+    """GitHub can list a run's jobs seconds behind the jobs themselves.
+
+    Merge group run 45343675711 read its jobs between 07:30:08 and 07:30:17Z
+    without "backend / metrics shard 4", which had finished at 07:30:04Z; a
+    fresh read shows it. Two of that run's planned metrics legs, as listed.
+    """
+
+    LEGS = {
+        f"collected-ids-metrics-{n}": {
+            "suite": "metrics",
+            "name": "metrics",
+            "group": n,
+        }
+        for n in (3, 4)
+    }
+    PREFIX = "backend / "
+
+    @staticmethod
+    def job(n, attempt=1, finished=True, conclusion="success"):
+        return {
+            "name": f"backend / metrics shard {n}",
+            "run_attempt": attempt,
+            "started_at": "2026-11-24T07:20:00Z",
+            "completed_at": "2026-11-24T07:30:04Z" if finished else None,
+            "conclusion": conclusion if finished else None,
+        }
+
+    @staticmethod
+    def artifact(n):
+        return {"name": f"collected-ids-metrics-{n}", "id": n, "digest": "sha256:x"}
+
+    def settle(self, *rounds, attempt=1):
+        """listings() over these (jobs, artifacts) rounds, the last one repeating."""
+        reads, pauses = [], []
+
+        def pages(endpoint, field):
+            jobs, artifacts = rounds[min(len(reads) // 2, len(rounds) - 1)]
+            reads.append(field)
+            return [dict(row) for row in (jobs if field == "jobs" else artifacts)]
+
+        with (
+            patch.object(checker, "pages", pages),
+            contextlib.redirect_stdout(io.StringIO()) as out,
+        ):
+            jobs, artifacts, missing = checker.listings(
+                "runs/1", self.LEGS, self.PREFIX, attempt, pause=pauses.append
+            )
+        return jobs, artifacts, missing, pauses, reads, out.getvalue()
+
+    def test_a_run_listed_in_full_is_read_once_and_waits_for_nothing(self):
+        full = ([self.job(3), self.job(4)], [self.artifact(3), self.artifact(4)])
+        _, artifacts, missing, pauses, reads, out = self.settle(full)
+        self.assertEqual(
+            (missing, pauses, reads, out), ([], [], ["jobs", "artifacts"], "")
+        )
+        self.assertEqual(
+            sorted(artifacts), ["collected-ids-metrics-3", "collected-ids-metrics-4"]
+        )
+
+    def test_a_producer_the_listings_lag_behind_is_read_again_in_full(self):
+        lagging = ([self.job(3)], [self.artifact(3)])
+        full = ([self.job(3), self.job(4)], [self.artifact(3), self.artifact(4)])
+        jobs, artifacts, missing, pauses, reads, out = self.settle(
+            lagging, lagging, full
+        )
+        self.assertEqual(missing, [])
+        self.assertEqual(pauses, [5, 10])
+        # Both listings, in full, on every read: nothing is kept between reads.
+        self.assertEqual(reads, ["jobs", "artifacts"] * 3)
+        self.assertEqual(jobs["backend / metrics shard 4"], [self.job(4)])
+        self.assertEqual(artifacts["collected-ids-metrics-4"], [self.artifact(4)])
+        self.assertIn(
+            "do not show job 'backend / metrics shard 4', artifact"
+            " collected-ids-metrics-4 yet; reading them again in 5 s",
+            out,
+        )
+
+    def test_a_producer_never_listed_is_still_missing_after_the_pauses(self):
+        lagging = ([self.job(3)], [self.artifact(3)])
+        _, _, missing, pauses, reads, _ = self.settle(lagging)
+        self.assertEqual(
+            missing,
+            ["job 'backend / metrics shard 4'", "artifact collected-ids-metrics-4"],
+        )
+        self.assertEqual(pauses, list(checker.SETTLE_PAUSES))
+        self.assertEqual(sum(pauses), 90)
+        self.assertEqual(len(reads), 2 * (len(checker.SETTLE_PAUSES) + 1))
+
+    def test_only_a_finished_job_of_this_attempt_counts(self):
+        artifacts = [self.artifact(3), self.artifact(4)]
+        for jobs in (
+            # Attempt 2 lists only attempt 1's job for shard 4 so far.
+            [self.job(3, 2), self.job(4, 1)],
+            # Or lists it, but not yet as finished.
+            [self.job(3, 2), self.job(4, 1), self.job(4, 2, finished=False)],
+        ):
+            with self.subTest(jobs=jobs):
+                missing = self.settle((jobs, artifacts), attempt=2)[2]
+                self.assertEqual(missing, ["job 'backend / metrics shard 4'"])
+        # A re-run attempt lists a finished copy of each job it did not re-run.
+        copied = [self.job(3, 2), self.job(4, 1), self.job(4, 2)]
+        self.assertEqual(self.settle((copied, artifacts), attempt=2)[2], [])
+        # Outside Actions the attempt is unknown: the latest job counts.
+        self.assertEqual(self.settle((copied, artifacts), attempt=None)[2], [])
+        unfinished = [self.job(3), self.job(4, 1), self.job(4, 2, finished=False)]
+        self.assertEqual(
+            self.settle((unfinished, artifacts), attempt=None)[2],
+            ["job 'backend / metrics shard 4'"],
+        )
+
+    def test_an_unsuccessful_producer_s_artifact_is_not_waited_for(self):
+        # A shard that failed before its upload never lists an artifact, and
+        # the verdict fails on it anyway: nothing to wait for.
+        for conclusion in ("failure", "cancelled", "timed_out"):
+            with self.subTest(conclusion=conclusion):
+                jobs = [self.job(3), self.job(4, conclusion=conclusion)]
+                _, _, missing, pauses, _, _ = self.settle((jobs, [self.artifact(3)]))
+                self.assertEqual((missing, pauses), ([], []))
+        # Its job not yet listed as finished: still waited for, with its artifact.
+        jobs = [self.job(3), self.job(4, finished=False)]
+        missing = self.settle((jobs, [self.artifact(3)]))[2]
+        self.assertEqual(
+            missing,
+            ["job 'backend / metrics shard 4'", "artifact collected-ids-metrics-4"],
+        )
+
+    def test_another_attempt_s_artifact_of_the_same_name_is_not_this_one(self):
+        def job(n, attempt, start, end):
+            return dict(self.job(n, attempt), started_at=start, completed_at=end)
+
+        jobs = [
+            job(3, 2, "2026-11-25T02:57:55Z", "2026-11-25T03:20:43Z"),
+            job(4, 2, "2026-11-25T02:57:55Z", "2026-11-25T03:20:43Z"),
+        ]
+        old = dict(self.artifact(4), id=40, created_at="2026-11-25T02:54:44Z")
+        new = dict(self.artifact(4), id=41, created_at="2026-11-25T03:20:38Z")
+        three = dict(self.artifact(3), created_at="2026-11-25T03:10:00Z")
+        # Attempt 1's artifact and a second one listed, neither from attempt 2.
+        stale = dict(old, id=42, created_at="2026-11-25T02:50:00Z")
+        missing = self.settle((jobs, [three, old, stale]), attempt=2)[2]
+        self.assertEqual(missing, ["artifact collected-ids-metrics-4"])
+        lagging = (jobs, [three, old, stale])
+        full = (jobs, [three, old, new])
+        _, _, missing, pauses, _, _ = self.settle(lagging, full, attempt=2)
+        self.assertEqual((missing, pauses), ([], [5]))
+
+    def test_the_run_attempt_comes_from_actions(self):
+        self.assertEqual(checker.run_attempt({"GITHUB_RUN_ATTEMPT": "3"}), 3)
+        for environ in ({}, {"GITHUB_RUN_ATTEMPT": ""}, {"GITHUB_RUN_ATTEMPT": "0"}):
+            with self.subTest(environ=environ):
+                self.assertIsNone(checker.run_attempt(environ))
+        self.assertIsNone(checker.run_attempt({"GITHUB_RUN_ATTEMPT": "x"}))
 
 
 class GhApiRetryTest(unittest.TestCase):

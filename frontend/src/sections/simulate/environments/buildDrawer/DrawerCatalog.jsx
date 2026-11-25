@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useConnectedAgents } from "src/api/agents/connectedAgents";
@@ -209,7 +209,7 @@ AgentTile.propTypes = {
 };
 
 // The agents already connected. Each opens Build environment for itself.
-function YourAgentsSection() {
+function YourAgentsSection({ resumeAgentId, onAgentDialog }) {
   const { data, isLoading } = useConnectedAgents({
     page: 0,
     pageSize: AGENTS_LIMIT,
@@ -218,6 +218,17 @@ function YourAgentsSection() {
   const [type, setType] = useState("all");
   const [showAll, setShowAll] = useState(false);
   const [buildFor, setBuildFor] = useState(null);
+  const resumed = useRef(false);
+  const openFor = (agent) => {
+    setBuildFor(agent);
+    onAgentDialog?.(agent?.id || null);
+  };
+  useEffect(() => {
+    if (resumed.current || !resumeAgentId || !agents.length) return;
+    resumed.current = true;
+    const agent = agents.find((a) => a.id === resumeAgentId);
+    if (agent) openFor(agent);
+  });
   const count = (id) =>
     id === "all"
       ? agents.length
@@ -290,7 +301,7 @@ function YourAgentsSection() {
             }}
           >
             {shown.map((a) => (
-              <AgentTile key={a.id} agent={a} onClick={() => setBuildFor(a)} />
+              <AgentTile key={a.id} agent={a} onClick={() => openFor(a)} />
             ))}
           </Box>
         ) : (
@@ -303,7 +314,7 @@ function YourAgentsSection() {
         <BuildEnvironmentDialog
           agent={buildFor}
           open
-          onClose={() => setBuildFor(null)}
+          onClose={() => openFor(null)}
         />
       )}
     </Box>
@@ -319,7 +330,12 @@ const SHOW_BUILD_FROM_CODE = false;
 const SHOW_PREBUILT_WORLDS = true;
 const SHOW_MCP_WORLD = false;
 
-export default function DrawerCatalog({ onPick, onBrowseWorlds }) {
+export default function DrawerCatalog({
+  onPick,
+  onBrowseWorlds,
+  resumeAgentId = null,
+  onAgentDialog,
+}) {
   return (
     <Stack spacing={4} sx={{ pb: 4 }}>
       {SHOW_BUILD_FROM_CODE && (
@@ -336,11 +352,21 @@ export default function DrawerCatalog({ onPick, onBrowseWorlds }) {
         onPick={onPick}
         onPickMcp={SHOW_MCP_WORLD ? () => onPick(MCP_ITEM) : undefined}
       />
-      <YourAgentsSection />
+      <YourAgentsSection
+        resumeAgentId={resumeAgentId}
+        onAgentDialog={onAgentDialog}
+      />
     </Stack>
   );
 }
+YourAgentsSection.propTypes = {
+  resumeAgentId: PropTypes.string,
+  onAgentDialog: PropTypes.func,
+};
+
 DrawerCatalog.propTypes = {
   onPick: PropTypes.func.isRequired,
   onBrowseWorlds: PropTypes.func.isRequired,
+  resumeAgentId: PropTypes.string,
+  onAgentDialog: PropTypes.func,
 };

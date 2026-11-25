@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -370,29 +370,11 @@ describe("MyEnvironmentsTable", () => {
     ]);
   });
 
-  it("offers Run with the version on a ready row, and none on one still building", async () => {
-    listHarnessEnvironments.mockResolvedValue({
-      ...HARNESS_ENVS,
-      results: [
-        {
-          ...HARNESS_ENVS.results[0],
-          environment_version: { id: "v", version_number: 2 },
-        },
-        ...HARNESS_ENVS.results.slice(1),
-      ],
-    });
+  it("puts no Run button on a row", async () => {
     renderTab();
     await screen.findByText("Customer Support Line");
-    fireEvent.click(
-      within(rowFor("Customer Support Line")).getByRole("button", {
-        name: "Run · v2",
-      }),
-    );
-    expect(navigate).toHaveBeenCalledWith(
-      expect.stringContaining("?tab=scenarios"),
-    );
     expect(
-      within(rowFor("Repo Triage Bot")).queryByRole("button", {
+      within(rowFor("Customer Support Line")).queryByRole("button", {
         name: /^Run/,
       }),
     ).toBeNull();

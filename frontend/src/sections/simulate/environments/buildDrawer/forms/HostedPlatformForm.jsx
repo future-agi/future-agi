@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import PanelHostedPlatform from "../../panels/PanelHostedPlatform";
+import { buildDraftKey } from "../buildDraft";
 
 const PLATFORM_BY_TYPE = {
   vapi: { [AGENT_TYPES.VOICE]: "vapi" },
@@ -15,6 +16,7 @@ export default function HostedPlatformForm({ item, onBusyChange }) {
       key={item?.id}
       platformByType={PLATFORM_BY_TYPE[item?.id]}
       onBusyChange={onBusyChange}
+      draftKey={item?.id ? buildDraftKey(item.id, "form") : undefined}
     />
   );
 }

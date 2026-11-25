@@ -191,6 +191,16 @@ HOSTED_AGENT = "hosted_agent"
 HOSTED_AGENT_CONFIG = ("name", "instructions", "model")
 HOSTED_AGENT_MODELS = ("vertex_ai/gemini-3.7-flash", "vertex_ai/gemini-3.8-flash")
 
+
+def names_agent_version(agent, metadata) -> bool:
+    metadata = metadata or {}
+    return (
+        agent.get("connector") == "auto"
+        and bool(metadata.get("agent_definition_id"))
+        and bool(metadata.get("agent_version_id"))
+    )
+
+
 # Mirrors the SDK's own E.164 rule so a malformed number is refused at admission.
 _E164 = re.compile(r"^\+[1-9]\d{6,14}$")
 _PHONE_FIXED_NATIONAL_DIGITS = (("91", 10), ("1", 10))
@@ -677,9 +687,12 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                     }
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}
-        elif source["kind"] == "provider" and (
-            agent["connector"] not in no_source
-            or not provider_target_mode
+        elif (
+            source["kind"] == "provider"
+            and not names_agent_version(agent, attrs.get("metadata"))
+            and (
+                agent["connector"] not in no_source or not provider_target_mode
+            )
         ):
             raise serializers.ValidationError(
                 {

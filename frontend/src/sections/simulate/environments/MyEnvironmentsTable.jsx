@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { DataTable } from "src/components/data-table";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { EMPTY_MESSAGE, ROW_HEIGHT } from "./myEnvironments.constants";
@@ -28,14 +28,10 @@ export default function MyEnvironmentsTable({
   const [menuFor, setMenuFor] = useState(null); /* { row, anchorEl } */
   const [confirmDelete, setConfirmDelete] = useState(null); /* row */
 
-  const onRunRef = useRef(onRun);
-  onRunRef.current = onRun;
-
   const columns = useMemo(
     () =>
       buildEnvironmentColumns({
         onRowActions: (row, anchorEl) => setMenuFor({ row, anchorEl }),
-        onRun: (env) => onRunRef.current?.(env),
       }),
     [],
   );

@@ -1,10 +1,11 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import GitHubConnectFlow from "src/sections/agent-playground/connect/GitHubConnectFlow";
 import UploadConnectFlow from "src/sections/agent-playground/connect/UploadConnectFlow";
 import { shownEnvValues } from "src/sections/agent-playground/connect/connectDraft";
 import usePanelBuild from "../../hooks/usePanelBuild";
+import { buildDraftKey, readBuildDraft, saveBuildDraft } from "../buildDraft";
 import { DEFAULT_SCENARIOS } from "../../panels/scenarioCountRules";
 import { T12 } from "../drawerStyles";
 import CodeEnvValues from "./CodeEnvValues";
@@ -64,15 +65,31 @@ const formFor = (picked) => ({
   observabilityEnabled: false,
 });
 
-export default function ConnectCodeForm({ kind, onBusyChange }) {
-  const [picked, setPicked] = useState(null);
-  const [form, setForm] = useState(null);
+const restoredForm = (saved) =>
+  saved?.form ? { ...formFor(saved.picked), ...saved.form, values: {} } : null;
+
+export default function ConnectCodeForm({ kind, item, onBusyChange }) {
+  const way = item?.id || kind;
+  const formKey = buildDraftKey(way, "form");
+  const [saved] = useState(() => readBuildDraft(formKey));
+  const [picked, setPicked] = useState(saved?.picked || null);
+  const [form, setForm] = useState(() => restoredForm(saved));
   const build = usePanelBuild();
+
+  useEffect(() => {
+    if (!picked || !form) {
+      saveBuildDraft(formKey, {});
+      return;
+    }
+    const { values: _values, ...kept } = form;
+    saveBuildDraft(formKey, { picked, form: kept });
+  }, [formKey, picked, form]);
 
   if (!picked) {
     const Flow = kind === "upload" ? UploadConnectFlow : GitHubConnectFlow;
     return (
       <Flow
+        draftKey={buildDraftKey(way, "flow")}
         onComplete={(next) => {
           build.resetPreflight();
           setPicked(next);
@@ -150,6 +167,7 @@ export default function ConnectCodeForm({ kind, onBusyChange }) {
 
 ConnectCodeForm.propTypes = {
   kind: PropTypes.oneOf(["github", "upload"]).isRequired,
+  item: PropTypes.object,
   onBusyChange: PropTypes.func,
 };
 

@@ -65,6 +65,7 @@ from simulate.models import (
 )
 from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.environment_documents import (
+    RUN_CONTRACT_VERSION,
     contract_data,
     registration_key,
     row_stage_output,
@@ -197,6 +198,8 @@ def filter_for_list(
     if status:
         queryset = queryset.filter(_status_q(status))
     if agent_type:
+        if "version_contract" not in queryset.query.annotations:
+            queryset = with_version_contract(queryset)
         queryset = (
             queryset.annotate(
                 list_connector=Coalesce(
@@ -204,6 +207,7 @@ def filter_for_list(
                     Value(""),
                     output_field=TextField(),
                 ),
+                list_version_modality=Lower(Trim(KT("version_contract__modality"))),
             )
             .annotate(
                 list_is_voice=Case(
@@ -279,9 +283,13 @@ def _voice_q() -> Q:
             {"kind": "contract", "data": {"modality": AGENT_TYPE_VOICE}}
         ]
     )
-    contract_says_voice = Exists(voice_contract) | (
+    snapshot_says_voice = Exists(voice_contract) | (
         ~Exists(contracts) & legacy_voice_contract
     )
+    has_version_contract = Q(version_contract__isnull=False) & ~Q(version_contract={})
+    contract_says_voice = (
+        has_version_contract & Q(list_version_modality=AGENT_TYPE_VOICE)
+    ) | (~has_version_contract & snapshot_says_voice)
     return Q(list_connector__in=_VOICE_CONNECTORS) | (
         Q(list_connector__in=("", "auto")) & contract_says_voice
     )
@@ -293,9 +301,17 @@ def with_version_contract(
     """The list's jobs with the contract each default version records it runs with, read in the same query. Only
     the list reads it: every other read of a job never touches a version's documents."""
     return queryset.annotate(
-        version_contract=Coalesce(
-            KeyTransform("run_contract", "environment_version__documents"),
-            KeyTransform("contract", "environment_version__documents"),
+        version_contract=Case(
+            # A run contract only this revision of the reading recorded, as every other reader takes it.
+            When(
+                environment_version__documents__run_contract_version=RUN_CONTRACT_VERSION,
+                then=Coalesce(
+                    KeyTransform("run_contract", "environment_version__documents"),
+                    KeyTransform("contract", "environment_version__documents"),
+                    output_field=JSONField(),
+                ),
+            ),
+            default=KeyTransform("contract", "environment_version__documents"),
             output_field=JSONField(),
         )
     )
@@ -357,13 +373,15 @@ def _agents_by_run_test(jobs: list[HostedHarnessJob]) -> dict[Any, dict[str, Any
         deleted=False,
         agent_definition__isnull=False,
     ).select_related("agent_definition")
-    return {
-        run_test.id: {
-            "id": str(run_test.agent_definition.id),
-            "name": run_test.agent_definition.agent_name or None,
-        }
-        for run_test in run_tests
-    }
+    agents: dict[Any, dict[str, Any]] = {}
+    for run_test in run_tests:
+        agent = run_test.agent_definition
+        if agent is not None:
+            agents[run_test.id] = {
+                "id": str(agent.id),
+                "name": agent.agent_name or None,
+            }
+    return agents
 
 
 def version_ref(

@@ -1,9 +1,9 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { MODALITY, UNIDENTIFIED_MODALITY } from "../agentTypes";
-import { ENV_STATUS, NOT_PROVIDED } from "../myEnvironments.constants";
+import { NOT_PROVIDED } from "../myEnvironments.constants";
 
 const VALUE_SX = { typography: "s1", color: "text.secondary" };
 
@@ -115,24 +115,3 @@ export const LastRunCell = ({ row }) => {
   );
 };
 LastRunCell.propTypes = { row: PropTypes.object };
-
-export const RunButtonCell = ({ row, onRun }) => {
-  const env = row?.original;
-  if (env?.status !== ENV_STATUS.READY) return null;
-  const label = isMissing(env.envVersion) ? "Run" : `Run · ${env.envVersion}`;
-  return (
-    <Button
-      size="small"
-      variant="outlined"
-      color="inherit"
-      onClick={(e) => {
-        e.stopPropagation();
-        onRun?.(env);
-      }}
-      sx={{ whiteSpace: "nowrap" }}
-    >
-      {label}
-    </Button>
-  );
-};
-RunButtonCell.propTypes = { row: PropTypes.object, onRun: PropTypes.func };

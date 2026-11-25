@@ -122,7 +122,7 @@ describe("EnvironmentsHome", () => {
   });
 
   // ?tab=build was the old Build tab. Links and bookmarks to it now open the
-  // drawer over My Environments, and the url stops saying build.
+  // drawer over My Environments; the drawer keeps its own build param.
   it("opens the drawer over My Environments on the old ?tab=build", async () => {
     renderHome("/dashboard/simulate/environments?tab=build");
 
@@ -131,7 +131,15 @@ describe("EnvironmentsHome", () => {
     expect(
       screen.getByRole("tab", { name: /^My environments/, hidden: true }),
     ).toHaveAttribute("aria-selected", "true");
-    expect(lastSearch).toBe("?tab=my-environments");
+    expect(lastSearch).toBe("?tab=my-environments&build=");
+  });
+
+  it("reopens the drawer on the way the url names", async () => {
+    renderHome(
+      "/dashboard/simulate/environments?tab=my-environments&build=vapi",
+    );
+
+    expect(await screen.findByText("Vapi API key")).toBeInTheDocument();
   });
 
   it("does not open the drawer on its own on other tabs", () => {
@@ -152,7 +160,7 @@ describe("EnvironmentsHome", () => {
       await screen.findByRole("button", { name: "Build an environment" }),
     );
     expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
-    expect(lastSearch).toBe("?tab=my-environments");
+    expect(lastSearch).toBe("?tab=my-environments&build=");
   });
 
   it("switches tabs and writes the choice to the url", async () => {
@@ -178,7 +186,7 @@ describe("EnvironmentsHome", () => {
         screen.getByRole("button", { name: "Build environment" }),
       );
       expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
-      expect(lastSearch).toBe(`?tab=${tab}`);
+      expect(lastSearch).toBe(`?tab=${tab}&build=`);
     },
   );
 

@@ -53,6 +53,7 @@ def _bare_agent() -> ClusterAnalysisAgent:
     agent.findings = []
     agent.synthesis = None
     agent._investigation_complete = False
+    agent._synthesis_is_last_resort = False
     agent.on_event = lambda *a, **k: None
     return agent
 

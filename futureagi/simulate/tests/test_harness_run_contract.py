@@ -102,6 +102,13 @@ def storage(monkeypatch):
     return fake
 
 
+def _recorded(contract: dict) -> dict:
+    """A run contract as a save records it now: stamped with the revision of the reading that wrote it."""
+    from simulate.selectors.environment_documents import RUN_CONTRACT_VERSION
+
+    return {"run_contract": contract, "run_contract_version": RUN_CONTRACT_VERSION}
+
+
 def _built(contract=AUTHORED, sealed=SEALED, **extra) -> bytes:
     """A build's archive: the authored contract at the root, and the bundle it sealed with ``sealed``."""
     files = {"environment-bundle/contract.json": json.dumps(sealed)} if sealed else {}
@@ -475,7 +482,7 @@ class TestVersionRecordedBeforeItsSealedContract:
             user, workspace, "rc-faults", monkeypatch
         )
         HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
-            documents={**version.documents, "run_contract": SEALED}
+            documents={**version.documents, **_recorded(SEALED)}
         )
         self._bundle(environment, version, storage)
 
@@ -784,10 +791,9 @@ class TestVersionRecordedBeforeItsSealedContract:
         HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
             documents={
                 "contract": moved,
-                "run_contract": {
-                    **moved,
-                    "tool_entrypoints": AUTHORED["tool_entrypoints"],
-                },
+                **_recorded(
+                    {**moved, "tool_entrypoints": AUTHORED["tool_entrypoints"]}
+                ),
             }
         )
         saved.refresh_from_db()
@@ -1099,11 +1105,73 @@ class TestVersionRecordedBeforeItsSealedContract:
         assert production_only(version_contract(environment, parent)) == []
         # A recorded run contract stops the walk where it is.
         HarnessEnvironmentVersion._base_manager.filter(id=parent.parent_id).update(
-            documents={"contract": AUTHORED, "run_contract": SEALED}
+            documents={"contract": AUTHORED, **_recorded(SEALED)}
         )
         with CaptureQueriesContext(connection) as queries:
             assert production_only(version_contract(environment, parent)) == []
         assert len(queries) < 10
+
+    def test_a_run_contract_an_earlier_reading_recorded_is_never_trusted_over_the_build_s_seal(
+        self, user, workspace, monkeypatch
+    ):
+        """As on a stack that ran an earlier build of this code: the first build sealed the four tools behind the
+        tools service, a chat save kept the author's entries and recorded them imported with no revision stamp. The
+        save is read through its ancestry to the build's seal; only a record this reading stamped stops the walk."""
+        from simulate.selectors.environment_documents import version_contract
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-stale-record", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        saved = HarnessEnvironmentVersion._base_manager.create(
+            job=environment,
+            organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
+            status="active",
+            origin="chat",
+            version_number=version.version_number + 1,
+            hash="sha256:" + "5" * 64,
+            parent=version,
+            archive_size=0,
+            documents={"contract": AUTHORED, "run_contract": AUTHORED},
+        )
+
+        unstamped = version_contract(environment, saved)
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            documents={"contract": AUTHORED, **_recorded(AUTHORED)}
+        )
+        saved.refresh_from_db()
+
+        assert production_only(unstamped) == []
+        assert (
+            recorded_contract(saved.documents)["tool_entrypoints"][0]["mode"]
+            == "import"
+        )
+        assert sorted(production_only(version_contract(environment, saved))) == sorted(
+            TOOLS
+        )
+
+    def test_the_list_reads_a_recorded_run_contract_only_when_this_reading_stamped_it(
+        self, user, workspace, monkeypatch
+    ):
+        from simulate.models import HostedHarnessJob
+        from simulate.services.harness_environment import with_version_contract
+
+        environment, version, _ = self._version(
+            user, workspace, "rc-list-stamp", monkeypatch
+        )
+
+        def listed(documents):
+            HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+                documents=documents
+            )
+            row = with_version_contract(
+                HostedHarnessJob.no_workspace_objects.filter(id=environment.id)
+            ).get()
+            return row.version_contract
+
+        assert listed({"contract": AUTHORED, "run_contract": SEALED}) == AUTHORED
+        assert listed({"contract": AUTHORED, **_recorded(SEALED)}) == SEALED
 
 
 def test_a_builder_save_that_seals_the_authored_entries_again_runs_as_the_first_build(
@@ -1374,7 +1442,7 @@ class TestARecordedRunContractStopsTheWalkAtAReseal:
                 hash=f"sha256:{number:064d}",
                 parent=parent,
                 archive_size=0,
-                documents={"contract": AUTHORED, "run_contract": SEALED},
+                documents={"contract": AUTHORED, **_recorded(SEALED)},
             )
             versions.append(parent)
         HarnessAssembledBundle._base_manager.bulk_create(

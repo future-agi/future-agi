@@ -56,15 +56,20 @@ jobs:
 
       # This marker also lets the feature push verify the exact tested tree
       # and immutable PR base, rather than assuming that an open PR ran CI.
+      # The event's base.sha and the test merge's first parent can each lag
+      # the other (scripts/ci-pr-inputs.sh), so the run accepts either order
+      # on one line of history and lints from the base it actually tested.
       - name: PR inputs ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} ${{ github.sha }}
         if: github.event_name == 'pull_request'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          test "$(git rev-parse HEAD^1)" = "$BASE"
+          bash scripts/ci-pr-inputs.sh self-test
           test "$(git rev-parse HEAD^2)" = "$HEAD"
+          parent=$(bash scripts/ci-pr-inputs.sh check "$BASE")
           git merge-base "$HEAD" "$BASE" >/dev/null
+          echo "DS_LINT_BASE=$parent" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -78,8 +83,7 @@ jobs:
 
       - name: Design system lint (changed lines)
         if: github.event_name == 'pull_request'
-        env:
-          DS_LINT_BASE: ${{ github.event.pull_request.base.sha }}
+        # DS_LINT_BASE is the test merge's first parent, set by "PR inputs".
         run: yarn lint:ds:changed
 
       - name: Design system opt-outs

@@ -531,6 +531,7 @@ export interface SecretKeyListItemApi {
   enabled: boolean;
   /** @minLength 1 */
   type: string;
+  can_switch: boolean;
   expires_at: string | null;
   is_expired: boolean;
 }

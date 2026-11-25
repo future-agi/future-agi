@@ -1,6 +1,7 @@
-// Owned acceptance-test listener. Its evaluator-facing networks are internal;
-// 11.23.0.10 is public-numbered only to exercise the real public-IP policy.
-// A separate bridge exposes the host-only journal. No outbound requests are made.
+// Owned negative-check listener: offline link evaluators must leave its journal
+// empty, even for public-numbered, private-host or redirecting destinations.
+// Evaluator-facing networks are internal; a separate bridge exposes the host-only
+// journal. No outbound requests are made.
 import http from "node:http";
 
 const requests = [];
