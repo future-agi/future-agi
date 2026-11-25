@@ -872,108 +872,13 @@ def _file_texts(version: Any, paths: set[str]) -> dict[str, str | None]:
     return texts
 
 
-def _replaced_by(
-    before: str | None,
-    new_rules: list[str],
-    documents: Mapping[str, Any],
-    parent_documents: Mapping[str, Any],
-) -> str | None:
-    """The rule the harness recorded as replacing ``before`` (`amendment_records`: the new record's `previous`, or the
-    old record's `replaced_by`, by rule id), as this version holds it; None when it recorded none."""
-    from simulate.services.harness_versioning.review_items import rule_key
-
-    if not before:
-        return None
-    was = f"rule-{rule_key(before)}"
-    records = [
-        one
-        for side in (documents, parent_documents)
-        for one in ((side.get("contract") or {}).get("amendment_records") or [])
-        if isinstance(one, Mapping) and one.get("kind") == "rule"
-    ]
-    now = next(
-        (
-            str(one.get("key"))
-            for one in records
-            if one.get("previous") == was and one.get("key")
-        ),
-        None,
-    ) or next(
-        (
-            str(one.get("replaced_by"))
-            for one in records
-            if one.get("key") == was and one.get("replaced_by")
-        ),
-        None,
-    )
-    return next((rule for rule in new_rules if f"rule-{rule_key(rule)}" == now), None)
-
-
-def _records(documents: Mapping[str, Any]) -> Any:
-    return (documents.get("contract") or {}).get("amendment_records")
-
-
-def _rule_pair(
-    quote: str,
-    old_rules: list[str],
-    new_rules: list[str],
-    documents: Mapping[str, Any],
-    parent_documents: Mapping[str, Any],
-) -> tuple[str | None, str | None]:
-    """The rule a quote names in the parent version and in this one: the rule holding its words, else the rule the
-    recorded rewordings put in its place, so a case citing words older than both still reads the rule it became."""
-    from simulate.services.harness_scenario_lifecycle import matched_rule
-    from simulate.services.harness_scenario_sources import replacement
-
-    def held(rules: list[str], side: Mapping[str, Any]) -> str | None:
-        at = replacement(quote, rules, _records(side))
-        return matched_rule(quote, rules) or (rules[at] if at is not None else None)
-
-    before = held(old_rules, parent_documents)
-    # A cited rule this version no longer holds reads its replacement only as the harness declared it.
-    after = held(new_rules, documents) or _replaced_by(
-        before, new_rules, documents, parent_documents
-    )
-    if before is None and after is not None:
-        # Words only this version holds: the parent's rule is the one this version recorded it replaced.
-        before = _replaced(after, old_rules, documents)
-    return before, after
-
-
-def _replaced(
-    rule: str, old_rules: list[str], documents: Mapping[str, Any]
-) -> str | None:
-    """The parent's rule that ``rule`` replaced, followed back through the rewordings this version recorded."""
-    from simulate.services.harness_versioning.review_items import rule_key
-
-    held = {f"rule-{rule_key(one)}": one for one in old_rules}
-    records = [
-        one
-        for one in (_records(documents) or [])
-        if isinstance(one, Mapping) and one.get("kind") == "rule"
-    ]
-    key, seen = f"rule-{rule_key(rule)}", set()
-    while key and key not in seen:
-        seen.add(key)
-        key = next(
-            (
-                str(one["previous"])
-                for one in records
-                if one.get("key") == key and one.get("previous")
-            ),
-            "",
-        )
-        if key in held:
-            return held[key]
-    return None
-
-
 def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChanges:
     """What changed between an environment version and its parent in the rules and files the
     default suite cites, each with the cases that cite it."""
     from simulate.services.harness_scenario_lifecycle import (
         changed_refs,
         parent_version_documents,
+        rule_pair,
         rules_of,
     )
     from simulate.services.harness_scenario_sources import normalise
@@ -1008,24 +913,25 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChan
     files: set[str] = set()
     for key, refs in changed.items():
         for source in (contents.get(key) or {}).get("sources") or []:
-            if (
-                not isinstance(source, Mapping)
-                or str(source.get("ref") or "") not in refs
-            ):
+            if not isinstance(source, Mapping):
                 continue
             kind, ref = str(source.get("kind")), str(source.get("ref") or "")
             if kind == "rule":
-                # A case's `rule:<n>` numbers its own sources, so one rule is grouped by the texts it reads in the
-                # two versions, followed through the rewordings the harness recorded.
-                before, after = _rule_pair(
+                # A case's `rule:<n>` numbers its own sources, so each rule is read by the texts it names in the
+                # two versions, as `changed_refs` reads it, and grouped by them; the same text in both is no change.
+                before, after = rule_pair(
                     str(source.get("quote") or ""),
                     old_rules,
                     new_rules,
                     version.documents or {},
                     parent_documents,
                 )
+                if before == after:
+                    continue
                 ref = f"rule-{rule_key(after or before or normalise(source.get('quote')))}"
                 group = (kind, ref)
+            elif ref not in refs:
+                continue
             else:
                 before = after = None
                 group = (kind, ref)
