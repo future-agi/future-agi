@@ -3815,11 +3815,11 @@
 - a rule over 2000 characters says so, keeps every character, and cannot be saved
 - approve sends the revision the page shows
 
-### SIM-E2E-039 — a person tags one scenario of an environment and only that scenario carries the tag
+### SIM-E2E-039 — a person tags one scenario of an environment, an over-long tag is refused on the page, and only that scenario carries the tag
 
 **Goal:** A developer labels a scenario of their environment with a tag of their own, so they can find and group it later, without changing the versioned suite
 
-**Spec:** `flows/simulate/scenario-tags.spec.ts:18`
+**Spec:** `flows/simulate/scenario-tags.spec.ts:24`
 
 **Tags:** —
 
@@ -3828,8 +3828,9 @@
 1. seed a built, versioned Environment with two scenarios (e2e/lib/harness_environment_seed.py)
 2. open its Scenarios tab
 3. select one scenario
-4. open Tag and type a new tag
-5. read the environment's tags (GET harness-environments/<id>/scenario-tags/)
+4. open Tag and type a 65-character tag
+5. type a new tag of a valid length instead
+6. read the environment's tags (GET harness-environments/<id>/scenario-tags/)
 
 **Backend state verified:**
 
@@ -3838,5 +3839,6 @@
 
 **Browser observations:**
 
+- a 65-character tag says a tag can be at most 64 characters and sends no tag change
 - the page confirms the tag was added to one scenario
 - the tagged row shows the tag and the other row does not
