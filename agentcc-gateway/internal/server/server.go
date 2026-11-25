@@ -519,7 +519,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 		Reason: "exact model catalog operation emits only configured model identifiers, owner, numeric limits/pricing and capability flags; it neither reads nor returns inference content",
 	}}
 	router.handleInspected("GET", "/v1/models", handlers.ListModels, modelCatalogInspection)
-	router.handleInspected("GET", "/v1/models/{model}", handlers.GetModel, modelCatalogInspection)
+	router.handleInspected("GET", "/v1/models/{model...}", handlers.GetModel, modelCatalogInspection)
 
 	// Assistants API.
 	router.Handle("POST", "/v1/assistants", handlers.CreateAssistant)
