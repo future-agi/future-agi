@@ -228,8 +228,12 @@ def test_launch_failure_before_a_new_attempt_fails_the_chosen_call_with_its_reas
     assert finished_run.failure["code"] == "hosted_launch_failed"
     chosen.refresh_from_db()
     assert chosen.status == CallExecution.CallStatus.FAILED
-    assert chosen.error_message == finished_run.failure["message"] == (
-        "The hosted run could not launch after its bounded retries; no call was attempted."
+    assert (
+        chosen.error_message
+        == finished_run.failure["message"]
+        == (
+            "The hosted run could not launch after its bounded retries; no call was attempted."
+        )
     )
     assert chosen.ended_reason == (
         "Stopped — an issue occurred while running this. Run it again; "
