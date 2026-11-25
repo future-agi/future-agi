@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from django.db import transaction
 from django.db.models import Q
@@ -338,6 +338,7 @@ class _Held:
 
     by_source: dict[tuple, list[EvidenceImportCase]]
     by_digest: dict[str, list[EvidenceImportCase]]
+    superseded: set = field(default_factory=set)
 
     def of(
         self, evidence_import: EvidenceImport, case: EvidenceImportCase
@@ -350,7 +351,7 @@ class _Held:
 
 
 def _held(
-    evidence_import: EvidenceImport, cases: list[EvidenceImportCase], statuses
+    evidence_import: EvidenceImport, cases: list[EvidenceImportCase], statuses, *, leaving=()
 ) -> _Held:
     """The environment's cases in ``statuses`` (in imports still kept, no repeat
     themselves, no stale draft, and no added case the suite no longer holds) that
@@ -383,6 +384,7 @@ def _held(
             status__in=statuses,
             duplicate_of__isnull=True,
         )
+        .exclude(pk__in=leaving)
         .exclude(_stale_drafts(evidence_import.environment))
         .exclude(_gone_from_suite(evidence_import.environment))
         .select_related("evidence_import")
@@ -397,7 +399,16 @@ def _held(
             if case.evidence_import.source_kind != EvidenceImport.SourceKind.TRANSCRIPT:
                 by_import[case.evidence_import_id].append(case)
         for originals in by_import.values():
-            current = current_evidence(originals[0].evidence_import, originals)
+            owner = originals[0].evidence_import
+            if owner.source_kind == EvidenceImport.SourceKind.DATASET:
+                current = current_evidence(owner, originals)
+            else:
+                try:
+                    with transaction.atomic():
+                        current = current_evidence(owner, originals)
+                except Exception:  # noqa: BLE001 - historical Observe reads are best effort
+                    stale.update(original.id for original in originals)
+                    continue
             for original in originals:
                 source = current.get(original.source_id)
                 if (
@@ -406,6 +417,11 @@ def _held(
                     or evidence_digest(source) != original.digest
                 ):
                     stale.add(original.id)
+                    if (
+                        original.status == EvidenceImportCase.Status.PENDING
+                        and _source_key(owner, original.source_id) in keyed
+                    ):
+                        held.superseded.add(original.id)
     for case in found:
         if case.id in stale:
             continue
@@ -445,6 +461,12 @@ def _store_cases(
         for old in blocked.of(evidence_import, case):
             retried.setdefault(old.id, case.id)
     EvidenceImportCase.objects.bulk_create(cases)
+    if repeated.superseded:
+        EvidenceImportCase.objects.filter(id__in=repeated.superseded).update(
+            status=EvidenceImportCase.Status.DISCARDED,
+            reason=RETRIED_LATER,
+            updated_at=timezone.now(),
+        )
     if not retried:
         return
     now = timezone.now()
@@ -515,20 +537,28 @@ def discard_open_cases(evidence_import: EvidenceImport) -> None:
 
 
 def _promote_duplicates(evidence_import: EvidenceImport, leaving) -> None:
-    """For each of ``leaving`` another import repeats, its earliest duplicate
-    there becomes the case to draft, and the rest repeat that one instead, so an
-    import's "already imported" never points at a discarded case."""
+    """Relink repeats to a current original when one exists. Otherwise the
+    earliest remaining repeat takes over for the departing original."""
     duplicates = (
         EvidenceImportCase.objects.select_for_update(of=("self",))
         .filter(duplicate_of__in=leaving)
         .exclude(evidence_import=evidence_import)
         .filter(evidence_import__deleted=False)
+        .select_related("evidence_import")
         .order_by("evidence_import__created_at", "position")
     )
+    by_import = defaultdict(list)
+    for case in duplicates:
+        by_import[case.evidence_import_id].append(case)
+    held = {
+        owner: _held(cases[0].evidence_import, cases, _REPEATED_STATUSES, leaving=leaving)
+        for owner, cases in by_import.items()
+    }
     successor: dict = {}
     now = timezone.now()
     for case in duplicates:
-        first = successor.setdefault(case.duplicate_of_id, case)
+        current = held[case.evidence_import_id].of(case.evidence_import, case)
+        first = current[0] if current else successor.setdefault(case.duplicate_of_id, case)
         if first is case:
             case.status = EvidenceImportCase.Status.PENDING
             case.duplicate_of_id = None

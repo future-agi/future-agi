@@ -444,6 +444,48 @@ class TestRetry:
         assert (old.status, old.reason) == ("blocked", BLOCKED_BECAUSE)
 
 
+class TestImportHistory:
+    def test_discard_reuses_current_original(self, client, environment, dataset, columns):
+        same = {columns["chat"]: CHAT, columns["expected"]: EXPECTED}
+        a, b = [_row(dataset, index, same) for index in range(2)]
+        first = _create_rows(client, environment, dataset, [a], columns).json()
+        repeat = _create_rows(client, environment, dataset, [b], columns).json()
+        a.delete()
+        fresh = _create_rows(client, environment, dataset, [b], columns).json()
+        [current] = _stored(fresh)
+        assert current.status == "pending"
+
+        discard_evidence_import(EvidenceImport.no_workspace_objects.get(pk=first["id"]))
+
+        [earlier] = _stored(repeat)
+        assert (earlier.status, earlier.duplicate_of_id) == ("duplicate", current.id)
+
+    def test_edited_source_retires_pending_history(self, client, environment, dataset, columns):
+        row = _row(dataset, 0, {columns["chat"]: CHAT, columns["expected"]: EXPECTED})
+        first = _create_rows(client, environment, dataset, [row], columns).json()
+        repeat = _create_rows(client, environment, dataset, [row], columns).json()
+        Cell.objects.filter(row=row, column=columns["expected"]).update(value="Refuse.")
+        fresh = _create_rows(client, environment, dataset, [row], columns).json()
+
+        [new] = _stored(fresh)
+        [old] = _stored(first)
+        [historical] = _stored(repeat)
+        assert (old.status, new.status) == ("discarded", "pending")
+        assert historical.duplicate_of_id == old.id
+
+    def test_unavailable_observe_history_does_not_abort_transcript(self, client, environment, project):
+        turns = (
+            Turn("user", "Where is my parcel?", False, "t", T0),
+            Turn("agent", "It left the depot today.", False, "t", T0),
+        )
+        first = _sessions(client, environment, project, {SESSION: _evidence(turns=turns)}, [SESSION])
+        with patch("simulate.selectors.evidence_import.observe_evidence", side_effect=ConnectionError):
+            response = _post_transcripts(client, environment, _transcript(text=_CHAT))
+        assert response.status_code == status.HTTP_201_CREATED, response.data
+        assert _stored(response.json())[0].status == "pending"
+        assert _stored(first)[0].status == "pending"
+
+
 class TestAcrossSources:
     def test_a_conversation_with_an_email_is_one_case_as_transcript_and_dataset_row(
         self, client, environment, dataset, columns
