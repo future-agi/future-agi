@@ -157,6 +157,7 @@ from simulate.temporal.activities.xl import (
     assert_recording_slot_available,
     build_simulation_context_map,
     hosted_assistant_recording,
+    sealed_tool_call_lines,
     stringify_leaf,
     walk_subject_path,
 )
@@ -4417,6 +4418,8 @@ class TestExecutor:
             call_execution.call_metadata["eval_started"] = True
             call_execution.save(update_fields=["call_metadata"])
             from simulate.services.scoring_status import (
+                REASON_EVAL_CALL_ERRORED,
+                call_errored,
                 locked_call_metadata_update,
                 mark_eval_progress,
             )
@@ -4440,6 +4443,16 @@ class TestExecutor:
                 eval_configs = SimulateEvalConfig.objects.filter(
                     run_test=run_test, deleted=False
                 )
+
+            if call_errored(call_execution):
+                self._mark_evals_not_run(
+                    call_execution,
+                    eval_configs,
+                    reason=REASON_EVAL_CALL_ERRORED,
+                    skip_status_update=skip_status_update,
+                    skip_existing=skip_existing,
+                )
+                return
 
             if not eval_configs.exists():
                 logger.info(f"No evaluation configs found for run test {run_test.id}")
@@ -4694,6 +4707,39 @@ class TestExecutor:
         self._check_and_update_eval_completion(
             call_execution, eval_config_ids=eval_config_ids
         )
+
+    def _mark_evals_not_run(
+        self,
+        call_execution,
+        eval_configs,
+        *,
+        reason: str,
+        skip_status_update: bool,
+        skip_existing: bool,
+    ) -> None:
+        from simulate.services.scoring_status import locked_call_metadata_update
+
+        outputs = dict(call_execution.eval_outputs or {})
+        for eval_config in eval_configs:
+            if skip_existing and has_stored_verdict(call_execution, eval_config.id):
+                continue
+            outputs[str(eval_config.id)] = build_skipped_eval_output_payload(
+                eval_name=eval_config.name, reason=reason
+            )
+
+        def _close_eval_side(metadata):
+            metadata["eval_completed"] = True
+
+        with transaction.atomic():
+            call_execution.eval_outputs = outputs
+            call_execution.save(update_fields=["eval_outputs"])
+            call_execution.call_metadata = locked_call_metadata_update(
+                call_execution.id, _close_eval_side
+            )
+        if not skip_status_update:
+            self._check_and_update_test_execution_completion(
+                call_execution.test_execution_id
+            )
 
     def _mark_eval_left_to_the_harness(self, call_execution, eval_config) -> None:
         """Mark a harness result column the platform can't grade as skipped."""
@@ -4953,6 +4999,12 @@ class TestExecutor:
                                 is_outbound=eval_is_outbound,
                             )
                             transcript_text.append(f"{eval_role}: {transcript.content}")
+                    tool_lines = sealed_tool_call_lines(
+                        call_execution.provider_call_data
+                    )
+                    if tool_lines:
+                        transcript_text.append("=== TOOL CALLS ===")
+                        transcript_text.extend(tool_lines)
                     transcript_data["transcript"] = "\n".join(transcript_text)
                     transcript_data["user_chat_transcript"] = "\n".join(
                         user_chat_transcript_text
