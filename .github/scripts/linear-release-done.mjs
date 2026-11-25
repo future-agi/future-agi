@@ -67,19 +67,27 @@ const CONCURRENCY = 8
 
 // ── Linear API ──────────────────────────────────────────────────────────────
 
-async function linearQuery(query, variables = {}) {
+// Linear answers a lookup of a ticket that doesn't exist (deleted, mistyped id)
+// with an error, not a null issue.
+const isNotFound = e => e.extensions?.code === 'INPUT_ERROR' && /^Entity not found/.test(e.message ?? '')
+
+async function linearQuery(query, variables = {}, { notFoundIsNull = false } = {}) {
   const res = await fetch('https://api.linear.app/graphql', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: LINEAR_API_KEY },
     body: JSON.stringify({ query, variables }),
   })
   const json = await res.json()
-  if (json.errors) throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`)
+  if (json.errors) {
+    if (notFoundIsNull && json.errors.every(isNotFound)) return null
+    throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`)
+  }
   return json.data
 }
 
 // Linear's issue(id:) accepts the human identifier (e.g. "TH-123") as well as
-// the UUID. Returns null when the ticket doesn't exist.
+// the UUID. Returns null when the ticket doesn't exist, so one bad id is listed
+// in the Slack message instead of stopping the whole sync.
 async function resolveIssue(identifier) {
   const data = await linearQuery(`
     query($id: String!) {
@@ -93,7 +101,7 @@ async function resolveIssue(identifier) {
         team { key states { nodes { id name type } } }
       }
     }
-  `, { id: identifier })
+  `, { id: identifier }, { notFoundIsNull: true })
   const issue = data?.issue
   if (!issue) return null
   const states = issue.team?.states?.nodes ?? []
@@ -174,19 +182,25 @@ async function previousStableTag(version) {
 // source of PRs.
 async function compareData(version) {
   const prev = await previousStableTag(version)
-  if (!prev) return { prev: null, prNumbers: [], ids: new Set() }
+  if (!prev) return { prev: null, prNumbers: [], seen: [] }
   const cmp = await gh(`/repos/${OWNER}/${REPO}/compare/${prev}...${version}`)
   const prNumbers = new Set()
-  const ids = new Set()
+  const seen = []   // [id, where it was mentioned]
   for (const c of cmp?.commits ?? []) {
     const msg = c.commit?.message ?? ''
     // Only the two real merge formats — squash `(#123)` and merge-commit
     // `Merge pull request #123` — so stray `#123` mentions in prose don't drag
     // unrelated PRs (and their tickets) into the release.
-    for (const m of msg.matchAll(/(?:\(#|Merge pull request #)(\d+)/g)) prNumbers.add(Number(m[1]))
-    for (const id of extractIds(msg)) ids.add(id)
+    const MERGE_RE = /(?:\(#|Merge pull request #)(\d+)/g
+    const prs = [...msg.matchAll(MERGE_RE)].map(m => Number(m[1]))
+    for (const n of prs) prNumbers.add(n)
+    // The commit's own PR is the last ref on its first line (a revert's title
+    // carries the reverted PR's ref first).
+    const own = [...msg.split('\n')[0].matchAll(MERGE_RE)].map(m => Number(m[1])).at(-1) ?? prs[0]
+    const where = own ? prLink(own) : `commit ${(c.sha ?? '').slice(0, 7)}`
+    for (const id of extractIds(msg)) seen.push([id, where])
   }
-  return { prev, prNumbers: [...prNumbers], ids }
+  return { prev, prNumbers: [...prNumbers], seen }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -197,6 +211,8 @@ function cmpSemverDesc(a, b) {
   for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pb[i] - pa[i]
   return 0
 }
+
+const prLink = n => `<https://github.com/${OWNER}/${REPO}/pull/${n}|#${n}>`
 
 function extractIds(text) {
   const out = new Set()
@@ -249,8 +265,15 @@ async function postSlack({ moved, nudged, skipped, notFound }) {
       lines.push(`   • <${n.url}|${n.identifier}> — ${n.stateName}${n.assigneeName ? ` — ${n.assigneeName}` : ' — unassigned'}`)
     }
   }
+  // An id no Linear ticket has (deleted, moved, mistyped): shown with where it was
+  // mentioned, so someone can fix the reference.
+  if (notFound.length) {
+    lines.push(`⚠️ *Ticket id not found in Linear (${notFound.length}) — please fix the reference:*`)
+    for (const n of [...notFound].sort((a, b) => a.identifier.localeCompare(b.identifier))) {
+      lines.push(`   • *${n.identifier}* — mentioned in ${n.where.join(', ')}`)
+    }
+  }
   if (skipped.length)  lines.push(`⏭️ *Skipped (${skipped.length}):* already Done/terminal`)
-  if (notFound.length) lines.push(`❓ *Not found (${notFound.length}):* ${notFound.join(', ')}`)
   await slackPost(lines.join('\n'))
 }
 
@@ -263,24 +286,33 @@ async function main() {
   // body. Ids unioned from release body, commit messages, and each PR's title +
   // body so a ticket referenced in ANY of them is caught.
   const body = await getReleaseBody(VERSION)
-  const { prev, prNumbers: cmpPrNumbers, ids: cmpIds } = await compareData(VERSION)
+  const { prev, prNumbers: cmpPrNumbers, seen } = await compareData(VERSION)
 
   const prNumbers = new Set(cmpPrNumbers)
   for (const m of body.matchAll(/#(\d+)/g)) prNumbers.add(Number(m[1]))
   log(`[linear-release-done] ${prNumbers.size} PR(s) since ${prev ?? '(no previous tag)'}`)
 
-  const ids = new Set([...extractIds(body), ...cmpIds])
-  const prTexts = await mapWithConcurrency([...prNumbers], CONCURRENCY, getPrText)
-  for (const t of prTexts) for (const id of extractIds(t)) ids.add(id)
+  // id → where it was mentioned (a PR link, a commit, or the release notes).
+  const ids = new Map()
+  const note = (id, where) => { if (!ids.has(id)) ids.set(id, new Set()); ids.get(id).add(where) }
+  for (const id of extractIds(body)) note(id, 'the release notes')
+  for (const [id, where] of seen) note(id, where)
+  const prList = [...prNumbers]
+  const prTexts = await mapWithConcurrency(prList, CONCURRENCY, getPrText)
+  prTexts.forEach((t, i) => { for (const id of extractIds(t)) note(id, prLink(prList[i])) })
 
-  const identifiers = [...ids].sort()
+  const identifiers = [...ids.keys()].sort()
   log(`[linear-release-done] ${identifiers.length} ticket reference(s): ${identifiers.join(', ') || '(none)'}`)
 
   const moved = [], nudged = [], skipped = [], notFound = []
 
   await mapWithConcurrency(identifiers, CONCURRENCY, async (identifier) => {
     const issue = await resolveIssue(identifier)
-    if (!issue) { log(`  ❓ ${identifier}: not found in Linear`); notFound.push(identifier); return }
+    if (!issue) {
+      const where = [...ids.get(identifier)]
+      log(`  ❓ ${identifier}: not found in Linear (mentioned in ${where.join(', ')})`)
+      notFound.push({ identifier, where }); return
+    }
 
     // Skip terminal / not-in-flight states.
     if (SKIP_TYPES.has(issue.stateType) || SKIP_STATE_NAMES.has(issue.stateName)) {
