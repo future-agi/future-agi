@@ -1241,7 +1241,7 @@ def _refuse_ignored_answer(
         role=HostedHarnessConversationMessage.Role.USER,
         reply_to__isnull=False,
     ).first()
-    if answer is None:
+    if answer is None or answer.reply_to is None:
         return False
     answer.state = HostedHarnessConversationMessage.State.FAILED
     answer.payload = {**(answer.payload or {}), "failure_reason": ANSWER_NOT_TAKEN}
