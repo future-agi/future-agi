@@ -8,9 +8,24 @@ from typing import Any
 from uuid import UUID
 
 from django.conf import settings
-from django.db.models import Q, QuerySet
+from django.db.models import (
+    Case,
+    Count,
+    Exists,
+    F,
+    OuterRef,
+    Prefetch,
+    Q,
+    QuerySet,
+    Subquery,
+    UUIDField,
+    Value,
+    When,
+)
+from django.db.models.functions import Coalesce
 
 from simulate.models import (
+    AgentFixCandidate,
     AgentFixIssueJob,
     AgentFixRun,
     EvidenceImport,
@@ -42,6 +57,7 @@ from simulate.selectors.agent_fix import (
     is_retryable,
     launch_surfaces,
     limited_validation,
+    retries_taking_the_retry,
     unsaved_changes,
 )
 from simulate.selectors.evidence_import import import_bundle
@@ -53,12 +69,14 @@ from tracer.models.project import Project
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.models.trace_grouping import TraceGroupingIssueState
 from tracer.queries.feed import _current_memberships
-from tracer.queries.grouping_redirect import resolve_issue_redirect
+from tracer.queries.grouping_redirect import (
+    MAX_REDIRECT_HOPS,
+    resolve_issue_redirect,
+    resolve_issue_row,
+)
 
 # Rows of the issue's newest members read to fill the pool: one trace can hold several.
 _RECENT_ROWS = SAMPLE_POOL * 5
-# Merges a read follows back, from an issue to the issues merged into it.
-_REDIRECT_HOPS = 3
 # The Observe kinds a sample imports as.
 _OBSERVE_KINDS = (
     EvidenceImport.SourceKind.SESSION,
@@ -91,7 +109,7 @@ def live_issue(issue: TraceErrorGroup | None) -> TraceErrorGroup | None:
     to; None once no live issue is left."""
     if issue is None or not issue.deleted:
         return issue
-    return requested_issue(issue.cluster_id, issue.project)
+    return resolve_issue_row(issue)
 
 
 def environment_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
@@ -331,7 +349,10 @@ def issue_job_phase(job: AgentFixIssueJob) -> IssueJobPhase:
         return IssueJobPhase.MEASURING
     if job.evidence_import.drafting_job_id is not None:
         return IssueJobPhase.DRAFTING
-    if runnable_cases(job.evidence_import).exists():
+    runnable = getattr(job, "has_runnable_case", None)
+    if runnable is None:
+        runnable = runnable_cases(job.evidence_import).exists()
+    if runnable:
         return IssueJobPhase.REVIEW
     return IssueJobPhase.BLOCKED
 
@@ -364,8 +385,45 @@ def is_open(job: AgentFixIssueJob) -> bool:
     )
 
 
-def _issue_path(hops: int) -> str:
-    return "evidence_import__source_issue" + "__redirect_to" * hops
+def _issue_jobs(
+    issues: Iterable[TraceErrorGroup], environments: QuerySet[HostedHarnessJob] | None
+) -> QuerySet[AgentFixIssueJob]:
+    """Map retired source rows to this page's live issues, one query per depth."""
+    roots = {issue.pk: issue.pk for issue in issues}
+    frontier = set(roots)
+    for _ in range(MAX_REDIRECT_HOPS):
+        if not frontier:
+            break
+        parents = TraceErrorGroup.all_objects.filter(
+            deleted=True,
+            target_type="error_feed",
+            redirect_to_id__in=frontier,
+            project_id=F("redirect_to__project_id"),
+        ).values_list("pk", "redirect_to_id")
+        more = {pk: roots[target] for pk, target in parents if pk not in roots}
+        roots.update(more)
+        frontier = set(more)
+
+    source = "evidence_import__source_issue_id"
+    jobs = AgentFixIssueJob.no_workspace_objects.filter(
+        environment__deleted=False, evidence_import__source_issue_id__in=roots
+    )
+    if environments is not None:
+        jobs = jobs.filter(environment__in=environments)
+    merged: dict[UUID, list[UUID]] = {}
+    for pk, root in roots.items():
+        if pk != root:
+            merged.setdefault(root, []).append(pk)
+    branches = [
+        When(
+            evidence_import__source_issue_id__in=pks,
+            then=Value(root, output_field=UUIDField()),
+        )
+        for root, pks in merged.items()
+    ]
+    return jobs.annotate(
+        live_id=Case(*branches, default=F(source), output_field=UUIDField())
+    ).select_related("environment", "evidence_import", "baseline_run", "fix_run")
 
 
 def jobs_of_issues(
@@ -373,39 +431,84 @@ def jobs_of_issues(
     *,
     environments: QuerySet[HostedHarnessJob] | None = None,
 ) -> dict[UUID, list[AgentFixIssueJob]]:
-    """Each issue's jobs, newest first, with the jobs of the issues merged into it (up to
-    _REDIRECT_HOPS merges back); only jobs on ``environments`` when given. A job on a
-    deleted environment is gone with it: it holds its issue no more."""
-    ids = {issue.id for issue in issues}
-    if not ids:
-        return {}
-    match = Q()
-    for hops in range(_REDIRECT_HOPS + 1):
-        match |= Q(**{f"{_issue_path(hops)}_id__in": ids})
-    match &= Q(environment__deleted=False)
-    if environments is not None:
-        match &= Q(environment__in=environments)
-    jobs = (
-        AgentFixIssueJob.no_workspace_objects.filter(match)
-        .select_related(
-            "environment",
-            "evidence_import",
-            "baseline_run",
-            "fix_run",
-            *(_issue_path(hops) for hops in range(_REDIRECT_HOPS + 1)),
-        )
-        .order_by("-created_at", "-id")
-    )
+    """All jobs, including older jobs which might still be open."""
     found: dict[UUID, list[AgentFixIssueJob]] = {}
-    for job in jobs:
-        issue = job.evidence_import.source_issue
-        for _ in range(_REDIRECT_HOPS + 1):
-            if issue is None or issue.id in ids:
-                break
-            issue = issue.redirect_to
-        if issue is not None and issue.id in ids:
-            found.setdefault(issue.id, []).append(job)
+    for job in _issue_jobs(issues, environments).order_by("-created_at", "-id"):
+        found.setdefault(job.live_id, []).append(job)
     return found
+
+
+def issue_status_page(
+    issues: list[TraceErrorGroup], environments: QuerySet[HostedHarnessJob]
+) -> dict[UUID, dict[str, Any]]:
+    """The newest visible job per live issue, with its newest retry."""
+    by_id = {issue.pk: issue for issue in issues}
+    jobs = list(
+        _issue_jobs(issues, environments)
+        .annotate(
+            has_runnable_case=Exists(
+                EvidenceImportCase.no_workspace_objects.filter(
+                    RUNNABLE_CASES, evidence_import_id=OuterRef("evidence_import_id")
+                )
+            )
+        )
+        .order_by("live_id", "-created_at", "-id")
+        .distinct("live_id")
+    )
+    epochs = _status_epochs(jobs)
+    return {
+        job.live_id: _job_view(job, by_id[job.live_id], epochs.get(job.fix_run_id))
+        for job in jobs
+    }
+
+
+def _status_epochs(jobs: list[AgentFixIssueJob]) -> dict[UUID, AgentFixRun]:
+    newest = {job.fix_run_id: job.fix_run_id for job in jobs if job.fix_run_id}
+    frontier = set(newest)
+    while frontier:
+        children = dict(
+            AgentFixRun.no_workspace_objects.filter(retried_from_id__in=frontier)
+            .order_by("retried_from_id", "-created_at", "-pk")
+            .distinct("retried_from_id")
+            .values_list("retried_from_id", "pk")
+        )
+        newest = {root: children.get(pk, pk) for root, pk in newest.items()}
+        frontier = set(children.values())
+    numbers = (
+        AgentFixRun.no_workspace_objects.filter(
+            environment_id=OuterRef("environment_id"),
+            created_at__lte=OuterRef("created_at"),
+        )
+        .order_by()
+        .values("environment_id")
+        .annotate(total=Count("pk"))
+        .values("total")
+    )
+    epochs = {
+        run.pk: run
+        for run in AgentFixRun.no_workspace_objects.filter(pk__in=newest.values())
+        .annotate(
+            number=Subquery(numbers),
+            retry_taken=Exists(
+                retries_taking_the_retry(
+                    Coalesce(
+                        OuterRef("retried_from_id"),
+                        OuterRef("pk"),
+                        output_field=UUIDField(),
+                    )
+                )
+            ),
+        )
+        .prefetch_related(
+            Prefetch(
+                "candidates",
+                queryset=AgentFixCandidate.objects.filter(
+                    outcome=AgentFixCandidate.Outcome.WINNER
+                ).only("fix_run_id", "outcome", "pull_request_url"),
+            )
+        )
+    }
+    return {root: epochs[pk] for root, pk in newest.items() if pk in epochs}
 
 
 # An issue has one open job, whichever environment it runs in. A caller who cannot
@@ -510,7 +613,9 @@ def _epoch_view(epoch: AgentFixRun) -> dict[str, Any]:
     return {
         "id": epoch.id,
         # Its place among the environment's epochs: "Epoch 6".
-        "number": AgentFixRun.no_workspace_objects.filter(
+        "number": epoch.number
+        if hasattr(epoch, "number")
+        else AgentFixRun.no_workspace_objects.filter(
             environment_id=epoch.environment_id, created_at__lte=epoch.created_at
         ).count(),
         "environment_id": epoch.environment_id,
@@ -556,12 +661,23 @@ def launch_defaults(environment: HostedHarnessJob | None) -> dict[str, Any]:
 def issue_job_view(job: AgentFixIssueJob, *, detail: bool = False) -> dict[str, Any]:
     """The job as the issue page and the CLI read it: its phase, its issue as the feed
     shows it now, its sample, and its baseline and newest epoch once it has them."""
+    return _job_view(
+        job, live_issue(job.evidence_import.source_issue), job_epoch(job), detail=detail
+    )
+
+
+def _job_view(
+    job: AgentFixIssueJob,
+    issue: TraceErrorGroup | None,
+    epoch: AgentFixRun | None,
+    *,
+    detail: bool = False,
+) -> dict[str, Any]:
     baseline = job.baseline_run
-    epoch = job_epoch(job)
     view: dict[str, Any] = {
         "id": job.id,
         "phase": issue_job_phase(job).value,
-        "issue": issue_view(live_issue(job.evidence_import.source_issue)),
+        "issue": issue_view(issue),
         "environment": {
             "id": job.environment_id,
             "name": environment_name(job.environment),

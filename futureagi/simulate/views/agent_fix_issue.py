@@ -18,8 +18,8 @@ from simulate.selectors.agent_fix_issue import (
     issue_sample,
     issue_scenarios,
     issue_scenarios_max,
+    issue_status_page,
     issue_view,
-    jobs_of_issues,
     launch_defaults,
     open_job,
     requested_issue,
@@ -190,12 +190,12 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
                 target_type="error_feed",
             )
         )
-        jobs = jobs_of_issues(issues, environments=self._environments(request))
+        jobs = issue_status_page(issues, self._environments(request))
         results = [
             {
                 "cluster_id": issue.cluster_id,
                 "project_id": issue.project_id,
-                "job": issue_job_view(jobs[issue.id][0]),
+                "job": jobs[issue.id],
             }
             for issue in issues
             if jobs.get(issue.id)

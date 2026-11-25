@@ -20,6 +20,7 @@ from django.utils import timezone
 from accounts.models import Organization, Workspace
 from model_hub.models.ai_model import AIModel
 from simulate.models import (
+    AgentFixCandidate,
     AgentFixIssueJob,
     AgentFixRun,
     EvidenceImport,
@@ -62,6 +63,7 @@ from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixtures
 )
 from simulate.tests.test_agent_fix_services import temporal as temporal
 from simulate.tests.test_agent_fix_services import versioning_on as versioning_on
+from simulate.tests.test_harness_agent_versions import _environment
 from simulate.tests.test_harness_amend_archive import NAMES
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
@@ -384,6 +386,53 @@ class TestPhase:
 
 
 class TestLinks:
+    def test_stored_source_and_reused_display_id_resolve_separately(
+        self, project, issue
+    ):
+        target = _issue(project, "target")
+        issue.deleted, issue.redirect_to = True, target
+        issue.save(update_fields=["deleted", "redirect_to"])
+        replacement = _issue(project, issue.cluster_id)
+        assert reads.live_issue(issue) == target
+        assert reads.requested_issue(issue.cluster_id, project) == replacement
+
+    def test_cross_project_redirect_is_not_followed_in_either_direction(
+        self, environment, project, issue
+    ):
+        other = Project.objects.create(
+            name="Other",
+            organization_id=project.organization_id,
+            workspace_id=project.workspace_id,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        source = _issue(other, "retired", deleted=True, redirect_to=issue)
+        _job(environment, _import(environment, source, []))
+        assert reads.live_issue(source) is None
+        assert reads.jobs_of_issues([issue]) == {}
+        source.redirect_to = source
+        source.save(update_fields=["redirect_to"])
+        assert reads.live_issue(source) is None
+        source.redirect_to = None
+        source.save(update_fields=["redirect_to"])
+        assert reads.live_issue(source) is None
+
+    def test_reverse_and_forward_reads_share_the_depth_limit(
+        self, environment, project
+    ):
+        from tracer.queries.grouping_redirect import MAX_REDIRECT_HOPS
+
+        target = _issue(project, "live")
+        source = target
+        for depth in range(MAX_REDIRECT_HOPS):
+            source = _issue(project, f"old-{depth}", deleted=True, redirect_to=source)
+        allowed = _job(environment, _import(environment, source, []))
+        beyond = _issue(project, "beyond", deleted=True, redirect_to=source)
+        _job(environment, _import(environment, beyond, []))
+        assert reads.live_issue(source) == target
+        assert reads.live_issue(beyond) is None
+        assert reads.jobs_of_issues([target]) == {target.id: [allowed]}
+
     def test_a_retried_epoch_keeps_its_issue(self, environment, issue, source_run):
         first = _fix_run(source_run, state=AgentFixRun.State.FAILED)
         retry = _fix_run(source_run, retried_from=first)
@@ -428,6 +477,31 @@ class TestLinks:
 
 
 class TestCreate:
+    def test_four_merges_preserve_an_older_open_job(self, environment, issue, user):
+        open_job, _ = _in_review(environment, issue, user)
+        for depth in range(4):
+            target = _issue(issue.project, f"merged-{depth}")
+            issue.deleted, issue.redirect_to = True, target
+            issue.save(update_fields=["deleted", "redirect_to"])
+            issue = target
+        assert reads.jobs_of_issues([issue]) == {issue.id: [open_job]}
+        newer = _job(environment, _import(environment, issue, []))
+        assert (
+            reads.issue_status_page([issue], _mine(environment))[issue.pk]["id"]
+            == newer.pk
+        )
+        traces = _members(issue, 2)
+        with _roots(_sdk(traces)), pytest.raises(HostedHarnessError) as refused:
+            jobs.create_issue_job(
+                issue,
+                environment=environment,
+                member_ids=traces,
+                user=user,
+                endpoint_base_url="https://platform.test",
+                environments=_mine(environment),
+            )
+        assert refused.value.details == {"job_id": str(open_job.id)}
+
     def test_the_picks_are_imported_and_drafted(
         self, environment, issue, user, boundaries
     ):
@@ -995,6 +1069,77 @@ class TestStop:
 
 
 class TestApi:
+    @pytest.mark.parametrize("size", [1, 100])
+    def test_launched_page_reads_only_the_latest_visible_jobs(
+        self,
+        size,
+        environment,
+        project,
+        source_run,
+        auth_client,
+        django_assert_max_num_queries,
+        record_property,
+    ):
+        expected = {}
+        for index in range(size):
+            issue = _issue(project, f"page-{index}")
+            source = _issue(
+                project, f"retired-{index}", deleted=True, redirect_to=issue
+            )
+            _job(environment, _import(environment, issue, []))
+            first = _fix_run(source_run, state=AgentFixRun.State.FAILED)
+            retry = _fix_run(
+                source_run, state=AgentFixRun.State.FAILED, retried_from=first
+            )
+            job = _job(environment, _import(environment, source, []), fix_run=first)
+            url = f"https://example.test/pulls/{index}"
+            AgentFixCandidate.objects.create(
+                fix_run=retry,
+                attempt=1,
+                agent_version_id=retry.base_agent_version_id,
+                outcome=AgentFixCandidate.Outcome.WINNER,
+                pull_request_url=url,
+            )
+            expected[issue.cluster_id] = (
+                str(job.id),
+                str(retry.id),
+                (index + 1) * 2,
+                url,
+            )
+
+        with patch.object(
+            AgentFixIssueJob, "from_db", wraps=AgentFixIssueJob.from_db
+        ) as load:
+            with django_assert_max_num_queries(9) as queries:
+                response = auth_client.get(
+                    f"{ISSUES}/", {"cluster_ids": ",".join(expected)}
+                )
+        assert response.status_code == 200, response.content
+        assert {
+            r["cluster_id"]: (
+                r["job"]["id"],
+                r["job"]["epoch"]["id"],
+                r["job"]["epoch"]["number"],
+                r["job"]["epoch"]["pull_request_url"],
+            )
+            for r in response.json()["results"]
+        } == expected
+        record_property("status_page_queries", len(queries))
+        assert load.call_count == size
+
+    def test_newer_job_outside_the_visible_environments_does_not_hide_a_visible_job(
+        self, environment, issue, user, workspace, storage
+    ):
+        visible = _job(environment, _import(environment, issue, []))
+        other = _environment(user, workspace, "other-environment", storage)
+        _job(other, _import(other, issue, []))
+        page = reads.issue_status_page([issue], _mine(environment))
+        assert page[issue.id]["id"] == visible.id
+        HostedHarnessJob.no_workspace_objects.filter(pk=environment.pk).update(
+            deleted=True
+        )
+        assert reads.issue_status_page([issue], _mine(environment)) == {}
+
     def test_the_first_plan_names_no_environment(self, auth_client, environment, issue):
         traces = _members(issue, 3)
 
