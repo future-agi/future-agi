@@ -1828,6 +1828,7 @@ function PropertyPicker({
   source = "traces",
   enableExactAttributeLookup = true,
   unifiedCatalogActive = false,
+  pickerSource,
   isSimulator = false,
   catalogLoading = false,
   catalogError = false,
@@ -1983,7 +1984,10 @@ function PropertyPicker({
       ? catalogProperties.filter(propertyFilter)
       : catalogProperties;
   }, [isSimulator, propertyFilter, searchedCatalog.metrics, source]);
+  // Users and Sessions also read the trace catalog, but an empty result on
+  // those pickers must not trigger a legacy trace-attribute request.
   const legacyAttributeSearchFallbackRequested =
+    (pickerSource === "traces" || pickerSource === "spans") &&
     shouldUseLegacyAttributeSearchFallback({
       unifiedCatalogActive,
       open,
@@ -4376,6 +4380,7 @@ function FilterRow({
         projectId={projectId}
         allowWorkspaceScope={allowWorkspaceScope}
         source={attributeSource || source}
+        pickerSource={source}
         enableExactAttributeLookup={enableExactAttributeLookup}
         unifiedCatalogActive={unifiedCatalogActive}
         isSimulator={isSimulator}

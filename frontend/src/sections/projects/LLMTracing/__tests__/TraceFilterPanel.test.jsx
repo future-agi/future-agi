@@ -3564,6 +3564,45 @@ describe("voice-call property search aliases", () => {
     document.body.removeChild(anchorEl);
   });
 
+  it.each(["users", "sessions"])(
+    "keeps empty %s searches on the unified catalog when attributes come from traces",
+    async (namespace) => {
+      const get = vi.spyOn(axios, "get").mockResolvedValue({
+        data: { result: { metrics: [], has_more: false } },
+      });
+      propertyCatalogMock.mockImplementation(() => settledPropertyCatalog());
+      const { anchorEl } = renderPanel({
+        projectId: `shared-trace-catalog-${namespace}`,
+        source: "sessions",
+        propertyNamespace: namespace,
+        attributeSource: "traces",
+      });
+      try {
+        fireEvent.click(screen.getByRole("button", { name: "Property" }));
+        fireEvent.change(screen.getByPlaceholderText("Search properties..."), {
+          target: { value: "missing.attribute" },
+        });
+        await waitFor(() =>
+          expect(propertyCatalogMock).toHaveBeenCalledWith(
+            expect.objectContaining({ search: "missing.attribute", enabled: true }),
+          ),
+        );
+        expect(get).not.toHaveBeenCalledWith(
+          endpoints.dashboard.metrics,
+          expect.objectContaining({
+            params: expect.objectContaining({
+              search: "missing.attribute",
+              category: "custom_attribute",
+            }),
+          }),
+        );
+      } finally {
+        document.body.removeChild(anchorEl);
+        get.mockRestore();
+      }
+    },
+  );
+
   it("falls back to the bounded legacy attribute read when a settled catalog search is empty", async () => {
     const get = vi.spyOn(axios, "get").mockImplementation((url, config) => {
       if (url !== endpoints.dashboard.metrics) {
