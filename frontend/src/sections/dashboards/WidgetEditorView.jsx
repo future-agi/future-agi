@@ -83,7 +83,11 @@ import {
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
 import { seriesColors } from "src/theme/data-colors";
-import { buildChartSeriesColorMap, buildSeriesColorMap, getSeriesColor } from "./chartColors";
+import {
+  buildChartSeriesColorMap,
+  buildSeriesColorMap,
+  getSeriesColor,
+} from "./chartColors";
 import {
   coerceFilterValue,
   FILTER_STRING_MAX_UTF8_BYTES,
@@ -3799,7 +3803,13 @@ export default function WidgetEditorView() {
   // previewSeries so hidden series keep their color when re-checked.
   const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () => buildChartSeriesColorMap(previewSeries, palette, theme.palette.mode, chartType),
+    () =>
+      buildChartSeriesColorMap(
+        previewSeries,
+        palette,
+        theme.palette.mode,
+        chartType,
+      ),
     [previewSeries, palette, theme.palette.mode, chartType],
   );
   const chartColors = useMemo(

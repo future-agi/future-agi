@@ -41,16 +41,36 @@ const shadeLevels = {
 };
 
 export function buildChartSeriesColorMap(series, palette, mode, chartType) {
-  const colors = buildSeriesColorMap(series.map((item) => item.name), palette);
-  if (!["bar", "column", "line", "stacked_bar", "stacked_column", "stacked_line"].includes(chartType)) {
+  const colors = buildSeriesColorMap(
+    series.map((item) => item.name),
+    palette,
+  );
+  if (
+    ![
+      "bar",
+      "column",
+      "line",
+      "stacked_bar",
+      "stacked_column",
+      "stacked_line",
+    ].includes(chartType)
+  ) {
     return colors;
   }
-  const groups = series.filter(({ breakdownName }) => breakdownName && breakdownName !== "total");
-  const hues = buildSeriesColorMap([...new Set(groups.map((item) => item.breakdownName))].sort(), palette);
+  const groups = series.filter(
+    ({ breakdownName }) => breakdownName && breakdownName !== "total",
+  );
+  const hues = buildSeriesColorMap(
+    [...new Set(groups.map((item) => item.breakdownName))].sort(),
+    palette,
+  );
   for (const { name, breakdownName, metricIndex } of groups) {
     const base = hues[breakdownName];
     const amount = (shadeLevels[mode] || shadeLevels.light)[metricIndex] || 0;
-    colors[name] = amount === 0 ? base : rgbToHex(amount < 0 ? darken(base, -amount) : lighten(base, amount));
+    colors[name] =
+      amount === 0
+        ? base
+        : rgbToHex(amount < 0 ? darken(base, -amount) : lighten(base, amount));
   }
   return colors;
 }

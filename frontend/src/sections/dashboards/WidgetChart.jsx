@@ -58,7 +58,11 @@ import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
 import ContentSkeleton from "src/components/content-skeleton";
 import { seriesColors } from "src/theme/data-colors";
-import { buildChartSeriesColorMap, buildSeriesColorMap, getSeriesColor } from "./chartColors";
+import {
+  buildChartSeriesColorMap,
+  buildSeriesColorMap,
+  getSeriesColor,
+} from "./chartColors";
 
 const CHART_HEIGHT_FALLBACK = 280;
 function getApexType(chartType) {
@@ -503,11 +507,11 @@ export default function WidgetChart({
   // hidden series keeps its slot and its color stays put when unhidden.
   const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () => buildChartSeriesColorMap(series, palette, theme.palette.mode, chartType),
+    () =>
+      buildChartSeriesColorMap(series, palette, theme.palette.mode, chartType),
     [series, palette, theme.palette.mode, chartType],
   );
-  const colorFor = (name) =>
-    getSeriesColor(name, seriesColorMap, palette);
+  const colorFor = (name) => getSeriesColor(name, seriesColorMap, palette);
 
   // Pie slices are breakdown values, which repeat across metrics. Key their
   // colours by the raw breakdown name so a given project is the same colour in
@@ -520,8 +524,7 @@ export default function WidgetChart({
       ),
     [series, palette],
   );
-  const pieColorFor = (name) =>
-    getSeriesColor(name, pieColorMap, palette);
+  const pieColorFor = (name) => getSeriesColor(name, pieColorMap, palette);
 
   const isDenseSeries = isDenseChartSeries(plottedChartSeries);
   const markerSizes = useMemo(

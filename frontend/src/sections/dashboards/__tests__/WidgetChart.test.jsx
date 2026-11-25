@@ -1943,11 +1943,18 @@ describe("WidgetChart — breakdown and metric color encoding", () => {
     h.query.data = {
       data: {
         result: {
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+          query_completed_at: "2026-07-09T01:00:00Z",
           metrics: [
             {
               id: "latency",
               name: "Latency",
               aggregation: "avg",
+              query_complete: true,
+              query_status: "complete",
+              query_sampled: false,
               series: [
                 {
                   name: "alpha",
@@ -1963,6 +1970,9 @@ describe("WidgetChart — breakdown and metric color encoding", () => {
               id: "tokens",
               name: "Tokens",
               aggregation: "sum",
+              query_complete: true,
+              query_status: "complete",
+              query_sampled: false,
               series: [
                 {
                   name: "alpha",
@@ -2024,10 +2034,14 @@ describe("WidgetChart — breakdown and metric color encoding", () => {
         metricIndex: 1,
       },
     ];
-    const expectedMap = buildChartSeriesColorMap(series, palette("light").data, "light", "line");
+    const expectedMap = buildChartSeriesColorMap(
+      series,
+      palette("light").data,
+      "light",
+      "line",
+    );
 
     expect(chartColors).toEqual(series.map((item) => expectedMap[item.name]));
     expect(legendColors).toEqual(chartColors);
   });
 });
-

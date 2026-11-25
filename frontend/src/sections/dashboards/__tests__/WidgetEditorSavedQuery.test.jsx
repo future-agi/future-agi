@@ -44,8 +44,19 @@ vi.mock("src/components/snackbar", () => ({
   useSnackbar: () => ({ enqueueSnackbar: vi.fn() }),
 }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
-vi.mock("react-apexcharts", () => ({ default: ({options}) => <div data-testid="preview-chart" data-colors={JSON.stringify(options.colors)} /> }));
-vi.mock("../ChartLegend", () => ({ default: ({colors}) => <div data-testid="preview-legend" data-colors={JSON.stringify(colors)} /> }));
+vi.mock("react-apexcharts", () => ({
+  default: ({ options }) => (
+    <div
+      data-testid="preview-chart"
+      data-colors={JSON.stringify(options.colors)}
+    />
+  ),
+}));
+vi.mock("../ChartLegend", () => ({
+  default: ({ colors }) => (
+    <div data-testid="preview-legend" data-colors={JSON.stringify(colors)} />
+  ),
+}));
 vi.mock("src/components/filter-value-label", () => ({
   default: () => null,
   useResolvedFilterOptions: () => ({ options: [] }),
@@ -246,7 +257,10 @@ describe("saved WidgetEditor actual reopen payload", () => {
         output_type: "text",
         aggregation,
       };
-      const saved = queryWith({ ...metric, allowedAggregations: ["count", "count_distinct"] });
+      const saved = queryWith({
+        ...metric,
+        allowedAggregations: ["count", "count_distinct"],
+      });
       expect(await captureReopen(saved)).toEqual(queryWith(metric));
     },
   );
@@ -505,7 +519,12 @@ describe("saved WidgetEditor actual reopen payload", () => {
 
 describe("restoreWidgetQueryItem typed saved contract", () => {
   it("restores text capabilities without rewriting a legacy Average request", () => {
-    const item = freeze({ name: LABEL, type: "annotation_metric", output_type: "text", aggregation: "avg" });
+    const item = freeze({
+      name: LABEL,
+      type: "annotation_metric",
+      output_type: "text",
+      aggregation: "avg",
+    });
     expect(editor.restoreWidgetQueryItem(item)).toMatchObject({
       allowedAggregations: ["count", "count_distinct"],
       aggregation: "avg",
@@ -683,12 +702,35 @@ describe("restoreWidgetQueryItem typed saved contract", () => {
 
 it("uses the same breakdown hue for the editor plot and legend", async () => {
   await captureReopen(SAVED_NUMERIC, "line");
-  const response = { data: { result: { metrics: SAVED_NUMERIC.metrics.map((metric, index) => ({ ...metric,
-    series: [{ name: "A", data: [{timestamp: "2026-07-09T00:00:00Z", value: index + 1}] }],
-  })) } } };
+  const response = {
+    data: {
+      result: {
+        query_complete: true,
+        query_status: "complete",
+        query_sampled: false,
+        query_completed_at: "2026-07-09T01:00:00Z",
+        metrics: SAVED_NUMERIC.metrics.map((metric, index) => ({
+          ...metric,
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+          series: [
+            {
+              name: "A",
+              data: [{ timestamp: "2026-07-09T00:00:00Z", value: index + 1 }],
+            },
+          ],
+        })),
+      },
+    },
+  };
   act(() => h.query.mutate.mock.calls[0][1].onSuccess(response));
-  const colors = JSON.parse((await screen.findByTestId("preview-chart")).dataset.colors);
+  const colors = JSON.parse(
+    (await screen.findByTestId("preview-chart")).dataset.colors,
+  );
   expect(colors[0]).toBe(palette("light").data[1]);
   expect(colors[1]).not.toBe(colors[0]);
-  expect(JSON.parse(screen.getByTestId("preview-legend").dataset.colors)).toEqual(colors);
+  expect(
+    JSON.parse(screen.getByTestId("preview-legend").dataset.colors),
+  ).toEqual(colors);
 });
