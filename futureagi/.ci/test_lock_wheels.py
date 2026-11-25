@@ -336,7 +336,9 @@ class WorkflowWiringTest(unittest.TestCase):
                     self.assertIn(self.ACTION, job)
                     self.assertLess(job.index(command), job.index(self.ACTION))
                     self.assertRegex(job, r"\n    needs: \[[^\]]*\bplan\b")
-        self.assertCountEqual(selecting, ["saml-multiworker", "agentic-eval"])
+        self.assertCountEqual(
+            selecting, ["saml-multiworker", "eval-task-mixed-workers", "agentic-eval"]
+        )
         # The base-only jobs do not select the wheel; if one starts to, the
         # loop above makes it adopt the same wiring.
         for name in ("update-safety", "slim-smoke"):

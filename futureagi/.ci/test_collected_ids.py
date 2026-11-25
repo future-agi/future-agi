@@ -1765,6 +1765,7 @@ class WorkflowTest(unittest.TestCase):
             "collection",
             "terminal-parity",
             "saml-multiworker",
+            "eval-task-mixed-workers",
             "migrated-database",
             "agentic-eval",
             "slim-smoke",
