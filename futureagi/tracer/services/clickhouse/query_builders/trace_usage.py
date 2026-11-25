@@ -265,7 +265,7 @@ def usage_aggregate_sql(
                     arrayMap(billable_usage_spans ->
                         arrayMap(cost_unknown -> tuple(cost_unknown,
                             if(cost_unknown, CAST(NULL, 'Nullable(Float64)'),
-                                arraySum(s -> s.5, billable_usage_spans)),
+                                {ordered_float_sum_sql("arrayMap(s -> s.5, billable_usage_spans)")}),
                             arraySum(s -> s.6, billable_usage_spans),
                             arraySum(s -> s.7, billable_usage_spans),
                             arraySum(s -> s.8, billable_usage_spans) {capture}),
@@ -281,7 +281,7 @@ def usage_aggregate_sql(
         "arrayFilter(s -> NOT tupleElement(s.9, 1) AND NOT (s.4 != 'llm' AND has(repeated_usage_ids, s.1)), usage_spans) AS billable_usage_spans",
         "arrayExists(s -> tupleElement(s.9, 2), billable_usage_spans) AS usage_cost_unknown",
         "if(usage_cost_unknown, CAST(NULL, 'Nullable(Float64)'), "
-        "arraySum(s -> s.5, billable_usage_spans)) AS usage_cost",
+        f"{ordered_float_sum_sql('arrayMap(s -> s.5, billable_usage_spans)')}) AS usage_cost",
     ]
     projections.extend(
         f"arraySum(s -> s.{index}, billable_usage_spans) AS usage_{column}"
