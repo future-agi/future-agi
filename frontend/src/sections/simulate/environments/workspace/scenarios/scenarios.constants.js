@@ -63,6 +63,16 @@ export const SCENARIOS_COPY = {
     "Scenarios are normally derived from your agent when the environment is built.",
   critical: "Critical: a failure here is a release blocker",
   briefTip: "What the caller is told to do",
+  batchSystem: "System",
+  batchBuilt: (who) => `${who} built the environment`,
+  batchChanged: (who) => `${who} changed the scenarios`,
+  batchWritten: "Written from the agent",
+  batchVersion: (label) => `scenarios ${label}`,
+  latest: "Latest",
+  allCanRun: (n) => `all ${n} can run`,
+  someCanRun: (ok, n) => `${ok} of ${n} can run`,
+  hideBatch: (n) => `Hide ${n}`,
+  showBatch: (n) => `Show ${n}`,
 };
 
 // A row the unsaved changes add or change; an added one can't be picked for a

@@ -87,9 +87,7 @@ describe("ScenarioTable columns", () => {
     const header = screen.getByRole("columnheader", { name: "Scenario" });
     expect(getComputedStyle(header).position).toBe("sticky");
     expect(getComputedStyle(header).left).toBe("92px");
-    const cell = screen
-      .getByText(rows[0].name || rows[0].title)
-      .closest("td");
+    const cell = screen.getByText(rows[0].name || rows[0].title).closest("td");
     expect(getComputedStyle(cell).position).toBe("sticky");
     expect(getComputedStyle(cell).left).toBe("92px");
   });
@@ -191,6 +189,69 @@ describe("ScenarioTable source chip", () => {
       batch: { version: built, latest: true, only: true },
     });
     expect(screen.getAllByText("Derived")).toHaveLength(1);
+  });
+});
+
+describe("ScenarioTable batch row", () => {
+  const version = {
+    id: "s1",
+    label: "v1",
+    origin: "authoring",
+    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    createdBy: "Asha Rao",
+  };
+  const groups = [{ id: "g1", label: "Group one", rows }];
+
+  it("names who built the scenarios, the latest chip, the source, when, the version and how many can run", () => {
+    renderTable({
+      groups,
+      total: rows.length,
+      batch: { version, latest: true, only: true },
+    });
+    expect(screen.getByText("Asha Rao built the environment")).toBeVisible();
+    expect(screen.getByText("Latest")).toBeVisible();
+    expect(
+      screen.getByText(
+        `Written from the agent · 2 hours ago · scenarios v1 · all ${rows.length} can run`,
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Group one")).toBeVisible();
+  });
+
+  it("counts the scenarios that cannot run, and drops the Latest chip on an older version", () => {
+    renderTable({
+      rows: [
+        { ...rows[0], doorProblem: { code: "x", message: "y" } },
+        ...rows.slice(1),
+      ],
+      total: rows.length,
+      batch: { version: { ...version, createdBy: null }, latest: false },
+    });
+    expect(screen.getByText("System built the environment")).toBeVisible();
+    expect(screen.queryByText("Latest")).toBeNull();
+    expect(
+      screen.getByText(`${rows.length - 1} of ${rows.length} can run`, {
+        exact: false,
+      }),
+    ).toBeVisible();
+  });
+
+  it("hides and shows its rows", () => {
+    renderTable({
+      groups,
+      total: rows.length,
+      batch: { version, latest: true, only: true },
+    });
+    const name = rows[0].name || rows[0].title;
+    fireEvent.click(
+      screen.getByRole("button", { name: `Hide ${rows.length}` }),
+    );
+    expect(screen.queryByText(name)).toBeNull();
+    expect(screen.queryByText("Group one")).toBeNull();
+    const show = screen.getByRole("button", { name: `Show ${rows.length}` });
+    expect(show).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(show);
+    expect(screen.getByText(name)).toBeVisible();
   });
 });
 

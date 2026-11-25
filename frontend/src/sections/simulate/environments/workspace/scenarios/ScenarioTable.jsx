@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import ScenarioTagCell from "./ScenarioTagCell";
+import ScenarioBatchRow from "./ScenarioBatchRow";
 import {
   Fragment,
   useCallback,
@@ -41,11 +42,7 @@ import {
   unsavedCheckboxProps,
 } from "./scenarios.constants";
 import { personaSubline } from "./personaLabels";
-import {
-  BATCH_SHAPE,
-  GROUP_SHAPE,
-  SCENARIO_SHAPE,
-} from "./scenarios.shapes";
+import { BATCH_SHAPE, GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // on the table carries this on a tooltip so the disabled state reads as
@@ -156,7 +153,9 @@ export default function ScenarioTable({
   rowHeight = "Short",
   envId = null,
   batch = null,
+  total,
 }) {
+  const [batchOpen, setBatchOpen] = useState(true);
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
   const [widths, setWidths] = useState(readWidths);
   const widthsRef = useRef(widths);
@@ -187,6 +186,8 @@ export default function ScenarioTable({
       groups?.length ? groups : [{ id: "all", label: null, rows: rows || [] }],
     [groups, rows],
   );
+
+  const shownSections = batch && !batchOpen ? [] : sections;
 
   const allIds = useMemo(
     () =>
@@ -391,7 +392,17 @@ export default function ScenarioTable({
       </TableHead>
 
       <TableBody>
-        {sections.map((section) => (
+        {batch && (
+          <ScenarioBatchRow
+            batch={batch}
+            rows={rows || []}
+            total={total ?? allIds.length}
+            colSpan={columns.length}
+            open={batchOpen}
+            onToggle={() => setBatchOpen((was) => !was)}
+          />
+        )}
+        {shownSections.map((section) => (
           <Fragment key={section.id}>
             {section.label && (
               <TableRow>
@@ -721,5 +732,6 @@ ScenarioTable.propTypes = {
   lockTooltip: PropTypes.string,
   envId: PropTypes.string,
   batch: BATCH_SHAPE,
+  total: PropTypes.number,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
 };

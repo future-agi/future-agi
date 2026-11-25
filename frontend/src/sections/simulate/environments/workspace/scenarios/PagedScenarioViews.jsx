@@ -149,6 +149,7 @@ export default function PagedScenarioViews({
             rowHeight={rowHeight}
             envId={env?.id}
             batch={batch}
+            total={total}
           />
         ) : (
           <GroupedScenarioList
