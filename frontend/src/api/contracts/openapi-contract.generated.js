@@ -54316,6 +54316,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "limits",
         "blocked",
         "variations_blocked",
+        "held_back_from",
+        "release_label",
       ],
       type: "object",
       properties: {
@@ -54354,6 +54356,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         variations_blocked: {
           $ref: "#/definitions/AgentFixFailure",
+        },
+        held_back_from: {
+          title: "Held back from",
+          description:
+            "What chooses the held-back cases: the run's release's test split, or a sample of the run's failing cases.",
+          type: "string",
+          enum: ["release", "sample"],
+        },
+        release_label: {
+          title: "Release label",
+          description: "The label of the run's release; null off a release.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -101264,6 +101280,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failing_sub_goals",
         "evidence_import_id",
+        "split",
       ],
       type: "object",
       properties: {
@@ -101295,6 +101312,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
           type: "string",
           format: "uuid",
+          "x-nullable": true,
+        },
+        split: {
+          title: "Split",
+          description:
+            "Its split in the run's release; null off a release, or when it can't be scored. A test-split case is never must-pass, and a failing one is held back.",
+          type: "string",
+          enum: ["train", "test"],
           "x-nullable": true,
         },
       },

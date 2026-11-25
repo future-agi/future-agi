@@ -39153,6 +39153,11 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
         .describe(
           "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
         ),
+      split: zod
+        .enum(["train", "test"])
+        .describe(
+          "Its split in the run's release; null off a release, or when it can't be scored. A test-split case is never must-pass, and a failing one is held back.",
+        ),
     }),
   ),
   suggested: zod.object({
@@ -39194,6 +39199,15 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     code: zod.string().min(1),
     message: zod.string().min(1),
   }),
+  held_back_from: zod
+    .enum(["release", "sample"])
+    .describe(
+      "What chooses the held-back cases: the run's release's test split, or a sample of the run's failing cases.",
+    ),
+  release_label: zod
+    .string()
+    .min(1)
+    .describe("The label of the run's release; null off a release."),
 });
 
 /**

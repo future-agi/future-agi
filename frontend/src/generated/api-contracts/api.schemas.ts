@@ -19679,6 +19679,17 @@ export interface AgentFixLaunchApi {
   cost_limit_usd?: number;
 }
 
+/**
+ * What chooses the held-back cases: the run's release's test split, or a sample of the run's failing cases.
+ */
+export type AgentFixLaunchOptionsApiHeldBackFrom =
+  (typeof AgentFixLaunchOptionsApiHeldBackFrom)[keyof typeof AgentFixLaunchOptionsApiHeldBackFrom];
+
+export const AgentFixLaunchOptionsApiHeldBackFrom = {
+  release: "release",
+  sample: "sample",
+} as const;
+
 export interface AgentFixLaunchSourceRunApi {
   id: string;
   number: number;
@@ -19695,6 +19706,17 @@ export interface AgentFixLaunchEnvironmentApi {
   version: number;
 }
 
+/**
+ * Its split in the run's release; null off a release, or when it can't be scored. A test-split case is never must-pass, and a failing one is held back.
+ */
+export type AgentFixLaunchScenarioApiSplit =
+  (typeof AgentFixLaunchScenarioApiSplit)[keyof typeof AgentFixLaunchScenarioApiSplit];
+
+export const AgentFixLaunchScenarioApiSplit = {
+  train: "train",
+  test: "test",
+} as const;
+
 export interface AgentFixLaunchScenarioApi {
   /** @minLength 1 */
   key: string;
@@ -19704,6 +19726,8 @@ export interface AgentFixLaunchScenarioApi {
   failing_sub_goals: string[];
   /** The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence. */
   evidence_import_id: string;
+  /** Its split in the run's release; null off a release, or when it can't be scored. A test-split case is never must-pass, and a failing one is held back. */
+  split: AgentFixLaunchScenarioApiSplit;
 }
 
 export interface AgentFixLaunchSuggestedApi {
@@ -19753,6 +19777,13 @@ export interface AgentFixLaunchOptionsApi {
   limits: AgentFixLaunchLimitsApi;
   blocked: AgentFixFailureApi;
   variations_blocked: AgentFixFailureApi;
+  /** What chooses the held-back cases: the run's release's test split, or a sample of the run's failing cases. */
+  held_back_from: AgentFixLaunchOptionsApiHeldBackFrom;
+  /**
+   * The label of the run's release; null off a release.
+   * @minLength 1
+   */
+  release_label: string;
 }
 
 export type AgentFixRunDetailApiState =
