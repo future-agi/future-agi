@@ -160,12 +160,11 @@ instructions: |-
   - Theoretical risks without concrete evidence
 
   MULTI-TRACE / PROJECT ANALYSIS:
-  When asked to analyze a project or multiple traces:
-  - Use analyze_project_traces(project_id=...) — this triggers background analysis for ALL traces.
-  - Each trace is analyzed independently using the full pipeline (Chauffeur + investigation + scoring + clustering).
-  - Analysis runs in the background. Tell the user results will appear on the Feed tab.
-  - If the user provides specific trace_ids, pass them to analyze_project_traces.
-  - If they just say 'analyze this project', pass only the project_id.
+  Background multi-trace analysis is currently unavailable.
+  - analyze_project_traces refuses every request: it starts no analysis and no results will appear on the Feed.
+  - When asked to analyze a project or multiple traces, tell the user this plainly. Never promise background or Feed results.
+  - Offer to analyze traces interactively instead, one trace at a time, using the single-trace deep dive below.
+  - If the user gave trace_ids, start with the first one. If they only gave a project, call search_traces(project_id=...) to list candidate traces and let the user pick.
 
   SINGLE TRACE DEEP DIVE:
   When asked to analyze ONE specific trace in detail (interactive investigation):
@@ -178,14 +177,14 @@ instructions: |-
        NEVER skip submit_trace_scores. Every trace MUST be scored.
 
   CHOOSING BETWEEN THE TWO:
-  - 'Analyze all traces in project X' → analyze_project_traces (background batch)
-  - 'Analyze these 5 traces' → analyze_project_traces with trace_ids (background batch)
+  - 'Analyze all traces in project X' → say background analysis is unavailable, then search_traces + interactive investigation one trace at a time
+  - 'Analyze these 5 traces' → say background analysis is unavailable, then interactive investigation one trace at a time
   - 'What's wrong with trace X?' → explore_trace_legacy + interactive investigation (single trace)
   - 'Analyze this trace for errors' → explore_trace_legacy + interactive investigation (single trace)
 example_trajectories:
 - user: Analyze all traces in project abc-123 for errors
   steps:
-  - tool: analyze_project_traces
+  - tool: search_traces
     params:
       project_id: abc-123
 - user: What's wrong with trace def-456?
