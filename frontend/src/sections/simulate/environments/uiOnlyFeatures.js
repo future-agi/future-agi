@@ -24,8 +24,7 @@ export const UI_ONLY_FEATURES = Object.freeze({
   },
   connectAgent: {
     label: "Connect an agent",
-    ask: "an endpoint to attach or change the agent an environment tests, with a run readiness check for the agent picked",
-    note: "UI only: the agent picked is kept in this browser, and connecting a new one adds a sample agent. Nothing is sent.",
+    ask: "an endpoint to attach or change the agent an environment tests",
   },
   syncAgent: {
     label: "Sync agent",
@@ -38,6 +37,10 @@ export const UI_ONLY_FEATURES = Object.freeze({
   toolFaults: {
     label: "Tool faults",
     ask: "per-tool fault injection settings",
+  },
+  mcpTools: {
+    label: "MCP tools",
+    ask: "adding, refreshing and removing tools from MCP servers",
   },
   compareRuns: {
     label: "Compare runs",

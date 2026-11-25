@@ -45,7 +45,7 @@ export default function MyEnvironmentsTable({
         rowCount={total}
         getRowId={(row) => row.id}
         onRowClick={(row) => onOpen?.(row)}
-        rowHeight={ROW_HEIGHT.twoLine}
+        rowHeight={ROW_HEIGHT.default}
         emptyMessage={pending ? "" : EMPTY_MESSAGE}
       />
       {total > 0 && (

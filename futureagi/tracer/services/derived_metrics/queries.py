@@ -716,6 +716,9 @@ def rollup_insert(
             stratum_parts_select,
         )
 
+        # field_recipe has no formula only for unique_count (sketched above) or
+        # an empty custom formula, which compile_formula rejects at validation.
+        assert formula is not None
         aggregate = combine_parts_select(
             stratum_parts_select(
                 source, formula, rollup=rollup, scope_column="sampling_scope"
@@ -724,6 +727,7 @@ def rollup_insert(
             rollup=rollup,
         )
     else:
+        assert formula is not None  # compile_formula always returns a Formula
         aggregate = aggregate_select(source, formula, rollup=rollup)
     return (
         f"""INSERT INTO derived_metric_results

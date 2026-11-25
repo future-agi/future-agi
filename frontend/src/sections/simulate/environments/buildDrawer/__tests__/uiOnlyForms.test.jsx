@@ -11,7 +11,7 @@ vi.mock("src/api/harness/harness", async (actual) => ({
 }));
 
 describe("Unavailable connectors", () => {
-  it("marks Vapi chat unavailable without preflight or a sample build", () => {
+  it("opens only the supported Vapi platform without a simulated chat connector", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <BuildEnvironmentDrawer open onClose={vi.fn()} />
@@ -19,13 +19,8 @@ describe("Unavailable connectors", () => {
     );
     fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms/ }));
     fireEvent.click(screen.getByRole("button", { name: "Connect Vapi" }));
-    fireEvent.click(screen.getByRole("button", { name: /Chat/ }));
-    expect(
-      screen.getByRole("button", { name: "Connect and build environment" }),
-    ).toBeDisabled();
-    expect(
-      screen.queryByRole("button", { name: "Run preflight" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByText("Vapi API key")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Chat$/ })).toBeNull();
     expect(create).not.toHaveBeenCalled();
   });
 

@@ -35,6 +35,7 @@ from tracer.services.derived_metrics.bounded_reads import (
     committed_key_pages,
     merge_bindings,
 )
+from tracer.services.derived_metrics.changes import ReconciliationCheckpoint
 from tracer.services.derived_metrics.deletion_protocol import serialized_project
 from tracer.services.derived_metrics.errors import MetricInputError
 from tracer.services.derived_metrics.publication import committed_rows_select
@@ -434,7 +435,7 @@ def retirement_definitions(writer, head, definitions):
     resurrect old versions after cleanup. Only the expiry planner uses them.
     """
     versions = {(str(d.metric_id), d.version): d for d in definitions}
-    needed = set()
+    needed: set[tuple[str, int]] = set()
     for table, prefix in ((FIELD_VALUES, "field"), (BUCKET_TOTALS, "metric")):
         relation, params = committed_rows_select(
             table, head, org_id=writer.org_id, project_id=writer.lease.project_id
@@ -874,7 +875,7 @@ def _grouped_committed_page(
     """
     if limit <= 0:
         return []
-    winners = {}
+    winners: dict[tuple[str, ...], datetime] = {}
     used_bytes = 0
     for keys in committed_key_pages(
         writer.store,
@@ -1006,7 +1007,9 @@ def day_page(analytics, writer, head, cursor, *, page_size, cutoff=None):
     params = changes._scope(writer.org_id, writer.lease.project_id, attempts)
     params.update(day_start=start, day_end=end)
     budget = changes.MetricReadBudget()
-    keys, units, scanned = set(), set(), 0
+    keys: set[changes.SourceKey] = set()
+    units: set[changes.UnitKey] = set()
+    scanned = 0
     keyset_start = None
     while proposed["phase"] != "coverage" and scanned < page_size:
         phase, after = proposed["phase"], proposed["after"]
@@ -1025,7 +1028,7 @@ def day_page(analytics, writer, head, cursor, *, page_size, cutoff=None):
                 AND start_time < toDateTime64(%(day_end)s, 6, 'UTC')
                 WHERE {predicate} ORDER BY {", ".join(changes.SOURCE_ORDER)}
                 LIMIT %(history_limit)s"""
-            columns = changes.SOURCE_ORDER
+            columns: tuple[str, ...] = changes.SOURCE_ORDER
         else:
             table = SOURCE_DEPENDENCIES if phase == "dependencies" else FIELD_VALUES
             columns = (
@@ -1114,7 +1117,7 @@ def day_page(analytics, writer, head, cursor, *, page_size, cutoff=None):
 @dataclass(frozen=True)
 class VersionCoveragePage:
     changes: changes.ChangeBatch
-    checkpoint: changes.ReconciliationCheckpoint
+    checkpoint: ReconciliationCheckpoint
     keyset_start: str | None
 
 
@@ -1147,7 +1150,9 @@ def version_coverage_page(
     )
     params.update(coverage_start=start, coverage_end=end)
     budget = changes.MetricReadBudget()
-    keys, units, scanned = set(), set(), 0
+    keys: set[changes.SourceKey] = set()
+    units: set[changes.UnitKey] = set()
+    scanned = 0
     keyset_start = None
     if phase == "sources":
         day = day or start.date()
@@ -1619,7 +1624,7 @@ def _committed_keyset_start(writer, committed, phase, after):
         "org_id = toUUID(%(keyset_org)s) AND project_id = toUUID(%(keyset_project)s)"
     )
     if phase == "dependencies":
-        tables = (SOURCE_DEPENDENCIES.name,)
+        tables: tuple[str, ...] = (SOURCE_DEPENDENCIES.name,)
         key = "trace_id = %(keyset_a)s AND span_id = %(keyset_b)s"
     else:
         versions = tuple(

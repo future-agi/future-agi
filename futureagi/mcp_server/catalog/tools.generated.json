@@ -729,18 +729,40 @@
             "type": "string"
           },
           "eval_tags": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "use_cases": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "experiment_id": {
             "type": "string",
@@ -1549,11 +1571,22 @@
             "maximum": 100
           },
           "modality": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -6007,28 +6040,64 @@
             "type": "string"
           },
           "project_id": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "uuid"
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "triggered",
-                "healthy"
-              ]
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "triggered",
+                  "healthy"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "triggered",
+                    "healthy"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "metric_type": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sort_by": {
             "type": "string",
@@ -6556,18 +6625,40 @@
             "maximum": 100
           },
           "status": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_type": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "assigned_to": {
             "type": "string"
@@ -7579,6 +7670,100 @@
                 ]
               },
               {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "voice",
+                    "text"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "github",
+                  "archive",
+                  "livekit",
+                  "vapi",
+                  "retell",
+                  "bland",
+                  "eleven_labs",
+                  "phone"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "github",
+                    "archive",
+                    "livekit",
+                    "vapi",
+                    "retell",
+                    "bland",
+                    "eleven_labs",
+                    "phone"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environments": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "with",
+                  "without"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "with",
+                    "without"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observe": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "linked",
+                  "not_linked"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "linked",
+                    "not_linked"
+                  ]
+                }
+              },
+              {
                 "type": "null"
               }
             ]
@@ -7621,6 +7806,9 @@
           "query": [
             "search",
             "agent_type",
+            "source",
+            "environments",
+            "observe",
             "agent_definition_id",
             "page",
             "limit"

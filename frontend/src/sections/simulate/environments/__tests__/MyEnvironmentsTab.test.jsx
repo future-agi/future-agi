@@ -171,7 +171,7 @@ describe("MyEnvironmentsTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/create your first environment/i)).toBeNull();
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Clear filters" })[0],
+      screen.getAllByRole("button", { name: /^Clear/ })[0],
     );
     expect(location.search).toBe("?tab=my-environments");
   });
@@ -209,7 +209,7 @@ describe("MyEnvironmentsTab", () => {
       screen.getByText("No environments match these filters"),
     ).toBeInTheDocument();
     expect(
-      screen.getAllByRole("button", { name: "Clear filters" }),
+      screen.getAllByRole("button", { name: /^Clear/ }),
     ).toHaveLength(1);
   });
 });

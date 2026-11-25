@@ -11,6 +11,7 @@ import { prepareSourceForBuild } from "./prepareSourceForBuild";
 import { clampParallelism } from "../parallelism.constants";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import useBuildSources from "../buildDrawer/forms/shared/useBuildSources";
+import { clearBuildDrafts } from "../buildDrawer/buildDraft";
 
 /**
  * The inline build machine shared by every Build environment drawer form. A
@@ -161,6 +162,7 @@ export default function usePanelBuild() {
             });
             return;
           }
+          clearBuildDrafts();
           navigate(paths.dashboard.simulate.environments.detail(envId));
         },
         // A create failure (e.g. the sandbox is unavailable) must surface, not

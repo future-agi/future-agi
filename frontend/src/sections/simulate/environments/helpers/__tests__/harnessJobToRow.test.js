@@ -282,34 +282,41 @@ describe("harnessEnvToRow, design columns", () => {
   };
   const run = (over = {}) => ({
     status: "completed",
+    run_number: 4,
     outcome_passed: 6,
     outcome_failed: 2,
     outcome_skipped: 5,
+    pass_rate: 75,
     ...over,
   });
 
-  it("marks fields the API does not send as NOT_PROVIDED", () => {
-    const row = harnessEnvToRow(base);
-    expect(row.agent).toBe(NOT_PROVIDED);
-    expect(row.owner).toBe(NOT_PROVIDED);
-    expect(row.envVersion).toBe(NOT_PROVIDED);
-    expect(row.agentTags).toBe(NOT_PROVIDED);
+  it("marks an agent the API does not send as NOT_PROVIDED", () => {
+    expect(harnessEnvToRow(base).agent).toBe(NOT_PROVIDED);
   });
 
-  it("keeps a sent-but-null field as null", () => {
-    const row = harnessEnvToRow({ ...base, agent: null, owner: null });
-    expect(row.agent).toBeNull();
-    expect(row.owner).toBeNull();
+  it("keeps a sent-but-null agent as null", () => {
+    expect(harnessEnvToRow({ ...base, agent: null }).agent).toBeNull();
   });
 
-  it("passes agent and owner through", () => {
+  it("passes the agent through", () => {
     const row = harnessEnvToRow({
       ...base,
       agent: { id: "a1", name: "Billing" },
-      owner: { id: "u1", name: "Ada Lovelace" },
     });
     expect(row.agent).toEqual({ id: "a1", name: "Billing" });
-    expect(row.owner).toEqual({ id: "u1", name: "Ada Lovelace" });
+  });
+
+  it("labels the environment version, or nothing without one", () => {
+    expect(
+      harnessEnvToRow({
+        ...base,
+        environment_version: { id: "v1", version_number: 3 },
+      }).envVersion,
+    ).toBe("v3");
+    expect(harnessEnvToRow(base).envVersion).toBeNull();
+    expect(
+      harnessEnvToRow({ ...base, environment_version: null }).envVersion,
+    ).toBeNull();
   });
 
   it("marks a missing last_run key as NOT_PROVIDED, and a null one as no run", () => {
@@ -317,40 +324,15 @@ describe("harnessEnvToRow, design columns", () => {
     expect(harnessEnvToRow({ ...base, last_run: null }).lastRun).toBeNull();
   });
 
-  it("rates the last run on scored scenarios only", () => {
+  it("takes the last run's rate and number from the API", () => {
     const row = harnessEnvToRow({ ...base, last_run: run() });
-    expect(row.lastRun.rate).toBe(75);
+    expect(row.lastRun).toEqual({ rate: 75, ordinal: 4 });
   });
 
-  it("shows no rate when nothing was scored", () => {
-    const zero = run({
-      outcome_passed: 0,
-      outcome_failed: 0,
-      outcome_skipped: 4,
-    });
-    expect(harnessEnvToRow({ ...base, last_run: zero }).lastRun).toBeNull();
+  it("shows no rate when the API has none", () => {
+    expect(
+      harnessEnvToRow({ ...base, last_run: run({ pass_rate: null }) }).lastRun,
+    ).toBeNull();
     expect(harnessEnvToRow({ ...base, last_run: null }).lastRun).toBeNull();
-    const unknown = run({
-      outcome_passed: null,
-      outcome_failed: null,
-      outcome_skipped: null,
-    });
-    expect(harnessEnvToRow({ ...base, last_run: unknown }).lastRun).toBeNull();
-  });
-
-  it("computes the delta from previous_pass_rate", () => {
-    const withPrev = harnessEnvToRow({
-      ...base,
-      last_run: run({ previous_pass_rate: 70 }),
-    });
-    expect(withPrev.lastRun.delta).toBe(5);
-    expect(harnessEnvToRow({ ...base, last_run: run() }).lastRun.delta).toBe(
-      NOT_PROVIDED,
-    );
-    const nullPrev = harnessEnvToRow({
-      ...base,
-      last_run: run({ previous_pass_rate: null }),
-    });
-    expect(nullPrev.lastRun.delta).toBeNull();
   });
 });

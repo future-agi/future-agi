@@ -151,7 +151,7 @@ describe("MyEnvironmentsTable", () => {
     renderTab();
     await screen.findByText("Customer Support Line");
 
-    ["Ready", "Running…", "Building", "Failed"].forEach((label) =>
+    ["Ready", "Running", "Building", "Failed"].forEach((label) =>
       expect(screen.getByText(label)).toBeInTheDocument(),
     );
   });
@@ -176,7 +176,7 @@ describe("MyEnvironmentsTable", () => {
     // Real description, sub-goals count and run state for the first row. The
     // Domain column is gone: §1 sends `domain` verbatim from the submitter's
     // metadata and it is null for nearly every environment.
-    expect(row.getByText("Handles inbound billing calls")).toBeInTheDocument();
+    expect(row.queryByText("Handles inbound billing calls")).toBeNull();
     expect(screen.queryByText("Domain")).toBeNull();
     expect(row.queryByText("Logistics")).toBeNull();
     expect(row.getByText("12")).toBeInTheDocument();
@@ -363,26 +363,14 @@ describe("MyEnvironmentsTable", () => {
       "Agent type",
       "Agent",
       "Last run",
-      "Tools",
       "Scenarios",
       "Sub-goals",
       "Runs",
-      "Owner",
       "Updated",
     ]);
   });
 
-  it("runs only from the row menu, with no Run button in the row", async () => {
-    listHarnessEnvironments.mockResolvedValue({
-      ...HARNESS_ENVS,
-      results: [
-        {
-          ...HARNESS_ENVS.results[0],
-          agent_version: { id: "v", version_number: 4 },
-        },
-        ...HARNESS_ENVS.results.slice(1),
-      ],
-    });
+  it("puts no Run button on a row", async () => {
     renderTab();
     await screen.findByText("Customer Support Line");
     expect(

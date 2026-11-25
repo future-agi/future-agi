@@ -132,6 +132,9 @@ from simulate.services.harness_environment import (
     environment_detail,
     environment_rows,
     eval_modality,
+    filter_for_list,
+    status_counts,
+    with_version_contract,
 )
 from simulate.services.harness_provider import (
     _usage_limit_response,
@@ -306,7 +309,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
 
-    def _queryset(self, request, *, designs: bool = False, adaptations: bool = False):
+    def _scoped_jobs(self, request, *, designs: bool = False, adaptations: bool = False):
         # The environments workspace is the page of a design and of an adaptation as well.
         # A design is listed, read and renamed like an environment; an adaptation is only
         # read (the composition it produces is the environment that gets listed). Neither
@@ -320,7 +323,12 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             jobs = jobs.exclude(payload__metadata__has_key="adaptation")
         if not designs:
             jobs = jobs.exclude(payload__metadata__has_key="design")
-        return annotate_for_list(scope_jobs(jobs, request))
+        return scope_jobs(jobs, request)
+
+    def _queryset(self, request, *, designs: bool = False, adaptations: bool = False):
+        return annotate_for_list(
+            self._scoped_jobs(request, designs=designs, adaptations=adaptations)
+        )
 
     def _job(self, request, pk, *, designs: bool = False, adaptations: bool = False):
         identifier = _uuid_or_none(pk)
@@ -1454,13 +1462,21 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        jobs = self._queryset(request, designs=True)
-        agent_definition_id = request.validated_query_data.get("agent_definition_id")
+        query = request.validated_query_data
+        jobs = filter_for_list(
+            with_version_contract(self._queryset(request, designs=True)),
+            search=query.get("search"),
+            status=query.get("status"),
+            agent_type=query.get("agent_type"),
+        )
+        agent_definition_id = query.get("agent_definition_id")
         if agent_definition_id is not None:
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
-        return paginator.get_paginated_response(environment_rows(page))
+        response = paginator.get_paginated_response(environment_rows(page or []))
+        response.data["status_counts"] = status_counts(self._scoped_jobs(request, designs=True))
+        return response
 
     @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
     def retrieve(self, request, pk=None):

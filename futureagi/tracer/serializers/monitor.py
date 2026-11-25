@@ -41,7 +41,7 @@ class UserAlertMonitorCreateResponseSerializer(serializers.Serializer):
 class UserAlertMonitorEntitlementResponseSerializer(ApiErrorResponseSerializer):
     """FeatureUnavailable as emitted by custom_exception_handler before creation."""
 
-    error = ApiErrorObjectSerializer()
+    error = ApiErrorObjectSerializer()  # type: ignore[assignment]  # nested object replaces the base string field
     upgrade_required = serializers.BooleanField()
     upgrade_cta = JsonValueField(required=False)
 

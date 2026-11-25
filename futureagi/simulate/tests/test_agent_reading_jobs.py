@@ -394,6 +394,21 @@ class TestReadingSandbox:
 
         assert env["ALK_READING_MAX_DURATION_SECONDS"] == "60"
 
+    def test_a_reading_is_given_the_platforms_call_limit(self, settings, simulator):
+        settings.ALK_HOSTED_READING_MAX_MODEL_CALLS = 7
+
+        _spec, env, material, _timeout = _launch_spec(_Provider(), {})
+
+        assert env["ALK_READING_MAX_MODEL_CALLS"] == "7"
+        assert "ALK_READING_MAX_MODEL_CALLS" not in material
+
+    def test_the_call_limit_is_60_unless_set(self, settings, simulator):
+        del settings.ALK_HOSTED_READING_MAX_MODEL_CALLS
+
+        _spec, env, _material, _timeout = _launch_spec(_Provider(), {})
+
+        assert env["ALK_READING_MAX_MODEL_CALLS"] == "60"
+
     def test_the_simulator_values_reach_the_sandbox_in_a_private_file(
         self, simulator, monkeypatch
     ):
@@ -936,3 +951,53 @@ class TestReadingStepCheck:
 
         assert step.status == "done"
         assert [one["check_id"] for one in billed] == ["run-1"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "limit"),
+    [
+        (None, 60),
+        ("", 60),
+        ("  ", 60),
+        ("abc", 60),
+        ("60.0", 60),
+        ("0", 60),
+        ("-5", 60),
+        ("7", 7),
+        (" 12 ", 12),
+    ],
+)
+def test_the_call_limit_setting_reads_anything_but_a_positive_whole_number_as_60(
+    monkeypatch, raw, limit
+):
+    from tfc.settings.settings import _reading_call_limit
+
+    if raw is None:
+        monkeypatch.delenv("ALK_HOSTED_READING_MAX_MODEL_CALLS", raising=False)
+    else:
+        monkeypatch.setenv("ALK_HOSTED_READING_MAX_MODEL_CALLS", raw)
+
+    assert _reading_call_limit() == limit
+
+
+def test_a_bad_call_limit_never_stops_settings_import():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import tfc.settings.settings as s; print(s.ALK_HOSTED_READING_MAX_MODEL_CALLS)",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        env={**os.environ, "ALK_HOSTED_READING_MAX_MODEL_CALLS": "abc"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip().splitlines()[-1] == "60"

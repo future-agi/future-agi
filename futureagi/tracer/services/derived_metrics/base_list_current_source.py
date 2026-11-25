@@ -329,7 +329,7 @@ def _state(scope):
     )
 
 
-def _token(state, intent):
+def _token(state, intent) -> SourceIntentToken:
     return SourceIntentToken(
         SourceScope(state.organization_id, state.project_id),
         state.epoch,
@@ -540,7 +540,7 @@ def _advance(state):
     state.save(using=DEFAULT_DB_ALIAS, update_fields=("closed_revision",))
 
 
-def _progress(state):
+def _progress(state) -> SourceProgress:
     return SourceProgress(
         SourceScope(state.organization_id, state.project_id),
         state.epoch,

@@ -24,6 +24,7 @@ from tracer.tests.test_span_physical_identity_latest import (
 from tracer.tests.test_span_physical_identity_latest import engine as engine
 from tracer.tests.test_span_population_time_discovery import _engine_population_page
 from tracer.tests.test_span_probe_index_witness import without_index_hints
+from tracer.views.observation_span import _span_cursor_order_for_partial_page
 
 
 @pytest.fixture
@@ -32,8 +33,9 @@ def seed_engine(request):
 
 
 class PreviousSource(SpanListQueryBuilderV2):
-    def _filter_seed_source_sql(self, *, raw_key_predicate=""):
-        return self._latest_window_source_sql("filter_slice")
+    def _filter_seed_source_sql(self, *, raw_key_predicate="", consumer_sql=""):
+        # The control differs only in prefix pruning, not the winner projection.
+        return self._latest_window_source_sql("filter_slice", consumer_sql=consumer_sql)
 
 
 def builder(*, previous=False, filters=None, **kwargs):
@@ -54,6 +56,118 @@ def query(target, **kwargs):
             "limit": 50,
         }
         | kwargs
+    )
+
+
+def sparse_hops(execute, target, filters, *, query_limited_hop=None, **options):
+    """Walk the public cursor, not an offset or an inferred time interval."""
+    previous = None
+    # Even a day at a time, a 64-acquisition request has room to cover 48
+    # empty days after warm-up, proofs and replay. Eight hops cover a year;
+    # the separate small-window controls below must finish in ONE request.
+    for hop in range(8):
+        page = _engine_population_page(execute, target, filters, **options)
+        if page.complete:
+            assert query_limited_hop is None or hop > query_limited_hop
+        else:
+            if hop == query_limited_hop:
+                assert page.error_code == "query_budget_exceeded", page
+                assert sum(a.kind != "seed_density_probe" for a in page.attempts) == 64
+            else:
+                assert page.error_code == "scan_budget_exceeded", page
+            assert page.has_more or page.continuation_slice_end is not None
+        yield page
+        if page.complete and not page.has_more:
+            return
+        order = _span_cursor_order_for_partial_page(
+            rows=page.rows, bounded_page=page, cursor_state=None
+        )
+        assert previous is None or order < previous, (previous, order)
+        previous = order
+        options.update(cursor_start_time=order[0], cursor_order_token=order[1:])
+        for key in (
+            "continuation_slice_start",
+            "continuation_slice_end",
+            "continuation_before_start_time",
+            "continuation_before_id",
+        ):
+            options[key] = None if page.has_more else getattr(page, key)
+    pytest.fail("sparse fixture did not reach an exact page within eight requests")
+
+
+def sparse_page(execute, target, filters, **options):
+    for page in sparse_hops(execute, target, filters, **options):
+        if page.complete:
+            return page
+        assert not page.rows and not page.has_more, page
+    pytest.fail("missing complete page")
+
+
+class LadderControl(SpanListQueryBuilderV2):
+    """Same seed, proof SQL and classifier, with just the original proof widths."""
+
+    def filter_population_discovery_width_policy(self):
+        return None
+
+
+def budgeted_sparse_walk(
+    execute, filters, expected, record_property, *, page_size=25, query_limited_hop=None
+):
+    """Run the real row-budgeted selector over the SAME year as the ladder control."""
+    pages = []
+    target = builder(filters=filters)
+    for hop, page in enumerate(
+        sparse_hops(
+            execute,
+            target,
+            filters,
+            page_size=page_size,
+            query_limited_hop=query_limited_hop,
+        )
+    ):
+        trace = [
+            (
+                a.kind,
+                a.slice_start.isoformat(),
+                a.slice_end.isoformat(),
+                a.read_rows,
+                a.probe_rows,
+                a.error_code,
+            )
+            for a in page.attempts
+        ]
+        record_property(f"statement_trace_{hop}", json.dumps(trace))
+        assert all(
+            a.error_code is None and a.read_rows is not None for a in page.attempts
+        ), trace
+        assert page.query_count == len(trace) <= 128, trace
+        assert sum(a.kind != "seed_density_probe" for a in page.attempts) <= 64, trace
+        assert len(page.rows) <= page_size
+        # A proof wider than a day must have bought an index estimate for
+        # that interval. The estimate is not itself an absence proof.
+        approved = set()
+        for a in page.attempts:
+            interval = a.slice_start, a.slice_end
+            if a.kind == "seed_density_probe" and a.probe_rows is not None:
+                approved.add(interval)
+            if (
+                a.kind == "population_time_discovery"
+                and a.slice_end - a.slice_start > timedelta(days=1)
+            ):
+                assert interval in approved, trace
+        pages.append(page)
+    assert [r["id"] for page in pages for r in page.rows] == expected
+    assert pages[-1].complete and not pages[-1].has_more
+    assert any(
+        a.kind == "population_time_discovery" for page in pages for a in page.attempts
+    )
+    assert any(a.kind == "seed_density_probe" for page in pages for a in page.attempts)
+    return pages
+
+
+def ladder_control(filters):
+    return LadderControl(
+        project_id=PROJECT, filters=filters, bounded_internal_scan=True
     )
 
 
@@ -236,17 +350,34 @@ def test_non_key_only_modes_cannot_silently_expand_discovery_to_a_year(op):
 @pytest.mark.integration
 @pytest.mark.parametrize("present", [False, True])
 def test_full_year_sparse_numeric_gap_uses_adjacent_proofs_then_latest_replay(
-    seed_engine, present
+    seed_engine, present, record_property
 ):
     execute, insert = seed_engine
     start, end = START - timedelta(days=100), START + timedelta(days=265)
+    filters = [time_filter(start, end), attr_filter("greater_than", 1)]
+    if not present:
+        # One 7-day rung fits this entirely empty interval. Even including
+        # the density question, real policy must finish within four calls;
+        # a per-day fallback across a week cannot satisfy this control.
+        short = [time_filter(start, start + timedelta(days=7)), *filters[1:]]
+        week = _engine_population_page(execute, builder(filters=short), short)
+        assert week.complete and not week.rows and not week.has_more
+        assert week.query_count <= 4, week.attempts
     insert(id="irrelevant", start_time=end - timedelta(minutes=5), attrs_number={})
     if present:
         insert(id="wanted", attrs_number={"tag": 3})
         insert(id="deleted", attrs_number={"tag": 4})
         insert(id="deleted", _version=2, is_deleted=1, attrs_number={"tag": 4})
-    filters = [time_filter(start, end), attr_filter("greater_than", 1)]
-    target = builder(filters=filters)
+    budgeted_sparse_walk(
+        execute,
+        filters,
+        ["wanted"] if present else [],
+        record_property,
+        # On the second hop the classifier for the live hit costs one of the
+        # 64 statements: 60 seeds + 3 proofs + 1 classifier, not 64 scan steps.
+        query_limited_hop=1 if present else None,
+    )
+    target = ladder_control(filters)
     result = _engine_population_page(execute, target, filters)
     assert result.complete
     assert [row["id"] for row in result.rows] == (["wanted"] if present else [])
@@ -268,7 +399,9 @@ def test_full_year_sparse_numeric_gap_uses_adjacent_proofs_then_latest_replay(
 
 
 @pytest.mark.integration
-def test_repeated_gap_proof_does_not_stop_at_a_nonmatching_raw_hit(seed_engine):
+def test_repeated_gap_proof_does_not_stop_at_a_nonmatching_raw_hit(
+    seed_engine, record_property
+):
     execute, insert = seed_engine
     start, end = START - timedelta(days=100), START + timedelta(days=265)
     # Rejected value, cleared key and tombstone all produce raw key hits. A
@@ -285,7 +418,8 @@ def test_repeated_gap_proof_does_not_stop_at_a_nonmatching_raw_hit(seed_engine):
         )
     insert(id="older", attrs_number={"tag": 3})
     filters = [time_filter(start, end), attr_filter("greater_than", 1)]
-    result = _engine_population_page(execute, builder(filters=filters), filters)
+    budgeted_sparse_walk(execute, filters, ["older"], record_property)
+    result = _engine_population_page(execute, ladder_control(filters), filters)
     assert result.complete and [row["id"] for row in result.rows] == ["older"]
     probes = [a for a in result.attempts if a.kind == "population_time_discovery"]
     assert len(probes) > 6
@@ -299,7 +433,7 @@ def test_repeated_gap_proof_does_not_stop_at_a_nonmatching_raw_hit(seed_engine):
 @pytest.mark.integration
 @pytest.mark.parametrize("matching", [False, True])
 def test_one_row_preview_batches_rejected_witnesses_without_changing_page(
-    seed_engine, matching
+    seed_engine, matching, record_property
 ):
     execute, insert = seed_engine
     for index in range(30):
@@ -310,7 +444,19 @@ def test_one_row_preview_batches_rejected_witnesses_without_changing_page(
         insert(id="wanted-b", start_time=wanted_time, attrs_number={"tag": 3})
     start, end = START - timedelta(days=100), START + timedelta(days=265)
     filters = [time_filter(start, end), attr_filter("greater_than", 1)]
-    target = builder(filters=filters)
+    pages = budgeted_sparse_walk(
+        execute,
+        filters,
+        ["wanted-b", "wanted-a"] if matching else [],
+        record_property,
+        page_size=1,
+    )
+    first_match = next((i for i, p in enumerate(pages) if p.rows), len(pages) - 1)
+    before_publication = [a for p in pages[: first_match + 1] for a in p.attempts]
+    assert sum(a.kind == "classify" for a in before_publication) == int(matching)
+    if matching:
+        assert pages[first_match].complete and pages[first_match].has_more
+    target = ladder_control(filters)
     result = _engine_population_page(execute, target, filters, page_size=1)
     assert result.complete
     assert [row["id"] for row in result.rows] == (["wanted-b"] if matching else [])
@@ -353,14 +499,25 @@ def test_full_window_cross_type_key_proof_requires_keys_on_same_raw_span(seed_en
         },
     ]
     target = builder(filters=filters)
+    # Text leaves qualify at most a day per proof, even on a 201-day request.
+    with pytest.raises(ValueError, match="qualified window"):
+        target.build_filter_population_time_discovery_query(
+            slice_start=start, slice_end=end
+        )
     sql, params = target.build_filter_population_time_discovery_query(
-        slice_start=start, slice_end=end
+        slice_start=START, slice_end=START + timedelta(days=1)
     )
     assert execute(sql, params) == [{"newest_raw_time_us": None}]
     insert(id="both", attrs_number={"tag": 4}, attrs_string={"note": ""})
     assert execute(sql, params)[0]["newest_raw_time_us"] is not None
-    result = _engine_population_page(execute, target, filters)
-    assert result.complete and [row["id"] for row in result.rows] == ["both"]
+    # A daily proof cannot promise one-hop exhaustion of a 201-day range.
+    # In the two-day control the same three identities are in range and
+    # completion IS required without following even one empty checkpoint.
+    short = [time_filter(start, START + timedelta(days=1)), *filters[1:]]
+    for window, read in ((short, _engine_population_page), (filters, sparse_page)):
+        result = read(execute, builder(filters=window), window)
+        assert result.complete and not result.has_more
+        assert [row["id"] for row in result.rows] == ["both"]
 
 
 def scalar(key, value, kind="number", op="equals", **config):
@@ -521,11 +678,6 @@ def test_mixed_text_single_witness_does_not_change_joint_membership(
     insert(id="number-only", attrs_number={"number": 7})
     stored_value = int(value) if kind == "boolean" else value
     insert(id="other-only", attrs_number={}, **{column: {"other": stored_value}})
-    insert(
-        id="wrong-number",
-        attrs_number={"number": 8},
-        **{column: {"other": stored_value}},
-    )
     assert reference_rows(span_reference, execute, filters) == []
     target = builder(filters=filters)
     # One necessary leaf may hit although no physical winner satisfies the
@@ -533,9 +685,22 @@ def test_mixed_text_single_witness_does_not_change_joint_membership(
     sql, params = target.build_filter_population_time_discovery_query(
         slice_start=START, slice_end=end
     )
-    hit = execute(sql, params)[0]["newest_raw_time_us"]
-    assert (hit is not None) is (kind == "text")
-    # Numeric + Boolean WITHOUT text retains its original joint absence proof.
+    assert execute(sql, params) == [{"newest_raw_time_us": None}]
+    insert(
+        id="wrong-number",
+        attrs_number={"number": 8},
+        **{column: {"other": stored_value}},
+    )
+    assert reference_rows(span_reference, execute, filters) == []
+    # Number discovery reads key presence plus an index hint, not a row-level
+    # value comparison. Now the keys coexist; only the classifier rejects 8.
+    stamp = START + timedelta(minutes=20)
+    assert execute(sql, params) == [
+        {
+            "newest_raw_time_us": (stamp - datetime(1970, 1, 1))
+            // timedelta(microseconds=1)
+        }
+    ]
     page = _engine_population_page(execute, target, filters)
     assert page.complete and page.rows == []
     assert any(a.kind == "population_time_discovery" for a in page.attempts)
@@ -884,30 +1049,51 @@ def test_mixed_value_discovery_replays_stale_hours_and_preserves_reference_order
         "wanted",
         "cross-hour",
     }
-    target = builder(filters=filters)
-    page = _engine_population_page(execute, target, filters, page_size=2)
-    assert page.complete and page.has_more
-    next_page = _engine_population_page(
-        execute,
-        target,
-        filters,
-        page_size=2,
-        cursor_start_time=page.rows[-1]["start_time"],
-        cursor_order_token=target.bounded_filter_row_order_token(page.rows[-1]),
-    )
-    assert next_page.complete and not next_page.has_more
 
-    def identity(row):
-        return (
-            target.bounded_filter_row_identity(row),
-            row["start_time"],
-            int(row["_version"]),
+    def identities(target, rows):
+        return [
+            (
+                target.bounded_filter_row_identity(row),
+                row["start_time"],
+                int(row["_version"]),
+            )
+            for row in rows
+        ]
+
+    # The reference places every published identity in the first three days.
+    # Check both page boundaries with one request each on that window before
+    # allowing empty continuations across the year-long, text-capped tail.
+    short = [time_filter(start, START + timedelta(days=7)), *filters[1:]]
+    # Unlike the daily text proofs, the wider number/Boolean proofs hit
+    # stale hours and replay them in the same scan step. The first year hop
+    # spends its 64 statements (54 seeds + 10 proofs) before 64 scan steps.
+    for window, read, first_options in (
+        (short, _engine_population_page, {}),
+        (
+            filters,
+            sparse_page,
+            {"query_limited_hop": 0 if pair == "number_boolean" else None},
+        ),
+    ):
+        target = builder(filters=window)
+        page = read(execute, target, window, page_size=2, **first_options)
+        assert page.complete and page.has_more
+        next_page = read(
+            execute,
+            target,
+            window,
+            page_size=2,
+            cursor_start_time=page.rows[-1]["start_time"],
+            cursor_order_token=target.bounded_filter_row_order_token(page.rows[-1]),
         )
+        assert next_page.complete and not next_page.has_more
 
-    assert list(map(identity, page.rows + next_page.rows)) == list(
-        map(identity, expected)
-    )
-    assert any(attempt.kind == "population_time_discovery" for attempt in page.attempts)
+        assert identities(target, page.rows + next_page.rows) == identities(
+            target, expected
+        )
+        assert any(
+            attempt.kind == "population_time_discovery" for attempt in page.attempts
+        )
 
 
 @pytest.mark.integration

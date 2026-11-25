@@ -248,8 +248,7 @@ describe("useEnvironment resolution order", () => {
     expect(result.current.env).toBeNull();
   });
 
-  it("resolves a template id from the prebuilt catalogue", async () => {
-    getHarnessJob.mockRejectedValue(notFoundError());
+  it("resolves a prebuilt template without a job or environment request", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useEnvironment("env-voice-support"), {
       wrapper: Wrapper,
@@ -257,6 +256,8 @@ describe("useEnvironment resolution order", () => {
 
     await waitFor(() => expect(result.current.source).toBe("template"));
     expect(result.current.env.id).toBe("env-voice-support");
+    expect(getHarnessJob).not.toHaveBeenCalled();
+    expect(getHarnessEnvironment).not.toHaveBeenCalled();
   });
 });
 

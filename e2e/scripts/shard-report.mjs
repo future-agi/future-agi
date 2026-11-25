@@ -20,7 +20,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -297,6 +297,19 @@ export function fileDurations(merged) {
   );
 }
 
+/** Fails on a stack plan or caller prefix that cannot name the shard jobs. */
+export function checkPlan(stack, total, prefix = "") {
+  if (
+    !["distributed", "standalone"].includes(stack) ||
+    !Number.isSafeInteger(total) ||
+    total < 1
+  )
+    throw new Error("invalid stack plan");
+  // A caller's jobs prefix these names ("<caller job> / "); none when direct.
+  if (prefix !== "" && !/^[A-Za-z0-9][A-Za-z0-9 _.-]* \/ $/.test(prefix))
+    throw new Error("invalid job prefix");
+}
+
 /**
  * The attempt that produced each shard's receipts, by shard number (1-based).
  *
@@ -306,17 +319,12 @@ export function fileDurations(merged) {
  * carry the earliest attempt of the copies of its latest job. Fails closed:
  * every shard needs a finished latest job, and the copies must agree.
  */
-export function shardAttempts(stack, total, jobs) {
-  if (
-    !["distributed", "standalone"].includes(stack) ||
-    !Number.isSafeInteger(total) ||
-    total < 1
-  )
-    throw new Error("invalid stack plan");
+export function shardAttempts(stack, total, jobs, prefix = "") {
+  checkPlan(stack, total, prefix);
   const produced = [];
   for (let i = 1; i <= total; i++) {
     const matches = jobs
-      .filter((job) => job.name === `e2e (${stack}, ${i}/${total})`)
+      .filter((job) => job.name === `${prefix}e2e (${stack}, ${i}/${total})`)
       .sort((a, b) => b.run_attempt - a.run_attempt);
     if (
       !matches.length ||
@@ -392,6 +400,99 @@ export function checkStackImages(records, attempts) {
     );
 }
 
+// A GitHub API read can fail for a moment or come back cut short: gh then says
+// "unexpected end of JSON input" (run 45334240608). Such a read is retried from
+// scratch, a few times with backoff, then fails closed with the exact error. A
+// partial response is never used.
+export const API_TRIES = 4;
+const TRANSIENT =
+  /unexpected end of JSON input|HTTP 5\d\d|HTTP 429|rate limit|timed? ?out|connection (?:reset|refused)|\bEOF\b|TLS handshake|temporarily unavailable|Bad Gateway|Service Unavailable|Gateway Timeout/i;
+
+const sleepSync = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+const failure = (result) => {
+  const stderr = String(result.stderr || result.error?.message || "").trim();
+  return {
+    error: `failed (exit ${result.status}): ${stderr}`,
+    transient: Boolean(result.error) || TRANSIENT.test(stderr),
+  };
+};
+
+/** `gh api ARGS` parsed as JSON, read again from scratch on a transient failure. */
+export function ghJson(args, { run = spawnSync, sleep = sleepSync } = {}) {
+  const command = ["api", ...args];
+  for (let attempt = 1; attempt <= API_TRIES; attempt++) {
+    const result = run("gh", command, {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    let outcome;
+    if (result.status === 0) {
+      try {
+        return JSON.parse(result.stdout);
+      } catch (cause) {
+        outcome = {
+          error: `returned cut-short JSON (${cause.message})`,
+          transient: true,
+        };
+      }
+    } else {
+      outcome = failure(result);
+    }
+    if (!outcome.transient || attempt === API_TRIES)
+      throw new Error(
+        `gh ${command.join(" ")} ${outcome.error}, after ${attempt} tries`,
+      );
+    sleep(2 ** attempt * 1000);
+  }
+  throw new Error("unreachable");
+}
+
+function sha256File(file) {
+  return execFileSync("sha256sum", [file], { encoding: "utf8" }).split(" ")[0];
+}
+
+/**
+ * Downloads `gh api ARGS` into `file` until its sha256 equals `digest`
+ * ("sha256:<hex>"). A transient failure, or a download cut short (which cannot
+ * match the digest), is fetched again from scratch; then it fails closed and
+ * leaves no file behind.
+ */
+export function ghDownload(
+  args,
+  file,
+  digest,
+  { run = spawnSync, sleep = sleepSync, hash = sha256File } = {},
+) {
+  const command = ["api", ...args];
+  for (let attempt = 1; attempt <= API_TRIES; attempt++) {
+    rmSync(file, { force: true });
+    const fd = openSync(file, "wx");
+    let result;
+    try {
+      result = run("gh", command, {
+        stdio: ["ignore", fd, "pipe"],
+        encoding: "utf8",
+      });
+    } finally {
+      closeSync(fd);
+    }
+    let outcome;
+    if (result.status !== 0) outcome = failure(result);
+    else if (`sha256:${hash(file)}` === digest) return;
+    else outcome = { error: `does not match ${digest}`, transient: true };
+    if (!outcome.transient || attempt === API_TRIES) {
+      rmSync(file, { force: true });
+      throw new Error(
+        `gh ${command.join(" ")} ${outcome.error}, after ${attempt} tries`,
+      );
+    }
+    sleep(2 ** attempt * 1000);
+  }
+  throw new Error("unreachable");
+}
+
 /** The one unexpired artifact with this name, or an error. */
 export function receiptArtifact(artifacts, name) {
   const matches = artifacts.filter((row) => row.name === name && !row.expired);
@@ -400,24 +501,98 @@ export function receiptArtifact(artifacts, name) {
   return matches[0];
 }
 
+// GitHub can list a run's jobs seconds behind the jobs themselves (Backend
+// merge group run 45343675711 read its jobs without a shard that had finished
+// about four seconds earlier). The report knows every shard
+// and receipt it needs, so it reads both listings again, in full, until they
+// show all of them, pausing this many seconds between reads (90 in all). Then
+// it fails closed, naming what is still missing.
+export const SETTLE_PAUSES = [5, 10, 15, 30, 30];
+
+/** This run attempt (GITHUB_RUN_ATTEMPT), or 0 outside Actions. */
+export function runAttempt(env) {
+  const attempt = Number(env.GITHUB_RUN_ATTEMPT);
+  return Number.isSafeInteger(attempt) && attempt >= 1 ? attempt : 0;
+}
+
+/**
+ * What the listings do not show yet: each shard's job, finished in this run
+ * attempt (every attempt lists every job: a shard it did not re-run appears as
+ * a copy), and then the receipts the report reads, from the attempt that
+ * produced each. Without a known attempt, a shard's latest job counts.
+ */
+export function unsettled(stack, total, jobs, artifacts, prefix = "", attempt = 0) {
+  const missing = [];
+  for (let i = 1; i <= total; i++) {
+    const name = `${prefix}e2e (${stack}, ${i}/${total})`;
+    const listed = jobs.filter((job) => job.name === name);
+    const current = attempt
+      ? listed.filter((job) => job.run_attempt === attempt)
+      : listed.sort((a, b) => b.run_attempt - a.run_attempt).slice(0, 1);
+    if (!current.length || !current.every((job) => job.started_at && job.completed_at))
+      missing.push(`job ${name}`);
+  }
+  if (missing.length) return missing;
+  let attempts;
+  try {
+    attempts = shardAttempts(stack, total, jobs, prefix);
+  } catch {
+    // Not a listing delay: the report fails on it as before.
+    return [];
+  }
+  // An expired receipt counts as listed: waiting cannot bring it back, and
+  // the report rejects it at once.
+  const listed = new Set(artifacts.map((row) => row.name));
+  const wanted = [];
+  for (let i = 1; i <= total; i++)
+    wanted.push(
+      `blob-report-${stack}-${i}-attempt-${attempts[i - 1]}`,
+      `stack-images-${stack}-${i}-attempt-${attempts[i - 1]}`,
+    );
+  wanted.push(`once-per-stack-${stack}-attempt-${attempts[total - 1]}`);
+  return wanted.filter((name) => !listed.has(name)).map((name) => `artifact ${name}`);
+}
+
+/**
+ * Both listings, `read("jobs")` and `read("artifacts")`, each read again in
+ * full until `unsettled` finds nothing missing; fails closed after the pauses.
+ */
+export function settledListings(read, plan, { sleep = sleepSync, log = console.log } = {}) {
+  const { stack, total, prefix = "", attempt = 0 } = plan;
+  // A plan that cannot name the shards fails now, not after the pauses.
+  checkPlan(stack, total, prefix);
+  for (const wait of [...SETTLE_PAUSES, null]) {
+    const jobs = read("jobs");
+    const artifacts = read("artifacts");
+    const missing = unsettled(stack, total, jobs, artifacts, prefix, attempt);
+    if (!missing.length) return { jobs, artifacts };
+    if (wait === null)
+      throw new Error(
+        `after ${SETTLE_PAUSES.reduce((sum, pause) => sum + pause, 0)} s of reading, the run's listings still do not show ${missing.join(", ")}`,
+      );
+    log(`The run's listings do not show ${missing.join(", ")} yet; reading them again in ${wait} s`);
+    sleep(wait * 1000);
+  }
+  throw new Error("unreachable");
+}
+
 function downloadReceipts(stack, total) {
   const repo = `repos/${process.env.GITHUB_REPOSITORY}/actions`;
   const run = `${repo}/runs/${process.env.GITHUB_RUN_ID}`;
+  const prefix = process.env.E2E_JOB_PREFIX ?? "";
+  // Every page again on each try: a cut-short listing is never completed.
   const pages = (url, key) =>
-    JSON.parse(
-      execFileSync("gh", ["api", "--paginate", "--slurp", url], {
-        encoding: "utf8",
-        maxBuffer: 64 * 1024 * 1024,
-      }),
-    ).flatMap((page) => page[key]);
-  const attempts = shardAttempts(
-    stack,
-    total,
-    pages(`${run}/jobs?filter=all&per_page=100`, "jobs"),
+    ghJson(["--paginate", "--slurp", url]).flatMap((page) => page[key]);
+  const { jobs, artifacts } = settledListings(
+    (what) =>
+      what === "jobs"
+        ? pages(`${run}/jobs?filter=all&per_page=100`, "jobs")
+        : pages(`${run}/artifacts?per_page=100`, "artifacts"),
+    { stack, total, prefix, attempt: runAttempt(process.env) },
   );
+  const attempts = shardAttempts(stack, total, jobs, prefix);
   // The last shard writes the once-per-stack record.
   const recordAttempt = attempts[total - 1];
-  const artifacts = pages(`${run}/artifacts?per_page=100`, "artifacts");
   const temp = mkdtempSync(path.join(tmpdir(), "e2e-receipts-"));
   const stream = (command, args, file) => {
     const fd = openSync(file, "wx");
@@ -430,12 +605,7 @@ function downloadReceipts(stack, total) {
   const unpack = (name, member, target, attempt) => {
     const { id, digest } = receiptArtifact(artifacts, name);
     const archive = path.join(temp, String(id));
-    stream("gh", ["api", `${repo}/artifacts/${id}/zip`], archive);
-    const hash = execFileSync("sha256sum", [archive], {
-      encoding: "utf8",
-    }).split(" ")[0];
-    if (digest !== `sha256:${hash}`)
-      throw new Error(`artifact ${id} digest mismatch`);
+    ghDownload([`${repo}/artifacts/${id}/zip`], archive, digest);
     if (
       execFileSync("unzip", ["-Z1", archive], {
         encoding: "utf8",

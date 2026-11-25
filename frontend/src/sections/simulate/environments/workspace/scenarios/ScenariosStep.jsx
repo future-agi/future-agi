@@ -27,6 +27,7 @@ import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import EvidenceReviewDrawer from "../../evidence/EvidenceReviewDrawer";
 import ImportEvidenceButton from "../../evidence/ImportEvidenceButton";
+import ViewerLock from "../../components/ViewerLock";
 import DraftImports from "../../evidence/DraftImports";
 import { IMPORT_PARAM } from "../../evidence/evidence.constants";
 import PropTypes from "prop-types";
@@ -585,11 +586,17 @@ export default function ScenariosStep({
                         search={debouncedQuery}
                         filters={filters}
                       />
-                      {!rowsLocked && !editHint && evidenceEnvId && (
-                        <ImportEvidenceButton
-                          envId={evidenceEnvId}
-                          onImported={openImport}
-                        />
+                      {!locked && !editHint && evidenceEnvId && (
+                        <ViewerLock
+                          locked={!canEdit}
+                          title={WORKSPACE_COPY.viewer.scenarios}
+                        >
+                          <ImportEvidenceButton
+                            envId={evidenceEnvId}
+                            onImported={openImport}
+                            disabled={!canEdit}
+                          />
+                        </ViewerLock>
                       )}
                       <AddButton
                         onClick={() => setAdding(true)}

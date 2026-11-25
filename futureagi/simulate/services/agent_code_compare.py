@@ -4,8 +4,8 @@ import difflib
 import hashlib
 import io
 import tarfile
-import time
 from collections.abc import Iterable
+from time import monotonic
 from typing import Any
 
 import structlog
@@ -242,7 +242,7 @@ def _computed(
         code, [path for path, _o, _s, _old, new in missing if new is not None]
     )
     for index, (path, old_path, _status, old, new) in enumerate(missing):
-        if index and time.monotonic() > deadline:
+        if index and monotonic() > deadline:
             computed[path] = None
             continue
         before = texts_before.get(old_path or path, "") if old is not None else ""
@@ -273,9 +273,7 @@ def compare(version: AgentVersion, against: AgentVersion | None) -> dict[str, An
         return {"against": str(against.id), **flags, **cached}
     pairs = _pairs(before, after)
     shown = pairs[:MAX_COMPARE_FILES]
-    computed = _computed(
-        code, base, shown, deadline=time.monotonic() + DIFF_BUDGET_SECONDS
-    )
+    computed = _computed(code, base, shown, deadline=monotonic() + DIFF_BUDGET_SECONDS)
     files = []
     additions = deletions = 0
     deferred = False
@@ -360,7 +358,7 @@ def patches(
             continue
         found[path] = {"path": path, "kind": kind, "unchanged": False, "hunks": hunks}
     computed = (
-        _computed(code, base, misses, deadline=time.monotonic() + DIFF_BUDGET_SECONDS)
+        _computed(code, base, misses, deadline=monotonic() + DIFF_BUDGET_SECONDS)
         if misses
         else {}
     )

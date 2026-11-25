@@ -51,15 +51,17 @@ vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
 });
 
 // The launch form has its own tests; here it only shows which run and environment it opens on.
+// It stays mounted and toggles `open` (so the drawer slides); closed, it shows nothing.
 vi.mock("../LaunchFixDialog", () => ({
   // eslint-disable-next-line react/prop-types
-  default: ({ envId, sourceRunId }) => (
-    <div
-      data-testid="launch-fix-dialog"
-      data-env={envId}
-      data-source={sourceRunId}
-    />
-  ),
+  default: ({ open, envId, sourceRunId }) =>
+    open && (
+      <div
+        data-testid="launch-fix-dialog"
+        data-env={envId}
+        data-source={sourceRunId}
+      />
+    ),
 }));
 
 const axios = (await import("src/utils/axios")).default;

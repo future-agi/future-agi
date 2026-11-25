@@ -127,7 +127,7 @@ test('cold benchmarks disable all external BuildKit imports, without changing th
 test('profiling is a separate dispatch, not an alternative required check', () => {
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
   assert.notEqual(workflow.jobs['e2e-tests'].name, baseline.jobs['e2e-tests'].name);
-  assert.match(baseline.jobs['e2e-tests'].name, /&& 'E2E metadata edit' \|\| 'E2E Tests Pass' \}\}$/);
+  assert.equal(baseline.jobs['e2e-tests'].name, 'E2E Tests Pass');
   assert.equal(workflow.jobs['e2e-tests'].name, 'E2E profile parity');
   assert.equal(workflow.jobs.e2e.name, baseline.jobs.e2e.name); // receipt producer lookup
   const harness = loadWorkflow('e2e-harness-selftest.yml');

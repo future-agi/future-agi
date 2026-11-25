@@ -70,7 +70,7 @@ test(
   async ({ page, actor, probe }, testInfo) => {
     // Seeding + five UI_READY browser steps (tab, dialog, refusal, import, review).
     test.setTimeout(240_000);
-    const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
+    const suffix = `${testInfo.workerIndex}-${[...String(Date.now())].join('_')}`;
     const ask = `e2e-ask-${suffix}`;
     const email = `e2e-${suffix}@example.com`;
     const name = `e2e-sim4-${suffix}`;
@@ -146,6 +146,13 @@ test(
     expect(stored).toHaveLength(1);
     expect(`${stored[0].redaction}\n${stored[0].transcript}`).not.toContain(email);
     expect(stored[0].transcript).toContain(ask);
+    const storedTranscript = JSON.parse(stored[0].transcript) as Bundle['cases'][number]['transcript'];
+    const firstUserTurn = storedTranscript.turns.find(turn => turn.role === 'user');
+    expect(firstUserTurn).toBeDefined();
+    await testInfo.attach('stored-first-user-turn', {
+      contentType: 'application/json', body: JSON.stringify(firstUserTurn),
+    });
+    expect(firstUserTurn!.text).toBe(`${ask}: my refund never arrived, write to <EMAIL_ADDRESS>`);
 
     // Check 5: read again through the route the review reads.
     const again = await actor.api.get<Bundle>(`${imports(env)}${bundle.id}/`);

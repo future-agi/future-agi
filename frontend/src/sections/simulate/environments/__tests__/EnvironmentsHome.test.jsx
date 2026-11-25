@@ -111,7 +111,7 @@ describe("EnvironmentsHome", () => {
     renderHome("/dashboard/simulate/environments");
 
     expect(
-      screen.getByRole("tab", { name: /^My Environments/ }),
+      screen.getByRole("tab", { name: /^My environments/ }),
     ).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByText("Billing Chat Agent")).toBeInTheDocument();
   });
@@ -122,16 +122,24 @@ describe("EnvironmentsHome", () => {
   });
 
   // ?tab=build was the old Build tab. Links and bookmarks to it now open the
-  // drawer over My Environments, and the url stops saying build.
+  // drawer over My Environments; the drawer keeps its own build param.
   it("opens the drawer over My Environments on the old ?tab=build", async () => {
     renderHome("/dashboard/simulate/environments?tab=build");
 
     expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
     // The open drawer hides the page behind it from the accessibility tree.
     expect(
-      screen.getByRole("tab", { name: /^My Environments/, hidden: true }),
+      screen.getByRole("tab", { name: /^My environments/, hidden: true }),
     ).toHaveAttribute("aria-selected", "true");
-    expect(lastSearch).toBe("?tab=my-environments");
+    expect(lastSearch).toBe("?tab=my-environments&build=");
+  });
+
+  it("reopens the drawer on the way the url names", async () => {
+    renderHome(
+      "/dashboard/simulate/environments?tab=my-environments&build=vapi",
+    );
+
+    expect(await screen.findByText("Vapi API key")).toBeInTheDocument();
   });
 
   it("does not open the drawer on its own on other tabs", () => {
@@ -152,7 +160,7 @@ describe("EnvironmentsHome", () => {
       await screen.findByRole("button", { name: "Build an environment" }),
     );
     expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
-    expect(lastSearch).toBe("?tab=my-environments");
+    expect(lastSearch).toBe("?tab=my-environments&build=");
   });
 
   it("switches tabs and writes the choice to the url", async () => {
@@ -163,7 +171,7 @@ describe("EnvironmentsHome", () => {
     expect(lastSearch).toContain("tab=personas");
     expect(screen.getByText("persona-list-stub")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: /^My Environments/ }));
+    await user.click(screen.getByRole("tab", { name: /^My environments/ }));
     expect(lastSearch).toContain("tab=my-environments");
     expect(await screen.findByText("Billing Chat Agent")).toBeInTheDocument();
   });
@@ -178,7 +186,7 @@ describe("EnvironmentsHome", () => {
         screen.getByRole("button", { name: "Build environment" }),
       );
       expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
-      expect(lastSearch).toBe(`?tab=${tab}`);
+      expect(lastSearch).toBe(`?tab=${tab}&build=`);
     },
   );
 
@@ -187,7 +195,7 @@ describe("EnvironmentsHome", () => {
 
     expect(
       screen.getAllByRole("tab").map((t) => t.textContent.replace(/\d+$/, "")),
-    ).toEqual(["My Environments", "Personas"]);
+    ).toEqual(["My environments", "Personas"]);
   });
 
   it("tracks a Personas tab click with the personas navigation event", async () => {
@@ -260,7 +268,7 @@ describe("EnvironmentsHome", () => {
     expect(screen.getByText("Environments")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Set up the world your agent is tested in: seeded data, tools and rules.",
+        "Build a simulated world for your agent, then run callers against it and read the failures.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Start from scratch")).toBeNull();
@@ -269,7 +277,7 @@ describe("EnvironmentsHome", () => {
 
   it("shows how many environments there are on the My Environments tab", async () => {
     renderHome("/dashboard/simulate/environments");
-    const tab = screen.getByRole("tab", { name: /^My Environments/ });
+    const tab = screen.getByRole("tab", { name: /^My environments/ });
     expect(await within(tab).findByText("1")).toBeInTheDocument();
   });
 });

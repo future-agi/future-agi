@@ -8,16 +8,10 @@ import {
   NameCell,
   AgentCell,
   LastRunCell,
-  OwnerCell,
-  RunsCell,
 } from "./environmentTableCells";
 
 // No column sorts: the list API takes no ordering and always returns newest
 // first, so a sort arrow would promise something the server can't do.
-// Rows arrive pre-flattened (see harnessEnvToRow), so column accessors stay
-// simple. the design's column set: the description is the Name cell's second line.
-// A field the API doesn't send yet draws a "Coming soon" chip; one it sends
-// as null draws a dash.
 export function buildEnvironmentColumns({ onRowActions }) {
   return [
     {
@@ -26,7 +20,6 @@ export function buildEnvironmentColumns({ onRowActions }) {
       header: "Name",
       enableSorting: false,
       meta: { flex: 1 },
-      // Room for a readable name beside its version chip.
       minSize: 280,
       cell: NameCell,
     },
@@ -35,7 +28,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       accessorKey: "status",
       header: "Status",
       enableSorting: false,
-      size: 100,
+      size: 156,
       cell: ({ getValue, row }) => (
         <StatusPill
           status={getValue()}
@@ -48,37 +41,31 @@ export function buildEnvironmentColumns({ onRowActions }) {
       accessorKey: "agentType",
       header: "Agent type",
       enableSorting: false,
-      size: 100,
+      size: 120,
       cell: AgentTypeCell,
     },
     {
       id: "agent",
       accessorKey: "agent",
       header: "Agent",
-      size: 140,
       enableSorting: false,
+      size: 220,
       cell: AgentCell,
     },
     {
       id: "lastRun",
       accessorKey: "lastRun",
       header: "Last run",
-      size: 124,
+      meta: { align: "right" },
       enableSorting: false,
+      size: 100,
       cell: LastRunCell,
-    },
-    {
-      id: "tools",
-      accessorKey: "tools",
-      header: "Tools",
-      enableSorting: false,
-      size: 58,
-      cell: NumberCell,
     },
     {
       id: "scenarios",
       accessorKey: "scenarios",
       header: "Scenarios",
+      meta: { align: "right" },
       enableSorting: false,
       size: 84,
       cell: NumberCell,
@@ -87,6 +74,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "subgoals",
       accessorKey: "subgoals",
       header: "Sub-goals",
+      meta: { align: "right" },
       enableSorting: false,
       size: 84,
       cell: NumberCell,
@@ -95,18 +83,10 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "runs",
       accessorKey: "runsTotal",
       header: "Runs",
+      meta: { align: "right" },
       enableSorting: false,
-      size: 56,
-      cell: RunsCell,
-    },
-    {
-      id: "owner",
-      accessorKey: "owner",
-      header: "Owner",
-      // Wide enough for the Coming soon chip until the API sends owners.
-      size: 130,
-      enableSorting: false,
-      cell: OwnerCell,
+      size: 64,
+      cell: NumberCell,
     },
     {
       id: "updated",
@@ -115,7 +95,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       enableSorting: false,
       size: 100,
       cell: ({ getValue }) => (
-        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        <Typography noWrap sx={{ typography: "s1", color: "text.secondary" }}>
           {relativeTime(getValue())}
         </Typography>
       ),
@@ -124,7 +104,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "actions",
       accessorKey: "id",
       header: "",
-      size: 56,
+      size: 48,
       enableSorting: false,
       cell: ({ row }) => {
         const env = row?.original;

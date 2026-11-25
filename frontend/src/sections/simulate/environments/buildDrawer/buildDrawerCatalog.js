@@ -156,7 +156,7 @@ const closed = (id, name, channels, icon, reach, keywords) => ({
   setup: { panel: "closed", platform: id, uiOnly: true },
 });
 
-export const CATALOG_ITEMS = [
+const ALL_CATALOG_ITEMS = [
   {
     id: "github",
     tab: "code",
@@ -216,7 +216,7 @@ export const CATALOG_ITEMS = [
     { logo: "vapi" },
     "Add your Vapi API key, then pick the assistant · Voice and chat",
     "voice phone assistant",
-    { panel: "hosted", preset: { voice: "vapi", chat: null } },
+    { panel: "hosted", flush: true, preset: { voice: "vapi", chat: null } },
   ),
   hosted(
     "retell",
@@ -225,7 +225,11 @@ export const CATALOG_ITEMS = [
     { logo: "retell" },
     "Add your Retell AI API key, then pick the agent · Voice and chat",
     "voice phone chat agent",
-    { panel: "hosted", preset: { voice: "retell", chat: "retell_chat" } },
+    {
+      panel: "hosted",
+      flush: true,
+      preset: { voice: "retell", chat: "retell_chat" },
+    },
   ),
   hosted(
     "elevenlabs",
@@ -287,11 +291,11 @@ export const CATALOG_ITEMS = [
     id: "livekit",
     tab: "other",
     name: "LiveKit project",
-    next: "Add the server URL and the agent's name · Voice",
+    next: "Reach it in the browser or by its phone number · Voice",
     logo: "livekit",
-    keywords: "voice webrtc server",
+    keywords: "voice webrtc server phone number pstn sip",
     channels: ["voice"],
-    setup: { panel: "livekit", title: "LiveKit" },
+    setup: { panel: "livekit", title: "LiveKit", flush: true },
   },
   {
     id: "running",
@@ -311,7 +315,7 @@ export const CATALOG_ITEMS = [
     icon: "solar:phone-calling-rounded-linear",
     keywords: "call telephone pstn voice",
     channels: ["voice"],
-    setup: { panel: "phone" },
+    setup: { panel: "phone", flush: true },
   },
   closed(
     "sierra",
@@ -346,6 +350,19 @@ export const CATALOG_ITEMS = [
     "zendesk sunshine",
   ),
 ];
+
+const LIVE_IN_PROD = new Set([
+  "github",
+  "upload",
+  "vapi",
+  "retell",
+  "livekit",
+  "phone",
+]);
+
+export const CATALOG_ITEMS = ALL_CATALOG_ITEMS.filter((it) =>
+  LIVE_IN_PROD.has(it.id),
+);
 
 /** The items whose name or keywords contain `query`; all of them for a blank one. */
 export function searchCatalog(items, query) {

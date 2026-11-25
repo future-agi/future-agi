@@ -136,10 +136,11 @@ AppTile.propTypes = {
 };
 
 /** The SaaS sandbox as one row under the featured worlds. */
-export function SaasSandboxRow({ onOpen }) {
+export function SaasSandboxRow({ onOpen, disabled = false }) {
   return (
     <ButtonBase
       onClick={onOpen}
+      disabled={disabled}
       aria-label="SaaS sandbox"
       sx={{
         ...cardSx,
@@ -150,6 +151,9 @@ export function SaasSandboxRow({ onOpen }) {
         alignItems: "center",
         gap: 2,
         "&:hover .sandbox-go": { color: "text.primary" },
+        "&.Mui-disabled": {
+          opacity: (theme) => theme.palette.action.disabledOpacity,
+        },
       }}
     >
       <Stack
@@ -192,7 +196,10 @@ export function SaasSandboxRow({ onOpen }) {
     </ButtonBase>
   );
 }
-SaasSandboxRow.propTypes = { onOpen: PropTypes.func.isRequired };
+SaasSandboxRow.propTypes = {
+  onOpen: PropTypes.func.isRequired,
+  disabled: PropTypes.bool,
+};
 
 /** The same, as a card pinned first in the full worlds list. */
 export function SaasSandboxCard({ onOpen }) {

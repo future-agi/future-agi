@@ -1,3 +1,6 @@
+import time
+from contextlib import contextmanager
+from itertools import chain, repeat
 from unittest.mock import patch
 
 import pytest
@@ -233,12 +236,23 @@ def test_a_file_past_the_line_cap_is_too_large_without_being_diffed(
     matcher.assert_not_called()
 
 
+@contextmanager
 def _past_the_budget_after_the_first_file():
-    return patch.object(
-        agent_code_compare.time,
-        "monotonic",
-        side_effect=[0.0] + [DIFF_BUDGET_SECONDS + 1] * 10,
-    )
+    sides = agent_code_compare._sides
+
+    def sides_reading_the_clock(*args):
+        time.monotonic()
+        return sides(*args)
+
+    with (
+        patch.object(
+            agent_code_compare,
+            "monotonic",
+            side_effect=chain([0.0], repeat(DIFF_BUDGET_SECONDS + 1)),
+        ),
+        patch.object(agent_code_compare, "_sides", side_effect=sides_reading_the_clock),
+    ):
+        yield
 
 
 def test_files_past_the_time_budget_wait_for_load_and_the_summary_is_not_kept(

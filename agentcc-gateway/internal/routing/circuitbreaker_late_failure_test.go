@@ -10,6 +10,7 @@ import (
 func TestCircuitBreaker_LateFailureAcrossRepeatedFailedProbes(t *testing.T) {
 	cfg := newTestCBConfig()
 	cfg.FailureThreshold = 1
+	cfg.HalfOpenMaxProbes = 2 // the failing probe and its in-flight sibling
 	cfg.Cooldown = 100 * time.Millisecond
 	type change struct {
 		healthy bool
@@ -33,25 +34,30 @@ func TestCircuitBreaker_LateFailureAcrossRepeatedFailedProbes(t *testing.T) {
 		}
 	}
 
-	cb.RecordFailure(serverErr())
+	lateGeneration := admitProbe(t, cb)
+	recordAdmittedFailure(t, cb, serverErr())
 	for cycle := 0; cycle < 3; cycle++ {
 		await(false)
 		time.Sleep(60 * time.Millisecond)
 		late := time.Now()
-		cb.RecordFailure(serverErr())
+		cb.RecordFailure(lateGeneration, serverErr())
 		readmitted := await(true)
 		if elapsed := readmitted.at.Sub(late); elapsed < cfg.Cooldown {
 			t.Fatalf("cycle %d: readmitted %s after late failure, want at least %s", cycle, elapsed, cfg.Cooldown)
 		}
-		if !cb.Allow() || cb.State() != StateHalfOpen {
+		generation, allowed := cb.Allow()
+		if !allowed || cb.State() != StateHalfOpen {
 			t.Fatalf("cycle %d: readmission did not allow a half-open probe", cycle)
 		}
 		if cycle < 2 {
-			cb.RecordFailure(serverErr())
+			lateGeneration = admitProbe(t, cb)
+			cb.RecordFailure(generation, serverErr())
+		} else {
+			cb.RecordSuccess(generation)
 		}
 	}
-	for i := 0; i < cfg.SuccessThreshold; i++ {
-		cb.RecordSuccess()
+	for i := 1; i < cfg.SuccessThreshold; i++ {
+		cb.RecordSuccess(admitProbe(t, cb))
 	}
 	await(true) // Preserve dev's distinct closed/recovered callback.
 	if cb.State() != StateClosed {
