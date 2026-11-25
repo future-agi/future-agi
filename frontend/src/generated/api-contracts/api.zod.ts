@@ -38898,6 +38898,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
       retried_from_id: zod.union([zod.string().uuid(), zod.null()]),
       retryable: zod.boolean().optional(),
       attempt_of_id: zod.union([zod.string().uuid(), zod.null()]),
+      counted: zod.union([zod.boolean(), zod.null()]).optional(),
       limited_validation: zod.boolean().optional(),
       issue: zod
         .union([
@@ -39244,7 +39245,9 @@ export const SimulateApiAgentFixRunsBriefResponse = zod.object({
 
 /**
  * What the launch form shows and prefills for a finished run, and what would
-refuse the launch now.
+refuse the launch now. Only a person's signed-in session reads the cases an Epoch
+on the run holds back, as for an Epoch's read; a coding agent, the CLI or MCP
+never.
  */
 export const SimulateApiAgentFixRunsLaunchOptionsQueryParams = zod.object({
   source_run_id: zod.string().uuid(),
@@ -39574,6 +39577,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   retried_from_id: zod.union([zod.string().uuid(), zod.null()]),
   retryable: zod.boolean().optional(),
   attempt_of_id: zod.union([zod.string().uuid(), zod.null()]),
+  counted: zod.union([zod.boolean(), zod.null()]).optional(),
   limited_validation: zod.boolean().optional(),
   issue: zod
     .union([
@@ -40055,6 +40059,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
   retried_from_id: zod.union([zod.string().uuid(), zod.null()]),
   retryable: zod.boolean().optional(),
   attempt_of_id: zod.union([zod.string().uuid(), zod.null()]),
+  counted: zod.union([zod.boolean(), zod.null()]).optional(),
   limited_validation: zod.boolean().optional(),
   issue: zod
     .union([
@@ -40242,6 +40247,7 @@ export const SimulateApiAgentFixRunsVerdictResponse = zod.object({
       detail: zod.string(),
     }),
   ),
+  counted: zod.boolean(),
   must_pass_regressions: zod.array(zod.string().min(1)),
   patch_available: zod.boolean(),
   pull_request_url: zod.string(),

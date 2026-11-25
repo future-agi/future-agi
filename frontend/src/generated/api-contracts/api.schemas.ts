@@ -19623,6 +19623,7 @@ export interface AgentFixRunApi {
   retried_from_id: string | null;
   readonly retryable?: boolean;
   attempt_of_id: string | null;
+  counted?: boolean | null;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
   /** Run from an Error Feed issue, even once the issue is gone. */
@@ -19875,6 +19876,7 @@ export interface AgentFixRunDetailApi {
   retried_from_id: string | null;
   readonly retryable?: boolean;
   attempt_of_id: string | null;
+  counted?: boolean | null;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
   /** Run from an Error Feed issue, even once the issue is gone. */
@@ -19968,6 +19970,7 @@ export interface AgentFixAttemptVerdictApi {
   failure: AgentFixFailureApi;
   summary: string;
   tiers: AgentFixAttemptTierApi[];
+  counted: boolean;
   must_pass_regressions: string[];
   patch_available: boolean;
   pull_request_url: string;

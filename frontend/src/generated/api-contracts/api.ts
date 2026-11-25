@@ -60531,7 +60531,9 @@ export const getSimulateApiAgentFixRunsLaunchOptionsUrl = (
 
 /**
  * What the launch form shows and prefills for a finished run, and what would
-refuse the launch now.
+refuse the launch now. Only a person's signed-in session reads the cases an Epoch
+on the run holds back, as for an Epoch's read; a coding agent, the CLI or MCP
+never.
  */
 export const simulateApiAgentFixRunsLaunchOptions = async (
   params: SimulateApiAgentFixRunsLaunchOptionsParams,

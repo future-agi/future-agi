@@ -52116,7 +52116,7 @@
         "/simulate/api/agent-fix-runs/launch-options/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-runs_launch_options",
-                "description": "What the launch form shows and prefills for a finished run, and what would\nrefuse the launch now.",
+                "description": "What the launch form shows and prefills for a finished run, and what would\nrefuse the launch now. Only a person's signed-in session reads the cases an Epoch\non the run holds back, as for an Epoch's read; a coding agent, the CLI or MCP\nnever.",
                 "parameters": [
                     {
                         "name": "source_run_id",
@@ -145944,6 +145944,12 @@
                     "format": "uuid",
                     "x-nullable": true
                 },
+                "counted": {
+                    "title": "Counted",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
                 "limited_validation": {
                     "title": "Limited validation",
                     "type": "boolean",
@@ -146733,6 +146739,12 @@
                     "format": "uuid",
                     "x-nullable": true
                 },
+                "counted": {
+                    "title": "Counted",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
                 "limited_validation": {
                     "title": "Limited validation",
                     "type": "boolean",
@@ -146876,6 +146888,7 @@
                 "failure",
                 "summary",
                 "tiers",
+                "counted",
                 "must_pass_regressions",
                 "patch_available",
                 "pull_request_url"
@@ -146943,6 +146956,10 @@
                     "items": {
                         "$ref": "#/definitions/AgentFixAttemptTier"
                     }
+                },
+                "counted": {
+                    "title": "Counted",
+                    "type": "boolean"
                 },
                 "must_pass_regressions": {
                     "type": "array",

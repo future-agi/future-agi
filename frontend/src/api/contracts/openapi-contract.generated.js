@@ -53853,6 +53853,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failure",
         "summary",
         "tiers",
+        "counted",
         "must_pass_regressions",
         "patch_available",
         "pull_request_url",
@@ -53914,6 +53915,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/AgentFixAttemptTier",
           },
+        },
+        counted: {
+          title: "Counted",
+          type: "boolean",
         },
         must_pass_regressions: {
           type: "array",
@@ -54692,6 +54697,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        counted: {
+          title: "Counted",
+          type: "boolean",
+          readOnly: true,
+          "x-nullable": true,
+        },
         limited_validation: {
           title: "Limited validation",
           type: "boolean",
@@ -54865,6 +54876,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Attempt of id",
           type: "string",
           format: "uuid",
+          "x-nullable": true,
+        },
+        counted: {
+          title: "Counted",
+          type: "boolean",
+          readOnly: true,
           "x-nullable": true,
         },
         limited_validation: {
