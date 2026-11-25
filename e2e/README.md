@@ -33,16 +33,20 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The distributed harness starts the dedicated `code-executor` and sets
-`CODE_EXECUTOR_LOCAL_FALLBACK=false`; it never executes evaluator code in a worker.
-`EVAL-E2E-016` uses the shipped templates and an owned HTTP listener. The executor
-only joins internal Docker networks, with no default route. `allowed.example`
-resolves to the listener at public-numbered `11.23.0.10` **inside that network**,
-not on the internet. `private.example` resolves to its private interface and is
-operator-listed to prove that admission cannot override the public-IP rule.
-The listener never makes outbound requests. Its loopback-only journal is at
-`http://127.0.0.1:28082/requests?prefix=...` (`E2E_LINK_CANARY_URL` in attach mode).
-Redirects point only to that owned private interface. No real third party is contacted.
+Both harness stacks start the dedicated `code-executor` and set
+`CODE_EXECUTOR_LOCAL_FALLBACK=false`; they never execute evaluator code in a worker.
+`EVAL-E2E-016` uses the shipped templates to check link format entirely offline.
+Owned HTTP listeners remain only as negative witnesses: both complete journals must
+stay empty after every browser submission and the Temporal harness task. The executor
+only joins internal Docker networks, with no default route. `allowed.example` and
+`worker-allowed.example` resolve to the listeners at public-numbered `11.23.0.10`
+and `11.23.0.11` **inside those networks**, not on the internet; `private.example`
+resolves to the first listener's private interface. These aliases and local redirects
+make an accidental destination request observable without contacting a real third party.
+The listeners never make outbound requests. Their loopback-only journals are at
+`http://127.0.0.1:28082/requests` and `http://127.0.0.1:28083/requests`
+(`E2E_LINK_CANARY_URL` and `E2E_LINK_WORKER_CANARY_URL` in attach mode).
+The browser's local-only request guard remains in place as an additional boundary.
 
 Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
 `http://localhost:28081/messages`. They seed issue transitions through the authenticated
@@ -627,13 +631,18 @@ minute; they are skipped only when the stack never booted.
 
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
-label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
-only if the PR has it when a run starts, so add it, then push or close and reopen the PR: a re-run
-keeps the labels of the run it repeats. Adding a label starts no run, on purpose (see below). The
+label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. A pull request run
+reads the labels the PR carries when it starts, so a label added together with the PR
+(`gh pr create --label e2e-standalone`, which GitHub delivers after `opened`) counts. A label added
+later takes effect on the next push: adding a label starts no run, on purpose (see below). Only
+E2E CI reads `e2e-standalone` this way (Backend CI and Update CI pass the event's `e2e-standalone`
+to the planner, whose E2E fields they do not use); if the read fails, the labels the run's event
+carried stand, with a warning. The read can add the Standalone leg, never drop it. The
 Standalone leg builds the four component images with the layer cache, assembles the app image with
 `bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
 The `upgrade` job in `.github/workflows/standalone-ci.yml` runs weekly, on demand, and on a pull
-request labelled `upgrade-check` (the same rule: add the label, then push). It installs v1.41.1
+request labelled `upgrade-check` (read from the run's event only, unlike `e2e-standalone`: a label
+added with `gh pr create --label` does not count, so add the label, then push). It installs v1.41.1
 with its own `./bin/install` and sends a trace. Then it re-runs `./bin/install` at the head commit
 and checks four things: the install stays on the Distributed setup
 (`COMPOSE_FILE=docker-compose.distributed.yml` in `.env`), its backend, worker, frontend and gateway
@@ -686,10 +695,9 @@ the gate when the repository variable `E2E_ENFORCE_RUNTIME_SKIPS` is `true`, unl
 enough. An entry that is not by design names the ticket that removes it, an owner, and an expiry
 at most 45 days ahead; after that date it no longer allows the skip. Each listed skip gets a
 warning on the run, and an entry whose test ran and passed is reported as out of date. Expiry is
-judged on the run's date, so re-running only the report job cannot change its verdict. Today it
-lists OBS-E2E-031 and OBS-E2E-032 on Standalone only (TH-10597, expiring 2027-01-06): their churn
-guard measured no DOM mutations in CI, so they skipped themselves. They now run and pass on
-Distributed; the Standalone entries go once a Standalone run shows the same.
+judged on the run's date, so re-running only the report job cannot change its verdict. Today the
+list is empty: OBS-E2E-031 and OBS-E2E-032 (TH-10597), whose churn guard once measured no DOM
+mutations in CI, now run and pass on both stacks.
 
 The backend has a stricter rule for its own skips in `futureagi/.ci/runtime-skips.json`
 (`BACKEND_ENFORCE_RUNTIME_SKIPS`). Each rule names the exact test files it covers, each with the
@@ -706,9 +714,9 @@ without the private package) or internal runs (`"runs": "internal"`).
 A skip that depends on data other tests leave behind cannot have an exact count. Its rule says why
 in `"varies"`, and each of its files maps to the number of tests the inventory collects there: an
 upper bound, checked against the inventory on every complete run, and matching nothing is no
-problem. Exact counts stay the default. Today one rule varies: `tracer/tests/test_hourly_aggregate_state_route_live_ch.py`
-(TH-10618, up to its 8 tests) skips when its shard's earlier tests left no spans in the shared
-ClickHouse table; 1 or 2 of its tests skipped in six runs on 22 Nov.
+problem. Exact counts stay the default, and no rule varies today. The last one, for
+`tracer/tests/test_hourly_aggregate_state_route_live_ch.py`, went once its tests ran against the
+CI ClickHouse sidecar, which they seed themselves.
 
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
 SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
@@ -726,11 +734,28 @@ merge queue refuses the PR, although the real run is green. Blacksmith edits eve
 about 4 s after it opens, which is how #4332 (green run 45070958943, then skipped run 45070969031)
 and #4001 were refused. This is not documented by GitHub, and `gh pr checks --required` cannot
 show it, because it still lists the older green runs. A retarget therefore starts no run of these
-workflows either. The merge queue re-tests every merge into dev, but main has no queue: a pull
-request moved onto main keeps checks from its old base until a push or reopen runs CI against main.
-Until a check that proves the tested merge candidate lands, do that after every retarget into main.
-Update CI is not required and still starts on edits and labels (`update-rehearsal` starts the Real
-rehearsals).
+workflows either. The merge queue re-tests every merge into dev. For a retarget, **Retarget proof**
+(`.github/workflows/retarget-proof.yml`) first checks that GitHub delivered the retarget with a
+merge of the head onto the new base's current tip. GitHub often sends a retarget, its automatic
+ones included, with the merge from before it; then that check fails and nothing else runs, and a
+push lets the pull request's own runs test the new base. Otherwise it calls
+Backend CI and E2E CI on that merge. Their jobs appear as `retarget-backend / …` and
+`retarget-e2e / …`, never under a required name, and they never share or cancel the pull request's
+own runs. Like a merge group, its backend leg runs without the private package: no secrets are
+forwarded. A Backend CI or E2E CI run on a pull request whose suite was selected, ran and passed
+records the merge candidate it tested (artifact `ci-candidate-<kind>-attempt-<n>`). The **"CI ran
+on this base"** check (`.github/workflows/ci-base-gate.yml`, not required) passes for a
+retargeted pull request into main only when both a Backend CI and an E2E CI run recorded this pull
+request, this head, this base and its current tip, and the tree of GitHub's current merge
+candidate. It re-reads all of that, and fails closed when anything is missing, skipped, from
+another pull request or stale. A green verdict is **proved against the base tip at its last run**,
+not at merge time: the base can move after it. A receipt is written by the producing run's own
+workflow, which for a pull request comes from that pull request's merge commit, so this check has
+the same trust as the required checks. If `CI_SCOPE_MODE` ever narrows the suites, a retargeted
+pull request whose suite was not selected records no receipt and stays red into main. Until the
+repository owner makes it required on main, push a commit after a retarget into main if it is
+red. Update CI is not required and still starts on edits and labels (`update-rehearsal` starts the
+Real rehearsals).
 
 To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
 artifact of a green run and regenerate the recorded times:

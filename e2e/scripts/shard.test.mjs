@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -23,14 +25,21 @@ import {
 } from "../lib/shard.ts";
 import { grepInvertPattern } from "../lib/quarantine.ts";
 import {
+  API_TRIES,
   annotation,
   checkParity,
   fileDurations,
   checkStackImages,
+  ghDownload,
+  ghJson,
   readRuntimeSkips,
   receiptArtifact,
+  runAttempt,
   runDate,
+  settledListings,
+  SETTLE_PAUSES,
   shardAttempts,
+  unsettled,
 } from "./shard-report.mjs";
 
 const flat = (groups) => groups.flat().sort();
@@ -331,6 +340,249 @@ test("each shard's receipts come from the attempt that ran it", () => {
   );
 });
 
+test("a caller's prefix names the shard jobs; without one today's names hold", () => {
+  const job = (name, attempt = 1) => ({
+    name,
+    run_attempt: attempt,
+    started_at: "2026-11-23T01:00:00Z",
+    completed_at: "2026-11-23T01:30:00Z",
+  });
+  const called = [1, 2].map((i) => job(`retarget-e2e / e2e (distributed, ${i}/2)`));
+  assert.deepEqual(
+    shardAttempts("distributed", 2, called, "retarget-e2e / "),
+    [1, 1],
+  );
+  // Unprefixed lookups do not see a caller's jobs, and the reverse.
+  assert.throws(() => shardAttempts("distributed", 2, called), /missing producer/);
+  const direct = [1, 2].map((i) => job(`e2e (distributed, ${i}/2)`));
+  assert.deepEqual(shardAttempts("distributed", 2, direct), [1, 1]);
+  assert.throws(
+    () => shardAttempts("distributed", 2, direct, "retarget-e2e / "),
+    /missing producer/,
+  );
+  for (const bad of ["retarget-e2e", " / ", "a / b / ", "x/ "])
+    assert.throws(
+      () => shardAttempts("distributed", 2, called, bad),
+      /invalid job prefix/,
+      bad,
+    );
+  // The report job passes the input through; empty unless a caller set it.
+  const report = workflow().jobs.report;
+  assert.equal(report.env.E2E_JOB_PREFIX, "${{ inputs.job_prefix }}");
+  assert.equal(workflow().on.workflow_call.inputs.job_prefix.default, "");
+});
+
+// Run 45334240608: a paginated read came back cut short ("unexpected end of
+// JSON input") and the verdict failed with every shard green.
+const CUT = "unexpected end of JSON input";
+const fakeGh = (...results) => {
+  const calls = [];
+  const run = (command, args, options) => {
+    calls.push([command, ...args]);
+    const [status, out, err] = results.shift();
+    if (options.stdio && out) writeSync(options.stdio[1], out);
+    return { status, stdout: options.stdio ? null : out, stderr: err };
+  };
+  return { run, calls };
+};
+
+test("an API read cut short or failing for a moment is read again from scratch", () => {
+  const sleeps = [];
+  const { run, calls } = fakeGh(
+    [1, "", CUT],
+    [0, '[{"jobs": [1,', ""],
+    [0, '[{"jobs": [1]}]', ""],
+  );
+  const sleep = (ms) => sleeps.push(ms);
+  assert.deepEqual(ghJson(["--paginate", "--slurp", "x"], { run, sleep }), [
+    { jobs: [1] },
+  ]);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0], ["gh", "api", "--paginate", "--slurp", "x"]);
+  assert.deepEqual(sleeps, [2000, 4000]);
+});
+
+test("other API errors fail at once; retries are bounded and fail closed", () => {
+  const notFound = fakeGh([1, "", "gh: Not Found (HTTP 404)"]);
+  assert.throws(
+    () => ghJson(["x"], { run: notFound.run, sleep: () => {} }),
+    /Not Found \(HTTP 404\), after 1 tries/,
+  );
+  assert.equal(notFound.calls.length, 1);
+  for (const bad of [
+    [1, "", CUT],
+    [1, "", "HTTP 502: Bad Gateway"],
+    [0, "[{", ""],
+  ]) {
+    const always = fakeGh(...Array(API_TRIES).fill(bad));
+    const sleeps = [];
+    assert.throws(
+      () => ghJson(["x"], { run: always.run, sleep: (ms) => sleeps.push(ms) }),
+      new RegExp(`after ${API_TRIES} tries`),
+    );
+    assert.equal(always.calls.length, API_TRIES);
+    assert.deepEqual(sleeps, [2000, 4000, 8000]);
+  }
+});
+
+test("a download cut short is fetched again until it matches its digest", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "gh-download-"));
+  try {
+    const file = path.join(dir, "artifact.zip");
+    const whole = "whole archive";
+    const sha = (data) => createHash("sha256").update(data).digest("hex");
+    const digest = `sha256:${sha(whole)}`;
+    const hash = (target) => sha(readFileSync(target));
+    const sleep = () => {};
+    const { run, calls } = fakeGh(
+      [1, "", CUT],
+      [0, "whole arch", ""],
+      [0, whole, ""],
+    );
+    ghDownload(["a/zip"], file, digest, { run, sleep, hash });
+    assert.equal(readFileSync(file, "utf8"), whole);
+    assert.equal(calls.length, 3);
+    // It fails closed after the tries and leaves no mismatching file.
+    const short = fakeGh(...Array(API_TRIES).fill([0, "whole arch", ""]));
+    assert.throws(
+      () => ghDownload(["a/zip"], file, digest, { run: short.run, sleep, hash }),
+      new RegExp(`does not match ${digest}, after ${API_TRIES} tries`),
+    );
+    assert.equal(existsSync(file), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the report reads both listings again until they show every shard and receipt", () => {
+  // As in merge group run 45343675711: a shard had finished, but neither
+  // listing showed it yet.
+  const job = (i) => ({
+    name: `e2e (distributed, ${i}/2)`,
+    run_attempt: 1,
+    started_at: "2026-11-24T07:20:00Z",
+    completed_at: "2026-11-24T07:30:04Z",
+  });
+  const receipts = (i) => [
+    { name: `blob-report-distributed-${i}-attempt-1`, expired: false },
+    { name: `stack-images-distributed-${i}-attempt-1`, expired: false },
+  ];
+  const record = { name: "once-per-stack-distributed-attempt-1", expired: false };
+  const full = { jobs: [job(1), job(2)], artifacts: [...receipts(1), ...receipts(2), record] };
+  const lagging = { jobs: [job(1)], artifacts: receipts(1) };
+  const settle = (...rounds) => {
+    const reads = [];
+    const sleeps = [];
+    const logs = [];
+    const read = (what) => {
+      const round = rounds[Math.min(Math.floor(reads.length / 2), rounds.length - 1)];
+      reads.push(what);
+      return structuredClone(round[what]);
+    };
+    try {
+      const result = settledListings(
+        read,
+        { stack: "distributed", total: 2, attempt: 1 },
+        { sleep: (ms) => sleeps.push(ms), log: (line) => logs.push(line) },
+      );
+      return { result, reads, sleeps, logs };
+    } catch (error) {
+      return { error, reads, sleeps, logs };
+    }
+  };
+  // Listed in full: one read of each, and no wait.
+  let s = settle(full);
+  assert.deepEqual([s.reads, s.sleeps, s.logs], [["jobs", "artifacts"], [], []]);
+  assert.deepEqual(s.result, full);
+  // Behind twice, then caught up: both read again, in full, after each pause.
+  s = settle(lagging, lagging, full);
+  assert.deepEqual(s.sleeps, [5000, 10000]);
+  assert.deepEqual(s.reads, ["jobs", "artifacts", "jobs", "artifacts", "jobs", "artifacts"]);
+  assert.deepEqual(s.result, full);
+  assert.match(s.logs[0], /do not show job e2e \(distributed, 2\/2\) yet; reading them again in 5 s$/);
+  // Never caught up: after the pauses it fails closed, naming what is missing.
+  s = settle(lagging);
+  assert.deepEqual(s.sleeps, SETTLE_PAUSES.map((pause) => pause * 1000));
+  assert.equal(SETTLE_PAUSES.reduce((sum, pause) => sum + pause, 0), 90);
+  assert.equal(s.reads.length, 2 * (SETTLE_PAUSES.length + 1));
+  assert.match(
+    s.error.message,
+    /^after 90 s of reading, the run's listings still do not show job e2e \(distributed, 2\/2\)$/,
+  );
+  // Every job listed, one receipt not yet: it waits for that receipt too.
+  s = settle({ jobs: full.jobs, artifacts: [...receipts(1), receipts(2)[0], record] });
+  assert.match(s.error.message, /still do not show artifact stack-images-distributed-2-attempt-1$/);
+  // A plan or caller prefix that cannot name the shards fails before any read.
+  for (const [plan, cause] of [
+    [{ stack: "distributed", total: 2, prefix: "retarget-e2e" }, /invalid job prefix/],
+    [{ stack: "both", total: 2 }, /invalid stack plan/],
+    [{ stack: "distributed", total: 0 }, /invalid stack plan/],
+  ]) {
+    const reads = [];
+    assert.throws(
+      () => settledListings((what) => reads.push(what) && [], plan, { sleep: () => assert.fail("slept") }),
+      cause,
+    );
+    assert.deepEqual(reads, []);
+  }
+});
+
+test("a shard shows once its job in this attempt has finished; its receipts are the producing attempt's", () => {
+  const job = (i, attempt, ran = attempt, finished = true) => ({
+    name: `e2e (distributed, ${i}/2)`,
+    run_attempt: attempt,
+    started_at: `2026-11-24T0${ran}:00:00Z`,
+    completed_at: finished ? `2026-11-24T0${ran}:30:00Z` : null,
+  });
+  const listed = (...names) => names.map((name) => ({ name, expired: false }));
+  // Attempt 2 re-ran shard 2; shard 1 appears again as a copy of attempt 1.
+  const jobs = [job(1, 1), job(2, 1), job(1, 2, 1), job(2, 2)];
+  const artifacts = listed(
+    "blob-report-distributed-1-attempt-1",
+    "stack-images-distributed-1-attempt-1",
+    "blob-report-distributed-2-attempt-2",
+    "stack-images-distributed-2-attempt-2",
+    "once-per-stack-distributed-attempt-2",
+  );
+  assert.deepEqual(unsettled("distributed", 2, jobs, artifacts, "", 2), []);
+  // Attempt 2 lists only attempt 1's job for shard 2 so far, or not finished.
+  for (const shown of [jobs.slice(0, 3), [...jobs.slice(0, 3), job(2, 2, 2, false)]])
+    assert.deepEqual(unsettled("distributed", 2, shown, artifacts, "", 2), [
+      "job e2e (distributed, 2/2)",
+    ]);
+  // The re-run shard's receipts are attempt 2's; the record is the last shard's.
+  assert.deepEqual(unsettled("distributed", 2, jobs, artifacts.slice(0, 2), "", 2), [
+    "artifact blob-report-distributed-2-attempt-2",
+    "artifact stack-images-distributed-2-attempt-2",
+    "artifact once-per-stack-distributed-attempt-2",
+  ]);
+  // An expired receipt counts as listed: waiting cannot bring it back, and
+  // the report rejects it at once.
+  const expired = artifacts.map((row, i) => (i === 0 ? { ...row, expired: true } : row));
+  assert.deepEqual(unsettled("distributed", 2, jobs, expired, "", 2), []);
+  assert.throws(
+    () => receiptArtifact(expired, "blob-report-distributed-1-attempt-1"),
+    /missing or repeated receipt/,
+  );
+  // A caller's prefix names the jobs.
+  const called = jobs.map((row) => ({ ...row, name: `retarget-e2e / ${row.name}` }));
+  assert.deepEqual(unsettled("distributed", 2, called, artifacts, "retarget-e2e / ", 2), []);
+  assert.deepEqual(unsettled("distributed", 2, called, artifacts, "", 2), [
+    "job e2e (distributed, 1/2)",
+    "job e2e (distributed, 2/2)",
+  ]);
+  // Outside Actions the attempt is unknown: a shard's latest job counts.
+  assert.deepEqual(unsettled("distributed", 2, jobs, artifacts), []);
+  // Copies with a gap are not a listing delay: nothing to wait for, and the
+  // report fails on them as before.
+  const gap = [job(1, 1), job(2, 1), job(1, 3, 1), job(2, 3)];
+  assert.deepEqual(unsettled("distributed", 2, gap, artifacts, "", 3), []);
+  assert.throws(() => shardAttempts("distributed", 2, gap), /inconsistent/);
+  assert.equal(runAttempt({ GITHUB_RUN_ATTEMPT: "3" }), 3);
+  for (const env of [{}, { GITHUB_RUN_ATTEMPT: "" }, { GITHUB_RUN_ATTEMPT: "0" }, { GITHUB_RUN_ATTEMPT: "x" }])
+    assert.equal(runAttempt(env), 0);
+});
+
 test("a receipt is exactly one unexpired artifact", () => {
   const name = "blob-report-distributed-2-attempt-2";
   const row = { name, id: 1, digest: "sha256:x", expired: false };
@@ -522,25 +774,12 @@ test("the run-time skip list is strict, and the committed one is what CI measure
     readRuntimeSkips(file, new Date("2027-01-07T00:00:00Z"))[1].expired,
     true,
   );
-  const committed = readRuntimeSkips();
-  const by = (stack) =>
-    committed
-      .filter((entry) => entry.stack === stack)
-      .map((entry) => entry.id)
-      .sort();
-  // Exact flow ids, ticketed, owned and expiring (TH-10597). The pager tests
-  // ran and passed on Distributed (E2E CI run 45072697985), so they have no
-  // entry there; Standalone keeps its entries until a Standalone run shows
-  // the same. The two Distributed-only tests are discovery-time skips on
-  // Standalone, so they need no entry.
-  assert.deepEqual(by("distributed"), []);
-  assert.deepEqual(by("standalone"), ["OBS-E2E-031", "OBS-E2E-032"]);
-  for (const entry of committed) {
-    assert.equal(entry.issue, "TH-10597");
-    assert.ok(entry.owner.trim() && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(entry.expires));
-  }
-  const names = committed.map((entry) => `${entry.stack} ${entry.id}`);
-  assert.equal(new Set(names).size, names.length);
+  // No listed flow may skip itself at run time today. The pager tests
+  // (TH-10597) ran and passed on Distributed (E2E CI run 45072697985) and on
+  // Standalone (E2E CI run 45329428602), so their entries are gone. The two
+  // Distributed-only tests are discovery-time skips on Standalone, so they
+  // need no entry. A new entry has to change this line too.
+  assert.deepEqual(readRuntimeSkips(), []);
 });
 
 test("skip expiry is judged on the run date, not wall time", () => {
@@ -756,7 +995,103 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
     "metadata edit",
   ])
     assert.ok(!text.includes(expression), expression);
-  assert.match(workflow().concurrency.group, /-candidate$/);
+  // One "candidate" group per pull request, except Retarget proof's calls.
+  assert.match(
+    workflow().concurrency.group,
+    /-\$\{\{ github\.workflow == 'Retarget proof' && github\.run_id \|\| 'candidate' \}\}$/,
+  );
+});
+
+test("a pull request run also reads its current labels, adds Standalone only, and keeps the event's labels when the read fails", (t) => {
+  const changes = workflow().jobs.changes;
+  const step = changes.steps.find((s) => s.id === "labels");
+  const planner = changes.steps.find((s) => s.id === "filter");
+  const stacks = changes.steps.find((s) => s.id === "stacks");
+  // Both readers take the step's answer, and it runs before them.
+  for (const reader of [planner, stacks])
+    assert.equal(reader.env.STANDALONE_LABEL, "${{ steps.labels.outputs.standalone }}");
+  assert.ok(changes.steps.indexOf(step) < changes.steps.indexOf(planner));
+  assert.equal(
+    step.env.EVENT_LABEL,
+    "${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}",
+  );
+  assert.equal(changes.permissions.issues, "read");
+  const dir = mkdtempSync(path.join(tmpdir(), "e2e-labels-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, "bin"));
+  const calls = path.join(dir, "calls");
+  // A fake gh: records each call, then prints FAKE_LABELS (one per line) or fails with FAKE_ERROR.
+  writeFileSync(
+    path.join(dir, "bin", "gh"),
+    `#!/usr/bin/env bash\necho "$*" >> "${calls}"\nif [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 1; fi\nprintf '%s\\n' $FAKE_LABELS\n`,
+    { mode: 0o755 },
+  );
+  const run = (event, eventLabel, env = {}) => {
+    const output = path.join(dir, "output");
+    writeFileSync(output, "");
+    rmSync(calls, { force: true });
+    const result = spawnSync("bash", ["-c", step.run], {
+      encoding: "utf8",
+      env: {
+        PATH: `${path.join(dir, "bin")}${path.delimiter}${process.env.PATH}`,
+        GITHUB_EVENT_NAME: event,
+        GITHUB_REPOSITORY: "owner/repo",
+        GITHUB_OUTPUT: output,
+        RUNNER_TEMP: dir,
+        EVENT_LABEL: String(eventLabel),
+        PR: "4354",
+        FAKE_LABELS: "",
+        ...env,
+      },
+    });
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      output: readFileSync(output, "utf8"),
+      calls: existsSync(calls) ? readFileSync(calls, "utf8") : "",
+    };
+  };
+  // The event carried the label: nothing to read.
+  let r = run("pull_request", true, { FAKE_LABELS: "infra" });
+  assert.deepEqual([r.status, r.output, r.calls], [0, "standalone=true\n", ""]);
+  // Added with the pull request, after "opened" (#4354): the live labels add it.
+  r = run("pull_request", false, { FAKE_LABELS: "infra e2e-standalone" });
+  assert.deepEqual([r.status, r.output], [0, "standalone=true\n"]);
+  assert.match(r.calls, /repos\/owner\/repo\/issues\/4354\/labels/);
+  // Not on the pull request now either (an exact name only): Distributed only.
+  r = run("pull_request", false, { FAKE_LABELS: "infra e2e-standalone-later" });
+  assert.deepEqual([r.status, r.output], [0, "standalone=false\n"]);
+  // The read fails: the event's labels stand, a warning says so, and the job goes on.
+  r = run("pull_request", false, { FAKE_ERROR: "HTTP 502: Bad Gateway" });
+  assert.deepEqual([r.status, r.output], [0, "standalone=false\n"]);
+  assert.match(r.stdout, /::warning title=E2E stacks::.*HTTP 502: Bad Gateway/);
+  // Not a pull request: no read (the stacks step runs both stacks or follows a dispatch).
+  for (const event of ["merge_group", "push", "schedule", "workflow_dispatch"]) {
+    r = run(event, false, { FAKE_LABELS: "e2e-standalone" });
+    assert.deepEqual([r.status, r.output, r.calls], [0, "standalone=false\n", ""], event);
+  }
+});
+
+test("CI guidance asks for a push, never a close and reopen", () => {
+  const files = [
+    ".github/workflows/e2e-ci.yml",
+    ".github/workflows/backend-ci.yml",
+    ".github/workflows/python-lint.yml",
+    ".github/workflows/retarget-proof.yml",
+    ".github/scripts/ci_base_gate.py",
+    "e2e/README.md",
+  ];
+  for (const file of files) {
+    const text = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
+    assert.doesNotMatch(text, /close and reopen|\bor reopen\b|\bor a close\b/i, file);
+  }
+  // A change to any of them starts this self-test.
+  const harness = parseYaml(
+    readFileSync(new URL("../../.github/workflows/e2e-harness-selftest.yml", import.meta.url), "utf8"),
+  );
+  for (const { paths } of [harness.on.pull_request, harness.on.push])
+    for (const file of files.filter((f) => !f.startsWith("e2e/")))
+      assert.ok(paths.includes(file), file);
 });
 
 test("the E2E gate passes only on a green suite with its report, or when nothing was needed", () => {
@@ -1045,6 +1380,8 @@ process.stdout.write(hash + "  " + file + "\\n");`,
           E2E_STACK: "distributed",
           SHARD_TOTAL: "3",
           E2E_QUARANTINE_TODAY: "2026-11-22",
+          // The attempt the report job runs in: the last one.
+          GITHUB_RUN_ATTEMPT: String(ran.length),
         },
       },
     );

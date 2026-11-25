@@ -269,8 +269,8 @@ def topology_profile(mode: str, profiles: Any) -> TopologyProfile:
                 ("code-executor", "code_executor"), ("fi-collector", "fi_collector"),
                 ("fi-property-catalog-consumer", "fi_collector"),
                 ("postgres-schema-bootstrap", "backend"), ("clickhouse-native-bootstrap", "backend"),
-                ("clickhouse-cdc-bootstrap", "backend"), ("peerdb-temporal-init", "backend"),
-                ("peerdb-init", "backend")]
+                ("clickhouse-cdc-bootstrap", "backend"), ("metrics-schema-bootstrap", "backend"),
+                ("peerdb-temporal-init", "backend"), ("peerdb-init", "backend")]
     if selected & {"workers", "all", "full"}:
         # Inherits queue-worker's profiles, unlike the always-on SQL and exact
         # aggregation workers, which explicitly clear profiles in Compose.

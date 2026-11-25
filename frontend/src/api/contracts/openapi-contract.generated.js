@@ -29535,6 +29535,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
               format: "uuid",
             },
           },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 255,
+            },
+          },
+          status: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["building", "running", "completed", "failed"],
+            },
+          },
+          agent_type: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["voice", "chat"],
+            },
+          },
         },
         responses: {
           200: {
@@ -75309,6 +75330,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_pages",
         "current_page",
         "results",
+        "status_counts",
       ],
       type: "object",
       properties: {
@@ -75341,6 +75363,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessEnvironment",
           },
+        },
+        status_counts: {
+          $ref: "#/definitions/HarnessEnvironmentStatusCounts",
         },
       },
     },
@@ -117692,6 +117717,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "tools_count",
         "runs_count",
         "agent_version",
+        "environment_version",
         "agent_policy",
         "last_updated",
         "created_at",
@@ -117766,6 +117792,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         agent_version: {
           $ref: "#/definitions/AgentVersionRef",
+        },
+        environment_version: {
+          $ref: "#/definitions/EnvironmentVersionRef",
         },
         agent_policy: {
           title: "Agent policy",
@@ -118058,9 +118087,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "tools_count",
         "runs_count",
         "agent_version",
+        "environment_version",
         "agent_policy",
         "last_updated",
         "created_at",
+        "agent",
         "last_run",
       ],
       type: "object",
@@ -118128,6 +118159,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_version: {
           $ref: "#/definitions/AgentVersionRef",
         },
+        environment_version: {
+          $ref: "#/definitions/EnvironmentVersionRef",
+        },
         agent_policy: {
           title: "Agent policy",
           type: "string",
@@ -118144,8 +118178,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
         },
+        agent: {
+          $ref: "#/definitions/HarnessEnvironmentAgentRef",
+        },
         last_run: {
           $ref: "#/definitions/HarnessRunSummary",
+        },
+      },
+    },
+    HarnessEnvironmentStatusCounts: {
+      required: ["building", "running", "completed", "failed"],
+      type: "object",
+      properties: {
+        building: {
+          title: "Building",
+          type: "integer",
+        },
+        running: {
+          title: "Running",
+          type: "integer",
+        },
+        completed: {
+          title: "Completed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
         },
       },
     },
@@ -142271,6 +142330,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentAgentRef: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessDiagnostics: {
       required: ["size", "final", "error"],
       type: "object",
@@ -147901,6 +147978,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "created_at",
         "enabled",
         "type",
+        "can_switch",
         "expires_at",
         "is_expired",
       ],
@@ -147945,6 +148023,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Type",
           type: "string",
           minLength: 1,
+        },
+        can_switch: {
+          title: "Can switch",
+          type: "boolean",
         },
         expires_at: {
           title: "Expires at",

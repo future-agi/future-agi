@@ -340,10 +340,8 @@ def test_legacy_reseed_works_before_publication_table_exists(legacy_seed_databas
         user=user, organization=org, role="Owner"
     )
     assert "accounts_demotracepublication" not in connection.introspection.table_names()
-    # 0020 explicitly uses this historical-compatible seeding path.
-    assert (
-        create_demo_traces_and_spans(str(user.organization_id), publish=False) is None
-    )
+    # The shipped accounts.0020 call shape, before the publication table exists.
+    assert create_demo_traces_and_spans(str(user.organization_id)) is None
     trace_ids = identities(user)
     assert len(trace_ids) == 2
     executor = MigrationExecutor(connection)
@@ -361,6 +359,55 @@ def test_legacy_reseed_works_before_publication_table_exists(legacy_seed_databas
             executor.loader.project_state([new]).apps, editor
         )
     assert DemoTracePublication.objects.count() == 2
+
+
+@pytest.mark.django_db(transaction=True)
+def test_shipped_0020_reseeds_a_broken_demo_org_before_the_outbox_exists(
+    legacy_seed_database,
+):
+    from importlib import import_module
+
+    from django.db.migrations.executor import MigrationExecutor
+
+    from model_hub.models.develop_dataset import Dataset, Row
+
+    # A disposable database, as above: model_hub is at its latest migration
+    # here too, and the shared database never rolls attachments back.
+    connection = legacy_seed_database
+    old = [
+        ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
+        ("tracer", "0135_eval_put_back"),  # Last node before attachment migrations.
+    ]
+    executor = MigrationExecutor(connection)
+    apps = executor.migrate(old).apps
+    org = apps.get_model("accounts", "Organization").objects.create(name="Demo")
+    user = apps.get_model("accounts", "User").objects.create(
+        email="broken-demo@example.com", organization=org
+    )
+    apps.get_model("accounts", "OrganizationMembership").objects.create(
+        user=user, organization=org, role="Owner"
+    )
+    assert "accounts_demotracepublication" not in connection.introspection.table_names()
+    broken = Dataset.objects.create(
+        name="Demo-dataset", source="demo", organization_id=user.organization_id
+    )
+
+    def fake_upload(org_id, user_id):
+        dataset = Dataset.objects.create(
+            name="Demo-dataset", source="demo", organization_id=org_id
+        )
+        Row.objects.create(dataset=dataset, order=1, metadata={})
+
+    operation = import_module("accounts.migrations.0020_reseed_broken_demo_data")
+    with (
+        patch("accounts.user_onboard.upload_demo_dataset", fake_upload),
+        connection.schema_editor() as editor,
+    ):
+        operation.reseed_broken_demo_data(
+            executor.loader.project_state(old).apps, editor
+        )
+    assert len(identities(user)) == 2
+    assert not Dataset.objects.filter(pk=broken.pk, deleted=False).exists()
 
 
 @pytest.mark.django_db(transaction=True)

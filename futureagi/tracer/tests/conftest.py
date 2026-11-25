@@ -85,6 +85,16 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
+def _metric_schema_installed(monkeypatch):
+    """Scenario fixtures create only the ClickHouse tables they read, so the
+    deployment readiness probe would refuse them. test_metric_schema_install
+    resets this to exercise the probe itself."""
+    from tracer.services.derived_metrics import schema_install
+
+    monkeypatch.setattr(schema_install._cache, "installed", True)
+
+
+@pytest.fixture(autouse=True)
 def _stub_eval_task_workflow(monkeypatch):
     """Keep eval-task create/edit views and tools from connecting to Temporal."""
 

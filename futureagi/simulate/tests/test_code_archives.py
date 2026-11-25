@@ -355,6 +355,7 @@ def test_a_build_preflight_reads_a_private_source_with_its_workspaces_connection
         [],
         [],
         1,
+        [],
     )
     with pytest.raises(HostedHarnessError) as refused:
         _preflight_source_connectors(organization, _payload())

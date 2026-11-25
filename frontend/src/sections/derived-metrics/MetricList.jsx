@@ -27,6 +27,7 @@ import {
 import MetricValueCell from "./MetricValueCell";
 import { firstCalculationBadge } from "./metricCalculationState";
 import { isMetricFirstUse } from "./metricPresentation";
+import { METRIC_SCHEMA_NOT_INSTALLED } from "./metricPageValues";
 import {
   metricProjectLabel,
   useMetricProjectNames,
@@ -468,7 +469,9 @@ export default function MetricList({
             </Button>
           }
         >
-          Metrics could not be loaded. Try again.
+          {definitions.error?.code === "metric_schema_not_installed"
+            ? METRIC_SCHEMA_NOT_INSTALLED
+            : "Metrics could not be loaded. Try again."}
         </Alert>
       ) : loading ? (
         <Box role="status" aria-live="polite" sx={{ pt: 1 }}>

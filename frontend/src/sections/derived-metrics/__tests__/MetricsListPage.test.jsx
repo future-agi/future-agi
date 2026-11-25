@@ -168,6 +168,20 @@ it("does not report first use on a failed list read and retries the real list", 
   ).toBeVisible();
 });
 
+it("says the Metrics schema is not installed instead of a generic list failure", async () => {
+  mock.get.mockRejectedValueOnce({
+    statusCode: 503,
+    code: "metric_schema_not_installed",
+    retryable: true,
+  });
+  mount();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Metrics schema not installed. An administrator needs to install it",
+  );
+  expect(screen.queryByText(/could not be loaded/)).not.toBeInTheDocument();
+  expect(screen.queryByText("No metrics yet")).not.toBeInTheDocument();
+});
+
 it("searches only the current page without inventing a server search argument", async () => {
   mount();
   await screen.findByRole("button", { name: conversation.name });

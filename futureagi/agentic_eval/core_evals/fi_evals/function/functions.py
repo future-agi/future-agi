@@ -23,6 +23,7 @@ from agentic_eval.core_evals.fi_utils.sandbox import SETUP_ERROR_MESSAGES
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 from agentic_eval.core_evals.keys.openai_api import OpenAiApiKey
 from agentic_eval.core_evals.llm_services.openai_api import OpenAiService
+from common.utils.link_format import _evaluate_links
 
 
 def _standardize_url(url):
@@ -1326,75 +1327,15 @@ def contains_link(text, **kwargs):
 
 
 def contains_valid_link(text, **kwargs):
-    """
-    Check if the text contains a valid link.
-
-    Args:
-        text (str): The text string to check for a valid link.
-
-    Returns:
-        dict: A dictionary containing the result of the link check and the reason for the result.
-    """
-    pattern = r"(?!.*@)(?:https?://)?(?:www\.)?\S+\.\S+"
-    link_match = re.search(pattern=pattern, string=text)
-    if link_match:
-        matched_url = link_match.group()
-        if matched_url:
-            standardized_url = _standardize_url(matched_url)
-            try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
-                    return {
-                        "result": True,
-                        "reason": f"link {matched_url} found in output and is valid",
-                    }
-                else:
-                    return {
-                        "result": False,
-                        "reason": f"link {matched_url} found in output but is invalid",
-                    }
-            except Exception:
-                return {
-                    "result": False,
-                    "reason": f"link {matched_url} found in output but is invalid",
-                }
-    return {"result": False, "reason": "no link found in output"}
+    """Check for a valid HTTP(S) link format without making network requests."""
+    result = _evaluate_links(text, require_all=False)
+    return {"result": bool(result["score"]), "reason": result["reason"]}
 
 
 def no_invalid_links(text, **kwargs):
-    """
-    Check for invalid links in the text.
-
-    Args:
-        text (str): The text string to check for invalid links.
-
-    Returns:
-        dict: A dictionary containing the result of the link check and the reason for the result.
-    """
-    pattern = r"(?!.*@)(?:https?://)?(?:htp?://)?(?://?)?(?:http?://)?(?:www\.)?\S+\.\S+"
-    link_match = re.search(pattern=pattern, string=text)
-    if link_match:
-        matched_url = link_match.group()
-        if matched_url:
-            standardized_url = _standardize_url(matched_url)
-            try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
-                    return {
-                        "result": True,
-                        "reason": f"link {matched_url} found in output and is valid",
-                    }
-                else:
-                    return {
-                        "result": False,
-                        "reason": f"link {matched_url} found in output but is invalid",
-                    }
-            except Exception:
-                return {
-                    "result": False,
-                    "reason": f"link {matched_url} found in output but is invalid",
-                }
-    return {"result": True, "reason": "no invalid link found in output"}
+    """Check every detected link's format without making network requests."""
+    result = _evaluate_links(text, require_all=True)
+    return {"result": bool(result["score"]), "reason": result["reason"]}
 
 
 def api_call(

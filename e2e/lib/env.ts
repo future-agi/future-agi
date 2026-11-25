@@ -13,6 +13,7 @@ export const E2E = {
   linkWorkerCanaryUrl: process.env.E2E_LINK_WORKER_CANARY_URL ?? 'http://127.0.0.1:28083',
   googleMockUrl: process.env.E2E_GOOGLE_MOCK_URL ?? 'https://localhost:28443',
   slackMockUrl: process.env.E2E_SLACK_MOCK_URL ?? 'http://localhost:28081',
+  daytonaMockUrl: process.env.E2E_DAYTONA_MOCK_URL ?? 'http://localhost:28084',
   chUrl: process.env.E2E_CH_URL ?? 'http://localhost:28123',
   chDatabase: process.env.E2E_CH_DB ?? 'default',
   // The managed stacks' CH_PASSWORD (e2e/stack/*.env), for user `default`.

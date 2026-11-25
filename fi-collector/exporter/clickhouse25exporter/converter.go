@@ -108,12 +108,12 @@ var knownObservationTypes = map[string]struct{}{
 // attributes. *pricing.Pricer satisfies this; nil disables token pricing
 // (cost falls back to the user-provided value or 0).
 type Pricer interface {
-	TokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32) (float64, bool)
+	TokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32, projectID string) (float64, bool)
 	// OpenRouterTokenCost prices a span that came through OpenRouter, whose
 	// model is an OpenRouter slug: like TokenCost, but OpenRouter's own rate
 	// for the slug (the price table's "openrouter/<slug>" entry) is tried
 	// before the bare provider entry.
-	OpenRouterTokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32) (float64, bool)
+	OpenRouterTokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32, projectID string) (float64, bool)
 }
 
 // OpenRouter Broadcast detection. OpenRouter's OTLP export names its resource
@@ -425,9 +425,9 @@ func spanToRow(
 		var c float64
 		var ok bool
 		if fromOpenRouter || adapter.ProviderIs(attrsStr, openRouterName) {
-			c, ok = pricer.OpenRouterTokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens)
+			c, ok = pricer.OpenRouterTokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens, projectID)
 		} else {
-			c, ok = pricer.TokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens)
+			c, ok = pricer.TokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens, projectID)
 		}
 		if ok {
 			cost = c

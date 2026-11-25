@@ -93,8 +93,8 @@
     },
     {
       "path": "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
-      "before_sha256": "5c59bfeebdf31fdcfe99364f086f5ddc1f305fc214ef18520a4cb2400d599748",
-      "after_sha256": "865a7b9ad1fc7370858c981d695f8ef8a92bdc99b34132287bc2f83226f1ac3a",
+      "before_sha256": "865a7b9ad1fc7370858c981d695f8ef8a92bdc99b34132287bc2f83226f1ac3a",
+      "after_sha256": "0513e7322cf9a6705a7144fe4c0fe6bf4adc0f8ad764481c4acb1be53b580226",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -175,8 +175,8 @@
           "clickhouse:tracer_trace",
           "clickhouse:traces"
         ],
-        "mitigation": "Pure SQL transformation; the caller submits DDL and records the original file hash per topology. The new branch adds ON CLUSTER once at the ordinary view declaration, leaves the SELECT unchanged, and does not rewrite its engine. It changes the packaged derived_metrics view on the selected cluster, not its backing rows. Existing table/projection transforms retain their prior potentially rewriting DDL. Restore the prior view on every replica or restore the failed transition's backup; reverting code alone does not undo executed DDL.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "mitigation": "Merge of main into dev: adds main's reviewed dictionary handling (#4162) to dev's rewriter. Replicated mode now appends ON CLUSTER to CREATE [OR REPLACE] DICTIONARY [IF NOT EXISTS] as well as to ordinary views, tables, MVs and ALTER TABLE; no other rewrite changes. Dev side: Pure SQL transformation; the caller submits DDL and records the original file hash per topology. The new branch adds ON CLUSTER once at the ordinary view declaration, leaves the SELECT unchanged, and does not rewrite its engine. It changes the packaged derived_metrics view on the selected cluster, not its backing rows. Existing table/projection transforms retain their prior potentially rewriting DDL. Restore the prior view on every replica or restore the failed transition's backup; reverting code alone does not undo executed DDL. Main side: Replicated-mode rewriter now appends ON CLUSTER to CREATE [OR REPLACE] DICTIONARY [IF NOT EXISTS], with the same object-name grammar as tables and MVs. Table, MV and ALTER handling is unchanged. Affects only dictionary DDL over traces, end_users and trace_sessions (read by spans via dictGet). Exercised with 028 on two-replica production-chart rehearsals (17 and 18 Nov).",
+        "review": "https://github.com/future-agi/future-agi/pull/4162#discussion_r4608730344",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
@@ -199,6 +199,27 @@
         ],
         "mitigation": "Add status and config_hash to direct-write eval rows using ADD COLUMN IF NOT EXISTS, then create three metric stores and the committed-only ordinary view with IF NOT EXISTS. No SQL backfill or deletion; existing eval reads see defaults where columns were absent. A partial apply can be replayed after shape checks. Keep additive objects on code rollback; restore the sealed snapshot for exact pre-update state.",
         "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/v2/schema/028_reconcile_metadata_dictionaries.sql",
+      "before_sha256": null,
+      "after_sha256": "4fa7df992ce443f48b762fc32a92deeb72462dbf5e95b3cb300f0eda2b40defc",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:traces",
+          "clickhouse:end_users",
+          "clickhouse:trace_sessions",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Forward-only metadata repair. CREATE OR REPLACE DICTIONARY for trace_dict, end_users_dict and trace_sessions_dict, byte-identical to 015/017/018, runs ON CLUSTER through the fixed rewriter so every replica holds the dictionaries. No source table is altered, rewritten or replayed; each replica loads the dictionary the way the first replica already does. Rollback: the identical earlier definitions. Exercised on two-replica production-chart rehearsals (17 and 18 Nov).",
+        "review": "https://github.com/future-agi/future-agi/pull/4162#discussion_r4608730337",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
@@ -684,6 +705,80 @@
         ],
         "mitigation": "Store only ambiguous sampler span-ID/quarter keys in a fresh session Memory table; bounds are 50,000 rows and 64 MiB across populations. A recoverable page-budget retry can replay and compare the exact frozen rows from a query-local external table; unrelated session loss aborts. DROP TEMPORARY IF EXISTS or disconnect clears state, so no persistent rollback is needed.",
         "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "deploy/standalone/bin/bootstrap.py",
+      "before_sha256": "fbf8c6a36f72adba275ad3c7f11a9bda2095ee424730dc3567a8b4badedd76b3",
+      "after_sha256": "473950a5fe018504ccdac4b96fb9623c783b64e3dec1f37628aadc3aeee43246",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:eval_per_config",
+          "clickhouse:eval_per_config_mv",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:derived_metric_inputs",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits",
+          "clickhouse:derived_metrics",
+          "clickhouse:metric_field_values",
+          "clickhouse:metric_field_values_checkpoint",
+          "clickhouse:metric_bucket_totals",
+          "clickhouse:metric_bucket_totals_checkpoint",
+          "clickhouse:metric_unit_state",
+          "clickhouse:metric_source_dependencies",
+          "clickhouse:metric_bucket_retired_parts",
+          "clickhouse:list_current_root_facts",
+          "clickhouse:list_current_members",
+          "clickhouse:list_current_user_activity",
+          "clickhouse:derived_metric_snapshot_units",
+          "clickhouse:derived_metric_snapshot_buckets",
+          "clickhouse:schema_versions"
+        ],
+        "mitigation": "Adds only the Metrics schema step; existing statements are unchanged. While METRICS_ENABLED is on it runs the packaged receipt-based runner on files 009, 011 and 028-038 (CREATE/ADD COLUMN IF NOT EXISTS and view replacement; 011's materialized view is protected by its receipt). No backfill, mutation or TTL change, never --force, skipped on hosted production. A failure or drift is logged at ERROR and startup continues with only Metrics unavailable. Rollback: older code ignores the new tables; no data is dropped.",
+        "review": "https://github.com/future-agi/future-agi/pull/4309#discussion_r4657946974",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tfc/management/commands/bootstrap_install.py",
+      "before_sha256": "1f6504e06ce50f8f2e9feab146b2d6252fc73977489e906ced4a4a2b28ecc080",
+      "after_sha256": "46ca8571505b08339bc91588b5001bcfc48ff7539ca50232eb3d97fb1c307652",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:eval_per_config",
+          "clickhouse:eval_per_config_mv",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:derived_metric_inputs",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits",
+          "clickhouse:derived_metrics",
+          "clickhouse:metric_field_values",
+          "clickhouse:metric_field_values_checkpoint",
+          "clickhouse:metric_bucket_totals",
+          "clickhouse:metric_bucket_totals_checkpoint",
+          "clickhouse:metric_unit_state",
+          "clickhouse:metric_source_dependencies",
+          "clickhouse:metric_bucket_retired_parts",
+          "clickhouse:list_current_root_facts",
+          "clickhouse:list_current_members",
+          "clickhouse:list_current_user_activity",
+          "clickhouse:derived_metric_snapshot_units",
+          "clickhouse:derived_metric_snapshot_buckets",
+          "clickhouse:schema_versions"
+        ],
+        "mitigation": "Adds only the Metrics schema step; existing statements are unchanged. While METRICS_ENABLED is on it runs the packaged receipt-based runner on files 009, 011 and 028-038 (CREATE/ADD COLUMN IF NOT EXISTS and view replacement; 011's materialized view is protected by its receipt). No backfill, mutation or TTL change, never --force, skipped on hosted production. A failure or drift is logged at ERROR and startup continues with only Metrics unavailable. Rollback: older code ignores the new tables; no data is dropped.",
+        "review": "https://github.com/future-agi/future-agi/pull/4309#discussion_r4657946974",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }

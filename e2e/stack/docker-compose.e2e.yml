@@ -112,6 +112,8 @@ services:
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
       # Actors and test conditions, which the actor flows cover.
       HARNESS_ACTORS_ENABLED: "true"
+      HARNESS_AGENT_READING_ENABLED: "true"
+      HARNESS_PUBLIC_BASE_URL: http://platform.e2e.invalid
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
       <<: *e2e-attachments-env
@@ -133,6 +135,7 @@ services:
     environment:
       HARNESS_VERSIONING_ENABLED: "true"
       HARNESS_ACTORS_ENABLED: "true"
+      HARNESS_AGENT_READING_ENABLED: "true"
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
@@ -221,6 +224,44 @@ services:
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-reading:
+    extends:
+      file: ./docker-compose.distributed.yml
+      service: worker
+    networks: [default, link-public]
+    restart: "no"
+    volumes: !reset []
+    environment:
+      HARNESS_VERSIONING_ENABLED: "true"
+      HARNESS_ACTORS_ENABLED: "true"
+      HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
+      HARNESS_AGENT_READING_ENABLED: "true"
+      MODEL_SERVING_URL: http://mock-llm:8080
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      DJANGO_SETTINGS_MODULE: tfc.settings.e2e
+      INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      TEMPORAL_ALL_QUEUES: "false"
+      TEMPORAL_TASK_QUEUE: simulation_runner
+      TEMPORAL_EXCLUDED_QUEUES: ""
+      HOSTED_SANDBOX_PROVIDER: daytona
+      DAYTONA_API_URL: http://mock-daytona:8080/api
+      DAYTONA_API_KEY: e2e-mock
+      DAYTONA_TARGET: e2e
+      DAYTONA_USE_DEPRECATED_POLLING: "true"
+      ALK_DAYTONA_SNAPSHOT: e2e-mock
+      AGENTCC_BASE_URL: http://agentcc-gateway:8080
+    depends_on:
+      mock-daytona:
+        condition: service_started
+  mock-daytona:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/mock-daytona/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28084:8080"
+    restart: "no"
   worker-sql-workbench:
     networks: [default, link-public]
     restart: "no"
@@ -255,48 +296,17 @@ services:
     depends_on:
       clickhouse-cdc-bootstrap:
         condition: service_completed_successfully
-  # The OSS native/CDC bootstraps never create the Metrics ClickHouse schema,
-  # and FI_SKIP_CH25_MIGRATION keeps Django's 0078 from replaying the schema
-  # glob. docs/derived-metrics.rst leaves 028-038 to the deployer, so this
-  # stack applies exactly those packaged files with the maintained runner.
-  # 028 alters tracer_eval_logger_v2, which 011 creates; 011's materialized view
-  # writes the rollup 009 creates. Nothing reads that table here, because
-  # CH25_EVAL_LOGGER_TABLE still selects the CDC table.
-  # Without this, every refresh fails after preparing its attempt
-  # (metric_refresh_failed) and no Metrics value is ever published.
+  # docker-compose.distributed.yml's metrics-schema-bootstrap applies the Metrics
+  # ClickHouse schema (009, 011, 028-038) only while METRICS_ENABLED is on, which
+  # this stack sets per service rather than in .env. Without it every refresh
+  # fails (metric_schema_not_installed) and no Metrics value is ever published.
   metrics-schema-bootstrap:
-    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
-    working_dir: /app/backend
-    entrypoint: ["python", "-m", "tracer.services.clickhouse.v2.apply_schema"]
-    command:
-      - --ch-host=clickhouse
-      - --ch-http-port=8123
-      - --ch-user=${CH_USERNAME:-default}
-      - --ch-database=${CH25_DATABASE:-${CH_DATABASE:-default}}
-      - --files
-      - 009_per_eval_rollup.sql
-      - 011_eval_logger_v2.sql
-      - 028_derived_metrics.sql
-      - 029_derived_metric_uncertainty.sql
-      - 030_derived_metric_view_refresh.sql
-      - 031_metric_field_values.sql
-      - 032_metric_bucket_totals.sql
-      - 033_metric_unit_state.sql
-      - 034_metric_source_dependencies.sql
-      - 035_metric_bucket_retired_parts.sql
-      - 036_list_current_root_facts.sql
-      - 037_list_current_user_activity.sql
-      - 038_metric_snapshot_sketches.sql
-    restart: "no"
     environment:
-      # apply_schema reads the password from the environment, never argv.
+      METRICS_ENABLED: "1"
+      # Passed to the runner through the environment, never argv.
       CH_PASSWORD: ${CH_PASSWORD:-e2e-clickhouse-password}
-      FI_MIGRATION_USER: e2e-metrics-schema-bootstrap
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
-    depends_on:
-      clickhouse-cdc-bootstrap:
-        condition: service_completed_successfully
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
@@ -402,8 +412,8 @@ services:
         ipv4_address: 172.30.91.10
     restart: "no"
 
-  # A separate journal keeps asynchronous harness traffic out of the browser
-  # flow's full-journal assertion when Playwright runs the files in parallel.
+  # Separate listeners identify browser versus Temporal regressions; both
+  # journals must stay empty because the shipped link evaluators are offline.
   link-worker-canary:
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]

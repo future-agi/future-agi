@@ -27,6 +27,7 @@ import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import EvidenceReviewDrawer from "../../evidence/EvidenceReviewDrawer";
 import ImportEvidenceButton from "../../evidence/ImportEvidenceButton";
+import ViewerLock from "../../components/ViewerLock";
 import DraftImports from "../../evidence/DraftImports";
 import { IMPORT_PARAM } from "../../evidence/evidence.constants";
 import PropTypes from "prop-types";
@@ -582,10 +583,16 @@ export default function ScenariosStep({
                         filters={filters}
                       />
                       {!locked && env?.id && (
-                        <ImportEvidenceButton
-                          envId={env.id}
-                          onImported={openImport}
-                        />
+                        <ViewerLock
+                          locked={!canEdit}
+                          title={WORKSPACE_COPY.viewer.scenarios}
+                        >
+                          <ImportEvidenceButton
+                            envId={env.id}
+                            onImported={openImport}
+                            disabled={!canEdit}
+                          />
+                        </ViewerLock>
                       )}
                       <AddButton
                         onClick={() => setAdding(true)}
@@ -646,7 +653,7 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
-              {!locked && env?.id ? (
+              {!rowsLocked && env?.id ? (
                 <DraftImports envId={env.id} onResume={openImport} />
               ) : null}
               <PagedScenarioViews

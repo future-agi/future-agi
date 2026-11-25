@@ -17,7 +17,7 @@ on:
     # head commit, and GitHub then ignores the older suite's required check,
     # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
     # the merge queue re-tests every dev merge, but a PR moved onto main is
-    # not re-tested until a push or reopen (see e2e/README.md).
+    # not re-tested until a push (see e2e/README.md).
     types: [opened, synchronize, reopened]
   push:
     branches: [dev, main]

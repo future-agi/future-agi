@@ -52,6 +52,29 @@
 - The UI displays the exact ordered graph set returned by the authorized list request at supported page sizes.
 - Above-cap graph requests return at most 100 rows, metadata reflects the cap, and following next_page returns the complete seeded ID set once.
 
+### AGENT-E2E-003 — connecting an agent from a folder asks only for the keys its code reads, then Connect enables
+
+**Goal:** A developer connects an agent from a folder, and the check asks only for the keys the agent's code reads before Connect enables
+
+**Spec:** `flows/agents/connect-folder-preflight.spec.ts:27`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Agents › New agent › Upload a folder
+2. choose the agent folder and wait for the upload
+3. find agents and pick the one found
+4. name it and run preflight
+5. see preflight pass without asking for a key the code only mentions in a comment
+6. connect the agent and land on its page
+
+**Backend state verified:**
+
+- the preflight response the page received is ready to submit and does not name the commented key
+- the scan of the uploaded folder reached found in PG simulate_agent_scan, scoped to the actor org
+- exactly one PG simulate_agent_definition row has the minted name in the actor org after Connect
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
@@ -1631,11 +1654,11 @@
 - the previous entry is retired (deleted = true), not left live beside the new one
 - the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
 
-### EVAL-E2E-016 — shipped link evaluators accept approved links and refuse other destinations
+### EVAL-E2E-016 — shipped link evaluators give correct format verdicts without network requests
 
-**Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
+**Goal:** Run the shipped link evaluators on well-formed links and ordinary prose using format-only validation without contacting any destination
 
-**Spec:** `flows/evals/link-destinations.spec.ts:16`
+**Spec:** `flows/evals/link-destinations.spec.ts:15`
 
 **Tags:** —
 
@@ -1643,15 +1666,15 @@
 
 1. resolve the two shipped system template IDs without rewriting their code
 2. open each system evaluator in the browser
-3. submit approved links, link-free prose and refused destinations in the Custom playground
-4. read exact verdicts and explanations
-5. inspect the exact request set on the owned canary
+3. submit well-formed links including formerly denied, private-host and redirecting destinations, plus link-free prose in the Custom playground
+4. read exact verdicts and explanations for all 16 evaluator and input combinations
+5. require empty browser and Temporal canary journals after every submission
 
 **Backend state verified:**
 
 - both shipped templates retain their system identity and text input contract
-- browser-submitted playground responses match the exact verdict and explanation matrix
-- the owned canary records only approved HEAD requests and never receives refused destinations
+- browser-submitted playground responses match the exact offline verdict and explanation matrix
+- both complete canary journals record zero destination requests in every case
 
 ### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
 
@@ -2181,7 +2204,7 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:108`
 
 **Tags:** —
 
@@ -2201,7 +2224,7 @@
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:161`
 
 **Tags:** —
 
@@ -3322,7 +3345,7 @@
 **Browser observations:**
 
 - /dashboard/simulate lands on Environments
-- harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>
+- harness lands on Environments, harness/new on My Environments with the Build environment drawer open (build= in the address), harness/<id> on environments/<id>
 - simulator-agent lands on Environments
 - personas lands on the Environments Personas tab
 - the Personas tab is selected and shows the persona search
@@ -3766,3 +3789,30 @@
 - the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
 - B reading A's import answers 404, through A's environment and through B's own
 - a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending
+
+### SIM-E2E-037 — a Viewer opens a built environment, finds Run and Rename locked with the reason, and is refused a run
+
+**Goal:** A Viewer of a workspace opens one of its built environments, sees that they can't start a run or rename it and why, and the API refuses the run they try anyway without starting anything
+
+**Spec:** `flows/simulate/viewer-environment-refusal.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment in the owner's workspace (lib/environment-seed.ts)
+2. as a Viewer of that workspace, open the environment
+3. hover Run simulation
+4. look at Rename
+5. as the same Viewer, start a run through the API
+
+**Backend state verified:**
+
+- the run answers 403 with code viewer_read_only, action "start a paid run" and its reason
+- simulate_hosted_harness_job has no run job for the environment afterwards
+
+**Browser observations:**
+
+- the environment opens on its workspace with its name
+- Run simulation is disabled and its tooltip says "You don't have permission to start runs."
+- Rename environment is disabled

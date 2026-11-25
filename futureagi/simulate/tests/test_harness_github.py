@@ -1,7 +1,6 @@
 """The GitHub reader: the token each read carries, GitHub's own limits, the errors a
 person sees, the workspace limit and name checks."""
 
-import json
 import time
 import uuid
 from unittest.mock import MagicMock, patch
@@ -322,21 +321,37 @@ class TestCredentialNeverReachesSentry:
         self, settings, workspace_owned
     ):
         import sentry_sdk
-        from sentry_sdk.transport import Transport
+        from sentry_sdk.utils import iter_event_frames
 
         from integrations.services import github_app
         from tfc.logging.sentry import _event_scrubber, _get_before_send
+        from tfc.tests.sentry_capture import MemoryWire
 
-        secret = "ghs_" + "s3cr3tV4lue" * 3
-        events = []
+        marker = "s3cr3tV4lue"
+        secret = "ghs_" + marker * 3
+        wire = MemoryWire()
+        saw_credential = False
 
-        class Capture(Transport):
-            def capture_envelope(self, envelope):
-                events.append(envelope.get_event())
+        def is_read_frame(frame):
+            return (
+                frame.get("module") == github.__name__
+                and frame.get("function") == "github_get"
+            )
+
+        def observe_locals(event, _hint):
+            # Scope processors see SDK-captured locals before the client scrubs them.
+            # Keep only the proof, not the frame that the SDK will mutate in place.
+            nonlocal saw_credential
+            for frame in iter_event_frames(event):
+                if is_read_frame(frame):
+                    fields = frame.get("vars") or {}
+                    authorization = fields.get("headers", {}).get("Authorization", "")
+                    saw_credential = "credential" in fields and secret in authorization
+            return event
 
         client = sentry_sdk.Client(
             dsn="https://key@sentry.example.com/1",
-            transport=Capture,
+            transport=wire,
             include_local_variables=True,
             send_default_pii=True,
             event_scrubber=_event_scrubber(),
@@ -359,20 +374,25 @@ class TestCredentialNeverReachesSentry:
             sentry_sdk.isolation_scope() as scope,
         ):
             scope.set_client(client)
+            scope.add_event_processor(observe_locals)
             try:
                 with read_credential("org", "ws") as credential:
+                    assert credential.workspace_owned is workspace_owned
                     github_get("/x", accept="a", credential=credential, purpose="t")
             except RuntimeError:
                 sentry_sdk.capture_exception()
 
-        [event] = events
-        frames = [
-            frame
-            for value in event["exception"]["values"]
-            for frame in value["stacktrace"]["frames"]
-        ]
-        assert any("credential" in (frame.get("vars") or {}) for frame in frames)
-        assert secret not in json.dumps(event, default=str)
+        assert saw_credential, "SDK did not capture the credential-bearing read frame"
+        [packet] = wire.raw
+        leaked = any(value.encode() in packet for value in (secret, marker))
+        assert not leaked, "Serialized Sentry envelope contains credential material"
+
+        [(_, item_type, event)] = wire.items
+        assert item_type == "event"
+        assert event["exception"]["values"][-1]["type"] == "RuntimeError"
+        frames = list(iter_event_frames(event))
+        assert any(is_read_frame(f) and f.get("lineno", 0) > 0 for f in frames)
+        assert all("vars" not in f for f in frames)
 
 
 class TestNames:
