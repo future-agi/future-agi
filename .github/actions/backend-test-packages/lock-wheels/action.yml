@@ -1,0 +1,32 @@
+# The URL-pinned wheels of uv.lock (en-core-web-sm, a GitHub release asset)
+# are fetched once per run by the plan job (futureagi/.ci/lock_wheels.py).
+# A job that synced with `--no-install-package` for each of them installs the
+# run's copy here: re-verified against this checkout's uv.lock, installed with
+# uv's own hash check and network access disabled. It never downloads, so a
+# missing or corrupt artifact fails this job instead of reaching GitHub.
+name: Install the run's lock wheels
+description: Install the plan job's verified URL-pinned wheels into futureagi/.venv, offline.
+runs:
+  using: composite
+  steps:
+    - name: Fetch this run's verified lock wheels
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: backend-lock-wheels
+        path: ${{ runner.temp }}/lock-wheels
+    - name: Install them offline against the uv.lock hashes (no downloads)
+      shell: bash
+      working-directory: futureagi
+      run: |
+        set -euo pipefail
+        started=$SECONDS
+        python3 -I .ci/lock_wheels.py requirements uv.lock "$RUNNER_TEMP/lock-wheels" "$RUNNER_TEMP/lock-wheels.txt"
+        uv pip install --python .venv/bin/python --offline --no-deps --require-hashes \
+          -r "$RUNNER_TEMP/lock-wheels.txt"
+        python3 -I .ci/lock_wheels.py check uv.lock .venv/bin/python
+        # The wheel is installed from a local file, not the lock's URL, so a
+        # later syncing `uv run` would reinstall it from GitHub. Never resync.
+        echo "UV_NO_SYNC=true" >> "$GITHUB_ENV"
+        # setup.sh's timing line ends at the first import, before this step.
+        printf 'Lock wheels: verified and installed offline in %ss.\n' \
+          "$((SECONDS - started))" >> "$GITHUB_STEP_SUMMARY"
