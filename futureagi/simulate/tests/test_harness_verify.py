@@ -1011,7 +1011,10 @@ class TestWhatACodingAgentReads:
             "code": "authoring_runtime_validation_failed",
             "message": RUNTIME_VALIDATION_FAILED,
         }
-        assert person.json()["status"]["failure"] == failure
+        assert person.json()["status"]["failure"] == {
+            **failure,
+            "person_message": RUNTIME_VALIDATION_FAILED,
+        }
         assert (
             coder[job_path].json()["status"]["state"] == HostedHarnessJob.State.FAILED
         )
