@@ -296,6 +296,16 @@ describe("ScenarioEditor test conditions", () => {
     ).toBeInTheDocument();
   });
 
+  it("says a fixed field was set when the scenario was written, not that it was proved", () => {
+    openEditor();
+    expect(
+      screen.getAllByText(
+        "Set when the scenario was written; ask the builder to change it.",
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/Proved/)).toBeNull();
+  });
+
   it("disables tools that run inside the agent", () => {
     openEditor();
     fireEvent.click(
