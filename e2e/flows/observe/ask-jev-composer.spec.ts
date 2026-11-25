@@ -71,12 +71,27 @@ function placement(actions: Locator) {
 // page/AskComposer.jsx: two size cards of 240 px and their 10 px gap. Under
 // this the composer stacks them, whatever the window's width.
 const TWO_CARDS = 490;
+const ONE_CARD = 240;
 // MUI's sm breakpoint: past it, a breakpoint-based row would stay side by side.
 const SM = 600;
+// Under this a sample card's title and size menu (about 215 px on one line)
+// can't fit, whatever the layout; 240 px is the floor a card used to keep.
+const LEAST_ROOM = 220;
+// src/components/settings: the layout picked in the settings drawer, kept in
+// localStorage "settings". The vertical nav's frame is at least 1200 px wide,
+// which keeps the composer over 590 px with Past questions open; the
+// horizontal nav's frame has no minimum, so the composer narrows with the window.
+async function setNavLayout(page: Page, themeLayout: 'horizontal' | 'vertical'): Promise<void> {
+  await page.evaluate(layout => {
+    const saved = JSON.parse(localStorage.getItem('settings') ?? '{}');
+    localStorage.setItem('settings', JSON.stringify({ ...saved, themeLayout: layout }));
+  }, themeLayout);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+}
 
-/** The size cards against their scrolling pane: the room the composer has,
- * whether the pane overflows sideways, and how far past its right edge the
- * furthest card reaches. */
+/** The size cards against their scrolling pane: the width of the block the
+ * cards' container query measures, whether that block or the pane overflows
+ * sideways, and how far past the pane's right edge the furthest card reaches. */
 function cardsInPane(group: Locator) {
   return group.evaluate(row => {
     let pane = row.parentElement;
@@ -86,8 +101,9 @@ function cardsInPane(group: Locator) {
     const paneRight = pane.getBoundingClientRect().right;
     const cards = Array.from(row.children).map(card => card.getBoundingClientRect().right);
     return {
-      room: Math.round(block.parentElement!.clientWidth),
-      overflowsSideways: pane.scrollWidth > pane.clientWidth,
+      room: Math.round(block.clientWidth),
+      blockOverflows: block.scrollWidth > block.clientWidth,
+      paneOverflows: pane.scrollWidth > pane.clientWidth,
       pastRight: Math.max(0, Math.round(Math.max(...cards) - paneRight)),
     };
   });
@@ -113,7 +129,7 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
       'send 4 traces to a new Observe project',
       'save the org TypeSafe key through the endpoint AI Providers uses',
       'open the project\'s Traces view, its Evaluate menu, and choose Ask a question, with the count held back',
-      'open Past questions and narrow the window until the composer has under two cards\' room, then restore both',
+      'open Past questions, switch to the horizontal nav layout and narrow the window 40 px at a time, then restore the window, Past questions and the vertical layout',
       'type a question and add two example questions from Try one',
       'click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back',
       'click Ask Jev again and click Start',
@@ -125,7 +141,7 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     ],
     browserChecks: [
       'Question 1 stays at the same height on the page while the count is held back and after the size cards land',
-      'with Past questions open in a window past 600 px that leaves the composer under 490 px, the size card stays inside its pane and the pane does not scroll sideways',
+      'with Past questions open on the horizontal nav layout, narrowing the window 40 px at a time from 1280 px to 600 px (until the composer is under 220 px), the size card stays inside its pane, the size block never overflows, and the pane does not scroll sideways while the composer has 240 px',
       'the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it',
       'Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button, and Back has focus',
       'Enter on the focused Back closes the confirm and gives Ask Jev focus again',
@@ -207,24 +223,34 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     await page.getByRole('button', { name: 'Show past questions', exact: true }).click();
     const hide = page.getByRole('button', { name: 'Hide past questions', exact: true });
     await ui(hide).toBeVisible();
-    // Narrow the window, staying past sm, until the composer itself has
-    // less room than two cards side by side need.
-    let width = full.width;
-    let fit = await cardsInPane(group);
-    while (fit && fit.room >= TWO_CARDS && width - 40 >= SM) {
-      width -= 40;
+    await setNavLayout(page, 'horizontal');
+    await ui(group).toBeVisible();
+    await ui(hide).toBeVisible();
+    // Narrow the window 40 px at a time, staying past sm, through the band
+    // where one card fits but two don't and on below one card's 240 px.
+    const samples = [];
+    for (let width = full.width; width >= SM; width -= 40) {
       await page.setViewportSize({ width, height: full.height });
-      fit = await cardsInPane(group);
+      const fit = await cardsInPane(group);
+      expect(fit).not.toBeNull();
+      if (fit!.room < LEAST_ROOM) break;
+      samples.push({ width, ...fit! });
+      if (fit!.room < TWO_CARDS && fit!.room >= ONE_CARD && samples.filter(x => x.room < TWO_CARDS).length === 1)
+        await testInfo.attach('narrow-with-history', { body: await page.screenshot(), contentType: 'image/png' });
     }
-    await testInfo.attach('cards-in-pane', { contentType: 'application/json',
-      body: JSON.stringify({ viewport: page.viewportSize(), fit }) });
-    await testInfo.attach('narrow-with-history', { body: await page.screenshot(), contentType: 'image/png' });
-    expect(fit?.room).toBeLessThan(TWO_CARDS);
-    expect(width).toBeGreaterThanOrEqual(SM);
-    expect(fit).toMatchObject({ overflowsSideways: false, pastRight: 0 });
-    await ui(group.getByRole('radio', { name: new RegExp(`^Every one of the ${TRACES}`) })).toBeInViewport({ ratio: 1 });
+    await testInfo.attach('cards-in-pane', { contentType: 'application/json', body: JSON.stringify(samples) });
+    expect(samples.some(x => x.room < TWO_CARDS && x.room >= ONE_CARD)).toBe(true);
+    for (const x of samples) {
+      expect(x, `at ${x.width} px`).toMatchObject({ blockOverflows: false, pastRight: 0 });
+      // Under one card's width the question box may need the room too; the
+      // pane must not scroll sideways wherever a card fits.
+      if (x.room >= ONE_CARD) expect(x.paneOverflows, `pane at ${x.width} px`).toBe(false);
+    }
     await page.setViewportSize(full);
     await hide.click();
+    await ui(page.getByRole('button', { name: 'Show past questions', exact: true })).toBeVisible();
+    await setNavLayout(page, 'vertical');
+    await ui(group).toBeVisible();
     await ui(page.getByRole('button', { name: 'Show past questions', exact: true })).toBeVisible();
   });
 

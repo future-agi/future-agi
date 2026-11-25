@@ -2872,6 +2872,21 @@ describe("a sample size typed in", () => {
           new RegExp(`@media[^{]*\\{\\.(${classes})\\{[^}]*flex-direction:row`),
         );
       }
+      // Stacked, the lone card keeps its own height and narrows with the
+      // composer: its 240 px floor and its share of the row apply only side
+      // by side.
+      const card = own(
+        screen.getByRole("radio", { name: /Every one of the 42/ })
+          .parentElement,
+      ).join("|");
+      const base = css.match(new RegExp(`(^|[}\\s])\\.(${card})\\{[^}]*\\}`));
+      expect(base?.[0]).toMatch(/(\{|;)flex:none/);
+      expect(base?.[0]).not.toMatch(/min-width:240px/);
+      expect(css).toMatch(
+        new RegExp(
+          `@container \\(min-width: ?490px\\)\\{\\.(${card})\\{([^}]*;)?flex:1;([^}]*;)?min-width:240px`,
+        ),
+      );
     });
 
     it("offers a sample from inside the every-row card, adding no row", async () => {

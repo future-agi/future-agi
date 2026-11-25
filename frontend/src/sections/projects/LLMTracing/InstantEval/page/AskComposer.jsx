@@ -108,8 +108,11 @@ function ChoiceCard({
       variant="panel"
       sx={{
         position: "relative",
-        flex: 1,
-        minWidth: CHOICE_CARD_MIN_WIDTH,
+        // Stacked, a card keeps its own height (the cell can be two cards
+        // tall) and narrows with the composer; side by side, the two share
+        // the row and each keeps room for its cost line.
+        flex: "none",
+        [CHOICES_SIDE_BY_SIDE]: { flex: 1, minWidth: CHOICE_CARD_MIN_WIDTH },
         p: 1.5,
         borderColor: selected ? "border.selected" : "divider",
       }}
@@ -553,10 +556,13 @@ function ScopeCard({
                     // Stacked, two cells' worth would overflow.
                     flex: "none",
                     height: CHOICE_CARD_HEIGHT,
-                    minWidth: CHOICE_CARD_MIN_WIDTH,
                     minHeight: CHOICE_CARD_HEIGHT,
                     borderRadius: "8px",
-                    [CHOICES_SIDE_BY_SIDE]: { flex: 1, height: "100%" },
+                    [CHOICES_SIDE_BY_SIDE]: {
+                      flex: 1,
+                      height: "100%",
+                      minWidth: CHOICE_CARD_MIN_WIDTH,
+                    },
                   }}
                 />
               ))}
