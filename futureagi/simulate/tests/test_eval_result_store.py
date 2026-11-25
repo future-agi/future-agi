@@ -16,11 +16,9 @@ from django.utils import timezone
 
 from simulate.models import (
     CallExecution,
-    SimulateEvalAsk,
     SimulateEvalResult,
     TestExecution,
 )
-from simulate.services.eval_result_store import readable_results
 from simulate.services.run_regrade import RegradeAlreadyRunning, regrade_run_evals
 from simulate.services.scoring_status import REASON_EVAL_RUN_CANCELLED
 from simulate.tests import test_harness_environment_evals as env_evals
@@ -86,8 +84,6 @@ def test_run_new_evals_keeps_the_verdict_it_replaces(
     assert row.question_definition["mapping"] == {"output": "transcript"}
     assert row.question_definition["as_of"] == "replacement"
     assert row.question_definition["not_the_grader"] is True
-    assert row.question_version == ""
-    assert row.ask_id is None
     assert row.replacement_id is not None
     assert row.replaced_at is not None
     assert row.replaced_by_id == user.id
@@ -356,7 +352,7 @@ def test_a_pending_placeholder_is_not_a_verdict_and_gets_no_row(
 
 def _kept(call, cfg, environment, **fields):
     return SimulateEvalResult.objects.create(
-        origin=SimulateEvalResult.Origin.REPLACED_OWN_SCORE,
+        origin=fields.pop("origin", SimulateEvalResult.Origin.REPLACED_OWN_SCORE),
         replacement_id=fields.pop("replacement_id", uuid.uuid4()),
         call_execution=call,
         eval_config=cfg,
@@ -495,69 +491,13 @@ def test_an_eval_removed_later_leaves_the_kept_verdict_readable(
 
 
 @pytest.mark.django_db
-def test_an_ask_keeps_one_row_per_call_and_question(environment, finished_run, user):
-    call = env_evals._call(finished_run)
-    ask = SimulateEvalAsk.objects.create(
-        organization=environment.run_test.organization,
-        workspace=environment.run_test.workspace,
-        started_by=user,
-        selection={"call_ids": [str(call.id)], "description": {"kind": "calls"}},
-        questions=[{"key": "q1", "text": "Did the agent confirm the refund?"}],
-    )
-
-    def answer():
-        return SimulateEvalResult.objects.create(
-            origin=SimulateEvalResult.Origin.ASK,
-            ask=ask,
-            call_execution=call,
-            question_key="q1",
-            state=SimulateEvalResult.State.PENDING,
-            organization=ask.organization,
-            workspace=ask.workspace,
-        )
-
-    answer()
-    with pytest.raises(IntegrityError), transaction.atomic():
-        answer()
-    assert ask.status == SimulateEvalAsk.Status.PENDING
-
-
-@pytest.mark.django_db
-def test_a_replaced_row_names_no_ask_and_an_ask_row_must(environment, finished_run):
+def test_a_row_of_any_other_origin_is_refused(environment, finished_run):
+    # Only replaced verdicts are written today. The change that writes another
+    # origin widens the check; until then the table holds nothing else.
+    cfg = _mapped_eval(environment)
     call = env_evals._call(finished_run)
     with pytest.raises(IntegrityError), transaction.atomic():
-        SimulateEvalResult.objects.create(
-            origin=SimulateEvalResult.Origin.ASK,
-            ask=None,
-            call_execution=call,
-            question_key="q1",
-            state=SimulateEvalResult.State.PENDING,
-            organization=environment.run_test.organization,
-            workspace=environment.run_test.workspace,
-        )
-
-
-@pytest.mark.django_db
-def test_an_ask_row_carries_no_request_id(environment, finished_run, user):
-    call = env_evals._call(finished_run)
-    ask = SimulateEvalAsk.objects.create(
-        organization=environment.run_test.organization,
-        workspace=environment.run_test.workspace,
-        started_by=user,
-        selection={"call_ids": [str(call.id)]},
-        questions=[{"key": "q1"}],
-    )
-    with pytest.raises(IntegrityError), transaction.atomic():
-        SimulateEvalResult.objects.create(
-            origin=SimulateEvalResult.Origin.ASK,
-            ask=ask,
-            replacement_id=uuid.uuid4(),
-            call_execution=call,
-            question_key="q1",
-            state=SimulateEvalResult.State.PENDING,
-            organization=ask.organization,
-            workspace=ask.workspace,
-        )
+        _kept(call, cfg, environment, origin="ask")
 
 
 @pytest.mark.django_db
@@ -584,21 +524,3 @@ def test_one_request_keeps_one_row_per_call_and_eval(environment, finished_run):
     _kept(call, cfg, environment, replacement_id=request_id)
     with pytest.raises(IntegrityError), transaction.atomic():
         _kept(call, cfg, environment, replacement_id=request_id)
-
-
-@pytest.mark.django_db
-@pytest.mark.parametrize("deleted", ["call", "run"])
-def test_readers_leave_out_rows_of_a_deleted_call_or_run(
-    environment, finished_run, deleted
-):
-    cfg = _mapped_eval(environment)
-    call = env_evals._call(finished_run)
-    row = _kept(call, cfg, environment)
-    assert list(readable_results(SimulateEvalResult.all_objects.all())) == [row]
-
-    if deleted == "call":
-        CallExecution.all_objects.filter(id=call.id).update(deleted=True)
-    else:
-        TestExecution.all_objects.filter(id=finished_run.id).update(deleted=True)
-
-    assert list(readable_results(SimulateEvalResult.all_objects.all())) == []

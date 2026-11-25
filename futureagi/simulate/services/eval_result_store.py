@@ -17,7 +17,6 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
-from django.db.models import QuerySet
 from django.utils import timezone
 
 from simulate.models import SimulateEvalConfig, SimulateEvalResult, TestExecution
@@ -62,8 +61,6 @@ def state_of_stored_verdict(slot: Mapping[str, Any]) -> tuple[str, str]:
     code = slot.get("code") or slot.get("reason_code")
     if code == "run_cancelled" or slot.get("reason") == REASON_EVAL_RUN_CANCELLED:
         return State.CANCELLED, "run_cancelled"
-    if code == "input_missing":
-        return State.UNMEASURED, "input_missing"
     return State.UNMAPPED, "skipped"
 
 
@@ -265,10 +262,3 @@ def forget_replacement(
     if question_key is not None:
         rows = rows.filter(question_key=str(question_key))
     rows.delete()
-
-
-def readable_results(queryset: QuerySet) -> QuerySet:
-    """Results whose call and run are not marked deleted. Every reader filters through this."""
-    return queryset.filter(
-        call_execution__deleted=False, call_execution__test_execution__deleted=False
-    )
