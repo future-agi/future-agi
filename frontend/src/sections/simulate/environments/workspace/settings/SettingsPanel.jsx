@@ -104,7 +104,10 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
                         onChange={(e) => setNameDraft(e.target.value)}
                         error={Boolean(nameError)}
                         helperText={nameError || `1–${MAX_ENV_NAME} characters.`}
-                        inputProps={{ maxLength: MAX_ENV_NAME + 1 }}
+                        inputProps={{
+                          maxLength: MAX_ENV_NAME + 1,
+                          readOnly: !canEdit,
+                        }}
                         sx={{ flex: 1, maxWidth: 460 }}
                       />
                       <ViewerLock

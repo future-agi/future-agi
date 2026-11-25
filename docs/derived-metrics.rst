@@ -470,14 +470,74 @@ fail explicitly rather than truncating or merging categories. Broad workloads th
 budget must use smaller closed windows. This is a correctness-preserving workload
 limit, not a claim to have benchmarked a billion-span population.
 
-Deployment applies the PostgreSQL migration graph and ClickHouse schema files
-``028_derived_metrics.sql`` through ``037_list_current_user_activity.sql`` using
-the existing schema runner. The source ``spans`` table is unchanged;
+Deployment applies the PostgreSQL migration graph and, while ``METRICS_ENABLED``
+is on, these packaged ClickHouse schema files in this order with the existing
+schema runner (``tracer.services.clickhouse.v2.apply_schema``):
+``009_per_eval_rollup.sql``, ``011_eval_logger_v2.sql``, then
+``028_derived_metrics.sql`` through ``038_metric_snapshot_sketches.sql``. 028
+adds columns to ``tracer_eval_logger_v2``, which 011 provides, and 011's
+materialized view writes 009's rollup. The source ``spans`` table is unchanged;
 ``tracer_eval_logger_v2`` gains the additive ``status`` and ``config_hash``
 columns. Schema 029 refreshes the committed-only SQL view, and 030 has a separate
 receipt to repair that projection where 029 was already recorded as applied.
 The configured ``ON CLUSTER`` runner handles ordinary view creation and
 replacement; supported multi-replica deployment still requires qualification.
+
+Every install path runs this step through
+``python -m tracer.services.derived_metrics.schema_install --apply``, which
+targets the database the Metrics refresh uses (``CH25_*``, falling back to
+``CH_*``) and passes the password through the environment, never the command
+line. With ``METRICS_ENABLED`` off it does nothing. Each file has a receipt, so
+a rerun applies only what is missing. Install paths run it with ``--advisory``:
+a failure is logged and the rest of the product still starts, with only Metrics
+unavailable until the cause is fixed.
+
+* Standalone (``docker-compose.yml``) and the Helm chart: the bootstrap runs it
+  on every start, after the native ClickHouse schema. To turn Metrics on later,
+  set ``METRICS_ENABLED=1`` in ``.env`` and run ``docker compose up -d``, which
+  recreates ``app``; its bootstrap applies the files before the API starts. To
+  apply them without a restart:
+
+  .. code-block:: bash
+
+     docker compose exec app python -m tracer.services.derived_metrics.schema_install --apply
+
+* Distributed (``docker-compose.distributed.yml``): the
+  ``metrics-schema-bootstrap`` job runs it after ``clickhouse-cdc-bootstrap``,
+  and the backend and workers start after it finishes. ``docker compose up -d``
+  after turning Metrics on runs it again. The production and dev overlays only
+  check (``--check``) and log what is missing; apply it as step 6 of
+  ``deploy/README.md``:
+
+  .. code-block:: bash
+
+     $COMPOSE run --rm metrics-schema-bootstrap --apply
+
+* A release without ``schema_install``: apply the same files, in this order, with
+  the runner's Django command:
+
+  .. code-block:: bash
+
+     docker compose exec -e NO_STARTUP_DB_MUTATIONS=false app \
+       python manage.py ch25_apply_schema --files \
+       009_per_eval_rollup.sql 011_eval_logger_v2.sql 028_derived_metrics.sql \
+       029_derived_metric_uncertainty.sql 030_derived_metric_view_refresh.sql \
+       031_metric_field_values.sql 032_metric_bucket_totals.sql \
+       033_metric_unit_state.sql 034_metric_source_dependencies.sql \
+       035_metric_bucket_retired_parts.sql 036_list_current_root_facts.sql \
+       037_list_current_user_activity.sql 038_metric_snapshot_sketches.sql
+
+  (``backend`` instead of ``app`` on a Distributed install.)
+
+If the runner reports drift (exit 2), a file changed after it was applied on
+this install. The step logs it and the install starts without Metrics; review
+the change with the ClickHouse owner.
+
+While Metrics is on and the schema is missing, the Metrics API answers every
+request with HTTP 503 and code ``metric_schema_not_installed`` ("Metrics schema
+not installed"), the Metrics pages say so, and refreshes record that code
+instead of failing as ``metric_refresh_failed``. The check reads
+``system.columns`` once per process until the schema is found, then not again.
 
 PostgreSQL adds Metrics-owned tables and extends ``UserAlertMonitor`` with
 ``last_derived_run_id``, ``alert_when`` and the derived-metric type choice.
@@ -485,8 +545,8 @@ Migrations 0126 and 0127 also transform existing metric state; they are not an
 empty-table-only upgrade. Rehearse their data operations and downgrade guards
 before rollout, and do not rewrite already deployed migration files.
 
-Provision the schema before enabling writes and register the exact-aggregation
-task queue. ``METRICS_ENABLED`` defaults to OFF; schema application does not
+Register the exact-aggregation task queue. ``METRICS_ENABLED`` defaults to OFF;
+turning it on is what applies the schema above, and the schema alone does not
 activate Metrics. Trace-level Metrics remain disabled. An application writer
 connection is required for snapshot persistence; readonly-only deployments fail
 explicitly. Apply the delivery ledger migration before enabling derived

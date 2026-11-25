@@ -12,7 +12,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from sentry_sdk.integrations.dedupe import DedupeIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
-from tfc.logging.sentry import _get_before_send
+from tfc.logging.sentry import _REDACTED, _get_before_send
 from tfc.tests.sentry_capture import sentry_capture
 
 LOGGER = "ee.agenthub.explanation_agent.exp_agent"
@@ -189,7 +189,7 @@ def test_litellm_logger_errors_are_breadcrumbs_and_our_captures_stay_issues(
     )
     assert any(
         crumb.get("category") == "LiteLLM"
-        and "Failed to load vertex credentials" in crumb.get("message", "")
+        and crumb.get("message") == "Vertex credential loading failed"
         for crumb in event["breadcrumbs"]["values"]
     )
 
@@ -204,7 +204,7 @@ def test_unexpected_litellm_error_is_an_issue(transport):
     logging.getLogger("LiteLLM").error("Unexpected response parser failure")
     [event] = transport.events
     assert event["logger"] == "LiteLLM"
-    assert event["logentry"]["formatted"] == "Unexpected response parser failure"
+    assert event["logentry"] == {"message": "Log entry"}
 
 
 def test_real_litellm_vertex_key_failure_is_not_an_issue(transport):
@@ -292,19 +292,13 @@ async def test_expected_activity_denial_is_not_an_issue(transport, monkeypatch):
             "other refusal", type="ProviderMisconfigured", non_retryable=True
         ),
     ]
-    for error in genuine:
+    for count, error in enumerate(genuine, 1):
         with pytest.raises(type(error)):
             await interceptor_raising(error).execute_activity(activity_input)
-    assert [
-        event["exception"]["values"][-1]["value"] for event in transport.events
-    ] == [
-        "synthetic activity fault",
-        "retryable",
-        "retryable capability",
-        "lookup unavailable",
-        "untyped refusal",
-        "other refusal",
-    ]
+        assert len(transport.events) == count
+        reported = transport.events[-1]["exception"]["values"][-1]
+        assert reported["type"] == type(error).__name__
+        assert reported["value"] == _REDACTED
 
 
 @pytest.fixture
@@ -352,7 +346,7 @@ async def test_capability_gate_activity_denial_is_not_an_issue(
     sentry_sdk.capture_exception(RuntimeError("synthetic subsequent fault"))
     [event] = transport.events
     assert any(
-        crumb.get("message") == "Activity failed: denied_activity"
+        crumb.get("category") == "temporal.activity" and crumb.get("level") == "error"
         for crumb in event["breadcrumbs"]["values"]
     )
 
