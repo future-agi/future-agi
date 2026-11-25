@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { crc32, deflateSync } from 'node:zlib';
-import { request, type APIRequestContext, type Locator, type Response } from '@playwright/test';
+import { request, type APIRequestContext, type Locator, type Request, type Response } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { newBackendRequest } from '../../lib/backend-request';
 import type { TestActor } from '../../lib/provisioning';
@@ -662,22 +662,29 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         const play=panel.getByRole('button',{name:'Play recording',exact:true});
         // The first matching response can belong to a fetch the app aborts and repeats, whose
         // body never arrives. Only a finished request has a body to read; read it at once.
-        const finished=(match:(r:Response)=>boolean)=>page.waitForEvent('requestfinished',async request=>{
+        const peakGrant=page.waitForEvent('requestfinished',async request=>{
           const response=await request.response();
-          return !!response && match(response);
-        }).then(async request=>(await request.response())!);
-        const peakGrant=finished(exactResolve(voiceProject,item,traceKey,'peaks'))
-          .then(response=>response.json() as Promise<{items:Grant[]}>);
-        const peakBytes=finished(r=>new URL(r.url()).pathname.includes(`/${item.occurrenceId}/`) && r.headers()['content-type']==='application/octet-stream')
-          .then(async response=>({response, body: await response.body()}));
+          return !!response && exactResolve(voiceProject,item,traceKey,'peaks')(response);
+        }).then(async request=>(await request.response())!.json() as Promise<{items:Grant[]}>);
+        // The app reads the peaks bytes as a stream. Chromium can report that request as
+        // aborted even after the app has drawn the waveform from it, so the test records
+        // which paths the app asked for and reads the grant's bytes with a fetch of its own.
+        const requested:string[]=[];
+        const onRequest=(request:Request)=>{ if (request.method()==='GET') requested.push(new URL(request.url()).pathname); };
+        page.on('request',onRequest);
         await drawer.getByRole('button',{name:'Conversation',exact:true}).click();
         const [peak]=(await peakGrant).items;
-        const {response: bytes, body: peakBody}=await peakBytes;
-        expect(new URL(bytes.url()).pathname).toBe(peak.gateway_path);
-        const descriptor=JSON.parse(bytes.headers()['x-attachment-peaks']);
-        expect(descriptor.v).toBe(1);
-        expect(peakBody.length).toBe(4*descriptor.channels*descriptor.levels.reduce((sum:number,l:{buckets:number})=>sum+l.buckets,0));
         await expect(panel.getByTestId('recording-waveform')).toBeVisible();
+        page.off('request',onRequest);
+        expect(requested).toContain(peak.gateway_path);
+        const served=await page.evaluate(async(path:string)=>{
+          const r=await fetch(path,{credentials:'same-origin',mode:'same-origin',cache:'no-store',redirect:'error'});
+          return {status:r.status, type:r.headers.get('Content-Type'), peaks:r.headers.get('X-Attachment-Peaks'), length:(await r.arrayBuffer()).byteLength};
+        },peak.gateway_path!);
+        expect(served).toMatchObject({status:200, type:'application/octet-stream'});
+        const descriptor=JSON.parse(served.peaks!);
+        expect(descriptor.v).toBe(1);
+        expect(served.length).toBe(4*descriptor.channels*descriptor.levels.reduce((sum:number,l:{buckets:number})=>sum+l.buckets,0));
         // The waveform shows the recording's shape: tall bars for the bursts, nothing for silence.
         const bars = await panel.getByTestId('recording-waveform').evaluate(svg =>
           [...svg.querySelectorAll('rect')].map(r => [Number(r.getAttribute('x')), Number(r.getAttribute('height'))]));
