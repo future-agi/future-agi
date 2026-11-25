@@ -114,6 +114,63 @@ describe("Scenarios tab", () => {
     ]);
   });
 
+  it("reads a drop the verdict counted within noise as moved, never Broke", async () => {
+    const fix = structuredClone(byId("fix-ready-archive"));
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.must_pass_regressions = [];
+    winner.verdict.must_pass_within_noise = ["on-time-cancel: escalated"];
+    wrap(<FixScenariosTab fix={fix} />);
+    const row = within(await screen.findByTestId("scenario-on-time-cancel"));
+    expect(row.getByText("Moved within noise")).toHaveStyle({
+      color: appTheme.palette.text.secondary,
+    });
+    expect(screen.queryByText("Broke")).toBeNull();
+    // Not sorted as Broke: it leads only because nothing broke.
+    expect(rowIds()[0]).toBe("scenario-on-time-cancel");
+  });
+
+  it("keeps a scenario with no measured call, and says how many trials were measured", async () => {
+    const real = axios.get.getMockImplementation();
+    // Every candidate call of the refund case, and one of the late
+    // cancellation's, errored on our side.
+    const unmeasured = (row) =>
+      row.source_scenario_key === "refund-window" ||
+      (row.source_scenario_key === "late-cancel" && row.trial_index === 3);
+    axios.get.mockImplementation(async (url, config) => {
+      const res = await real(url, config);
+      if (!/te-fix-ready-archive-c3\/calls\/$/.test(url)) return res;
+      return {
+        data: {
+          ...res.data,
+          results: res.data.results.map((row) =>
+            unmeasured(row) ? { ...row, outcome: "inconclusive" } : row,
+          ),
+        },
+      };
+    });
+    try {
+      wrap(<FixScenariosTab fix={byId("fix-ready-archive")} />);
+      const refund = within(await screen.findByTestId("scenario-refund-window"));
+      expect(refund.getByText("Not measured")).toBeInTheDocument();
+      expect(refund.getByText("3 trials not measured")).toBeInTheDocument();
+      expect(
+        within(screen.getByTestId("scenario-late-cancel")).getByText(
+          "2 of 2 measured, 1 not measured",
+        ),
+      ).toBeInTheDocument();
+      // It counts in All and in its set; the chips still add up.
+      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+        "All 5",
+        "Target 1",
+        "Held back 2",
+        "Other 2",
+      ]);
+      expect(rowIds().at(-1)).toBe("scenario-refund-window");
+    } finally {
+      axios.get.mockImplementation(real);
+    }
+  });
+
   it("filters to one set and back, and puts Broke last on a second sort", async () => {
     const user = userEvent.setup();
     wrap(<FixScenariosTab fix={byId("fix-ready-archive")} />);

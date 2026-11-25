@@ -28,8 +28,13 @@ import { scenarioOutcomes, scenarioSetOf } from "./scenarioOutcomes";
 const OUTCOME = {
   fixed: "Fixed",
   broke: "Broke",
+  // A drop the verdict did not count: within the current version's noise, or
+  // never judged by the must-pass check.
+  noise: "Moved within noise",
+  dropped: "Passed less often",
   "still-failing": "Still failing",
   same: "Unchanged",
+  "not-measured": "Not measured",
 };
 
 // Colour only for the two results that change something.
@@ -68,9 +73,6 @@ const SET_LABEL = {
   protected: "Must-pass",
 };
 
-const trialsText = ({ passed, of }) =>
-  `${passed}/${of} ${of === 1 ? "trial" : "trials"}`;
-
 // The design's Scenarios tab (EpochScenarioResults), fed from the check runs:
 // what the chosen candidate did to each scenario against today's version, Broke
 // first. A row opens its calls before the change beside the candidate's.
@@ -93,7 +95,9 @@ export default function FixScenariosTab({ fix, candidateId }) {
     );
   }
 
-  const rows = scenarioOutcomes(before, after).map((r) => ({
+  // The candidate's verdict says which drops count as broken.
+  const outcomes = scenarioOutcomes(before, after, candidate?.verdict);
+  const rows = outcomes.map((r) => ({
     ...r,
     set: scenarioSetOf(fix.request, r.key),
   }));
@@ -103,7 +107,7 @@ export default function FixScenariosTab({ fix, candidateId }) {
         variant="no-results"
         icon="solar:list-check-linear"
         title="No scenario to compare yet"
-        description="A scenario shows here once the current version and this candidate both have a measured call on it."
+        description="A scenario shows here once this candidate has a call on it."
       />
     );
   }
@@ -199,7 +203,7 @@ export default function FixScenariosTab({ fix, candidateId }) {
                     {OUTCOME[r.outcome]}
                   </Typography>
                   <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    {trialsText(r.afterTrials)}
+                    {r.trials}
                   </Typography>
                 </Stack>
               </TableCell>

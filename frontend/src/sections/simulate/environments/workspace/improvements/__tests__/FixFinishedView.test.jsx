@@ -152,7 +152,7 @@ describe("FixVerdict", () => {
   it("lists must-pass breaks, noting what was within noise", () => {
     renderUi(<FixVerdict fix={fixOf("fix-ready-archive")} />);
     const breaks = within(screen.getByTestId("must-pass-breaks"));
-    expect(breaks.getByText("on-time-cancel")).toBeInTheDocument();
+    expect(breaks.getByText("on-time-cancel: escalated")).toBeInTheDocument();
     expect(breaks.getByText(/refund-window/)).toBeInTheDocument();
     expect(
       breaks.getByText(/within normal noise, not counted/),
