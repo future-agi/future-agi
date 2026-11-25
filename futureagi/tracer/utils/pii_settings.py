@@ -56,7 +56,7 @@ def get_pii_settings_for_projects(
         for name in uncached:
             result.setdefault(name, False)
 
-    except Exception:
+    except Exception:  # noqa: BLE001 - any lookup failure falls back to redacting this batch, never caches
         logger.warning("pii_settings_lookup_failed")
         # Redact unresolved projects for this batch only; retry lookup next time.
         for name in uncached:
