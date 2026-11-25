@@ -127,6 +127,20 @@ class HostedHarnessError(Exception):
         return {}
 
 
+class RetryAlreadyDelivered(HostedHarnessError):
+    """A retry found, when it registered, that every call it was to run had delivered its
+    result since cleanup. The Run was settled from the attempt that delivered them, and
+    no attempt is registered, so nothing runs or is charged again."""
+
+    def __init__(self, attempt: HostedHarnessAttempt) -> None:
+        super().__init__(
+            "retry_already_delivered",
+            "every call the retry was to run already delivered its result",
+            status_code=409,
+        )
+        self.attempt = attempt
+
+
 @dataclass(frozen=True)
 class AttemptCapability:
     attempt: HostedHarnessAttempt
@@ -1757,13 +1771,17 @@ def keep_delivered_attempt(attempt: HostedHarnessAttempt) -> bool:
 
     A failure the platform recorded earlier (an unreachable sandbox whose delete was still in
     progress, before the last result landed) does not describe the Run kept here, so it is
-    cleared.
+    cleared. When that failure replaced a completed ending the guest sent, the guest's
+    ending is restored.
     """
     if attempt.terminal_stage == "canceled":
         return False
     if attempt.terminal_event_received:
-        if attempt.terminal_stage != "completed":
+        if attempt.terminal_stage != "completed" and not _replaced_guest_completion(
+            attempt
+        ):
             return False
+        attempt.terminal_stage = "completed"
         logger.warning(
             "hosted_run_kept_with_every_result_in",
             attempt_id=str(attempt.id),
@@ -1791,6 +1809,55 @@ def keep_delivered_attempt(attempt: HostedHarnessAttempt) -> bool:
     return True
 
 
+# The failures the platform records when it loses an attempt: the sandbox went away or
+# stopped answering, the guest crashed, or its ending or manifest never arrived. None of
+# them describes a Run whose every call delivered its result.
+PLATFORM_LOSS_CODES = frozenset(
+    {
+        "sandbox_disappeared",
+        "sandbox_unreachable",
+        "guest_crashed",
+        "evidence_undeliverable",
+        "terminal_delivery_incomplete",
+    }
+)
+
+
+def fail_lost_attempt(attempt: HostedHarnessAttempt, failure: dict[str, Any]) -> None:
+    """Put the platform's failure for a lost attempt on ``attempt``; the caller saves it.
+
+    A completed ending the guest already sent is remembered in the failure, so that if
+    the missing results land after all, keep_delivered_attempt gives the guest its
+    ending back instead of leaving a finished Run failed.
+    """
+    if attempt.terminal_event_received and attempt.terminal_stage == "completed":
+        failure = {
+            **failure,
+            "details": {**(failure.get("details") or {}), "guest_stage": "completed"},
+        }
+    attempt.terminal_stage = "failed"
+    attempt.terminal_failure = failure
+    attempt.state = HostedHarnessAttempt.State.FAILED
+
+
+def _replaced_guest_completion(attempt: HostedHarnessAttempt) -> bool:
+    failure = attempt.terminal_failure
+    return (
+        isinstance(failure, dict)
+        and failure.get("code") in PLATFORM_LOSS_CODES
+        and (failure.get("details") or {}).get("guest_stage") == "completed"
+    )
+
+
+def _lost_by_platform(attempt: HostedHarnessAttempt) -> bool:
+    failure = attempt.terminal_failure
+    return (
+        isinstance(failure, dict)
+        and failure.get("code") in PLATFORM_LOSS_CODES
+        and platform_set_failure(attempt) is None
+    )
+
+
 def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
     """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
 
@@ -1805,6 +1872,22 @@ def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
     ]
     metadata["execution_manifest"] = manifest
     return {**dispatch_payload, "scenario_count": len(manifest), "metadata": metadata}
+
+
+def scope_dispatch_to_registered(
+    dispatch_payload: dict[str, Any], job: HostedHarnessJob
+) -> dict[str, Any]:
+    """Narrow a dispatch document built before its attempt registered to the executions
+    the job chose at registration, where a retry drops the calls whose results landed
+    after cleanup."""
+    chosen = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
+    if not chosen:
+        return dispatch_payload
+    metadata = {
+        **(dispatch_payload.get("metadata") or {}),
+        RERUN_EXECUTION_KEYS: chosen,
+    }
+    return scope_dispatch_to_rerun({**dispatch_payload, "metadata": metadata})
 
 
 def _apply_parallelism_admission(
@@ -1940,6 +2023,70 @@ def _check_subfolder_echo(
 
 
 def register_attempt(
+    job_id: uuid.UUID | str,
+    *,
+    endpoint_base_url: str,
+    provider_ref: str | None = None,
+    snapshot_name: str | None = None,
+    snapshot_digest: str | None = None,
+) -> AttemptCapability:
+    """Register a job's next attempt. A retry reads its calls here, under the job's lock,
+    not only at cleanup: a result that landed in between takes its call out, and when
+    none is left the Run is settled and RetryAlreadyDelivered is raised."""
+    with transaction.atomic():
+        # The lock is held until the attempt is registered, so no result of the previous
+        # attempt lands between this read and the new attempt superseding it.
+        delivered = _settle_delivered_retry(job_id)
+        if delivered is None:
+            return _register_attempt(
+                job_id,
+                endpoint_base_url=endpoint_base_url,
+                provider_ref=provider_ref,
+                snapshot_name=snapshot_name,
+                snapshot_digest=snapshot_digest,
+            )
+    raise RetryAlreadyDelivered(delivered)
+
+
+def _settle_delivered_retry(
+    job_id: uuid.UUID | str,
+) -> HostedHarnessAttempt | None:
+    """Lock the job, and for a retry, narrow it to the calls still without a result.
+
+    Returns the previous attempt when every call it was retried for has delivered its
+    result since cleanup: the job is then ended as record_cleanup ends one whose results
+    are all in, and nothing is left to run.
+    """
+    job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
+    previous_number = job.current_attempt_number
+    if not previous_number or job.state != HostedHarnessJob.State.RETRY_WAIT:
+        return None
+    missing = executions_without_result(job, previous_number)
+    if missing != []:
+        if missing:
+            _narrow_retry_scope(job, missing)
+            job.save(update_fields=["payload", "updated_at"])
+        return None
+    previous = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+        job=job, attempt_number=previous_number
+    )
+    if (
+        keep_delivered_attempt(previous)
+        and previous.state != HostedHarnessAttempt.State.SUPERSEDED
+    ):
+        previous.state = _attempt_terminal_state(previous)
+        previous.save(update_fields=["state", "updated_at"])
+    _settle_job(job, previous, timezone.now())
+    logger.info(
+        "hosted_retry_settled_with_every_result_in",
+        job_id=str(job.id),
+        attempt_id=str(previous.id),
+    )
+    previous.job = job
+    return previous
+
+
+def _register_attempt(
     job_id: uuid.UUID | str,
     *,
     endpoint_base_url: str,
@@ -3132,17 +3279,14 @@ def record_cleanup(
         )
         if attempt.attempt_number < job.current_attempt_number:
             return job
-        missing = (
-            executions_without_result(job, attempt.attempt_number)
-            if retry_pending
-            else None
-        )
+        missing = executions_without_result(job, attempt.attempt_number)
         # With every call's result in, a relaunch would only run them and charge them
         # again: the attempt ends here instead. A last result can land while the sandbox is
         # deleted, after the platform recorded its own failure; the Run is then kept as the
-        # gateway keeps one, under this lock, so it does not end failed.
+        # gateway keeps one, under this lock, so it does not end failed. That holds on the
+        # last attempt the budget allows too, where nothing is left to retry.
         if (
-            retry_pending
+            (retry_pending or _lost_by_platform(attempt))
             and missing == []
             and keep_delivered_attempt(attempt)
             and attempt.state != HostedHarnessAttempt.State.SUPERSEDED
@@ -3153,90 +3297,102 @@ def record_cleanup(
             # Whatever ended the attempt, the retry runs only the calls it left without
             # a result, as an in-run re-run runs only its chosen calls. With no result
             # in, it runs the same calls again. A build retries whole.
-            scope = (job.payload.get("metadata") or {}).get(
-                RERUN_EXECUTION_KEYS
-            ) or HostedHarnessExecution.no_workspace_objects.filter(
-                job=job
-            ).values_list("execution_key", flat=True)
-            if missing and len(missing) < len(scope):
-                job.payload = {
-                    **job.payload,
-                    "metadata": {
-                        **(job.payload.get("metadata") or {}),
-                        RERUN_EXECUTION_KEYS: missing,
-                    },
-                }
+            _narrow_retry_scope(job, missing)
             job.state = HostedHarnessJob.State.RETRY_WAIT
             job.save(update_fields=["state", "payload", "updated_at"])
             return job
-        snapshot_missing = (
-            job.environment_id is None
-            and job.test_execution_id is None
-            and attempt.terminal_stage == "completed"
-            and (
-                not job.run_test_id
-                or not (job.payload.get("metadata") or {}).get("authoring_object_key")
-                or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
-                != job.scenario_count
-            )
-        )
-        if snapshot_missing:
-            job.state = HostedHarnessJob.State.FAILED
-        elif attempt.terminal_stage == "completed":
-            job.state = HostedHarnessJob.State.COMPLETED
-        elif attempt.terminal_stage == "canceled":
-            job.state = HostedHarnessJob.State.CANCELED
-        else:
-            job.state = HostedHarnessJob.State.FAILED
-        # Cleanup is an intermediate lifecycle stage. Once absence has been verified, expose the
-        # guest's terminal stage so a completed job cannot remain visually stuck on cleaning_up.
-        job.current_stage = (
-            HostedHarnessJob.State.FAILED
-            if snapshot_missing
-            else attempt.terminal_stage or job.state
-        )
-        job.terminal_at = now
-        job.failure = (
-            {
-                "domain": "platform_sync",
-                "stage": "validating_scenarios",
-                "code": "authoring_snapshot_missing",
-                "message": "Validated scenarios or their durable bundle are missing",
-            }
-            if snapshot_missing
-            else attempt.terminal_failure
-        )
-        job.content_updated_at = now
-        job.save(
-            update_fields=[
-                "state",
-                "terminal_at",
-                "current_stage",
-                "failure",
-                "content_updated_at",
-                "updated_at",
-                *finish_deferred_delete(job),
-            ]
-        )
-        if (
-            job.environment_id is None
-            and job.test_execution_id is None
-            and job.state == HostedHarnessJob.State.COMPLETED
-        ):
-            from simulate.services.harness_versioning.nudges import schedule_reconcile
-            from simulate.services.harness_versioning.rebuild import (
-                schedule_deferred_activations,
-            )
-
-            schedule_reconcile(job.id)
-            schedule_deferred_activations(job.id)
-        if job.state == HostedHarnessJob.State.COMPLETED:
-            built_job_id, built_attempt_id = str(job.id), str(attempt.id)
-            transaction.on_commit(
-                lambda: _ask_builder_to_check(built_job_id, built_attempt_id)
-            )
-        project_terminal_job_onto_run(job, now)
+        _settle_job(job, attempt, now)
         return job
+
+
+def _narrow_retry_scope(job: HostedHarnessJob, missing: list[str] | None) -> None:
+    """Narrow a retry to the calls left without a result; the caller saves the payload."""
+    scope = (job.payload.get("metadata") or {}).get(
+        RERUN_EXECUTION_KEYS
+    ) or HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
+        "execution_key", flat=True
+    )
+    if missing and len(missing) < len(scope):
+        job.payload = {
+            **job.payload,
+            "metadata": {
+                **(job.payload.get("metadata") or {}),
+                RERUN_EXECUTION_KEYS: missing,
+            },
+        }
+
+
+def _settle_job(
+    job: HostedHarnessJob, attempt: HostedHarnessAttempt, now: datetime
+) -> None:
+    """End the locked job with the ending of its last attempt."""
+    snapshot_missing = (
+        job.environment_id is None
+        and job.test_execution_id is None
+        and attempt.terminal_stage == "completed"
+        and (
+            not job.run_test_id
+            or not (job.payload.get("metadata") or {}).get("authoring_object_key")
+            or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
+            != job.scenario_count
+        )
+    )
+    if snapshot_missing:
+        job.state = HostedHarnessJob.State.FAILED
+    elif attempt.terminal_stage == "completed":
+        job.state = HostedHarnessJob.State.COMPLETED
+    elif attempt.terminal_stage == "canceled":
+        job.state = HostedHarnessJob.State.CANCELED
+    else:
+        job.state = HostedHarnessJob.State.FAILED
+    # Cleanup is an intermediate lifecycle stage. Once absence has been verified, expose the
+    # guest's terminal stage so a completed job cannot remain visually stuck on cleaning_up.
+    job.current_stage = (
+        HostedHarnessJob.State.FAILED
+        if snapshot_missing
+        else attempt.terminal_stage or job.state
+    )
+    job.terminal_at = now
+    job.failure = (
+        {
+            "domain": "platform_sync",
+            "stage": "validating_scenarios",
+            "code": "authoring_snapshot_missing",
+            "message": "Validated scenarios or their durable bundle are missing",
+        }
+        if snapshot_missing
+        else attempt.terminal_failure
+    )
+    job.content_updated_at = now
+    job.save(
+        update_fields=[
+            "state",
+            "terminal_at",
+            "current_stage",
+            "failure",
+            "content_updated_at",
+            "updated_at",
+            *finish_deferred_delete(job),
+        ]
+    )
+    if (
+        job.environment_id is None
+        and job.test_execution_id is None
+        and job.state == HostedHarnessJob.State.COMPLETED
+    ):
+        from simulate.services.harness_versioning.nudges import schedule_reconcile
+        from simulate.services.harness_versioning.rebuild import (
+            schedule_deferred_activations,
+        )
+
+        schedule_reconcile(job.id)
+        schedule_deferred_activations(job.id)
+    if job.state == HostedHarnessJob.State.COMPLETED:
+        built_job_id, built_attempt_id = str(job.id), str(attempt.id)
+        transaction.on_commit(
+            lambda: _ask_builder_to_check(built_job_id, built_attempt_id)
+        )
+    project_terminal_job_onto_run(job, now)
 
 
 def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:

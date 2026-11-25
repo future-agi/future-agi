@@ -58,14 +58,17 @@ from simulate.services.code_archives import (
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    RetryAlreadyDelivered,
     activate_attempt_capability,
     executions_without_result,
+    fail_lost_attempt,
     finish_deferred_delete,
     keep_delivered_attempt,
     platform_set_failure,
     record_cleanup,
     register_attempt,
     request_cancellation,
+    scope_dispatch_to_registered,
     scope_dispatch_to_rerun,
     validate_cancellation_reason,
 )
@@ -182,6 +185,16 @@ _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
 _PROVIDER_UNREACHABLE_GRACE_SECONDS = 180
+
+# The attempt fields a poll decides its ending from, read afresh after provider calls.
+_ATTEMPT_ENDING_FIELDS = (
+    "terminal_event_received",
+    "manifest_acked",
+    "terminal_stage",
+    "terminal_reason",
+    "terminal_failure",
+    "state",
+)
 # Capped so pkill 10 + seal 45 + provider get about 30 + delete 120 stays inside the cancel activity's 4-minute timeout.
 _CANCEL_SEAL_CAP_SECONDS = 45
 _CANCEL_SEAL_POLL_SECONDS = 2
@@ -2889,13 +2902,22 @@ class HostedHarnessGateway:
                 "configured resource profile does not match the selected sandbox runtime",
                 status_code=503,
             )
-        capability = register_attempt(
-            job.id,
-            endpoint_base_url=endpoint_base_url,
-            snapshot_name=selected_snapshot,
-            snapshot_digest=registered_snapshot_digest,
-        )
+        try:
+            capability = register_attempt(
+                job.id,
+                endpoint_base_url=endpoint_base_url,
+                snapshot_name=selected_snapshot,
+                snapshot_digest=registered_snapshot_digest,
+            )
+        except RetryAlreadyDelivered as settled:
+            # Every call this retry was for delivered its result after cleanup: the Run
+            # ended with the attempt that delivered them, and nothing is launched. The
+            # workflow's next poll of that attempt reads the ended job.
+            return settled.attempt
         attempt = capability.attempt
+        # The document was built before registration, which may have dropped calls whose
+        # results landed after cleanup: the guest is sent only what is left.
+        dispatch_payload = scope_dispatch_to_registered(dispatch_payload, attempt.job)
         dispatch_runtime = dict(dispatch_payload["runtime"])
         dispatch_runtime["parallelism"] = capability.admitted_parallelism
         dispatch_runtime["cpu_units"] = capacity.cpu_units
@@ -4830,13 +4852,49 @@ class HostedHarnessGateway:
             "retryable_domains", []
         ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
 
-    def _keep_delivered_results(self, attempt: HostedHarnessAttempt) -> bool:
+    def _keep_delivered_results(
+        self,
+        attempt: HostedHarnessAttempt,
+        *,
+        loss: dict[str, Any] | None = None,
+        over_guest_ending: bool = False,
+    ) -> bool:
         """Keep the Run of an attempt whose every call delivered its result, whatever
         ended the guest, and say whether it did (`keep_delivered_attempt`). The results are
-        what the run page and a check run read."""
-        if executions_without_result(attempt.job, attempt.attempt_number) != []:
-            return False
-        return keep_delivered_attempt(attempt)
+        what the run page and a check run read.
+
+        Decided under the attempt's lock from a fresh read, as a guest's ending or a last
+        result can land while the provider is asked about the sandbox. When the Run is
+        not kept, ``loss`` is recorded as the attempt's failure, over an ending the guest
+        sent only with ``over_guest_ending``. ``attempt`` is left holding what was read
+        and written.
+        """
+        with transaction.atomic():
+            current = (
+                HostedHarnessAttempt.no_workspace_objects.select_for_update()
+                .select_related("job")
+                .get(id=attempt.id)
+            )
+            kept = executions_without_result(
+                current.job, current.attempt_number
+            ) == [] and keep_delivered_attempt(current)
+            if (
+                not kept
+                and loss is not None
+                and (over_guest_ending or not current.terminal_event_received)
+            ):
+                fail_lost_attempt(current, loss)
+                current.save(
+                    update_fields=[
+                        "terminal_stage",
+                        "terminal_failure",
+                        "state",
+                        "updated_at",
+                    ]
+                )
+        for name in _ATTEMPT_ENDING_FIELDS:
+            setattr(attempt, name, getattr(current, name))
+        return kept
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
@@ -4847,6 +4905,14 @@ class HostedHarnessGateway:
         attempt.refresh_from_db()
         job = attempt.job
         job.refresh_from_db()
+        if attempt.cleanup_verified_at is not None and job.state in {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }:
+            # Already ended with its sandbox verified gone, as when a retry found every
+            # result in when it registered: there is nothing left to inspect or record.
+            return job
         if (
             not attempt.provider_ref
             and attempt.state == HostedHarnessAttempt.State.FAILED
@@ -4861,27 +4927,21 @@ class HostedHarnessGateway:
         try:
             observation = self.inspect(attempt)
         except SandboxNotFoundError:
-            retry_pending = False
-            if not attempt.terminal_event_received and not self._keep_delivered_results(
-                attempt
-            ):
-                attempt.terminal_stage = "failed"
-                attempt.terminal_failure = {
+            # An ending the guest sent stands; without one, the platform records the loss.
+            kept = self._keep_delivered_results(
+                attempt,
+                loss={
                     "domain": "infrastructure",
                     "stage": "running",
                     "code": "sandbox_disappeared",
                     "message": "provider sandbox disappeared before terminal delivery",
-                }
-                attempt.state = HostedHarnessAttempt.State.FAILED
-                attempt.save(
-                    update_fields=[
-                        "terminal_stage",
-                        "terminal_failure",
-                        "state",
-                        "updated_at",
-                    ]
-                )
-                retry_pending = self._should_retry(attempt, "infrastructure")
+                },
+            )
+            retry_pending = (
+                not kept
+                and not attempt.terminal_event_received
+                and self._should_retry(attempt, "infrastructure")
+            )
             forget_attempt_redaction_values(attempt.id)
             return record_cleanup(
                 attempt.id,
@@ -4912,10 +4972,11 @@ class HostedHarnessGateway:
                     attempt.provider_ref,
                 )
                 return None
-            results_kept = self._keep_delivered_results(attempt)
-            if not results_kept:
-                attempt.terminal_stage = "failed"
-                attempt.terminal_failure = {
+            # A completed ending the guest sent is kept in the failure, so it is the
+            # attempt's again if the missing results land before the sandbox is gone.
+            results_kept = self._keep_delivered_results(
+                attempt,
+                loss={
                     "domain": "infrastructure",
                     "stage": "running",
                     "code": "sandbox_unreachable",
@@ -4928,16 +4989,9 @@ class HostedHarnessGateway:
                         "exception_type": type(exc).__name__,
                         "grace_seconds": grace_seconds,
                     },
-                }
-                attempt.state = HostedHarnessAttempt.State.FAILED
-                attempt.save(
-                    update_fields=[
-                        "terminal_stage",
-                        "terminal_failure",
-                        "state",
-                        "updated_at",
-                    ]
-                )
+                },
+                over_guest_ending=True,
+            )
             try:
                 return self._delete_and_record(
                     attempt,
@@ -5043,21 +5097,22 @@ class HostedHarnessGateway:
             # rejected the final drain). Still an infrastructure failure — and
             # retryable once P1 lands — but labelled distinctly so operators
             # don't read an undeliverable-evidence exit as a guest crash.
-            attempt.terminal_stage = "failed"
-            attempt.terminal_failure = {
-                "domain": "infrastructure",
-                "stage": "finalizing",
-                "code": "evidence_undeliverable",
-                "message": (
-                    "guest reached terminal state but could not deliver "
-                    "the terminal event"
-                ),
-                "details": {
-                    "guest_log_tail": observation.get("logs", ""),
-                    "process_logs": observation.get("process_logs", ""),
+            fail_lost_attempt(
+                attempt,
+                {
+                    "domain": "infrastructure",
+                    "stage": "finalizing",
+                    "code": "evidence_undeliverable",
+                    "message": (
+                        "guest reached terminal state but could not deliver "
+                        "the terminal event"
+                    ),
+                    "details": {
+                        "guest_log_tail": observation.get("logs", ""),
+                        "process_logs": observation.get("process_logs", ""),
+                    },
                 },
-            }
-            attempt.state = HostedHarnessAttempt.State.FAILED
+            )
             attempt.save(
                 update_fields=[
                     "terminal_stage",
@@ -5157,18 +5212,19 @@ class HostedHarnessGateway:
                 not attempt.terminal_event_received
                 or attempt.terminal_stage == "completed"
             ) and self._should_retry(attempt, "infrastructure")
-            attempt.terminal_stage = "failed"
-            attempt.terminal_failure = {
-                "domain": "platform_sync",
-                "stage": "uploading_artifacts",
-                "code": "terminal_delivery_incomplete",
-                "message": "guest exited without an acknowledged terminal stream",
-                "details": {
-                    "guest_log_tail": observation.get("logs", ""),
-                    "process_logs": observation.get("process_logs", ""),
+            fail_lost_attempt(
+                attempt,
+                {
+                    "domain": "platform_sync",
+                    "stage": "uploading_artifacts",
+                    "code": "terminal_delivery_incomplete",
+                    "message": "guest exited without an acknowledged terminal stream",
+                    "details": {
+                        "guest_log_tail": observation.get("logs", ""),
+                        "process_logs": observation.get("process_logs", ""),
+                    },
                 },
-            }
-            attempt.state = HostedHarnessAttempt.State.FAILED
+            )
             attempt.save(
                 update_fields=[
                     "terminal_stage",
