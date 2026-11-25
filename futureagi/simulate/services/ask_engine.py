@@ -58,6 +58,7 @@ from simulate.services.call_evidence import (
     CallNotInWorkspace,
     Kind,
     State,
+    kind_for_key,
     read_call_evidence,
 )
 from tfc.temporal.drop_in import temporal_activity
@@ -141,6 +142,10 @@ class Definition:
     labels: tuple[str, ...]
     inputs: tuple[tuple[str, Kind], ...]
     descriptions: Mapping[str, str] = field(default_factory=dict)
+    # A configured eval: the template it runs on, and its own criteria before any
+    # block was added. A typed question has neither; its template is saved at launch.
+    eval_template_id: str | None = None
+    own_criteria: str | None = None
 
     @property
     def kinds(self) -> tuple[Kind, ...]:
@@ -149,6 +154,16 @@ class Definition:
     @property
     def decision_model(self) -> str:
         return self.model
+
+    @property
+    def priced_by_use(self) -> bool:
+        # A configured eval runs on a platform model, billed on what it uses.
+        return self.eval_template_id is not None
+
+    def as_question(self) -> Question:
+        return Question(
+            self.name, self.kinds, self.model, priced_by_use=self.priced_by_use
+        )
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -160,6 +175,10 @@ class Definition:
             "labels": list(self.labels),
             "descriptions": dict(self.descriptions),
             "inputs": [[key, kind.value] for key, kind in self.inputs],
+            "eval_template_id": self.eval_template_id,
+            "own_criteria": (
+                self.criteria if self.own_criteria is None else self.own_criteria
+            ),
         }
 
 
@@ -232,6 +251,93 @@ def typed_question(
         inputs=tuple((kind.value, kind) for kind in kinds),
         descriptions=descriptions,
     )
+
+
+# --- a configured eval ----------------------------------------------------------------
+
+AGENT_EVALUATOR = "AgentEvaluator"
+# The head of the one block added after a configured eval's own criteria, naming each
+# input they don't name, so the evaluator passes it whole.
+CONFIGURED_BLOCK_HEAD = "The inputs to judge, each given in full:"
+_NOT_OFFERED = "This eval can't be asked over saved calls yet."
+
+
+def configured_eval(key: str, template, *, modality: str) -> Definition:
+    """A configured eval as a definition: its own keys, each read as one kind; its own
+    criteria, with one block after them naming any input they don't name; its model
+    and labels. Only an agent evaluator with a choice answer is offered here, whose
+    limits the step checks before sending. The template is not changed."""
+    config = template.config or {}
+    labels = _labels_of(template)
+    if (
+        config.get("eval_type_id") != AGENT_EVALUATOR
+        or config.get("output") == "Pass/Fail"
+        or getattr(template, "multi_choice", False)
+        or not labels
+        or any(label not in (template.choice_scores or {}) for label in labels)
+    ):
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    keys = config.get("required_keys")
+    keys = [str(k) for k in keys] if isinstance(keys, list) else []
+    read: list[tuple[str, Kind]] = []
+    for k in keys:
+        kind = kind_for_key(k, modality)
+        if kind is None or kind == Kind.AUDIO:
+            # A key no kind fills, or the recording: the step sends text only.
+            raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+        read.append((k, kind))
+    if not read:
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    inputs = tuple(read)
+    own, held_by_version = _own_criteria(template)
+    if not own or not own.strip():
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    unnamed = [(k, kind) for k, kind in inputs if not _names(own, k)]
+    if unnamed and held_by_version:
+        # The version's own text replaces what the step sends, so a block added
+        # after it would never reach the model.
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    criteria = own
+    if unnamed:
+        named = "\n\n".join(
+            f"{KIND_LABELS[kind]} ({k}):\n{{{{{k}}}}}" for k, kind in unnamed
+        )
+        criteria = f"{own}\n\n{CONFIGURED_BLOCK_HEAD}\n\n{named}"
+    return Definition(
+        key=key,
+        name=template.name,
+        criteria=criteria,
+        model=template.model,
+        answer_type=(
+            AnswerType.YES_NO if labels == YES_NO_LABELS else AnswerType.CATEGORY
+        ),
+        labels=labels,
+        inputs=inputs,
+        eval_template_id=str(template.id),
+        own_criteria=own,
+    )
+
+
+def _names(criteria: str, key: str) -> bool:
+    return re.search(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", criteria) is not None
+
+
+def _labels_of(template) -> tuple[str, ...]:
+    return tuple(template.choices or list((template.choice_scores or {}).keys()))
+
+
+def _own_criteria(template) -> tuple[str | None, bool]:
+    """The criteria the evaluator reads for this template, and whether its current
+    version holds them (that text then replaces whatever is sent)."""
+    from model_hub.models.evals_metric import EvalTemplateVersion
+    from model_hub.utils.prompt_migration import prompt_messages_to_flat_config
+
+    current = EvalTemplateVersion.objects.get_default(template)
+    if current is not None:
+        held = prompt_messages_to_flat_config(current.prompt_messages or [])
+        if held.get("rule_prompt") is not None:
+            return held["rule_prompt"], True
+    return (template.config or {}).get("rule_prompt"), False
 
 
 def _clean_labels(labels: Sequence[str]) -> tuple[str, ...]:
@@ -423,10 +529,7 @@ def launch_ask(
     definitions = list(definitions)
     if len({definition.key for definition in definitions}) != len(definitions):
         raise LaunchRefused("questions", "Each question needs its own key.")
-    checked = [
-        Question(definition.name, definition.kinds, definition.decision_model)
-        for definition in definitions
-    ]
+    checked = [definition.as_question() for definition in definitions]
     shown = check_before_launch(
         selection, checked, organization=organization, workspace_id=workspace_id
     )
@@ -435,6 +538,11 @@ def launch_ask(
         workspace_id=workspace_id,
         questions=checked,
         answers=shown["answers"],
+        priced_answers=sum(
+            one["ready"]
+            for question, one in zip(checked, shown["questions"], strict=True)
+            if not question.priced_by_use
+        ),
     )
     if shown["credits_estimate"] != accepted_credits:
         raise LaunchRefused(
@@ -446,13 +554,16 @@ def launch_ask(
     with transaction.atomic():
         questions = []
         for index, definition in enumerate(definitions):
-            template, version = save_question_template(
-                definition,
-                organization=organization,
-                workspace_id=workspace_id,
-                user=asked_by,
-                at=at + timedelta(seconds=index),
-            )
+            if definition.eval_template_id is not None:
+                template, version = _configured_template(definition, organization)
+            else:
+                template, version = save_question_template(
+                    definition,
+                    organization=organization,
+                    workspace_id=workspace_id,
+                    user=asked_by,
+                    at=at + timedelta(seconds=index),
+                )
             questions.append(
                 {
                     **definition.as_json(),
@@ -491,6 +602,30 @@ def launch_ask(
         )
         transaction.on_commit(lambda: _queue(ask.id))
     return ask
+
+
+def _configured_template(definition: Definition, organization):
+    """A configured eval's own template and its current version number, as the
+    definition read them. One changed or gone since is refused."""
+    from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+
+    template = (
+        EvalTemplate.no_workspace_objects.filter(
+            id=definition.eval_template_id, deleted=False
+        ).first()
+        if definition.eval_template_id
+        else None
+    )
+    if template is None or template.organization_id not in (None, organization.id):
+        raise LaunchRefused("not_found", "This eval can't be found.")
+    if _own_criteria(template)[0] != definition.own_criteria or (
+        template.model != definition.model or _labels_of(template) != definition.labels
+    ):
+        raise LaunchRefused(
+            "question_changed", "This eval was changed. Choose it again."
+        )
+    current = EvalTemplateVersion.objects.get_default(template)
+    return template, None if current is None else current.version_number
 
 
 def _queue(ask_id) -> None:
@@ -768,12 +903,18 @@ def _grade(row) -> dict[str, Any]:
             "ask started, so it wasn't graded.",
             "evidence": evidence,
         }
-    if _too_large(question["model"], template, values):
+    if _too_large(question["model"], template, values, question["criteria"]):
         return {"state": RESULT.UNMEASURED, "cause": "too_large", "evidence": evidence}
     organization = row.ask.organization
+    run_config: dict[str, Any] = {"run_config": {"model": question["model"]}}
+    if question["criteria"] != question.get("own_criteria", question["criteria"]):
+        # A configured eval's block: sent with this grading, not saved on the
+        # template. The evaluator reads a rule prompt it is given over the
+        # template's own, and its version holds none (checked when defined).
+        run_config["config"] = {"rule_prompt": question["criteria"]}
     try:
         result = run_eval_func(
-            {"run_config": {"model": question["model"]}},
+            run_config,
             dict(values),
             template,
             organization,
@@ -825,14 +966,13 @@ def _as_launched(template, question: Mapping[str, Any]) -> bool:
     model, answer labels and current version."""
     from model_hub.models.evals_metric import EvalTemplateVersion
 
-    config = template.config or {}
     current = EvalTemplateVersion.objects.get_default(template)
     return (
-        config.get("rule_prompt") == question["criteria"]
+        _own_criteria(template)[0] == question.get("own_criteria", question["criteria"])
         and template.model == question["model"]
-        and list(template.choices or []) == list(question["labels"])
-        and current is not None
-        and current.version_number == question["template_version"]
+        and list(_labels_of(template)) == list(question["labels"])
+        and (None if current is None else current.version_number)
+        == question["template_version"]
     )
 
 
@@ -857,10 +997,14 @@ def _confidence(metadata: Any) -> float | None:
     return None
 
 
-def _too_large(model: str, template, values: Mapping[str, str]) -> bool:
-    """Whether the request the decision model's evaluator would build is over its
-    limits. Built with that evaluator's own functions and limits, so nothing here
-    copies a number; over the limit, it is never sent."""
+def _too_large(model: str, template, values: Mapping[str, str], criteria: str) -> bool:
+    """Whether the request the evaluator would build is over its limits. Built with
+    that evaluator's own functions and limits, so nothing here copies a number; over
+    the limit, it is never sent."""
+    if (template.config or {}).get("eval_type_id") == AGENT_EVALUATOR:
+        return _too_large_for_agent(
+            criteria, values, (template.config or {}).get("template_format", "mustache")
+        )
     try:
         from jinja2 import StrictUndefined
         from jinja2.sandbox import SandboxedEnvironment
@@ -914,6 +1058,28 @@ def _too_large(model: str, template, values: Mapping[str, str]) -> bool:
         )
         return len(state_text.encode("utf-8")) > spec.max_state_bytes
     return False
+
+
+def _too_large_for_agent(
+    criteria: str, values: Mapping[str, str], template_format: str
+) -> bool:
+    """The agent evaluator's two cuts: a value over its context limit is windowed,
+    and its rendered instructions, sent as one message, are cut head and tail over
+    the per-message cap. Rendered with its own function."""
+    try:
+        from ee.evals.llm.agent_evaluator.context.budget import PER_MESSAGE_CHARS_CAP
+        from ee.evals.llm.agent_evaluator.evaluator import (
+            _MAX_CONTEXT_CHARS,
+            AgentEvaluator,
+        )
+    except ImportError:
+        return False
+    if any(len(value) > _MAX_CONTEXT_CHARS for value in values.values()):
+        return True
+    # The template's own format, as the shared entry hands it to the evaluator.
+    renderer = AgentEvaluator(rule_prompt=criteria, template_format=template_format)
+    rendered = renderer._render_prompt(list(values), dict(values), [])
+    return len(rendered) > PER_MESSAGE_CHARS_CAP
 
 
 # An evaluator failure, by its code. Only the code and the evaluator's own

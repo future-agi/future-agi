@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+import structlog
 from django.db.models import Q
 
 from simulate.models.test_execution import CallExecution, TestExecution
@@ -32,6 +33,8 @@ from simulate.services.call_evidence import (
     in_workspace,
     read_call_evidence,
 )
+
+logger = structlog.get_logger(__name__)
 
 # An ask over more calls is refused with the count (a guessed limit).
 MAX_CALLS = 200
@@ -73,6 +76,9 @@ class Question:
     name: str
     kinds: tuple[Kind, ...]
     decision_model: str
+    # Billed on the tokens it uses (a platform eval), so it has no price per answer
+    # before it runs, and no decision model's key to check.
+    priced_by_use: bool = False
 
 
 @dataclass(frozen=True)
@@ -343,12 +349,19 @@ def check_before_launch(
             "A selected call has been deleted since the ask was made.",
         ) from None
     counted = [_count(question, states) for question in questions]
-    answers = sum(one["ready"] for one in counted)
+    priced = [
+        one["ready"]
+        for question, one in zip(questions, counted, strict=True)
+        if not question.priced_by_use
+    ]
     return {
         "requested": len(selection.call_ids),
         "questions": counted,
-        "answers": answers,
-        "credits_estimate": _credits(answers),
+        "answers": sum(one["ready"] for one in counted),
+        # The answers with a price per answer; None where they are not billed.
+        "credits_estimate": _credits(sum(priced)) if priced else None,
+        # Questions billed on what they use, with no price before they run.
+        "priced_by_use": [q.name for q in questions if q.priced_by_use],
     }
 
 
@@ -404,17 +417,80 @@ def launch_gate(
     workspace_id: Any,
     questions: Sequence[Question],
     answers: int,
+    priced_answers: int | None = None,
 ) -> None:
     """Instant Eval's own checks before a launch: refuses with the reason, else None.
+    ``priced_answers`` are the answers with a price per answer (all of them when not
+    given); a question priced by use gets the shared evaluator's checks instead.
     Nothing is spent or kept here; a key that is read is dropped at once."""
     if answers < 1:
         raise LaunchRefused(
             "nothing_ready", "No selected call has the evidence these questions read."
         )
+    by_use = [question for question in questions if question.priced_by_use]
+    priced = [question for question in questions if not question.priced_by_use]
+    for model in dict.fromkeys(question.decision_model for question in by_use):
+        _check_by_use(organization, model)
+    if not priced:
+        return
     _check_capability(organization)
-    for model in dict.fromkeys(question.decision_model for question in questions):
+    for model in dict.fromkeys(question.decision_model for question in priced):
         _check_key(model, organization, workspace_id)
-    _check_credits(organization, answers)
+    _check_credits(
+        organization, priced_answers if priced_answers is not None else answers
+    )
+
+
+def _check_by_use(organization: Any, model: str) -> None:
+    """The shared evaluator's own checks for a platform eval, before anything runs:
+    agent evals allowed for the organisation, and usage left for the model's type."""
+    if not _agent_evals_allowed(organization):
+        raise LaunchRefused(
+            "ENTITLEMENT_DENIED", "Agent evaluations aren't available for your plan."
+        )
+    check = _usage_check(organization, model)
+    if check is not None and not getattr(check, "allowed", True):
+        raise LaunchRefused(
+            "usage_limit",
+            "Your organization has reached its usage limit for this eval's model.",
+        )
+
+
+def _agent_evals_allowed(organization: Any) -> bool:
+    # As run_eval_func decides it, failing closed.
+    try:
+        from tfc.capabilities import service as capability_service
+
+        if capability_service.is_configured():
+            return bool(
+                capability_service.check(
+                    "agentic_eval", org_id=str(organization.id)
+                ).allowed
+            )
+        from tfc.ee_loader import has_ee
+
+        return bool(has_ee("ee.evals"))
+    except Exception:
+        logger.exception("ask_agent_eval_capability_check_failed")
+        return False
+
+
+def _usage_check(organization: Any, model: str) -> Any:
+    """Billing's usage check for the model's evaluator type, or None without ee."""
+    from sdk.utils.helpers import _get_api_call_type
+
+    try:
+        from ee.usage.services.metering import check_usage
+    except ImportError:
+        return None
+    try:
+        return check_usage(str(organization.id), _get_api_call_type(model))
+    except Exception:
+        raise LaunchRefused(
+            "credit_check_unavailable",
+            "Usage can't be checked right now, so the ask wasn't started. "
+            "Please retry in a moment.",
+        ) from None
 
 
 def _check_capability(organization: Any) -> None:
