@@ -561,9 +561,16 @@ def _patch(before: Any, after: Any) -> list[JsonPatchOp]:
     (its ops fail, or land in another order), so a diff that does not rebuild ``after`` replaces the whole value."""
     patch: list[JsonPatchOp] = jsonpatch.make_patch(before, after).patch
     try:
-        if jsonpatch.apply_patch(before, patch) == after:
-            return patch
-    except (jsonpatch.JsonPatchException, jsonpatch.JsonPointerException):
+        # A trial on copies: the diff's added values are the draft's own objects, which a later op could edit.
+        if jsonpatch.apply_patch(copy.deepcopy(before), copy.deepcopy(patch)) == after:
+            return copy.deepcopy(patch)
+    except (
+        jsonpatch.JsonPatchException,
+        jsonpatch.JsonPointerException,
+        TypeError,
+        KeyError,
+        IndexError,
+    ):
         pass
     return [{"op": "replace", "path": "", "value": copy.deepcopy(after)}]
 
@@ -579,8 +586,8 @@ def _tested(before: Any, patch: list[JsonPatchOp]) -> list[JsonPatchOp]:
             out.append(
                 {"op": "test", "path": op["path"], "value": copy.deepcopy(value)}
             )
-        out.append(op)
-        doc = jsonpatch.apply_patch(doc, [op], in_place=True)
+        out.append(copy.deepcopy(op))
+        doc = jsonpatch.apply_patch(doc, [copy.deepcopy(op)], in_place=True)
     return out
 
 

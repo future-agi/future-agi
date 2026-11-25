@@ -101,6 +101,29 @@ def test_a_dict_moved_and_edited_in_a_list_gives_a_patch_that_builds_the_draft(
         jsonpatch.apply_patch({**before, "examples": ["c"]}, change["patch"])
 
 
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # jsonpatch's remove raises TypeError on this diff: it must fall back, never 500.
+        ([{"k": "a"}, ["a", "b"], "a", {"k": "a"}], ["a", ["a"]]),
+        # Its diff adds the draft's own objects, and a later op edited them: the check must not compare a changed draft.
+        ([{"k": "b"}, "b", ["a"]], ["b", {"k": ["a"]}, ["a", "b"], {"k": "b"}]),
+    ],
+)
+def test_a_patch_is_checked_on_copies_and_leaves_the_draft_as_it_was(was, now):
+    import copy
+
+    before = {**TOOLS[1], "examples": was}
+    after = {**TOOLS[1], "examples": now}
+    draft = _tree({"tools": [TOOLS[0], after]})
+    seen = copy.deepcopy(after)
+
+    [change] = compute_changes(_tree({"tools": [TOOLS[0], before]}), draft)
+
+    assert jsonpatch.apply_patch(copy.deepcopy(before), change["patch"]) == seen
+    assert jsonpatch.apply_patch(copy.deepcopy(before), change["patch"]) == seen
+
+
 def test_reordering_items_is_not_a_change_and_an_unchanged_draft_has_none():
     default = _tree({"tools": TOOLS, "hard_constraints": ["a", "b"]})
     assert (
