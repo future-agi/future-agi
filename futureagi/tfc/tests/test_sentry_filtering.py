@@ -359,6 +359,64 @@ def test_sensitive_key_detection():
     assert not _is_sensitive_key("user_id")
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "upstream rejected Bearer qa-opaque-value",
+        "retry with BEARER eyJhbGciOiJIUzI1NiJ9.e30.c2ln",
+        "upstream rejected Bearer abcdefghijklmnopqrstuvwxyz",
+        'upstream rejected Bearer "a b"',
+        "upstream rejected Bearer %r",
+        "upstream rejected `Bearer qa-opaque-value`",
+        "upstream rejected Bearer\tqa-opaque-value",
+        "upstream rejected Bearer\nqa-opaque-value",
+        "upstream rejected Bearer   qa-opaque-value",
+        "bearer:qa-opaque-value",
+        "bearer=abc",
+        "bearer => abc",
+        '{"bearer": "qa-opaque-value"}',
+        "bearer='qa-opaque-value'",
+        "\u201cbearer\u201d: qa-opaque-value",
+        "[('Bearer', 'qa-opaque-value')]",
+        '["Bearer", "qa-opaque-value"]',
+        "first the bearer of the news, then Bearer qa-opaque-value",
+        # URL- or form-encoded, or glued by a non-word separator.
+        "callback rejected Bearer%20eyJ0eXAi1",
+        "callback rejected Bearer%3Dabc",
+        "callback rejected Bearer+tok-123",
+        "callback rejected Bearer+abc",
+        "upstream rejected Bearer;abc",
+        "upstream rejected Bearer(abc)",
+        "upstream rejected Bearer|abc",
+        "upstream rejected Bearer/abc",
+        "upstream rejected Bearer%r",
+    ],
+)
+def test_scrub_text_redacts_a_bearer_value(text):
+    assert sentry._scrub_text(text) == _REDACTED
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "standard-bearer of the release",
+        "the bearer bonds matured",
+        "flag bearer: the team lead",
+        "bearer, the person",
+        "who is the bearer?",
+        "the bearer is.",
+        "bearers 12 left",
+        "Bearer scheme rejected",
+        "unsupported auth scheme bearer",
+        # Source excerpts that only name the scheme's prefix literal.
+        '        if not auth_header.startswith("Bearer "):',
+        "    expected 'Bearer ' prefix",
+    ],
+)
+def test_scrub_text_keeps_ordinary_uses_of_bearer(text):
+    assert sentry._scrub_text(text) == text
+
+
 def test_scrub_redacts_an_agent_check_payloads_values():
     scrubbed = _scrub(
         {"agent": {"connector": "livekit"}, "credential_values": {"K": "v"}}

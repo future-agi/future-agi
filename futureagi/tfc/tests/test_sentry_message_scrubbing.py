@@ -79,6 +79,21 @@ def test_ordinary_event_and_next_event(at_ingestion):
         (f"job failed input_tokens={MARKER}", False),
         (f"Cookie: session=ok; additional={MARKER}", False),
         (f"job failed password={MARKER} trailing detail", False),
+        # A Bearer value carries no sensitive name of its own.
+        (f"upstream rejected Bearer {MARKER}", False),
+        (f"upstream rejected BEARER\t{MARKER}", False),
+        ('upstream rejected Bearer "a b"', False),
+        (f'retry with {{"bearer": "{MARKER}"}}', False),
+        (f"retry with ('Bearer', '{MARKER}')", False),
+        (f"retry with bearer={MARKER}", False),
+        (f"callback rejected Bearer%20{MARKER}", False),
+        (f"callback rejected Bearer+{MARKER}", False),
+        (f"Authorization: Bearer {MARKER}", False),
+        # Ordinary uses of the word are kept.
+        ("standard-bearer of the release stopped", True),
+        ("the bearer bonds job failed", True),
+        ("flag bearer: the team lead", True),
+        ("Bearer scheme rejected", True),
     ],
 )
 def test_bounded_message_policy(message, kept):
@@ -443,6 +458,31 @@ def test_usage_log_templates_only_retain_validated_count_arguments():
         for event in (malformed, wrong_placeholder):
             assert event["logentry"] == {"message": sentry._REDACTED}
         assert following["message"] == "next diagnostic"
+        assert all(MARKER.encode() not in e.serialize() for e in transport.envelopes)
+
+
+def test_log_templates_with_a_bearer_value_are_not_retained():
+    with sentry_capture(
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        include_local_variables=False,
+    ) as transport:
+        logger = logging.getLogger(LOGGER)
+        logger.error(f"retry with Bearer {MARKER}: %s", "GET")
+        # The usage-count path re-checks only the template's literal text.
+        logger.error(f"job Bearer {MARKER} input_tokens=%d", 17)
+        logger.error("standard-bearer of the release stopped: %s", "GET")
+        sentry_sdk.capture_message("next diagnostic")
+
+        plain, counted, ordinary, following = transport.events
+        for event in (plain, counted):
+            assert event["logentry"] == {"message": sentry._REDACTED}
+            assert event["logger"] == LOGGER
+        assert ordinary["logentry"] == {
+            "message": "standard-bearer of the release stopped: %s",
+            "params": ["GET"],
+        }
+        assert following["message"] == "next diagnostic"
+        assert len(transport.envelopes) == 4
         assert all(MARKER.encode() not in e.serialize() for e in transport.envelopes)
 
 

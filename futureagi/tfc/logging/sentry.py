@@ -209,6 +209,30 @@ _USAGE_COUNT = re.compile(_USAGE_ASSIGNMENT + r"[0-9]{1,18}(?=$|[ )])")
 _LOG_DIRECTIVE = re.compile(_USAGE_ASSIGNMENT + r"%d(?=$|[ )])|%[sd]|%")
 _SENSITIVE_NAMES = (*SENSITIVE_KEY_SUBSTRINGS, *_CREDENTIAL_ALIASES)
 _SENSITIVE_TEXT = (*_SENSITIVE_NAMES, "credential", "<saml:", "<samlp:")
+# A Bearer scheme value carries no sensitive name of its own ("Bearer abc123",
+# a `"bearer": "x"` key, a header tuple's repr, a URL- or form-encoded
+# `Bearer%20x` / `Bearer+x`). Capture the separator and the run after it.
+_BEARER_SCHEME = re.compile(
+    r"(?<![a-z0-9])bearer[\"'`\u2018\u2019\u201c\u201d]?([\s:=,;(|/+%]+)(\S*)"
+)
+_BEARER_PLAIN_SEPARATOR = re.compile(r"[\s:,]+")
+_BEARER_TRAILING = ".,;:!?)]\"'`\u2018\u2019\u201c\u201d"
+
+
+def _has_bearer_value(probe: str) -> bool:
+    # Keep only a short plain word after a space, colon or comma ("the bearer
+    # of the news", "bearer bonds") or a bare prefix literal
+    # (`startswith("Bearer ")`). Any other separator (`=`, `;`, `(`, `|`, `/`,
+    # `+`, `%`), an opening quote, digits, punctuation, directives and long
+    # runs can all be credentials, so they redact the whole text.
+    for match in _BEARER_SCHEME.finditer(probe):
+        word = match[2].rstrip(_BEARER_TRAILING)
+        if word and (
+            not _BEARER_PLAIN_SEPARATOR.fullmatch(match[1])
+            or not (word.isalpha() and len(word) < 20)
+        ):
+            return True
+    return False
 
 
 def _is_sensitive_key(key: Any) -> bool:
@@ -222,7 +246,7 @@ def _scrub_text(value: Any) -> str:
     if type(value) is not str or len(value) > _MAX_TEXT:
         return _REDACTED
     probe = _USAGE_COUNT.sub("", value).lower()
-    if any(s in probe for s in _SENSITIVE_TEXT):
+    if any(s in probe for s in _SENSITIVE_TEXT) or _has_bearer_value(probe):
         return _REDACTED
     return value
 
