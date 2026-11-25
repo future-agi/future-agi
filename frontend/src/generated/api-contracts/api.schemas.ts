@@ -20540,6 +20540,8 @@ export type HarnessEnvironmentApiStatus =
   (typeof HarnessEnvironmentApiStatus)[keyof typeof HarnessEnvironmentApiStatus];
 
 export const HarnessEnvironmentApiStatus = {
+  reading: "reading",
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -20588,6 +20590,8 @@ export interface HarnessEnvironmentApi {
 }
 
 export interface HarnessEnvironmentStatusCountsApi {
+  reading: number;
+  awaiting_approval: number;
   building: number;
   running: number;
   completed: number;
@@ -20666,6 +20670,8 @@ export type HarnessEnvironmentOverviewApiStatus =
   (typeof HarnessEnvironmentOverviewApiStatus)[keyof typeof HarnessEnvironmentOverviewApiStatus];
 
 export const HarnessEnvironmentOverviewApiStatus = {
+  reading: "reading",
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -47926,6 +47932,8 @@ export type SimulateApiHarnessEnvironmentsListStatus =
   (typeof SimulateApiHarnessEnvironmentsListStatus)[keyof typeof SimulateApiHarnessEnvironmentsListStatus];
 
 export const SimulateApiHarnessEnvironmentsListStatus = {
+  reading: "reading",
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",

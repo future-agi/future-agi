@@ -53339,6 +53339,8 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "reading",
+                            "awaiting_approval",
                             "building",
                             "running",
                             "completed",
@@ -148833,6 +148835,8 @@
                     "title": "Status",
                     "type": "string",
                     "enum": [
+                        "reading",
+                        "awaiting_approval",
                         "building",
                         "running",
                         "completed",
@@ -148897,6 +148901,8 @@
         },
         "HarnessEnvironmentStatusCounts": {
             "required": [
+                "reading",
+                "awaiting_approval",
                 "building",
                 "running",
                 "completed",
@@ -148904,6 +148910,14 @@
             ],
             "type": "object",
             "properties": {
+                "reading": {
+                    "title": "Reading",
+                    "type": "integer"
+                },
+                "awaiting_approval": {
+                    "title": "Awaiting approval",
+                    "type": "integer"
+                },
                 "building": {
                     "title": "Building",
                     "type": "integer"
@@ -149217,6 +149231,8 @@
                     "title": "Status",
                     "type": "string",
                     "enum": [
+                        "reading",
+                        "awaiting_approval",
                         "building",
                         "running",
                         "completed",

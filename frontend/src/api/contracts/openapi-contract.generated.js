@@ -29546,7 +29546,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["building", "running", "completed", "failed"],
+              enum: [
+                "reading",
+                "awaiting_approval",
+                "building",
+                "running",
+                "completed",
+                "failed",
+              ],
             },
           },
           agent_type: {
@@ -115471,7 +115478,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["building", "running", "completed", "failed"],
+          enum: [
+            "reading",
+            "awaiting_approval",
+            "building",
+            "running",
+            "completed",
+            "failed",
+          ],
         },
         stage: {
           title: "Stage",
@@ -115840,7 +115854,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["building", "running", "completed", "failed"],
+          enum: [
+            "reading",
+            "awaiting_approval",
+            "building",
+            "running",
+            "completed",
+            "failed",
+          ],
         },
         stage: {
           title: "Stage",
@@ -115896,9 +115917,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentStatusCounts: {
-      required: ["building", "running", "completed", "failed"],
+      required: [
+        "reading",
+        "awaiting_approval",
+        "building",
+        "running",
+        "completed",
+        "failed",
+      ],
       type: "object",
       properties: {
+        reading: {
+          title: "Reading",
+          type: "integer",
+        },
+        awaiting_approval: {
+          title: "Awaiting approval",
+          type: "integer",
+        },
         building: {
           title: "Building",
           type: "integer",
