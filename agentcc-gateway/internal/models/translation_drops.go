@@ -66,8 +66,19 @@ func GeminiOmittedParams(req *ChatCompletionRequest) []string {
 	if req == nil {
 		return nil
 	}
+	tools := req.Tools
+	allowed, err := ParseAllowedToolsChoice(req.ToolChoice)
+	if err != nil {
+		return nil
+	}
+	if allowed != nil {
+		tools, err = allowed.Filter(tools)
+		if err != nil {
+			return nil
+		}
+	}
 	var params []string
-	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(req.Tools) > 0 {
+	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(tools) > 0 {
 		var choice string
 		_ = json.Unmarshal(req.ToolChoice, &choice)
 		// NONE already permits zero calls, satisfying the restriction.
@@ -75,7 +86,7 @@ func GeminiOmittedParams(req *ChatCompletionRequest) []string {
 			params = append(params, "parallel_tool_calls")
 		}
 	}
-	for _, tool := range req.Tools {
+	for _, tool := range tools {
 		if tool.IsFunction() && tool.HasNonDirectCallerPolicy() {
 			params = append(params, "allowed_callers")
 			break
