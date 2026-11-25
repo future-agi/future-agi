@@ -40,6 +40,9 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# Marks an exhausted iterator in the explicit-stack tree walk below.
+_EXHAUSTED = object()
+
 
 def _parse_output_str_list(raw) -> list[str]:
     """Parse a CHOICES eval's ``output_str_list`` (CH JSON string or native list)."""
@@ -526,16 +529,18 @@ def retrieve_trace_detail_ch(
                 },
             )
 
-    # Clean up internal fields
-    def _clean_entry(entry):
+    # Clean up internal fields. A stack of child iterators visits the entries
+    # in the recursive walk's order (each root's subtree, then each orphan's)
+    # without one Python frame per tree level, so a parent chain as long as
+    # the span cap cannot reach the interpreter recursion limit.
+    clean_pending = [iter(orphan_spans), iter(root_spans)]
+    while clean_pending:
+        entry = next(clean_pending[-1], _EXHAUSTED)
+        if entry is _EXHAUSTED:
+            clean_pending.pop()
+            continue
         del entry["_parent_id"]
-        for child in entry["children"]:
-            _clean_entry(child)
-
-    for entry in root_spans:
-        _clean_entry(entry)
-    for entry in orphan_spans:
-        _clean_entry(entry)
+        clean_pending.append(iter(entry["children"]))
 
     observation_spans_response = root_spans + orphan_spans
 
