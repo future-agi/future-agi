@@ -4,6 +4,7 @@ import re
 
 from django.db import transaction
 from django.utils import timezone
+from temporalio import activity
 
 from simulate.models import HarnessSourceReview
 from simulate.services.harness_storage import remove_private
@@ -36,8 +37,26 @@ def expire_environment_source_import(object_key: str) -> dict[str, bool]:
     return {"expired": True}
 
 
-@temporal_activity(time_limit=14400, max_retries=3, retry_delay=60, queue="simulation_runner")
+_GENERATION_RETRIES = 3
+
+
+@temporal_activity(
+    time_limit=14400,
+    max_retries=_GENERATION_RETRIES,
+    retry_delay=60,
+    queue="simulation_runner",
+)
 def generate_environment_source_scenarios(generation_id: str) -> dict:
     from simulate.services.harness_source_generation import process
 
-    return process(generation_id)
+    if not activity.in_activity():
+        return process(generation_id)
+    info = activity.info()
+    attempts = (
+        info.retry_policy.maximum_attempts
+        if info.retry_policy is not None
+        else _GENERATION_RETRIES + 1
+    )
+    return process(
+        generation_id, retry_available=attempts == 0 or info.attempt < attempts
+    )

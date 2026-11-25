@@ -814,3 +814,89 @@ def test_writer_cleanup_preserves_result_or_writer_error(monkeypatch, writer_exi
     else:
         assert writer.author_additions(owner, files, {}, []) == files
     sandbox.delete.assert_called_once()
+
+
+@pytest.fixture
+def queued_source_job(user, workspace):
+    from django.utils import timezone
+
+    owner = _environment(user, workspace, "source-generation-retry")
+    basis = harness_source_generation._basis(owner)
+    review = reviews.HarnessSourceReview.objects.create(
+        owner=owner,
+        owner_kind="environment",
+        organization=user.organization,
+        workspace=workspace,
+        state="accepted",
+        basis={**basis, "suite_draft": basis["suite"]},
+        receipt={"draft": basis["environment"]},
+        expires_at=timezone.now() + timedelta(days=1),
+    )
+    return reviews.HarnessSourceScenarioGeneration.objects.create(
+        review=review, requested_count=1, source_digest="sha256:example", basis=basis
+    )
+
+
+@pytest.mark.parametrize("hosted_error", [False, True])
+def test_source_generation_reports_exhausted_activity_retries(
+    queued_source_job, monkeypatch, hosted_error
+):
+    from dataclasses import replace
+
+    from temporalio.common import RetryPolicy
+    from temporalio.testing import ActivityEnvironment
+
+    from simulate.tasks.environment_source_imports import (
+        generate_environment_source_scenarios,
+    )
+
+    job = queued_source_job
+    error = (
+        HostedHarnessError("sandbox_unavailable", "temporary", retryable=True)
+        if hosted_error
+        else ConnectionError("provider disconnected")
+    )
+
+    def offline(*args):
+        raise error
+
+    monkeypatch.setattr(harness_source_generation, "_generate", offline)
+    env = ActivityEnvironment()
+    for attempt in (1, 2):
+        env.info = replace(
+            env.info, attempt=attempt, retry_policy=RetryPolicy(maximum_attempts=2)
+        )
+        with pytest.raises(type(error)):
+            env.run(generate_environment_source_scenarios._original_func, str(job.pk))
+        job.refresh_from_db()
+        assert job.state == ("queued" if attempt == 1 else "failed")
+    assert job.error == (
+        "sandbox_unavailable" if hosted_error else "source_generation_failed"
+    )
+
+
+def test_source_dispatch_failure_can_be_replayed(
+    queued_source_job, monkeypatch, django_capture_on_commit_callbacks
+):
+    from unittest.mock import Mock
+
+    from simulate.tasks.environment_source_imports import (
+        generate_environment_source_scenarios,
+    )
+
+    job = queued_source_job
+    submit = Mock(side_effect=[ConnectionError("dispatch failed"), None])
+    monkeypatch.setattr(generate_environment_source_scenarios, "apply_async", submit)
+    assert not harness_source_generation.dispatch(job.pk)
+    job.refresh_from_db()
+    assert (job.state, job.error) == ("failed", "source_generation_dispatch_failed")
+    monkeypatch.setattr(
+        harness_sources,
+        "read_accepted_snapshot",
+        lambda *_: ({}, {"snapshot_digest": job.source_digest}),
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_source_generation.reserve(job.review, job.reviewer)
+    job.refresh_from_db()
+    assert (job.state, job.error) == ("queued", "")
+    assert submit.call_count == 2

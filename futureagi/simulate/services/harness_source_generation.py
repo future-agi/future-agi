@@ -47,6 +47,9 @@ def summary(job):
     }
 
 
+_DISPATCH_ERROR = "source_generation_dispatch_failed"
+
+
 def dispatch(identifier):
     from simulate.tasks.environment_source_imports import (
         generate_environment_source_scenarios,
@@ -60,7 +63,9 @@ def dispatch(identifier):
             dispatch_timeout_seconds=30,
         )
     except Exception:
-        # A queued row survives delivery failure and can be re-delivered by POST or the platform sweep.
+        Generation.objects.filter(pk=identifier, state=Generation.State.QUEUED).update(
+            state=Generation.State.FAILED, error=_DISPATCH_ERROR
+        )
         return False
     return True
 
@@ -76,7 +81,7 @@ def reserve(row, user):
         "environment": row.receipt["draft"],
         "suite": row.basis["suite_draft"],
     }
-    job, created = Generation.objects.get_or_create(
+    job, _ = Generation.objects.get_or_create(
         review=row,
         defaults={
             "reviewer": user,
@@ -85,7 +90,12 @@ def reserve(row, user):
             "basis": basis,
         },
     )
-    if created or job.state == Generation.State.QUEUED:
+    if job.state == Generation.State.FAILED and job.error == _DISPATCH_ERROR:
+        Generation.objects.filter(
+            pk=job.pk, state=job.state, error=_DISPATCH_ERROR
+        ).update(state=Generation.State.QUEUED, error="")
+        job.refresh_from_db()
+    if job.state == Generation.State.QUEUED:
         transaction.on_commit(lambda: dispatch(job.id))
     return job
 
@@ -379,7 +389,7 @@ def _apply(generation_id, archive, digest, generated):
     generation.save(update_fields=["state", "result", "error"])
 
 
-def process(generation_id):
+def process(generation_id, *, retry_available=False):
     job = Generation.objects.select_related("review__owner").get(pk=generation_id)
     if job.state not in {Generation.State.QUEUED, Generation.State.RUNNING}:
         return summary(job)
@@ -397,24 +407,24 @@ def process(generation_id):
         result, approved, snapshot = _generate(job, owner)
         archive, digest, generated = _prepare(job, owner, result, approved, snapshot)
         _apply(job.id, archive, digest, generated)
-    except HostedHarnessError as exc:
-        if exc.retryable:
-            Generation.objects.filter(pk=job.pk, state=Generation.State.RUNNING).update(
-                state=Generation.State.QUEUED
-            )
+    except Exception as exc:
+        code = (
+            exc.code
+            if isinstance(exc, HostedHarnessError)
+            else "source_generation_failed"
+        )
+        retryable = not isinstance(exc, HostedHarnessError) or exc.retryable
+        running = Generation.objects.filter(pk=job.pk, state=Generation.State.RUNNING)
+        if retryable and retry_available:
+            running.update(state=Generation.State.QUEUED, error="")
             raise
-        Generation.objects.filter(pk=job.pk, state=Generation.State.RUNNING).update(
-            state=(
-                Generation.State.STALE
-                if exc.code in {"source_generation_stale", "draft_changed"}
-                else Generation.State.FAILED
-            ),
-            error=exc.code,
+        state = (
+            Generation.State.STALE
+            if code in {"source_generation_stale", "draft_changed"}
+            else Generation.State.FAILED
         )
-    except Exception:
-        Generation.objects.filter(pk=job.pk, state=Generation.State.RUNNING).update(
-            state=Generation.State.QUEUED
-        )
-        raise
+        running.update(state=state, error=code)
+        if retryable:
+            raise
     job.refresh_from_db()
     return summary(job)
