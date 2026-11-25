@@ -31,6 +31,8 @@ export const SCENARIOS_COPY = {
   editLabel: "Edit scenario",
   openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
+  removeArchived: "Archived scenarios don't run. Restore it to remove it.",
+  deleteArchived: "Archived scenarios don't run. Restore them to delete them.",
   filterLabel: "Filter",
   filterTitle: "Filter by use case",
   clearLabel: "Clear",
@@ -183,6 +185,10 @@ export const LIFECYCLE_COPY = {
 // run yet.
 export const hasUnsavedChange = (row) =>
   row?.draftChange === "added" || row?.draftChange === "changed";
+export const isArchived = (row) => row?.lifecycle?.state === "archived";
+// Removing an archived scenario would wait in the unsaved changes while Restore says it runs again.
+export const removeTitle = (row) =>
+  isArchived(row) ? SCENARIOS_COPY.removeArchived : SCENARIOS_COPY.removeLabel;
 export const isUnsavedAddition = (row) => row?.draftChange === "added";
 // The ids a header checkbox selects: every row but the unsaved additions.
 export const selectableRowIds = (rows) =>

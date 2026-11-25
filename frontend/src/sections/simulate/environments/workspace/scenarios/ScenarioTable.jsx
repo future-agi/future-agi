@@ -35,7 +35,9 @@ import {
 import {
   ROW_HEIGHTS,
   SCENARIOS_COPY,
+  isArchived,
   isUnsavedAddition,
+  removeTitle,
   unsavedCheckboxProps,
 } from "./scenarios.constants";
 import { personaSubline } from "./personaLabels";
@@ -625,19 +627,23 @@ export default function ScenarioTable({
                     </Tooltip>
                     <Tooltip
                       arrow
-                      title={locked ? lockTooltip : SCENARIOS_COPY.removeLabel}
+                      title={locked ? lockTooltip : removeTitle(row)}
                     >
                       <Box component="span" sx={{ display: "inline-flex" }}>
                         <IconButton
                           size="small"
-                          disabled={locked}
+                          disabled={locked || isArchived(row)}
                           aria-label={SCENARIOS_COPY.removeLabel}
                           onClick={() => onRemove(row.id)}
                         >
                           <Iconify
                             icon="solar:trash-bin-trash-linear"
                             width={15}
-                            sx={{ color: "text.subtitle" }}
+                            sx={{
+                              color: isArchived(row)
+                                ? "action.disabled"
+                                : "text.subtitle",
+                            }}
                           />
                         </IconButton>
                       </Box>

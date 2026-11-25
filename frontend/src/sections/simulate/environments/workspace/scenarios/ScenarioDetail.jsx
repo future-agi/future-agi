@@ -23,7 +23,7 @@ const onKeyActivate = (fn) => (e) => {
   }
 };
 
-export default function ScenarioDetail({ row, defaultOpen = false }) {
+export default function ScenarioDetail({ row, defaultOpen = false, mark = null }) {
   const [open, setOpen] = useState(defaultOpen);
   const s = row;
   if (!s) return null;
@@ -52,6 +52,7 @@ export default function ScenarioDetail({ row, defaultOpen = false }) {
         >
           {s.name || s.title}
         </Typography>
+        {mark}
         {s.summary && (
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
             {s.summary}
@@ -193,6 +194,8 @@ ScenarioDetailBody.propTypes = {
 ScenarioDetail.propTypes = {
   row: SCENARIO_SHAPE,
   defaultOpen: PropTypes.bool,
+  // The scenario's state, beside its name.
+  mark: PropTypes.node,
 };
 
 function PolicyRow({ label, children }) {

@@ -28,7 +28,7 @@ import TrialsPicker from "./TrialsPicker";
  * disabled, with the reason on hover, rather than leaving it out.
  */
 export default function SelectionBar({
-  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching,
+  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, deleteBlockedReason, onClear, matching,
 }) {
   const k = Math.max(1, Math.min(20, Number(trials) || 1));
   const totalRuns = count * k;
@@ -138,18 +138,17 @@ export default function SelectionBar({
       {/* The actions move as one: on a narrow bar they wrap together, right-aligned. */}
       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ ml: "auto", flexShrink: 0 }}>
         {/* DESTRUCTIVE — Delete */}
-        <CustomTooltip show arrow size="small" title="Delete selected scenarios">
-          <Button
-            size="small"
-            onClick={onDelete}
-            variant="outlined"
-            color="inherit"
-            startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
-            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
-          >
-            Delete
-          </Button>
-        </CustomTooltip>
+        {deleteBlockedReason ? (
+          <CustomTooltip show arrow size="small" title={deleteBlockedReason}>
+            <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
+              <DeleteButton disabled />
+            </Box>
+          </CustomTooltip>
+        ) : (
+          <CustomTooltip show arrow size="small" title="Delete selected scenarios">
+            <DeleteButton onClick={onDelete} />
+          </CustomTooltip>
+        )}
 
         {/* TRIALS — reliability dial */}
         {onTrialsChange && (
@@ -183,6 +182,22 @@ export default function SelectionBar({
     </Stack>
   );
 }
+const DeleteButton = forwardRef(function DeleteButton(props, ref) {
+  return (
+    <Button
+      ref={ref}
+      {...props}
+      size="small"
+      variant="outlined"
+      color="inherit"
+      startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
+      sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+    >
+      Delete
+    </Button>
+  );
+});
+
 // The bar's primary action: Run simulation (N).
 const RunButton = forwardRef(function RunButton({ label, onClick, disabled = false, ...other }, ref) {
   return (
@@ -214,6 +229,8 @@ SelectionBar.propTypes = {
   // Why Run is unavailable; shows the button disabled with this on hover.
   runBlockedReason: PropTypes.string,
   onDelete: PropTypes.func.isRequired,
+  // Why Delete is unavailable; shows the button disabled with this on hover.
+  deleteBlockedReason: PropTypes.string,
   onClear: PropTypes.func.isRequired,
   // Select-all-matching context from the pagination predicate. Absent → a plain
   // page selection with no escalation. { mode, total, pageCount, onSelectAll }.

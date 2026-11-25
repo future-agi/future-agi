@@ -711,6 +711,8 @@ describe("ScenariosStep lifecycle", () => {
     expect(
       screen.getByRole("button", { name: "Filter (1)" }),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
     fireEvent.click(archived);
     expect(archived).toHaveAttribute("aria-pressed", "false");
   });

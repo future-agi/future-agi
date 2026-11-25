@@ -7,7 +7,7 @@ import Iconify from "src/components/iconify";
 import { ARCHIVE_REASON_MAX } from "src/api/simulate-environments/scenarios";
 import { useArchiveScenario } from "src/api/simulate-environments/scenariosHooks";
 import { refusalText } from "../evals/refusalText";
-import { LIFECYCLE_COPY } from "./scenarios.constants";
+import { LIFECYCLE_COPY, isArchived } from "./scenarios.constants";
 import { isRunnable } from "./lifecycleView";
 
 const COPY = LIFECYCLE_COPY.archive;
@@ -21,7 +21,7 @@ export default function ArchiveScenarioButton({ envId, row, onChanged }) {
   const [anchor, setAnchor] = useState(null);
   const [note, setNote] = useState("");
   const mutation = useArchiveScenario(envId);
-  const archived = row?.lifecycle?.state === "archived";
+  const archived = isArchived(row);
   // A scenario only the unsaved changes add can't be archived; it is removed instead.
   if (!row?.lifecycle || !row.scenarioKey || row.draftChange === "added")
     return null;

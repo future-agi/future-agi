@@ -155,6 +155,7 @@ export default function PagedScenarioViews({
             selection={selection}
             locked={locked}
             lockTooltip={lockTooltip}
+            isValidating={isValidating}
           />
         )}
       </Box>

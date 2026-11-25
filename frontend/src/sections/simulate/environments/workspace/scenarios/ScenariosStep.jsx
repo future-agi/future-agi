@@ -686,6 +686,11 @@ export default function ScenariosStep({
                     <SelectionBar
                       count={sel.count}
                       onDelete={bulkDelete}
+                      deleteBlockedReason={
+                        showingArchived
+                          ? SCENARIOS_COPY.deleteArchived
+                          : undefined
+                      }
                       onClear={sel.clear}
                       onRun={
                         canRun && onStartRun ? handleRunSelected : undefined
