@@ -15,7 +15,7 @@ rewrite and ``_v2_rewrite_exclude`` stays empty.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -31,6 +31,7 @@ from tracer.services.eval_tiles import build_eval_rollup
 from tracer.utils.helper import _normalize_eval_output_type
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from uuid import UUID
 
     from rest_framework.request import Request
@@ -533,12 +534,16 @@ def retrieve_trace_detail_ch(
     # in the recursive walk's order (each root's subtree, then each orphan's)
     # without one Python frame per tree level, so a parent chain as long as
     # the span cap cannot reach the interpreter recursion limit.
-    clean_pending = [iter(orphan_spans), iter(root_spans)]
+    clean_pending: list[Iterator[dict[str, Any]]] = [
+        iter(orphan_spans),
+        iter(root_spans),
+    ]
     while clean_pending:
-        entry = next(clean_pending[-1], _EXHAUSTED)
-        if entry is _EXHAUSTED:
+        item = next(clean_pending[-1], _EXHAUSTED)
+        if item is _EXHAUSTED:
             clean_pending.pop()
             continue
+        entry = cast("dict[str, Any]", item)
         del entry["_parent_id"]
         clean_pending.append(iter(entry["children"]))
 

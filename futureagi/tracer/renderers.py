@@ -7,7 +7,10 @@ stock ``JSONRenderer``: it raises ``RecursionError`` after the view returned,
 and the client gets a generic server error.
 """
 
+from typing import Any
+
 from rest_framework import renderers as drf_renderers
+from rest_framework.compat import LONG_SEPARATORS, SHORT_SEPARATORS
 
 from tfc.utils.contants import RESULT_KEY_NAME
 
@@ -51,11 +54,8 @@ class TraceDetailJSONRenderer(drf_renderers.JSONRenderer):
         exact list as ``[`` + ``item_separator``-joined values + ``]``. A value
         encodes to the same text wherever it sits, so the pieces are spliced.
         """
-        separators = (
-            drf_renderers.SHORT_SEPARATORS
-            if self.compact
-            else drf_renderers.LONG_SEPARATORS
-        )
+        # The separators JSONRenderer.render takes from rest_framework.compat.
+        separators = SHORT_SEPARATORS if self.compact else LONG_SEPARATORS
         item_separator, key_separator = separators
         # Exactly the encoder json.dumps builds for JSONRenderer.render.
         encode = self.encoder_class(
@@ -68,10 +68,11 @@ class TraceDetailJSONRenderer(drf_renderers.JSONRenderer):
             default=None,
             sort_keys=False,
         ).encode
-        encoded_keys = {}
-        parts = []
-        open_containers = set()
-        pending = [(_TREE, data)]
+        encoded_keys: dict[str, str] = {}
+        parts: list[str] = []
+        open_containers: set[int] = set()
+        pending: list[tuple[int, Any]] = [(_TREE, data)]
+        items: list[tuple[int, Any]]
         while pending:
             kind, value = pending.pop()
             if kind == _TEXT:

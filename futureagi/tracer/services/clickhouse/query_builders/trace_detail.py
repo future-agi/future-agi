@@ -18,7 +18,7 @@ view wraps.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
 from tracer.services.clickhouse.query_builders.trace_usage import (
     CaptureCoverage,
@@ -27,6 +27,8 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from rest_framework.request import Request
 
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
@@ -84,24 +86,28 @@ def compute_trace_summary_and_graph(
     call this so the two interchangeable paths cannot drift in the totals or the
     graph shape. Works with both PG and CH span dicts.
     """
-    all_spans = []
-    graph_nodes = []
-    graph_edges = []
+    all_spans: list[dict[str, Any]] = []
+    graph_nodes: list[dict[str, Any]] = []
+    graph_edges: list[dict[str, Any]] = []
 
     # Pre-order with siblings in order, the sequence of a recursive walk, kept
     # on an explicit stack of child iterators so a deep span tree does not
     # reach the interpreter recursion limit. An entry met again inside its own
     # subtree is a cycle, which a recursive walk can only end with
     # RecursionError; raise that at once instead of looping forever.
-    pending = [(iter(spans_tree), None, None)]
-    open_entries = set()
+    pending: list[tuple[Iterator[dict[str, Any]], Any, int | None]] = [
+        (iter(spans_tree), None, None)
+    ]
+    open_entries: set[int] = set()
     while pending:
         entries, parent_id, owner = pending[-1]
-        entry = next(entries, _EXHAUSTED)
-        if entry is _EXHAUSTED:
+        item = next(entries, _EXHAUSTED)
+        if item is _EXHAUSTED:
             pending.pop()
-            open_entries.discard(owner)
+            if owner is not None:
+                open_entries.discard(owner)
             continue
+        entry = cast("dict[str, Any]", item)
         if id(entry) in open_entries:
             raise RecursionError("span tree contains a cycle")
         span = entry.get("observation_span") or entry.get("observationSpan") or {}
