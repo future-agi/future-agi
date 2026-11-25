@@ -99,8 +99,8 @@ export default function RunPlanDrawer({
         sx: {
           height: "100vh",
           position: "fixed",
-          // Shown again over another drawer, it has to sit above it.
-          zIndex: shownOver ? theme.zIndex.drawer + 1 : 110,
+          // Another drawer slides over the same edge: the tab, and the plan shown again, sit above it.
+          zIndex: covered ? theme.zIndex.drawer + 1 : 110,
           boxShadow: "none",
           borderRadius: 0,
           borderLeft: "1px solid",
