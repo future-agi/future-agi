@@ -660,15 +660,18 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         const panel=drawer.getByRole('region',{name:'Conversation',exact:true});
         const slider=panel.getByRole('slider',{name:'Recording position'}), player=panel.locator('audio');
         const play=panel.getByRole('button',{name:'Play recording',exact:true});
-        const peakGrant=page.waitForResponse(exactResolve(voiceProject,item,traceKey,'peaks'));
-        const peakBytes=page.waitForResponse(r=>new URL(r.url()).pathname.includes(`/${item.occurrenceId}/`) && r.headers()['content-type']==='application/octet-stream');
+        // Read each body as soon as it arrives: a browser response body is gone once the page moves on.
+        const peakGrant=page.waitForResponse(exactResolve(voiceProject,item,traceKey,'peaks'))
+          .then(response=>response.json() as Promise<{items:Grant[]}>);
+        const peakBytes=page.waitForResponse(r=>new URL(r.url()).pathname.includes(`/${item.occurrenceId}/`) && r.headers()['content-type']==='application/octet-stream')
+          .then(async response=>({response, body: await response.body()}));
         await drawer.getByRole('button',{name:'Conversation',exact:true}).click();
-        const [peak]=((await (await peakGrant).json()) as {items:Grant[]}).items;
-        const bytes=await peakBytes;
+        const [peak]=(await peakGrant).items;
+        const {response: bytes, body: peakBody}=await peakBytes;
         expect(new URL(bytes.url()).pathname).toBe(peak.gateway_path);
         const descriptor=JSON.parse(bytes.headers()['x-attachment-peaks']);
         expect(descriptor.v).toBe(1);
-        expect((await bytes.body()).length).toBe(4*descriptor.channels*descriptor.levels.reduce((sum:number,l:{buckets:number})=>sum+l.buckets,0));
+        expect(peakBody.length).toBe(4*descriptor.channels*descriptor.levels.reduce((sum:number,l:{buckets:number})=>sum+l.buckets,0));
         await expect(panel.getByTestId('recording-waveform')).toBeVisible();
         // The waveform shows the recording's shape: tall bars for the bursts, nothing for silence.
         const bars = await panel.getByTestId('recording-waveform').evaluate(svg =>
