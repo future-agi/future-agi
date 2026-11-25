@@ -63893,6 +63893,18 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                   .describe(
                     "How many calls to this host were refused; absent on older trials (one).",
                   ),
+                via: zod
+                  .string()
+                  .optional()
+                  .describe(
+                    "`browser` when the environment's browser made the request; absent for the agent's own calls.",
+                  ),
+                what: zod
+                  .enum(["navigation", "page_request"])
+                  .optional()
+                  .describe(
+                    "For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart.",
+                  ),
               })
               .describe(
                 "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
@@ -64482,6 +64494,18 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                       .optional()
                       .describe(
                         "How many calls to this host were refused; absent on older trials (one).",
+                      ),
+                    via: zod
+                      .string()
+                      .optional()
+                      .describe(
+                        "`browser` when the environment's browser made the request; absent for the agent's own calls.",
+                      ),
+                    what: zod
+                      .enum(["navigation", "page_request"])
+                      .optional()
+                      .describe(
+                        "For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart.",
                       ),
                   })
                   .describe(

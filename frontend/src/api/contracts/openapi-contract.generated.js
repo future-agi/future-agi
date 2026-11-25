@@ -147798,6 +147798,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "How many calls to this host were refused; absent on older trials (one).",
           type: "integer",
         },
+        via: {
+          title: "Via",
+          description:
+            "`browser` when the environment's browser made the request; absent for the agent's own calls.",
+          type: "string",
+        },
+        what: {
+          title: "What",
+          description:
+            "For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart.",
+          type: "string",
+          enum: ["navigation", "page_request"],
+        },
       },
     },
     TrialRefusedAction: {

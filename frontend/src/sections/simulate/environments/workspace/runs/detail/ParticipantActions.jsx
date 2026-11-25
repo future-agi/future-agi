@@ -3,8 +3,10 @@ import { Box, Stack, Typography } from "@mui/material";
 import {
   QUIET as quiet,
   TRIAL_CHANGES_COPY as C,
+  BLOCKED_KINDS,
   groupBlocked,
   groupNames,
+  splitBlocked,
   ACTION_TONE,
 } from "./trialChanges.constants";
 
@@ -77,17 +79,23 @@ export function ParticipantActions({ one }) {
         tone="warning"
       />,
     );
-  if (one.blocked?.length)
-    lines.push(
-      <Box key="b">
-        <ActionLine
-          chipTestId="blocked-call"
-          label={C.blockedLabel}
-          names={groupBlocked(one.blocked).map((call) => C.blockedCall(call))}
-          tone="warning"
-        />
-      </Box>,
+  if (one.blocked?.length) {
+    const blocked = splitBlocked(one.blocked);
+    BLOCKED_KINDS.filter((kind) => blocked[kind.key].length).forEach((kind) =>
+      lines.push(
+        <Box key={`b-${kind.key}`}>
+          <ActionLine
+            chipTestId={kind.testId}
+            label={C[kind.label]}
+            names={groupBlocked(blocked[kind.key]).map((call) =>
+              C.blockedCall(call),
+            )}
+            tone="warning"
+          />
+        </Box>,
+      ),
     );
+  }
   if (one.refused_actions?.length)
     lines.push(
       <Box key="x" data-testid="refused-attempts">

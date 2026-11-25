@@ -94,6 +94,10 @@ class BlockedCall(TypedDict, total=False):
     method: str
     tool: str
     count: int
+    # `browser` when the environment's browser made the request.
+    via: str
+    # For the browser: `navigation`, a page the agent tried to open, or `page_request`, a request a page made.
+    what: str
 
 
 # Why the world refused a call until something happened first, as the door records it.

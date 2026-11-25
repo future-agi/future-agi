@@ -28710,6 +28710,17 @@ export interface CallParticipantApi {
 }
 
 /**
+ * For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart.
+ */
+export type BlockedCallApiWhat =
+  (typeof BlockedCallApiWhat)[keyof typeof BlockedCallApiWhat];
+
+export const BlockedCallApiWhat = {
+  navigation: "navigation",
+  page_request: "page_request",
+} as const;
+
+/**
  * Calls to hosts outside the test world, refused before they left: counted in refused, never a change.
  */
 export interface BlockedCallApi {
@@ -28720,6 +28731,10 @@ export interface BlockedCallApi {
   tool?: string;
   /** How many calls to this host were refused; absent on older trials (one). */
   count?: number;
+  /** `browser` when the environment's browser made the request; absent for the agent's own calls. */
+  via?: string;
+  /** For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart. */
+  what?: BlockedCallApiWhat;
 }
 
 export interface TrialRefusedActionApi {

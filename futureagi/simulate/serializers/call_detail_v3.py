@@ -116,6 +116,17 @@ class BlockedCallSerializer(serializers.Serializer):
         required=False,
         help_text="How many calls to this host were refused; absent on older trials (one).",
     )
+    via = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="`browser` when the environment's browser made the request; absent for the agent's own calls.",
+    )
+    what = serializers.ChoiceField(
+        choices=["navigation", "page_request"],
+        required=False,
+        help_text="For the browser: a page the agent tried to open, or a request a page made. Absent where the "
+        "browser's record could not tell them apart.",
+    )
 
 
 class TrialRefusedActionSerializer(serializers.Serializer):
