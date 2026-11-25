@@ -118,28 +118,27 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
   // A compared version that a refresh removed falls back to the previous one.
   const against = others.some((one) => one.id === picked) ? picked : "";
   const first = !against && isFirst(version, siblings);
-  const asked = useVersionDiff(envId, piece, version.id, against || undefined, {
-    enabled: !first,
+  const saved = useVersionDiff(envId, piece, version.id, undefined, {
+    enabled: !isFirst(version, siblings),
   });
   // No change was saved with this version: work it out against the version
   // it was made from instead, which the server can do from both contents.
   const savedMissing =
-    !against &&
-    !first &&
     Boolean(parent) &&
-    !asked.isLoading &&
-    !asked.isError &&
-    asked.data?.diff == null;
-  const live = useVersionDiff(envId, piece, version.id, parent?.id, {
-    enabled: savedMissing,
-  });
+    !saved.isLoading &&
+    !saved.isError &&
+    saved.data?.diff == null;
+  // With nothing to compare against, this is the saved change itself.
+  const target = against || (savedMissing ? parent.id : undefined);
   const {
     data,
-    isLoading,
+    isLoading: loadingFirst,
     isError: refreshFailed,
     // The last comparison, kept while another one loads.
     isPlaceholderData: stale,
-  } = savedMissing ? live : asked;
+  } = useVersionDiff(envId, piece, version.id, target, { enabled: !first });
+  // A last answer with no change in it says nothing about the one loading.
+  const isLoading = loadingFirst || (stale && data?.diff == null);
   // A failed refresh keeps the diff it already has.
   const isError = refreshFailed && !data;
   const noRecord = !first && !isLoading && !isError && data?.diff == null;
@@ -152,7 +151,7 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
 
   // The last comparison stays as it is while the next loads (no skeleton
   // flash, no faded "disabled" look); a thin line on top says it's updating.
-  const updating = stale && !first;
+  const updating = stale && !isLoading && !first;
 
   const note = (text) => (
     <Typography sx={{ typography: "s2", color: "text.secondary" }}>

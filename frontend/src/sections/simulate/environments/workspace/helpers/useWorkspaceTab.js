@@ -14,9 +14,12 @@ export default function useWorkspaceTab() {
   const raw = params.get("tab");
   const tab = TAB_IDS.includes(raw) ? raw : DEFAULT_TAB;
 
-  // `extra` rides along as more params (the Versions tab's `version`).
+  // `extra` rides along as more params (the History tab's `version` or `kind`).
+  // A new link drops the last one's, so the newest always wins.
   const setTab = (next, extra = {}) => {
     const q = new URLSearchParams(params);
+    q.delete("version");
+    q.delete("kind");
     q.set("tab", next);
     Object.entries(extra).forEach(([key, value]) => q.set(key, value));
     setParams(q, { replace: true });

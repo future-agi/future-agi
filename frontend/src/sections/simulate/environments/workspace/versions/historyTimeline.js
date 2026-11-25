@@ -89,7 +89,11 @@ export function groupByDay(entries, now = new Date()) {
     let label = days.earlier;
     if (key === today) label = days.today;
     else if (key === yesterday) label = days.yesterday;
-    else if (date) label = fDate(date, "MMM d");
+    else if (date)
+      label = fDate(
+        date,
+        date.getFullYear() === now.getFullYear() ? "MMM d" : "MMM d, yyyy",
+      );
     const last = groups[groups.length - 1];
     if (last?.key === key) last.entries.push(entry);
     else groups.push({ key, label, entries: [entry] });

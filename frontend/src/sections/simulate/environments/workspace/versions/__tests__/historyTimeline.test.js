@@ -74,7 +74,10 @@ describe("historyTimeline", () => {
           v("e2", "v2", "2026-11-18T23:30:00"),
           v("e1", "v1", null),
         ],
-        suite: [v("s1", "v1", "2026-11-04T08:00:00")],
+        suite: [
+          v("s2", "v2", "2026-11-04T08:00:00"),
+          v("s1", "v1", "2025-11-04T08:00:00"),
+        ],
       }),
     );
     const groups = groupByDay(entries, new Date("2026-11-19T10:00:00"));
@@ -82,6 +85,7 @@ describe("historyTimeline", () => {
       "Today",
       "Yesterday",
       "Nov 4",
+      "Nov 4, 2025",
       "Earlier",
     ]);
     expect(groups.at(-1).entries.map((e) => e.key)).toEqual(["environment:e1"]);

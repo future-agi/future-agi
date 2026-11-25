@@ -898,6 +898,72 @@ describe("EnvironmentWorkspace route shell", () => {
   });
 });
 
+describe("EnvironmentWorkspace history links", () => {
+  const version = (id, label) => ({
+    id,
+    label,
+    status: "active",
+    is_default: true,
+    created_at: NOW,
+  });
+
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+    resetEnvironmentsStore();
+    clearScenarioSelection();
+    getHarnessJob.mockReset();
+    getHarnessJob.mockResolvedValue({
+      ...COMPLETED_JOB,
+      versioning: { enabled: true },
+    });
+    axios.get.mockReset();
+    axios.get.mockImplementation((url) => {
+      if (url.endsWith("/versions/")) {
+        return Promise.resolve({
+          data: {
+            agent: [version("a1", "v4")],
+            environment: [version("e1", "v2")],
+            suite: [version("s1", "v3")],
+          },
+        });
+      }
+      if (/\/harness-environments\/job-done\/$/.test(url)) {
+        return Promise.resolve({ data: DETAIL_NOT_AUTHORED });
+      }
+      return Promise.reject(
+        Object.assign(new Error("Not found"), { statusCode: 404 }),
+      );
+    });
+  });
+
+  it("opens History on the version the bar names", async () => {
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+    await userEvent.click(
+      await screen.findByRole("button", { name: /scenarios v3/ }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Scenarios" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("opens History on environment versions from the header", async () => {
+    renderWorkspace(
+      "/dashboard/simulate/environments/job-done?tab=versions&kind=agent",
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /env v2/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "See full history" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Environment" }),
+      ).toHaveAttribute("aria-pressed", "true"),
+    );
+  });
+});
+
 describe("EnvironmentWorkspace unsaved changes", () => {
   const DRAFT = {
     id: "ed",

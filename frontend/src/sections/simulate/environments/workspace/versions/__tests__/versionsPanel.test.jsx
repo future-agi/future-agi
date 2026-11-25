@@ -33,7 +33,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   const actual = await vi.importActual(
     "src/api/simulate-environments/versions",
   );
-  const { useState } = await import("react");
+  const { useRef, useState } = await import("react");
   return {
     ...actual,
     useMoveDefault: vi.fn(() => {
@@ -89,20 +89,23 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     useVersionDiff: vi.fn(
       (envId, piece, id, against, { enabled = true } = {}) => {
         diffCalls.push({ piece, id, against, enabled });
+        const last = useRef();
         if (!enabled)
           return { data: undefined, isLoading: false, isError: false };
         if (state.diffLoading)
           return { data: undefined, isLoading: true, isError: false };
         // A comparison still loading keeps the previous answer, as
         // placeholderData does.
-        if (state.diffStale)
+        const key = `${id}:${against || ""}`;
+        if (state.diffStale && last.current && last.current.key !== key)
           return {
-            data: state.diffs[`${id}:`],
+            data: last.current.data,
             isLoading: false,
             isError: false,
-            isPlaceholderData: Boolean(against),
+            isPlaceholderData: true,
           };
-        const data = state.diffs[`${id}:${against || ""}`];
+        const data = state.diffs[key];
+        last.current = { key, data };
         return {
           data,
           isLoading: false,
@@ -650,6 +653,28 @@ describe("VersionsPanel", () => {
     expect(within(detail).getByText("issue_refund")).toBeVisible();
   });
 
+  it("doesn't call two versions incomparable while their comparison loads", async () => {
+    const user = userEvent.setup();
+    state.versions = {
+      ...VERSIONS,
+      environment: [...VERSIONS.environment, item({ id: "e0", label: "v0" })],
+    };
+    // Saved without a change, so it's compared with its previous version.
+    state.diffs["e2:"] = { summary: "", diff: null };
+    state.diffs["e2:e1"] = ENV_DIFF;
+    render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
+    state.diffStale = true;
+    await user.click(screen.getByRole("combobox", { name: "Compared with" }));
+    await user.click(screen.getByRole("option", { name: "v0" }));
+
+    const detail = screen.getByTestId("version-detail");
+    expect(
+      within(detail).queryByText("These two versions can't be compared."),
+    ).toBeNull();
+    expect(within(detail).getByText("issue_refund")).toBeVisible();
+  });
+
   it("shows a skeleton while the changes load and an error if they fail", async () => {
     const user = userEvent.setup();
     state.diffLoading = true;
@@ -1001,37 +1026,100 @@ describe("VersionsPanel", () => {
       render(<VersionsPanel env={ENV} />);
       const agent = screen.getByRole("button", { name: "Agent" });
       expect(agent).toHaveAttribute("aria-pressed", "true");
-      // Used once, so the reader's own pick isn't undone.
+      await user.click(screen.getByRole("button", { name: "Scenarios" }));
+      expect(agent).toHaveAttribute("aria-pressed", "false");
+      // Dropped with the pick, so following the same link again works.
       expect(new URLSearchParams(window.location.search).has("kind")).toBe(
         false,
       );
-      await user.click(screen.getByRole("button", { name: "Scenarios" }));
-      expect(agent).toHaveAttribute("aria-pressed", "false");
     } finally {
       window.history.pushState({}, "", "/");
     }
   });
 
-  it("lets a bar link's kind win over an older version link still in the URL", () => {
-    // Left over from a View changes link, then the bar's Agent was clicked.
-    window.history.pushState(
-      {},
-      "",
-      "/?tab=versions&version=suite:s1&kind=agent",
-    );
-    try {
-      render(<VersionsPanel env={ENV} />);
-      expect(screen.getByRole("button", { name: "Agent" })).toHaveAttribute(
+  it("follows the newest of the bar and View changes links", async () => {
+    const user = userEvent.setup();
+    const Links = () => {
+      const { setTab } = useWorkspaceTab();
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => setTab("versions", { version: "suite:s1" })}
+          >
+            View changes
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("versions", { kind: "agent" })}
+          >
+            Bar agent
+          </button>
+        </>
+      );
+    };
+    const click = (name) => user.click(screen.getByRole("button", { name }));
+    const shown = (name) =>
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
         "aria-pressed",
         "true",
       );
-      expect(screen.queryByTestId("version-detail")).toBeNull();
-      expect(new URLSearchParams(window.location.search).has("version")).toBe(
-        false,
+    window.history.pushState({}, "", "/?tab=versions");
+    try {
+      render(
+        <>
+          <Links />
+          <VersionsPanel env={ENV} />
+        </>,
       );
+      await click("View changes");
+      shown("Scenarios");
+      await click("Bar agent");
+      shown("Agent");
+      await click("View changes");
+      shown("Scenarios");
+      // The reader's own pick, then the same link again.
+      await click("Agent");
+      shown("Agent");
+      await click("View changes");
+      shown("Scenarios");
+      expect(row("suite", "v1")).toHaveAttribute("aria-expanded", "true");
     } finally {
       window.history.pushState({}, "", "/");
     }
+  });
+
+  it("starts on a kind that has versions when there is no environment version", () => {
+    state.versions = { ...VERSIONS, environment: [] };
+    render(<VersionsPanel env={ENV} />);
+    expect(screen.queryByText("No environment versions yet.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Agent" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("puts the versions under the day they were made", () => {
+    state.versions = {
+      ...VERSIONS,
+      environment: [
+        { ...VERSIONS.environment[0], created_at: new Date().toISOString() },
+        { ...VERSIONS.environment[1], created_at: "2020-03-04T12:00:00" },
+      ],
+    };
+    render(<VersionsPanel env={ENV} />);
+    const order = [
+      screen.getByText("Today"),
+      row("environment", "v2"),
+      screen.getByText("Mar 4, 2020"),
+      row("environment", "v1"),
+    ];
+    order.slice(1).forEach((node, i) => {
+      expect(
+        order[i].compareDocumentPosition(node) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
   });
 
   it("ignores a link to a version that is no longer listed", () => {
@@ -1241,6 +1329,14 @@ describe("VersionsPanel", () => {
             name: "Roll back to environment v1",
           }),
         ).toHaveAttribute("aria-disabled", "true");
+        await user.hover(
+          within(menu).getByLabelText(
+            "You don't have permission to change versions.",
+          ),
+        );
+        expect(await screen.findByRole("tooltip")).toHaveTextContent(
+          "You don't have permission to change versions.",
+        );
       } finally {
         useSimulationAccess.mockReturnValue({ canEdit: true, canRun: true });
       }

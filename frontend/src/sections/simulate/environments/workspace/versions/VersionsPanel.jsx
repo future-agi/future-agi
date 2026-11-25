@@ -84,29 +84,37 @@ export default function VersionsPanel({ env }) {
   const { data, isLoading, error } = useEnvironmentVersions(env?.id, {
     enabled,
   });
-  // A link (the unsaved-changes bar) may name the version to open.
+  // A link may name the kind to show (the version bar) or the version to open
+  // (the unsaved-changes bar). It holds until the reader picks something, which
+  // drops it from the URL so that following it again counts.
   const [params, setParams] = useSearchParams();
-  const [linkedPiece, linkedId] = (params.get("version") || "").split(":");
-  const [picked, setPicked] = useState(null);
-  const [kind, setKind] = useState("environment");
-  // A link (the version bar) may name the kind to show; used once, so the
-  // reader's own pick isn't undone. It's the newer ask, so it also drops a
-  // version link left in the URL from an earlier visit.
-  const linkedKind = params.get("kind");
-  useEffect(() => {
-    if (!linkedKind) return;
-    if (VERSION_PIECES.includes(linkedKind)) setKind(linkedKind);
-    const q = new URLSearchParams(params);
-    q.delete("kind");
-    q.delete("version");
-    setParams(q, { replace: true });
-  }, [linkedKind, params, setParams]);
-  useEffect(() => {
-    if (!linkedId || linkedKind) return;
-    setPicked({ piece: linkedPiece, id: linkedId });
-    // Show the linked version's kind, or the filter would hide its row.
-    if (VERSION_PIECES.includes(linkedPiece)) setKind(linkedPiece);
-  }, [linkedPiece, linkedId, linkedKind]);
+  const linkedKind = VERSION_PIECES.includes(params.get("kind"))
+    ? params.get("kind")
+    : null;
+  const [linkedPiece, linkedId] = (
+    (!linkedKind && params.get("version")) ||
+    ""
+  ).split(":");
+  const [own, setOwn] = useState({ kind: null, picked: null });
+  const picked = linkedId ? { piece: linkedPiece, id: linkedId } : own.picked;
+  // Environment first, unless it has no versions and another kind does.
+  const startKind = data?.environment?.length
+    ? "environment"
+    : VERSION_PIECES.find((one) => data?.[one]?.length) ?? "environment";
+  const kind =
+    linkedKind ??
+    (linkedId && VERSION_PIECES.includes(linkedPiece) ? linkedPiece : null) ??
+    own.kind ??
+    startKind;
+  const choose = (next) => {
+    setOwn({ kind, picked, ...next });
+    if (params.has("version") || params.has("kind")) {
+      const q = new URLSearchParams(params);
+      q.delete("version");
+      q.delete("kind");
+      setParams(q, { replace: true });
+    }
+  };
   // Held here so a refusal outlives the refresh that re-renders the row.
   const move = useMoveDefault(env?.id);
   const entries = useMemo(() => timelineEntries(data), [data]);
@@ -174,13 +182,10 @@ export default function VersionsPanel({ env }) {
 
   const pick = (entry, open) => {
     move.reset();
-    setPicked(open ? { piece: entry.piece, id: entry.version.id } : null);
-    // So the next link to a version counts as a change.
-    if (params.has("version")) {
-      const q = new URLSearchParams(params);
-      q.delete("version");
-      setParams(q, { replace: true });
-    }
+    choose({
+      kind: entry.piece,
+      picked: open ? { piece: entry.piece, id: entry.version.id } : null,
+    });
   };
 
   const { tiles } = COPY;
@@ -269,7 +274,7 @@ export default function VersionsPanel({ env }) {
             size="small"
             value={kind}
             // One kind is always picked; clicking it again keeps it.
-            onChange={(_, next) => next && setKind(next)}
+            onChange={(_, next) => next && choose({ kind: next })}
             aria-label={COPY.filterLabel}
             sx={{ flexShrink: 0 }}
           >
