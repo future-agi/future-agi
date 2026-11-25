@@ -243,7 +243,14 @@ def test_build_preflight_refuses_a_version_the_build_would_refuse(
             " checked. Sync the agent to make a version that can be built"
         ),
     }
-    built = _post(client, workspace, _creation(agent))
+    dialog_request = _body(
+        source={"kind": "provider", "visibility": "public"},
+        metadata={
+            "agent_definition_id": str(agent.id),
+            "agent_version_id": str(version.id),
+        },
+    )
+    built = _post(client, workspace, dialog_request)
     assert built.status_code == status.HTTP_409_CONFLICT, built.content
     assert built.json()["error"] == "version_not_buildable"
 
