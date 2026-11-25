@@ -944,7 +944,7 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
  "environment_faults": 1}
 ```
 
-- `manifest.binding_proof` is `null` when the binding is not `tool_routed`.
+- `manifest.binding_proof` is absent when the binding is not `tool_routed` (§2.5).
 - `run_mode` is the binding's mode; `origin` comes from the suite manifest.
 - A trial is a scenario's receipt per trial index. `errored` trials are
   environment faults: counted in `environment_faults` and excluded from rates.

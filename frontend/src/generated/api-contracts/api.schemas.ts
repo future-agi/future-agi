@@ -20908,6 +20908,11 @@ export interface HarnessJobReadApi {
   versioning?: HarnessVersioningFlagsApi;
 }
 
+export interface HarnessAdaptationApprovedApi {
+  /** The adaptation that was approved. */
+  id: string;
+}
+
 /**
  * checking: the mapping is still being checked on every case; awaiting_approval: Approve and build may be pressed; building: approved; ready: the environment exists.
  */
@@ -23686,6 +23691,8 @@ export type HarnessRunReportManifestApiSuite = { [key: string]: string };
 
 export type HarnessRunReportManifestApiBinding = { [key: string]: string };
 
+export type HarnessRunReportManifestApiBindingProof = { [key: string]: string };
+
 export type HarnessRunReportManifestApiAgent = { [key: string]: string };
 
 export type HarnessRunReportManifestApiSelection = { [key: string]: string };
@@ -23702,6 +23709,7 @@ export interface HarnessRunReportManifestApi {
   environment: HarnessRunReportManifestApiEnvironmentItem[];
   suite: HarnessRunReportManifestApiSuite;
   binding: HarnessRunReportManifestApiBinding;
+  binding_proof?: HarnessRunReportManifestApiBindingProof;
   agent: HarnessRunReportManifestApiAgent;
   selection: HarnessRunReportManifestApiSelection;
   simulator: HarnessRunReportManifestApiSimulator;

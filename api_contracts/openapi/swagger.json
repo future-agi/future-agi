@@ -53313,6 +53313,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "202": {
                         "description": "",
                         "schema": {
@@ -53355,10 +53361,16 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "202": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/HarnessJobRead"
+                            "$ref": "#/definitions/HarnessAdaptationApproved"
                         }
                     },
                     "404": {
@@ -55634,6 +55646,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "201": {
                         "description": "",
                         "schema": {
@@ -56391,6 +56409,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -149381,6 +149405,20 @@
                 }
             }
         },
+        "HarnessAdaptationApproved": {
+            "required": [
+                "id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "The adaptation that was approved.",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "HarnessReleaseFitAgent": {
             "required": [
                 "name",
@@ -156493,6 +156531,14 @@
                 },
                 "binding": {
                     "title": "Binding",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "binding_proof": {
+                    "title": "Binding proof",
                     "type": "object",
                     "additionalProperties": {
                         "type": "string",

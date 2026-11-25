@@ -1821,7 +1821,7 @@ def fail_unscheduled_run(run: HostedHarnessJob) -> bool:
             terminal_at=timezone.now(),
             failure=failure,
         )
-        if failed:
+        if failed and run.test_execution_id:
             TestExecution.no_workspace_objects.filter(id=run.test_execution_id).update(
                 status=TestExecution.ExecutionStatus.FAILED,
                 completed_at=timezone.now(),

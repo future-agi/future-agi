@@ -29519,6 +29519,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessJobRead",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
@@ -29539,7 +29542,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           202: {
-            $ref: "#/definitions/HarnessJobRead",
+            $ref: "#/definitions/HarnessAdaptationApproved",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/ApiTextErrorResponse",
@@ -30661,6 +30667,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           201: {
             $ref: "#/definitions/HarnessHostedAgentResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
@@ -31024,6 +31033,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessReleaseFitResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -71813,6 +71825,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
           maxItems: 100,
+        },
+      },
+    },
+    HarnessAdaptationApproved: {
+      required: ["id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "The adaptation that was approved.",
+          type: "string",
+          format: "uuid",
         },
       },
     },
@@ -116984,6 +117008,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         binding: {
           title: "Binding",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        binding_proof: {
+          title: "Binding proof",
           type: "object",
           additionalProperties: {
             type: "string",
