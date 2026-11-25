@@ -74,7 +74,9 @@ NEW_RUNS = {
     "continuous-gen-stale": 1,
 }
 NEW = {
-    f"new-{name}-run{hop}.json" for name, runs in NEW_RUNS.items() for hop in range(runs)
+    f"new-{name}-run{hop}.json"
+    for name, runs in NEW_RUNS.items()
+    for hop in range(runs)
 }
 DEV = {"dev-historical-closed-run0.json", "dev-historical-gen-closed-run0.json"}
 # Closed sampling with a future deadline: a timer before the first reconcile.
@@ -181,7 +183,8 @@ def test_a_closed_sampling_history_sleeps_on_a_timer_before_its_reconcile(fixtur
         if "timerFiredEventAttributes" in e
         else e["activityTaskScheduledEventAttributes"]["activityType"]["name"]
         for e in events
-        if "timerFiredEventAttributes" in e or "activityTaskScheduledEventAttributes" in e
+        if "timerFiredEventAttributes" in e
+        or "activityTaskScheduledEventAttributes" in e
     ]
     assert order[:5] == [
         "get_workflow_labels_activity",

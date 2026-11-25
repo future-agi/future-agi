@@ -215,7 +215,9 @@ def _reconcile_sync(
         close_old_connections()
 
 
-def _claim_batch_sync(task_id: str, n: int, workflow_generation: str | None = None) -> dict:
+def _claim_batch_sync(
+    task_id: str, n: int, workflow_generation: str | None = None
+) -> dict:
     """Atomically claim up to ``n`` pending entries and flip them to running.
 
     Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` so concurrent claims never grab

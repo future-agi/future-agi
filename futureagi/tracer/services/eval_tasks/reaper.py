@@ -143,12 +143,16 @@ def _record_instant_answers(task: EvalTask, at) -> None:
 
     # Primary: these rows were failed a moment ago, and a replica may not
     # have them yet.
-    ids = EvalLogger.objects.using("default").filter(
-        eval_task_id=str(task.id),
-        status=EvalEntryStatus.ERRORED,
-        error_message=_GAVE_UP,
-        updated_at=at,
-    ).values_list("id", flat=True)
+    ids = (
+        EvalLogger.objects.using("default")
+        .filter(
+            eval_task_id=str(task.id),
+            status=EvalEntryStatus.ERRORED,
+            error_message=_GAVE_UP,
+            updated_at=at,
+        )
+        .values_list("id", flat=True)
+    )
     try:
         with transaction.atomic():
             record_answers(task.id, ids)

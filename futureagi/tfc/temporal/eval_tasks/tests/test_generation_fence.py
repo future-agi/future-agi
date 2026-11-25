@@ -154,7 +154,9 @@ def test_first_write_waits_for_recovery_to_commit_its_handoff(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_replaced_run_cannot_claim_the_new_owners_batch(eval_task, make_pending_entries):
+def test_replaced_run_cannot_claim_the_new_owners_batch(
+    eval_task, make_pending_entries
+):
     """Reconcile refuses a replaced run, but a continuous run claims next: the
     claim itself must select nothing once the task is handed over."""
     first, second = make_pending_entries(eval_task, 2)

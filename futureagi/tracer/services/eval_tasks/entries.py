@@ -443,8 +443,7 @@ def claim_pending_batch(
         )
     with transaction.atomic():
         entries = list(
-            pending.select_for_update(skip_locked=True)
-            .order_by("created_at", "id")[:n]
+            pending.select_for_update(skip_locked=True).order_by("created_at", "id")[:n]
         )
         if entries:
             EvalLogger.objects.filter(id__in=[e.id for e in entries]).update(

@@ -755,7 +755,9 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
 
             claim_lost = False
             try:
-                batch = await _claim(input.task_id, input.batch_size, input.workflow_generation)
+                batch = await _claim(
+                    input.task_id, input.batch_size, input.workflow_generation
+                )
             except ActivityError as exc:
                 # A lost claim reply: handle it as an empty claim, never as a
                 # retry (see _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH). The
@@ -925,7 +927,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                                 generation=state.workflow_generation,
                             )
                             reaped = True
-                        batch = await _claim(state.task_id, state.batch_size, state.workflow_generation)
+                        batch = await _claim(
+                            state.task_id, state.batch_size, state.workflow_generation
+                        )
                         entry_ids = batch["entry_ids"]
                         if entry_ids:
                             self._phase = PHASE_DRAINING
@@ -1027,7 +1031,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 )
                 reaped = True
 
-            batch = await _claim(state.task_id, state.batch_size, state.workflow_generation)
+            batch = await _claim(
+                state.task_id, state.batch_size, state.workflow_generation
+            )
             entry_ids = batch["entry_ids"]
             if entry_ids:
                 self._phase = PHASE_DRAINING
