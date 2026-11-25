@@ -4592,9 +4592,7 @@ def test_a_replayed_launch_after_the_retry_settled_launches_nothing(
 
 
 @pytest.mark.django_db
-def test_a_replayed_launch_hands_back_the_attempt_it_started(
-    organization, monkeypatch
-):
+def test_a_replayed_launch_hands_back_the_attempt_it_started(organization, monkeypatch):
     first = _delivered_run(organization, "run-replayed-started-launch", receipts=0)
     gateway = _lost_by(monkeypatch, "guest_crashed")
     assert gateway.reconcile_completed(first).state == (

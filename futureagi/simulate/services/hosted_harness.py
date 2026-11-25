@@ -131,9 +131,7 @@ class NothingToLaunch(HostedHarnessError):
     """register_attempt registered no attempt; ``attempt`` is the one a launch hands back
     for the workflow to poll instead."""
 
-    def __init__(
-        self, attempt: HostedHarnessAttempt, code: str, message: str
-    ) -> None:
+    def __init__(self, attempt: HostedHarnessAttempt, code: str, message: str) -> None:
         super().__init__(code, message, status_code=409)
         self.attempt = attempt
 
