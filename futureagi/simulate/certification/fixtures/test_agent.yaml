@@ -1,0 +1,4 @@
+mode: connect_only
+call_direction: inbound
+config:
+  assistant_id: agent-one
