@@ -17,6 +17,7 @@ import {
   jobStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { usePrebuiltEnvironments } from "./prebuilt";
+import { keepChat } from "./chatHistory";
 import { conversationInFlight } from "./conversationProjection";
 import { environmentVersionsKey, refreshDrafts } from "./versions";
 
@@ -69,14 +70,56 @@ const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
 // workspace never settles on its "not found" state.
 const isJobNotFound = (error) => errorStatus(error) === 404;
 
-export const harnessJobQuery = (envId, { enabled = true } = {}) => ({
+// Read the job with only the chat events newer than the ones held, a page at a
+// time until caught up.
+const readNewer = async (envId, { conversation_id, events: held }) => {
+  let after = held.at(-1).sequence;
+  let events = [];
+  for (;;) {
+    const job = await getHarnessJob(envId, { eventsAfter: after });
+    // Another conversation, so the cursor was not one of its events.
+    if (job.conversation?.conversation_id !== conversation_id) {
+      return getHarnessJob(envId);
+    }
+    const page = job.conversation.events ?? [];
+    events = [...events, ...page];
+    if (!job.conversation.events_has_newer || !page.length) {
+      return { ...job, conversation: { ...job.conversation, events } };
+    }
+    after = page.at(-1).sequence;
+  }
+};
+
+const readHarnessJob = async (envId, held) => {
+  if (!held?.conversation?.events?.length) return getHarnessJob(envId);
+  try {
+    return await readNewer(envId, held.conversation);
+  } catch (error) {
+    // Only the hosted provider reads from a cursor.
+    if (errorStatus(error) === 501) return getHarnessJob(envId);
+    throw error;
+  }
+};
+
+export const harnessJobQuery = (
+  envId,
+  { enabled = true, queryClient } = {},
+) => ({
   queryKey: ["harness-job", envId],
-  queryFn: () => getHarnessJob(envId),
+  queryFn: () =>
+    readHarnessJob(envId, queryClient?.getQueryData(["harness-job", envId])),
+  structuralSharing: keepChat,
   enabled: Boolean(envId) && enabled,
   retry: (failureCount, error) => !isJobNotFound(error) && failureCount < 3,
   refetchInterval: (query) =>
     isJobNotFound(query.state.error) ? false : jobRefetchInterval(query.state.data),
 });
+
+/** The job poll. Every reader goes through this, so each can ask for only what is new. */
+export const useHarnessJob = (envId, { enabled } = {}) => {
+  const queryClient = useQueryClient();
+  return useQuery(harnessJobQuery(envId, { enabled, queryClient }));
+};
 
 // §6 environment detail. Fetched once on open and refetched by the workspace
 // when the job poll crosses `validating_scenarios` (sections appear) or reaches
@@ -276,7 +319,7 @@ export function useEnvironment(envId) {
   // Catalogue entries have no job. Resolve the local catalogue before issuing
   // either backend lookup, including on a cold workspace load.
   const lookupJob = !clientEnv && !prebuilt.isPending && !templateEnv;
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: lookupJob }));
+  const jobQuery = useHarnessJob(envId, { enabled: lookupJob });
 
   // §6 detail (gated by HARNESS_DETAIL_ENABLED). The job poll stays the live
   // heartbeat (§7); the detail carries no progress, so it is fetched once and

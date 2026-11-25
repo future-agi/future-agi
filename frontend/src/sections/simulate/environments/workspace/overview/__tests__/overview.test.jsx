@@ -8,9 +8,7 @@ import OverviewPanel from "../OverviewPanel";
 
 // The drawer's real-data panel has its own tests; here it only has to mount.
 vi.mock("../../agents/AgentVersionsPanel", () => ({
-  default: ({ env }) => (
-    <div data-testid="agent-versions-panel">{env.id}</div>
-  ),
+  default: ({ env }) => <div data-testid="agent-versions-panel">{env.id}</div>,
 }));
 import { HardRulesCard } from "../OverviewCards";
 
@@ -254,6 +252,20 @@ describe("OverviewPanel", () => {
       await waitFor(() =>
         expect(screen.queryByTestId("agent-versions-panel")).toBeNull(),
       );
+    });
+
+    it("opens from the link in the URL and drops it on close", async () => {
+      const user = userEvent.setup();
+      window.history.pushState({}, "", "/?tab=overview&agentVersions=open");
+      renderPanel({ env: versioned });
+      expect(screen.getByTestId("agent-versions-panel")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() =>
+        expect(screen.queryByTestId("agent-versions-panel")).toBeNull(),
+      );
+      expect(window.location.search).toBe("?tab=overview");
+      window.history.pushState({}, "", "/");
     });
 
     it("offers nothing while versioning is off", () => {
