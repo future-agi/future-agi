@@ -64,6 +64,8 @@ export default function CopyBriefButton({
   onOpened,
   disabledReason,
   sx,
+  openText = null,
+  onPreview = null,
 }) {
   const navigate = useNavigate();
   const integrations = useIntegrations();
@@ -159,7 +161,7 @@ export default function CopyBriefButton({
       <Button
         size="small"
         variant="outlined"
-        onClick={copy}
+        onClick={onPreview || copy}
         startIcon={
           <Iconify
             icon={done ? "solar:check-circle-bold" : "solar:copy-linear"}
@@ -180,7 +182,7 @@ export default function CopyBriefButton({
   const idle = agent
     ? {
         icon: <BrandMark brand={agent.id} size={markSize} tile={false} />,
-        text: `Open in ${agent.label}`,
+        text: openText ? openText(agent.label) : `Open in ${agent.label}`,
         onClick: open,
       }
     : {
@@ -239,7 +241,8 @@ export default function CopyBriefButton({
         <MenuItem
           onClick={() => {
             setMenu(null);
-            copy();
+            if (onPreview) onPreview();
+            else copy();
           }}
           sx={{ typography: "s2" }}
         >
@@ -248,7 +251,7 @@ export default function CopyBriefButton({
             width={16}
             sx={{ mr: 1, color: "text.secondary" }}
           />
-          Copy brief instead
+          {onPreview ? "Preview and copy the brief" : "Copy brief instead"}
         </MenuItem>
         {clouds
           .filter((c) => c.id !== lead?.id)
@@ -360,6 +363,10 @@ export default function CopyBriefButton({
 }
 
 CopyBriefButton.propTypes = {
+  /* (agentLabel) => the lead button's text, e.g. "Open 3 in Claude Code". */
+  openText: PropTypes.func,
+  /* Shows the brief before it is copied (Copy for coding agent drawer). */
+  onPreview: PropTypes.func,
   getBrief: PropTypes.func.isRequired,
   label: PropTypes.string,
   size: PropTypes.oneOf(["small", "medium"]),

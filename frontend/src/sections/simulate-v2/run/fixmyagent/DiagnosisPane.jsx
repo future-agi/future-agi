@@ -15,6 +15,7 @@ import {
   Tab,
   Tabs,
   TextField,
+  Checkbox,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
@@ -27,6 +28,7 @@ import CallScanStrip from "./CallScanStrip";
 import OmegaHandoff from "../OmegaHandoff";
 import ImaginePane from "./ImaginePane";
 import CopyBriefButton from "../../components/CopyBriefButton";
+import { neutralCheckboxSx } from "../../components/primitives";
 import CodingAgentBriefDrawer from "../../components/CodingAgentBriefDrawer";
 import { useSimStore, useConnectedAgents } from "../../store";
 import {
@@ -572,10 +574,13 @@ export default function DiagnosisPane({
         verdict,
         ...flagged.map((a) => `- ${a.label}: ${a.headline}`),
       ].join("\n"),
-      suggestedFix: sorted.map((p) => ({
-        ...p,
-        scope: fixScope(p, { env, limits }),
-      })),
+      /* Only the ticked fixes — the same set Run Epoch acts on. */
+      suggestedFix: sorted
+        .filter((p) => applied[p.id])
+        .map((p) => ({
+          ...p,
+          scope: fixScope(p, { env, limits }),
+        })),
       evidence: byTop.map((t) => ({
         source: scenarioTitle(t.title) || t.id,
         text: decidingMoment(t).text,
@@ -615,6 +620,10 @@ export default function DiagnosisPane({
       model,
     });
   };
+
+  /* What the hand-off sends: one ticked fix gets its own focused brief
+     (the per-card button it replaced); more get the whole diagnosis. */
+  const handBrief = included.length === 1 ? briefFor(included[0]) : brief;
 
   /* Export the diagnosis as a plain-text report. Defensive: restricted
      sandboxes block programmatic downloads, so a failure is swallowed. */
@@ -1156,17 +1165,8 @@ export default function DiagnosisPane({
                     </Typography>
                   )}
                 </Box>
-                {/* For teams whose coding agent makes the edit — it gets the
-                    evidence and the constraints, and submits back here. */}
-                {/* Not for a voice agent built outside Future AGI — no code to edit. */}
-                {!running && !voiceFix && !!sorted.length && (
-                  <CopyBriefButton
-                    size="small"
-                    getBrief={brief}
-                    target={{ kind: "run", envId: env?.id, runId }}
-                    onOpened={onHandToAgent}
-                  />
-                )}
+                {/* Handing to a coding agent is one action at the bottom, for
+                    the ticked fixes — not a button on every card. */}
               </Stack>
               {running && !shownIssues.length && (
                 <Box
@@ -1223,6 +1223,22 @@ export default function DiagnosisPane({
                         {/* Rank — the order to work through them. Until every
                             call is read there is no order yet; the slot is
                             held so the card does not shift when it lands. */}
+                        {/* Ticked fixes are what Run Epoch and Open in Claude
+                            Code act on — every fix starts ticked. */}
+                        {!running && (
+                          <Checkbox
+                            size="small"
+                            checked={!!applied[p.id]}
+                            onChange={() =>
+                              setApplied((prev) => ({
+                                ...prev,
+                                [p.id]: !prev[p.id],
+                              }))
+                            }
+                            inputProps={{ "aria-label": `Include ${p.title}` }}
+                            sx={{ p: 0, mt: "1px", ...neutralCheckboxSx }}
+                          />
+                        )}
                         {rank != null ? (
                           <Typography
                             sx={{
@@ -1381,15 +1397,6 @@ export default function DiagnosisPane({
                                   Edit
                                 </Button>
                               )}
-                            {/* This proposal alone, for a coding agent. */}
-                            {!running && !voiceFix && (
-                              <CopyBriefButton
-                                size="small"
-                                getBrief={briefFor(p)}
-                                target={{ kind: "run", envId: env?.id, runId }}
-                                onOpened={onHandToAgent}
-                              />
-                            )}
                           </Stack>
                           {editing?.id === p.id ? (
                             <Box sx={{ mt: 1.125 }}>
@@ -1639,9 +1646,7 @@ export default function DiagnosisPane({
                         <Iconify icon="solar:magic-stick-3-bold" width={16} />
                       }
                     >
-                      {checksFirst && !running
-                        ? "Run Epoch anyway"
-                        : "Run Epoch"}
+                      {`${checksFirst && !running ? "Run Epoch anyway" : "Run Epoch"}${!running && included.length ? ` on ${included.length} ${included.length === 1 ? "fix" : "fixes"}` : ""}`}
                     </Button>
                   </Box>
                 </Tooltip>
@@ -1652,22 +1657,25 @@ export default function DiagnosisPane({
                 earlier full-width outlined button read as an equal
                 alternative, which it isn't.
               */}
-                {/* Your own coding agent writes the change instead; the drawer
-                    shows what is copied and who pays for the checks. */}
+                {/* One hand-off for the ticked fixes: your own coding agent
+                    writes the change. Open in Claude Code when it's connected;
+                    the caret previews and copies the brief (who pays shown). */}
                 {!voiceFix && (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="inherit"
-                    disabled={running || !sorted.length}
-                    onClick={() => setBriefOpen(true)}
-                    startIcon={
-                      <Iconify icon="solar:programming-linear" width={16} />
+                  <CopyBriefButton
+                    getBrief={handBrief}
+                    target={{ kind: "run", envId: env?.id, runId }}
+                    onOpened={onHandToAgent}
+                    onPreview={() => setBriefOpen(true)}
+                    openText={(l) => `Open ${included.length} in ${l}`}
+                    label="Copy brief for your coding agent"
+                    disabledReason={
+                      running
+                        ? "Available once every call is read."
+                        : !included.length
+                          ? "Tick at least one fix."
+                          : null
                     }
-                    sx={{ borderColor: "divider", flexShrink: 0 }}
-                  >
-                    Copy for coding agent
-                  </Button>
+                  />
                 )}
                 <Button
                   size="small"
@@ -1685,7 +1693,7 @@ export default function DiagnosisPane({
       <CodingAgentBriefDrawer
         open={briefOpen}
         onClose={() => setBriefOpen(false)}
-        getText={brief}
+        getText={handBrief}
       />
     </Stack>
   );
