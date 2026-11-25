@@ -201,8 +201,11 @@ describe("OverviewPanel while an approved design builds", () => {
       }),
     );
 
-    expect(screen.getByRole("button", { name: "0 rules" })).toBeInTheDocument();
     expect(screen.getByText("Built use case")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: `${DESIGN_RULES.length} rules` }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /\d+ rules?$/ })).toBeNull();
     expect(screen.queryByText(DESIGN_USE_CASES[0])).toBeNull();
     expect(
       mapGroup(MAP_COPY.groups.tools.label).getByText(MAP_COPY.toolsRight(1)),
