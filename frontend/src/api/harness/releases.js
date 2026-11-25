@@ -60,7 +60,8 @@ export function useHarnessReleaseFit({ suiteId, agentVersionId, pairing }) {
 }
 
 // Review the design: what an adaptation takes from the ready world, the pairing, the cases it
-// measures, its policy conflicts and where it stands (`state`). Polled until it is ready.
+// measures, its policy conflicts and where it stands (`state`). Polled until it is ready, or until
+// it's refused before it was ever read.
 export const harnessAdaptationDesignKey = (id) => [
   "harness-adaptation-design",
   id,
@@ -76,8 +77,11 @@ export function useHarnessAdaptationDesign(id) {
         )
       ).data,
     enabled: Boolean(id),
-    refetchInterval: (query) =>
-      ["ready", "failed"].includes(query.state.data?.state) ? false : 5000,
+    refetchInterval: ({ state: { data, error } }) =>
+      ["ready", "failed"].includes(data?.state) ||
+      (!data && error?.statusCode >= 400 && error.statusCode < 500)
+        ? false
+        : 5000,
     meta: { errorHandled: true },
   });
 }
@@ -87,6 +91,7 @@ export const approveHarnessAdaptation = async (id) =>
   (
     await axios.post(
       apiPath("/simulate/api/harness-adaptations/{id}/approve/", { id }),
+      {},
     )
   ).data;
 
