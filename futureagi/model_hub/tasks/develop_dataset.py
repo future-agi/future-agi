@@ -613,7 +613,7 @@ def create_synthetic_dataset(
             )
         except Exception as inner_e:
             logger.error(
-                f"Error recording synthetic generation failure: {str(inner_e)}"
+                "synthetic_generation_failure_record_failed", error=str(inner_e)
             )
         raise e
 
