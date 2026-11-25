@@ -51,19 +51,23 @@ def get_pii_settings_for_projects(
             metadata = row.get("metadata") or {}
             enabled = bool(metadata.get("pii_redaction_enabled", False))
             result[name] = enabled
-            cache.set(_cache_key(org_id, name), enabled, _CACHE_TTL)
-            uncached.discard(name)
 
-        # Projects not found in DB → default False, cache that too
+        # A successful lookup also resolves missing projects (redaction off).
         for name in uncached:
-            result[name] = False
-            cache.set(_cache_key(org_id, name), False, _CACHE_TTL)
+            result.setdefault(name, False)
 
     except Exception:
         logger.warning("pii_settings_lookup_failed")
         # Redact unresolved projects for this batch only; retry lookup next time.
         for name in uncached:
             result.setdefault(name, True)
+        return result
+
+    for name in uncached:
+        try:
+            cache.set(_cache_key(org_id, name), result[name], _CACHE_TTL)
+        except Exception:  # noqa: BLE001 - cache writes are best effort
+            logger.warning("pii_settings_cache_write_failed")
 
     return result
 
