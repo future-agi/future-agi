@@ -15,6 +15,7 @@ from accounts.models import OrgApiKey
 from simulate.models import (
     CallExecution,
     HarnessSuiteMember,
+    HarnessSuiteValidation,
     HarnessSuiteVersion,
     HostedHarnessJob,
 )
@@ -60,6 +61,7 @@ from simulate.tests.test_agent_fix_services import (
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
     environment as environment,
 )
+from simulate.tests.test_harness_affected_scenarios import _proved_on
 from simulate.tests.test_harness_agent_versions import _environment
 from simulate.tests.test_harness_amend_archive import NAMES, _key
 from simulate.tests.test_harness_run_compare import _done
@@ -353,8 +355,16 @@ class TestWhenTheSuiteChanges:
         HarnessSuiteVersion.no_workspace_objects.filter(id=old_suite).update(
             status=VersionStatus.DISCARDED
         )
+        candidate = _second_agent(environment)
+        # The new suite proved, with no other agent version recorded on its validation.
+        _proved_on(
+            environment, environment.environment_version, environment.suite_version
+        )
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id
+        ).update(job=None)
 
-        run = _verify(environment, _second_agent(environment))
+        run = _verify(environment, candidate)
 
         assert run.suite_version_id == environment.suite_version_id
         assert KEYS[1] in run.payload["metadata"]["selected_scenario_keys"]
@@ -504,6 +514,29 @@ class TestVerify:
             _verify(environment, _second_agent(environment))
 
         assert refused.value.code == "held_back_empty"
+
+
+def test_a_held_back_trial_failed_only_by_a_check_its_proof_never_verified_is_not_counted_failed(
+    environment,
+):
+    from simulate.selectors.held_back import verify_result
+    from simulate.services.hosted_harness_ingestion import UNVERIFIED_KEY
+
+    run = _verify(environment, _second_agent(environment))
+    executions = list(_executions(run).order_by("trial_index"))
+    key = executions[0].source_scenario.scenario_key
+    _receipt(executions[0].call_execution, key, {"refunded": True})
+    unverified = executions[1].call_execution
+    _receipt(unverified, key, {"refunded": False})
+    unverified.call_metadata = {
+        **unverified.call_metadata,
+        UNVERIFIED_KEY: ["refunded"],
+    }
+    unverified.save(update_fields=["call_metadata"])
+
+    result = verify_result(run)
+
+    assert (result["passed"], result["failed"], result["total"]) == (1, 0, 2)
 
 
 class TestVerifyApi:
@@ -1261,10 +1294,10 @@ def test_a_coding_agent_s_verify_refused_by_readiness_names_no_case(
     candidate = _second_agent(environment)
     real = harness_readiness.select_for_run
 
-    def every_case_held(pairing, *, keys, trials):
+    def every_case_held(pairing, *, keys, trials, **options):
         # Readiness holding back every case the verify sends (a Blocked start row, or
         # a production-only tool every held-back case uses); the 409 is the PR's own.
-        plan = real(pairing, keys=keys, trials=trials)
+        plan = real(pairing, keys=keys, trials=trials, **options)
         view = {
             **plan.view,
             "running": 0,

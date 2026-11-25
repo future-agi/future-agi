@@ -3,8 +3,9 @@ import {
   useInfiniteQuery,
   useMutation,
   useQueryClient,
+  isCancelledError,
 } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios, { endpoints, readQuery } from "src/utils/axios";
 import { getFilterValueReadState } from "src/utils/queryReadState";
 import { accumulateUniqueListContinuations } from "src/sections/projects/LLMTracing/listCursorPagination";
@@ -1277,10 +1278,46 @@ export function useDashboardFilterValues({
         : "complete";
   const lastPage = pages.at(-1);
   const browseStatus = lastPage?.browse_status;
+  const onNextPageError = useCallback(
+    (cursor, notify) => {
+      const cache = queryClient.getQueryCache();
+      return cache.subscribe(({ type, action, query: updated }) => {
+        if (
+          type === "updated" &&
+          action.type === "error" &&
+          !isCancelledError(action.error) &&
+          updated.state.fetchMeta?.fetchMore?.direction === "forward" &&
+          JSON.stringify(updated.queryKey) === queryIdentity &&
+          getFilterValueNextCursor(updated.state.data?.pages?.at(-1)) === cursor
+        ) {
+          notify();
+        }
+      });
+    },
+    [queryClient, queryIdentity],
+  );
 
   return {
     ...query,
     data: values,
+    queryIdentity,
+    onNextPageError,
+    // Unlike the picker's explicit Load more, a chip must not pay for joining
+    // another observer's request. Check the live cache and dispatch in the
+    // same turn. If the rendered page/error changed, let its observer rerender.
+    tryStartNextPage: () => {
+      const live = queryClient.getQueryState(queryKey);
+      if (
+        !query.hasNextPage ||
+        cursorChainStopped ||
+        live?.fetchStatus !== "idle" ||
+        live.data !== query.data ||
+        live.errorUpdateCount !== query.errorUpdateCount
+      ) {
+        return null;
+      }
+      return query.fetchNextPage({ cancelRefetch: false });
+    },
     continuationKey:
       !cursorChainStopped && query.hasNextPage
         ? getFilterValueNextCursor(lastPage) || null

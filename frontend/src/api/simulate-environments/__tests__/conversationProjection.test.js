@@ -751,4 +751,22 @@ describe("conversationInFlight", () => {
     ).toBe(false);
     expect(conversationInFlight(null)).toBe(false);
   });
+
+  it("is false once a later reply has finished, though an answer was left delivered", () => {
+    const answer = { role: "user", state: "delivered", sequence: 17 };
+    const reply = { role: "assistant", state: "completed", sequence: 18 };
+    expect(
+      conversationInFlight({ state: "warm_idle", messages: [answer, reply] }),
+    ).toBe(false);
+    // Still in flight while the reply to it is being written.
+    expect(
+      conversationInFlight({
+        state: "warm_idle",
+        messages: [
+          { role: "assistant", state: "completed", sequence: 16 },
+          answer,
+        ],
+      }),
+    ).toBe(true);
+  });
 });

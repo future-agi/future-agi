@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from simulate.models import (
     AgentDefinition,
     HostedHarnessConversation,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
@@ -37,10 +38,38 @@ from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from simulate.models import HarnessSuiteVersion
     from simulate.services.harness_actor_rules import ActorRecord
+    from simulate.services.harness_scenario_lifecycle import LifecycleView
+    from simulate.services.harness_scenario_sources import SourceView
     from simulate.services.scenario_faults import FaultProblem, FaultTarget
 
 logger = logging.getLogger(__name__)
+
+
+class ListLifecycle(TypedDict):
+    """The lifecycle the scenarios list reads, on the pair in view: what it filters by, each case's view, the
+    archived cases, and how an unsaved case's sources resolve."""
+
+    wanted: str
+    suite: HarnessSuiteVersion
+    resolve_sources: Callable[[dict[str, list[Any]]], dict[str, list[SourceView]]]
+    views: dict[str, LifecycleView]
+    archived: list[LifecycleView]
+    archived_rows: list[HostedHarnessScenario]
+    archived_views: dict[str, LifecycleView]
+
+
+class UncoveredLevel(TypedDict):
+    axis: str
+    level: str
+
+
+class UncoveredLevels(TypedDict):
+    uncovered: list[UncoveredLevel]
+    coverage_recorded: bool
 
 
 class AmendReceipt(TypedDict):
@@ -49,8 +78,8 @@ class AmendReceipt(TypedDict):
     scenario: str
     outcome: str
     why: str
-    code: str
-    field: str | None
+    code: NotRequired[str]
+    field: NotRequired[str | None]
     problems: NotRequired[list[FaultProblem]]
 
 
@@ -170,6 +199,30 @@ def _connected_build_source(runtime: Any, payload: dict[str, Any]) -> dict[str, 
     from simulate.services.agent_reading_sandbox import version_source
 
     return {**(payload.get("source") or {}), **version_source(runtime)}
+
+
+def _environment_build_runtime(
+    organization_id: Any, workspace_id: Any, payload: dict[str, Any]
+) -> Any:
+    from simulate.models import HarnessAgentVersionRuntime
+    from simulate.services.harness_agent_versions import environment_owned
+
+    metadata = payload.get("metadata") or {}
+    try:
+        definition_id = uuid.UUID(str(metadata.get("agent_definition_id") or ""))
+        version_id = uuid.UUID(str(metadata.get("agent_version_id") or ""))
+    except ValueError:
+        return None
+    if not environment_owned(definition_id):
+        return None
+    return HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_definition_id=definition_id,
+        agent_version_id=version_id,
+        agent_version__deleted=False,
+        agent_definition__organization_id=organization_id,
+        agent_definition__workspace_id=workspace_id,
+        agent_definition__deleted=False,
+    ).first()
 
 
 def get_harness_provider():
@@ -346,7 +399,11 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     return {k: v for k, v in metadata.items() if k != "observability_refusal"}
 
 
-def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
+def serialize_job(
+    job: HostedHarnessJob,
+    *,
+    events_after: int | None = None,
+) -> dict[str, Any]:
     from simulate.services.harness_cancel import cancel_status
     from simulate.services.harness_usage import harness_consumption
     from simulate.services.harness_versioning.read import versioning_flags
@@ -418,7 +475,12 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     current_attempt = (
         attempt if attempt and attempt.attempt_number >= cycle_start else None
     )
-    registered_keys = {reg.scenario_key for reg in scenario_regs}
+    # A receipt and a started event name a trial by its execution key where the job runs executions.
+    registered_keys = {reg.scenario_key for reg in scenario_regs} | set(
+        HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
+            "execution_key", flat=True
+        )
+    )
     finished = {
         row.body.get("scenario_key")
         for row in receipt_rows
@@ -557,7 +619,9 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
         "platform": platform,
         "credentials": {"detected_connectors": detected_connectors},
         "conversation": (
-            serialize_conversation(conversation) if conversation is not None else None
+            serialize_conversation(conversation, events_after=events_after)
+            if conversation is not None
+            else None
         ),
         "versioning": versioning_flags(),
     }
@@ -582,6 +646,7 @@ def _connector_credential_readiness(
     detected_connectors=(),
     scanned_files=0,
     required_credential_files=(),
+    source_api_keys=(),
 ):
     """Readiness report the create form renders: which target aliases are still missing.
 
@@ -606,6 +671,25 @@ def _connector_credential_readiness(
     present = present_provider_aliases(agent)
     required_files = set() if remote else set(required_credential_files)
     missing.extend(sorted(required_files - present))
+    provided = present | {
+        str(name).upper()
+        for name in (payload["source"].get("environment_values") or {})
+    }
+    from simulate.services.harness_credential_probes import PROVIDER_PROBES
+
+    family_aliases = {
+        alias for aliases in CONNECTOR_ALIASES.values() for alias in aliases
+    }
+    verifiable = {
+        alias
+        for probe in PROVIDER_PROBES.values()
+        for alias in probe.aliases
+        if alias.endswith("_API_KEY")
+    } - family_aliases
+    api_keys = (
+        [] if remote else sorted((set(source_api_keys) & verifiable) - required_files)
+    )
+    api_missing = [name for name in api_keys if name not in provided]
     if connector == "auto":
         families = dict(CONNECTOR_ALIASES)
         # A complete family of any kind satisfies the run (see missing_provider_credentials),
@@ -645,6 +729,15 @@ def _connector_credential_readiness(
         }
         for alias in sorted(required_files)
     )
+    requirements.extend(
+        {
+            "environment_name": name,
+            "purpose": "API key the agent's code reads",
+            "required": True,
+            "status": "missing" if name in api_missing else "configured",
+        }
+        for name in api_keys
+    )
     choices = []
     if connector == "auto" and len(required) > 1:
         choices.append(
@@ -660,7 +753,7 @@ def _connector_credential_readiness(
             }
         )
     return {
-        "missing": missing,
+        "missing": [*missing, *api_missing],
         "report": {
             "scanned_files": scanned_files,
             "detected_connectors": detected if connector == "auto" else [connector],
@@ -675,6 +768,7 @@ def _preflight_source_connectors(organization, payload, workspace_id=None):
     credential family the agent actually uses instead of every family."""
     from simulate.services.hosted_harness_gateway import (
         HostedSourceAcquirer,
+        detect_source_api_keys,
         detect_source_credentials,
     )
 
@@ -682,17 +776,30 @@ def _preflight_source_connectors(organization, payload, workspace_id=None):
     # is checked through its authenticated target lookup below, not by invoking
     # the repository source scanner with a synthetic source.
     if payload["source"]["kind"] in {"remote", "provider"}:
-        return [], [], 0
+        return [], [], 0, []
     probe = HostedHarnessJob(
         organization=organization, workspace_id=workspace_id, payload=payload
     )
     archive, _commit = HostedSourceAcquirer().acquire(probe)
+    subfolder = payload["source"].get("subfolder")
     detected, required_files, scanned = detect_source_credentials(
-        archive, subfolder=payload["source"].get("subfolder")
+        archive, subfolder=subfolder
     )
+    api_keys = detect_source_api_keys(archive, subfolder=subfolder)
     if payload["agent"]["connector"] != "auto":
         detected = []
-    return detected, required_files, scanned
+    return detected, required_files, scanned, api_keys
+
+
+def scan_parts(analysis) -> tuple[list[str], list[str], int, list[str]]:
+    if len(analysis) == 2:
+        detected, scanned = analysis
+        return list(detected), [], scanned, []
+    if len(analysis) == 3:
+        detected, required_files, scanned = analysis
+        return list(detected), list(required_files), scanned, []
+    detected, required_files, scanned, api_keys = analysis
+    return list(detected), list(required_files), scanned, list(api_keys)
 
 
 def _validate_required_credential_files(
@@ -703,7 +810,7 @@ def _validate_required_credential_files(
     from simulate.services.hosted_harness import HostedHarnessError
 
     analysis = _preflight_source_connectors(organization, payload, workspace_id)
-    required_files = analysis[1] if len(analysis) == 3 else []
+    required_files = scan_parts(analysis)[1]
     present = {
         str(alias).upper()
         for alias in (*(payload["agent"].get("secret_refs") or {}), *available_names)
@@ -1033,16 +1140,10 @@ def run_preflight_checks(
             )
         except HostedHarnessError as exc:
             source_error = exc
-            analysis = ([], [], 0)
-    # Keep two-item patched return values compatible with tests and custom
-    # providers written before credential-file discovery was added.
-    if len(analysis) == 2:
-        detected, scanned = analysis
-        required_files = []
-    else:
-        detected, required_files, scanned = analysis
+            analysis = ([], [], 0, [])
+    detected, required_files, scanned, api_keys = scan_parts(analysis)
     secret_readiness = _connector_credential_readiness(
-        secret_payload, detected, scanned, required_files
+        secret_payload, detected, scanned, required_files, api_keys
     )
     secret_probe = _preflight_credential_probe(secret_payload)
     secret_readiness["report"]["probe"] = secret_probe
@@ -1060,7 +1161,7 @@ def run_preflight_checks(
         secret_readiness,
         secret_probe,
         source_error,
-        (detected, required_files, scanned),
+        (detected, required_files, scanned, api_keys),
     )
 
 
@@ -1385,6 +1486,7 @@ def _environment_agent_maker(
     user,
     repository_id=None,
     workspace=None,
+    version_bound=False,
 ):
     """Check a creation's credentials now; the returned hook makes its agent and first
     version inside the job's transaction."""
@@ -1394,14 +1496,21 @@ def _environment_agent_maker(
         ensure_environment_agent,
         submitted_credentials,
     )
+    from simulate.services.harness_credentials import is_names_only_ref
 
-    secret_submitted = submitted_credentials(
-        organization, payload["agent"]["secret_refs"], secret_values
-    )
+    secret_refs = payload["agent"]["secret_refs"]
+    if version_bound:
+        secret_refs = {
+            alias: ref
+            for alias, ref in secret_refs.items()
+            if not is_names_only_ref(ref)
+        }
+    secret_submitted = submitted_credentials(organization, secret_refs, secret_values)
     check = (
-        # Not run for a connected agent: no answer to which names it needs.
+        # Not run for a connected agent or a pinned version: no answer to which
+        # names it needs.
         CreationCheck(report={}, required_variable_names=None)
-        if _builds_connected_agent(organization, workspace, payload)
+        if version_bound or _builds_connected_agent(organization, workspace, payload)
         else check_creation_credentials(
             organization, payload, secret_submitted, analysis
         )
@@ -1468,6 +1577,7 @@ class HostedHarnessProvider:
     name = "hosted"
 
     def create(self, request) -> Response:
+        from simulate.serializers.harness_job import names_agent_version
         from simulate.services.harness_agent_versions import advisory_xact_lock
         from simulate.services.harness_versioning.versions import versioning_enabled
         from simulate.services.hosted_harness import (
@@ -1501,15 +1611,39 @@ class HostedHarnessProvider:
         # This uses only references/configuration and deployment env presence.
         # Definitive launch validation runs again after vault resolution.
         workspace = request_workspace(request)
+        version_bound = False
         try:
             connected_runtime = _connected_build_runtime(
                 organization.id, getattr(workspace, "id", None), payload
             )
             if connected_runtime is not None:
                 payload["source"] = _connected_build_source(connected_runtime, payload)
+            else:
+                connected_runtime = _environment_build_runtime(
+                    organization.id, getattr(workspace, "id", None), payload
+                )
+                if connected_runtime is not None:
+                    from simulate.services.harness_agent_versions import (
+                        apply_agent_version,
+                    )
+
+                    apply_agent_version(payload, connected_runtime)
+                    version_bound = True
         except (ValueError, ValidationError):
             connected_runtime = None
+            version_bound = False
         connected_build = connected_runtime is not None
+        if (
+            not connected_build
+            and (payload.get("source") or {}).get("kind") == "provider"
+            and names_agent_version(payload["agent"], payload.get("metadata"))
+        ):
+            refusal = HostedHarnessError(
+                "version_not_buildable",
+                "This agent version can't be built from here",
+                status_code=409,
+            )
+            return Response(refusal.as_dict(), status=refusal.status_code)
         available_names: list[str] = []
         if connected_build:
             from simulate.services.harness_agent_versions import (
@@ -1613,6 +1747,7 @@ class HostedHarnessProvider:
                         request.user,
                         repository_id,
                         workspace=workspace,
+                        version_bound=version_bound,
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)
@@ -1770,7 +1905,47 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness job not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(serialize_job(job))
+        query = getattr(request, "validated_query_data", None) or {}
+        return Response(serialize_job(job, events_after=query.get("events_after")))
+
+    def conversation_history(self, request, pk) -> Response:
+        """The builder chat's messages or events before a sequence, for reading back past a job read's window."""
+        from simulate.services.hosted_harness_conversation import (
+            MessageNotInConversation,
+            conversation_history,
+        )
+
+        job = self._job(request, pk)
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.filter(job=job).first()
+            if job is not None
+            else None
+        )
+        if conversation is None:
+            return Response(
+                build_error_envelope(
+                    "Hosted harness conversation not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        query = request.validated_query_data
+        try:
+            page = conversation_history(
+                conversation,
+                kind=query["kind"],
+                before=query.get("before"),
+                around=query.get("around"),
+            )
+        except MessageNotInConversation:
+            return Response(
+                build_error_envelope(
+                    "Message not found in this builder chat",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(page)
 
     def run(self, request, pk) -> Response:
         """Create and dispatch one immutable selected-scenario simulation Run."""
@@ -2273,12 +2448,14 @@ class HostedHarnessProvider:
         child.refresh_from_db()
         return serialize_job(child)
 
-    # Editable fields; all but `tests` are refused when the caller declines a re-proof.
-    _DESCRIPTIVE_FIELDS = frozenset({"tests"})
+    # Editable fields; behavioural and re-proof ones are refused when the caller declines a re-proof.
+    _DESCRIPTIVE_FIELDS = frozenset({"tests", "sources", "must_pass"})
     # `faults` are the scenario's test conditions: what the world does to the agent's calls, so a re-proof.
     _BEHAVIOURAL_FIELDS = frozenset(
         {"max_turns", "background_noise", "keywords", "faults"}
     )
+    # What the checks are proved against: an edit leaves the case Draft until it is validated again.
+    _REPROOF_FIELDS = frozenset({"negative_controls"})
     _PERSONA_FIELDS = frozenset(
         {
             "personality",
@@ -2319,7 +2496,9 @@ class HostedHarnessProvider:
             "location": Persona.LocationChoices,
         }
         return {
-            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | behavioural),
+            "editable_fields": sorted(
+                self._DESCRIPTIVE_FIELDS | behavioural | self._REPROOF_FIELDS
+            ),
             "persona_fields": sorted(persona),
             "persona_choices": {
                 field: (
@@ -2332,7 +2511,7 @@ class HostedHarnessProvider:
             "noise_choices": (
                 [bed for bed in NOISE_LABELS if bed != "present"] if spoken else []
             ),
-            "rework_fields": sorted(behavioural | persona),
+            "rework_fields": sorted(behavioural | persona | self._REPROOF_FIELDS),
         }
 
     def list_scenarios(self, request, pk) -> Response:
@@ -2385,6 +2564,12 @@ class HostedHarnessProvider:
                 queryset = HostedHarnessScenario.no_workspace_objects.filter(
                     job=job
                 ).select_related("scenario", "call_execution")
+        lifecycle = _lifecycle_for_list(job, request.query_params)
+        if isinstance(lifecycle, Response):
+            return lifecycle
+        queryset, drafted = _narrow_by_lifecycle(
+            job, queryset, drafted, lifecycle, request.query_params
+        )
         # Filter choices are counted before filtering, or picking one value would hide the others.
         queryset = apply_search(queryset, request.query_params.get("search", ""))
         offerable = queryset
@@ -2397,7 +2582,10 @@ class HostedHarnessProvider:
 
         asked = request.query_params.get("group_by")
         group_by = DEFAULT_GROUP_BY if asked is None else asked
-        from simulate.services.harness_actor_rules import actor_rules
+        from simulate.services.harness_actor_rules import (
+            actor_rules,
+            private_scenario_fields,
+        )
         from simulate.services.harness_environment import (
             environment_actor_side,
             working_contract,
@@ -2419,7 +2607,11 @@ class HostedHarnessProvider:
             row = scenario_row(
                 one, targets=door, fault_targets=targets, actor_cast=actor_cast
             )
-            return row if drafted is None else {**row, "draft_change": one.draft_change}
+            return _with_lifecycle(
+                row if drafted is None else {**row, "draft_change": one.draft_change},
+                lifecycle,
+                draft_sources=getattr(one, "draft_sources", None),
+            )
 
         rows = grouped([row_of(one) for one in page], group_by)
         response = paginator.get_paginated_response(rows)
@@ -2436,6 +2628,9 @@ class HostedHarnessProvider:
             offerable, spoken=spoken, call_actor_labels=lambda: call_actor_labels(job)
         )
         response.data["scenario_editing"] = self._editing_contract(spoken)
+        # The scenario fields only the grader reads, as the environment's sealed rules name them: never shown to
+        # the agent or to a simulated person.
+        response.data["private_fields"] = private_scenario_fields(rules)
         from simulate.services.harness_scenarios import GROUPINGS
 
         response.data["groupings"] = [
@@ -2444,6 +2639,18 @@ class HostedHarnessProvider:
         from simulate.services.harness_scenarios import level_labels_for
 
         response.data["level_labels"] = level_labels_for(rows, response.data["fields"])
+        if lifecycle is not None:
+            from simulate.services.harness_scenario_lifecycle import (
+                dropped_cases,
+                lifecycle_counts,
+            )
+
+            response.data["lifecycle_counts"] = lifecycle_counts(
+                list(lifecycle["views"].values()) + lifecycle["archived"]
+            )
+            dropped, restored = dropped_cases(lifecycle["suite"], lifecycle["views"])
+            response.data["dropped"] = dropped
+            response.data["restored"] = restored
         return response
 
     def scenario_coverage(self, request, pk) -> Response:
@@ -2468,13 +2675,22 @@ class HostedHarnessProvider:
         queryset = apply_filters(queryset, request.query_params)
         from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
 
+        grid = coverage_grid(
+            queryset,
+            request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
+            request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+            spoken=agent_type(job) == AGENT_TYPE_VOICE,
+        )
+        from simulate.services.harness_scenario_lifecycle import workflow_proofs
+        from simulate.services.harness_scenario_sources import requested_uncovered
+
         return Response(
-            coverage_grid(
-                queryset,
-                request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
-                request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
-                spoken=agent_type(job) == AGENT_TYPE_VOICE,
-            )
+            {
+                **grid,
+                **uncovered_levels(job),
+                "workflows": workflow_proofs(job),
+                "requested_uncovered": requested_uncovered(job),
+            }
         )
 
     def amend_scenarios(self, request, pk) -> Response:
@@ -2550,6 +2766,7 @@ class HostedHarnessProvider:
             # Where drafts apply, an edit goes to the unsaved changes, on top of them.
             on_draft = drafts.drafts_apply(job)
             draft_numbering = None
+            suite_draft = None
             if on_draft:
                 try:
                     drafts.require_no_rebuild(job, piece="suite")
@@ -2656,6 +2873,16 @@ class HostedHarnessProvider:
                     field = str(change.get("field") or "")
                     if field in self._DESCRIPTIVE_FIELDS:
                         pass
+                    elif field in self._REPROOF_FIELDS:
+                        if not rework:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": f"{field} are what the checks are proved against, so they need a re-proof",
+                                }
+                            )
+                            continue
                     elif field in self._behavioural_fields():
                         if not rework:
                             receipts.append(
@@ -2679,6 +2906,52 @@ class HostedHarnessProvider:
                             }
                         )
                         continue
+                    if field == "sources":
+                        from simulate.services.harness_scenario_sources import (
+                            source_problems,
+                        )
+
+                        problems = source_problems(
+                            change.get("value"), require_one=True
+                        )
+                        if problems:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": problems[0],
+                                }
+                            )
+                            continue
+                        _store_edited_sources(job, target, change.get("value"))
+                    if field == "must_pass" and not isinstance(
+                        change.get("value"), bool
+                    ):
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "must_pass must be true or false",
+                            }
+                        )
+                        continue
+                    if field == "negative_controls":
+                        from simulate.services.harness_scenario_sources import (
+                            negative_control_problems,
+                        )
+
+                        problems = negative_control_problems(
+                            change.get("value"), target.get("sub_goals") or []
+                        )
+                        if problems:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": problems[0],
+                                }
+                            )
+                            continue
                     if field == "faults":
                         from simulate.services.harness_environment import (
                             edit_fault_side,
@@ -2698,13 +2971,13 @@ class HostedHarnessProvider:
                                 edit_fault_side(job),
                                 True,
                             )
-                        problems = faults_problems(
+                        fault_problems = faults_problems(
                             change.get("value"),
                             fault_targets,
                             approvers=scenario_approvers(target, cast),
                         )
-                        if problems:
-                            said = "; ".join(one["message"] for one in problems)
+                        if fault_problems:
+                            said = "; ".join(one["message"] for one in fault_problems)
                             receipts.append(
                                 {
                                     "scenario": name,
@@ -2713,7 +2986,7 @@ class HostedHarnessProvider:
                                     "code": "fault_invalid",
                                     "field": "faults",
                                     # Each under its own fault: its place in the list, its field and why.
-                                    "problems": problems,
+                                    "problems": fault_problems,
                                 }
                             )
                             continue
@@ -2831,7 +3104,13 @@ class HostedHarnessProvider:
                         }
                     )
             if touched and on_draft:
-                return self._amend_draft(job, suite, receipts, request.user)
+                return self._amend_draft(
+                    job,
+                    suite,
+                    receipts,
+                    request.user,
+                    had_draft=suite_draft is not None,
+                )
             if touched:
                 # The archive a run replays changes first; if it cannot, nothing changes.
                 try:
@@ -2889,15 +3168,16 @@ class HostedHarnessProvider:
                 delivered = push_scenarios_into_live_sandbox(job, suite)
                 if delivered:
                     receipts = [
-                        {**one, "outcome": "queued"}
+                        AmendReceipt(**{**one, "outcome": "queued"})
                         if one.get("outcome") == "applied"
                         else one
                         for one in receipts
                     ]
         return Response({"receipts": receipts})
 
-    def _amend_draft(self, job, suite, receipts, user) -> Response:
-        """Write an amended suite into the unsaved changes; nothing runs it until Save."""
+    def _amend_draft(self, job, suite, receipts, user, *, had_draft: bool) -> Response:
+        """Write an amended suite into the unsaved changes; nothing runs it until Save. An edit that leaves no draft
+        where there was none changed nothing: the saved version already reads that way."""
         from simulate.services.harness_versioning import drafts
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
@@ -2937,6 +3217,8 @@ class HostedHarnessProvider:
         if write is None:
             return kept("the change could not be saved")
         draft = write.suite
+        if draft is None and not had_draft:
+            return kept("the saved version already has this")
         return Response(
             {
                 "receipts": receipts,
@@ -3277,6 +3559,16 @@ class SandboxHarnessProvider:
             status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
+    def conversation_history(self, request, pk) -> Response:
+        return Response(
+            build_error_envelope(
+                "reading back the builder chat is only available on the hosted provider",
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                code="conversation_history_not_supported",
+            ),
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
     def scenario_coverage(self, request, pk) -> Response:
         return Response(
             {
@@ -3400,6 +3692,17 @@ class SandboxHarnessProvider:
         return Response(_sandbox_preflight_body(request.validated_data, report))
 
     def retrieve(self, request, pk) -> Response:
+        if (getattr(request, "validated_query_data", None) or {}).get(
+            "events_after"
+        ) is not None:
+            return Response(
+                build_error_envelope(
+                    "reading only new builder chat events is only available on the hosted provider",
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    code="events_after_not_supported",
+                ),
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
         from simulate.services.harness_sandbox import (
             HarnessSandboxRejected,
             HarnessSandboxUnavailable,
@@ -3503,3 +3806,201 @@ class SandboxHarnessProvider:
 
 class _SandboxMappingError(RuntimeError):
     pass
+
+
+LIFECYCLE_FILTERS = frozenset(
+    {"draft", "validated", "active", "archived", "source_changed", "kept_as_written"}
+)
+
+
+def _lifecycle_for_list(
+    job: HostedHarnessJob, params: Any
+) -> ListLifecycle | Response | None:
+    """The lifecycle of every case on the pair in view (the defaults unless the query names
+    versions, the agent's included), or ``None`` for an environment that is not versioned.
+    A refusal is the same body every harness refusal has."""
+    from simulate.services.harness_scenario_actions import resolve_versions
+    from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    if not job.suite_version_id or not job.environment_version_id:
+        return None
+    wanted = params.get("lifecycle") or ""
+    try:
+        if wanted and wanted not in LIFECYCLE_FILTERS:
+            raise HostedHarnessError(
+                "lifecycle_invalid",
+                f"lifecycle must be one of {', '.join(sorted(LIFECYCLE_FILTERS))}",
+                status_code=400,
+            )
+        agent, environment_version, suite = resolve_versions(job, params)
+    except HostedHarnessError as refused:
+        return Response(refused.as_dict(), status=refused.status_code)
+    views = scenario_lifecycle(
+        job,
+        suite_version=suite,
+        environment_version=environment_version,
+        agent_version_id=agent.id if agent is not None else None,
+    )
+    archived_rows = list(
+        HostedHarnessScenario.no_workspace_objects.filter(
+            job=job, archived_at__isnull=False, deleted=False
+        ).order_by("-archived_at")
+    )
+    from simulate.services.harness_scenario_lifecycle import archived_view
+
+    archived = [
+        archived_view(row.archived_at, row.archive_reason) for row in archived_rows
+    ]
+    archived_keys = {row.scenario_key for row in archived_rows}
+    from simulate.services.harness_scenario_sources import resolve
+    from simulate.services.harness_versioning.drafts import open_draft
+
+    def resolve_draft_sources(
+        by_key: dict[str, list[Any]],
+    ) -> dict[str, list[SourceView]]:
+        # An unsaved case may cite a file the unsaved environment adds (a policy upload).
+        return resolve(
+            job, open_draft(job, "environment") or environment_version, by_key
+        )
+
+    return ListLifecycle(
+        wanted=wanted,
+        suite=suite,
+        resolve_sources=resolve_draft_sources,
+        views={key: view for key, view in views.items() if key not in archived_keys},
+        archived=archived,
+        archived_rows=archived_rows,
+        archived_views=dict(
+            zip([row.scenario_key for row in archived_rows], archived, strict=True)
+        ),
+    )
+
+
+def _matches(view: LifecycleView, wanted: str) -> bool:
+    if wanted == "source_changed":
+        return bool(view["source_changed"])
+    return view["state"] == wanted
+
+
+def _narrow_by_lifecycle(job, queryset, drafted, lifecycle, params):
+    """Narrow the list's source before paging: archived rows only on request, else by state."""
+    from simulate.services.harness_scenario_lifecycle import (
+        DRAFT_CHANGES,
+        in_draft_view,
+    )
+    from simulate.services.harness_scenarios import ScenarioRows, as_member
+
+    if lifecycle is None:
+        return queryset, drafted
+    wanted = lifecycle["wanted"]
+    archived_keys = set(lifecycle["archived_views"])
+    if wanted == "archived":
+        rows = ScenarioRows()
+        for row in lifecycle["archived_rows"]:
+            content = (
+                row.archived_content if isinstance(row.archived_content, dict) else {}
+            )
+            rows.append(as_member(row, content) if content else row)
+        return rows, None
+    if drafted is not None:
+        kept = ScenarioRows(
+            one
+            for one in drafted
+            if one.scenario_key not in archived_keys
+            and (
+                not wanted
+                or _matches(
+                    in_draft_view()
+                    if one.draft_change in DRAFT_CHANGES
+                    else lifecycle["views"].get(one.scenario_key) or in_draft_view(),
+                    wanted,
+                )
+            )
+        )
+        kept.draft = drafted.draft
+        return kept, kept
+    queryset = queryset.exclude(archived_at__isnull=False)
+    if wanted:
+        matching = [
+            key for key, view in lifecycle["views"].items() if _matches(view, wanted)
+        ]
+        queryset = queryset.filter(scenario_key__in=matching)
+    return queryset, drafted
+
+
+def _with_lifecycle(
+    row: dict[str, Any],
+    lifecycle: ListLifecycle | None,
+    *,
+    draft_sources: list[Any] | None = None,
+) -> dict[str, Any]:
+    from simulate.services.harness_scenario_lifecycle import (
+        DRAFT_CHANGES,
+        in_draft_view,
+    )
+
+    if lifecycle is None:
+        return {**row, "lifecycle": None}
+    key = row["scenario_key"]
+    if key in lifecycle["archived_views"]:
+        view = lifecycle["archived_views"][key]
+    elif row.get("draft_change") in DRAFT_CHANGES:
+        view = in_draft_view()
+        if draft_sources:
+            # An unsaved case still shows what it cites, read against the version in view.
+            view["sources"] = list(
+                lifecycle["resolve_sources"]({key: draft_sources}).get(key) or []
+            )
+    else:
+        view = lifecycle["views"].get(key) or in_draft_view()
+    return {**row, "lifecycle": view}
+
+
+def _store_edited_sources(
+    job: HostedHarnessJob, document: dict[str, Any], sources: list[Any]
+) -> None:
+    """Resolve an edited case's file sources once, against the default environment version."""
+    from simulate.models import HarnessEnvironmentVersion
+    from simulate.services.harness_scenario_sources import stored_file_results
+
+    key = str(document.get("scenario_key") or "")
+    version = (
+        HarnessEnvironmentVersion._base_manager.filter(
+            id=job.environment_version_id
+        ).first()
+        if job.environment_version_id
+        else None
+    )
+    results = stored_file_results(
+        sources, archive_key=getattr(version, "archive_object_key", None)
+    )
+    HostedHarnessScenario.no_workspace_objects.filter(job=job, scenario_key=key).update(
+        sources=[dict(one) for one in sources if one.get("kind") != "file"] + results
+    )
+
+
+def uncovered_levels(job: HostedHarnessJob) -> UncoveredLevels:
+    """The levels the build planned that no scenario uses, from the default suite's coverage.json."""
+    from simulate.models import HarnessSuiteVersion
+
+    documents = (
+        HarnessSuiteVersion._base_manager.filter(id=job.suite_version_id)
+        .values_list("documents", flat=True)
+        .first()
+        if job.suite_version_id
+        else None
+    ) or {}
+    coverage = documents.get("coverage") if isinstance(documents, dict) else None
+    axes = coverage.get("axes") if isinstance(coverage, dict) else None
+    if not isinstance(axes, dict):
+        return UncoveredLevels(uncovered=[], coverage_recorded=False)
+    return UncoveredLevels(
+        uncovered=[
+            UncoveredLevel(axis=str(axis), level=str(level))
+            for axis, entry in axes.items()
+            if isinstance(entry, dict)
+            for level in entry.get("unused") or []
+        ],
+        coverage_recorded=True,
+    )

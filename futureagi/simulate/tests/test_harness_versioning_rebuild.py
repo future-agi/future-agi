@@ -34,7 +34,11 @@ from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
-from simulate.tests.test_harness_nudges import NEW_VALUE, _activated, _answer
+from simulate.tests.test_harness_nudges import (
+    NEW_VALUE,
+    _activated,
+    _answer,
+)
 from simulate.tests.test_harness_nudges import (  # noqa: F401 - fixture
     started as started,
 )
@@ -745,6 +749,63 @@ class TestLanding:
         )
         assert suite.base_environment_version_id == e2.id
 
+    def test_a_recorded_draft_cites_the_files_and_rows_it_read(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        settings,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment, _nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-file-rows",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        from simulate.services.hosted_harness_gateway import (
+            with_authoring_basis,
+            with_draft_basis,
+        )
+
+        token = drafts.compose_workspace(
+            environment, ensure_conversation(environment)
+        ).token
+        mine = {"agent": "support", "tools": [{"name": "lookup_order"}]}
+        drafts.record_draft(
+            environment,
+            with_draft_basis(
+                with_authoring_basis(_authoring(contract=mine), ""), token
+            ),
+            origin="import",
+            user=user,
+            used_files=[{"file_id": "knowledge/orders.csv", "row": 4}],
+        )
+
+        draft = drafts.open_draft(environment, "environment")
+        used = [
+            one
+            for sources in draft.documents["provenance"].values()
+            for source in sources
+            for one in source["used"]
+        ]
+        assert used and all(
+            one
+            == {
+                "kind": "file",
+                "id": "knowledge/orders.csv",
+                "row": 4,
+                "name": "orders.csv",
+            }
+            for one in used
+        )
+
     def test_the_rebuild_lands_on_top_of_the_unsaved_edits(
         self,
         user,
@@ -1081,7 +1142,7 @@ class TestLanding:
             documents={**(e1.documents or {}), "contract": REFUND}
         )
         world = {"tools": [], "tables": {"orders": 1}}
-        files = drafts._piece_files
+        files = drafts.piece_files
 
         def with_world(locked, piece, version):
             found = files(locked, piece, version)
@@ -1089,7 +1150,7 @@ class TestLanding:
                 found = {**found, "manifest.json": json.dumps(world).encode()}
             return found
 
-        with patch.object(drafts, "_piece_files", with_world):
+        with patch.object(drafts, "piece_files", with_world):
             nudge = _turn(
                 environment,
                 nudge,
@@ -2620,11 +2681,11 @@ class TestAgentDefault:
             pair = default_pair(*args)
             return replace(pair, revision="sha256:" + "9" * 64)
 
-        default_pair = versions._default_pair
+        default_pair = versions.pair_archive
 
         def move_by_hand():
             revisions.append(environment_authoring_revision(environment))
-            with patch.object(versions, "_default_pair", side_effect=recomposed):
+            with patch.object(versions, "pair_archive", side_effect=recomposed):
                 move_default(environment, "agent", a1.id, expected_default_id=a2.id)
             environment.refresh_from_db()
             revisions.append(environment_authoring_revision(environment))
@@ -2728,7 +2789,10 @@ class TestSuite:
         from simulate.tests.test_harness_amend_archive import _key
 
         made = (now + timedelta(minutes=1)).isoformat()
-        proofs = {_key(name): {"holds": True, "proved_at": made} for name in NAMES}
+        proofs = {
+            _key(name): {"format": 2, "holds": True, "proved": True, "proved_at": made}
+            for name in NAMES
+        }
         proofs[_key(NAMES[0])]["proved_at"] = old
 
         suite = _turn(

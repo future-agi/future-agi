@@ -46,6 +46,10 @@ services:
     <<: *dev-worker
     command: ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"]
 
+  metrics-schema-bootstrap:
+    <<: *dev-worker
+    command: ["--check", "--advisory"]
+
   frontend:
     build:
       context: ./frontend

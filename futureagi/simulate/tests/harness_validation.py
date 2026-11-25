@@ -2,7 +2,12 @@
 
 from typing import Any
 
-from simulate.models import HarnessAssembledBundle, HostedHarnessJob
+from simulate.models import (
+    HarnessAssembledBundle,
+    HarnessSuiteMember,
+    HarnessSuiteValidation,
+    HostedHarnessJob,
+)
 from simulate.services.harness_versioning import archives, assembly, validation
 
 
@@ -52,3 +57,59 @@ def settle_validations(environment: Any = None, *, passed: bool = True) -> list[
                 )
             outcomes.append(validation.finish_validation(job.id))
     return outcomes
+
+
+PROVED = {
+    "format": 2,
+    "holds": True,
+    "proved": True,
+    "assumed": [],
+    "blocked_reason": None,
+}
+
+
+def prove_pair(
+    environment: Any,
+    environment_version: Any = None,
+    suite_version: Any = None,
+    *,
+    keys: Any = None,
+) -> None:
+    """Every member of the suite proved on this pair (the defaults when absent), as a
+    finished build or validation records it, so a run reads its cases as validated.
+    With ``keys``, only those, and the pair reads partly proved."""
+    from django.core.cache import cache
+    from django.utils import timezone
+
+    suite = suite_version or environment.suite_version
+    partial = keys is not None
+    if keys is None:
+        keys = HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=suite
+        ).values_list("scenario_key", flat=True)
+    HarnessSuiteValidation.no_workspace_objects.update_or_create(
+        suite_version=suite,
+        environment_version=environment_version or environment.environment_version,
+        defaults={
+            "status": "partial" if partial else "passed",
+            "proved_at": timezone.now(),
+            "proofs": dict.fromkeys(keys, PROVED),
+        },
+    )
+    cache.clear()
+
+
+def prove_every_pair(environment: Any) -> None:
+    """Every active suite version proved on every active environment version of the
+    environment, as validations of each pairing would have recorded it."""
+    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
+
+    suites = HarnessSuiteVersion._base_manager.filter(
+        job_id=environment.id, status="active", deleted=False
+    )
+    versions = HarnessEnvironmentVersion._base_manager.filter(
+        job_id=environment.id, status="active", deleted=False
+    )
+    for suite in suites:
+        for version in versions:
+            prove_pair(environment, version, suite)

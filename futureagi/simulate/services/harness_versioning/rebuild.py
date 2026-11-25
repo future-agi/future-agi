@@ -285,7 +285,9 @@ def _check_answerable(environment: HostedHarnessJob, nudge_id: Any) -> HarnessNu
     if nudge.state not in (State.PENDING, State.FAILED):
         raise nudges._closed(nudge)
     if not nudges.nudges_enabled():
-        raise drafts._error("nudges_disabled", "Rebuilds aren't switched on", 409)
+        raise drafts.version_error(
+            "nudges_disabled", "Rebuilds aren't switched on", 409
+        )
     return nudge
 
 
@@ -315,7 +317,7 @@ def answer_rebuild(
         if locked is None:
             raise nudges.nudge_not_found()
         if _busy(locked):
-            raise drafts._error(
+            raise drafts.version_error(
                 "environment_building", "The environment is still being built", 409
             )
         nudge = _lock_nudge(locked, nudge_id)
@@ -584,7 +586,7 @@ def restore_draft_snapshot(nudge: HarnessNudge, *, locked: HostedHarnessJob) -> 
     from simulate.services.harness_versioning import drafts
 
     snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
-    model = drafts._model(nudge.target)
+    model = drafts.piece_model(nudge.target)
     draft_id = snapshot.get("draft_version_id")
     others = model.no_workspace_objects.filter(job=locked, status=VersionStatus.DRAFT)
     if draft_id:
@@ -889,6 +891,16 @@ def _user_draft_keys(locked: HostedHarnessJob) -> list[str]:
     return sorted({*(diff.get("added") or []), *(diff.get("changed") or {})})
 
 
+def _suite_agent_label(nudge: HarnessNudge, head: HostedHarnessJob) -> str | None:
+    """The agent version a suite rebuild follows: the one its environment version was built for,
+    named in the reason a scenario it drops for a removed capability keeps."""
+    environment = nudge.base_environment_version
+    agent = getattr(environment, "agent_version", None) or head.agent_version
+    if agent is None:
+        return None
+    return reads._agent_label(agent.version_name, agent.version_number)
+
+
 def _labels(nudge: HarnessNudge) -> dict[str, str | None]:
     refs = reads.version_refs(
         nudge.base_agent_version,
@@ -1027,7 +1039,10 @@ def dispatch_nudge(environment_id: Any, *, start_runtime: bool = True) -> bool:
                     _user_draft_keys(head) if nudge.target == Target.SUITE else []
                 ),
                 **(
-                    {"new_sub_goals": _added_sub_goals(nudge)}
+                    {
+                        "new_sub_goals": _added_sub_goals(nudge),
+                        "agent_label": _suite_agent_label(nudge, head),
+                    }
                     if nudge.target == Target.SUITE
                     else {}
                 ),
@@ -1326,6 +1341,7 @@ def _items(piece: str, diff: Mapping[str, Any] | None) -> set[str]:
                 if isinstance(one, Mapping)
             ),
             *(diff.get("changed") or {}),
+            *(diff.get("restored") or []),
         }
     contract = diff.get("contract") or {}
     names: set[str] = set(contract.get("fields") or [])
@@ -1350,13 +1366,15 @@ def _snapshot_documents(locked: HostedHarnessJob, nudge: HarnessNudge) -> Any:
     files = archives.read_archive(archives.get_archive(snapshot["archive_object_key"]))
     other = Target.SUITE if target == Target.ENVIRONMENT else Target.ENVIRONMENT
     sides = {
-        target: drafts._side(files, target),
-        other: drafts._piece_files(locked, other, getattr(locked, f"{other}_version")),
+        target: drafts.piece_side(files, target),
+        other: drafts.piece_files(locked, other, getattr(locked, f"{other}_version")),
     }
-    _split, prepared = drafts._prepared(
+    _split, prepared = drafts.prepare_tree(
         locked, archives.compose(sides["environment"], sides["suite"])
     )
-    values = drafts._content(locked, target, prepared, origin="nudge", default=default)
+    values = drafts.draft_content(
+        locked, target, prepared, origin="nudge", default=default
+    )
     return SimpleNamespace(documents=values["documents"])
 
 
@@ -1376,8 +1394,9 @@ def _buckets(
             before, documents.get("contract") or {}, documents
         )
     else:
+        # The drops the rebuild recorded give a removed case its reason and a restored one its bucket.
         update, _summary = suite_change(
-            before, documents.get("scenarios") or [], "nudge"
+            before, documents.get("scenarios") or [], "nudge", documents.get("dropped")
         )
     edits = ((nudge.draft_snapshot or {}).get("piece") or {}).get("diff")
     return (
@@ -1432,6 +1451,15 @@ def _report(
         one for one in secret_result.get("left_out") or [] if isinstance(one, Mapping)
     ][:PROBLEMS_MAX]
     secret_not_checked = list(secret_checks.get("not_checked") or [])[:PROBLEMS_MAX]
+    # Dropped scenarios the rebuild put back and proved, and those it could not.
+    secret_restored = [
+        one for one in secret_result.get("restored") or [] if isinstance(one, Mapping)
+    ][:PROBLEMS_MAX]
+    secret_restore_failed = [
+        one
+        for one in secret_result.get("restore_failed") or []
+        if isinstance(one, Mapping)
+    ][:PROBLEMS_MAX]
     # Every free text the builder wrote, as (part, field, cap), masked in one pass.
     secret_parts = [
         ("notes", None, str(secret_result.get("notes") or ""), NOTES_MAX),
@@ -1452,6 +1480,21 @@ def _report(
         *(
             ("left_out", (index, field), str(one.get(field) or ""), PROBLEM_TEXT_MAX)
             for index, one in enumerate(secret_left_out)
+            for field in ("key", "why")
+        ),
+        *(
+            ("restored", (index, field), str(one.get(field) or ""), PROBLEM_TEXT_MAX)
+            for index, one in enumerate(secret_restored)
+            for field in ("key", "name")
+        ),
+        *(
+            (
+                "restore_failed",
+                (index, field),
+                str(one.get(field) or ""),
+                PROBLEM_TEXT_MAX,
+            )
+            for index, one in enumerate(secret_restore_failed)
             for field in ("key", "why")
         ),
     ]
@@ -1479,6 +1522,8 @@ def _report(
         "warnings": [],
         "not_checked": [],
         "left_out": [{} for _ in secret_left_out],
+        "restored": [{} for _ in secret_restored],
+        "restore_failed": [{} for _ in secret_restore_failed],
     }
     for (part, at, _text, cap), text in zip(secret_parts, masked, strict=True):
         text = text[:cap]
@@ -1506,7 +1551,7 @@ def _saved_over(
     # A save equal to the default leaves no draft, only the one it discarded.
     ids = [snapshot["draft_version_id"]] if snapshot.get("draft_version_id") else []
     discarded = (
-        drafts._model(nudge.target)
+        drafts.piece_model(nudge.target)
         ._base_manager.filter(
             Q(nudge=nudge) | Q(id__in=ids),
             job=locked,
@@ -1542,7 +1587,7 @@ def _unhandled_tools(
     tools = diffs._tools((result.documents or {}).get("contract") or {})
     if not tools:
         return []
-    files = drafts._piece_files(locked, "environment", result)
+    files = drafts.piece_files(locked, "environment", result)
     try:
         manifest = json.loads(files["manifest.json"])
     except (KeyError, ValueError):
@@ -1664,7 +1709,13 @@ def land_nudge_result(
             )
         extra = {
             key: report[key]
-            for key in ("left_out", "not_checked", "warnings")
+            for key in (
+                "left_out",
+                "not_checked",
+                "warnings",
+                "restored",
+                "restore_failed",
+            )
             if report[key]
         }
         if draft is None or not report["changed"] or draft.hash == snapshot.get("hash"):
@@ -1743,15 +1794,15 @@ def _validate(
 ) -> None:
     from simulate.services.harness_versioning.versions import (
         PROOF_CLOCK_SKEW,
-        _member_rows,
         _validation,
+        member_rows,
     )
 
     environment_version = nudge.base_environment_version or locked.environment_version
     taken = _taken_at(nudge)
     if suite is None or environment_version is None or taken is None:
         return
-    paired = _member_rows(locked, (suite.documents or {}).get("scenarios") or [])
+    paired = member_rows(locked, (suite.documents or {}).get("scenarios") or [])
     # Only proofs made after the turn started count: no clock-skew allowance (Q1).
     _validation(
         suite, environment_version, proofs, paired, locked, taken + PROOF_CLOCK_SKEW

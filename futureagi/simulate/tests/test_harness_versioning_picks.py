@@ -176,6 +176,14 @@ def _pins(job):
     return (job.agent_version_id, job.environment_version_id, job.suite_version_id)
 
 
+def _proved(environment, suite=None, keys=()):
+    """A validation of the pair (the defaults, or ``suite`` on them) that proved ``keys``,
+    so a run sends those cases."""
+    from simulate.tests.harness_validation import prove_pair
+
+    prove_pair(environment, environment.environment_version, suite, keys=list(keys))
+
+
 def _post_run(auth_client, environment, body, key="api", path=None):
     with patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"):
         return auth_client.post(
@@ -219,6 +227,7 @@ class TestNoPicks:
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, "pk-202", storage)
+        _proved(environment, keys=[_key(NAMES[0])])
 
         response = _post_run(
             auth_client, environment, {"scenario_ids": [_key(NAMES[0])], "trials": 1}
@@ -249,7 +258,8 @@ class TestNoPicks:
             },
             "suite": {"id": str(environment.suite_version_id), "label": "v2"},
         }
-        assert [one["code"] for one in body["warnings"]] == ["suite_unproved"]
+        # Its only case is proved, so nothing is warned about the suite.
+        assert body["warnings"] == []
 
     def test_with_versioning_off_the_202_has_no_versions(
         self, auth_client, user, workspace, storage, settings
@@ -641,6 +651,7 @@ class TestPickedRun:
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-miss-on", storage)
         s1 = _suite(environment, 1)
+        _proved(environment, s1, [ONLY_IN_S1])
 
         run = _create(environment, VersionPicks(suite_version_id=s1.id), [ONLY_IN_S1])
 
@@ -657,6 +668,7 @@ class TestPickedRun:
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-miss-202", storage)
         s1 = _suite(environment, 1)
+        _proved(environment, s1, [ONLY_IN_S1])
 
         response = _post_run(
             auth_client,
@@ -668,7 +680,7 @@ class TestPickedRun:
         body = response.json()
         assert body["versions"]["suite"] == {"id": str(s1.id), "label": "v1"}
         assert [one["code"] for one in body["warnings"]] == [
-            "suite_unproved",
+            "suite_partly_proved",
             "bundle_cache_miss",
         ]
 
@@ -781,6 +793,7 @@ class TestIdempotentRepeat:
     ):
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-idem-same", storage)
+        _proved(environment, _suite(environment, 1), [ONLY_IN_S1])
         picks = VersionPicks(suite_version_id=_suite(environment, 1).id)
         run = _create(environment, picks, [ONLY_IN_S1], key="same")
         row = HarnessAssembledBundle._base_manager.get(id=run.assembled_bundle_id)
@@ -850,6 +863,7 @@ class TestIdempotentRepeat:
     ):
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-idem-other", storage)
+        _proved(environment, keys=[_key(NAMES[0])])
         body = {"scenario_ids": [_key(NAMES[0])], "trials": 1}
         first = _post_run(auth_client, environment, body, key="same")
         assert first.status_code == 202, first.content
@@ -881,6 +895,7 @@ class TestIdempotentRepeat:
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-idem-202", storage)
         s1 = _suite(environment, 1)
+        _proved(environment, s1, [ONLY_IN_S1])
         body = {
             "scenario_ids": [ONLY_IN_S1],
             "trials": 1,
@@ -915,13 +930,10 @@ class TestWarnings:
         return run_warnings(environment, resolve_run_pins(environment, picks=picks))
 
     def test_a_proved_default_pair_has_no_warnings(self, user, workspace, storage):
+        from simulate.tests.harness_validation import prove_pair
+
         environment = _environment(user, workspace, "pk-w-none", storage)
-        HarnessSuiteValidation.no_workspace_objects.create(
-            suite_version=environment.suite_version,
-            environment_version=environment.environment_version,
-            status="passed",
-            proved_at=timezone.now(),
-        )
+        prove_pair(environment)
 
         assert self._warnings(environment) == []
 
@@ -938,6 +950,40 @@ class TestWarnings:
             {
                 "code": "suite_unproved",
                 "message": "Suite v2 hasn't been proved against environment v1",
+                "piece": "suite",
+            }
+        ]
+
+    def test_a_partly_proved_suite_says_how_each_case_stands(
+        self, user, workspace, storage
+    ):
+        from simulate.models import HarnessSuiteMember
+
+        environment = _environment(user, workspace, "pk-w-partly", storage)
+        keys = sorted(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version=environment.suite_version
+            ).values_list("scenario_key", flat=True)
+        )
+        kept = {
+            "format": 2,
+            "proved": False,
+            "kept_as_written": True,
+            "blocked_reason": "solution_assumed",
+        }
+        HarnessSuiteValidation.no_workspace_objects.create(
+            suite_version=environment.suite_version,
+            environment_version=environment.environment_version,
+            status="partial",
+            proved_at=timezone.now(),
+            proofs={keys[0]: kept},
+        )
+
+        assert self._warnings(environment) == [
+            {
+                "code": "suite_partly_proved",
+                "message": "Suite v2 on environment v1: 0 proved, 1 kept as written,"
+                f" {len(keys) - 1} not proved",
                 "piece": "suite",
             }
         ]
@@ -1192,6 +1238,7 @@ class TestRunPlan:
     ):
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-plan-failed", storage)
+        _proved(environment, keys=[_key(NAMES[0])])
         row = _ready(
             environment,
             environment.agent_version_id,
@@ -1206,7 +1253,7 @@ class TestRunPlan:
         )
 
         assert response.status_code == 202, response.content
-        assert [one["code"] for one in plan["warnings"]] == ["suite_unproved"]
+        assert plan["warnings"] == []
         assert plan["bundle_cached"] is None
         assert response.json()["warnings"] == plan["warnings"]
 
@@ -1216,6 +1263,7 @@ class TestRunPlan:
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment = _environment(user, workspace, "pk-plan-failed-pick", storage)
         s1 = _suite(environment, 1)
+        _proved(environment, s1, [ONLY_IN_S1])
         row = _ready(
             environment,
             environment.agent_version_id,
@@ -1504,6 +1552,10 @@ class TestProductionOnly:
             }
         )
         s1.refresh_from_db()
+        from simulate.tests.harness_validation import prove_pair
+
+        # Its cases are validated, so only the production-only tool holds them.
+        prove_pair(environment, environment.environment_version, s1)
         return environment, s1
 
     def test_a_run_every_scenario_of_which_needs_it_is_refused_naming_the_tool(

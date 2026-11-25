@@ -39,6 +39,10 @@ from tracer.models.derived_metric import (
     MetricStateConflict,
 )
 from tracer.models.project import Project
+from tracer.services.derived_metrics.bounded_reads import (
+    committed_branches,
+    merge_bindings,
+)
 from tracer.services.derived_metrics.deletion_protocol import (
     revoke_generations,
     serialized_project,
@@ -306,8 +310,8 @@ class ProposalCaptures:
 
     Only BOUNDED inputs are materialized: a draft's frozen batches (one batch
     per INSERT) and the retained-owner set. The committed head side of every
-    proposal stays an inline committed_rows_select over immutable allowlisted
-    attempts: it is the project's whole retained history, so copying it would
+    proposal stays inline over immutable allowlisted attempts: it is the
+    project's whole retained history, so copying it would
     put a hard ceiling on every finite-retention refresh. Later statements,
     including each 500-row freeze page, name the captured relations instead of
     repeating inline RowBinary bytes or the owner subquery, so per-statement
@@ -403,6 +407,31 @@ class ProposalCaptures:
         version and tombstone) is unbounded, while the overlay is one pass.
         """
         return self.proposal(FIELD_VALUES)
+
+    def span_owner_fields(self):
+        """One winner per span key across committed revisions and the frozen draft."""
+        keys = FIELD_VALUES.logical_key
+        version = FIELD_VALUES.version_column
+        columns = (*keys, "generation", version, "session_id", "user_id")
+        projection = ", ".join(columns)
+        branches, params = committed_branches(
+            FIELD_VALUES,
+            self.head,
+            org_id=self.writer.org_id,
+            project_id=self.writer.lease.project_id,
+            columns=columns,
+            key_in={"level": ("span",)},
+            param_prefix="span_owner_fields",
+        )
+        overlay, bound = self.overlay(FIELD_VALUES)
+        # Level is part of the key; a newer empty link or retraction must
+        # still compete with every older linked row for that key.
+        branches.append(f"SELECT {projection} FROM ({overlay}) WHERE level = 'span'")
+        return (
+            f"SELECT {projection} FROM ({' UNION ALL '.join(branches)}) AS span_owner_revisions "
+            f"ORDER BY generation DESC, {version} DESC LIMIT 1 BY {', '.join(keys)}",
+            merge_bindings(params, bound),
+        )
 
     def owners(self, cutoff, parameter="retire_cutoff"):
         """Conversations whose earliest proposed anchor is retained (or all).
@@ -974,7 +1003,13 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures, scratch
         or (
             span_definitions
             and _span_owner_cleanup_required(
-                writer, head, fields, params, cutoff, captures.owners(cutoff)
+                writer,
+                head,
+                fields,
+                params,
+                cutoff,
+                captures.owners(cutoff),
+                span_fields=captures.span_owner_fields,
             )
         )
     )
@@ -1917,7 +1952,7 @@ def _span_dependencies(sql, retained_conversation, cutoff_parameter):
 
 
 def _span_owner_cleanup_required(
-    writer, head, fields, field_params, cutoff, owners=None
+    writer, head, fields, field_params, cutoff, owners=None, *, span_fields=None
 ):
     """A retained span does not prove retention of its private owner links."""
     inline_owners = (
@@ -1936,21 +1971,23 @@ def _span_owner_cleanup_required(
         "raw_user_id",
         "canonical_user_id",
     )
+    if writer.store.execute(
+        f"SELECT count() FROM ({dependencies}) WHERE "
+        f"({' OR '.join(f'notEmpty({c})' for c in owner_columns)}) "
+        f"AND canonical_session_id NOT IN (SELECT unit_id FROM ({fields}) "
+        "WHERE level = 'conversation' AND unit_start >= toDateTime64(%(span_owner_cutoff)s, 6, 'UTC'))",
+        {**field_params, **params, "span_owner_cutoff": cutoff},
+    )[0][0]:
+        return True
+    # Standalone expiry has only committed fields. Refresh can combine the raw
+    # head and draft once on the left; owner evidence still needs all recipes.
+    left, bound = span_fields() if span_fields is not None else (fields, {})
     return bool(
         writer.store.execute(
-            f"SELECT count() FROM ({dependencies}) WHERE "
-            f"({' OR '.join(f'notEmpty({c})' for c in owner_columns)}) "
-            f"AND canonical_session_id NOT IN (SELECT unit_id FROM ({fields}) "
-            "WHERE level = 'conversation' AND unit_start >= toDateTime64(%(span_owner_cutoff)s, 6, 'UTC'))",
-            {**field_params, **params, "span_owner_cutoff": cutoff},
-        )[0][0]
-        or writer.store.execute(
-            f"SELECT count() FROM ({fields}) WHERE level = 'span' "
+            f"SELECT count() FROM ({left}) WHERE level = 'span' "
             "AND (notEmpty(session_id) OR notEmpty(user_id)) "
-            # A pass's captured owner set IS this relation (exact cutoff):
-            # one collapse of the proposal per statement, not two.
             f"AND session_id NOT IN ({owners or inline_owners})",
-            {**field_params, "span_owner_cutoff": cutoff},
+            merge_bindings(field_params, bound, {"span_owner_cutoff": cutoff}),
         )[0][0]
     )
 

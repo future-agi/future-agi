@@ -2530,7 +2530,7 @@ def test_a_question_asked_again_under_a_new_id_takes_the_answer_and_never_holds_
 
 
 @pytest.mark.django_db
-def test_a_question_whose_turn_ended_stops_blocking_once_another_turn_runs(
+def test_a_question_whose_turn_ended_unanswered_closes_with_the_turn(
     organization,
 ):
     job, _ = create_hosted_job(
@@ -2587,19 +2587,16 @@ def test_a_question_whose_turn_ended_stops_blocking_once_another_turn_runs(
         message_id=question,
         payload={"prompt": "Confirm this change"},
     )
-    # The turn that asked ends unanswered (stopped), so the question stays open for now.
+    # The turn that asked ends unanswered: its question ends with it, and the chat is idle, not waiting.
     emit(
         "turn_completed",
         acknowledged_through=1,
         payload={"command_message_id": str(rework.id)},
     )
     conversation.refresh_from_db()
-    assert (conversation.state, conversation.blocking_input["message_id"]) == (
-        "waiting_for_user",
-        question,
-    )
+    assert (conversation.state, conversation.blocking_input) == ("warm_idle", None)
 
-    # The person writes in the chat instead of answering; that message runs a turn of its own.
+    # The person writes in the chat; that message runs a turn of its own, which asks nothing.
     _c, typed, _ = enqueue_message(
         job, content="No, not this one", client_request_id="typed"
     )
@@ -2643,3 +2640,195 @@ def test_a_resumed_turn_keeps_the_question_it_asks_again(organization):
     )
 
     assert conversation.blocking_input is not None
+
+
+def _events(conversation, count):
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessConversationEvent
+
+    for number in range(1, count + 1):
+        HostedHarnessConversationEvent.no_workspace_objects.create(
+            event_id=f"{conversation.id}-e{number}",
+            conversation=conversation,
+            sequence=number,
+            kind="stage_changed",
+            payload={},
+            digest="sha256:" + "0" * 64,
+            emitted_at=timezone.now(),
+        )
+
+
+@pytest.mark.django_db
+def test_a_conversation_read_pages_back_and_a_poll_carries_only_new_events(
+    organization, monkeypatch
+):
+    from simulate.services import hosted_harness_conversation as conversations
+
+    monkeypatch.setattr(conversations, "EVENT_LIMIT", 3)
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-history"
+    )
+    for number in range(1, 6):
+        enqueue_message(
+            job, content=f"m{number}", client_request_id=f"history-{number}"
+        )
+    conversation = job.conversation
+    _events(conversation, 8)
+
+    newest = serialize_conversation(conversation)
+    assert [item["sequence"] for item in newest["messages"]] == [3, 4, 5]
+    assert [item["sequence"] for item in newest["events"]] == [6, 7, 8]
+    assert newest["history"] == {
+        "messages": {"oldest_sequence": 3, "has_older": True},
+        "events": {"oldest_sequence": 6, "has_older": True},
+    }
+    assert newest["events_has_newer"] is False
+
+    older = conversations.conversation_history(conversation, kind="messages", before=3)
+    assert [item["sequence"] for item in older["messages"]] == [1, 2]
+    assert (
+        older["events"] == []
+        and older["has_older"] is False
+        and older["oldest_sequence"] == 1
+    )
+    earlier = conversations.conversation_history(conversation, kind="events", before=6)
+    assert [item["sequence"] for item in earlier["events"]] == [3, 4, 5]
+    assert earlier["messages"] == [] and earlier["has_older"] is True
+
+    # A message changes in place (a streamed reply, its state), so every poll carries the newest messages whole.
+    conversation.messages.filter(sequence=5).update(content="m5, streamed further")
+    poll = serialize_conversation(conversation, events_after=7)
+    assert [item["sequence"] for item in poll["messages"]] == [3, 4, 5]
+    assert poll["messages"][-1]["content"] == "m5, streamed further"
+    assert [item["sequence"] for item in poll["events"]] == [8]
+    assert "events" not in poll["history"] and poll["events_has_newer"] is False
+
+    quiet = serialize_conversation(conversation, events_after=8)
+    assert quiet["events"] == [] and quiet["events_has_newer"] is False
+
+    # A reader behind the window catches up oldest first, never skipping to the newest.
+    behind = serialize_conversation(conversation, events_after=1)
+    assert [item["sequence"] for item in behind["events"]] == [2, 3, 4]
+    assert behind["events_has_newer"] is True
+    caught_up = serialize_conversation(conversation, events_after=4)
+    assert [item["sequence"] for item in caught_up["events"]] == [5, 6, 7]
+    assert caught_up["events_has_newer"] is True
+
+
+@pytest.mark.django_db
+def test_the_job_read_and_the_history_read_page_the_builder_chat_over_the_api(
+    organization, workspace, auth_client, monkeypatch
+):
+    from simulate.services import hosted_harness_conversation as conversations
+
+    monkeypatch.setattr(conversations, "EVENT_LIMIT", 3)
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="conversation-history-api",
+        workspace=workspace,
+    )
+    for number in range(1, 6):
+        enqueue_message(job, content=f"m{number}", client_request_id=f"api-{number}")
+    _events(job.conversation, 5)
+    base = f"/simulate/api/harness-jobs/{job.id}"
+
+    full = auth_client.get(f"{base}/").json()["conversation"]
+    assert [item["sequence"] for item in full["messages"]] == [3, 4, 5]
+    assert full["history"]["messages"] == {"oldest_sequence": 3, "has_older": True}
+
+    poll = auth_client.get(f"{base}/", {"events_after": 4}).json()["conversation"]
+    assert [item["sequence"] for item in poll["messages"]] == [3, 4, 5]
+    assert [item["sequence"] for item in poll["events"]] == [5]
+    assert "events" not in poll["history"]
+
+    page = auth_client.get(
+        f"{base}/conversation/history/", {"kind": "messages", "before": 3}
+    )
+    assert page.status_code == 200
+    assert [item["sequence"] for item in page.json()["messages"]] == [1, 2]
+    assert page.json()["events"] == [] and page.json()["has_older"] is False
+
+    refused = auth_client.get(f"{base}/conversation/history/", {"kind": "messages"})
+    assert refused.status_code == 400
+
+
+def test_the_sandbox_provider_refuses_a_read_of_only_new_events():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_provider import SandboxHarnessProvider
+
+    provider = SandboxHarnessProvider.__new__(SandboxHarnessProvider)
+    answer = provider.retrieve(
+        SimpleNamespace(validated_query_data={"events_after": 3}), "job"
+    )
+
+    assert answer.status_code == 501
+    assert answer.data["code"] == "events_after_not_supported"
+
+
+@pytest.mark.django_db
+def test_a_history_read_around_a_message_returns_the_page_that_holds_it(
+    organization, workspace, auth_client, monkeypatch
+):
+    from uuid import uuid4
+
+    from simulate.services import hosted_harness_conversation as conversations
+
+    monkeypatch.setattr(conversations, "EVENT_LIMIT", 3)
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="history-around", workspace=workspace
+    )
+    other, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="history-around-other",
+        workspace=workspace,
+    )
+    for number in range(1, 8):
+        enqueue_message(job, content=f"m{number}", client_request_id=f"around-{number}")
+    enqueue_message(other, content="elsewhere", client_request_id="around-other")
+    ids = {
+        one.sequence: str(one.id)
+        for one in job.conversation.messages.order_by("sequence")
+    }
+    base = f"/simulate/api/harness-jobs/{job.id}/conversation/history/"
+
+    def page(around):
+        answer = auth_client.get(base, {"kind": "messages", "around": around})
+        assert answer.status_code == 200, answer.content
+        body = answer.json()
+        return (
+            [item["sequence"] for item in body["messages"]],
+            body["oldest_sequence"],
+            body["newest_sequence"],
+            body["has_older"],
+            body["has_newer"],
+        )
+
+    assert page(ids[4]) == ([3, 4, 5], 3, 5, True, True)
+    # At the very start and the very end, the page fills from the other side.
+    assert page(ids[1]) == ([1, 2, 3], 1, 3, False, True)
+    assert page(ids[7]) == ([5, 6, 7], 5, 7, True, False)
+
+    elsewhere = str(other.conversation.messages.get().id)
+    for unknown in (str(uuid4()), elsewhere):
+        missing = auth_client.get(base, {"kind": "messages", "around": unknown})
+        assert missing.status_code == 404
+        assert elsewhere not in missing.content.decode()
+    both = auth_client.get(base, {"kind": "messages", "around": ids[4], "before": 4})
+    assert both.status_code == 400
+    assert (
+        auth_client.get(base, {"kind": "events", "around": ids[4]}).status_code == 400
+    )
+    assert auth_client.get(base, {"kind": "messages"}).status_code == 400
+
+    # A read back before a sequence says what lies on either side of it too.
+    before = auth_client.get(base, {"kind": "messages", "before": 4}).json()
+    assert [item["sequence"] for item in before["messages"]] == [1, 2, 3]
+    assert (before["newest_sequence"], before["has_older"], before["has_newer"]) == (
+        3,
+        False,
+        True,
+    )

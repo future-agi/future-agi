@@ -80,6 +80,7 @@ from simulate.services.hosted_harness_gateway import (
     _validate_resolved_egress_domains,
     _webrtc_egress_cidrs,
     attach_platform_simulator_secret_refs,
+    detect_source_api_keys,
     detect_source_connectors,
     detect_source_credentials,
     guest_failure_cause,
@@ -945,6 +946,50 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization, monke
     store.assert_called_once_with(job, b"frozen-authoring", advance_lifecycle=False)
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("supports", "freezes"),
+    [({"cases": 2, "asked": 3, "written": 2}, True), (None, False)],
+)
+def test_a_build_the_agent_supports_fewer_cases_for_freezes_with_what_it_wrote(
+    organization, monkeypatch, supports, freezes
+):
+    """Asked for 3, the agent's plan holds about 2: the build is complete at 2, and only when its yield says so."""
+    payload = _payload()
+    payload["scenario_count"] = 3
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key=f"freeze-supported-{freezes}"
+    )
+    attempt = SimpleNamespace(id="attempt-1", job_id=job.id, attempt_number=1)
+    files = {
+        "/work/authoring/contract.json": b'{"modality":"voice"}',
+        "/work/authoring/environment-bundle/environment-plan.json": b'{"runtime":{}}',
+        "/work/authoring/scenarios.json": b'[{"scenario_key":"one"},{"scenario_key":"two"}]',
+        "/work/bundle/manifest.json": b'{"schema_version":"v2"}',
+        "/tmp/authoring-rerun.tar.gz": b"frozen-authoring",
+    }
+    if supports:
+        files["/work/authoring/generic-harness/yield.json"] = json.dumps(
+            {"supports": supports}
+        ).encode()
+    sandbox = SimpleNamespace(
+        fs=SimpleNamespace(download_file=lambda path, timeout=None: files[path]),
+        process=SimpleNamespace(
+            exec=lambda command, **kwargs: SimpleNamespace(exit_code=0, result="")
+        ),
+    )
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.record_sandbox_runtime",
+        lambda *args, **kwargs: None,
+    )
+    with patch(
+        "simulate.services.hosted_harness_gateway.store_authoring_archive"
+    ) as store:
+        HostedHarnessGateway._sync_authoring_progress(attempt, sandbox)
+
+    assert store.called is freezes
+
+
 def test_voice_authoring_resolves_auto_connector_with_livekit_credentials(tmp_path):
     root = tmp_path / "authoring"
     scenario = root / "scenarios" / "one"
@@ -1047,6 +1092,65 @@ def test_source_scan_does_not_require_adc_for_google_sdk_or_api_key_mode():
     assert required_files == []
     assert scanned == 1
     assert detect_source_credentials(b"not a tarball") == ([], [], 0)
+
+
+def test_source_scan_lists_the_api_keys_the_code_reads():
+    names = detect_source_api_keys(
+        _source_tarball(
+            {
+                "agent.py": (
+                    '"""Swap to Claude: os.getenv("ANTHROPIC_API_KEY")."""\n'
+                    "import os\n"
+                    "# To use Claude instead, set ANTHROPIC_API_KEY.\n"
+                    "# c = Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])\n"
+                    "client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])  # not os.getenv('XAI_API_KEY')\n"
+                    "register(api_key=os.getenv('FI_API_KEY'))\n"
+                    "port = os.environ['PORT']\n"
+                    "\n"
+                    "def build():\n"
+                    '    """Or os.environ.get(\'MISTRAL_API_KEY\')."""\n'
+                    "    return os.environ.get('TOGETHER_API_KEY')\n"
+                ),
+                "settings.py": (
+                    'from os import environ\ngroq = environ.get("GROQ_API_KEY", "")\n'
+                ),
+                "server.ts": (
+                    "// const claude = process.env.ANTHROPIC_API_KEY;\n"
+                    "/* const mistral = process.env['MISTRAL_API_KEY']; */\n"
+                    'const url = "https://api.example.com/v1";\n'
+                    "const tts = process.env.CARTESIA_API_KEY;\n"
+                    'const stt = process.env["DEEPGRAM_API_KEY"];\n'
+                ),
+                ".env.example": "GEMINI_API_KEY=\nFI_SECRET_KEY=\n",
+                "README.md": "Set MISTRAL_API_KEY to use Mistral.\n",
+                "node_modules/sdk/index.js": "process.env.COHERE_API_KEY",
+            }
+        )
+    )
+
+    assert names == [
+        "CARTESIA_API_KEY",
+        "DEEPGRAM_API_KEY",
+        "FI_API_KEY",
+        "GROQ_API_KEY",
+        "OPENAI_API_KEY",
+        "TOGETHER_API_KEY",
+    ]
+    assert detect_source_api_keys(b"not a tarball") == []
+
+
+def test_source_scan_reads_api_keys_only_within_the_agents_reach():
+    names = detect_source_api_keys(
+        _source_tarball(
+            {
+                "agents/support/agent.py": "os.environ['ANTHROPIC_API_KEY']\n",
+                "agents/billing/agent.py": "os.environ['OPENAI_API_KEY']\n",
+            }
+        ),
+        subfolder="agents/support",
+    )
+
+    assert names == ["ANTHROPIC_API_KEY"]
 
 
 _MONOREPO = {
@@ -5182,6 +5286,23 @@ def _chat_document(monkeypatch, events=None):
     return json.loads(client.sandbox.fs.uploads["/work/job.json"]), job
 
 
+def test_a_build_and_a_chat_send_every_key_the_environment_gave(monkeypatch):
+    """So a new case never takes a removed one's key and inherits its runs: a build seeds them as the chat does."""
+    monkeypatch.setattr(
+        f"{_GATEWAY}._with_used_scenario_keys",
+        lambda document, _job: {
+            **document,
+            "metadata": {
+                **(document.get("metadata") or {}),
+                "used_scenario_keys": ["removed-case"],
+            },
+        },
+    )
+    for upload_document in (_authoring_document, _chat_document):
+        document, _job = upload_document(monkeypatch)
+        assert document["metadata"]["used_scenario_keys"] == ["removed-case"]
+
+
 def test_authoring_and_chat_documents_carry_the_mark_even_when_the_function_fails(
     monkeypatch,
 ):
@@ -6834,4 +6955,56 @@ def test_process_log_capture_labels_the_builds_logs_apart_from_the_runs(tmp_path
         output.index("validation worker")
         < output.index("402 Payment Required")
         < output.index("live worker")
+    )
+
+
+def test_a_build_yield_is_served_with_the_stage_outputs_from_the_build_and_its_archive():
+    """ALK's `generic-harness/yield.json` reads as one stage output: X of N runnable, and what is held and why."""
+    import io
+    import tarfile
+
+    from simulate.services.hosted_harness_gateway import (
+        authoring_stage_outputs,
+        authoring_stage_outputs_from_archive,
+    )
+
+    build_yield = {
+        "asked": 10,
+        "runnable": 8,
+        "cases": 10,
+        "held": {"not_solvable": 2},
+        "line": "8 of 10 runnable; held: 2 because its expected handling does not pass its checks",
+        "rounds": [{"round": 1, "handed_back": 2}],
+        "supports": {
+            "cases": 10,
+            "asked": 20,
+            "written": 10,
+            "line": "this agent supports about 10 distinct scenarios; wrote 10 of 20",
+            "why": "its plan has one order state and two refund paths",
+        },
+    }
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        data = json.dumps(build_yield).encode()
+        member = tarfile.TarInfo("generic-harness/yield.json")
+        member.size = len(data)
+        archive.addfile(member, io.BytesIO(data))
+
+    [served] = [
+        one
+        for one in authoring_stage_outputs(None, None, None, build_yield=build_yield)
+        if one["kind"] == "yield"
+    ]
+    [archived] = [
+        one
+        for one in authoring_stage_outputs_from_archive(body.getvalue())
+        if one["kind"] == "yield"
+    ]
+
+    assert served == archived
+    assert (served["summary"], served["data"]) == (
+        "8 of 10 runnable; held: 2 because its expected handling does not pass its checks; "
+        "this agent supports about 10 distinct scenarios; wrote 10 of 20. "
+        "its plan has one order state and two refund paths",
+        build_yield,
     )

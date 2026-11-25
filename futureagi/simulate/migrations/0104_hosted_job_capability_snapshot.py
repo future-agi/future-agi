@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('simulate', '0103_harness_job_verify_of'),
+        ("simulate", "0103_harness_job_verify_of"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='hostedharnessjob',
-            name='capability_snapshot',
+            model_name="hostedharnessjob",
+            name="capability_snapshot",
             field=models.JSONField(blank=True, null=True),
         ),
     ]

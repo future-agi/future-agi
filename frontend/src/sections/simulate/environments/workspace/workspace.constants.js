@@ -113,6 +113,8 @@ export const WORKSPACE_COPY = {
   },
   viewer: {
     run: "You don't have permission to start runs.",
+    export: "You don't have permission to export run results.",
+    stop: "You don't have permission to stop runs.",
     edit: "You don't have permission to edit this environment.",
     rename: "You don't have permission to rename environments.",
     delete: "You don't have permission to delete environments.",
@@ -198,6 +200,7 @@ export const WORKSPACE_COPY = {
 // environment, what changed in each, and which scenarios a suite version holds.
 export const VERSIONS_COPY = {
   title: "Versions",
+  savedWithoutCheck: "Saved without a check",
   subtitle:
     "Every change to the agent, the environment or its scenarios is kept as a version. Runs replay the default environment and scenario versions.",
   pieces: {
@@ -536,6 +539,18 @@ export const DRAFTS_COPY = {
     `These unsaved changes started from ${piece} ${from || "an earlier version"}; it is now ${now || "a newer version"}. Discard them, or ask chat to make them again on the current version.`,
   busy: "Chat is working; save when it finishes",
   saveError: "Couldn't save the changes. Try again in a moment.",
+  validate: "Validate",
+  versionName: "Name this version",
+  validating: "Validating changes",
+  validateError: "Couldn't start validating. Try again in a moment.",
+  validation: {
+    retry: "Validation did not start. Try again",
+    superseded: "The environment changed while validating. Validate again",
+    failed: (n) =>
+      `Validation failed. ${plural(n, "scenario")} need${n === 1 ? "s" : ""} a change`,
+    check_unavailable:
+      "The check is unavailable on our side, so this saves without a check. Re-check the pairing once it is back.",
+  },
   discardError: "Couldn't discard the changes. Try again in a moment.",
   errors: {
     draft_changed:
@@ -548,6 +563,11 @@ export const DRAFTS_COPY = {
     draft_not_found: "These changes were already saved or discarded.",
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
+    validation_required: "Validate these reviewed changes, then save them.",
+    scenario_index_mismatch:
+      "A scenario's entry in the suite list doesn't match the scenario itself. Ask chat to fix that scenario, then save again.",
+    change_depends_on_rejected:
+      "An accepted change needs one that was rejected. Accept both or reject both, then save again.",
   },
   // The Scenarios tab and the run dialog.
   unsaved: "Unsaved",

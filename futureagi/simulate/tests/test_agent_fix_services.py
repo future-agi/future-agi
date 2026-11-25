@@ -167,8 +167,13 @@ def temporal():
 
 @pytest.fixture
 def environment(user, workspace, storage):
-    """Backfilled to A1/E1/S1: a GitHub agent with two scenarios."""
-    return _environment(user, workspace, "fix-env", storage)
+    """Backfilled to A1/E1/S1: a GitHub agent with two scenarios, proved on that pair
+    so a run sends them."""
+    from simulate.tests.test_harness_affected_scenarios import _proved_on
+
+    built = _environment(user, workspace, "fix-env", storage)
+    _proved_on(built, built.environment_version)
+    return built
 
 
 @pytest.fixture
@@ -1522,7 +1527,7 @@ class TestCheckRunStatus:
                     "sub_goals": [{"name": "refunded", "held": None}],
                 },
                 "error",
-                "the judge decided nothing on refunded",
+                "the trial ended errored",
                 {},
             ),
         ],
@@ -4224,3 +4229,25 @@ class TestCheckRunReceipts:
             call.call_metadata.get("eval_started"),
             call.call_metadata.get("eval_completed"),
         ) == (True, True)
+
+
+def test_a_suite_private_to_a_fix_is_never_reused_as_a_saved_twin(source_run):
+    """Save and Validate reuse an active version with the same content; never one only a fix's check runs see."""
+    from simulate.models import HarnessSuiteVersion
+    from simulate.services.harness_versioning.draft_pieces import active_twin
+
+    environment = source_run.environment
+    suite = environment.suite_version
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(
+        fix_run=_fix_run(source_run)
+    )
+
+    assert (
+        active_twin(HarnessSuiteVersion, environment, suite.hash, suite.hash_kind)
+        is None
+    )
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(fix_run=None)
+    assert (
+        active_twin(HarnessSuiteVersion, environment, suite.hash, suite.hash_kind).id
+        == suite.id
+    )
