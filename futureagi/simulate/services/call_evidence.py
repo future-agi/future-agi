@@ -192,7 +192,8 @@ class _Read:
             self._cache["chat"] = list(
                 self.call.chat_messages.filter(deleted=False).order_by("created_at")
             )
-        return self._cache["chat"]
+        messages: list[ChatMessageModel] = self._cache["chat"]
+        return messages
 
 
 # --- the public calls ----------------------------------------------------------
@@ -686,7 +687,7 @@ def _voice_turns(call: CallExecution) -> list[dict[str, str]]:
     provider_data = _mapping(call.provider_call_data)
     # A call whose provider data names no provider was stored the platform's way round.
     provider = (
-        SpeakerRoleResolver.detect_provider(provider_data)
+        SpeakerRoleResolver.detect_provider(dict(provider_data))
         if any(provider_data.get(one.value) for one in _KNOWN_PROVIDERS)
         else ProviderChoices.LIVEKIT
     )
@@ -712,11 +713,11 @@ def _voice_turns(call: CallExecution) -> list[dict[str, str]]:
 
 
 def _chat_turns(messages: list[ChatMessageModel]) -> list[dict[str, str]]:
-    speakers = {
+    speakers: dict[str, str] = {
         ChatMessageModel.RoleChoices.USER: "customer",
         ChatMessageModel.RoleChoices.ASSISTANT: "agent",
     }
-    turns = []
+    turns: list[dict[str, str]] = []
     for message in messages:
         speaker = speakers.get(message.role)
         if speaker is None:
