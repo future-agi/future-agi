@@ -209,6 +209,13 @@ def run_usage_sql() -> str:
         "cost AS span_cost "
         "FROM spans FINAL "
         f"{_job_scope_sql()}"
+        # An agent with two exporters sends one span under two service names, which the
+        # table keeps apart: count it once, by the copy that has a price, then the one
+        # its Future AGI instrumentor named.
+        "ORDER BY trace_id, id, span_cost > 0 DESC, "
+        f"(mapContains({cols.ATTRS_STRING}, 'llm.model_name') "
+        f"OR mapContains({cols.ATTRS_STRING}, 'fi.span.kind')) DESC, service_name "
+        "LIMIT 1 BY trace_id, id"
         ") "
         "WHERE call_execution_id != '' "
         "GROUP BY call_execution_id"
