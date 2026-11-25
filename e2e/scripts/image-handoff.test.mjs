@@ -14,7 +14,13 @@ test('image handoff verifier accepts matching bytes and rejects broken bindings'
 
 test('proof remains dispatch-only and uses the distributed backend recipe', () => {
   const proof = workflow('e2e-image-handoff-proof');
-  assert.equal(proof.on, 'workflow_dispatch');
+  // Dispatch runs the proof; the dev push only registers it, every job skipped.
+  assert.deepEqual(Object.keys(proof.on).sort(), ['push', 'workflow_dispatch']);
+  assert.deepEqual(proof.on.push, { branches: ['dev'], paths: ['.github/workflows/e2e-image-handoff-proof.yml'] });
+  assert.equal(proof.jobs.donor.if, "github.event_name == 'workflow_dispatch'");
+  assert.deepEqual(Object.keys(proof.jobs).sort(), ['consumer', 'donor']);
+  assert.equal(proof.jobs.consumer.needs, 'donor');
+  assert.equal(proof.jobs.consumer.if, undefined); // skipped with the donor
   const ordinary = workflow('e2e-ci');
   const base = (steps) => steps.find(s => s.with?.file === 'futureagi/Dockerfile.oss').with;
   const reference = base(ordinary.jobs.e2e.steps);

@@ -1,6 +1,14 @@
 name: E2E image handoff proof
 
-on: workflow_dispatch
+# Only a manual dispatch runs the proof. GitHub offers a dispatch-only
+# workflow only once its file is on the default branch or it has run; the push
+# trigger below (this file, on dev) runs it once with every job skipped, so it
+# can be dispatched from dev before the file reaches main.
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths: [.github/workflows/e2e-image-handoff-proof.yml]
 
 permissions:
   contents: read
@@ -13,6 +21,8 @@ env:
 
 jobs:
   donor:
+    # The push run only registers the workflow; consumers need the donor.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 100
     outputs:
