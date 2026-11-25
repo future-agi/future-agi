@@ -104,7 +104,10 @@ Score.propTypes = { result: PropTypes.object };
 // How a scoring state that ended without a value reads in a cell, and the tip
 // to fall back on when the server sent no reason.
 const ENDED_UNSCORED = {
-  [SCORING_STATUS.FAILED]: { text: "Failed", color: "status.danger.fg" },
+  [SCORING_STATUS.FAILED]: {
+    text: "Couldn't score",
+    color: "status.warning.fg",
+  },
   [SCORING_STATUS.TIMED_OUT]: { text: "Timed out", color: "status.warning.fg" },
   [SCORING_STATUS.SKIPPED]: { text: "Not scored", color: "text.disabled" },
 };
