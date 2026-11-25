@@ -86,7 +86,9 @@ def test_a_list_edit_that_shifts_indexes_tests_each_value_where_its_op_meets_it(
         (["a", {"k": "a"}, "b", "a"], ["b", {"k": "b"}]),
     ],
 )
-def test_a_dict_moved_and_edited_in_a_list_gives_a_patch_that_builds_the_draft(was, now):
+def test_a_dict_moved_and_edited_in_a_list_gives_a_patch_that_builds_the_draft(
+    was, now
+):
     before = {**TOOLS[1], "examples": was}
     after = {**TOOLS[1], "examples": now}
 
