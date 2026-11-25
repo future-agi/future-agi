@@ -66,7 +66,14 @@ def _created_tables(filename):
 
 def test_files_are_009_011_then_every_packaged_metrics_file_in_order():
     packaged = sorted(p.name for p in SCHEMA_DIR.glob("[0-9][0-9][0-9]_*.sql"))
-    metrics = [name for name in packaged if 28 <= int(name[:3]) <= 38]
+    # 028_reconcile_metadata_dictionaries.sql shares the 028 slot but belongs to
+    # the native dictionaries, not Metrics.
+    not_metrics = {"028_reconcile_metadata_dictionaries.sql"}
+    metrics = [
+        name
+        for name in packaged
+        if 28 <= int(name[:3]) <= 38 and name not in not_metrics
+    ]
     assert metrics[-1] == "038_metric_snapshot_sketches.sql"
     assert schema_install.FILES == (
         "009_per_eval_rollup.sql",
