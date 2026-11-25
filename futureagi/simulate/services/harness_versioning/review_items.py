@@ -556,6 +556,18 @@ def world_rows(
     return out
 
 
+def _patch(before: Any, after: Any) -> list[JsonPatchOp]:
+    """The ops that turn ``before`` into ``after``. jsonpatch's own diff can misplace a dict moved and edited in a list
+    (its ops fail, or land in another order), so a diff that does not rebuild ``after`` replaces the whole value."""
+    patch: list[JsonPatchOp] = jsonpatch.make_patch(before, after).patch
+    try:
+        if jsonpatch.apply_patch(before, patch) == after:
+            return patch
+    except (jsonpatch.JsonPatchException, jsonpatch.JsonPointerException):
+        pass
+    return [{"op": "replace", "path": "", "value": copy.deepcopy(after)}]
+
+
 def _tested(before: Any, patch: list[JsonPatchOp]) -> list[JsonPatchOp]:
     """The patch with a `test` on each value it replaces or removes, so it applies only to what was read. Each test sits
     just before its op and reads the document as the earlier ops left it: an earlier add or remove shifts list indexes."""
@@ -770,7 +782,7 @@ def compute_changes(
         elif new is None:
             patch = [{"op": "test", "path": "", "value": old.value}]
         else:
-            patch = _tested(old.value, jsonpatch.make_patch(old.value, new.value).patch)
+            patch = _tested(old.value, _patch(old.value, new.value))
         fields = _fields(old.value if old else None, new.value if new else None)
         rows = (
             world_rows(item.key, old.raw if old else None, new.raw if new else None)
