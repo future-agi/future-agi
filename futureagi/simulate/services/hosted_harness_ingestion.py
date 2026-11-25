@@ -584,6 +584,13 @@ def ingest_manifest(
             body=_json_ready(body),
         )
         attempt.manifest_acked = True
+        if attempt.cleanup_verified_at is not None:
+            # The sandbox is verified gone and cleanup already decided from the results in
+            # then: the Run settled, or its retry was narrowed to the calls without one. A
+            # manifest arriving after that is kept on record and reopens neither, nor does
+            # it mark the missing calls skipped.
+            attempt.save(update_fields=["manifest_acked", "updated_at"])
+            return manifest, True
         attempt.state = HostedHarnessAttempt.State.CLEANING_UP
         attempt.save(update_fields=["manifest_acked", "state", "updated_at"])
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(

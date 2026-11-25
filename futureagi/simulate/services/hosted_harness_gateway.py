@@ -58,12 +58,13 @@ from simulate.services.code_archives import (
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
-    RetryAlreadyDelivered,
+    NothingToLaunch,
     activate_attempt_capability,
     executions_without_result,
     fail_lost_attempt,
     finish_deferred_delete,
     keep_delivered_attempt,
+    launched_attempt,
     platform_set_failure,
     record_cleanup,
     register_attempt,
@@ -186,6 +187,20 @@ _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
 _PROVIDER_UNREACHABLE_GRACE_SECONDS = 180
 
+_ENDED_JOB_STATES = frozenset(
+    {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+)
+_ENDED_ATTEMPT_STATES = frozenset(
+    {
+        HostedHarnessAttempt.State.COMPLETED,
+        HostedHarnessAttempt.State.FAILED,
+        HostedHarnessAttempt.State.CANCELED,
+    }
+)
 # The attempt fields a poll decides its ending from, read afresh after provider calls.
 _ATTEMPT_ENDING_FIELDS = (
     "terminal_event_received",
@@ -2770,6 +2785,12 @@ class HostedHarnessGateway:
     ) -> HostedHarnessAttempt:
         from simulate.services.harness_versioning import assembly as bundle_cache
 
+        # A launch replayed after its response was lost (or any launch of a job that is
+        # settled or already running its guest) hands back what the first one did, before
+        # it acquires source, stamps a commit or touches the job.
+        launched = launched_attempt(job.id)
+        if launched is not None:
+            return launched
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
         # A pinned run replays its assembled pair; on a cache miss it certifies it first.
@@ -2908,11 +2929,12 @@ class HostedHarnessGateway:
                 endpoint_base_url=endpoint_base_url,
                 snapshot_name=selected_snapshot,
                 snapshot_digest=registered_snapshot_digest,
+                resume_launched=True,
             )
-        except RetryAlreadyDelivered as settled:
-            # Every call this retry was for delivered its result after cleanup: the Run
-            # ended with the attempt that delivered them, and nothing is launched. The
-            # workflow's next poll of that attempt reads the ended job.
+        except NothingToLaunch as settled:
+            # Every call this retry was for delivered its result after cleanup, or an
+            # earlier launch of this step already settled the job or started its guest:
+            # nothing is launched, and the workflow polls the attempt handed back.
             return settled.attempt
         attempt = capability.attempt
         # The document was built before registration, which may have dropped calls whose
@@ -4905,13 +4927,15 @@ class HostedHarnessGateway:
         attempt.refresh_from_db()
         job = attempt.job
         job.refresh_from_db()
-        if attempt.cleanup_verified_at is not None and job.state in {
-            HostedHarnessJob.State.COMPLETED,
-            HostedHarnessJob.State.FAILED,
-            HostedHarnessJob.State.CANCELED,
-        }:
+        if (
+            attempt.cleanup_verified_at is not None
+            and job.state in _ENDED_JOB_STATES
+            and attempt.state in _ENDED_ATTEMPT_STATES
+        ):
             # Already ended with its sandbox verified gone, as when a retry found every
             # result in when it registered: there is nothing left to inspect or record.
+            # A guest ending that landed since puts the attempt back to finalizing, and
+            # that is reconciled below as before.
             return job
         if (
             not attempt.provider_ref
