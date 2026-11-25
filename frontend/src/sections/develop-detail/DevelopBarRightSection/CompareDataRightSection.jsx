@@ -188,6 +188,7 @@ const CompareDataRightSection = ({
         <Switch
           size="small"
           color="success"
+          disabled={columns.length === 0}
           checked={diffMode}
           onChange={() => {
             handleToggleDiffMode();

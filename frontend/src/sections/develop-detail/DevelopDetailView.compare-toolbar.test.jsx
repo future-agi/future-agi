@@ -372,6 +372,23 @@ describe("DevelopDetailView comparison toolbar", () => {
     expect(within(button).queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
+  it("clears the grid and toolbar when a new comparison selection has no rows", async () => {
+    renderView();
+    await loadPage();
+    expect(screen.getByRole("button", { name: "Columns" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Evaluate" })).toBeEnabled();
+    act(() => mocks.selectorProps.setBaseColumnInParent("other"));
+    expect(screen.getByRole("button", { name: "Columns" })).toBeDisabled();
+    mocks.post.mockResolvedValueOnce(
+      tableResponse({ empty: true, compareId: NEW_COMPARE_ID }),
+    );
+    await loadPage();
+    expect(grid.props.columnDefs).toEqual([]);
+    expect(screen.getByRole("button", { name: "Columns" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Evaluate" })).toBeDisabled();
+    expect(screen.getByRole("checkbox")).toBeDisabled();
+  });
+
   it("opens the real column menu with the keyboard and applies column visibility to the comparison", async () => {
     const user = userEvent.setup();
     renderView();

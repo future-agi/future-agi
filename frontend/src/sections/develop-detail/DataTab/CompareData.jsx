@@ -169,7 +169,7 @@ const CompareData = ({
   }, [isRefreshingColumns, refreshGrid]); // Dependency on pending items
 
   function filterColumnDef(columnDefs, selectedColumns) {
-    if (columnDefs?.length < 1) return;
+    if (!columnDefs?.length) return [];
 
     return columnDefs.map((col) => {
       if (!selectedColumns?.includes(col?.id)) {
@@ -296,6 +296,10 @@ const CompareData = ({
     setExpandRow(null);
     gridApiRef.current?.api?.deselectAll?.();
     setColumnConfig([]);
+    setColumns([]);
+    setCompareColumnDefs([]);
+    setColumnData([]);
+    setColumnDefs([]);
     setPinnedBottomRowData([]);
     setColumnAvgs([]);
     isRefreshingColumns.current = null;
@@ -303,7 +307,7 @@ const CompareData = ({
     // a previous comparison's client-row fallback inputs across a rebuild.
     setCommonColumn([]);
     setDatasetInfo({});
-  }, [gridApiRef, setCommonColumn, setDatasetInfo]);
+  }, [gridApiRef, setColumns, setCompareColumnDefs, setCommonColumn, setDatasetInfo]);
 
   // Dataset/base-column changes still delete the previous comparison. Purge
   // rather than refresh in place: row IDs belong to the previous selection.
@@ -441,7 +445,15 @@ const CompareData = ({
             compareId.current = responseCompareId;
             compareIdSelectionRef.current = selection;
             clearComparisonRows();
-            emptyComparisonRef.current = { selection, id: responseCompareId };
+            emptyComparisonRef.current = {
+              selection,
+              id: responseCompareId,
+              // On a same-selection rollover the join key is still valid for
+              // sorting. Never retain old dataset column IDs or renderers.
+              columns: requestCompareId
+                ? [{ headerName: baseColumn, colId: "compare-join-key", sortable: true }]
+                : [],
+            };
             setHasData(false);
             if (requestCompareId || request.startRow > 0) {
               // A later block's success([], 0) alone cannot retire all old SSRM
@@ -774,7 +786,11 @@ const CompareData = ({
           <CompositeEvalDialog />
           <AgGridReact
             ref={gridApiRef}
-            columnDefs={columnDefs}
+            columnDefs={
+              emptyComparisonRef.current?.selection === selection
+                ? emptyComparisonRef.current.columns
+                : columnDefs
+            }
             noRowsOverlayComponent={NoRowsOverlay}
             onColumnHeaderClicked={(event) => {
               if (

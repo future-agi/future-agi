@@ -49,6 +49,8 @@ const TabOptions = [
   { label: "Summary", value: "summary" },
 ];
 
+const EMPTY_COLUMNS = [];
+
 const DevelopDetailView = () => {
   const { dataset } = useParams();
   const location = useLocation();
@@ -76,7 +78,7 @@ const DevelopDetailView = () => {
   const [openRunCompareEvaluation, setOpenRunCompareEvaluation] =
     useState(false);
   const [rowSelected, setRowSelected] = useState([]);
-  const [columns, setColumns] = useState([]);
+  const [loadedColumns, setLoadedColumns] = useState(null);
   const [selectedColumns, setSelectedColumns] = useState([]);
   const [evalsData, setEvalsData] = useState([]);
   const [isCommonColumn, setIsCommonColumn] = useState(
@@ -93,6 +95,19 @@ const DevelopDetailView = () => {
   );
   const [selectedDatasets, setSelectedDatasets] = useState(
     location?.state?.selectedDatasets || [],
+  );
+  // Render controls only for the selection that supplied their columns,
+  // including the render before the grid's selection-change effect runs.
+  const columns =
+    loadedColumns?.baseColumn === baseColumn &&
+    loadedColumns?.datasets === selectedDatasets
+      ? loadedColumns.columns
+      : EMPTY_COLUMNS;
+  const setColumns = useCallback(
+    (next) => {
+      setLoadedColumns({ baseColumn, datasets: selectedDatasets, columns: next });
+    },
+    [baseColumn, selectedDatasets],
   );
   const [selectedDatasetData, setSelectedDatasetData] = useState(
     location?.state?.selectedDatasetsValues || [],
