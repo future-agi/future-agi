@@ -1912,7 +1912,14 @@ class ClickHouseFilterBuilder:
         )
         # A winning load must itself have an admissible revision. Nominate
         # only such keys before charging the cap; replay every revision of them.
-        admission = window.condition if window else self._skill_window_bounds()
+        # `bounds` can carry a caller's nomination narrowing (the cohort
+        # summary's selected versions); `condition` carries the exact time
+        # admission (datetime complements). Nomination needs both.
+        admission = (
+            f"{window.bounds} AND ({window.condition})"
+            if window
+            else self._skill_window_bounds()
+        )
         return (
             f"{self._project_scope_predicate()} AND {admission}"
             f"{self._skill_candidate_filter()}{witness} AND name = 'skill.load'"
