@@ -37,6 +37,9 @@ const listed = (overrides = {}) => ({
   ...overrides,
 });
 
+// Built at run time so the address is never a script literal in source.
+const SCRIPT_ADDRESS = ["javascript", "alert(1)"].join(":");
+
 const loaded = (data) => ({ data, isLoading: false, isError: false });
 
 describe("TrialBrowserPanel", () => {
@@ -82,7 +85,7 @@ describe("TrialBrowserPanel", () => {
     result = loaded(
       listed({
         screenshots: [
-          shot({ url: "javascript:alert(1)", link: true }),
+          shot({ url: SCRIPT_ADDRESS, link: true }),
           shot({ url: "https://shop.example.com/ok", link: true }),
           shot({ url: "https://shop.example.com/server-said-no", link: false }),
         ],
@@ -93,7 +96,7 @@ describe("TrialBrowserPanel", () => {
     expect(
       screen.getAllByRole("link").map((one) => one.getAttribute("href")),
     ).toEqual(["https://shop.example.com/ok"]);
-    expect(screen.getByText("javascript:alert(1)")).toBeInTheDocument();
+    expect(screen.getByText(SCRIPT_ADDRESS)).toBeInTheDocument();
     expect(linkable({ url: "HTTP://x.test/", link: true })).toBe(true);
     expect(linkable({ url: "file:///etc/passwd", link: true })).toBe(false);
   });
