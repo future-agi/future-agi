@@ -8,14 +8,14 @@ import React, {
   useMemo,
 } from "react";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
-import {
-  getAccessToken,
-  getRefreshToken,
-  getRememberMe,
-} from "src/auth/context/jwt/utils";
 import { HOST_API } from "src/config-global";
-import axiosInstance, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
+import {
+  AUTH_REJECTED_CLOSE_CODE,
+  MAX_AUTH_FAILURES,
+  getCurrentAccessToken,
+  refreshRejectedSocketToken,
+} from "./socket-auth";
 
 export const WebSocketContext = createContext();
 
@@ -23,16 +23,6 @@ const RECONNECT_INTERVAL = 5000;
 const MAX_RECONNECT_DELAY = 30000; // 30 seconds max delay
 const MAX_RECONNECT_ATTEMPTS = 10; // Give up after this many consecutive failures
 const HEARTBEAT_INTERVAL = 10000;
-// The server accepts the handshake and then closes with this code when it
-// rejects the token, so "open" alone does not mean the socket is usable.
-const AUTH_REJECTED_CLOSE_CODE = 4003;
-// Stop after this many consecutive token rejections; a new token or a page
-// reload starts over.
-const MAX_AUTH_FAILURES = 3;
-
-// The REST client refreshes the access token in storage without updating the
-// auth context, so the stored token is the current one.
-const getCurrentAccessToken = (fallback) => getAccessToken() || fallback;
 
 export const WebSocketProvider = ({ children }) => {
   const { user, authenticated } = useSafeAuthContext();
@@ -164,26 +154,25 @@ export const WebSocketProvider = ({ children }) => {
   }, []);
 
   // After the server rejects a token, make sure the next attempt carries a
-  // current one: reuse a token the REST client already refreshed, otherwise
-  // let an authenticated request run the REST client's single refresh.
+  // current one before reconnecting.
   const refreshTokenThenReconnect = useCallback(
     async (rejectedToken) => {
       if (refreshingRef.current) return;
 
-      if (getCurrentAccessToken(accessToken.current) === rejectedToken) {
-        if (!getRememberMe() || !getRefreshToken()) {
-          // Nothing to refresh with; a new sign-in brings a new token.
-          authFailuresRef.current = MAX_AUTH_FAILURES;
-          return;
-        }
-        refreshingRef.current = true;
-        try {
-          await axiosInstance.get(endpoints.auth.me);
-        } catch (e) {
-          logger.debug("WebSocket token refresh request failed", e);
-        } finally {
-          refreshingRef.current = false;
-        }
+      refreshingRef.current = true;
+      let canRetry;
+      try {
+        canRetry = await refreshRejectedSocketToken(
+          rejectedToken,
+          accessToken.current,
+        );
+      } finally {
+        refreshingRef.current = false;
+      }
+      if (!canRetry) {
+        // Nothing to refresh with; a new sign-in brings a new token.
+        authFailuresRef.current = MAX_AUTH_FAILURES;
+        return;
       }
 
       if (!authenticatedRef.current) return;
