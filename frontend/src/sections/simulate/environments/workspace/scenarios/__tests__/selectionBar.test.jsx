@@ -56,15 +56,18 @@ describe("SelectionBar", () => {
     expect(props.onTrialsChange).toHaveBeenCalledWith(5);
   });
 
-  it("accepts a custom repeats value (clamped to 1–20)", () => {
+  it("accepts a custom repeats value and refuses one above 20 instead of clamping it", () => {
     const props = base();
     render(<SelectionBar {...props} />);
 
     fireEvent.click(screen.getByText(/Repeats:/));
     fireEvent.click(screen.getByText("Custom…"));
     fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "99" } });
+    expect(screen.getByText("Up to 20 repeats")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "12" } });
     fireEvent.click(screen.getByText("Set"));
-    expect(props.onTrialsChange).toHaveBeenCalledWith(20);
+    expect(props.onTrialsChange).toHaveBeenCalledWith(12);
   });
 
   it("offers the select-all-matching escalation and calls onSelectAll", () => {
