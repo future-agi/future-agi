@@ -256,6 +256,12 @@ def test_rejects_invalid_tier():
     _err(lambda: validate_manifest(_doc([case])), "invalid_schema")
 
 
+def test_rejects_invalid_stable_assertion_names():
+    case = _enabled_case()
+    case["interactions"][0]["stable_assertions"] = [""]
+    _err(lambda: validate_manifest(_doc([case])), "invalid_schema")
+
+
 def test_rejects_disabled_without_pending_markers():
     case = _enabled_case(enabled=False)
     _err(lambda: validate_manifest(_doc([case])), "unmarked_placeholder")
