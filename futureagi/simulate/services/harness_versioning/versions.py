@@ -28,6 +28,7 @@ from simulate.models import (
 )
 from simulate.models.harness_versioning import ArchiveLayout, HashKind, VersionStatus
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.services.browser_sites import browser_sites_at_pin
 from simulate.services.harness_versioning import archives, diffs, hashing
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -308,6 +309,10 @@ def prepare_pieces(
             "documents": environment_documents,
             "contract_hash_raw": hashing.contract_hash_raw(split.environment),
             "world_ir_hash": hashing.world_ir_hash(split.environment),
+            # Not part of the hash: the sites at the job's pin, which a new version keeps.
+            "browser_allowed_sites": browser_sites_at_pin(
+                payload, getattr(job, "environment_version", None)
+            ),
         },
         suite_fields={
             "archive_object_key": suite_key,

@@ -2339,3 +2339,41 @@ class TestReReviewFindings:
 
         environment.refresh_from_db()
         assert environment.environment_version_id is None
+
+
+def _with_browser_sites(environment, sites):
+    """The environment as created with a browser that may open ``sites``."""
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        payload={**environment.payload, "browser": {"allowed_sites": sites}}
+    )
+    environment.refresh_from_db()
+    return environment
+
+
+class TestBrowserSites:
+    @pytest.mark.parametrize("body", [None, False], ids=["split", "combined"])
+    def test_a_backfilled_version_records_the_environment_s_sites(
+        self, user, workspace, storage, body
+    ):
+        environment = _with_browser_sites(
+            _legacy(user, workspace, f"bf-sites-{body}", storage, body=body),
+            ["Shop.Example.com", "*.docs.example.org"],
+        )
+
+        backfill_environment(environment.id)
+
+        environment.refresh_from_db()
+        assert environment.environment_version.browser_allowed_sites == [
+            "*.docs.example.org",
+            "shop.example.com",
+        ]
+
+    def test_a_backfilled_version_without_a_browser_records_none(
+        self, user, workspace, storage
+    ):
+        environment = _legacy(user, workspace, "bf-sites-none", storage)
+
+        backfill_environment(environment.id)
+
+        environment.refresh_from_db()
+        assert environment.environment_version.browser_allowed_sites == []
