@@ -71,6 +71,11 @@ func TestRedactCredentials_DiagnosticURLs(t *testing.T) {
 		{"https://host/v1?auth=first&other=second&auth=third", "https://host/v1?auth=REDACTED&auth=REDACTED&other=REDACTED"},
 		{"https://host/v1#sample-fragment", "https://host/v1"},
 		{"https://host:bad/v1#sample-fragment", "https://host:bad/v1"},
+		{"https://sample,user@host/v1", "https://REDACTED@host/v1"},
+		{"https://sample'user@host/v1", "https://REDACTED@host/v1"},
+		{"Get 'https://host/v1?mode=one,two'three': retry", "Get 'https://host/v1?mode=REDACTED': retry"},
+		{`Get "https://host/v1#one'two,three", then retry`, `Get "https://host/v1", then retry`},
+		{"tried https://host/v1?q=one,two, then failed", "tried https://host/v1?q=REDACTED, then failed"},
 	} {
 		if got := RedactCredentials(tc.input); got != tc.want {
 			t.Errorf("RedactCredentials(%q) = %q, want %q", tc.input, got, tc.want)

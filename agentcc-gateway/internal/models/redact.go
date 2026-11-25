@@ -55,7 +55,9 @@ func isSchemeByte(b byte) bool {
 }
 
 func isURLTerminator(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '"' || b == '\'' || b == '<' || b == '>' || b == '\\' || b == ','
+	// Commas and apostrophes can occur inside URL components. Leave surrounding
+	// punctuation to redactURL, which separates it only at the end of the token.
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '"' || b == '<' || b == '>' || b == '\\'
 }
 
 // redactURL rewrites one URL with its credentials removed.
