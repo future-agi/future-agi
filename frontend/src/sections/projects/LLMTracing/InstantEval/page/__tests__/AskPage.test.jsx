@@ -2839,6 +2839,41 @@ describe("a sample size typed in", () => {
       expect(screen.getAllByRole("radio")).toHaveLength(1);
     });
 
+    // History open beside the composer leaves it narrower than the window
+    // says: two cards side by side need 2 × 240 px and a gap of the composer's
+    // own width, so the rows switch on a container query, never a breakpoint,
+    // and the hidden two-card reserve can't widen the composer past its panel.
+    it("puts the size cards side by side by the composer's own width, not the window's", async () => {
+      fakes.estimate.mockImplementation(costed(smallEstimate(42)));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      const group = await screen.findByRole("radiogroup", {
+        name: "How many to read",
+      });
+      const block = screen.getByTestId("scope-choices");
+      const css = Array.from(document.querySelectorAll("style[data-emotion]"))
+        .map((style) => style.textContent)
+        .join("\n");
+      const own = (el) =>
+        [...el.classList]
+          .filter((name) => name.startsWith("css-"))
+          .map((name) => name.replace(/[^\w-]/g, "\\$&"));
+      const [blockClass] = own(block);
+      expect(css).toMatch(
+        new RegExp(`\\.${blockClass}\\{[^}]*container-type:inline-size`),
+      );
+      for (const row of [screen.getByTestId("scope-choices-reserve"), group]) {
+        const classes = own(row).join("|");
+        expect(css).toMatch(
+          new RegExp(
+            `@container \\(min-width: ?490px\\)\\{\\.(${classes})\\{([^}]*;)?flex-direction:row`,
+          ),
+        );
+        expect(css).not.toMatch(
+          new RegExp(`@media[^{]*\\{\\.(${classes})\\{[^}]*flex-direction:row`),
+        );
+      }
+    });
+
     it("offers a sample from inside the every-row card, adding no row", async () => {
       fakes.estimate.mockImplementation(costed(smallEstimate(42)));
       renderAt(askLink(PROJECT, { unit: "sessions" }));

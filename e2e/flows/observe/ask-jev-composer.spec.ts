@@ -68,6 +68,31 @@ function placement(actions: Locator) {
   });
 }
 
+// page/AskComposer.jsx: two size cards of 240 px and their 10 px gap. Under
+// this the composer stacks them, whatever the window's width.
+const TWO_CARDS = 490;
+// MUI's sm breakpoint: past it, a breakpoint-based row would stay side by side.
+const SM = 600;
+
+/** The size cards against their scrolling pane: the room the composer has,
+ * whether the pane overflows sideways, and how far past its right edge the
+ * furthest card reaches. */
+function cardsInPane(group: Locator) {
+  return group.evaluate(row => {
+    let pane = row.parentElement;
+    while (pane && !/(auto|scroll)/.test(getComputedStyle(pane).overflowY)) pane = pane.parentElement;
+    if (!pane) return null;
+    const block = row.parentElement!;
+    const paneRight = pane.getBoundingClientRect().right;
+    const cards = Array.from(row.children).map(card => card.getBoundingClientRect().right);
+    return {
+      room: Math.round(block.parentElement!.clientWidth),
+      overflowsSideways: pane.scrollWidth > pane.clientWidth,
+      pastRight: Math.max(0, Math.round(Math.max(...cards) - paneRight)),
+    };
+  });
+}
+
 /** The row's box lies wholly inside the viewport. */
 async function expectOnScreen(page: Page, actions: Locator): Promise<void> {
   const viewport = page.viewportSize();
@@ -88,6 +113,7 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
       'send 4 traces to a new Observe project',
       'save the org TypeSafe key through the endpoint AI Providers uses',
       'open the project\'s Traces view, its Evaluate menu, and choose Ask a question, with the count held back',
+      'open Past questions and narrow the window until the composer has under two cards\' room, then restore both',
       'type a question and add two example questions from Try one',
       'click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back',
       'click Ask Jev again and click Start',
@@ -99,6 +125,7 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     ],
     browserChecks: [
       'Question 1 stays at the same height on the page while the count is held back and after the size cards land',
+      'with Past questions open in a window past 600 px that leaves the composer under 490 px, the size card stays inside its pane and the pane does not scroll sideways',
       'the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it',
       'Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button, and Back has focus',
       'Enter on the focused Back closes the confirm and gives Ask Jev focus again',
@@ -172,6 +199,33 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     await testInfo.attach('estimate', { contentType: 'application/json', body: JSON.stringify(estimate) });
     expect(estimate).toMatchObject({ population: TRACES, rows_to_read: TRACES, needs_confirm: true,
       confirm_rows: CONFIRM_ROWS });
+  });
+
+  await test.step('UI: with Past questions open in a narrower window, the size card stays inside the composer', async () => {
+    const group = page.getByRole('radiogroup', { name: 'How many to read' });
+    const full = page.viewportSize()!;
+    await page.getByRole('button', { name: 'Show past questions', exact: true }).click();
+    const hide = page.getByRole('button', { name: 'Hide past questions', exact: true });
+    await ui(hide).toBeVisible();
+    // Narrow the window, staying past sm, until the composer itself has
+    // less room than two cards side by side need.
+    let width = full.width;
+    let fit = await cardsInPane(group);
+    while (fit && fit.room >= TWO_CARDS && width - 40 >= SM) {
+      width -= 40;
+      await page.setViewportSize({ width, height: full.height });
+      fit = await cardsInPane(group);
+    }
+    await testInfo.attach('cards-in-pane', { contentType: 'application/json',
+      body: JSON.stringify({ viewport: page.viewportSize(), fit }) });
+    await testInfo.attach('narrow-with-history', { body: await page.screenshot(), contentType: 'image/png' });
+    expect(fit?.room).toBeLessThan(TWO_CARDS);
+    expect(width).toBeGreaterThanOrEqual(SM);
+    expect(fit).toMatchObject({ overflowsSideways: false, pastRight: 0 });
+    await ui(group.getByRole('radio', { name: new RegExp(`^Every one of the ${TRACES}`) })).toBeInViewport({ ratio: 1 });
+    await page.setViewportSize(full);
+    await hide.click();
+    await ui(page.getByRole('button', { name: 'Show past questions', exact: true })).toBeVisible();
   });
 
   const actions = page.getByTestId('ask-actions');

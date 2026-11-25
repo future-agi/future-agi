@@ -3023,7 +3023,7 @@
 
 **Goal:** Write a question for Jev, add example questions without losing the Ask button, confirm the read, and start the run
 
-**Spec:** `flows/observe/ask-jev-composer.spec.ts:82`
+**Spec:** `flows/observe/ask-jev-composer.spec.ts:107`
 
 **Tags:** —
 
@@ -3032,9 +3032,10 @@
 1. send 4 traces to a new Observe project
 2. save the org TypeSafe key through the endpoint AI Providers uses
 3. open the project's Traces view, its Evaluate menu, and choose Ask a question, with the count held back
-4. type a question and add two example questions from Try one
-5. click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back
-6. click Ask Jev again and click Start
+4. open Past questions and narrow the window until the composer has under two cards' room, then restore both
+5. type a question and add two example questions from Try one
+6. click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back
+7. click Ask Jev again and click Start
 
 **Backend state verified:**
 
@@ -3045,6 +3046,7 @@
 **Browser observations:**
 
 - Question 1 stays at the same height on the page while the count is held back and after the size cards land
+- with Past questions open in a window past 600 px that leaves the composer under 490 px, the size card stays inside its pane and the pane does not scroll sideways
 - the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it
 - Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button, and Back has focus
 - Enter on the focused Back closes the confirm and gives Ask Jev focus again

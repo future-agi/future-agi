@@ -64,6 +64,19 @@ const ALL = "all";
 // The least a size choice's skeleton fills (padding, title row and its
 // one-line cost); the hidden reserve row sets the real height.
 const CHOICE_CARD_HEIGHT = 64;
+// A size choice's least width, and the gap between two.
+const CHOICE_CARD_MIN_WIDTH = 240;
+const CHOICE_GAP = 1.25;
+// Side by side once the composer itself has room for two cards, stacked
+// below that. Its own width, not the window's: History open beside it takes
+// some, and the hidden reserve's two cards must never widen it.
+const CHOICES_SIDE_BY_SIDE = `@container (min-width: ${
+  2 * CHOICE_CARD_MIN_WIDTH + CHOICE_GAP * 8
+}px)`;
+const choiceRowSx = {
+  flexDirection: "column",
+  [CHOICES_SIDE_BY_SIDE]: { flexDirection: "row" },
+};
 const noop = () => {};
 // The hidden reserve's text: as long as a big view's real cost lines, so it
 // wraps like them, in words no real card shows.
@@ -96,7 +109,7 @@ function ChoiceCard({
       sx={{
         position: "relative",
         flex: 1,
-        minWidth: 240,
+        minWidth: CHOICE_CARD_MIN_WIDTH,
         p: 1.5,
         borderColor: selected ? "border.selected" : "divider",
       }}
@@ -480,14 +493,19 @@ function ScopeCard({
           so the question box and suggestions below never jump. */}
       <Box
         data-testid="scope-choices"
-        sx={{ display: "grid", mt: 1.75, "& > *": { gridArea: "1 / 1" } }}
+        sx={{
+          display: "grid",
+          mt: 1.75,
+          containerType: "inline-size",
+          "& > *": { gridArea: "1 / 1" },
+        }}
       >
         <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={1.25}
+          spacing={CHOICE_GAP}
+          useFlexGap
           aria-hidden
           data-testid="scope-choices-reserve"
-          sx={{ visibility: "hidden" }}
+          sx={{ ...choiceRowSx, visibility: "hidden" }}
         >
           <ChoiceCard
             selected={false}
@@ -515,8 +533,9 @@ function ScopeCard({
         </Stack>
         {!(estimate && count > 0) && (
           <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1.25}
+            spacing={CHOICE_GAP}
+            useFlexGap
+            sx={choiceRowSx}
             aria-hidden
             data-testid={
               population.isLoading && !estimate
@@ -531,12 +550,13 @@ function ScopeCard({
                   key={key}
                   variant="rounded"
                   sx={{
-                    flex: { xs: "none", sm: 1 },
-                    minWidth: 240,
-                    // Stacked on a phone, two cells' worth would overflow.
-                    height: { xs: CHOICE_CARD_HEIGHT, sm: "100%" },
+                    // Stacked, two cells' worth would overflow.
+                    flex: "none",
+                    height: CHOICE_CARD_HEIGHT,
+                    minWidth: CHOICE_CARD_MIN_WIDTH,
                     minHeight: CHOICE_CARD_HEIGHT,
                     borderRadius: "8px",
+                    [CHOICES_SIDE_BY_SIDE]: { flex: 1, height: "100%" },
                   }}
                 />
               ))}
@@ -544,8 +564,9 @@ function ScopeCard({
         )}
         {estimate && count > 0 && (
           <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1.25}
+            spacing={CHOICE_GAP}
+            useFlexGap
+            sx={choiceRowSx}
             role="radiogroup"
             aria-label="How many to read"
           >
