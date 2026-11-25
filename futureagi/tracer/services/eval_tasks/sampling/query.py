@@ -227,6 +227,9 @@ class SamplingQuery:
 
     def _source(self) -> str:
         from tracer.selectors.eval_tasks.row_resolver import _build_sample_query
+        from tracer.services.clickhouse.query_builders.session_list import (
+            ResolvedSpanSource,
+        )
         from tracer.services.clickhouse.v2.id_remap_sql import resolved_id_expr
 
         filters = deepcopy(self.task.filters or {})
@@ -251,7 +254,7 @@ class SamplingQuery:
             sampling_rate=100,
             filters=filters,
             limit=None,
-            source_table="sampling_source",
+            resolved_source=ResolvedSpanSource.SAMPLING,
         )
         self.params.update(params)
         session = "toString(s.trace_session_id)"

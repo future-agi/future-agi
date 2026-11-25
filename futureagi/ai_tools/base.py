@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional, Type
+from functools import wraps
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
+from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
+
+from tracer.services.falcon_background_analysis import (
+    BackgroundAnalysisUnavailable,
+    require_background_analysis_ready,
+)
+
+if TYPE_CHECKING:
+    from accounts.saml_credential import SamlCredential
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +25,19 @@ class EmptyInput(PydanticBaseModel):
     """Input model for tools that take no parameters."""
 
     pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class BackgroundExecutionScope:
+    """Legacy constructor shape. Its presence refuses execution; it is not a grant."""
+
+    org_id: UUID
+    workspace_id: UUID
+    project_id: UUID
+    assigned_trace_id: str
+    initiating_user_id: UUID
+    analysis_attempt_id: UUID
+    auth_scope: SamlCredential = field(repr=False)
 
 
 @dataclass
@@ -27,6 +51,23 @@ class ToolContext:
     user: Any  # accounts.models.User
     organization: Any  # accounts.models.Organization
     workspace: Any  # accounts.models.Workspace
+    # Compatibility fields, never model-supplied tool arguments.
+    project: Any = None  # tracer.models.Project
+    assigned_trace_id: str | None = None
+    # An optional credential is not a background marker or an execution grant.
+    auth_scope: SamlCredential | None = field(default=None, kw_only=True, repr=False)
+    background_execution_scope: BackgroundExecutionScope | None = field(
+        default=None, kw_only=True
+    )
+
+    def require_foreground_execution(self) -> None:
+        # An assignment (even without its captured credential) is not an
+        # interactive request. Do not infer assignment from ordinary foreground fields.
+        if (
+            self.background_execution_scope is not None
+            or self.assigned_trace_id is not None
+        ):
+            require_background_analysis_ready()
 
     @property
     def user_id(self):
@@ -71,6 +112,14 @@ class ToolResult:
         )
 
     @classmethod
+    def background_refusal(cls, context: ToolContext) -> ToolResult | None:
+        try:
+            context.require_foreground_execution()
+        except BackgroundAnalysisUnavailable as exc:
+            return cls.error(str(exc), error_code=exc.code)
+        return None
+
+    @classmethod
     def not_found(cls, entity_type: str, entity_id: str) -> ToolResult:
         return cls(
             content=f"**Not Found:** {entity_type} with ID `{entity_id}` was not found in this workspace.",
@@ -107,6 +156,21 @@ class ToolResult:
         )
 
 
+def _guard_native_execute(
+    implementation: Callable[[BaseTool, PydanticBaseModel, ToolContext], ToolResult],
+) -> Callable[[BaseTool, PydanticBaseModel, ToolContext], ToolResult]:
+    @wraps(implementation)
+    def execute(
+        self: BaseTool, params: PydanticBaseModel, context: ToolContext
+    ) -> ToolResult:
+        refusal = ToolResult.background_refusal(context)
+        if refusal is not None:
+            return refusal
+        return implementation(self, params, context)
+
+    return execute
+
+
 class BaseTool(ABC):
     """Abstract base class for all AI tools.
 
@@ -121,7 +185,16 @@ class BaseTool(ABC):
     name: str
     description: str
     category: str
-    input_model: ClassVar[Type[PydanticBaseModel]] = EmptyInput
+    input_model: ClassVar[type[PydanticBaseModel]] = EmptyInput
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # Native callers can invoke a concrete execute() without run(). Guard
+        # that boundary too, without changing the foreground tool implementations.
+        method_name = "execute"
+        implementation = cls.__dict__.get(method_name)
+        if implementation is not None:
+            setattr(cls, method_name, _guard_native_execute(implementation))
 
     @abstractmethod
     def execute(self, params: PydanticBaseModel, context: ToolContext) -> ToolResult:
@@ -141,6 +214,10 @@ class BaseTool(ABC):
         so that BaseModel managers, AutoWorkspaceField, and queryset scoping
         work correctly without touching django.conf.settings.
         """
+        refusal = ToolResult.background_refusal(context)
+        if refusal is not None:
+            return refusal
+
         from tfc.middleware.workspace_context import workspace_context
 
         try:

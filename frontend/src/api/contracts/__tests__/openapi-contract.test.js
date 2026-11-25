@@ -14,6 +14,29 @@ describe("OpenAPI runtime contract", () => {
     vi.unstubAllEnvs();
   });
 
+  it("keeps the metrics rollout capability typed and default-OFF", () => {
+    expect(
+      OPENAPI_CONTRACT.definitions.CapabilitiesResponse.properties
+        .metrics_enabled,
+    ).toMatchObject({ type: "boolean", default: false });
+  });
+
+  it("does not expose the retired comparison route while keeping saved-run reads", () => {
+    const runId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
+    expect(
+      findOpenApiEndpoint(
+        `/tracer/derived-metric-runs/${runId}/compare/`,
+        "get",
+      ),
+    ).toBeNull();
+    expect(
+      findOpenApiEndpoint(`/tracer/derived-metric-runs/${runId}/`, "get"),
+    ).toMatchObject({
+      template: "/tracer/derived-metric-runs/{id}/",
+      method: "get",
+    });
+  });
+
   it("accepts a run seed as the decimal text a run shows, past what a JSON number keeps", () => {
     const run = (seed) =>
       validateContractedRequestConfig({

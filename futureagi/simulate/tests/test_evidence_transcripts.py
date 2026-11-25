@@ -11,7 +11,7 @@ import pytest
 from django.db import IntegrityError, transaction
 from rest_framework import status
 
-from accounts.tests.test_rbac_regressions import WORKSPACE_WRITE_DENIED, _viewer_client
+from accounts.tests.test_rbac_regressions import _viewer_client
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
 from simulate.selectors.evidence_import import (
     BASIC_REDACTION,
@@ -336,7 +336,7 @@ class TestRefused:
         response = _post(viewer, environment)
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert WORKSPACE_WRITE_DENIED in str(response.data)
+        assert response.data["code"] == "viewer_read_only"
         assert not EvidenceImport.no_workspace_objects.exists()
 
 

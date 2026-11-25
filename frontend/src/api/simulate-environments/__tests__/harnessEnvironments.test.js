@@ -28,6 +28,25 @@ describe("listHarnessEnvironments", () => {
     axios.get.mockClear();
   });
 
+  it("sends search, status and agent type as snake_case params", async () => {
+    await listHarnessEnvironments({
+      page: 1,
+      limit: 25,
+      search: "refund",
+      status: "failed",
+      agentType: "voice",
+    });
+    expect(axios.get).toHaveBeenCalledWith(BASE, {
+      params: {
+        page: 1,
+        limit: 25,
+        search: "refund",
+        status: "failed",
+        agent_type: "voice",
+      },
+    });
+  });
+
   it("filters to one agent's environments when asked", async () => {
     await listHarnessEnvironments({
       page: 1,
@@ -93,6 +112,11 @@ describe("runHarnessEnvironment", () => {
       { scenario_ids: ["scenario-a", "scenario-b"], trials: 3 },
       { headers: { "Idempotency-Key": "request-1" } },
     );
+  });
+
+  it("names no scenarios for a run of them all, which the server resolves", async () => {
+    await runHarnessEnvironment("env-6", undefined, 1, "request-1");
+    expect(axios.post.mock.calls[0][1]).toStrictEqual({ trials: 1 });
   });
 
   it("adds only the version picks that are set", async () => {

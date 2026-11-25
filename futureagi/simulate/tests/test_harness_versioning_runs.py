@@ -675,6 +675,9 @@ class TestManifest:
         from simulate.services.harness_provider import HostedHarnessProvider
 
         environment = _versioned(user, workspace, key, storage)
+        from simulate.tests.harness_validation import prove_every_pair
+
+        prove_every_pair(environment)
         source = _run(environment, [_key(NAMES[1])])
         HostedHarnessJob.no_workspace_objects.filter(id=source.id).update(
             state=HostedHarnessJob.State.COMPLETED

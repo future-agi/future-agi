@@ -9,6 +9,7 @@ import pytest
 from django.test import override_settings
 
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
 from tfc.licensing.types import (
     DeploymentFlavor,
     DeploymentLocation,
@@ -17,19 +18,25 @@ from tfc.licensing.types import (
 )
 
 from ee.licensing import state
-from ee.usage.deployment import _detect_mode
+from ee.usage import deployment
 from ee.usage.services.license import LicenseResult, LicenseValidator
 
 
+check_capability_isolation = capability_testing.check_capability_isolation
+preserve_capability_service = capability_testing.preserve_capability_service
+
+
 @pytest.fixture(autouse=True)
-def reset_license_state():
-    state.set_snapshot(LicenseSnapshot(state=LicenseState.MISSING))
+def reset_license_state(preserve_capability_service, monkeypatch):
+    monkeypatch.setattr(
+        state, "_current_snapshot", LicenseSnapshot(state=LicenseState.MISSING)
+    )
+    # Read each test's overridden settings without touching the startup cache.
+    monkeypatch.setattr(deployment, "_detect_mode", deployment._detect_mode.__wrapped__)
     service.configure(
         flavor=DeploymentFlavor.OSS,
         location=DeploymentLocation.SELF_HOSTED,
     )
-    yield
-    _detect_mode.cache_clear()
 
 
 @pytest.mark.unit
@@ -143,7 +150,6 @@ class TestPhoneHome:
     @override_settings(CLOUD_DEPLOYMENT="US", EE_LICENSE_KEY="")
     @patch("ee.usage.deployment._validate_cloud_secret", return_value=True)
     def test_phone_home_skips_on_cloud(self, _mock_secret):
-        _detect_mode.cache_clear()
         from ee.usage.tasks.phone_home import phone_home
 
         result = phone_home()
@@ -151,7 +157,6 @@ class TestPhoneHome:
 
     @override_settings(CLOUD_DEPLOYMENT="", EE_LICENSE_KEY="")
     def test_phone_home_skips_on_oss(self):
-        _detect_mode.cache_clear()
         from ee.usage.tasks.phone_home import phone_home
 
         result = phone_home()

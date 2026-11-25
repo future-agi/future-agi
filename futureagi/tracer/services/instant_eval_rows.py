@@ -64,6 +64,20 @@ ROW_TYPE = {
 }
 
 
+def is_instant_task(task) -> bool:
+    """A task the Ask page started (it carries RUN_MARKER), or a one-off task
+    whose questions are all Instant eval questions (asked through the plain
+    eval-task API)."""
+    from tracer.models.eval_task import RunType
+
+    if (task.filters or {}).get(RUN_MARKER):
+        return True
+    if task.run_type != RunType.HISTORICAL:
+        return False
+    configs = list(task.evals.all())
+    return bool(configs) and all((c.config or {}).get("instant_eval") for c in configs)
+
+
 class PopulationUnavailable(ValueError):
     """The view's filters can't be resolved on the server; the caller says so
     and the page hands over the rows it can see instead."""

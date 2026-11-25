@@ -3,7 +3,9 @@ import { useState } from "react";
 import { Box, Button, Stack, Tooltip, Typography } from "@mui/material";
 import { checkRunning } from "src/api/simulate-environments/versions";
 import { VersionBadge } from "../EnvVersionPin";
-import { AGENT_VERSIONS_COPY } from "../workspace.constants";
+import { AGENT_VERSIONS_COPY, WORKSPACE_COPY } from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { PreflightBadge, PreflightReport } from "./PreflightStatus";
 import { activationText, missingRequired, named } from "./agentVersionStatus";
 import CredentialsForm from "./CredentialsForm";
@@ -14,6 +16,7 @@ const MONO = "ui-monospace, Menlo, monospace";
 // The default version's credential names (values are never shown) and a form
 // that saves new values as the agent's next version, then follows its check.
 export default function AgentCredentials({ envId, defaultVersion, versions }) {
+  const { canEdit } = useSimulationAccess();
   const [open, setOpen] = useState(false);
   const [savedId, setSavedId] = useState(null);
 
@@ -47,22 +50,24 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
           )}
         </Box>
         {defaultVersion && !open && (
-          <Tooltip arrow title={checking ? COPY.checkRunning : ""}>
-            <Box
-              component="span"
-              sx={{ display: "inline-flex", flexShrink: 0 }}
-            >
-              <Button
-                size="small"
-                variant="outlined"
-                color="inherit"
-                disabled={checking}
-                onClick={() => setOpen(true)}
+          <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.secrets}>
+            <Tooltip arrow title={checking ? COPY.checkRunning : ""}>
+              <Box
+                component="span"
+                sx={{ display: "inline-flex", flexShrink: 0 }}
               >
-                {COPY.change}
-              </Button>
-            </Box>
-          </Tooltip>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  disabled={!canEdit || checking}
+                  onClick={() => setOpen(true)}
+                >
+                  {COPY.change}
+                </Button>
+              </Box>
+            </Tooltip>
+          </ViewerLock>
         )}
       </Stack>
 
@@ -91,7 +96,11 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
             <Stack key={name} direction="row" spacing={0.5} alignItems="center">
               <Typography
                 data-testid="credential-name"
-                sx={{ typography: "s3", fontFamily: MONO, color: "status.danger.fg" }}
+                sx={{
+                  typography: "s3",
+                  fontFamily: MONO,
+                  color: "status.danger.fg",
+                }}
               >
                 {name}
               </Typography>

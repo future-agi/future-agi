@@ -11,7 +11,9 @@ import {
 import Iconify from "src/components/iconify";
 import { useChangeCredentials } from "src/api/simulate-environments/versions";
 import { useUploadSecretFile } from "src/api/simulate-environments/environments";
-import { AGENT_VERSIONS_COPY } from "../workspace.constants";
+import { AGENT_VERSIONS_COPY, WORKSPACE_COPY } from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { refusalText } from "../evals/refusalText";
 import { checkMissing, missingRequired } from "./agentVersionStatus";
 
@@ -81,6 +83,7 @@ export default function CredentialsForm({
   note = null,
 }) {
   const change = useChangeCredentials(envId);
+  const { canEdit } = useSimulationAccess();
   // Dropped from the cache on reset, so the picked File doesn't linger.
   const upload = useUploadSecretFile({ gcTime: 0 });
   // Without extras the form asks only for what the check found missing.
@@ -326,14 +329,16 @@ export default function CredentialsForm({
         >
           {COPY.cancel}
         </Button>
-        <Button
-          size="small"
-          variant="contained"
-          type="submit"
-          disabled={change.isPending || upload.isPending}
-        >
-          {change.isPending ? COPY.saving : saveLabel}
-        </Button>
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.secrets}>
+          <Button
+            size="small"
+            variant="contained"
+            type="submit"
+            disabled={!canEdit || change.isPending || upload.isPending}
+          >
+            {change.isPending ? COPY.saving : saveLabel}
+          </Button>
+        </ViewerLock>
       </Stack>
     </Box>
   );

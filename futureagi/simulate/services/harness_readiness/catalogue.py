@@ -35,13 +35,15 @@ from simulate.models import (
 )
 
 CATALOG_VERSION = "1"
-RULES_VERSION = "14"
+RULES_VERSION = "15"
 
 Status = Literal["supported", "partial", "blocked", "unavailable", "untested", "stale"]
 EvidenceSource = Literal["pair_certificate", "build_certificate", "none"]
 Finding = Literal["passed", "failed", "limited", "not_applicable", "not_run"]
 # The four kinds of repair a blocker sends the user to.
-FixCategory = Literal["startup", "message_mapping", "tool_routing", "evidence"]
+FixCategory = Literal[
+    "startup", "message_mapping", "tool_routing", "evidence", "agent_version"
+]
 # Who fixes a row: the builder chat, the user, or a re-check alone.
 FixGroup = Literal["needs_you", "builder", "recheck"]
 # An area, and the answer, read as their worst row.

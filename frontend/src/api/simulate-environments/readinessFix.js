@@ -3,11 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
+import { refreshReadiness } from "./readiness";
 import {
   draftsKey,
   readinessFixKey,
   refreshDrafts,
   refreshFollowers,
+  retryServerFailures,
   versionPickFields,
 } from "./versions";
 
@@ -27,12 +29,6 @@ const fixPath = (envId) =>
 export const fixIsActive = (run) => Boolean(run?.active);
 
 const fixRunKey = readinessFixKey;
-
-const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
-const retryServerFailures = (failureCount, error) => {
-  const status = errorStatus(error);
-  return (status === undefined || status >= 500) && failureCount < 2;
-};
 
 export const getFixRun = async (envId) => {
   return (await axios.get(fixPath(envId))).data?.fix ?? null;
@@ -77,7 +73,7 @@ export function useStartGroupFix(envId) {
     onSuccess: (data) => {
       queryClient.setQueryData(fixRunKey(envId), data.fix);
       queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
-      queryClient.invalidateQueries({ queryKey: ["harness-readiness", envId] });
+      refreshReadiness(queryClient, envId);
     },
     onError: (error) => {
       const code = error?.error;
@@ -86,9 +82,7 @@ export function useStartGroupFix(envId) {
       } else if (code === "unsaved_changes") {
         queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
       } else if (code === "nothing_to_fix") {
-        queryClient.invalidateQueries({
-          queryKey: ["harness-readiness", envId],
-        });
+        refreshReadiness(queryClient, envId);
       }
     },
     meta: { errorHandled: true },
@@ -113,7 +107,7 @@ export function useFollowFixRun(envId, fixRun) {
     prev.current = { state, updatedAt, saved, draft };
     if (!was) return;
     if (was.state !== state || was.updatedAt !== updatedAt) {
-      queryClient.invalidateQueries({ queryKey: ["harness-readiness", envId] });
+      refreshReadiness(queryClient, envId);
       // The server posts the fix's turn after the POST returns; an idle
       // chat isn't polling, so read it again as the run moves.
       queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });

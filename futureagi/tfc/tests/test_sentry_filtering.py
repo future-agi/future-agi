@@ -15,6 +15,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import grpc
 import pytest
 import sentry_sdk
 from google.auth.exceptions import InvalidValue, MalformedError, RefreshError
@@ -29,7 +30,6 @@ from tfc.logging.sentry import (
     _get_before_send,
     _is_sensitive_key,
     _scrub,
-    _scrub_deployment_telemetry_event,
     _scrub_event,
 )
 from tfc.tests.sentry_capture import EnvelopeTransport
@@ -164,7 +164,7 @@ def vertex_capture(monkeypatch):
     monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     from litellm.llms.vertex_ai.vertex_llm_base import VertexBase
 
-    # Keep production hooks, locals, source context and scrubber. Replace the
+    # Keep the production hooks, frame policy and scrubber. Replace the
     # transport and don't auto-instrument unrelated packages in the test process.
     transport = EnvelopeTransport()
     real_init = sentry_sdk.init
@@ -182,7 +182,7 @@ def vertex_capture(monkeypatch):
         isolated.clear_breadcrumbs()
         try:
             assert sentry.init_sentry(component="temporal")
-            assert sentry_sdk.get_client().options["include_local_variables"]
+            assert not sentry_sdk.get_client().options["include_local_variables"]
             yield VertexBase(), transport.events
         finally:
             if scope.client is not previous:
@@ -381,7 +381,7 @@ def test_before_send_scrubs_request_and_extra():
         "logger": "tracer.views.foo",
         "message": "real error",
         "request": {
-            "headers": {"Authorization": "Bearer secret", "Accept": "json"},
+            "headers": {"Authorization": "Bearer secret", "Accept": "application/json"},
             "cookies": {"sessionid": "xyz"},
             "query_string": "api_key=leak&page=1",
         },
@@ -389,11 +389,10 @@ def test_before_send_scrubs_request_and_extra():
     }
     out = before_send(event, {})
     assert out is not None
-    assert out["request"]["headers"]["Authorization"] == _REDACTED
-    assert out["request"]["headers"]["Accept"] == "json"
+    assert out["request"]["headers"] == {"Accept": "application/json"}
     assert out["request"]["query_string"] == _REDACTED
     assert out["request"]["cookies"] == _REDACTED  # cookies redacted wholesale
-    assert out["extra"]["api_key"] == _REDACTED
+    assert "api_key" not in out["extra"]
     assert out["extra"]["count"] == 5
 
 
@@ -449,11 +448,10 @@ def test_transaction_scrubber_accepts_list_breadcrumbs():
         ]
     }
 
-    out = _scrub_deployment_telemetry_event(event)
+    out = _scrub_event(event)
 
     assert out is event
     assert out["breadcrumbs"][0]["data"] == {
-        "url": "https://example.test/telemetry/registration/",
         "method": "POST",
     }
 
@@ -472,15 +470,13 @@ def test_transaction_scrubber_keeps_mapping_breadcrumb_contract():
         }
     }
 
-    out = _scrub_deployment_telemetry_event(event)
+    out = _scrub_event(event)
 
-    assert out["breadcrumbs"]["values"][0]["data"] == {
-        "url": "https://example.test/telemetry/heartbeat/"
-    }
+    assert out["breadcrumbs"]["values"][0]["data"] == {}
 
 
 def test_a_frame_with_no_module_drops_every_frames_vars():
-    """When the scrub cannot tell where a frame ran, it assumes trace ingestion."""
+    """Unknown modules are no exception to the no-locals policy."""
     frames = [
         {"function": "<generated>", "vars": {"batch": "span text"}},
         {"module": "accounts.views", "vars": {"user_id": "1"}},
@@ -496,17 +492,18 @@ def test_a_frame_with_no_module_drops_every_frames_vars():
 
 
 @pytest.mark.parametrize(
-    ("module", "stripped"),
+    "module",
     [
-        ("tracer.utils.trace_ingestion", True),  # the module itself
-        ("tracer.utils.otel.media", True),  # a dotted child
-        ("tracer.utils.otel_metrics", False),  # a neighbour sharing the prefix
-        ("tracer.utils", False),  # the parent package
+        "tracer.utils.trace_ingestion",
+        "tracer.utils.otel.media",
+        "tracer.utils.otel_metrics",
+        "tracer.utils",
+        "<template>",
     ],
 )
-def test_the_module_match_stops_at_a_dot(module, stripped):
+def test_supplied_frames_keep_location_not_locals_regardless_of_module(module):
     frames = [
-        {"module": module, "vars": {"batch": "span text"}},
+        {"module": module, "lineno": 7, "vars": {"batch": "span text"}},
         {"module": "accounts.views", "vars": {"user_id": "1"}},
     ]
     event = {"exception": {"values": [{"stacktrace": {"frames": frames}}]}}
@@ -515,8 +512,50 @@ def test_the_module_match_stops_at_a_dot(module, stripped):
 
     assert out is not None
     [value] = out["exception"]["values"]
-    with_vars = [f for f in value["stacktrace"]["frames"] if "vars" in f]
-    assert len(with_vars) == (0 if stripped else 2)
+    assert value["stacktrace"]["frames"] == [
+        {"module": module, "lineno": 7},
+        {"module": "accounts.views"},
+    ]
+
+
+def test_frame_budget_is_shared_and_checked_before_iteration(monkeypatch):
+    class NonIterableFrames(list):
+        def __iter__(self):
+            pytest.fail("the hook iterated uninspectable frames before checking bounds")
+
+    monkeypatch.setattr(sentry, "_MAX_FRAMES", 3)
+    event = {
+        "stacktrace": {"frames": [{"lineno": 2, "vars": {}}, {"lineno": 3}]},
+        "exception": {
+            "values": [
+                {
+                    "type": "LookupError",
+                    "value": "unverified detail",
+                    "raw_stacktrace": {"frames": [{"vars": {"detail": "raw"}}]},
+                    "stacktrace": {"frames": [{"vars": {}}, {"vars": {}}]},
+                }
+            ]
+        },
+        "threads": {
+            "values": [
+                {"stacktrace": {"frames": NonIterableFrames([{}, {}])}},
+                {"stacktrace": {"frames": [{"lineno": 9, "vars": {}}]}},
+            ]
+        },
+    }
+    out = before_send(event, {})
+    assert out is not None
+    assert out["stacktrace"]["frames"] == [{"lineno": 3}]
+    [error] = out["exception"]["values"]
+    assert error == {
+        "type": "LookupError",
+        "value": _REDACTED,
+        "stacktrace": {"frames": [{}, {}]},
+    }
+    assert out["threads"]["values"] == [
+        {"stacktrace": {}},
+        {"stacktrace": {}},
+    ]
 
 
 def test_an_event_whose_stacks_cannot_be_walked_is_dropped():
@@ -527,7 +566,15 @@ def test_an_event_whose_stacks_cannot_be_walked_is_dropped():
 # One breadcrumb hook, two scrubs. Each test fails if its half is removed.
 
 
-def test_the_breadcrumb_hook_drops_the_grpc_framework_request():
+@pytest.mark.parametrize(
+    "status",
+    [
+        grpc.StatusCode.UNAUTHENTICATED,
+        repr(grpc.StatusCode.UNAUTHENTICATED),
+        "UNAUTHENTICATED",
+    ],
+)
+def test_the_breadcrumb_hook_drops_the_grpc_framework_request(status):
     """django_socio_grpc's request container holds the raw spans. The crumb keeps
     its record without it, and a framework crumb it cannot read is dropped."""
     crumb = {
@@ -536,7 +583,7 @@ def test_the_breadcrumb_hook_drops_the_grpc_framework_request():
         "message": "Unauthenticated : ObservationSpan/Export",
         "data": {
             "request": "GRPCRequestContainer(grpc_request=resource_spans {...})",
-            "status_code": "UNAUTHENTICATED",
+            "status_code": status,
         },
     }
 
@@ -547,6 +594,26 @@ def test_the_breadcrumb_hook_drops_the_grpc_framework_request():
     assert out["message"] == "Unauthenticated : ObservationSpan/Export"
     unreadable = {"category": "django_socio_grpc.services", "data": "[raw request]"}
     assert _before_breadcrumb(unreadable, {}) is None
+
+
+@pytest.mark.parametrize("status", ["UNKNOWN and customer detail", True, {"raw": 7}])
+def test_free_form_grpc_fields_are_not_diagnostics(status):
+    marker = "unlabelled customer body"
+    data = {"status_code": status, "request": marker}
+    category = "django_socio_grpc.request"
+    crumb = {"category": category, "message": marker, "data": data}
+    event = {
+        "logger": category,
+        "extra": data,
+        "exception": {"values": [{"type": "RuntimeError", "value": marker}]},
+        "breadcrumbs": [crumb],
+    }
+    out = before_send(event, {})
+    assert out is not None
+    assert out["extra"] == {}
+    assert out["breadcrumbs"] == [{"category": category, "data": {}}]
+    assert out["exception"]["values"][0]["type"] == "RuntimeError"
+    assert marker not in json.dumps(out)
 
 
 def test_the_breadcrumb_hook_keeps_the_vertex_credential_scrub():

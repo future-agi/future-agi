@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, get_args
 
 from django.conf import settings
 from rest_framework import serializers
 
-from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB, MAX_SEED
+from simulate.models.hosted_harness import (
+    MAX_SCENARIOS_PER_JOB,
+    MAX_SEED,
+    HostedHarnessJob,
+)
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 from simulate.services.harness_credentials import agent_version_secret_ref
+from simulate.types import UnprovedNext
+from tfc.utils.api_serializers import StrictInputSerializer
 from tfc.utils.serializer_fields import JsonValueField
 
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
@@ -19,6 +25,10 @@ from tfc.utils.serializer_fields import JsonValueField
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
 
 _LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
+
+# A folder inside the repository, relative to its root: no leading slash, no "." or
+# ".." segment, no empty segment, no trailing slash. Empty means the root.
+SUBFOLDER_PATTERN = r"^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -61,7 +71,7 @@ def _check_variable_values(values: Mapping[str, Any]) -> list[str]:
     return []
 
 
-def _check_credential_values(values: Mapping[str, Any]) -> list[str]:
+def check_credential_values(values: Mapping[str, Any]) -> list[str]:
     problems = _check_variable_values(values)
     reserved = sorted(name for name in values if str(name).startswith("SIMULATOR_"))
     if reserved:
@@ -122,6 +132,13 @@ class HarnessSourceSerializer(serializers.Serializer):
     installation_id = serializers.CharField(
         max_length=255, required=False, allow_null=True
     )
+    subfolder = serializers.RegexField(
+        SUBFOLDER_PATTERN,
+        max_length=512,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
     archive_artifact_id = serializers.UUIDField(required=False, allow_null=True)
     endpoint = serializers.URLField(required=False, allow_null=True)
     visibility = serializers.ChoiceField(
@@ -137,6 +154,16 @@ class HarnessSourceSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         kind = attrs["kind"]
+        if attrs.get("subfolder") and kind != "github":
+            raise serializers.ValidationError(
+                {"subfolder": "only a github source names a folder"}
+            )
+        if attrs.get("subfolder") and not getattr(
+            settings, "HARNESS_SOURCE_SUBFOLDER_ENABLED", False
+        ):
+            raise serializers.ValidationError(
+                {"subfolder": "not supported yet; builds use the repository root"}
+            )
         if kind == "github":
             if not attrs.get("repository"):
                 raise serializers.ValidationError(
@@ -164,6 +191,16 @@ VOICE_CONNECTORS = ("livekit", "vapi", "retell", "phone")
 # Connectors that reach an already-running agent, so the run carries no source tree.
 PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone", "livekit"}
 
+
+def names_agent_version(agent, metadata) -> bool:
+    metadata = metadata or {}
+    return (
+        agent.get("connector") == "auto"
+        and bool(metadata.get("agent_definition_id"))
+        and bool(metadata.get("agent_version_id"))
+    )
+
+
 # Mirrors the SDK's own E.164 rule so a malformed number is refused at admission.
 _E164 = re.compile(r"^\+[1-9]\d{6,14}$")
 _PHONE_FIXED_NATIONAL_DIGITS = (("91", 10), ("1", 10))
@@ -187,6 +224,18 @@ def phone_number_error(value: str) -> str | None:
 
 
 TARGET_SYSTEM_PROMPT_MAX_CHARS = 65_536
+
+
+class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
+    phone_number = serializers.CharField(max_length=512, required=False)
+    agent_name = serializers.CharField(max_length=512, required=False)
+    target_speaks_first = serializers.BooleanField(required=False)
+
+    def validate_phone_number(self, value):
+        error = phone_number_error(value)
+        if error:
+            raise serializers.ValidationError(error)
+        return value.strip()
 
 
 class HarnessAgentSerializer(serializers.Serializer):
@@ -551,7 +600,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             data.get("credential_values"), Mapping
         ):
             secret_values = data["credential_values"]
-            problems = _check_credential_values(secret_values)
+            problems = check_credential_values(secret_values)
             if problems:
                 raise serializers.ValidationError({"credential_values": problems})
             agent = data.get("agent")
@@ -608,9 +657,13 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                     }
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}
-        elif source["kind"] == "provider" and (
-            agent["connector"] not in PROVIDER_TARGET_CONNECTORS
-            or not provider_target_mode
+        elif (
+            source["kind"] == "provider"
+            and not names_agent_version(agent, attrs.get("metadata"))
+            and (
+                agent["connector"] not in PROVIDER_TARGET_CONNECTORS
+                or not provider_target_mode
+            )
         ):
             raise serializers.ValidationError(
                 {
@@ -858,6 +911,12 @@ class HarnessRunCreateSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=255),
         allow_empty=False,
         max_length=1000,
+        required=False,
+        help_text=(
+            "The scenarios to run, at most 1000. Leave it out to run every scenario"
+            " of the chosen suite version, resolved by the server; an empty list is"
+            " refused."
+        ),
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
     # The run's seed: the same seed draws the same personas and variations again. Absent or null keeps the
@@ -889,6 +948,11 @@ class HarnessRunWarningSerializer(serializers.Serializer):
     message = serializers.CharField()
     piece = serializers.ChoiceField(
         choices=("agent", "environment", "suite"), allow_null=True
+    )
+    scenario_keys = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Every scenario the warning is about, when it names scenarios.",
     )
 
 
@@ -936,9 +1000,30 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
     count = serializers.IntegerField(min_value=0)
     keys = serializers.ListField(child=serializers.CharField())
     truncated = serializers.BooleanField()
+    names = serializers.DictField(
+        child=serializers.CharField(),
+        help_text="Each listed case's current name, by its key; a case without one is shown by its key.",
+    )
     by = serializers.DictField(
         child=serializers.IntegerField(min_value=0),
-        help_text="Held-back cases per readiness row that held them.",
+        help_text=(
+            "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, "
+            "no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and "
+            "unreadable for a case whose cited seed records could not be read just now)."
+        ),
+    )
+    by_key = serializers.DictField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+    )
+    reason_by_key = serializers.DictField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof"
+            " failed, archived, seed records unread): show it for that case instead of the row's `reasons`."
+        ),
     )
 
 
@@ -949,6 +1034,12 @@ class HarnessRunReadinessSelectionSerializer(HarnessCapabilityScopeSerializer):
     reasons = serializers.DictField(
         child=serializers.CharField(),
         help_text="Each holding row's reason, in plain words.",
+    )
+    next = serializers.ChoiceField(
+        choices=get_args(UnprovedNext),
+        allow_null=True,
+        required=False,
+        help_text="As the run preview's selection.next.",
     )
 
 
@@ -1130,6 +1221,18 @@ class HarnessJobStatusSerializer(serializers.Serializer):
     queued_scenarios = serializers.IntegerField(required=False)
     total_scenarios = serializers.IntegerField()
     deadline_at = serializers.CharField()
+    cancel_requested_at = serializers.CharField(allow_null=True, required=False)
+    cancel_confirmed_at = serializers.CharField(allow_null=True, required=False)
+    cancel_confirmed_by = serializers.ChoiceField(
+        choices=HostedHarnessJob.CancelConfirmation.choices,
+        allow_null=True,
+        required=False,
+    )
+    cancel_status = serializers.ChoiceField(
+        choices=("requested", "confirmed", "unconfirmed", "cleanup_failed"),
+        allow_null=True,
+        required=False,
+    )
     failure = serializers.JSONField(allow_null=True)
 
 
@@ -1299,3 +1402,35 @@ class HarnessJobReadSerializer(serializers.Serializer):
     consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
     usage_limit = serializers.JSONField(required=False, allow_null=True)
     versioning = HarnessVersioningFlagsSerializer(required=False)
+
+
+class RunStopSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=("requested", "confirmed", "unconfirmed", "cleanup_failed"),
+        help_text="requested until the agent's side is seen to stop, confirmed once it"
+        " is, unconfirmed when the provider check gave up, cleanup_failed when it"
+        " stayed unverified for 10 minutes.",
+    )
+    kind = serializers.ChoiceField(
+        choices=("sandbox", "provider", "endpoint"),
+        help_text="How a stop can be confirmed: our sandbox, the provider's calls, or"
+        " never for an agent at its own URL.",
+    )
+    provider = serializers.CharField(allow_null=True)
+    requested_at = serializers.DateTimeField()
+    confirmed_at = serializers.DateTimeField(allow_null=True)
+    confirmed_by = serializers.ChoiceField(
+        choices=HostedHarnessJob.CancelConfirmation.choices, allow_null=True
+    )
+    reason = serializers.ChoiceField(
+        choices=("no_key", "key_rejected", "no_target", "no_calls", "too_many_calls"),
+        allow_null=True,
+        help_text="Why the provider could not be checked, when confirmed_by is"
+        " provider_unchecked.",
+    )
+    check_window_minutes = serializers.IntegerField(
+        help_text="How long the provider check waits for open calls to end."
+    )
+    cleanup_grace_minutes = serializers.IntegerField(
+        help_text="How long a stop stays unverified before it reads cleanup_failed."
+    )

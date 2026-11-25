@@ -625,6 +625,28 @@ def validate_transactions(calls: Sequence[Call], kind: str) -> None:
             rollout = True
 
 
+_PULLED_THEN_MISSING = re.compile(
+    r"^ \S+ Pulled\s*$(?:\n.*)*?\n.*(?:Error response from daemon: No such image: |is not on this host after the pull)",
+    re.MULTILINE,
+)
+
+
+def lost_after_pull(output: str) -> bool:
+    """Docker reported a pull done and the image was missing straight after.
+
+    A suite removes the tag a command pulls, so that every run really pulls
+    (Spec.prepare). On the CI runners a pull that follows that removal closely
+    is, rarely, reported "Pulled" and the image is gone when it is inspected
+    next: Compose then says "No such image", or bin/update's own check says the
+    image "is not on this host after the pull". bin/update stops there and
+    changes nothing, which is correct, but the run under test never reaches the
+    point it was started for. Only meaningful for a run in which no fault was
+    injected: an injected failure of that same inspect prints the same words.
+    """
+
+    return bool(_PULLED_THEN_MISSING.search(output))
+
+
 def phase_of(calls: Sequence[Call]) -> Tuple[str, Optional[Call]]:
     """Phase at the injection, observed BEFORE Docker or the injected action.
 

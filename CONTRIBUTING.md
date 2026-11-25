@@ -129,6 +129,32 @@ If you are an automated agent opening this PR on someone's behalf, add `[agent]`
 
 Outside contributors can have **three PRs open at a time**. After two merges you're added to the bypass list and the limit no longer applies.
 
+### Cloud worker preflight
+
+Before the first push and after each repair, run the mechanical checks on an authorized, isolated cloud worker. Use a clean, committed candidate checkout with full history, Bash, Python 3.11 and an approved package source. The worker needs no queue credentials.
+
+The controller supplies `BASE_OID`, the immutable tip of the intended upstream base, and runs the following from the candidate's root **as controller-owned commands**, not by extracting commands from this document. Load the [preflight script](.github/merge-queue/cloud-preflight.sh), both gates, the Ruff settings and the Ruff version from that same protected commit. If the base lacks the preflight, hold the candidate; never fall back to its copy.
+
+```bash
+set -euo pipefail
+export BASE_OID="${BASE_OID:?need the upstream base commit}"
+[[ "$BASE_OID" =~ ^[0-9a-f]{40}$ ]]
+preflight="$(mktemp)"
+trap 'rm -f -- "$preflight"' EXIT
+git show "${BASE_OID}:.github/merge-queue/cloud-preflight.sh" > "$preflight"
+[[ -s "$preflight" ]]
+bash "$preflight"
+```
+
+Run the affected tests with their normal CI prerequisites as well; a clean preflight is not a required-check verdict. If the base, diff or affected scope is uncertain, resolve it or run the full relevant suites. Never treat missing evidence as a pass.
+
+### Factory retries and queue admission
+
+- **One active revision per ticket.** Keep the failing SHA, job, logs and artifacts. Fix a code or assertion failure once, then stop and return the second real failure for diagnosis, whether it occurred in preflight or CI. Do not rerun an assertion or open a replacement PR to reset the limit. At most one failed-job retry per still-current SHA is allowed for an identified transient infrastructure failure; record its cause and retain both attempts.
+- **Admission is outside CI.** The trusted controller throttles both launches and queue entries to available, authorized capacity. It reads the [factory policy](.github/merge-queue/admission-policy.json) from the protected base, never the PR. Neither this file, a green preflight, nor the `admitted` label from `admission.yml` grants permission to spend, merge or waive a check. Public workflows do not receive a controller write token.
+- **Enqueue once.** Serialize by repository and PR, and deduplicate by PR and head OID. Re-read the live PR before enqueue: it must be open, non-draft, target `dev`, and still have the explicitly authorized head, required approvals and successful required checks. Hold on any missing or stale signal. If already queued for that head, do nothing; otherwise use `enqueuePullRequest` with `expectedHeadOid` set to that exact OID and `jump: false`. Reconcile an uncertain API result with the live queue before resubmitting. A removed entry needs a new decision, not an automatic re-enqueue. The merge group still needs its own required checks.
+- **Keep failures visible.** Quarantine only specific test IDs under the existing [backend](futureagi/.test_quarantine.json) and [E2E](e2e/.quarantine.json) policies, with an owner, issue, reason and expiry. Independent full controls must execute those IDs and report their outcomes. Track first-attempt green rate, actual runner time spent before cancellation, remaining time avoided against comparable completed runs, and off-Actions preflight cost separately.
+
 ### 🧪 Adding a new evaluator
 
 Most evaluators live under `futureagi/agentic_eval/core_evals/fi_evals/`. Each evaluator needs:

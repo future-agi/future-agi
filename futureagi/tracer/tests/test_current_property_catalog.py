@@ -34,6 +34,10 @@ from tracer.services.clickhouse.v2.property_catalog.value_reader import (
 )
 
 ORG, WS, PROJECT = (str(uuid4()) for _ in range(3))
+# Fixed, not uuid4(): this value is part of the pytest ids. Every CI shard
+# collects the tests in its own process, and pytest-split runs each case
+# exactly once only when all shards see the same ids.
+OTHER_ID = "00000000-0000-4000-8000-000000000001"
 SCOPE = {
     "organization_id": ORG,
     "workspace_id": WS,
@@ -80,14 +84,14 @@ def value_row(value, attribute_type=None):
 @pytest.mark.parametrize(
     "field,changed",
     [
-        ("organization_id", str(uuid4())),
-        ("workspace_id", str(uuid4())),
-        ("project_ids", [str(uuid4())]),
+        ("organization_id", OTHER_ID),
+        ("workspace_id", OTHER_ID),
+        ("project_ids", [OTHER_ID]),
         ("principal_id", "other-user"),
         ("auth_id", "other-token"),
         ("auth_type", "session"),
-        ("agent_definition_id", str(uuid4())),
-        ("dataset_id", str(uuid4())),
+        ("agent_definition_id", OTHER_ID),
+        ("dataset_id", OTHER_ID),
         ("workspace_scope", True),
     ],
 )
@@ -288,6 +292,8 @@ def test_observed_keys_use_string_scope_grouped_history_not_current_types():
         ("workspace_id", "k.workspace_id = %(workspace_id)s", WS),
         ("project_ids", "k.project_id IN %(project_ids)s", (PROJECT,)),
     ],
+    # ORG and WS are random per process; keep them out of the ids.
+    ids=["organization", "workspace", "project"],
 )
 def test_observed_catalog_sql_enforces_each_tenant_boundary(
     read, field, predicate, expected

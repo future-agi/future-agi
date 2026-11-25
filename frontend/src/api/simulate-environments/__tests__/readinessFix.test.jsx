@@ -64,9 +64,10 @@ describe("useFollowFixRun", () => {
         saved: { environment: { id: "ev3" }, suite: null },
       }),
     });
-    const keys = spy.mock.calls.map(([arg]) => arg.queryKey[0]);
-    expect(keys).toContain("harness-readiness");
-    expect(keys).toContain("harness-env-versions");
-    expect(keys).toContain("harness-job");
+    const keys = spy.mock.calls.map(([arg]) => arg.queryKey);
+    // Readiness reads sit under the run plan's key.
+    expect(keys).toContainEqual(["harness-env-versions", "e1", "run-plan"]);
+    expect(keys).toContainEqual(["harness-env-versions", "e1"]);
+    expect(keys).toContainEqual(["harness-job", "e1"]);
   });
 });

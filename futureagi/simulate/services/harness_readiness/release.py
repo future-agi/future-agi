@@ -15,6 +15,7 @@ from typing import Any, Literal, TypedDict
 from django.core.cache import cache
 
 from simulate.models import HarnessAssembledBundle, HarnessEnvironmentVersion
+from simulate.services.harness_versioning.versions import control_ran
 
 Result = Literal["passed", "failed", "pending"]
 RELEASE_CHECKS = (
@@ -131,6 +132,127 @@ def certified_pairings(environment: Any, *, cursor: int | None) -> HistoryPage:
         "items": items,
         "next": str(start + HISTORY_PAGE) if len(rows) > HISTORY_PAGE else None,
     }
+
+
+def record_release_check(
+    environment_version_id: Any,
+    name: Literal["reference_passes", "wrong_answer_fails", "hidden_checks_kept"],
+    result: Literal["passed", "failed"] | None,
+    *,
+    job_id: Any | None,
+) -> None:
+    """Set or remove one recorded release check on the version, never touching the others.
+
+    ``None`` is pending: the key is removed. The job and time go in a sibling document the
+    release checks ignore.
+    """
+    from django.db import transaction
+    from django.utils import timezone
+
+    with transaction.atomic():
+        version = (
+            HarnessEnvironmentVersion._base_manager.select_for_update()
+            .filter(id=environment_version_id)
+            .first()
+        )
+        if version is None:
+            return
+        documents = dict(version.documents or {})
+        recorded = dict(documents.get("release_checks") or {})
+        detail = dict(documents.get("release_checks_detail") or {})
+        if result is None:
+            recorded.pop(name, None)
+            detail.pop(name, None)
+        else:
+            recorded[name] = result
+            detail[name] = {
+                "job_id": str(job_id) if job_id else None,
+                "recorded_at": timezone.now().isoformat(),
+            }
+        documents["release_checks"] = recorded
+        documents["release_checks_detail"] = detail
+        version.documents = documents
+        version.save(update_fields=["documents", "updated_at"])
+
+
+def _proof_release_results(
+    proofs: Mapping[str, Any], use_cases: Mapping[str, str]
+) -> tuple[Result, Result]:
+    """``reference_passes`` and ``wrong_answer_fails`` from one validation's proofs."""
+    entries = [proofs.get(key) for key in use_cases]
+    format_two = [
+        one for one in entries if isinstance(one, Mapping) and one.get("format") == 2
+    ]
+    complete = bool(entries) and len(format_two) == len(entries)
+    if any(one.get("ready") and not one.get("solvable") for one in format_two):
+        reference: Result = "failed"
+    elif complete and all(
+        one.get("solvable") and not one.get("assumed") for one in format_two
+    ):
+        reference = "passed"
+    else:
+        reference = "pending"
+
+    def ran(one: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        return [
+            c
+            for c in one.get("controls") or []
+            if isinstance(c, Mapping) and control_ran(c) and not c.get("assumed")
+        ]
+
+    if any(c.get("failed") is False for one in format_two for c in ran(one)):
+        wrong: Result = "failed"
+    else:
+        deterministic = [one for one in format_two if not one.get("judged_only")]
+        every_control = complete and all(
+            ran(one) and all(c.get("failed") for c in ran(one)) for one in deterministic
+        )
+        covered = True
+        for use_case in set(use_cases.values()):
+            outcomes = {
+                (proofs.get(key) or {}).get("outcome")
+                for key, case in use_cases.items()
+                if case == use_case and (proofs.get(key) or {}).get("proved") is True
+            }
+            covered = covered and {"change", "no_change"} <= outcomes
+        wrong = "passed" if every_control and covered else "pending"
+    return reference, wrong
+
+
+def record_proof_release_checks(environment_version: HarnessEnvironmentVersion) -> None:
+    """Recompute ``reference_passes`` and ``wrong_answer_fails`` on the version, from its
+    validation on the environment's default suite, else its newest one."""
+    from simulate.models import HarnessSuiteMember, HarnessSuiteValidation
+
+    validations = HarnessSuiteValidation.no_workspace_objects.filter(
+        environment_version_id=environment_version.id
+    )
+    default_suite = getattr(environment_version.job, "suite_version_id", None)
+    latest = (
+        validations.filter(suite_version_id=default_suite).first()
+        if default_suite
+        else None
+    ) or validations.order_by("-proved_at").first()
+    if latest is None or not isinstance(latest.proofs, Mapping):
+        return
+    use_cases = {
+        key: str((content or {}).get("use_case") or "")
+        for key, content in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=latest.suite_version_id
+        ).values_list("scenario_key", "content")
+    }
+    reference, wrong = _proof_release_results(latest.proofs, use_cases)
+    results: dict[Literal["reference_passes", "wrong_answer_fails"], Result] = {
+        "reference_passes": reference,
+        "wrong_answer_fails": wrong,
+    }
+    for name, result in results.items():
+        record_release_check(
+            environment_version.id,
+            name,
+            None if result == "pending" else result,
+            job_id=latest.job_id,
+        )
 
 
 def certificate_harness_version(certificate: Any) -> str | None:

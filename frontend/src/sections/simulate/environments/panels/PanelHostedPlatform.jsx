@@ -1,4 +1,6 @@
-import { useReducer } from "react";
+import PropTypes from "prop-types";
+import { useEffect, useReducer } from "react";
+import { readBuildDraft, saveBuildDraft } from "../buildDrawer/buildDraft";
 import { Box, Stack, Typography } from "@mui/material";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import Field from "../components/Field";
@@ -16,6 +18,8 @@ import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import ParallelismField from "./ParallelismField";
 import usePanelBuild from "../hooks/usePanelBuild";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 import { ENTRY_AGENT_TYPES } from "../agentTypes";
 import { HOSTED_PLATFORMS_BY_TYPE, HOSTED_EMPTY_ROSTER_COPY } from "../hostedPlatforms";
 
@@ -49,9 +53,35 @@ function reducer(s, a) {
   return { ...s, [a.field]: value };
 }
 
-export default function PanelHostedPlatform() {
-  const [form, dispatch] = useReducer(reducer, initial);
+const UNSAVED_FIELDS = ["key", "apiSecret"];
+
+const withoutSecrets = (form) =>
+  Object.fromEntries(
+    Object.entries(form).filter(([field]) => !UNSAVED_FIELDS.includes(field)),
+  );
+
+export default function PanelHostedPlatform({ platformByType, onBusyChange, draftKey }) {
+  const lockedTypes = platformByType ? Object.keys(platformByType) : null;
+  const [form, dispatch] = useReducer(reducer, lockedTypes, (types) => {
+    const start = types?.length
+      ? {
+          ...initial,
+          agentType: types[0],
+          platform: platformByType[types[0]],
+        }
+      : initial;
+    const saved = draftKey ? readBuildDraft(draftKey) : null;
+    return saved ? { ...start, ...withoutSecrets(saved) } : start;
+  });
+  useEffect(() => {
+    if (draftKey) saveBuildDraft(draftKey, withoutSecrets(form));
+  }, [draftKey, form]);
   const build = usePanelBuild();
+  useEffect(() => {
+    onBusyChange?.(build.committing);
+  }, [build.committing, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+  const { canEdit } = useSimulationAccess();
   // Any edit invalidates a prior preflight result, so re-disable Build.
   const set = (field) => (value) => {
     dispatch({ field, value });
@@ -72,7 +102,9 @@ export default function PanelHostedPlatform() {
   /* When agent type flips, snap to the first platform of the new type and clear
      the credentials so we do not carry a key into another provider's form. */
   const pickAgentType = (nextType) => {
-    const first = (HOSTED_PLATFORMS_BY_TYPE[nextType] || [])[0];
+    const first = platformByType
+      ? { id: platformByType[nextType] }
+      : (HOSTED_PLATFORMS_BY_TYPE[nextType] || [])[0];
     set("agentType")(nextType);
     set("platform")(first?.id || "");
     set("id")("");
@@ -166,11 +198,22 @@ export default function PanelHostedPlatform() {
   });
 
   return (
-    <Stack spacing={1.5} sx={{ p: 1.5 }}>
+    <Stack
+      spacing={1.5}
+      useFlexGap={!!platformByType}
+      sx={
+        platformByType
+          ? { px: 2.5, pt: 2.5, pb: 0, minHeight: "100%" }
+          : { p: 1.5 }
+      }
+    >
+      {(!lockedTypes || lockedTypes.length > 1) && (
       <Box>
         <Label>Agent type</Label>
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
-          {ENTRY_AGENT_TYPES.map((t) => (
+          {ENTRY_AGENT_TYPES.filter(
+            (t) => !lockedTypes || lockedTypes.includes(t.id),
+          ).map((t) => (
             <ChipCard
               key={t.id}
               icon={t.icon}
@@ -182,6 +225,8 @@ export default function PanelHostedPlatform() {
           ))}
         </Box>
       </Box>
+      )}
+      {!platformByType && (
       <Box>
         <Label>Platform</Label>
         {platforms.length === 0 ? (
@@ -206,6 +251,7 @@ export default function PanelHostedPlatform() {
           </Box>
         )}
       </Box>
+      )}
       {chosen && (
         <>
           {promptOnly ? (
@@ -345,8 +391,8 @@ export default function PanelHostedPlatform() {
       />
       <RuntimePreflight
         status={build.status}
-        canRun={canGo}
-        blockedReason={preflightBlockedReason}
+        canRun={canEdit && canGo}
+        blockedReason={!canEdit ? WORKSPACE_COPY.viewer.create : preflightBlockedReason}
         onRun={() => build.runPreflight(buildSource())}
         result={build.result}
         error={build.error}
@@ -357,11 +403,18 @@ export default function PanelHostedPlatform() {
         onDismiss={build.creditExhaustion.onDismiss}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
+        disabled={!canEdit || !build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
-        hint={build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
+        hint={!canEdit ? WORKSPACE_COPY.viewer.create : build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
         onClick={build.commitBuild}
+        sticky={!!platformByType}
       />
     </Stack>
   );
 }
+
+PanelHostedPlatform.propTypes = {
+  platformByType: PropTypes.objectOf(PropTypes.string),
+  onBusyChange: PropTypes.func,
+  draftKey: PropTypes.string,
+};

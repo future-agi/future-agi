@@ -1656,7 +1656,8 @@ class TestApi:
         )
 
         assert saved.status_code == 200, saved.content
-        assert set(saved.json()) == {"saved", "versions"}
+        # `not_active`: the saved cases that cannot run until validated (section 4.14).
+        assert set(saved.json()) == {"saved", "versions", "not_active"}
         assert saved.json()["saved"]["suite"]["label"] == "v2"
         # The save route takes only POST; no route takes another piece.
         assert (
@@ -2514,6 +2515,104 @@ class TestChatReads:
         settings.HARNESS_VERSIONING_ENABLED = False
 
         assert "drafts" not in conversation_overview(conversation)
+
+
+def test_failed_change_blocks_only_its_key(user, workspace, storage, auth_client):
+    from unittest.mock import patch
+
+    from simulate.services import hosted_harness_conversation as conversation_service
+
+    environment = _built(user, workspace, "d-failed-change")
+    conversation = _conversation(environment)
+    conversation_service.HostedHarnessConversation.no_workspace_objects.filter(
+        id=conversation.id
+    ).update(latest_workspace_digest="sha256:abc")
+    with (
+        patch.object(
+            conversation_service, "promote_latest_checkpoint", return_value=environment
+        ),
+        patch.object(drafts, "drafts_apply", return_value=True),
+        patch.object(drafts, "draft_changes", return_value={}),
+    ):
+        said = conversation_service.publish_conversation_workspace(
+            conversation,
+            digest="sha256:abc",
+            failed_scenarios=[{"scenario_key": "refund-a", "reason": "bad check"}],
+        )
+
+    assert said["applied"] is True
+    assert said["failed"] == [{"scenario_key": "refund-a", "reason": "bad check"}]
+    environment.refresh_from_db()
+    assert conversation_service.failed_changes(environment) == {"refund-a": "bad check"}
+
+
+def test_failed_scenarios_must_name_a_key_and_a_text_reason():
+    from simulate.serializers.hosted_harness_conversation import (
+        HarnessConversationPublishSerializer,
+    )
+
+    def valid(failed):
+        return HarnessConversationPublishSerializer(
+            data={"digest": "sha256:abc", "failed_scenarios": failed}
+        ).is_valid()
+
+    assert valid([{"scenario_key": "refund-a", "reason": "bad check"}])
+    assert valid([{"scenario_key": "refund-a"}])
+    assert not valid([{"reason": "no key"}])
+    assert not valid([{"scenario_key": "refund-a", "reason": {"nested": 1}}])
+    assert not valid(["refund-a"])
+    assert not valid([{"scenario_key": "k"}] * 201)
+
+
+def test_failed_change_reason_is_its_first_written_line(user, workspace, storage):
+    from simulate.services.hosted_harness_conversation import record_failed_changes
+
+    environment = _built(user, workspace, "d-failed-reason")
+
+    kept = record_failed_changes(
+        environment,
+        [
+            {"scenario_key": " refund-a ", "reason": "\n\n  bad check  \nTraceback"},
+            {"scenario_key": "refund-b", "reason": "   "},
+            {"scenario_key": "  ", "reason": "no key"},
+        ],
+    )
+
+    assert kept == {"refund-a": "bad check", "refund-b": "it could not be loaded"}
+
+
+def test_a_later_save_of_the_same_environment_keeps_the_cleared_set(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import (
+        failed_changes,
+        record_failed_changes,
+    )
+
+    environment = _built(user, workspace, "d-failed-stale")
+    record_failed_changes(environment, [{"scenario_key": "refund-a", "reason": "bad"}])
+    record_failed_changes(environment, [])
+    # What discard_draft's candidate drop does with the locked row it holds.
+    environment.save(update_fields=["payload", "updated_at"])
+
+    environment.refresh_from_db()
+    assert failed_changes(environment) == {}
+
+
+def test_discard_with_no_suite_draft_clears_a_failed_change(user, workspace, storage):
+    from simulate.services.hosted_harness_conversation import (
+        failed_changes,
+        record_failed_changes,
+    )
+
+    environment = _built(user, workspace, "d-failed-no-draft")
+    record_failed_changes(environment, [{"scenario_key": "refund-a", "reason": "bad"}])
+    assert drafts.open_draft(environment, "suite") is None
+
+    drafts.discard_draft(environment, "suite", user=user)
+
+    environment.refresh_from_db()
+    assert failed_changes(environment) == {}
 
 
 def test_a_changed_contract_field_counts_as_an_unsaved_change():

@@ -46,6 +46,15 @@ class HarnessGitHubPushSerializer(serializers.Serializer):
     repository = HarnessGitHubPushRepositorySerializer()
 
 
+class HarnessGitHubInstallationRefSerializer(serializers.Serializer):
+    id = serializers.IntegerField(min_value=1)
+
+
+class HarnessGitHubInstallationSerializer(serializers.Serializer):
+    action = serializers.CharField(max_length=64)
+    installation = HarnessGitHubInstallationRefSerializer()
+
+
 def _reject_non_finite(value: float) -> None:
     # FloatField min/max never reject NaN/inf: every comparison with NaN is
     # False, so a `score: NaN` slips past bounds and canonicalizes into
@@ -159,6 +168,8 @@ class HarnessCallSerializer(serializers.Serializer):
     )
     script_completed = serializers.BooleanField(required=False)
     target_metrics = HarnessTargetMetricsSerializer(required=False, allow_null=True)
+    # Writes the world applied twice after the agent's answer was lost: the agent's failure, whatever the checks say.
+    duplicate_commits = serializers.IntegerField(min_value=0, required=False)
 
 
 HARNESS_FAILURE_DOMAINS = (
@@ -169,6 +180,7 @@ HARNESS_FAILURE_DOMAINS = (
     "infrastructure",
     "grading",
     "platform_sync",
+    "artifact",
 )
 
 

@@ -1,6 +1,7 @@
 import concurrent.futures
 import hashlib
 import json
+import math
 import uuid
 from collections import defaultdict
 from dataclasses import replace
@@ -613,6 +614,15 @@ def _build_eval_metric_entry(
         return (100.0 if output_bool else 0.0), "bool"
 
     return None, None
+
+
+def _matches_resolved_project(span, project_id):
+    if "project_id" not in span:
+        return True
+    try:
+        return uuid.UUID(str(span["project_id"])) == project_id
+    except ValueError:
+        return False
 
 
 def _get_request_organization(request):
@@ -1630,6 +1640,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     id=observation_span["project"],
                     organization=_get_request_organization(self.request),
                 )
+                if observation_span["project"].trace_type == "observe":
+                    if not _matches_resolved_project(
+                        observation_span, observation_span["project"].pk
+                    ):
+                        return self._gm.bad_request("project_id must match project")
+                    observation_span.pop("project_id", None)
                 if observation_span.get("project_version"):
                     observation_span["project_version"] = ProjectVersion.objects.get(
                         _project_workspace_scope_q(self.request),
@@ -1644,6 +1660,23 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     project__organization=_get_request_organization(self.request),
                 )
 
+                # A sender's Observe cost, including zero, takes precedence over an estimate.
+                if (
+                    observation_span["project"].trace_type == "observe"
+                    and observation_span.get("cost") is not None
+                ):
+                    reported_cost_input = observation_span["cost"]
+                    if isinstance(reported_cost_input, bool):
+                        return self._gm.bad_request("cost must be a finite number")
+                    try:
+                        reported_cost = float(reported_cost_input)
+                    except (TypeError, ValueError, OverflowError):
+                        return self._gm.bad_request("cost must be a finite number")
+                    if not math.isfinite(reported_cost):
+                        return self._gm.bad_request("cost must be a finite number")
+                    observation_span["cost"] = reported_cost
+                    continue
+
                 prompt_tokens = observation_span.get("prompt_tokens") or 0
                 completion_tokens = observation_span.get("completion_tokens") or 0
                 model = observation_span.get("model")
@@ -1651,6 +1684,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     model=model,
+                    project_type=observation_span["project"].trace_type,
                     organization_id=(
                         getattr(request, "organization", None)
                         or request.user.organization

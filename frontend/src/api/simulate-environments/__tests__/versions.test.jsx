@@ -37,6 +37,7 @@ const {
   useValidateDrafts,
   useDiscardDraft,
   useEditActor,
+  useSetFileRole,
   useActorCheck,
   checkActor,
   actorsKey,
@@ -54,6 +55,9 @@ const {
   versionFromApi,
   isVersioningDisabled,
   isStuck,
+  movingAgent,
+  refreshDrafts,
+  draftReviewKey,
 } = await import("../versions");
 const { harnessEnvironmentKey, harnessJobQuery } = await import(
   "../environment"
@@ -80,6 +84,7 @@ const RESPONSE = {
     {
       id: "e2",
       label: "v2",
+      name: "Refunds 14 days",
       status: "active",
       is_default: true,
       created_by: { id: "u1", name: "Asha" },
@@ -123,6 +128,7 @@ describe("versionFromApi / toVersions", () => {
     expect(versionFromApi(RESPONSE.environment[0])).toEqual({
       id: "e2",
       label: "v2",
+      name: "Refunds 14 days",
       status: "active",
       isDefault: true,
       createdAt: null,
@@ -810,6 +816,58 @@ describe("agent version checks", () => {
     expect(spy).toHaveBeenCalledTimes(3);
   });
 
+  const moving = (overrides) =>
+    agentItem({
+      status: "active",
+      preflight_status: "passed",
+      activation_outcome: "validating",
+      ...overrides,
+    });
+
+  it("asks again every 15 seconds while an agent move waits on its check", async () => {
+    expect(await intervalFor([moving()])).toBe(15000);
+    expect(await intervalFor([pendingHere({ id: "a6" }), moving()])).toBe(5000);
+    expect(await intervalFor([moving({ is_default: true })])).toBe(false);
+  });
+
+  it("names the newest active version a move waits on", () => {
+    const list = (...items) => items.map(versionFromApi);
+    expect(
+      movingAgent(list(moving({ id: "a7" }), moving({ id: "a6" })))?.id,
+    ).toBe("a7");
+    expect(movingAgent(list(moving({ is_default: true })))).toBeNull();
+    expect(movingAgent(list(moving({ status: "discarded" })))).toBeNull();
+  });
+
+  it("refreshes what follows the default once a move's check ends", () => {
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const { rerender } = renderHook(
+      ({ versions }) => useRefreshWhenChecked("env-1", versions),
+      {
+        wrapper,
+        initialProps: { versions: [versionFromApi(moving())] },
+      },
+    );
+    expect(spy).not.toHaveBeenCalled();
+    rerender({
+      versions: [
+        versionFromApi(
+          moving({ is_default: true, activation_outcome: "activated" }),
+        ),
+      ],
+    });
+    const keys = spy.mock.calls.map(([filters]) => filters.queryKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        environmentVersionsKey("env-1"),
+        harnessEnvironmentKey("env-1"),
+        harnessJobQuery("env-1").queryKey,
+        ["harness-scenarios", "env-1"],
+        nudgesKey("env-1"),
+      ]),
+    );
+  });
+
   it("refreshes nothing when nothing was pending", () => {
     const spy = vi.spyOn(client, "invalidateQueries");
     const passed = [versionFromApi(agentItem({ preflight_status: "passed" }))];
@@ -1350,6 +1408,32 @@ describe("drafts", () => {
     });
   });
 
+  it("says when a save must go through Validate", () => {
+    expect(toDrafts({ validation_required: true }).validationRequired).toBe(
+      true,
+    );
+    // A server from before the flag: a plain Save is tried, and its refusal asks for Validate.
+    expect(toDrafts({}).validationRequired).toBe(false);
+  });
+
+  it("sends the reviewed digest and the name with a plain save", async () => {
+    axios.post.mockResolvedValue({ data: { saved: {}, versions: RESPONSE } });
+    const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
+    await act(() =>
+      result.current.mutateAsync({
+        drafts: PIECES,
+        reviewDigest: "d-1",
+        name: "Refund window",
+      }),
+    );
+    expect(axios.post).toHaveBeenCalledWith(SAVE_PATH, {
+      drafts: BODY,
+      idempotency_key: "key-1",
+      expected_review_digest: "d-1",
+      name: "Refund window",
+    });
+  });
+
   it("reads the drafts under their key, and not while versioning is off", async () => {
     axios.get.mockResolvedValue({ data: DRAFTS });
     const { result } = renderHook(() => useDrafts("env-1"), { wrapper });
@@ -1371,7 +1455,7 @@ describe("drafts", () => {
     const spy = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
-    await act(() => result.current.mutateAsync(PIECES));
+    await act(() => result.current.mutateAsync({ drafts: PIECES }));
 
     expect(axios.post).toHaveBeenCalledWith(SAVE_PATH, {
       drafts: BODY,
@@ -1393,7 +1477,9 @@ describe("drafts", () => {
     axios.post.mockResolvedValue({ data: {} });
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
     await act(() =>
-      result.current.mutateAsync([{ piece: "suite", parentId: null }]),
+      result.current.mutateAsync({
+        drafts: [{ piece: "suite", parentId: null }],
+      }),
     );
     expect(axios.post.mock.calls[0][1].drafts).toEqual([
       { piece: "suite", expected_parent_id: null },
@@ -1405,8 +1491,10 @@ describe("drafts", () => {
     axios.post.mockResolvedValueOnce({ data: {} });
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
-    await act(() => result.current.mutateAsync(PIECES));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
+    await act(() => result.current.mutateAsync({ drafts: PIECES }));
 
     const keys = axios.post.mock.calls.map(([, body]) => body.idempotency_key);
     expect(keys).toEqual(["key-1", "key-1"]);
@@ -1421,9 +1509,13 @@ describe("drafts", () => {
     axios.post.mockResolvedValue({ data: {} });
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
-    await act(() => result.current.mutateAsync(PIECES.slice(0, 1)));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
+    await act(() => result.current.mutateAsync({ drafts: PIECES.slice(0, 1) }));
 
     const keys = axios.post.mock.calls.map(([, body]) => body.idempotency_key);
     expect(keys).toEqual(["key-1", "key-2", "key-3"]);
@@ -1437,7 +1529,9 @@ describe("drafts", () => {
       const { result } = renderHook(() => useSaveDrafts("env-1"), {
         wrapper,
       });
-      await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
+      await act(() =>
+        result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+      );
       expect(invalidated(spy)).toEqual([{ queryKey: draftsKey("env-1") }]);
     },
   );
@@ -1453,12 +1547,16 @@ describe("drafts", () => {
     });
     const spy = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
     expect(invalidated(spy)).toEqual([
       { queryKey: environmentVersionsKey("env-1") },
     ]);
     spy.mockClear();
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -1726,5 +1824,47 @@ describe("checkActor", () => {
       },
       { op: "delete", actor_id: "manager" },
     ]);
+  });
+});
+
+describe("useSetFileRole", () => {
+  it("sends the path, role and expected revision, and seeds the cast with the answer", async () => {
+    const cast = { actors: [], revision: 8 };
+    axios.post.mockResolvedValue({ data: cast });
+    const queryClient = new QueryClient();
+    const { result } = renderHook(() => useSetFileRole("env-1"), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+    await act(() =>
+      result.current.mutateAsync({
+        path: "knowledge/refunds.md",
+        role: "evaluator_only",
+        revision: 7,
+      }),
+    );
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/files/role/",
+      {
+        path: "knowledge/refunds.md",
+        role: "evaluator_only",
+        expected_revision: 7,
+      },
+    );
+    expect(queryClient.getQueryData(actorsKey("env-1"))).toEqual(cast);
+  });
+});
+
+describe("draft review cache", () => {
+  it("reads the review again whenever the drafts are refreshed", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(draftReviewKey("env-1"), { changes: [] });
+    refreshDrafts(queryClient, "env-1");
+    expect(
+      queryClient.getQueryState(draftReviewKey("env-1")).isInvalidated,
+    ).toBe(true);
   });
 });

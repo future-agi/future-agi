@@ -14,20 +14,27 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
 from django.db.models import (
+    BooleanField,
+    Case,
     Count,
+    Exists,
     JSONField,
     OuterRef,
     Prefetch,
     Q,
     QuerySet,
     Subquery,
+    TextField,
+    Value,
+    When,
 )
-from django.db.models.fields.json import KeyTransform
-from django.db.models.functions import Coalesce
+from django.db.models.fields.json import KT, KeyTransform
+from django.db.models.functions import Coalesce, Lower, NullIf, Trim
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
@@ -48,11 +55,14 @@ from simulate.models import (
     HarnessEnvironmentVersion,
     HostedHarnessJob,
     HostedHarnessReceipt,
+    HostedHarnessScenario,
     HostedHarnessStageOutput,
+    RunTest,
     TestExecution,
 )
 from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.environment_documents import (
+    RUN_CONTRACT_VERSION,
     contract_data,
     registration_key,
     row_stage_output,
@@ -143,6 +153,13 @@ def annotate_for_list(
                 .values("id")[:1]
             ),
         )
+        .select_related("agent_version", "environment_version")
+        .defer(
+            "agent_version__configuration_snapshot",
+            "environment_version__diff",
+            "environment_version__documents",
+            "environment_version__snapshot_diff",
+        )
         .prefetch_related(
             Prefetch(
                 "normalized_stage_outputs",
@@ -156,15 +173,114 @@ def annotate_for_list(
     )
 
 
+def filter_for_list(
+    queryset: QuerySet[HostedHarnessJob],
+    *,
+    search: str | None = None,
+    status: str | None = None,
+    agent_type: str | None = None,
+) -> QuerySet[HostedHarnessJob]:
+    term = (search or "").strip()
+    if term:
+        queryset = queryset.annotate(
+            list_name=Coalesce(
+                _blank_as_null("name"),
+                _blank_as_null(KT("payload__metadata__agent_name")),
+                _blank_as_null(KT("payload__metadata__name")),
+                _blank_as_null(KT("payload__source__repository")),
+                output_field=TextField(),
+            ),
+            list_repository=KT("payload__source__repository"),
+        ).filter(Q(list_name__icontains=term) | Q(list_repository__icontains=term))
+    if status:
+        queryset = queryset.filter(_status_q(status))
+    if agent_type:
+        if "version_contract" not in queryset.query.annotations:
+            queryset = with_version_contract(queryset)
+        queryset = (
+            queryset.annotate(
+                list_connector=Coalesce(
+                    Lower(Trim(KT("payload__agent__connector"))),
+                    Value(""),
+                    output_field=TextField(),
+                ),
+                list_version_modality=Lower(Trim(KT("version_contract__modality"))),
+            )
+            .annotate(
+                list_is_voice=Case(
+                    When(_voice_q(), then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                )
+            )
+            .filter(list_is_voice=agent_type == AGENT_TYPE_VOICE)
+        )
+    return queryset
+
+
+def _blank_as_null(expression: Any) -> NullIf:
+    return NullIf(Trim(expression), Value(""))
+
+
+def status_counts(queryset: QuerySet[HostedHarnessJob]) -> dict[str, int]:
+    statuses = (STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
+    return queryset.order_by().aggregate(
+        **{status: Count("id", filter=_status_q(status)) for status in statuses}
+    )
+
+
+def _status_q(status: str) -> Q:
+    known = _TERMINAL_FAILED | _RUN_STATES | {HostedHarnessJob.State.COMPLETED}
+    if status == STATUS_COMPLETED:
+        return Q(state=HostedHarnessJob.State.COMPLETED)
+    if status == STATUS_FAILED:
+        return Q(state__in=_TERMINAL_FAILED)
+    if status == STATUS_RUNNING:
+        return Q(state__in=_RUN_STATES)
+    return ~Q(state__in=known)
+
+
+def _voice_q() -> Q:
+    contracts = HostedHarnessStageOutput.no_workspace_objects.filter(
+        job=OuterRef("pk"), kind="contract", deleted=False
+    )
+    voice_contract = contracts.annotate(
+        modality=Lower(Trim(KT("data__modality")))
+    ).filter(modality=AGENT_TYPE_VOICE)
+    legacy_voice_contract = Q(
+        stage_outputs__contains=[
+            {"kind": "contract", "data": {"modality": AGENT_TYPE_VOICE}}
+        ]
+    )
+    snapshot_says_voice = Exists(voice_contract) | (
+        ~Exists(contracts) & legacy_voice_contract
+    )
+    has_version_contract = Q(version_contract__isnull=False) & ~Q(version_contract={})
+    contract_says_voice = (
+        has_version_contract & Q(list_version_modality=AGENT_TYPE_VOICE)
+    ) | (~has_version_contract & snapshot_says_voice)
+    return Q(list_connector__in=_VOICE_CONNECTORS) | (
+        Q(list_connector__in=("", "auto")) & contract_says_voice
+    )
+
+
 def with_version_contract(
     queryset: QuerySet[HostedHarnessJob],
 ) -> QuerySet[HostedHarnessJob]:
     """The list's jobs with the contract each default version records it runs with, read in the same query. Only
     the list reads it: every other read of a job never touches a version's documents."""
     return queryset.annotate(
-        version_contract=Coalesce(
-            KeyTransform("run_contract", "environment_version__documents"),
-            KeyTransform("contract", "environment_version__documents"),
+        version_contract=Case(
+            # A run contract only this revision of the reading recorded, as every other reader takes it.
+            When(
+                environment_version__documents__run_contract_version=RUN_CONTRACT_VERSION,
+                then=Coalesce(
+                    KeyTransform("run_contract", "environment_version__documents"),
+                    KeyTransform("contract", "environment_version__documents"),
+                    output_field=JSONField(),
+                ),
+            ),
+            default=KeyTransform("contract", "environment_version__documents"),
             output_field=JSONField(),
         )
     )
@@ -175,6 +291,8 @@ def environment_row(
 ) -> dict[str, Any]:
     """One list row. Safe to call on a job that has never finished building. ``contract``: the one the default
     version runs with, when the caller has it; a listed row reads the one its version records."""
+    from simulate.services.harness_agent_versions import environment_policy
+
     if contract is None:
         listed = getattr(job, "version_contract", None)
         contract = listed if isinstance(listed, dict) and listed else contract_data(job)
@@ -194,6 +312,9 @@ def environment_row(
         "sub_goals_count": _sub_goals_count(row_stage_output(job, "sub_goals")),
         "tools_count": _tools_count(contract),
         "runs_count": runs_count,
+        "agent_version": version_ref(job.agent_version),
+        "environment_version": version_ref(job.environment_version),
+        "agent_policy": environment_policy(job),
         "last_updated": _isoformat(job.content_updated_at or job.created_at),
         "created_at": _isoformat(job.created_at),
     }
@@ -204,16 +325,86 @@ def environment_rows(jobs: list[HostedHarnessJob]) -> list[dict[str, Any]]:
         id__in=[job.last_execution_id for job in jobs if job.last_execution_id]
     ).select_related("agent_version", "run_test")
     last_runs = run_summaries(list(executions))
+    agents = _agents_by_run_test(jobs)
     return [
-        {**environment_row(job), "last_run": last_runs.get(job.last_execution_id)}
+        {
+            **environment_row(job),
+            "agent": agents.get(job.run_test_id),
+            "last_run": last_runs.get(job.last_execution_id),
+        }
         for job in jobs
     ]
 
 
-def version_ref(version: AgentVersion | None) -> dict[str, Any] | None:
+def _agents_by_run_test(jobs: list[HostedHarnessJob]) -> dict[Any, dict[str, Any]]:
+    run_tests = RunTest.objects.filter(
+        id__in=[job.run_test_id for job in jobs if job.run_test_id],
+        deleted=False,
+        agent_definition__isnull=False,
+    ).select_related("agent_definition")
+    agents: dict[Any, dict[str, Any]] = {}
+    for run_test in run_tests:
+        agent = run_test.agent_definition
+        if agent is not None:
+            agents[run_test.id] = {
+                "id": str(agent.id),
+                "name": agent.agent_name or None,
+            }
+    return agents
+
+
+def version_ref(
+    version: AgentVersion | HarnessEnvironmentVersion | None,
+) -> dict[str, Any] | None:
     if version is None:
         return None
     return {"id": str(version.id), "version_number": version.version_number}
+
+
+def _scenario_history(
+    environment_ids: Iterable[uuid.UUID],
+) -> dict[Any, list[tuple[str, Any, Any]]]:
+    """Each environment's scenario registrations, deleted ones included, in one read."""
+    history: dict[Any, list[tuple[str, Any, Any]]] = {}
+    # The base manager: the soft-delete and workspace managers would hide the
+    # registrations removed after a run, which the run still had.
+    rows = HostedHarnessScenario._base_manager.filter(
+        job_id__in=list(environment_ids)
+    ).values_list("job_id", "scenario_key", "created_at", "deleted", "deleted_at")
+    for job_id, key, created_at, deleted, deleted_at in rows:
+        if deleted and deleted_at is None:
+            # Removed with no time recorded: there's no telling which runs had it.
+            continue
+        history.setdefault(job_id, []).append((key, created_at, deleted_at))
+    return history
+
+
+def _partial(
+    job: HostedHarnessJob | None,
+    execution: TestExecution,
+    history: dict[Any, list[tuple[str, Any, Any]]],
+) -> bool | None:
+    """Whether a run picked only some of the scenarios its environment had then.
+
+    Scenarios are counted by key, so trials of one scenario count once, and
+    against the registrations that existed when the run was created, so a suite
+    extended later doesn't turn an old full run partial.
+    """
+    if job is None or job.environment_id is None:
+        return None
+    metadata = (job.payload or {}).get("metadata") or {}
+    selected = len(set(metadata.get("selected_scenario_keys") or [])) or int(
+        execution.total_scenarios or 0
+    )
+    started = execution.created_at
+    available = {
+        key
+        for key, created_at, deleted_at in history.get(job.environment_id, [])
+        if created_at <= started and (deleted_at is None or deleted_at > started)
+    }
+    if not selected or not available:
+        return None
+    return selected < len(available)
 
 
 def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
@@ -224,9 +415,12 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
         job.test_execution_id: job
         for job in HostedHarnessJob.no_workspace_objects.filter(
             test_execution_id__in=ids, deleted=False
-        ).select_related("environment")
+        ).select_related("environment", "environment_version")
     }
     counts = receipt_outcome_counts(job.id for job in jobs.values())
+    history = _scenario_history(
+        {job.environment_id for job in jobs.values() if job.environment_id}
+    )
     trials = trial_passes(executions)
     run_numbers = dict(
         TestExecution.no_workspace_objects.filter(id__in=ids)
@@ -266,6 +460,10 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
                 else None
             ),
             "agent_version": version_ref(execution.agent_version),
+            "environment_version": (
+                version_ref(job.environment_version) if job else None
+            ),
+            "partial": _partial(job, execution, history),
             **outcome_fields(
                 status=execution.status,
                 receipts=outcomes,
@@ -1259,13 +1457,16 @@ def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
     definition = getattr(run_test, "agent_definition", None)
     if definition is None:
         return None
-    latest = definition.latest_version
+    # The environment's own pin; an unpinned environment runs the agent's active version.
+    version = job.agent_version or definition.active_version
+    if version is not None and version.agent_definition_id != definition.id:
+        version = definition.active_version
     return {
         "id": str(definition.id),
         "name": definition.agent_name or None,
         "provider": definition.provider or None,
         "versions_count": definition.version_count,
-        "active_version": f"v{latest.version_number}" if latest else None,
+        "active_version": f"v{version.version_number}" if version else None,
     }
 
 

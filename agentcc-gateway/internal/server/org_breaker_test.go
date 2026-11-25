@@ -78,8 +78,8 @@ func (k *keyedUpstream) count(key string) int {
 	return k.calls[key]
 }
 
-// Two orgs bring their own key for "primary"; "backup" is operator-only.
-// Requests are locked to primary first and fail over to backup.
+// Two orgs bring their own keys for primary and backup. Multi-provider requests
+// are unlocked; a lock to primary cannot authorize a backup-provider attempt.
 func orgBreakerGateway(t *testing.T, failing ...string) (*Server, *httptest.Server, *keyedUpstream) {
 	t.Helper()
 	return orgBreakerGatewayWithStatus(t, 0, failing...)
@@ -121,7 +121,8 @@ func orgBreakerGatewayWithConfig(t *testing.T, failStatus int, configure func(*c
 	store := tenant.NewStore()
 	for _, org := range []string{"org-a", "org-b"} {
 		store.Set(org, &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
-			"primary": {Enabled: true, APIKey: "synthetic-" + org + "-key", Models: []string{"different-model"}},
+			"primary": {Enabled: true, APIKey: "synthetic-" + org + "-key", Models: []string{"adaptive-sample"}},
+			"backup":  {Enabled: true, APIKey: "synthetic-" + org + "-backup-key", Models: []string{"different-model"}},
 		}})
 	}
 	orgCache := providers.NewOrgProviderCache(cfg.Providers, true)
@@ -133,8 +134,12 @@ func orgBreakerGatewayWithConfig(t *testing.T, failStatus int, configure func(*c
 
 func sendOrgRequests(t *testing.T, gateway *httptest.Server, probe string, n int) {
 	t.Helper()
+	headers := http.Header{}
+	if probe == "synthetic-operator-probe" {
+		headers.Set("X-Agentcc-Provider-Lock", "primary")
+	}
 	for i := 0; i < n; i++ {
-		if status, body := adaptiveHTTP(t, gateway, "adaptive-sample", probe, false, http.Header{"X-Agentcc-Provider-Lock": {"primary"}}); status != http.StatusOK || !strings.Contains(body, "synthetic response") {
+		if status, body := adaptiveHTTP(t, gateway, "adaptive-sample", probe, false, headers); status != http.StatusOK || !strings.Contains(body, "synthetic response") {
 			t.Fatalf("%s request %d: status=%d body=%s", probe, i, status, body)
 		}
 	}
@@ -181,7 +186,7 @@ func TestOrgBreakerCountsRejectedOrgKeyByDefault(t *testing.T) {
 			srv, gateway, keyed := orgBreakerGatewayWithStatus(t, status, "synthetic-org-a-key")
 			statuses := map[int]int{}
 			for i := 0; i < 12; i++ {
-				got, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", false, http.Header{"X-Agentcc-Provider-Lock": {"primary"}})
+				got, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", false)
 				statuses[got]++
 			}
 			if got := keyed.count("synthetic-org-a-key"); got != 2 {

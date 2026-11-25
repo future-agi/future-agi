@@ -210,25 +210,28 @@ func (r *Registry) Resolve(model string) (Provider, error) {
 
 // ResolveWithRouting finds the provider for a model, using load balancing if available.
 func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
+	return r.ResolveExcluding(model, nil)
+}
+
+// ResolveExcluding retains the model's routing semantics while skipping refused providers.
+func (r *Registry) ResolveExcluding(model string, excluded map[string]bool) (*ResolveResult, error) {
+	return r.ResolveForScope(model, excluded, nil)
+}
+
+// ResolveForScope preserves normal model matching. An independently credentialed
+// adapter can serve a routing target whose operator instance is unhealthy.
+func (r *Registry) ResolveForScope(model string, excluded map[string]bool, independent func(string) bool) (*ResolveResult, error) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	router := r.router
+	_, explicitModelRequested := r.modelMap[model]
+	r.mu.RUnlock()
 
 	// Try routing first if the model has routing targets. A single target
 	// routes too: it can name the provider and the model_override to send.
-	if r.router != nil && r.router.TargetCount(model) > 0 {
-		var (
-			routingResult *routing.RoutingResult
-			err           error
-		)
-
-		_, explicitModelRequested := r.modelMap[model]
-		if explicitModelRequested {
-			routingResult, err = r.router.SelectExactModel(model)
-		} else {
-			routingResult, err = r.router.Select(model)
-		}
+	if router != nil && router.TargetCount(model) > 0 {
+		routingResult, err := router.SelectForScope(model, excluded, explicitModelRequested, independent)
 		if err == nil {
-			if p, ok := r.providers[routingResult.Target.ProviderID]; ok {
+			if p, ok := r.GetProvider(routingResult.Target.ProviderID); ok {
 				return &ResolveResult{
 					Provider:      p,
 					StrategyName:  routingResult.StrategyName,
@@ -239,13 +242,15 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 		}
 
 		if !explicitModelRequested {
-			return nil, models.ErrServiceUnavailable(err.Error())
+			return nil, models.ErrProvidersUnavailable(err.Error())
 		}
 	}
 
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	// Direct lookup.
 	if providerID, ok := r.modelMap[model]; ok {
-		if p, ok := r.providers[providerID]; ok {
+		if p, ok := r.providers[providerID]; ok && !excluded[providerID] {
 			return &ResolveResult{Provider: p}, nil
 		}
 		return nil, models.ErrInternal(fmt.Sprintf("provider %q configured for model %q but not found", providerID, model))
@@ -254,15 +259,17 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 	// Try prefix match: "openai/gpt-4o" → provider "openai", model "gpt-4o".
 	if idx := strings.Index(model, "/"); idx > 0 {
 		providerID := model[:idx]
-		if p, ok := r.providers[providerID]; ok {
+		if p, ok := r.providers[providerID]; ok && !excluded[providerID] {
 			return &ResolveResult{Provider: p}, nil
 		}
 	}
 
 	// If only one provider is configured, use it as default.
 	if len(r.providers) == 1 {
-		for _, p := range r.providers {
-			return &ResolveResult{Provider: p}, nil
+		for id, p := range r.providers {
+			if !excluded[id] {
+				return &ResolveResult{Provider: p}, nil
+			}
 		}
 	}
 

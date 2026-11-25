@@ -13,8 +13,9 @@ import re
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import quote
 from uuid import UUID
 
@@ -31,6 +32,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services.harness_agent_versions import (
+    CONNECTED_OWNER,
     _agent_versions_unavailable,
     _busy,
     _default_lineage,
@@ -47,13 +49,15 @@ from simulate.services.harness_agent_versions import (
 )
 from simulate.services.harness_github import (
     GitHubResponse,
+    ReadCredential,
+    ReadStatus,
+    _workspace_installation,
     github_get,
-    rate_limited_now,
-    remaining,
+    read_credential,
+    read_refused,
     safe_ref,
     safe_repository,
     short_ref,
-    within_share,
 )
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -66,8 +70,6 @@ SourceKind = HarnessAgentVersionRuntime.SourceKind
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _PINNED_REF = re.compile(r"^[0-9a-fA-F]{40}$")
 _DAY = 86400
-# Calls an hour the poller leaves to push re-reads, creation checks and comparisons.
-_POLL_RESERVE = 20
 # A passed version an environment asked for from where it stands is observed, unless
 # its move was held back by one of these: asking again moves it.
 _ASK_AGAIN = (
@@ -101,7 +103,7 @@ _REPOSITORY_ID_KEY = "agent_source_repository_id"
 
 @dataclass(frozen=True)
 class WatchedSource:
-    environment_id: UUID
+    environment_id: UUID | None
     definition_id: UUID
     parent_version_id: UUID
     repository: str
@@ -111,14 +113,16 @@ class WatchedSource:
     # GitHub's id for the repository: its head is read by id, never by a name a
     # later owner could take.
     repository_id: int | None = None
+    connected: bool = False
+    installation_id: str | None = None
+    workspace_id: Any = None
 
 
 @dataclass(frozen=True)
 class HeadResult:
-    status: Literal[
-        "ok", "not_modified", "not_found", "rate_limited", "budget", "error"
-    ]
+    status: ReadStatus
     sha: str | None = None
+    reset_at: float | None = None
 
 
 def _facts(environment: HostedHarnessJob) -> Any:
@@ -136,12 +140,16 @@ def watched_sources(
     *, repository: str | None = None, definition_id: Any = None
 ) -> list[WatchedSource]:
     """Live, pinned, built environments whose effective default agent version is a
-    public GitHub source; optionally only those on ``repository`` (any case)."""
+    GitHub source, and connected agents on a GitHub source with no such
+    environment; a private source is read through its installation. Optionally
+    only those on ``repository`` (any case)."""
     jobs = HostedHarnessJob.no_workspace_objects.filter(
         environment__isnull=True,
         deleted=False,
         state=HostedHarnessJob.State.COMPLETED,
         agent_version__isnull=False,
+        agent_version__deleted=False,
+        agent_version__agent_definition__deleted=False,
     ).select_related("agent_version")
     # Narrows only, as below: a GitHub source by the payload (a legacy or unrecorded
     # default) or by the default's own side row.
@@ -158,10 +166,9 @@ def watched_sources(
             | Q(agent_version__harness_runtime__source__repository__iexact=repository)
         )
     found = []
-    private = 0
     for job in jobs.order_by("created_at"):
-        if _busy(job) or agent_definition_owner(job) == "connected":
-            # Connected agents change through their sync only.
+        connected = agent_definition_owner(job) == "connected"
+        if not connected and _busy(job):
             continue
         facts = _facts(job)
         if facts is None or facts.source_kind != SourceKind.GITHUB:
@@ -170,9 +177,6 @@ def watched_sources(
         built = (job.payload or {}).get("source") or {}
         access = (facts.agent_payload or {}).get("source_access") or {}
         visibility = access.get("visibility") or built.get("visibility")
-        if visibility == "private":
-            private += 1
-            continue
         name = str(source.get("repository") or "")
         stored_ref = str(source.get("ref") or "")
         if not safe_repository(name) or _PINNED_REF.fullmatch(stored_ref):
@@ -206,12 +210,141 @@ def watched_sources(
                     else None
                 ),
                 organization_id=job.organization_id,
+                workspace_id=job.workspace_id,
                 repository_id=access.get("repository_id") or recorded.get("id"),
+                connected=connected,
+                installation_id=_private_installation(visibility, access, built),
             )
         )
-    if private:
-        logger.info("harness_agent_watch_private_skipped count=%d", private)
+    watched = {one.definition_id for one in found if one.connected}
+    found.extend(
+        one
+        for one in _connected_agents(repository=repository, definition_id=definition_id)
+        if one.definition_id not in watched
+    )
     return found
+
+
+def _private_installation(
+    visibility: Any, access: Mapping[str, Any], built: Mapping[str, Any]
+) -> str | None:
+    if visibility != "private":
+        return None
+    return str(access.get("installation_id") or built.get("installation_id") or "")
+
+
+def _connected_agents(
+    *, repository: str | None, definition_id: Any
+) -> list[WatchedSource]:
+    """Connected agents whose production version is a GitHub source, one each."""
+    rows = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_payload__definition_owner=CONNECTED_OWNER,
+        source_kind=SourceKind.GITHUB,
+        agent_version__status=AgentVersion.StatusChoices.ACTIVE,
+        agent_version__deleted=False,
+        agent_definition__deleted=False,
+    ).defer("credential_blob", "diff")
+    if definition_id is not None:
+        rows = rows.filter(agent_definition_id=definition_id)
+    if repository is not None:
+        rows = rows.filter(source__repository__iexact=repository)
+    found: dict[Any, WatchedSource] = {}
+    for row in rows.order_by("agent_definition_id", "-created_at"):
+        if row.agent_definition_id in found:
+            continue
+        source = row.source or {}
+        access = (row.agent_payload or {}).get("source_access") or {}
+        name = str(source.get("repository") or "")
+        stored_ref = str(source.get("ref") or "")
+        ref = short_ref(stored_ref)
+        if (
+            not safe_repository(name)
+            or _PINNED_REF.fullmatch(stored_ref)
+            or (ref is not None and not safe_ref(ref))
+        ):
+            continue
+        found[row.agent_definition_id] = WatchedSource(
+            environment_id=None,
+            definition_id=row.agent_definition_id,
+            parent_version_id=row.agent_version_id,
+            repository=name,
+            ref=ref,
+            commit_sha=source.get("commit_sha"),
+            organization_id=row.organization_id,
+            workspace_id=row.workspace_id,
+            repository_id=access.get("repository_id"),
+            connected=True,
+            installation_id=_private_installation(access.get("visibility"), access, {}),
+        )
+    return list(found.values())
+
+
+def _outcome_key(watched: WatchedSource) -> str:
+    return str(watched.environment_id or watched.definition_id)
+
+
+def read_head(
+    watched: WatchedSource,
+    *,
+    purpose: str,
+    credential: ReadCredential | None = None,
+) -> HeadResult:
+    """The head of a watched source: a private one through its installation, any
+    other with the workspace's read credential (``credential`` when the caller holds
+    it already)."""
+    if watched.installation_id is None:
+        if credential is not None:
+            return github_head(
+                watched.repository,
+                watched.ref,
+                credential=credential,
+                purpose=purpose,
+                repository_id=watched.repository_id,
+            )
+        with read_credential(watched.organization_id, watched.workspace_id) as held:
+            return github_head(
+                watched.repository,
+                watched.ref,
+                credential=held,
+                purpose=purpose,
+                repository_id=watched.repository_id,
+            )
+    if not watched.installation_id:
+        return HeadResult("error")
+    from integrations.services.github_app import (
+        GitHubAppError,
+        branch_head,
+        installation_connected,
+    )
+
+    if not installation_connected(
+        organization_id=watched.organization_id,
+        workspace_id=watched.workspace_id,
+        installation_id=watched.installation_id,
+    ):
+        logger.info(
+            "harness_agent_private_head_disconnected definition=%s",
+            watched.definition_id,
+        )
+        return HeadResult("error")
+
+    try:
+        sha = branch_head(
+            watched.installation_id,
+            repository=watched.repository,
+            repository_id=watched.repository_id,
+            ref=watched.ref,
+        )
+    except GitHubAppError:
+        logger.warning(
+            "harness_agent_private_head_unreadable definition=%s",
+            watched.definition_id,
+            exc_info=True,
+        )
+        return HeadResult("error")
+    if sha is None:
+        return HeadResult("not_found")
+    return HeadResult("ok", sha) if _SHA.fullmatch(sha) else HeadResult("error")
 
 
 def _pair(watched: WatchedSource) -> tuple[str, str | None]:
@@ -220,6 +353,46 @@ def _pair(watched: WatchedSource) -> tuple[str, str | None]:
     if watched.repository_id is not None:
         name = f"{name}#{watched.repository_id}"
     return name, watched.ref
+
+
+Scope = tuple[str, ...]
+Read = tuple[tuple[str, str | None], Scope]
+FALLBACK_SCOPE: Scope = ("fallback",)
+
+
+def _scope(
+    watched: WatchedSource, known: dict[tuple[Any, Any, str | None], Scope]
+) -> Scope:
+    key = (watched.organization_id, watched.workspace_id, watched.installation_id)
+    if key not in known:
+        known[key] = _read_scope(watched)
+    return known[key]
+
+
+def _read_scope(watched: WatchedSource) -> Scope:
+    if watched.installation_id is None:
+        installation = _workspace_installation(
+            watched.organization_id, watched.workspace_id
+        )
+        return ("workspace", installation) if installation else FALLBACK_SCOPE
+    from integrations.services.github_app import installation_connected
+
+    if watched.installation_id and installation_connected(
+        organization_id=watched.organization_id,
+        workspace_id=watched.workspace_id,
+        installation_id=watched.installation_id,
+    ):
+        return ("private", watched.installation_id)
+    return (
+        "unavailable",
+        str(watched.organization_id),
+        str(watched.workspace_id),
+        watched.installation_id,
+    )
+
+
+def _read_name(pair: tuple[str, str | None], scope: Scope) -> str:
+    return f"{pair[0]}:{pair[1] or 'HEAD'}:{':'.join(scope)}"
 
 
 def _head_key(
@@ -232,8 +405,8 @@ def github_head(
     repository: str,
     ref: str | None,
     *,
+    credential: ReadCredential,
     purpose: str,
-    reserve: int = 0,
     repository_id: int | None = None,
 ) -> HeadResult:
     """The commit ``ref`` (the default branch when ``None``) points at now; read by
@@ -248,17 +421,16 @@ def github_head(
     response = github_get(
         f"{path}/commits/{quote(ref or 'HEAD', safe='/')}",
         accept="application/vnd.github.sha",
+        credential=credential,
         etag=cached.get("etag"),
         purpose=purpose,
-        reserve=reserve,
-        owner=repository.split("/")[0],
     )
     if response.status == "not_modified" and cached.get("sha"):
         return HeadResult("not_modified", cached["sha"])
     if response.status == "not_modified":
         return HeadResult("error")
     if response.status != "ok":
-        return HeadResult(response.status)
+        return HeadResult(response.status, reset_at=response.reset_at)
     sha = str(response.body or "").strip()
     if not _SHA.fullmatch(sha):
         return HeadResult("error")
@@ -429,15 +601,14 @@ def _seed(environment: HostedHarnessJob, watched: WatchedSource, head: str) -> b
 
 
 def github_repository(
-    repository: str, *, purpose: str, reserve: int = 0, owner: str | None = None
+    repository: str, *, credential: ReadCredential, purpose: str
 ) -> GitHubResponse:
     """GitHub's record of a public repository, by its checked name."""
     return github_get(
         f"/repos/{repository}",
         accept="application/vnd.github+json",
+        credential=credential,
         purpose=purpose,
-        reserve=reserve,
-        owner=owner,
     )
 
 
@@ -457,14 +628,10 @@ def _identified(
     key = f"harness:gh-repo-id:{watched.repository.lower()}"
     found = cache.get(key)
     if found is None:
-        found = _repository_id(
-            github_repository(
-                watched.repository,
-                purpose=purpose,
-                reserve=_POLL_RESERVE if purpose == "poll" else 0,
-                owner=watched.repository.split("/")[0],
+        with read_credential(watched.organization_id, watched.workspace_id) as held:
+            found = _repository_id(
+                github_repository(watched.repository, credential=held, purpose=purpose)
             )
-        )
         if found is None:
             return False
         # Environments on the same repository this tick share the one lookup.
@@ -499,6 +666,8 @@ def _observe_one(
         )
         .filter(id=watched.environment_id, environment__isnull=True, deleted=False)
         .first()
+        if watched.environment_id is not None
+        else None
     )
     if environment is None or environment.agent_version_id != (
         watched.parent_version_id
@@ -526,15 +695,17 @@ def _observe_one(
         or environment.agent_version
     )
     first_new = next_version_number(parent.agent_definition_id)
-    # The GitHub App installation the repository was connected through: without it a
-    # fix on the new version cannot open a pull request.
-    installation_id = (
+    # The GitHub App installation the repository was connected through: a private
+    # source is read through it, and without it a fix on the new version cannot open
+    # a pull request.
+    access = (
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_version_id=parent.id
         )
-        .values_list("agent_payload__source_access__installation_id", flat=True)
+        .values_list("agent_payload__source_access", flat=True)
         .first()
-    )
+    ) or {}
+    installation_id = access.get("installation_id")
     # No transaction or lock around it: its activation takes the environment's lock
     # after releasing the definition's.
     version = create_agent_version(
@@ -546,7 +717,9 @@ def _observe_one(
             "repository": watched.repository,
             "ref": watched.ref,
             "commit_sha": head,
-            "visibility": "public",
+            "visibility": "private"
+            if access.get("visibility") == "private"
+            else "public",
             "repository_id": watched.repository_id,
             **({"installation_id": installation_id} if installation_id else {}),
         },
@@ -557,18 +730,36 @@ def _observe_one(
     return ("created" if version.version_number >= first_new else "reused"), version
 
 
+def _observe_connected(
+    watched: WatchedSource, head: str
+) -> tuple[str, AgentVersion | None]:
+    """A connected agent's version at ``head``, made once for the agent however many
+    environments test it; none when Sync or an earlier look already made it."""
+    from simulate.services.agent_versions import version_at_head
+
+    definition = AgentDefinition.no_workspace_objects.filter(
+        id=watched.definition_id
+    ).first()
+    if definition is None:
+        return "skipped_missing", None
+    version, created = version_at_head(definition, head, trigger=Trigger.PUSH)
+    return ("created" if created else "unchanged"), version
+
+
 def observe_repository_head(
     definition: AgentDefinition | Any,
     *,
     repository: str | None = None,
-    heads: dict[tuple[str, str | None], HeadResult] | None = None,
+    heads: dict[Read, HeadResult] | None = None,
     purpose: str = "poll",
 ) -> dict[str, str]:
     """Make the next agent version for each environment watching this definition's
-    GitHub source whose head it has not observed; returns {environment_id: outcome}.
+    GitHub source whose head it has not observed; returns {environment_id: outcome},
+    keyed by the definition id for a connected agent watched with no environment.
 
-    With ``heads`` only the (repository, ref) pairs it holds are looked at; without,
-    each pair's head is read once.
+    With ``heads`` only the (repository, ref) pairs it holds are looked at, each
+    for the sources read through the same installation; without, each pair's head
+    is read once per installation.
     """
     from simulate.services.harness_versioning.versions import versioning_enabled
 
@@ -578,25 +769,28 @@ def observe_repository_head(
     only_given = heads is not None
     heads = {} if heads is None else heads
     outcomes: dict[str, str] = {}
+    connected_outcomes: dict[Any, str] = {}
+    known: dict[tuple[Any, Any, str | None], Scope] = {}
+    checked: set[Any] = set()
     for watched in watched_sources(repository=repository, definition_id=definition_id):
-        pair = _pair(watched)
-        head = heads.get(pair)
+        read = (_pair(watched), _scope(watched, known))
+        head = heads.get(read)
         if head is None:
             if only_given:
                 continue
-            head = heads[pair] = github_head(
-                watched.repository,
-                watched.ref,
-                purpose=purpose,
-                repository_id=watched.repository_id,
-            )
+            head = heads[read] = read_head(watched, purpose=purpose)
         if head.status not in ("ok", "not_modified") or not head.sha:
-            outcomes[str(watched.environment_id)] = "head_unavailable"
-            if head.status in ("rate_limited", "budget"):
-                break
+            outcomes[_outcome_key(watched)] = "head_unavailable"
+            continue
+        checked.add(watched.definition_id)
+        if watched.connected and watched.definition_id in connected_outcomes:
+            outcomes[_outcome_key(watched)] = connected_outcomes[watched.definition_id]
             continue
         try:
-            outcome, version = _observe_one(watched, head.sha, purpose)
+            if watched.connected:
+                outcome, version = _observe_connected(watched, head.sha)
+            else:
+                outcome, version = _observe_one(watched, head.sha, purpose)
         except HostedHarnessError as exc:
             outcome, version = f"error:{exc.code}", None
         except Exception as exc:  # noqa: BLE001 - one environment never stops another
@@ -606,7 +800,9 @@ def observe_repository_head(
                 type(exc).__name__,
             )
             outcome, version = "error", None
-        outcomes[str(watched.environment_id)] = outcome
+        if watched.connected:
+            connected_outcomes[watched.definition_id] = outcome
+        outcomes[_outcome_key(watched)] = outcome
         logger.info(
             "harness_agent_head_observed definition=%s environment=%s outcome=%s"
             " head=%s purpose=%s version=%s",
@@ -617,73 +813,102 @@ def observe_repository_head(
             purpose,
             getattr(version, "id", None),
         )
+    mark_source_checked(checked)
     return outcomes
 
 
-def _checked_key(repository: str, ref: str | None) -> str:
-    return f"harness:gh-checked:{repository}:{ref or 'HEAD'}"
+def mark_source_checked(definition_ids: Any) -> None:
+    """Record that GitHub answered for these agents' branches just now."""
+    ids = [one for one in definition_ids if one is not None]
+    if ids:
+        AgentDefinition.no_workspace_objects.filter(id__in=ids).update(
+            source_checked_at=timezone.now()
+        )
 
 
-def _poll_first(pair: tuple[str, str | None]) -> None:
-    """Have the poller read a pair first, within its owner's hourly share and the
-    hourly cap: pushes can't hold every poll slot."""
-    if within_share("poll-first", pair[0].split("/")[0]):
-        cache.set(_checked_key(*pair), -1, _DAY)
+def poll_interval_seconds() -> int:
+    """How often the poller reads the branches it watches."""
+    from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
+
+    for schedule in SIMULATE_SCHEDULES:
+        if schedule.schedule_id == "harness-github-poll":
+            return int(schedule.interval_seconds)
+    return 0
+
+
+def _checked_key(pair: tuple[str, str | None], scope: Scope) -> str:
+    return f"harness:gh-checked:{_read_name(pair, scope)}"
+
+
+def _poll_first(pair: tuple[str, str | None], scope: Scope) -> None:
+    """Have the poller read a pair first, through this installation."""
+    cache.set(_checked_key(pair, scope), -1, _DAY)
 
 
 def poll_repository_heads(*, budget: int | None = None) -> dict[str, int]:
-    """One poller tick: the oldest-checked (repo, ref) pairs first, within the shared
-    GitHub budget; returns counts by outcome."""
+    """One poller tick: the oldest-checked (repo, ref) pairs first, each read once
+    per installation its sources are read through; returns counts by outcome."""
     from django.conf import settings
 
     from simulate.services.harness_versioning.versions import versioning_enabled
 
-    if not versioning_enabled() or rate_limited_now():
+    if not versioning_enabled():
         return {}
-    groups: dict[tuple[str, str | None], list[WatchedSource]] = {}
+    groups: dict[Read, list[WatchedSource]] = {}
+    known: dict[tuple[Any, Any, str | None], Scope] = {}
     for watched in watched_sources():
-        groups.setdefault(_pair(watched), []).append(watched)
+        groups.setdefault((_pair(watched), _scope(watched, known)), []).append(watched)
     limit = (
         budget
         if budget is not None
-        else int(getattr(settings, "HARNESS_GITHUB_POLL_BUDGET", 5))
+        else int(getattr(settings, "HARNESS_GITHUB_POLL_BUDGET", 200))
     )
-    left = remaining()
-    if left is not None:
-        limit = min(limit, max(left - _POLL_RESERVE, 0))
-    checked = {pair: float(cache.get(_checked_key(*pair)) or 0) for pair in groups}
+    checked = {read: float(cache.get(_checked_key(*read)) or 0) for read in groups}
     order = sorted(groups, key=checked.__getitem__)
-    # Organizations take turns, each oldest-checked first, so one with many pairs
-    # can't hold every read; pairs a push asked for still go first.
+    # Organizations take turns, each with the pairs a push asked for first, then the
+    # oldest-checked: one organization's pushes can't hold every read.
     taken: Counter[Any] = Counter()
-    turn: dict[tuple[str, str | None], int] = {}
-    for pair in order:
-        turn[pair] = taken[groups[pair][0].organization_id]
-        taken[groups[pair][0].organization_id] += 1
-    order.sort(key=lambda pair: (checked[pair] >= 0, turn[pair]))
+    turn: dict[Read, int] = {}
+    for read in order:
+        turn[read] = taken[groups[read][0].organization_id]
+        taken[groups[read][0].organization_id] += 1
+    order.sort(key=lambda read: (turn[read], checked[read] >= 0))
     counts: Counter[str] = Counter()
-    for pair in order[:limit]:
-        sources = groups[pair]
-        head = github_head(
-            sources[0].repository,
-            pair[1],
-            purpose="poll",
-            reserve=_POLL_RESERVE,
-            repository_id=sources[0].repository_id,
-        )
-        if head.status in ("rate_limited", "budget"):
-            counts[head.status] += 1
-            break
-        cache.set(_checked_key(*pair), time.time(), _DAY)
-        for definition_id in dict.fromkeys(one.definition_id for one in sources):
-            for outcome in observe_repository_head(
-                definition_id,
-                repository=sources[0].repository,
-                heads={pair: head},
+    with ExitStack() as held:
+        credentials: dict[tuple[Any, Any], ReadCredential] = {}
+        for read in order[:limit]:
+            sources = groups[read]
+            head = read_head(
+                sources[0],
                 purpose="poll",
-            ).values():
-                counts[outcome] += 1
+                credential=_held_credential(held, credentials, sources[0]),
+            )
+            if head.status == "rate_limited":
+                counts[head.status] += 1
+                continue
+            cache.set(_checked_key(*read), time.time(), _DAY)
+            for definition_id in dict.fromkeys(one.definition_id for one in sources):
+                for outcome in observe_repository_head(
+                    definition_id,
+                    repository=sources[0].repository,
+                    heads={read: head},
+                    purpose="poll",
+                ).values():
+                    counts[outcome] += 1
     return dict(counts)
+
+
+def _held_credential(
+    held: ExitStack,
+    credentials: dict[tuple[Any, Any], ReadCredential],
+    watched: WatchedSource,
+) -> ReadCredential | None:
+    if watched.installation_id is not None:
+        return None
+    scope = (watched.organization_id, watched.workspace_id)
+    if scope not in credentials:
+        credentials[scope] = held.enter_context(read_credential(*scope))
+    return credentials[scope]
 
 
 def receive_push(
@@ -710,31 +935,32 @@ def receive_push(
         if (watched.ref == pushed or (watched.ref is None and on_default))
         and (repository_id is None or watched.repository_id in (None, repository_id))
     ]
-    heads: dict[tuple[str, str | None], HeadResult] = {}
-    seen: set[tuple[str, str | None]] = set()
-    for watched in matched:
-        pair = _pair(watched)
-        if pair not in seen:
-            seen.add(pair)
+    heads: dict[Read, HeadResult] = {}
+    seen: set[Read] = set()
+    known: dict[tuple[Any, Any, str | None], Scope] = {}
+    with ExitStack() as held:
+        credentials: dict[tuple[Any, Any], ReadCredential] = {}
+        for watched in matched:
+            read = (_pair(watched), _scope(watched, known))
+            if read in seen:
+                continue
+            seen.add(read)
             if not cache.add(
-                f"harness:gh-push-seen:{pair[0]}:{pair[1] or 'HEAD'}",
-                1,
-                _PUSH_COOLDOWN,
+                f"harness:gh-push-seen:{_read_name(*read)}", 1, _PUSH_COOLDOWN
             ):
                 # Read for a push just now: the poller reads it first.
-                _poll_first(pair)
+                _poll_first(*read)
                 continue
             cache.delete(
                 _head_key(watched.repository, watched.ref, watched.repository_id)
             )
-            heads[pair] = github_head(
-                watched.repository,
-                watched.ref,
+            heads[read] = read_head(
+                watched,
                 purpose="webhook",
-                repository_id=watched.repository_id,
+                credential=_held_credential(held, credentials, watched),
             )
-            if heads[pair].status in ("rate_limited", "budget"):
-                _poll_first(pair)
+            if heads[read].status == "rate_limited":
+                _poll_first(*read)
     counts: Counter[str] = Counter()
     for definition_id in dict.fromkeys(one.definition_id for one in matched):
         for outcome in observe_repository_head(
@@ -744,37 +970,53 @@ def receive_push(
     return dict(counts)
 
 
-def validate_public_github_source(
-    payload: Mapping[str, Any], *, organization_id: Any = None, lookup: bool = True
+def validate_github_source(
+    payload: Mapping[str, Any],
+    *,
+    organization_id: Any = None,
+    workspace_id: Any = None,
+    lookup: bool = True,
+    required: bool = False,
 ) -> int | None:
-    """Refuse a new environment on a private or unknown GitHub repository: only
-    public ones are watched. GitHub being unreachable never blocks a creation.
-    Without ``lookup`` only what the payload says is checked. Returns GitHub's id
-    for the repository when it was looked up."""
+    """Refuse a new environment on a GitHub repository the watcher could not read:
+    a private one needs its installation, and a public one must exist. A public
+    repository is read with the workspace's credential, a private one through its
+    installation. GitHub not answering never blocks a public creation, unless
+    ``required``: then an unchecked repository is refused, saying why. Without
+    ``lookup`` only what the payload says is checked. Returns GitHub's id for the
+    repository when it was looked up."""
     source = payload.get("source") or {}
     if source.get("kind") != "github":
         return None
+    repository = str(source.get("repository") or "")
+    if source.get("visibility") == "private":
+        installation_id = str(source.get("installation_id") or "")
+        if not installation_id:
+            raise HostedHarnessError(
+                "github_installation_not_connected",
+                "Connect GitHub in Settings > Integrations before building from a"
+                " private repository",
+                status_code=422,
+            )
+        if not lookup:
+            return None
+        from simulate.services.agent_connect import installation_repository_id
+
+        return installation_repository_id(installation_id, repository)
     private = HostedHarnessError(
         "github_private_unsupported",
-        "Private GitHub repositories can't be versioned yet; use a public repository"
-        " or upload the folder",
+        "That repository is private; choose Private and connect GitHub in"
+        " Settings > Integrations",
         status_code=422,
     )
-    if source.get("visibility") == "private":
-        raise private
     if not lookup:
         return None
-    repository = str(source.get("repository") or "")
-    found = (
-        # One organization's creations take only its share of their own cap.
-        github_repository(
-            repository,
-            purpose="create",
-            owner=str(organization_id) if organization_id else None,
-        )
-        if safe_repository(repository)
-        else None
-    )
+    found = None
+    if safe_repository(repository):
+        with read_credential(organization_id, workspace_id) as credential:
+            found = github_repository(
+                repository, credential=credential, purpose="create"
+            )
     if found is None or found.status == "not_found":
         raise HostedHarnessError(
             "github_repository_not_found",
@@ -782,8 +1024,9 @@ def validate_public_github_source(
             status_code=422,
         )
     if found.status != "ok":
-        # TODO: creations past the hourly cap fail open without a repository_id,
-        # and are identified by name on the first tick.
+        refused = read_refused(found.status, found.reset_at)
+        if required and refused is not None:
+            raise refused
         logger.info("harness_github_check_skipped reason=%s", found.status)
         return None
     if isinstance(found.body, Mapping) and found.body.get("private"):
@@ -809,6 +1052,65 @@ def _unchanged() -> HostedHarnessError:
         "Nothing changed",
         status_code=422,
         details={"piece": "agent"},
+    )
+
+
+@dataclass(frozen=True)
+class AgentEdit:
+    config: dict[str, Any] | None
+    prompt: str | None
+
+    @property
+    def changed(self) -> bool:
+        return self.config is not None or self.prompt is not None
+
+    @property
+    def trigger(self) -> str:
+        return Trigger.PROMPT if self.prompt is not None else Trigger.AGENT_PAYLOAD
+
+
+def edit_agent_config(
+    kind: str,
+    agent_payload: Mapping[str, Any],
+    *,
+    description: str,
+    prompt: str | None = None,
+    settings: Mapping[str, Any] | None = None,
+    settings_field: str = "agent_payload.config",
+) -> AgentEdit:
+    """A prompt and settings edit applied to a version's agent payload: the config
+    when it moved, and the prompt when it moved. A phone or LiveKit agent's prompt
+    is in its config, where the build reads it; a provider agent's is its
+    description. Only the settings its connector takes are allowed."""
+    config = dict(agent_payload.get("config") or {})
+    before = copy.deepcopy(config)
+    prompt_changed = False
+    if prompt is not None:
+        if kind not in _PROMPT_KINDS:
+            # A code agent's prompt belongs to its source.
+            raise _unsupported("prompt")
+        in_config = kind in (SourceKind.PHONE, SourceKind.LIVEKIT) or (
+            "target_system_prompt" in config
+        )
+        now = (
+            str(config.get("target_system_prompt") or "") if in_config else description
+        )
+        prompt_changed = prompt != now
+        if in_config:
+            config["target_system_prompt"] = prompt
+    connector = (
+        str(kind)
+        if kind != SourceKind.PROVIDER
+        else str(agent_payload.get("connector"))
+    )
+    allowed = _SETTINGS.get(connector, ())
+    for name, value in (settings or {}).items():
+        if kind not in _PROMPT_KINDS or name not in allowed:
+            raise _unsupported(f"{settings_field}.{name}")
+        config[name] = value
+    return AgentEdit(
+        config=config if config != before else None,
+        prompt=prompt if prompt_changed else None,
     )
 
 
@@ -903,47 +1205,28 @@ def change_agent_source(
             trigger=Trigger.UPLOAD,
         )
 
-    config = dict(current.get("config") or {})
-    before = copy.deepcopy(config)
-    prompt_changed = False
-    if prompt is not None:
-        if kind not in _PROMPT_KINDS:
-            # A code agent's prompt belongs to its source.
-            raise _unsupported("prompt")
-        in_config = kind in (SourceKind.PHONE, SourceKind.LIVEKIT) or (
-            "target_system_prompt" in config
-        )
-        now = (
-            str(config.get("target_system_prompt") or "")
-            if in_config
-            else (parent.description or "")
-        )
-        prompt_changed = prompt != now
-        if in_config:
-            config["target_system_prompt"] = prompt
-    connector = (
-        str(kind) if kind != SourceKind.PROVIDER else str(current.get("connector"))
+    edit = edit_agent_config(
+        kind,
+        current,
+        description=parent.description or "",
+        prompt=prompt,
+        settings=(agent_payload or {}).get("config"),
     )
-    allowed = _SETTINGS.get(connector, ())
-    for name, value in ((agent_payload or {}).get("config") or {}).items():
-        if kind not in _PROMPT_KINDS or name not in allowed:
-            raise _unsupported(f"agent_payload.config.{name}")
-        config[name] = value
-    if not prompt_changed and config == before:
+    if not edit.changed:
         raise _unchanged()
     changes: dict[str, Any] = {}
-    if config != before:
+    if edit.config is not None:
         # The environment's own source, so how it is reached stays as it was.
-        changes["agent_payload"] = {**current, "config": config}
+        changes["agent_payload"] = {**current, "config": edit.config}
         changes["source"] = env_source
-    if prompt_changed:
-        changes["prompt"] = prompt
+    if edit.prompt is not None:
+        changes["prompt"] = edit.prompt
     return _made(
         parent,
         environment,
         user,
         make_default=make_default,
-        trigger=Trigger.PROMPT if prompt_changed else Trigger.AGENT_PAYLOAD,
+        trigger=edit.trigger,
         **changes,
     )
 

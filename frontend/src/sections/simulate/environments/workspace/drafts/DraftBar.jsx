@@ -1,27 +1,18 @@
 import PropTypes from "prop-types";
-import { useEffect, useId, useRef, useState } from "react";
-import {
-  Box,
-  Button,
-  CircularProgress,
-  Stack,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { useId, useState } from "react";
+import { Box, Button, Stack, Typography } from "@mui/material";
 
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { relativeTime } from "src/utils/format-time";
 import {
-  useDiscardDraft,
-  useDraftReview,
-  useDrafts,
-  useSaveCandidates,
-  useSaveDrafts,
-  useValidateDrafts,
-} from "src/api/simulate-environments/versions";
-import { refusalText } from "../evals/refusalText";
-import { DRAFTS_COPY as COPY } from "../workspace.constants";
+  DRAFTS_COPY as COPY,
+  REVIEW_COPY,
+  WORKSPACE_COPY,
+} from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { changeCount } from "./changeCount";
+import useDraftSaveFlow from "./useDraftSaveFlow";
 
 const pieceLine = (piece, draft) =>
   `${COPY.pieces[piece]} · ${
@@ -30,202 +21,41 @@ const pieceLine = (piece, draft) =>
       : COPY.environmentChanges(changeCount(draft.changes))
   }`;
 
-// The piece a stale refusal names, else the first stale one.
-const staleText = (drafts, piece) => {
-  const stalePiece =
-    (piece && drafts[piece] && piece) ||
-    drafts.pieces.find((one) => drafts[one].stale) ||
-    drafts.pieces[0];
-  const draft = drafts[stalePiece];
-  return COPY.stale(
-    COPY.pieces[stalePiece],
-    draft.parentLabel,
-    draft.defaultLabel,
-  );
-};
-
-const errorText = (error, drafts, fallback) => {
-  if (error?.error === "draft_stale") return staleText(drafts, error.piece);
-  return COPY.errors[error?.error] || refusalText(error, fallback);
-};
-
 /**
  * The environment's unsaved changes, under the version bar: what they change,
- * who edited them last, and Save (every open piece at once) or Discard. Shown
- * only with versioning on and a draft open.
+ * who edited them last, and Review and save or Discard. Shown only with
+ * versioning on and a draft open.
  */
 export default function DraftBar({
   env,
   busy = false,
   rebuilding = false,
-  onViewChanges,
+  onReview,
 }) {
-  const enabled = Boolean(env?.versioning?.enabled);
-  const { data: drafts } = useDrafts(env?.id, { enabled });
-  const save = useSaveDrafts(env?.id);
-  const discard = useDiscardDraft(env?.id);
-  const validate = useValidateDrafts(env?.id);
-  const saveValidated = useSaveCandidates(env?.id);
-  const { data: review } = useDraftReview(env?.id, {
-    enabled: enabled && Boolean(drafts?.any),
-  });
+  const flow = useDraftSaveFlow(env);
+  const { canEdit } = useSimulationAccess();
   const [confirming, setConfirming] = useState(false);
-  // A validated save makes a new version, and the server asks for its name.
-  const [versionName, setVersionName] = useState("");
   const staleId = useId();
   const busyId = useId();
   const holdId = useId();
 
-  // A refusal is about the drafts it was sent for, so it goes when they
-  // change. draft_changed stays: it asks to review the drafts it refetched.
-  const signature = drafts?.any
-    ? drafts.pieces.map((p) => `${drafts[p].id}:${drafts[p].revision}`).join()
-    : "";
-  const failed = useRef({});
-  failed.current = {
-    save: save.isError && save.error?.error !== "draft_changed",
-    discard: discard.isError,
-  };
-  const { reset: resetSave } = save;
-  const { reset: resetDiscard } = discard;
-  useEffect(() => {
-    if (failed.current.save) resetSave();
-    if (failed.current.discard) resetDiscard();
-  }, [signature, resetSave, resetDiscard]);
+  if (!flow.open) return null;
 
-  if (!enabled || !drafts?.any) return null;
-
+  const { drafts, pending, error, validationNote, failedScenarios } = flow;
   const open = drafts.pieces.map((piece) => drafts[piece]);
   const latest = open.reduce((a, b) =>
     new Date(b.updatedAt || 0) > new Date(a.updatedAt || 0) ? b : a,
   );
-  // A change accepted or rejected in review makes a new version: it is
-  // validated before it can be saved.
-  const decided =
-    (review?.counts?.accepted ?? 0) + (review?.counts?.rejected ?? 0) > 0;
-  const validation = drafts.validation;
-  const needsValidate =
-    decided ||
-    save.error?.error === "validation_required" ||
-    Boolean(validation);
-  const validationState = validation?.state ?? null;
-  const validating = validationState === "validating" || validate.isPending;
-  const canSaveValidated =
-    ["ready", "check_unavailable"].includes(validationState) &&
-    Boolean(drafts.candidates);
-  const pending =
-    save.isPending ||
-    discard.isPending ||
-    saveValidated.isPending ||
-    validating;
-  const staleReason = drafts.stale ? staleText(drafts) : null;
+  const staleReason = flow.stale;
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
-  const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
+  const reviewReasons = [staleReason && staleId, ...holdReasons].filter(
+    Boolean,
+  );
 
-  const onValidate = () => {
-    discard.reset();
-    save.reset();
-    validate.mutate({
-      expectedRevisions: Object.fromEntries(
-        drafts.pieces.map((piece) => [piece, drafts[piece].revision]),
-      ),
-      expectedReviewDigest: review?.review_digest,
-    });
-  };
-  const onSaveValidated = () => {
-    discard.reset();
-    saveValidated.mutate({
-      candidates: drafts.candidates,
-      expectedReviewDigest: review?.review_digest,
-      name: versionName.trim(),
-    });
-  };
-  const onSave = () => {
-    discard.reset();
-    save.mutate(
-      drafts.pieces.map((piece) => ({
-        piece,
-        parentId: drafts[piece].parentId,
-        revision: drafts[piece].revision,
-      })),
-    );
-  };
   const onDiscard = () => {
     setConfirming(false);
-    save.reset();
-    discard.mutate(drafts.pieces);
+    flow.onDiscard();
   };
-
-  let error = null;
-  if (saveValidated.error) {
-    error = errorText(saveValidated.error, drafts, COPY.saveError);
-  } else if (validate.error) {
-    error = errorText(validate.error, drafts, COPY.validateError);
-  } else if (save.error && !needsValidate) {
-    error = errorText(save.error, drafts, COPY.saveError);
-  } else if (discard.error) {
-    error = errorText(discard.error, drafts, COPY.discardError);
-  }
-  const failedScenarios =
-    validationState === "failed" ? validation.affectedScenarios : [];
-  let validationNote = null;
-  if (needsValidate && !validationState && !error) {
-    validationNote = COPY.errors.validation_required;
-  } else if (validationState === "failed") {
-    validationNote = COPY.validation.failed(failedScenarios.length);
-  } else if (COPY.validation[validationState]) {
-    validationNote = COPY.validation[validationState];
-  }
-
-  let primary;
-  if (!needsValidate) {
-    primary = (
-      <Button
-        size="small"
-        variant="contained"
-        disabled={saveReasons.length > 0 || pending}
-        aria-describedby={saveReasons.join(" ") || undefined}
-        onClick={onSave}
-      >
-        {save.isPending ? COPY.saving : COPY.save}
-      </Button>
-    );
-  } else if (validating) {
-    primary = (
-      <Button
-        size="small"
-        variant="contained"
-        disabled
-        startIcon={<CircularProgress size={12} color="inherit" />}
-      >
-        {COPY.validating}
-      </Button>
-    );
-  } else if (canSaveValidated) {
-    primary = (
-      <Button
-        size="small"
-        variant="contained"
-        disabled={saveReasons.length > 0 || pending || !versionName.trim()}
-        aria-describedby={saveReasons.join(" ") || undefined}
-        onClick={onSaveValidated}
-      >
-        {saveValidated.isPending ? COPY.saving : COPY.save}
-      </Button>
-    );
-  } else {
-    primary = (
-      <Button
-        size="small"
-        variant="contained"
-        disabled={saveReasons.length > 0 || pending}
-        aria-describedby={saveReasons.join(" ") || undefined}
-        onClick={onValidate}
-      >
-        {COPY.validate}
-      </Button>
-    );
-  }
 
   return (
     <Box
@@ -257,34 +87,31 @@ export default function DraftBar({
           {latest.updatedAt &&
             ` — ${COPY.lastEdited(latest.lastEditedBy, relativeTime(latest.updatedAt))}`}
         </Typography>
-        <Button
-          size="small"
-          color="inherit"
-          onClick={() => onViewChanges?.(drafts.pieces[0], open[0].id)}
-        >
-          {COPY.viewChanges}
-        </Button>
-        <Button
-          size="small"
-          variant="outlined"
-          color="inherit"
-          disabled={holdReasons.length > 0 || pending}
-          aria-describedby={holdReasons.join(" ") || undefined}
-          onClick={() => setConfirming(true)}
-        >
-          {discard.isPending ? COPY.discarding : COPY.discard}
-        </Button>
-        {canSaveValidated && !validating && (
-          <TextField
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
+          <Button
             size="small"
-            value={versionName}
-            onChange={(event) => setVersionName(event.target.value)}
-            placeholder={COPY.versionName}
-            inputProps={{ "aria-label": COPY.versionName, maxLength: 80 }}
-            sx={{ width: 200 }}
-          />
-        )}
-        {primary}
+            variant="outlined"
+            color="inherit"
+            disabled={!canEdit || holdReasons.length > 0 || pending}
+            aria-describedby={holdReasons.join(" ") || undefined}
+            onClick={() => setConfirming(true)}
+          >
+            {flow.discardPending ? COPY.discarding : COPY.discard}
+          </Button>
+        </ViewerLock>
+        {/* Saving happens in the review: accept, validate, name, save. The bar only opens it, also while a check runs;
+            someone who can't edit still opens it to read the changes. */}
+        <Button
+          size="small"
+          variant="contained"
+          disabled={
+            reviewReasons.length > 0 || flow.savePending || flow.discardPending
+          }
+          aria-describedby={reviewReasons.join(" ") || undefined}
+          onClick={onReview}
+        >
+          {REVIEW_COPY.reviewAndSave}
+        </Button>
       </Stack>
       {validationNote && (
         <Typography
@@ -373,8 +200,8 @@ DraftBar.propTypes = {
   }),
   // Chat is working or still saving its last turn.
   busy: PropTypes.bool,
-  // A queued or running rebuild holds Save and Discard.
+  // A queued or running rebuild holds both buttons.
   rebuilding: PropTypes.bool,
-  // (piece, draft version id): show that draft in the Versions tab.
-  onViewChanges: PropTypes.func,
+  // Open the review of every change, where they are accepted, validated and saved.
+  onReview: PropTypes.func.isRequired,
 };

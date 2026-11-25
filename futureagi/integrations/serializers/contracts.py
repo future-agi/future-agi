@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from integrations.models import IntegrationPlatform
 from integrations.serializers.integration_connection import (
     IntegrationConnectionDetailSerializer,
     IntegrationConnectionListSerializer,
@@ -21,7 +22,7 @@ class IntegrationEmptyRequestSerializer(EmptyRequestSerializer):
     """No-body integration action request."""
 
 
-class IntegrationConnectionListQuerySerializer(StrictInputSerializer):
+class IntegrationPageQuerySerializer(StrictInputSerializer):
     page_number = serializers.IntegerField(required=False, min_value=0, default=0)
     page_size = serializers.IntegerField(
         required=False,
@@ -31,7 +32,13 @@ class IntegrationConnectionListQuerySerializer(StrictInputSerializer):
     )
 
 
-class SyncLogListQuerySerializer(IntegrationConnectionListQuerySerializer):
+class IntegrationConnectionListQuerySerializer(IntegrationPageQuerySerializer):
+    platform = serializers.ChoiceField(
+        choices=IntegrationPlatform.choices, required=False
+    )
+
+
+class SyncLogListQuerySerializer(IntegrationPageQuerySerializer):
     connection_id = serializers.UUIDField(required=False)
 
 

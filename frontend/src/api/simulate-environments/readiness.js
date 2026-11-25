@@ -1,17 +1,21 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
-import { VERSION_PIECES, versionPickFields } from "./versions";
+import {
+  VERSION_PIECES,
+  environmentVersionsKey,
+  retryServerFailures,
+  runPlanKey,
+  versionPickFields,
+} from "./versions";
 
-/**
- * Run readiness for an agent version, environment version and scenario
- * version together (the pair): what can run, what is blocked and how to fix
- * it. The report is worked out on every read; Re-check starts a new check of
- * the pair, and while it runs the report is read again every 5 seconds.
- */
+// Run readiness for an agent, environment and scenario version together (the pair): what can run, what is held
+// back and why. Worked out on every read; Re-check starts a new check of the pair, read again while it runs.
 
 const CHECK_POLL_MS = 5000;
+// The cases route reads at most this many scenario keys.
+export const MAX_CASE_KEYS = 200;
 
 const capabilitiesPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/capabilities/", {
@@ -26,38 +30,27 @@ const casesPath = (envId) =>
     id: envId,
   });
 
-const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
-const retryServerFailures = (failureCount, error) => {
-  const status = errorStatus(error);
-  return (status === undefined || status >= 500) && failureCount < 2;
-};
-
 // A pair check is running, or the agent's own start check (after a retry).
 const stillChecking = (report) =>
   report?.validation?.state === "validating" ||
   (report?.rows || []).some((row) => row.reason_code === "preflight_pending");
 
-export const readinessKey = (envId, picks = {}, keys = null, trials = 1) => [
-  "harness-readiness",
-  envId,
-  ...VERSION_PIECES.map((piece) => picks?.[piece] || null),
-  keys ? [...keys].sort().join(",") : null,
+// Under the run plan's key, so saves and default moves read it again too.
+const readinessKey = (envId, picks, keys, trials) => [
+  ...runPlanKey(envId, picks),
+  "readiness",
+  keys ?? null,
   trials,
 ];
 
-// The whole suite is a GET; a selection goes as a POST, which takes up to
-// 1,000 scenarios where the GET's repeated keys stop at 200.
-export const getReadiness = async (
-  envId,
-  picks,
-  { keys = null, trials = 1 } = {},
-) => {
+// The whole suite is a GET; a named selection goes in a POST body, so any number of keys fits.
+export const getReadiness = async (envId, picks, keys = null, trials = 1) => {
   const fields = versionPickFields(picks);
   const { data } = keys
     ? await axios.post(capabilitiesPath(envId), {
+        ...fields,
         scenario_ids: keys,
         trials,
-        ...fields,
       })
     : await axios.get(capabilitiesPath(envId), {
         params: { ...fields, trials },
@@ -72,7 +65,7 @@ export function useReadiness(
 ) {
   return useQuery({
     queryKey: readinessKey(envId, picks, keys, trials),
-    queryFn: () => getReadiness(envId, picks, { keys, trials }),
+    queryFn: () => getReadiness(envId, picks, keys, trials),
     enabled: Boolean(envId) && enabled,
     retry: retryServerFailures,
     refetchInterval: (query) =>
@@ -81,6 +74,12 @@ export function useReadiness(
   });
 }
 
+// Every readiness read of the environment, whatever its picks, with the run plans they sit beside.
+export const refreshReadiness = (queryClient, envId) =>
+  queryClient.invalidateQueries({
+    queryKey: [...environmentVersionsKey(envId), "run-plan"],
+  });
+
 export const recheckReadiness = async (envId, picks) =>
   (await axios.post(recheckPath(envId), versionPickFields(picks))).data;
 
@@ -88,29 +87,20 @@ export const useRecheck = (envId) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (picks) => recheckReadiness(envId, picks),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["harness-readiness", envId] }),
+    onSettled: () => refreshReadiness(queryClient, envId),
     meta: { errorHandled: true },
   });
 };
 
-// The cases route reads at most this many scenario keys.
-export const MAX_CASE_KEYS = 200;
-
-// The first page (50) of the scenarios in one bucket (eligible, blocked,
-// stale, untested), or held back by one row, with their names as the server
-// gives them. `keys` narrows it to the scenarios a run would send; none means
-// the whole suite.
+// The first page (50) of the selected scenarios, each with the rows that hold it back (`by`), narrowed to one row
+// when given. `keys` is the selection a run would send; none means the whole suite. `trials` changes what holds
+// a case (repeats need World resets), so it goes too.
 export const getReadinessCases = async (
   envId,
   picks,
-  bucket,
-  keys = null,
-  row = null,
-  trials = 1,
+  { keys, row, trials = 1 },
 ) => {
   const params = { ...versionPickFields(picks), trials };
-  if (bucket) params.bucket = bucket;
   if (row) params.row = row;
   if (keys) params.keys = keys;
   const page = (
@@ -127,53 +117,34 @@ export function useReadinessCases(
   envId,
   {
     picks = {},
-    bucket = null,
-    row = null,
     keys = null,
+    row = null,
     trials = 1,
     report = null,
     enabled = true,
   } = {},
 ) {
   return useQuery({
-    // `report` (when the report was worked out) ties the names to the counts
-    // beside them: a new report asks for them again.
-    queryKey: [
-      ...readinessKey(envId, picks, keys, trials),
-      "cases",
-      bucket,
-      row,
-      report,
-    ],
-    queryFn: () => getReadinessCases(envId, picks, bucket, keys, row, trials),
-    enabled: Boolean(envId) && Boolean(bucket || row) && enabled,
+    // `report` (when the report was worked out) ties the names to the counts beside them.
+    queryKey: [...runPlanKey(envId, picks), "cases", keys, row, trials, report],
+    queryFn: () => getReadinessCases(envId, picks, { keys, row, trials }),
+    enabled: Boolean(envId) && enabled && (keys?.length ?? 0) <= MAX_CASE_KEYS,
     retry: retryServerFailures,
     meta: { errorHandled: true },
   });
 }
 
-// Once a check the popup waits on has landed, the report may have changed.
-export function useRereadWhenDone(envId, waiting) {
-  const queryClient = useQueryClient();
-  const was = useRef(waiting);
-  useEffect(() => {
-    if (was.current && !waiting) {
-      queryClient.invalidateQueries({ queryKey: ["harness-readiness", envId] });
-    }
-    was.current = waiting;
-  }, [waiting, envId, queryClient]);
-}
-
-// Ready to run's key holds only hand-made picks, so a moved default must re-read it.
+// Only hand-made picks are in the readiness key, and a default can move without a save here (a new agent version
+// passing its check, polled in), so a moved default reads it again.
 export function useRereadWhenDefaultsMove(envId, defaults) {
   const queryClient = useQueryClient();
-  const signature = VERSION_PIECES.map((p) => defaults?.[p]?.id || "").join();
-  const was = useRef("");
+  const ids = VERSION_PIECES.map((piece) => defaults?.[piece]?.id);
+  const signature = ids.some(Boolean) ? ids.join() : null;
+  const was = useRef(null);
   useEffect(() => {
-    if (!signature.replace(/,/g, "")) return;
-    if (was.current && was.current !== signature) {
-      queryClient.invalidateQueries({ queryKey: ["harness-readiness", envId] });
-    }
+    if (!signature) return;
+    if (was.current && was.current !== signature)
+      refreshReadiness(queryClient, envId);
     was.current = signature;
   }, [signature, envId, queryClient]);
 }

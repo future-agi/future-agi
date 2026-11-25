@@ -6,15 +6,17 @@
 // agent is asked to do (Goal), the caller (Persona), or the first step
 // (Sub-goal) — not by the derivation kind they fell out of.
 
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { subTasksFor } from "src/api/simulate-environments/_fixtures/contract";
 
-// Table row height, as the Display menu names it: how many lines a text
-// cell shows and how many sub-goals are listed. 0 lines and Infinity show all.
+// Table row height, as the Display menu names it: the least a row takes (as
+// the trace tables do, so short texts change too), how many lines a text cell
+// shows and how many sub-goals are listed. 0 lines and Infinity show all.
 export const ROW_HEIGHTS = {
-  Short: { lines: 3, subTasks: 3 },
-  Medium: { lines: 5, subTasks: 5 },
-  Large: { lines: 8, subTasks: 8 },
-  "Extra large": { lines: 0, subTasks: Infinity },
+  Short: { height: ROW_HEIGHT.twoLine, lines: 3, subTasks: 3 },
+  Medium: { height: 80, lines: 5, subTasks: 5 },
+  Large: { height: 100, lines: 8, subTasks: 8 },
+  "Extra large": { height: 150, lines: 0, subTasks: Infinity },
 };
 
 // Toolbar buttons are the theme's small secondary buttons; this only keeps a
@@ -29,6 +31,8 @@ export const SCENARIOS_COPY = {
   editLabel: "Edit scenario",
   openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
+  removeArchived: "Archived scenarios don't run. Restore it to remove it.",
+  deleteArchived: "Archived scenarios don't run. Restore them to delete them.",
   filterLabel: "Filter",
   filterTitle: "Filter by use case",
   clearLabel: "Clear",
@@ -46,10 +50,149 @@ export const SCENARIOS_COPY = {
   critical: "Critical: a failure here is a release blocker",
 };
 
+// A scenario's state on the versions in view. Active and Validated get no mark: Active is the
+// normal case and Validated only lasts until Save.
+// The State filter's name for archived scenarios, which the counts line applies.
+export const ARCHIVED_LABEL = "Archived";
+const DRAFT_LABEL = "Not proved";
+
+export const LIFECYCLE_COPY = {
+  states: {
+    draft: DRAFT_LABEL,
+    kept_as_written: "Kept as written",
+    archived: "Archived",
+    runs_unvalidated: "Not validated here",
+  },
+  legacyHover:
+    "Saved before checks were recorded, so nothing proved its checks can fail.",
+  counts: ({
+    proved = 0,
+    kept_as_written: kept = 0,
+    not_proved: notProved = 0,
+  }) => `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
+  countsLegacy: (n) => ` · ${n} without a wrong-way example`,
+  // Archived scenarios are left out of the list, so the count is also the way to them.
+  countsArchived: (n) => `${n} archived`,
+  countsArchivedHint: (on) =>
+    on ? "Show all scenarios" : "Show archived scenarios",
+  filterLabel: "State",
+  // The list's `lifecycle` query values; archived rows show only when asked for.
+  filters: [
+    { value: "active", label: "Active" },
+    { value: "draft", label: DRAFT_LABEL },
+    { value: "kept_as_written", label: "Kept as written" },
+    { value: "archived", label: ARCHIVED_LABEL },
+    { value: "source_changed", label: "Source changed" },
+  ],
+  validate: {
+    all: "Validate cases not yet proved",
+    one: "Validate scenario against the environment",
+    reproveAll: "Re-prove all",
+    reproveAllHint:
+      "Proves every scenario again in a test sandbox. It doesn't start a paid run.",
+    progress: (n) => `Validating ${n} ${n === 1 ? "scenario" : "scenarios"}`,
+    // The tab's one line while a validation runs.
+    runningLine: (n) =>
+      `Validating ${n > 0 ? `${n} ${n === 1 ? "scenario" : "scenarios"}` : "scenarios"}. Save waits until it finishes; runs use the saved version.`,
+    reproveConfirmTitle: (n) =>
+      n > 0 ? `Re-prove all ${n} scenarios?` : "Re-prove every scenario?",
+    reproveConfirmBody:
+      "Every scenario is validated again, including proved ones. Save waits until it finishes; runs use the saved version.",
+    // The server's `proved` counts the scenarios the validation reached, proved or not.
+    done: (reached, total) =>
+      Number.isInteger(total) && total > 0
+        ? `Validation finished · checked ${reached} of ${total}`
+        : "Validation finished",
+    noResults: "Validation finished but recorded no results. Try again.",
+    elsewhere: "Another validation is running. Validate this one when it ends.",
+    nothing: "Nothing to validate",
+    saveWaits: "Save waits until it finishes.",
+    // Why the tab's two buttons are held.
+    heldHint: "A validation is running. Validate again when it finishes.",
+    rowValidating: "Validating",
+    rowHint: "Being proved now. Its state updates when Validate finishes.",
+    failed: (reason) =>
+      `Validate didn't finish${reason ? `: ${reason.replace(/\.$/, "")}` : ""}. Nothing changed; scenarios keep their state.`,
+    startFailed: "Couldn't start the validation. Try again.",
+    tryAgain: "Try again",
+  },
+  archive: {
+    action: "Archive",
+    restore: "Restore",
+    title: "Archive this scenario?",
+    body: "It stops running and counting. Find it again with State: Archived, and restore it any time.",
+    note: "Note (optional)",
+    cancel: "Cancel",
+    archived: "Archived. It no longer runs.",
+    restoredLive: "Restored. It runs again.",
+    restoredHeld: "Restored, but held back. Its Status says why.",
+    restoredDraft: "Restored into the unsaved changes. Save to run it.",
+    archiveFailed: "Couldn't archive it. Try again.",
+    restoreFailed: "Couldn't restore it. Try again.",
+    errors: {
+      scenario_unsaved:
+        "This scenario only exists in the unsaved changes. Remove it instead.",
+      scenario_files_missing:
+        "Its files are no longer in this version. Ask the builder chat to bring it back.",
+    },
+  },
+  sourceChanged: {
+    label: "Source changed",
+    line: (version) =>
+      `A rule or file it cites changed in environment v${version}.`,
+    compare: "Compare",
+    title: (from, to) =>
+      from && to
+        ? `What changed between environment v${from} and v${to}`
+        : "What changed",
+    rule: "Rule",
+    before: (version) => `Before (v${version})`,
+    after: (version) => `After (v${version})`,
+    missing: "Not in this version.",
+    loading: "Reading both versions…",
+    failed: "Couldn't read the change. Try again.",
+    validate: (n) => `Validate ${n} ${n === 1 ? "scenario" : "scenarios"}`,
+    citedBy: (n, keys) =>
+      `Cited by ${n === 1 ? "1 scenario" : `${n} scenarios`}: ${keys.join(", ")}`,
+    showMore: (n) => `Show ${n} more`,
+    hide: "Hide",
+    truncated: "Only the first changes are shown.",
+  },
+  sourcesLabel: "Sources",
+  citation: {
+    confirmed: "Confirmed",
+    changed: "Changed since",
+    unconfirmed: "Couldn't be confirmed",
+  },
+  keptRuns: "Runs, but not proved.",
+  notMeasured: "Not measured at run time",
+  statusTitle: "Status",
+  stateLabel: "State",
+  notMeasuredLabel: "Not measured",
+  proofLabel: "Proof",
+  activeLabel: "Active",
+  validatedLabel: "Validated, saves with the unsaved changes",
+  proved: "Proved on these versions",
+  notProved: "Not proved on these versions",
+  wrongWay: {
+    hint: "A deliberately wrong answer is run. The scenario only counts if its checks fail it.",
+    title: "Wrong-way examples",
+    caught: "Caught",
+    not_caught: "Not caught",
+    not_run: "Not run",
+    none: "None yet.",
+    noneLegacy: "None yet. Saved before proofs existed.",
+  },
+};
+
 // A row the unsaved changes add or change; an added one can't be picked for a
 // run yet.
 export const hasUnsavedChange = (row) =>
   row?.draftChange === "added" || row?.draftChange === "changed";
+export const isArchived = (row) => row?.lifecycle?.state === "archived";
+// Removing an archived scenario would wait in the unsaved changes while Restore says it runs again.
+export const removeTitle = (row) =>
+  isArchived(row) ? SCENARIOS_COPY.removeArchived : SCENARIOS_COPY.removeLabel;
 export const isUnsavedAddition = (row) => row?.draftChange === "added";
 // The ids a header checkbox selects: every row but the unsaved additions.
 export const selectableRowIds = (rows) =>
@@ -145,4 +288,19 @@ export const groupScenarios = (rows, mode = "goal", env) => {
   // Bigger groups first — the tail of one-off adversarial/edge titles shouldn't
   // push the meaty groups out of view.
   return [...buckets.values()].sort((a, b) => b.rows.length - a.rows.length);
+};
+
+// The Coverage drawer's proof per use case: whether each one proves a success, a refusal and a caught wrong answer.
+export const WORKFLOW_PROOF_COPY = {
+  title: "Proof per use case",
+  hint: "Counted over the saved default scenarios, not the filter or unsaved changes.",
+  columns: {
+    workflow: "Use case",
+    success: "Does it right",
+    refusal: "Says no",
+    wrong_result: "Wrong answer caught",
+  },
+  missing: "Missing",
+  complete: "All three proved",
+  empty: "Nothing to count yet: there are no saved scenarios with a use case.",
 };

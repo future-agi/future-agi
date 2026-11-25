@@ -682,8 +682,20 @@ class TestSuiteMembers:
         assert [one["number"] for one in members] == sorted(
             one["number"] for one in members
         )
-        assert set(members[0]) == {"scenario_key", "number", "name", "use_case"}
+        assert set(members[0]) == {
+            "scenario_key",
+            "number",
+            "name",
+            "use_case",
+            "issue_cluster_id",
+            "issue_project_id",
+        }
         assert members[0]["name"] == NAMES[0]
+        # No Error Feed issue drafted these scenarios.
+        assert (members[0]["issue_cluster_id"], members[0]["issue_project_id"]) == (
+            None,
+            None,
+        )
 
     def test_an_environment_version_id_is_not_a_suite(
         self, auth_client, user, workspace, storage

@@ -8,13 +8,17 @@ import {
   connectedAgentsQueryKey,
   mapConnectedAgent,
   useConnectedAgents,
+  useDeleteConnectedAgents,
 } from "../connectedAgents";
 import { connectedAgentsPage } from "../_fixtures/connectedAgents";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn() },
+  default: { get: vi.fn(), delete: vi.fn() },
   endpoints: {
-    agentDefinitions: { list: "/simulate/agent-definitions/" },
+    agentDefinitions: {
+      list: "/simulate/agent-definitions/",
+      delete: "/simulate/agent-definitions/",
+    },
   },
 }));
 
@@ -59,6 +63,44 @@ describe("buildConnectedAgentsParams", () => {
       buildConnectedAgentsParams({ page: 0, pageSize: 25, search: "   " }),
     ).toEqual({ page: 1, limit: 25 });
   });
+
+  it("sends each filter that has values and nothing else", () => {
+    expect(
+      buildConnectedAgentsParams({
+        page: 0,
+        pageSize: 25,
+        search: "",
+        filters: {
+          source: ["vapi", "retell"],
+          environments: ["without"],
+          agent_type: [],
+          owner: ["me"],
+        },
+      }),
+    ).toEqual({
+      page: 1,
+      limit: 25,
+      source: ["vapi", "retell"],
+      environments: ["without"],
+    });
+  });
+});
+
+describe("useDeleteConnectedAgents", () => {
+  it("deletes the given agents in one request", async () => {
+    axios.delete.mockResolvedValue({
+      data: { agents_updated: 1, versions_updated: 1, skipped_agent_ids: [] },
+    });
+    const { result } = renderHook(() => useDeleteConnectedAgents(), {
+      wrapper: makeWrapper(),
+    });
+
+    await result.current.mutateAsync(["a1", "a2"]);
+
+    expect(axios.delete).toHaveBeenCalledWith("/simulate/agent-definitions/", {
+      data: { agent_ids: ["a1", "a2"] },
+    });
+  });
 });
 
 describe("useConnectedAgents", () => {
@@ -66,6 +108,7 @@ describe("useConnectedAgents", () => {
     await load({ page: 1, pageSize: 25, search: "voice" });
     expect(axios.get).toHaveBeenCalledWith("/simulate/agent-definitions/", {
       params: { page: 2, limit: 25, search: "voice" },
+      paramsSerializer: expect.any(Object),
     });
   });
 
@@ -96,6 +139,7 @@ describe("mapConnectedAgent", () => {
         inbound: true,
         description: "# ROLE\nYou are the Uber phone-booking assistant.",
         created_at: "2026-10-14T11:50:22.093543Z",
+        updated_at: "2026-10-20T08:01:10.000000Z",
         latest_version: 1,
         latest_version_id: "93956ae6",
         agent_kind: "source",
@@ -116,6 +160,7 @@ describe("mapConnectedAgent", () => {
       environments: [{ id: "e5391b8a", name: "ride-voice-agent" }],
       environmentCount: 1,
       createdAt: "2026-10-14T11:50:22.093543Z",
+      updatedAt: "2026-10-20T08:01:10.000000Z",
     });
   });
 

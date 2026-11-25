@@ -1,0 +1,258 @@
+{
+  "total_count": 23,
+  "workflow_runs": [
+    {
+      "id": 45079002416,
+      "name": "Standalone install CI",
+      "path": ".github/workflows/standalone-ci.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002384,
+      "name": "E2E CI",
+      "path": ".github/workflows/e2e-ci.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002343,
+      "name": "Branch name check",
+      "path": ".github/workflows/branch-name-check.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002441,
+      "name": "CI base gate",
+      "path": ".github/workflows/ci-base-gate.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002378,
+      "name": "pr-title-lint",
+      "path": ".github/workflows/pr-title-lint.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002425,
+      "name": "migrations-callout",
+      "path": ".github/workflows/migrations-callout-check.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002448,
+      "name": "Auto-Approve Frontend Hotfix PR",
+      "path": ".github/workflows/frontend-auto-approve-hotfix.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 45079002428,
+      "name": "docs-declaration",
+      "path": ".github/workflows/docs-declaration.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "failure"
+    },
+    {
+      "id": 45079002540,
+      "name": "Python types (advisory)",
+      "path": ".github/workflows/python-types.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002469,
+      "name": "Test integrity",
+      "path": ".github/workflows/test-integrity.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002411,
+      "name": "Images CI",
+      "path": ".github/workflows/images-ci.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002525,
+      "name": "Python lint",
+      "path": ".github/workflows/python-lint.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002434,
+      "name": "E2E Harness Self-tests",
+      "path": ".github/workflows/e2e-harness-selftest.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002513,
+      "name": "Collector and compose CI",
+      "path": ".github/workflows/fi-collector-ci.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002539,
+      "name": "Backend CI",
+      "path": ".github/workflows/backend-ci.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45079002470,
+      "name": "Update CI",
+      "path": ".github/workflows/update-ci.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-22T22:40:10Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45304897115,
+      "name": "pr-title-lint",
+      "path": ".github/workflows/pr-title-lint.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-24T01:25:11Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45304897041,
+      "name": "Test integrity",
+      "path": ".github/workflows/test-integrity.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-24T01:25:11Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "cancelled"
+    },
+    {
+      "id": 45304897238,
+      "name": "Python types (advisory)",
+      "path": ".github/workflows/python-types.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-24T01:25:11Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 45304897023,
+      "name": "Update CI",
+      "path": ".github/workflows/update-ci.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-24T01:25:11Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 45304897186,
+      "name": "docs-declaration",
+      "path": ".github/workflows/docs-declaration.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-24T01:25:11Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "failure"
+    },
+    {
+      "id": 45304897157,
+      "name": "CI base gate",
+      "path": ".github/workflows/ci-base-gate.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-24T01:25:11Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 45304897153,
+      "name": "migrations-callout",
+      "path": ".github/workflows/migrations-callout-check.yml",
+      "event": "pull_request",
+      "head_sha": "e8e8b458b2924e0f1518bf0ee506cf6443eaa005",
+      "created_at": "2026-11-24T01:25:11Z",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ]
+}

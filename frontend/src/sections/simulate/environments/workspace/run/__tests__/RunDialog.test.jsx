@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
-import PropTypes from "prop-types";
+
+// Mutations keep one reset across renders, as React Query's do.
+const { reset } = vi.hoisted(() => ({ reset: () => {} }));
 
 // Each hook is stubbed; tests set what the server answered.
 const state = {
@@ -10,7 +12,9 @@ const state = {
   plans: {},
   members: {},
   drafts: null,
-  view: null,
+  // The readiness selection for the picks.
+  selection: undefined,
+  fixRun: null,
 };
 const PLAN_OK = {
   warnings: [],
@@ -26,7 +30,6 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   );
   return {
     ...actual,
-    useSaveDrafts: () => ({ mutate: vi.fn(), isPending: false, error: null }),
     useEnvironmentVersions: vi.fn((envId, { enabled } = {}) => ({
       data:
         enabled && state.versions
@@ -55,6 +58,11 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     useDrafts: vi.fn((envId, { enabled } = {}) => ({
       data: enabled && state.drafts ? actual.toDrafts(state.drafts) : undefined,
     })),
+    useRetryAgentVersion: vi.fn(() => ({
+      mutate: vi.fn(),
+      reset,
+      isPending: false,
+    })),
     useSuiteMembers: vi.fn((envId, id) => ({
       data: state.members[id],
       isLoading: !state.members[id],
@@ -63,33 +71,31 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   };
 });
 
-// Ready to run has its own tests (RunPlanReadiness.test.jsx).
+// The readiness report is `state.report`, else a report holding only `state.selection`.
 vi.mock("src/api/simulate-environments/readiness", () => ({
-  useReadiness: () => ({ data: undefined }),
+  useReadiness: vi.fn(() => ({
+    data:
+      state.report ??
+      (state.selection ? { selection: state.selection } : undefined),
+    isLoading: false,
+    isError: false,
+  })),
+  useReadinessCases: vi.fn((envId, { enabled } = {}) => ({
+    data: enabled ? state.cases : undefined,
+  })),
+  useRecheck: vi.fn(() => ({ mutate: vi.fn(), reset, isPending: false })),
+  useRereadWhenDefaultsMove: () => {},
 }));
 vi.mock("src/api/simulate-environments/readinessFix", () => ({
-  useFixRun: () => ({ data: null }),
-  // Fixtures name a state; the server sends active alongside it.
-  fixIsActive: (run) =>
-    run?.active ??
-    ["queued", "fixing", "waiting_on_you", "saving", "checking"].includes(
-      run?.state,
-    ),
+  fixIsActive: (run) => Boolean(run?.active),
+  useFixRun: () => ({ data: state.fixRun }),
+  useStartGroupFix: () => ({ mutate: vi.fn(), reset, isPending: false }),
 }));
-// Hands the dialog the view Ready to run would read (`state.view`).
-vi.mock("../readiness/ReadyToRunSection", async () => {
-  const { useEffect } = await vi.importActual("react");
-  function ReadyToRunStub({ onView }) {
-    useEffect(() => {
-      if (state.view) onView?.(state.view);
-    }, [onView]);
-    return null;
-  }
-  ReadyToRunStub.propTypes = { onView: PropTypes.func };
-  return { default: ReadyToRunStub };
-});
 
 const { default: RunDialog } = await import("../RunDialog");
+const { useReadiness, useRecheck } = await import(
+  "src/api/simulate-environments/readiness"
+);
 
 const ENV = { id: "env-1", versioning: { enabled: true } };
 const item = (overrides) => ({
@@ -159,8 +165,9 @@ describe("RunDialog", () => {
     state.members = { s3: members("k1", "k2", "k3"), s2: members("k1", "k9") };
     planCalls.length = 0;
     state.drafts = null;
-    state.view = null;
     state.versionsError = undefined;
+    state.selection = undefined;
+    state.fixRun = null;
   });
 
   it("asks the plan about the scenarios this run takes", () => {
@@ -260,35 +267,6 @@ describe("RunDialog", () => {
       "v2 (default)",
       "v1",
     ]);
-  });
-
-  it("collapses to its edge tab and keeps the picks mounted", async () => {
-    const user = userEvent.setup();
-    const onCollapsedChange = vi.fn();
-    const props = {
-      open: true,
-      env: ENV,
-      scenarioIds: ["k1"],
-      onClose: vi.fn(),
-      onCollapsedChange,
-    };
-    const { rerender } = render(<RunDialog {...props} />);
-    await pickOption(user, "Environment", "v1");
-
-    await user.click(screen.getByRole("button", { name: "Collapse run plan" }));
-    expect(onCollapsedChange).toHaveBeenCalledWith(true);
-    rerender(<RunDialog {...props} collapsed />);
-    // Hidden but still mounted.
-    expect(screen.queryByRole("combobox", { name: "Environment" })).toBeNull();
-    expect(screen.getByText("Environment")).toBeInTheDocument();
-
-    rerender(<RunDialog {...props} collapsed={false} />);
-    expect(
-      screen.getByRole("complementary", { name: "Run plan" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("combobox", { name: "Environment" }),
-    ).toHaveTextContent("v1");
   });
 
   it("offers the agent versions that can run, the default pre-selected", async () => {
@@ -726,7 +704,7 @@ describe("RunDialog", () => {
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(onSubmit).toHaveBeenCalledWith(
       { suite: "s2" },
-      ["k1", "k9"],
+      undefined,
       resolved({ suite: "s2" }),
       null,
     );
@@ -749,12 +727,7 @@ describe("RunDialog", () => {
     const { onSubmit } = renderDialog({ scenarioIds: undefined });
     expect(screen.getByText("Runs all 3 scenarios in v3.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenCalledWith(
-      {},
-      ["k1", "k2", "k3"],
-      DEFAULTS,
-      null,
-    );
+    expect(onSubmit).toHaveBeenCalledWith({}, undefined, DEFAULTS, null);
   });
 
   it("says unsaved changes aren't part of the run", () => {
@@ -769,6 +742,75 @@ describe("RunDialog", () => {
     state.drafts = { environment: null, suite: null, set_aside: [] };
     renderDialog();
     expect(screen.queryByTestId("run-drafts-note")).toBeNull();
+  });
+
+  it("collapses to its edge tab and keeps the picks mounted", async () => {
+    const user = userEvent.setup();
+    const onCollapsedChange = vi.fn();
+    const props = {
+      open: true,
+      env: ENV,
+      scenarioIds: ["k1"],
+      onClose: vi.fn(),
+      onCollapsedChange,
+    };
+    const { rerender } = render(<RunDialog {...props} />);
+    await pickOption(user, "Environment", "v1");
+    await user.click(screen.getByRole("button", { name: "Collapse run plan" }));
+    expect(onCollapsedChange).toHaveBeenCalledWith(true);
+    rerender(<RunDialog {...props} collapsed />);
+    expect(screen.queryByRole("combobox", { name: "Environment" })).toBeNull();
+    rerender(<RunDialog {...props} collapsed={false} />);
+    expect(
+      screen.getByRole("combobox", { name: "Environment" }),
+    ).toHaveTextContent("v1");
+  });
+
+  it("closes on Escape from inside the plan, not from the rest of the page", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <>
+        <input aria-label="Reply to the builder" />
+        <RunDialog open env={ENV} scenarioIds={["k1"]} onClose={onClose} />
+      </>,
+    );
+    // It takes focus as it opens.
+    await waitFor(() =>
+      expect(screen.getByRole("complementary")).toContainElement(
+        document.activeElement,
+      ),
+    );
+    await user.click(screen.getByLabelText("Reply to the builder"));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Environment" }));
+    // The first Escape is the open list's.
+    await user.keyboard("{Escape}");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 400);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it("follows the default again once the picker is put back on it", async () => {
+    const user = userEvent.setup();
+    const props = { open: true, env: ENV, scenarioIds: ["k1"] };
+    const { rerender } = render(<RunDialog {...props} />);
+    await pickOption(user, "Environment", "v1");
+    await pickOption(user, "Environment", "v2 (default)");
+    state.versions = {
+      ...VERSIONS,
+      environment: [
+        item({ id: "e3", label: "v3", is_default: true }),
+        item({ id: "e2", label: "v2" }),
+      ],
+    };
+    rerender(<RunDialog {...props} />);
+    expect(
+      screen.getByRole("combobox", { name: "Environment" }),
+    ).toHaveTextContent("v3 (default)");
   });
 
   it("says why Run is off when the picked suite has no scenarios", async () => {
@@ -919,34 +961,11 @@ describe("RunDialog", () => {
     },
   );
 
-  it("explains a pair_validating refusal in our words, not the check's longest wait", () => {
-    renderDialog({
-      error: {
-        statusCode: 409,
-        error: "pair_validating",
-        message:
-          "These versions are being checked together. Run them again when the check ends, at the latest in 45 minutes.",
-      },
-    });
-    expect(screen.getByTestId("run-error")).toHaveTextContent(
-      "These versions are being checked together. Run them once the check ends.",
-    );
-  });
-
-  it("leaves a pair_validating refusal to Ready to run once it reads the check, and holds Run", async () => {
-    const user = userEvent.setup();
-    state.view = { state: "checking", canRun: false, open: [] };
-    renderDialog({ error: { statusCode: 409, error: "pair_validating" } });
-
-    expect(screen.queryByTestId("run-error")).toBeNull();
-    expect(runButton()).toBeDisabled();
-    await user.hover(runButton().parentElement);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Checking these versions · runs wait until it finishes",
-    );
-  });
-
   it.each([
+    [
+      "pair_validating",
+      "These versions are being checked together. Run them again when the check ends, at the latest in 45 minutes.",
+    ],
     [
       "pair_failed",
       "These versions failed their check together: the agent did not pass this environment's checks. Fix them, or check again from Ready to run.",
@@ -1054,5 +1073,380 @@ describe("RunDialog", () => {
       DEFAULTS,
       "7902065059689103066",
     );
+  });
+
+  it("names a version by its number and its name in the pickers", () => {
+    state.versions = {
+      ...VERSIONS,
+      environment: [
+        item({
+          id: "e2",
+          label: "v2",
+          name: "Refunds 14 days",
+          is_default: true,
+        }),
+      ],
+    };
+    renderDialog();
+    expect(
+      screen.getByText("v2 · Refunds 14 days (default)"),
+    ).toBeInTheDocument();
+  });
+
+  describe("RunDialog run plan", () => {
+    const selection = (overrides = {}) => ({
+      requested: 2,
+      running: 1,
+      held_back: {
+        count: 1,
+        keys: ["k2"],
+        names: { k2: "Refund twice" },
+        by: { not_validated: 1 },
+        by_key: { k2: "not_validated" },
+        reason_by_key: { k2: "Not proved on these versions yet" },
+        truncated: false,
+      },
+      // A case's own lifecycle row has words in `reasons` but no `held_by` entry: that lists report rows only.
+      reasons: { not_validated: "Not proved on these versions yet" },
+      held_by: [],
+      ...overrides,
+    });
+    beforeEach(() => {
+      state.versions = VERSIONS;
+      state.plans = {};
+      state.members = { s3: members("k1", "k2", "k3") };
+      state.selection = undefined;
+      state.report = undefined;
+      state.cases = undefined;
+    });
+
+    it("says how many run, why the rest are held back, and runs that many", () => {
+      state.selection = selection();
+      renderDialog();
+      expect(screen.getByText("1 of 2 will run")).toBeInTheDocument();
+      expect(screen.getByText("Held back · 1")).toBeInTheDocument();
+      const held = within(screen.getByTestId("run-held-back"));
+      expect(held.getByText("Refund twice")).toBeInTheDocument();
+      expect(
+        held.getByText("Not proved on these versions yet"),
+      ).toBeInTheDocument();
+      expect(runButton()).toHaveTextContent("Run 1 scenario");
+    });
+
+    it("gives each held scenario its own reason, not the ones joined for its row", () => {
+      state.selection = selection({
+        held_back: {
+          count: 2,
+          keys: ["k1", "k2"],
+          names: {},
+          by: { scenario_archived: 1, tool_routing: 1 },
+          by_key: { k1: "scenario_archived", k2: "tool_routing" },
+          reason_by_key: { k1: "Archived on 24 Nov" },
+        },
+        reasons: {
+          scenario_archived: "Archived on 24 Nov; Archived on 20 Nov",
+          tool_routing: "refund reaches production",
+        },
+      });
+      renderDialog();
+      const held = within(screen.getByTestId("run-held-back"));
+      expect(held.getByText("Archived on 24 Nov")).toBeInTheDocument();
+      expect(held.getByText("refund reaches production")).toBeInTheDocument();
+    });
+
+    it("never shows a lifecycle row's joined reasons for a scenario without its own", () => {
+      state.selection = selection({
+        held_back: {
+          count: 3,
+          keys: ["k1"],
+          names: {},
+          by: { scenario_archived: 1, not_validated: 2 },
+          by_key: { k1: "scenario_archived" },
+        },
+        reasons: {
+          scenario_archived: "Archived on 24 Nov; Archived on 20 Nov",
+          not_validated: "Not validated yet; In a draft",
+        },
+      });
+      renderDialog();
+      const held = within(screen.getByTestId("run-held-back"));
+      expect(held.getByText("Archived")).toBeInTheDocument();
+      expect(
+        held.getByText("Not validated on these versions · 2"),
+      ).toBeInTheDocument();
+    });
+
+    it("words a held-back code the report sends no text for", () => {
+      state.selection = selection({
+        held_back: {
+          count: 1,
+          keys: ["k2"],
+          names: { k2: "Refund twice" },
+          by: { pair_failed: 1 },
+          by_key: { k2: "pair_failed" },
+        },
+        reasons: {},
+      });
+      renderDialog();
+      expect(
+        screen.getByText("These versions failed their check together"),
+      ).toBeInTheDocument();
+    });
+
+    it("lists five held scenarios, the rest one click away, and counts what the report leaves out", async () => {
+      const user = userEvent.setup();
+      const keys = ["a", "b", "c", "d", "e", "f"];
+      state.selection = selection({
+        held_back: {
+          count: 8,
+          keys,
+          names: {},
+          by: { not_validated: 6, proof_failed: 2 },
+          by_key: Object.fromEntries(keys.map((key) => [key, "not_validated"])),
+          truncated: true,
+        },
+        reasons: {},
+      });
+      renderDialog();
+      const held = within(screen.getByTestId("run-held-back"));
+      expect(held.getAllByRole("listitem")).toHaveLength(5);
+      // A reason no listed scenario carries is still counted.
+      expect(held.getByText("Its proof failed · 2")).toBeInTheDocument();
+      expect(held.getByText("and 2 more")).toBeInTheDocument();
+      await user.click(held.getByRole("button", { name: "Show 1 more" }));
+      expect(held.getAllByRole("listitem")).toHaveLength(6);
+    });
+
+    it("puts the changed-since-proved warning in its own box with every key one click away", async () => {
+      const user = userEvent.setup();
+      state.plans[JSON.stringify({})] = {
+        warnings: [
+          {
+            code: "scenarios_need_revalidation",
+            message: "Saved changes changed what 2 scenarios are graded on",
+            piece: "suite",
+            scenario_keys: ["case-1", "case-6"],
+          },
+        ],
+      };
+      renderDialog();
+      const box = screen.getByTestId("run-changed-since-proved");
+      expect(
+        within(box).getByText(/changed what 2 scenarios are graded on/),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("run-warning")).toBeNull();
+      await user.click(within(box).getByRole("button", { name: "Show which" }));
+      expect(within(box).getByText("case-6")).toBeInTheDocument();
+    });
+
+    it("asks for readiness only once the selection has settled", () => {
+      const readinessAsked = () => useReadiness.mock.lastCall[2].enabled;
+      state.members = {};
+      renderDialog();
+      expect(readinessAsked()).toBe(false);
+      state.members = { s3: members("k1", "k2", "k3") };
+      renderDialog({ scenarioIds: [] });
+      expect(readinessAsked()).toBe(false);
+      renderDialog();
+      expect(readinessAsked()).toBe(true);
+    });
+
+    // The server caps a named list, and reads the picked version whole without one.
+    it("names no scenarios to readiness for a run of them all", () => {
+      renderDialog({ scenarioIds: undefined });
+      expect(useReadiness.mock.lastCall[2].keys).toBeNull();
+      renderDialog({ scenarioIds: ["k1"] });
+      expect(useReadiness.mock.lastCall[2].keys).toEqual(["k1"]);
+    });
+
+    it("holds the run when every picked scenario is held back", () => {
+      state.selection = selection({
+        running: 0,
+        held_back: {
+          count: 2,
+          keys: ["k1", "k2"],
+          names: {},
+          by: { not_validated: 2 },
+        },
+      });
+      renderDialog();
+      expect(
+        screen.getByText(
+          "Every picked scenario is held back, so nothing would run.",
+        ),
+      ).toBeInTheDocument();
+      expect(runButton()).toBeDisabled();
+    });
+
+    it.each(["validate_first", "run_unvalidated"])(
+      "lets the run through when every held scenario only waits on a check the server runs (%s)",
+      (next) => {
+        state.selection = selection({
+          running: 0,
+          next,
+          held_back: {
+            count: 2,
+            keys: ["k1", "k2"],
+            names: {},
+            by: { not_validated: 2 },
+          },
+        });
+        renderDialog();
+        expect(
+          screen.queryByText(
+            "Every picked scenario is held back, so nothing would run.",
+          ),
+        ).toBeNull();
+        expect(runButton()).toBeEnabled();
+      },
+    );
+
+    // Shaped like a real report: a production-only tool holds every scenario back.
+    const report = (validation = { state: "ready" }) => ({
+      validation,
+      answer: { kind: "blocked" },
+      pairing: { evidence: "pair_certificate", agent_version: { id: "a1" } },
+      computed_at: "2026-11-23T14:00:00Z",
+      areas: [
+        { id: "tool_binding", rows: ["tool_routing"] },
+        { id: "cancellation", rows: ["cancel"] },
+      ],
+      rows: [
+        {
+          id: "tool_routing",
+          area: "tool_binding",
+          status: "blocked",
+          measured: true,
+          reason: "lookup_order reaches production",
+          affected: { count: 2 },
+          fix: {
+            type: "production_only",
+            category: "agent_version",
+            action: "Upload a new agent version that serves lookup_order",
+            would: "lookup_order runs in the test world",
+            recheck: null,
+          },
+        },
+        {
+          id: "cancel",
+          area: "cancellation",
+          status: "supported",
+          measured: true,
+        },
+      ],
+      selection: selection(),
+    });
+
+    it("shows what holds the pair back and opens the agent's versions for a fix on the agent", async () => {
+      const user = userEvent.setup();
+      const onOpenAgentVersions = vi.fn();
+      state.report = report();
+      renderDialog({ onOpenAgentVersions });
+      const section = within(screen.getByTestId("ready-to-run"));
+      expect(section.getByText(/1 blocker to fix/)).toBeInTheDocument();
+      expect(section.getByText("2 blocked")).toBeInTheDocument();
+      expect(
+        section.getByText("Also ready: Run can be stopped"),
+      ).toBeInTheDocument();
+      await user.click(
+        section.getByRole("button", {
+          name: "Details for Tools wired to the test world",
+        }),
+      );
+      await user.click(
+        section.getByRole("button", { name: "Open agent versions" }),
+      );
+      expect(onOpenAgentVersions).toHaveBeenCalledTimes(1);
+    });
+
+    it("says a re-check of versions already checked started nothing", () => {
+      state.report = report();
+      const answer = { data: { validation: { state: "ready", job_id: null } } };
+      const idle = useRecheck.getMockImplementation();
+      useRecheck.mockImplementation(() => ({ ...idle(), ...answer }));
+      renderDialog();
+      expect(
+        screen.getByText(
+          "Already checked with these versions, nothing to redo",
+        ),
+      ).toBeInTheDocument();
+      useRecheck.mockImplementation(idle);
+    });
+
+    it("holds the run while the pair is checked, as the server would refuse it", () => {
+      state.report = report({ state: "validating" });
+      renderDialog();
+      expect(
+        screen.getByText(
+          "Checking these versions · runs wait until it finishes",
+        ),
+      ).toBeInTheDocument();
+      expect(runButton()).toBeDisabled();
+    });
+
+    describe("while the server offers Fix", () => {
+      const offered = () => ({ ...report(), fix_groups: {} });
+      const drafts = {
+        environment: {
+          id: "d1",
+          parent: { id: "e2" },
+          revision: 3,
+          updated_at: "2026-11-12T10:00:00Z",
+        },
+        suite: null,
+        set_aside: [],
+      };
+
+      it("points unsaved changes to their review, and names a fix's own", async () => {
+        const user = userEvent.setup();
+        const onReviewChanges = vi.fn();
+        state.report = offered();
+        state.drafts = drafts;
+        state.fixRun = {
+          state: "done",
+          draft: true,
+          finished_at: "2026-11-12T10:01:00Z",
+        };
+        renderDialog({ onReviewChanges });
+        const note = within(screen.getByTestId("run-drafts-note"));
+        expect(
+          note.getByText(/^The fixes are in unsaved changes/),
+        ).toBeInTheDocument();
+        await user.click(note.getByRole("button", { name: "Review changes" }));
+        expect(onReviewChanges).toHaveBeenCalledTimes(1);
+      });
+
+      it("offers the version a fix saved over an older pick, with how many run on it", async () => {
+        const user = userEvent.setup();
+        state.report = offered();
+        state.versions = {
+          ...VERSIONS,
+          environment: [
+            item({ id: "e3", label: "v3", created_at: "2026-03-01" }),
+            item({
+              id: "e2",
+              label: "v2",
+              is_default: true,
+              created_at: "2026-02-01",
+            }),
+            item({ id: "e1", label: "v1", created_at: "2026-01-01" }),
+          ],
+        };
+        state.fixRun = {
+          state: "done",
+          saved: { environment: { id: "e3" }, suite: null },
+        };
+        renderDialog();
+        await pickOption(user, "Environment", "v1");
+        expect(screen.getByTestId("run-switch-environment")).toHaveTextContent(
+          "The fixes are in environment v3. 1 of 2 will run there.",
+        );
+        await user.click(screen.getByRole("button", { name: "Switch to v3" }));
+        expect(
+          screen.getByRole("combobox", { name: "Environment" }),
+        ).toHaveTextContent("v3");
+        expect(screen.queryByTestId("run-switch-environment")).toBeNull();
+      });
+    });
   });
 });

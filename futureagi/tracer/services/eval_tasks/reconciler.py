@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
+from contextlib import nullcontext
 from copy import copy
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,6 +31,7 @@ from tracer.services.eval_tasks.entries import (
     materialize_pending,
 )
 from tracer.services.eval_tasks.recalculate import drop_pending_entries
+from tracer.services.eval_tasks.running_task import locked_running_task
 
 # How far behind "now" the continuous cursor is parked after each pass: the
 # window each reconcile re-scans to catch late CH arrivals and version changes.
@@ -50,7 +52,7 @@ class ReconcileResult:
 
 
 @primary_required
-def reconcile(task: EvalTask) -> ReconcileResult:
+def reconcile(task: EvalTask, *, require_running: bool = False) -> ReconcileResult:
     """Make the task's live entries match its desired config + row set.
 
     Creates missing pending entries (streamed), re-queues in-scope entries whose
@@ -68,20 +70,25 @@ def reconcile(task: EvalTask) -> ReconcileResult:
     read, also keeps the revision taken before the lock and the one taken
     under it on the same database, so they can only differ on a real edit.
     """
-    if isinstance(task, EvalTask):
-        # Callers may retain the model instance across passes while the previous
-        # pass advances ``continuous_cursor`` with a queryset UPDATE.  Resolve
-        # from a fresh database snapshot so that ordinary sequential passes do
-        # not look like concurrent edits to the revision fence.
-        task = EvalTask.objects.get(id=task.id)
+    # Refresh after the activity's license check. Most of the pass is a CH
+    # read; never hold the task lock around it. A continuous baseline stamp
+    # can itself be a write if an edit removed the policy and converted the
+    # task while the historical workflow was waiting.
+    with transaction.atomic() if require_running else nullcontext():
+        if require_running:
+            task = locked_running_task(task.id)
+        elif isinstance(task, EvalTask):
+            task = EvalTask.objects.get(id=task.id)
+        sampled = bool(getattr(task, "sampling_policy", None))
+        if not sampled:
+            now = timezone.now()
+            force_full = _continuous_requires_full_reclassification(task)
 
-    if getattr(task, "sampling_policy", None):
+    if sampled:
         from tracer.services.eval_tasks.sampling.service import reconcile_policy
 
-        return reconcile_policy(task)
+        return reconcile_policy(task, require_running=require_running)
 
-    now = timezone.now()
-    force_full = _continuous_requires_full_reclassification(task)
     resolver_task = task
     if force_full:
         # Do not mutate the DB watermark before the proof succeeds. A shallow
@@ -97,7 +104,11 @@ def reconcile(task: EvalTask) -> ReconcileResult:
         return _apply_resolved(task, resolved=resolved, now=now)
 
     with transaction.atomic():
-        locked = EvalTask.objects.select_for_update().get(id=task.id)
+        locked = (
+            locked_running_task(task.id)
+            if require_running
+            else EvalTask.objects.select_for_update().get(id=task.id)
+        )
         # Lock configs while materialization stamps their hashes. This makes an
         # independent config edit wait for this transaction instead of landing
         # midway through a reconcile pass.

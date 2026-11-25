@@ -13,6 +13,7 @@ import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 import BuilderConsole from "../console/BuilderConsole";
 import { CONSOLE_COPY } from "../build.constants";
 import { injectComposerScaffold } from "../console/composerScaffoldBus";
+import { focusBuilderChat } from "../console/builderChatFocusBus";
 import { getBuilderMode, setBuilderMode } from "../console/builderModeBus";
 
 beforeAll(() => {
@@ -190,6 +191,24 @@ describe("BuilderConsole", () => {
       window.HTMLElement.prototype.scrollTo = original;
     });
 
+    it("doesn't snap back to the latest while a scroll to an earlier message is still near the bottom", () => {
+      render(
+        <BuilderConsole
+          turns={[
+            { id: "u1", role: "user", text: "Add 12 orders" },
+            toolTurn(1),
+          ]}
+          running={false}
+        />,
+      );
+      scrollList(1500);
+      scrollTo.mockClear();
+      act(() => focusBuilderChat("u1"));
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      scrollList(1497);
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+    });
+
     it("follows new events at the bottom", () => {
       const { rerender } = render(
         <BuilderConsole turns={[toolTurn(1)]} running={false} canStop />,
@@ -297,6 +316,22 @@ describe("BuilderConsole", () => {
         />,
       );
       expect(jump(CONSOLE_COPY.jumpNewMessage)).toBeInTheDocument();
+    });
+
+    it("pings for how a fix ended, whose button a Viewer can't press", () => {
+      const { rerender } = renderScrolledUp({ canStop: false });
+      const card = { text: "Fixed", action: "Open run plan", locked: true };
+      rerender(
+        <BuilderConsole
+          turns={[toolTurn(1), { id: "f1", role: "builder", card }]}
+          running={false}
+          canStop={false}
+        />,
+      );
+      expect(jump(CONSOLE_COPY.jumpNewMessage)).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Open run plan" }),
+      ).toBeDisabled();
     });
 
     it("shows no button when scrolled up with nothing happening", () => {

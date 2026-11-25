@@ -1,11 +1,27 @@
+import path from 'node:path';
+import { BaseSequencer } from 'vitest/node';
 import { defineConfig } from 'vitest/config';
+import { recordPlan, selectedFiles } from './scripts/ci-vitest-shards.mjs';
 import { mergeConfig } from 'vite';
 import viteConfig from './vite.config.js';
+
+// Only the manual benchmark sets a plan. Normal runs retain Vitest's default
+// sequencing, process isolation, DOM environment and shared test setup.
+class DurationSequencer extends BaseSequencer {
+  async shard(specs) {
+    const file = spec => path.relative(process.cwd(), spec.moduleId);
+    const discovered = specs.map(file);
+    const bins = recordPlan(discovered, process.env.CI_VITEST_HISTORY, process.env.CI_VITEST_PLAN);
+    const wanted = selectedFiles(bins, this.ctx.config.shard.index, discovered);
+    return specs.filter(spec => wanted.has(file(spec)));
+  }
+}
 
 export default mergeConfig(
   viteConfig,
   defineConfig({
     test: {
+      ...(process.env.CI_VITEST_PLAN && { sequence: { sequencer: DurationSequencer } }),
       globals: true,
       environment: 'jsdom',
       setupFiles: ['./src/setupTests.js'],

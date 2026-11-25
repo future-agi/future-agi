@@ -1,5 +1,6 @@
 """Guard the shard command against unbounded verbose parametrization output."""
 
+import configparser
 import pathlib
 import re
 import shlex
@@ -28,6 +29,52 @@ class BackendOutputTest(unittest.TestCase):
         )
         self.assertIn("-ra", args)
         self.assertIn("--junitxml=junit-${{ matrix.group }}.xml", shard)
+
+
+class MetricsShardTest(unittest.TestCase):
+    """The Metrics suite runs in its own legs of the shard job, never twice."""
+
+    def setUp(self):
+        self.workflow = (ROOT / ".github/workflows/backend-ci.yml").read_text()
+
+    def test_every_shard_keeps_pytest_ini_markers_and_adds_its_suite_term(self):
+        ini = configparser.ConfigParser(interpolation=None)
+        ini.read(ROOT / "futureagi/pytest.ini")
+        addopts = ini["pytest"]["addopts"]
+        markers = re.search(r'-m "([^"]+)"', addopts).group(1)
+        self.assertIn(f'  PYTEST_MARKERS: "{markers}"\n', self.workflow)
+        registered = [
+            line.split(":", 1)[0].strip()
+            for line in ini["pytest"]["markers"].splitlines()
+        ]
+        self.assertIn("metrics", registered)  # --strict-markers
+        shard = self.workflow.split("      - name: Run shard\n", 1)[1].split(
+            "      - name:", 1
+        )[0]
+        self.assertIn('-m "($PYTEST_MARKERS) and $SUITE_MARKERS"', shard)
+        self.assertIn('--splits "$SUITE_SPLITS"', shard)
+        # An unplanned empty leg is a failure, not an accepted exit code.
+        self.assertNotIn("set +e", shard)
+        self.assertNotIn("exit 0", shard)
+
+    def test_the_matrix_has_complementary_suites_with_distinct_artifacts(self):
+        changes = self.workflow.split("  changes:\n", 1)[1].split(
+            "\n  update-safety:", 1
+        )[0]
+        self.assertIn('legs main pytest "not metrics" 45 "$SPLITS"', changes)
+        self.assertIn('legs metrics metrics metrics 50 "$METRICS_SPLITS"', changes)
+        self.assertIn("metrics: ${{ steps.filter.outputs.metrics }}", changes)
+        job = self.workflow.split("  test:\n", 1)[1].split("\n  saml-multiworker:", 1)[
+            0
+        ]
+        self.assertIn("matrix: ${{ fromJSON(needs.changes.outputs.shards) }}", job)
+        self.assertIn("timeout-minutes: ${{ matrix.timeout }}", job)
+        for prefix in ("junit-results-", "timing-data-"):
+            self.assertIn(
+                f"name: {prefix}${{{{ matrix.suite }}}}-${{{{ matrix.group }}}}", job
+            )
+        gate = self.workflow.split("  backend-tests:\n", 1)[1]
+        self.assertIn("        test,\n", gate.split("    if:", 1)[0])
 
 
 class EvaluatorJobTest(unittest.TestCase):

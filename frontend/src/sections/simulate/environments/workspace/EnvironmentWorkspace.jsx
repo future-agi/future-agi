@@ -11,7 +11,7 @@ import {
   canRunHeader,
   stageOutputsToWorld,
   harnessEnvironmentQuery,
-  harnessJobQuery,
+  useHarnessJob,
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
@@ -21,13 +21,8 @@ import {
   refreshAfterRunStart,
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
-import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 import { environmentVersionsKey } from "src/api/simulate-environments/versions";
-import {
-  fixIsActive,
-  useFixRun,
-  useFollowFixRun,
-} from "src/api/simulate-environments/readinessFix";
+import { refreshReadiness } from "src/api/simulate-environments/readiness";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -43,18 +38,23 @@ import { subscribeScenarioSelection } from "../buildEnvironment/console/scenario
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
+import AgentMoveBanner from "./AgentMoveBanner";
 import VersionBar from "./VersionBar";
 import DraftBar from "./drafts/DraftBar";
+import ReviewChangesDrawer from "./drafts/ReviewChangesDrawer";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
-import { fixEndCard } from "./run/readiness/readinessView";
+import useFixInChat from "./run/readiness/useFixInChat";
 import { inlineRunError } from "./run/runErrors";
-import useWorkspaceTab from "./helpers/useWorkspaceTab";
+import useWorkspaceTab, {
+  AGENT_VERSIONS_PARAM,
+} from "./helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
+import useSimulationAccess from "../hooks/useSimulationAccess";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -134,6 +134,7 @@ export default function EnvironmentWorkspace() {
     clearError: clearCreditError,
   } = useCreditExhaustion({ feature: "hosted_harness" });
   const chat = useWorkspaceChat(env, { source });
+  const { canRun: roleCanRun, canEdit: roleCanEdit } = useSimulationAccess();
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
@@ -142,48 +143,16 @@ export default function EnvironmentWorkspace() {
   const [runDialog, setRunDialog] = useState(null);
   // Where runs go through the run plan.
   const planned = source === "harness" && Boolean(env?.versioning?.enabled);
-  // A fix started from the Run plan talks in the builder chat: lines it hasn't
-  // picked up yet show there as queued, and the chat opens when one starts.
-  // It keeps running after the plan closes, so the page follows it.
-  const fixRun = useFixRun(env?.id, { enabled: planned }).data ?? null;
-  useFollowFixRun(env?.id, fixRun);
-  let chatTurns = [
-    ...(chat.turns || []),
-    ...(fixRun?.queue || []).map((item, i) => ({
-      id: `fix-queued-${i}`,
-      role: "user",
-      text: item.message,
-      queued: true,
-    })),
-  ];
-  const activeFixId = fixIsActive(fixRun) ? fixRun.id : null;
-  // The latest fix seen ending here, and the chat turn it ended after, kept
-  // after the plan closes so the chat can say how it went. A fix already over
-  // when the page loads says nothing.
-  const [endedFix, setEndedFix] = useState(null);
-  const lastFix = useRef(null);
-  const lastTurnId = chatTurns.at(-1)?.id ?? null;
-  useEffect(() => {
-    if (!fixRun) return;
-    const was = lastFix.current;
-    lastFix.current = fixRun;
-    if (endedFix && endedFix.id !== fixRun.id) setEndedFix(null);
-    if (was?.id === fixRun.id && fixIsActive(was) && !fixIsActive(fixRun)) {
-      setEndedFix({ ...fixRun, afterTurn: lastTurnId });
-    }
-  }, [fixRun, endedFix, lastTurnId]);
+  // The review of the unsaved changes, opened from the unsaved-changes bar.
+  const [reviewOpen, setReviewOpen] = useState(false);
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
     // the changed `picks` are sent.
     mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
-      // Run-all reads the keys from the server list: the bootstrap
-      // `envState.scenarios` is seeded once and keeps a key an amend dropped.
-      const scenarioIds =
-        ids === undefined ? await listAllScenarioKeys(env.id) : ids;
       const selection = JSON.stringify([
         env.id,
-        scenarioIds,
+        ids ?? null,
         trials || 1,
         resolved?.agent ?? picks?.agent ?? null,
         resolved?.environment ?? picks?.environment ?? null,
@@ -198,7 +167,7 @@ export default function EnvironmentWorkspace() {
       }
       return runHarnessEnvironment(
         env.id,
-        scenarioIds,
+        ids,
         trials || 1,
         pendingSubmission.current.key,
         picks,
@@ -229,9 +198,7 @@ export default function EnvironmentWorkspace() {
       }
       // A check of the pair is running: Ready to run reads it and waits on it.
       if (error?.error === "pair_validating") {
-        queryClient.invalidateQueries({
-          queryKey: ["harness-readiness", env.id],
-        });
+        refreshReadiness(queryClient, env.id);
       }
       // The open run dialog explains its own refusals.
       if (picks !== undefined && inlineRunError(error)) return;
@@ -258,31 +225,17 @@ export default function EnvironmentWorkspace() {
     runDialog
       ? setRunDialog((open) => open && { ...open, collapsed: false })
       : startRun(undefined, 1);
-  // The card opens the run plan, so only where runs go through it. Its
-  // outcome is re-read as the fix's draft is saved or discarded.
-  const endCard =
-    planned &&
-    endedFix &&
-    fixEndCard(fixRun?.id === endedFix.id ? fixRun : endedFix);
-  if (endCard) {
-    // Where the fix ended in the chat, so later turns follow the card.
-    const at = chatTurns.findIndex((turn) => turn.id === endedFix.afterTurn);
-    const cut = at === -1 ? chatTurns.length : at + 1;
-    chatTurns = [
-      ...chatTurns.slice(0, cut),
-      {
-        id: `fix-end-${endedFix.id}`,
-        role: "builder",
-        card: { ...endCard, onAction: openRunPlan },
-      },
-      ...chatTurns.slice(cut),
-    ];
-  }
+  const fixChat = useFixInChat(env?.id, {
+    enabled: planned,
+    turns: chat.turns,
+    locked: !roleCanRun,
+    onOpenPlan: openRunPlan,
+  });
   const executionMatch = useMatch(EXECUTION_PATTERN);
-  // Keyed by the re-run's versions, which it reads only when it mounts.
+  // Keyed by the re-run's versions and seed, which it reads only when it mounts.
   const runDialogEl = runDialog && (
     <RunDialog
-      key={JSON.stringify(runDialog.initialPicks ?? null)}
+      key={JSON.stringify([runDialog.initialPicks, runDialog.seed])}
       open
       env={env}
       scenarioIds={runDialog.ids}
@@ -290,12 +243,16 @@ export default function EnvironmentWorkspace() {
       initialPicks={runDialog.initialPicks}
       initialSeed={runDialog.seed}
       onClose={() => setRunDialog(null)}
+      onOpenAgentVersions={() =>
+        setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" })
+      }
       // The run page has no builder chat; the workspace page does.
       onGoToChat={
         executionMatch
           ? () => navigate(paths.dashboard.simulate.environments.detail(env.id))
           : undefined
       }
+      onReviewChanges={executionMatch ? undefined : () => setReviewOpen(true)}
       collapsed={Boolean(runDialog.collapsed)}
       onCollapsedChange={(collapsed) =>
         setRunDialog((open) => open && { ...open, collapsed })
@@ -330,7 +287,7 @@ export default function EnvironmentWorkspace() {
   // neutral skeleton before.
   const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
+  const jobQuery = useHarnessJob(envId, { enabled: backed });
   const usageLimit = jobQuery.data?.usage_limit;
   const hadRemoteUsageLimit = useRef(false);
   useEffect(() => {
@@ -547,13 +504,17 @@ export default function EnvironmentWorkspace() {
 
   // A backed env's run gate reads the server scenario count, not the seeded
   // client list, which keeps the count from first load.
-  const runnable = canRunHeader(
-    source,
-    env,
-    backedScenarioCount != null
-      ? !!envState.agent && backedScenarioCount > 0
-      : canRun,
-  );
+  const runnable =
+    roleCanRun &&
+    canRunHeader(
+      source,
+      env,
+      backedScenarioCount != null
+        ? !!envState.agent && backedScenarioCount > 0
+        : canRun,
+    );
+  const runReason = (reason) =>
+    roleCanRun ? reason : WORKSPACE_COPY.viewer.run;
 
   // A scenario selection on the Scenarios tab owns the primary Run — the header
   // yields its Run/Repeats while one is active ("one primary at a time").
@@ -656,16 +617,16 @@ export default function EnvironmentWorkspace() {
         env={displayEnv}
         envState={envState}
         canRun={runnable && !runMutation.isPending && !detailBlock}
-        runBlockedReason={
+        runBlockedReason={runReason(
           detailBlock ||
-          blockedReason(
-            envState,
-            env,
-            backed,
-            runMutation.isPending,
-            backedScenarioCount,
-          )
-        }
+            blockedReason(
+              envState,
+              env,
+              backed,
+              runMutation.isPending,
+              backedScenarioCount,
+            ),
+        )}
         locked={locked}
         backed={source === "harness"}
         onFork={onFork}
@@ -678,15 +639,21 @@ export default function EnvironmentWorkspace() {
 
       <SystemBanners env={env} />
       {!detailLoading && !detailFailed && (
-        <VersionBar env={env} envState={envState} />
+        <>
+          <VersionBar env={env} envState={envState} />
+          <AgentMoveBanner
+            env={env}
+            onOpenAgentVersions={() =>
+              setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" })
+            }
+          />
+        </>
       )}
       <DraftBar
         env={env}
         busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
         rebuilding={chat.rebuildHold}
-        onViewChanges={(piece, id) =>
-          setTab("versions", { version: `${piece}:${id}` })
-        }
+        onReview={() => setReviewOpen(true)}
       />
 
       {/* A template-seeded env is read-only until forked — the banner states the
@@ -698,10 +665,10 @@ export default function EnvironmentWorkspace() {
           busy={
             chat.running || chat.inFlight || chat.waiting || chat.nudgePending
           }
-          openKey={activeFixId}
+          openKey={fixChat.activeId}
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
-              turns={chatTurns}
+              turns={fixChat.turns}
               running={chat.running}
               onSend={chat.send}
               onStop={chat.stop}
@@ -755,18 +722,29 @@ export default function EnvironmentWorkspace() {
               onStartRun={startRun}
               runDialogOpen={Boolean(runDialog)}
               canRun={runnable && !runMutation.isPending}
-              runBlockedReason={blockedReason(
-                envState,
-                env,
-                backed,
-                runMutation.isPending,
-                backedScenarioCount,
+              runBlockedReason={runReason(
+                blockedReason(
+                  envState,
+                  env,
+                  backed,
+                  runMutation.isPending,
+                  backedScenarioCount,
+                ),
               )}
             />
           )}
         </ChatSplitPane>
       </Box>
       {runDialogEl}
+      <ReviewChangesDrawer
+        open={reviewOpen}
+        env={env}
+        canEdit={!locked && roleCanEdit}
+        busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
+        rebuilding={chat.rebuildHold}
+        onClose={() => setReviewOpen(false)}
+        onOpenTab={setTab}
+      />
     </Box>
   );
 }

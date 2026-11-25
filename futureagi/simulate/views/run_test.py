@@ -26,6 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -152,6 +153,7 @@ from simulate.services.eval_config_edit import (
     update_eval_config,
     visible_eval_template_query,
 )
+from simulate.services.harness_cancel import stop_summaries
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
     is_harness_run_test,
@@ -639,6 +641,7 @@ class CreateRunTestView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("create a test run")
     @validated_request(
         request_serializer=CreateRunTestSerializer,
         responses={
@@ -984,6 +987,7 @@ class RunTestExecutionView(APIView):
             self._test_executor = TestExecutor()
         return self._test_executor
 
+    @viewer_denied("start a paid run")
     @validated_request(
         request_serializer=ExecuteRunTestSerializer,
         responses={
@@ -1362,6 +1366,7 @@ class TestExecutionCancelView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("cancel a run")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
@@ -5836,6 +5841,9 @@ class RunTestExecutionsView(APIView):
             version_labels = run_version_labels(
                 [test_execution.id for test_execution in result_page]
             )
+            stops = stop_summaries(
+                test_execution.id for test_execution in result_page or []
+            )
 
             for test_execution in result_page:
                 # Use annotated values instead of querying
@@ -6017,6 +6025,7 @@ class RunTestExecutionsView(APIView):
                         ),
                         **trials[test_execution.id],
                         **_version_labels(version_labels, test_execution.id),
+                        "stop": stops.get(str(test_execution.id)),
                     }
                 )
 

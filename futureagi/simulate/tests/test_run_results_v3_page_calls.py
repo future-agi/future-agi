@@ -36,6 +36,7 @@ from simulate.services.call_provider import (
     call_agent_provider_expression,
 )
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
+from simulate.services.hosted_harness_ingestion import UNVERIFIED_KEY, UNVERIFIED_REASON
 from simulate.services.run_results_v3 import (
     CALL_ROW_METADATA_KEYS,
     _row_dimensions,
@@ -301,8 +302,11 @@ def run(db, organization, workspace, user):
                         {"name": "Verifies", "held": "yes"},
                         {"name": ""},
                         "Bare goal",
+                        {"name": "Applies", "held": False, "verdict": "fail"},
                     ],
                 },
+                # Its proof never verified Applies: the row reads it unmeasured, never failed.
+                UNVERIFIED_KEY: ["Applies"],
                 "conversation_branch": "Metadata branch",
             },
             "provider_call_data": {
@@ -467,6 +471,14 @@ def test_slim_page_renders_the_same_rows_and_columns(run, goals):
         "passed": None,
         "subject_kind": "task",
         "display_name": "Verifies",
+    }
+    assert by_id[str(calls[0].id)]["sub_goal_results"][-1] == {
+        "name": "Applies",
+        "passed": None,
+        "subject_kind": "task",
+        "display_name": "Applies",
+        "result": "unmeasured",
+        "reason": UNVERIFIED_REASON,
     }
     assert by_id[str(calls[0].id)]["conversation_branch"] == "Own branch"
     assert by_id[str(calls[1].id)]["conversation_branch"] == "Environment branch"

@@ -8,6 +8,7 @@ from django.utils import timezone
 from tfc.temporal import temporal_activity
 from tfc.temporal.sql_workbench import SQL_ACTIVITY_QUEUE, SQLExecutionWorkflow
 from tracer.models.sql_query import SQLExecution
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
 
 from .access import Actor, authorize
 from .catalog import (
@@ -28,6 +29,7 @@ from .service import (
 )
 
 logger = logging.getLogger(__name__)
+private_logger = PrivateBoundaryLogger(__name__)
 
 
 @temporal_activity(
@@ -92,6 +94,15 @@ def execute_sql(job_id):
                 != cache_key
             ):
                 cache_key = ""
+        from .metric_retention import require_source, result_allowed
+
+        require_source(
+            job.organization_id, job.project_id, job.start, job.sql, end=job.end
+        )
+        if not result_allowed(job):
+            raise QueryUnavailable(
+                "Metric source data changed or expired. Run the query again."
+            )
         completed_at = timezone.now()
         published = SQLExecution.objects.filter(
             id=job_id, state="running", deadline__gt=completed_at
@@ -156,8 +167,14 @@ def execute_sql(job_id):
     max_retries=0,
 )
 def purge_expired_sql_results():
+    from .metric_retention import expire_results
     from .service import purge_expired_results
 
+    try:
+        expire_results(limit=1000)
+    except Exception as exc:
+        # Metric reads stay policy-gated; retry source expiry on the next tick.
+        private_logger.exception("metric_sql_expiry_pending", exc)
     return purge_expired_results(batch_size=1000)
 
 

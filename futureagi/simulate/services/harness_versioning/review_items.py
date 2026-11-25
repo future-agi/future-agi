@@ -9,6 +9,7 @@ underneath it.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections.abc import Mapping
@@ -69,6 +70,19 @@ class SourceAgent(TypedDict, total=False):
 class SourceUsed(TypedDict):
     kind: str
     id: str
+    # For an imported file, the row it read; None for the whole file.
+    row: NotRequired[int | None]
+    # For an imported file, its name as a person reads it ("orders.csv").
+    name: NotRequired[str]
+
+
+class UsedFile(TypedDict):
+    """An imported file a write read: the file, and its row (None for the whole file)."""
+
+    file_id: str
+    row: NotRequired[int | None]
+    # The file's name; the last part of `file_id` (its path in the environment) when not given.
+    name: NotRequired[str]
 
 
 class ChangeSource(TypedDict):
@@ -542,16 +556,39 @@ def world_rows(
     return out
 
 
+def _patch(before: Any, after: Any) -> list[JsonPatchOp]:
+    """The ops that turn ``before`` into ``after``. jsonpatch's own diff can misplace a dict moved and edited in a list
+    (its ops fail, or land in another order), so a diff that does not rebuild ``after`` replaces the whole value."""
+    patch: list[JsonPatchOp] = jsonpatch.make_patch(before, after).patch
+    try:
+        # A trial on copies: the diff's added values are the draft's own objects, which a later op could edit.
+        if jsonpatch.apply_patch(copy.deepcopy(before), copy.deepcopy(patch)) == after:
+            return copy.deepcopy(patch)
+    except (
+        jsonpatch.JsonPatchException,
+        jsonpatch.JsonPointerException,
+        TypeError,
+        KeyError,
+        IndexError,
+    ):
+        pass
+    return [{"op": "replace", "path": "", "value": copy.deepcopy(after)}]
+
+
 def _tested(before: Any, patch: list[JsonPatchOp]) -> list[JsonPatchOp]:
-    """The patch with a `test` on each value it replaces or removes, so it applies only to what was read."""
-    tests: list[JsonPatchOp] = []
+    """The patch with a `test` on each value it replaces or removes, so it applies only to what was read. Each test sits
+    just before its op and reads the document as the earlier ops left it: an earlier add or remove shifts list indexes."""
+    doc = copy.deepcopy(before)
+    out: list[JsonPatchOp] = []
     for op in patch:
         if op["op"] in ("replace", "remove"):
-            pointer = jsonpatch.JsonPointer(op["path"])
-            tests.append(
-                {"op": "test", "path": op["path"], "value": pointer.resolve(before)}
+            value = jsonpatch.JsonPointer(op["path"]).resolve(doc)
+            out.append(
+                {"op": "test", "path": op["path"], "value": copy.deepcopy(value)}
             )
-    return tests + patch
+        out.append(copy.deepcopy(op))
+        doc = jsonpatch.apply_patch(doc, [copy.deepcopy(op)], in_place=True)
+    return out
 
 
 def _fields(before: Any, after: Any) -> list[str]:
@@ -582,8 +619,17 @@ def _shown_fields(fields: list[str]) -> list[str]:
 
 def _summary(action: str, item: Item, fields: list[str]) -> str:
     noun = item.kind.replace("_", " ")
-    # A rule's key is a hash of its text, so the text names it; who last edited an item is not a change to it.
-    name = f'"{item.value}"' if item.kind == "rule" else item.key
+    # A rule's key is a hash of its text, so the text names it; a scenario reads by its name, its key when it has none.
+    if item.kind == "rule":
+        name = f'"{item.value}"'
+    elif (
+        item.kind == "scenario"
+        and isinstance(item.value, dict)
+        and str(item.value.get("name") or "").strip()
+    ):
+        name = str(item.value["name"]).strip()
+    else:
+        name = item.key
     shown = _shown_fields(fields)
     if action == "changed" and shown:
         return f"Change {', '.join(shown)} of {noun} {name}"
@@ -745,7 +791,7 @@ def compute_changes(
         elif new is None:
             patch = [{"op": "test", "path": "", "value": old.value}]
         else:
-            patch = _tested(old.value, jsonpatch.make_patch(old.value, new.value).patch)
+            patch = _tested(old.value, _patch(old.value, new.value))
         fields = _fields(old.value if old else None, new.value if new else None)
         rows = (
             world_rows(item.key, old.raw if old else None, new.raw if new else None)

@@ -30,6 +30,17 @@ vi.mock("../components/ClusterHeadlineCard", () => ({ default: () => null }));
 vi.mock("../components/AnalyzeTab", () => ({
   default: () => <div>analysis tab</div>,
 }));
+// Each part would read the viewer's capabilities and the issue's epoch: a shared
+// page must not mount them at all.
+vi.mock("../epoch/IssueEpochAction", () => ({
+  default: () => <div>epoch action</div>,
+}));
+vi.mock("../epoch/IssueEpochStrip", () => ({
+  default: () => <div>epoch strip</div>,
+}));
+vi.mock("../epoch/RunEpochDrawer", () => ({
+  default: () => <div>epoch drawer</div>,
+}));
 
 const row = {
   cluster_id: "E-LOCAL01",
@@ -73,6 +84,13 @@ describe("ErrorFeedDetailView on a shared issue", () => {
     expect(
       screen.queryByRole("button", { name: /error feed/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("mounts nothing of Epoch", () => {
+    renderShared();
+    for (const part of ["epoch action", "epoch strip", "epoch drawer"]) {
+      expect(screen.queryByText(part)).not.toBeInTheDocument();
+    }
   });
 
   it("never fetches the issue or starts the analysis runner", () => {

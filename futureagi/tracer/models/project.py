@@ -14,6 +14,10 @@ from tfc.utils.base_model import (
     BaseModelManager,
     NoWorkspaceFilterManager,
 )
+from tracer.services.derived_metrics.pg_response_hooks import (
+    PgResponseManagerMixin,
+    pg_response_save,
+)
 
 PROJECT_TYPES = (
     ("experiment", "Experiment"),
@@ -31,7 +35,7 @@ class ProjectSourceChoices(Enum):
         return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
 
 
-class _WithoutSimulationProjects:
+class _WithoutSimulationProjects(PgResponseManagerMixin):
     # The project managers leave out simulation projects; with_simulation does not.
     def get_queryset(self):
         return super().get_queryset().filter(simulation_agent__isnull=True)
@@ -46,6 +50,10 @@ class ProjectAllObjectsManager(_WithoutSimulationProjects, AllObjectsManager):
 
 
 class ProjectNoWorkspaceManager(_WithoutSimulationProjects, NoWorkspaceFilterManager):
+    pass
+
+
+class PgResponseUnfilteredManager(PgResponseManagerMixin, models.Manager):
     pass
 
 
@@ -109,13 +117,14 @@ class Project(BaseModel):
     objects = ProjectManager()
     all_objects = ProjectAllObjectsManager()
     no_workspace_objects = ProjectNoWorkspaceManager()
-    with_simulation = models.Manager()
+    with_simulation = PgResponseUnfilteredManager()
 
     def clean(self):
         super().clean()
         if self.metadata is None:
             self.metadata = {}  # Ensure metadata is a dictionary
 
+    @pg_response_save
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)

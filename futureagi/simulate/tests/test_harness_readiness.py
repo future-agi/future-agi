@@ -103,6 +103,10 @@ def _environment(user, workspace, storage, key):
     """Legacy A1 is the default; its pairing with E1 and S1 is certified."""
     environment = _agent_env(user, workspace, key, storage, body=_sealed_authoring())
     assert _row(environment).state == "ready"
+    # Its build proved every case on this pair, so a run sends them.
+    from simulate.tests.harness_validation import prove_pair
+
+    prove_pair(environment)
     return environment
 
 
@@ -678,7 +682,9 @@ class TestRows:
         assert routing["targets"] == [
             {"kind": "tool", "name": "issue_refund", "result": "failed"}
         ]
-        assert routing["fix"]["action"] == "Point issue_refund at the test world"
+        assert routing["fix"]["action"] == (
+            "Upload a new agent version that serves issue_refund from its tools service, or remove it"
+        )
 
 
 class TestPairs:
@@ -1077,6 +1083,10 @@ class TestApi:
             "dropped",
             "grading",
             "requirements_recorded",
+            "next",
+            "running",
+            "held_back",
+            "reasons",
         }
         # A single agent's workers hold nothing back.
         assert body["selection"]["held_by"] == []
@@ -1380,12 +1390,12 @@ class TestDoneWhen:
         assert routing["reason_code"] == "production_only"
         assert routing["reason"] == production_only_reason("issue_refund")
         assert routing["fix"] == {
-            "type": "tool_routing",
-            "category": "tool_routing",
+            "type": "production_only",
+            "category": "agent_version",
             "target": "issue_refund",
-            "action": "Point issue_refund at the test world",
-            "would": "issue_refund lands in the test world and its check passes",
-            # Certified already: the fix is a new version, checked on its own.
+            "action": "Upload a new agent version that serves issue_refund from its tools service, or remove it",
+            "would": "issue_refund runs in the test world instead of reaching production",
+            # Only a new agent version moves the tool off production: nothing to re-check.
             "recheck": None,
             "message": None,
         }
@@ -2084,7 +2094,7 @@ class TestConsequence:
         _certify(environment, storage, agent=a2)
         rows = _rows(_report(environment, a2))
         assert rows["reset"]["consequence"] == (
-            "The world resets between trials; the agent may carry its own memory"
+            "World resets: the agent may remember earlier attempts"
         )
 
         _certify(
@@ -2189,6 +2199,172 @@ class TestCancel:
         assert cancel["consequence"] == expected
         assert report["answer"]["kind"] == "ready"
         assert report["answer"]["worst"] == "partial"
+
+    def test_a_provider_agent_whose_call_ended_after_a_stop_is_supported(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_cancel import record_confirmation
+
+        environment, a2 = _with_a2(user, workspace, storage, "rd-cancel-ended")
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=a2).update(
+            source_kind="provider"
+        )
+        _certify(environment, storage, agent=a2)
+        job = _stopped(environment, key="stop", agent=a2)
+        record_confirmation(
+            job.id, HostedHarnessJob.CancelConfirmation.PROVIDER_CALL_ENDED
+        )
+
+        cancel = _rows(_report(environment, a2))["cancel"]
+
+        assert (cancel["status"], cancel["reason_code"]) == ("supported", None)
+        assert [one["check"] for one in cancel["evidence"]] == [
+            "stop_requested",
+            "sandbox_absent",
+            "provider_call_ended",
+        ]
+        assert cancel["consequence"] == (
+            "A Stop ends the provider's call too, so a stopped run spends nothing more"
+        )
+
+    def test_a_stop_whose_cleanup_failed_is_partial_with_its_own_consequence(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_cancel import record_confirmation
+
+        environment = _environment(user, workspace, storage, "rd-cancel-failed")
+        _certify(environment, storage)
+        job = _stopped(environment, key="stop", verified=False)
+        record_confirmation(job.id, HostedHarnessJob.CancelConfirmation.CLEANUP_FAILED)
+
+        cancel = _rows(_report(environment))["cancel"]
+
+        assert (cancel["status"], cancel["reason_code"]) == (
+            "partial",
+            "cleanup_failed",
+        )
+        assert [one["check"] for one in cancel["evidence"]] == [
+            "stop_requested",
+            "cleanup_failed",
+        ]
+        assert cancel["consequence"] == (
+            "The last stop wasn't confirmed (cleanup failed); the agent may keep running"
+        )
+
+    def _provider_agent(self, user, workspace, storage, key, **payload):
+        environment, a2 = _with_a2(user, workspace, storage, key)
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(agent_version=a2)
+        runtime.source_kind = "provider"
+        runtime.agent_payload = {**(runtime.agent_payload or {}), **payload}
+        runtime.save(update_fields=["source_kind", "agent_payload"])
+        _certify(environment, storage, agent=a2)
+        return environment, a2
+
+    @pytest.mark.parametrize("recorded", ["unchecked_no_key", "provider_unchecked"])
+    def test_a_stop_the_provider_could_not_be_checked_on_stays_untested(
+        self, user, workspace, storage, recorded
+    ):
+        from simulate.services.harness_cancel import record_confirmation
+
+        environment, a2 = self._provider_agent(
+            user, workspace, storage, f"rd-cancel-{recorded}", connector="vapi"
+        )
+        job = _stopped(environment, key="stop", agent=a2)
+        record_confirmation(job.id, recorded)
+
+        cancel = _rows(_report(environment, a2))["cancel"]
+
+        assert (cancel["status"], cancel["reason_code"]) == (
+            "untested",
+            "provider_unchecked",
+        )
+        assert cancel["consequence"] == (
+            "Not measured yet: we couldn't check with Vapi that the last stop's calls"
+            " ended"
+        )
+
+    def test_a_livekit_agent_stopped_and_confirmed_reads_like_a_code_agent(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_cancel import record_confirmation
+
+        environment, a2 = self._provider_agent(
+            user, workspace, storage, "rd-cancel-livekit", connector="livekit"
+        )
+        job = _stopped(environment, key="stop", agent=a2)
+        record_confirmation(
+            job.id, HostedHarnessJob.CancelConfirmation.PROVIDER_CALL_ENDED
+        )
+
+        rows = _rows(_report(environment, a2))
+
+        assert rows["cancel"]["status"] == "supported"
+        assert rows["cancel"]["consequence"].startswith(
+            "A Stop ends the agent with its test sandbox"
+        )
+        assert rows["reset"]["status"] == "supported"
+
+    def test_a_connect_only_live_system_cannot_be_reset(self, user, workspace, storage):
+        environment, a2 = self._provider_agent(
+            user,
+            workspace,
+            storage,
+            "rd-reset-live",
+            connector="vapi",
+            mode="connect_only",
+        )
+
+        reset = _rows(_report(environment, a2))["reset"]
+
+        assert (reset["status"], reset["reason_code"]) == ("unavailable", "live_system")
+        assert reset["consequence"] == "A live system isn't assumed resettable"
+
+    def test_a_stop_the_provider_did_not_confirm_is_partial_naming_the_provider(
+        self, user, workspace, storage
+    ):
+        gave_up = "provider_call_open"
+        consequence = (
+            "On the last stop, Vapi didn't confirm every call ended; an open call"
+            " keeps charging"
+        )
+        from simulate.services.harness_cancel import record_confirmation
+
+        environment, a2 = _with_a2(user, workspace, storage, f"rd-cancel-{gave_up}")
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(agent_version=a2)
+        runtime.source_kind = "provider"
+        runtime.agent_payload = {**(runtime.agent_payload or {}), "connector": "vapi"}
+        runtime.save(update_fields=["source_kind", "agent_payload"])
+        _certify(environment, storage, agent=a2)
+        job = _stopped(environment, key="stop", agent=a2)
+        record_confirmation(job.id, gave_up)
+
+        cancel = _rows(_report(environment, a2))["cancel"]
+
+        assert (cancel["status"], cancel["reason_code"]) == ("partial", gave_up)
+        assert [one["check"] for one in cancel["evidence"]] == [
+            "stop_requested",
+            "sandbox_absent",
+            gave_up,
+        ]
+        assert cancel["consequence"] == consequence
+
+    def test_a_provider_agent_never_stopped_is_untested_naming_the_provider(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-cancel-untested")
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(agent_version=a2)
+        runtime.source_kind = "provider"
+        runtime.agent_payload = {**(runtime.agent_payload or {}), "connector": "retell"}
+        runtime.save(update_fields=["source_kind", "agent_payload"])
+        _certify(environment, storage, agent=a2)
+
+        cancel = _rows(_report(environment, a2))["cancel"]
+
+        assert cancel["status"] == "untested"
+        assert cancel["consequence"] == (
+            "Not measured until you stop a run; until then a stop may not end the"
+            " Retell call"
+        )
 
     def test_no_stop_yet_is_untested_with_the_connection_consequence(
         self, user, workspace, storage
@@ -3838,7 +4014,7 @@ def test_a_scenario_with_an_acting_actor_on_an_in_process_agent_is_held_back():
     placed = _place(
         _case(acting),
         {},
-        proved=True,
+        view=None,
         voice=False,
         many=False,
         pair_validating=False,

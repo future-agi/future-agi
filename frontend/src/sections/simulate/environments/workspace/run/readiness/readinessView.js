@@ -1,5 +1,4 @@
 import { READY_TO_RUN_COPY, RUN_PLAN_COPY } from "./readiness.constants";
-import { RUN_PLAN_PROMPTS_COPY } from "../runPlanPrompts.constants";
 
 // Worst first: an area reads as its worst counted row.
 const STATUS_ORDER = [
@@ -18,6 +17,7 @@ const rank = (status) => {
   return at === -1 ? STATUS_ORDER.length : at;
 };
 
+// The pair check's state as the section words it.
 const CHECK_STATES = {
   validating: "checking",
   failed: "failed",
@@ -26,41 +26,44 @@ const CHECK_STATES = {
   unavailable: "unavailable",
 };
 
-// A row nothing measures yet (browser, sub-agents) would keep its area
-// "not checked" forever; it counts only once it affects a scenario.
-const counts = (row) => row.measured || (row.affected?.count ?? 0) > 0;
+// The server refuses a run while the pair is checked (`pair_validating`) or after its check failed (`pair_failed`).
+const HOLDS_RUN = new Set(["checking", "failed"]);
 
-// Who fixes a row when the server doesn't say: a re-check alone, or the user.
-const fallbackGroup = ({ fix }) => {
-  const recheckOnly =
-    (fix?.type === "recheck" && fix.recheck?.scope === "pair") ||
-    fix?.type === "agent_tools_unread";
-  return recheckOnly ? "recheck" : "needs_you";
-};
+// A row nothing measures yet (browser, sub-agents) would keep its area "not checked" forever; it counts only once
+// it affects a scenario. So does a block: one that blocks none of the picked scenarios stops nothing, unless a fix
+// is working on it.
+const counts = (row) =>
+  row.status === "blocked" && row.affected && !row.fix_progress
+    ? row.affected.count > 0
+    : row.measured || (row.affected?.count ?? 0) > 0;
 
-const groupOf = (row) => row.fix_group ?? fallbackGroup(row);
+// A fix someone makes on the agent: new credentials, or a new version that changes how a tool is served.
+const AGENT_FIXES = new Set(["preflight"]);
+export const isAgentFix = (fix) =>
+  fix?.category === "agent_version" || AGENT_FIXES.has(fix?.type);
+
+const isFixed = (line) =>
+  line.status === "supported" && line.progress?.state === "fixed";
 
 const areaLine = (area, rowsById) => {
   const rows = (area.rows || []).map((id) => rowsById.get(id)).filter(Boolean);
-  const counted = rows
+  const [worst] = rows
     .filter(counts)
     .sort((a, b) => rank(a.status) - rank(b.status));
-  const worst = counted[0];
   if (!worst || worst.status === "supported") {
     // A supported area a fix just mended still reads "Fixed".
     const fixed = rows.find((row) => row.fix_progress?.state === "fixed");
-    if (fixed) {
-      return {
-        area: area.id,
-        status: "supported",
+    return {
+      area: area.id,
+      status: "supported",
+      ...(fixed && {
         rowId: fixed.id,
         progress: fixed.fix_progress,
         // Only the builder chat fixes lines, so a fixed one stays in its group.
         group: "builder",
-      };
-    }
+      }),
+    };
   }
-  if (!worst) return { area: area.id, status: "supported" };
   return {
     area: area.id,
     status: worst.status,
@@ -71,86 +74,75 @@ const areaLine = (area, rowsById) => {
     checkedAt: worst.checked_at ?? null,
     affected: worst.affected?.count ?? 0,
     fix: worst.fix ?? null,
-    group: groupOf(worst),
+    // Who fixes it and how a fix of it stands; none of these come while Fix is off.
+    group: worst.fix_group ?? null,
     progress: worst.fix_progress ?? null,
-    // Whether Fix can run on the row now, and why not, as the server says.
-    fixAction: worst.fix_action ?? null,
-    // What a fix saved from these versions made of the row ("Fixed in v3").
-    fixResult: worst.fix_result ?? null,
+    action: worst.fix_action ?? null,
+    result: worst.fix_result ?? null,
     waitingOnArea: rowsById.get(worst.fix_progress?.waiting_on)?.area ?? null,
   };
 };
 
-const isFixed = (line) =>
-  line.status === "supported" && line.progress?.state === "fixed";
+const byGroup = (lines) => {
+  const groups = { needs_you: [], builder: [], recheck: [] };
+  lines.forEach((line) => (groups[line.group] ?? groups.needs_you).push(line));
+  return groups;
+};
 
 /**
- * The lines the run popup's Ready to run section shows, from a readiness
- * report: what the check is doing, whether Run is allowed, the counts, the
- * areas with something to fix, the stated limits and the areas that are fine.
+ * What the run plan's Ready to run section shows, from a readiness report: what the check is doing, whether it
+ * holds the run, the areas with something to fix (by who fixes them, once the server offers Fix), the stated limits
+ * and the areas that are fine.
  */
 export function readinessView(report) {
   const validation = report?.validation || {};
-  const answer = report?.answer?.kind;
   const state =
     CHECK_STATES[validation.state] ||
-    (report?.pairing?.evidence === "none" ? "unchecked" : answer) ||
+    (report?.pairing?.evidence === "none"
+      ? "unchecked"
+      : report?.answer?.kind) ||
     "unchecked";
   const rowsById = new Map((report?.rows || []).map((row) => [row.id, row]));
   const lines = (report?.areas || []).map((area) => areaLine(area, rowsById));
-  const selection = report?.selection || {};
+  const { requested = 0, grading } = report?.selection || {};
+  // The server sends fix_groups only while Fix is on.
   const grouped = Boolean(report?.fix_groups);
-  // With groups, an open line nobody can fix (a Stop not seen yet) is a note
-  // beside the limits, not a fix in Needs you.
+  // In groups, a line nobody can fix and that blocks nothing (a Stop not seen yet) is a note beside the limits.
   const noted = (line) =>
     grouped &&
-    OPEN.has(line.status) &&
+    (line.status === "stale" || line.status === "untested") &&
     !line.fix &&
-    !rowsById.get(line.rowId)?.fix_group;
+    !line.group;
   const open = lines
     .filter((line) => OPEN.has(line.status) && !noted(line))
     .sort((a, b) => rank(a.status) - rank(b.status));
-  const groups = { needs_you: [], builder: [], recheck: [] };
-  [...open, ...lines.filter(isFixed)].forEach((line) =>
-    (groups[line.group] ?? groups.needs_you).push(line),
-  );
-
   return {
     state,
     stateReason: validation.error?.reason ?? null,
     // When the report was worked out: ties scenario names to its counts.
     computedAt: report?.computed_at ?? null,
-    canRun: state !== "checking" && state !== "failed",
-    summary: {
-      requested: selection.requested ?? 0,
-      eligible: selection.eligible ?? 0,
-      blocked: selection.blocked ?? 0,
-      stale: selection.stale ?? 0,
-      untested: selection.untested ?? 0,
-    },
+    holdsRun: HOLDS_RUN.has(state),
     open,
-    // The server sends fix_groups only once it supports fixes.
-    grouped,
-    groups,
+    groups: grouped ? byGroup([...open, ...lines.filter(isFixed)]) : null,
     limits: lines
       .filter((line) => LIMIT.has(line.status) || noted(line))
       .map(({ area, status, reason }) => ({ area, status, reason })),
     ready: lines
-      .filter((line) => line.status === "supported" && !isFixed(line))
+      .filter(
+        (line) => line.status === "supported" && !(grouped && isFixed(line)),
+      )
       .map((line) => line.area),
     grading: {
-      gradable: selection.grading?.gradable ?? 0,
-      // The list stops at 200; the total is what the rest leaves out.
-      notGradable: selection.grading
-        ? (selection.requested ?? 0) - selection.grading.gradable
-        : 0,
+      gradable: grading?.gradable ?? 0,
+      // The report lists only some of the rest.
+      notGradable: grading ? requested - grading.gradable : 0,
     },
   };
 }
 
 /**
- * What the builder chat says when a fix ends, and its button, from the run's
- * outcome as the server reads it. Null while the run is active.
+ * What the builder chat says when a fix ends, and its button, from the run's outcome as the server reads it. Null
+ * while the run is active.
  */
 export function fixEndCard(fix) {
   const copy = RUN_PLAN_COPY.fixEnd;
@@ -158,12 +150,12 @@ export function fixEndCard(fix) {
   if (!outcome) return null;
   const { kind, message } = outcome;
   if (kind === "unsaved") {
-    // A stale draft can't be saved, so it never asks to save it.
-    if (fix.error?.code === "draft_stale") {
-      return { text: RUN_PLAN_PROMPTS_COPY.draftStale, action: copy.openPlan };
-    }
     return {
-      text: [RUN_PLAN_PROMPTS_COPY.draftFix, message].filter(Boolean).join(" "),
+      // A stale draft can't be saved, so it never asks to save it.
+      text:
+        fix.error?.code === "draft_stale"
+          ? RUN_PLAN_COPY.draftStale
+          : [RUN_PLAN_COPY.draftFix, message].filter(Boolean).join(" "),
       action: copy.openPlan,
     };
   }

@@ -39,6 +39,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tracer.services.clickhouse.v2.id_remap_sql import (
+    NIL_UUID,
     remap_left_join,
     resolved_id_expr,
 )
@@ -244,6 +245,13 @@ _CUTOFF_SETTINGS = {
     "ignore_data_skipping_indices": "auto_minmax_index_created_at",
 }
 _FEED_TRACE_BATCH_SIZE = 1000
+# trace_units runs on the shared tables when someone opens Run Epoch on an issue: it
+# may not run long or take much memory, whatever the project's size.
+_TRACE_UNIT_SETTINGS = {
+    "max_execution_time": 30,
+    "max_memory_usage": 2_000_000_000,
+    "max_threads": 2,
+}
 # Ids bound into one statement of a remap-aware read. Parameters are inlined
 # (about 40 bytes a UUID) and ClickHouse parses at most max_query_size (256
 # KiB) of a statement; the bounded survivor map binds its list twice.
@@ -550,6 +558,16 @@ def _as_uuid(value: object) -> str | None:
 def _uuid_text(value: object) -> str:
     """``value`` as ClickHouse's ``toString`` writes it, when it is a UUID."""
     return _as_uuid(value) or str(value).strip()
+
+
+@dataclass(frozen=True)
+class TraceUnit:
+    """A trace's root as an evidence import reads it: its type, its session (the
+    survivor, when the session was consolidated) and its start."""
+
+    observation_type: str
+    session_id: str | None
+    start_time: datetime
 
 
 class CHSpanReader:
@@ -1598,6 +1616,53 @@ class CHSpanReader:
             settings={"max_threads": 2},
         ).result_rows
         return {str(r[0]): str(r[1]) for r in rows}
+
+    def trace_units(
+        self, trace_ids: list[str], *, project_id: str
+    ) -> dict[str, TraceUnit]:
+        """``{trace_id: TraceUnit}`` for the given traces of one project, from each
+        root's latest version; a trace whose root is deleted is left out. Four
+        columns, pinned to the project and the traces before anything is read,
+        within a time and memory cap (_TRACE_UNIT_SETTINGS)."""
+        tids = tuple(dict.fromkeys(str(tid) for tid in trace_ids))
+        if not tids:
+            return {}
+        rows = self._client.query(
+            "SELECT toString(trace_id), observation_type, toString(trace_session_id),"
+            " start_time FROM ("
+            " SELECT trace_id, id,"
+            " argMax(observation_type, _version) AS observation_type,"
+            # A tuple keeps a latest NULL: argMax skips NULL values themselves.
+            " argMax(tuple(trace_session_id), _version).1 AS trace_session_id,"
+            " argMax(start_time, _version) AS start_time,"
+            " argMax(is_deleted, _version) AS latest_is_deleted"
+            " FROM spans"
+            " PREWHERE project_id = %(pid)s AND trace_id IN %(tids)s"
+            # A span's parent is the same in every version, so roots are found first.
+            " WHERE parent_span_id IS NULL OR parent_span_id = ''"
+            " GROUP BY trace_id, id"
+            ") WHERE latest_is_deleted = 0"
+            " ORDER BY trace_id, start_time, id"
+            " LIMIT 1 BY trace_id",
+            parameters={"pid": str(project_id), "tids": tids},
+            settings=_TRACE_UNIT_SETTINGS,
+        ).result_rows
+        # The nil id is no session, as this file's other reads treat it.
+        roots = [
+            (trace_id, kind, None if session in (None, "", NIL_UUID) else session, at)
+            for trace_id, kind, session, at in rows
+        ]
+        survivors = self.remap_groups(
+            "trace_session_id_remap", (root[2] for root in roots if root[2])
+        )
+        return {
+            str(trace_id): TraceUnit(
+                observation_type=str(kind or ""),
+                session_id=survivors.get(session, session) if session else None,
+                start_time=started,
+            )
+            for trace_id, kind, session, started in roots
+        }
 
     _CHILD_TREE_COLUMNS: tuple[tuple[str, str], ...] = (
         ("parent_span_id", "parent_span_id"),

@@ -5,27 +5,9 @@ export const READY_TO_RUN_COPY = {
   title: "Ready to run",
   blockers: (n) =>
     n ? `${plural(n, "blocker", "blockers")} to fix` : "No blocker",
-  // The plan's count line; a part with a bucket names its scenarios on hover.
-  counts: ({ eligible, requested, blocked, stale }) =>
-    [
-      {
-        bucket: "eligible",
-        count: eligible,
-        text: `${eligible} of ${requested} eligible`,
-      },
-      { bucket: "blocked", count: blocked, text: `${blocked} blocked` },
-      stale
-        ? { bucket: "stale", count: stale, text: `${stale} not proved here` }
-        : null,
-    ].filter(Boolean),
-  namesLoading: "Loading the scenarios…",
   namesMore: (n) => `and ${n} more`,
-  namesError: "Couldn't load these scenarios.",
-  namesTooMany: "Names show when 200 or fewer scenarios are selected.",
   recheck: "Re-check",
   checking: "Checking…",
-  // The header while the pair is being checked, in place of the blocker count.
-  checkingPair: "Checking these versions together…",
   areas: {
     start_and_message: "Starts and replies",
     tool_binding: "Tools wired to the test world",
@@ -46,6 +28,7 @@ export const READY_TO_RUN_COPY = {
         : "Check unavailable on our side · runs aren't held",
     retry: "The last check didn't finish · re-check",
     unavailable: "These versions can't be checked right now",
+    alreadyChecked: "Already checked with these versions, nothing to redo",
     refused: (reason) =>
       `The check couldn't start${reason ? `: ${reason}` : ""}`,
   },
@@ -77,6 +60,7 @@ export const READY_TO_RUN_COPY = {
     "Only these values change; everything else on the agent keeps its value. Saving checks the pair again.",
   recheckPair: "Re-check this pair",
   retryAgent: "Retry the agent's start",
+  openAgentVersions: "Open agent versions",
   moreReady: (labels, all) =>
     `${all ? "All ready" : "Also ready"}: ${labels.join(", ")}`,
   notGradable: (n) =>
@@ -112,10 +96,9 @@ export const READY_TO_RUN_COPY = {
       .join(" and ")}`,
   fixFinishing:
     "The fix is saving and checking its changes. Add more lines when it finishes.",
-  fixesUnsaved:
-    "Save or discard the unsaved changes first, then send fixes to the chat.",
   fixRefused: {
-    unsaved_changes: "Save or discard the unsaved changes first, then Fix all.",
+    unsaved_changes:
+      "Save or discard the unsaved changes first, then try again.",
     fix_running: "A fix is already running for this environment.",
     chat_unavailable: "The builder chat isn't available for this environment.",
     nothing_to_fix:
@@ -158,21 +141,18 @@ export const RUN_PLAN_COPY = {
       .join(" · "),
   // The version pickers' labels.
   pickers: { agent: "Agent", environment: "Environment", suite: "Scenarios" },
-  // Beside the scenario picker; null is "every current scenario".
-  scenarioCount: (n, all) => {
-    if (!all) return plural(n, "selected scenario", "selected scenarios");
-    if (n === null) return "All scenarios";
-    return n === 1 ? "1 scenario" : `All ${n} scenarios`;
-  },
-  heldBack: ({ requested, blocked }, label) =>
-    `${requested} selected · ${requested - blocked} will run · ${blocked} held back${
-      label ? ` (${label.toLowerCase()})` : ""
-    }, recorded as not run`,
-  allHeld: (label) =>
-    `Every selected scenario waits on a fix${label ? `: ${label.toLowerCase()}` : ""}`,
   // The builder chat's card when a fix ends.
   fixEnd: {
     openPlan: "Open run plan",
     review: "Review and start run",
   },
+  draftFix: "The fixes are in unsaved changes. Save them to run them.",
+  draftStale:
+    "These unsaved changes started from an older version. Discard them on the page, or ask chat to make them again.",
+  reviewChanges: "Review changes",
+  switchTo: (piece, label) => `The fixes are in ${piece} ${label}.`,
+  switchReady: (running, requested) =>
+    `${running} of ${requested} will run there.`,
+  switchVersion: (label) => `Switch to ${label}`,
+  keepVersion: "Keep this version",
 };

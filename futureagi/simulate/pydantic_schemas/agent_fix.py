@@ -113,6 +113,9 @@ class FixRequest(BaseModel):
     # models and agent cost cannot be read, and those checks read as not verified.
     observes_models: bool = False
     meters_agent_cost: bool = False
+    # Set at launch: the source run's agent names no tracing, so only the sandbox's own
+    # measuring saw its model calls. The fix page and the pull request say so.
+    measured_automatically: bool = False
     # Derived at launch, never asked: the evidence imports that added any target to the suite.
     # Empty when the fix did not start from evidence.
     evidence: list[FixEvidence] = Field(default_factory=list)

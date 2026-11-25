@@ -15,6 +15,7 @@ from simulate.services.harness_readiness import selection
 from simulate.tests.test_harness_affected_scenarios import (
     LOOKUP_KEYS,
     REFUND_KEYS,
+    _proved_on,
     _suite,
     _ten,
     _ten_certified,
@@ -237,7 +238,9 @@ class TestDoneWhen:
             "keys": REFUND_KEYS,
             "truncated": False,
         }
-        assert routing["fix"]["action"] == "Point issue_refund at the test world"
+        assert routing["fix"]["action"] == (
+            "Upload a new agent version that serves issue_refund from its tools service, or remove it"
+        )
         assert before["selection"]["blocked"] == 4
 
         e2 = _redirected(environment)
@@ -248,6 +251,8 @@ class TestDoneWhen:
                 environment, environment_version_id=e2.id
             ),
         )
+        # A validation of the new pairing certifies it and proves its cases.
+        _proved_on(environment, e2)
         after = _get(auth_client, environment.id, environment_version_id=e2.id).json()
 
         routing = _rows(after)["tool_routing"]
@@ -302,6 +307,81 @@ class TestRunHoldBackApi:
             f"/simulate/v3/test-executions/{body['test_execution_id']}/calls/"
         ).json()["execution"]
         assert header["readiness_selection"] == body["selection"]
+
+    def _run_all(self, auth_client, environment, key, **body):
+        return auth_client.post(
+            f"{BASE}/{environment.id}/run/",
+            {"trials": 1, **body},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=key,
+        )
+
+    def test_a_run_without_scenario_ids_runs_the_whole_suite_as_a_listed_run_would(
+        self, user, workspace, storage, auth_client, monkeypatch
+    ):
+        """Run all: no keys from the client, so no cap on how many it can list.
+
+        The server resolves the suite and plans, holds back and creates the run
+        exactly as for the same keys sent by name.
+        """
+        monkeypatch.setattr(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "simulate.services.harness_usage.require_harness_call_usage",
+            lambda *args, **kwargs: None,
+        )
+        listed_env = _ten_certified(user, workspace, storage, "all-listed")
+        _built(listed_env, contract=PRODUCTION_ONLY)
+        all_env = _ten_certified(user, workspace, storage, "all-resolved")
+        _built(all_env, contract=PRODUCTION_ONLY)
+
+        everything = REFUND_KEYS + LOOKUP_KEYS
+        listed = self._run_all(
+            auth_client, listed_env, "all-listed", scenario_ids=everything
+        )
+        resolved = self._run_all(auth_client, all_env, "all-resolved")
+
+        assert listed.status_code == 202, listed.content
+        assert resolved.status_code == 202, resolved.content
+        for body in (listed.json(), resolved.json()):
+            assert body["selection"]["held_back"]["keys"] == REFUND_KEYS
+            assert (body["selection"]["running"], body["total_calls"]) == (6, 6)
+            assert body["selection"]["suite_total"] == 10
+
+    def test_an_empty_list_is_still_refused_and_the_resolved_suite_keeps_the_run_budget(
+        self, user, workspace, storage, auth_client, monkeypatch, settings
+    ):
+        """An empty list stays a mistake, never "everything".
+
+        The per-run budget (scenarios x trials) applies to the suite the server
+        resolves as it does to a list.
+        """
+        monkeypatch.setattr(
+            "simulate.services.harness_usage.require_harness_call_usage",
+            lambda *args, **kwargs: None,
+        )
+        environment = _ten_certified(user, workspace, storage, "all-budget")
+
+        empty = self._run_all(auth_client, environment, "all-empty", scenario_ids=[])
+        settings.HARNESS_MAX_EXECUTIONS_PER_RUN = 5
+        too_large = self._run_all(auth_client, environment, "all-budget")
+
+        assert empty.status_code == 400, empty.content
+        assert too_large.status_code == 400, too_large.content
+        assert too_large.json()["error"] == "run_too_large"
+
+    def test_all_run_keys_is_the_suite_in_order_without_the_hidden_cases(
+        self, user, workspace, storage
+    ):
+        from simulate.services.hosted_harness import all_run_keys
+
+        environment = _ten_certified(user, workspace, storage, "all-keys")
+
+        assert all_run_keys(environment) == REFUND_KEYS + LOOKUP_KEYS
+        hidden = REFUND_KEYS[:2]
+        assert all_run_keys(environment, hidden=hidden) == REFUND_KEYS[2:] + LOOKUP_KEYS
 
     def test_every_case_blocked_answers_409_with_the_reasons(
         self, user, workspace, storage, auth_client, monkeypatch

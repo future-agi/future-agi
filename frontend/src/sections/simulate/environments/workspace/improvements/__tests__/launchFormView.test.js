@@ -12,6 +12,7 @@ import {
   costLimitOf,
   isTraced,
   seesModels,
+  seenModelsOf,
   tracesUnreadable,
   marginSteps,
 } from "../launchFormView";
@@ -225,5 +226,27 @@ describe("constraints", () => {
     expect(isTraced(options(["m1"], false))).toBe(true);
     expect(seesModels(options([], true))).toBe(false);
     expect(seesModels(options(["m1"], false))).toBe(true);
+  });
+
+  it("reads options that don't list the models as a run that saw none, without throwing", () => {
+    expect(seesModels({ defaults: {} })).toBe(false);
+    expect(seesModels({})).toBe(false);
+    expect(seenModelsOf({ defaults: {} })).toEqual([]);
+    expect(seenModelsOf({ defaults: { allowed_models: ["m1"] } })).toEqual([
+      "m1",
+    ]);
+  });
+
+  it("says only the minimum when the options leave out how variations fill the gap", () => {
+    const older = { scenarios_min: 12, scenarios_max: 200 };
+    const input = {
+      targets: ["a"],
+      protectedKeys: [],
+      surfaces: ["prompt"],
+      limits: older,
+    };
+    expect(launchError(input)).toBe("Needs at least 12 failing cases.");
+    expect(variationsNote(1, older)).toBeNull();
+    expect(countsLine(1, 9, older)).toBe("1 failing to fix · 9 protected");
   });
 });

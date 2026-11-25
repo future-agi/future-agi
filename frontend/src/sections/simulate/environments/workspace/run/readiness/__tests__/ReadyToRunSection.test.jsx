@@ -1,62 +1,34 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor } from "src/utils/test-utils";
+import PropTypes from "prop-types";
+import { render, screen, waitFor } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // The report the server answered, and what the buttons asked for.
 let report;
-let loading = false;
-let readinessError = null;
-let recheckPending = false;
 let recheckResult = {};
-let cases = { names: ["Refund over limit"], isError: false };
+let cases = [];
 const recheck = vi.fn();
+const reset = vi.fn();
 const retryAgent = vi.fn();
-const refetch = vi.fn();
 const saveCredentials = vi.fn();
 let agentVersions = [];
 let fixRun = null;
+let canEdit = true;
 const resetFix = vi.fn();
-let drafts;
 const startFix = vi.fn();
 
 vi.mock("src/api/simulate-environments/readiness", () => ({
-  MAX_CASE_KEYS: 200,
-  useReadiness: () =>
-    loading
-      ? { data: undefined, isLoading: true, isError: false }
-      : readinessError
-        ? {
-            data: undefined,
-            isLoading: false,
-            isError: true,
-            error: readinessError,
-            refetch,
-          }
-        : { data: report, isLoading: false, isError: false, refetch },
-  useRecheck: () => ({
-    mutate: recheck,
-    isPending: recheckPending,
-    ...recheckResult,
+  useRecheck: () => ({ mutate: recheck, reset, ...recheckResult }),
+  useReadinessCases: (envId, { enabled }) => ({
+    data: enabled
+      ? cases.map((name, at) => ({ key: `k${at}`, name }))
+      : undefined,
   }),
-  useRereadWhenDone: () => {},
-  useRereadWhenDefaultsMove: () => {},
-  useReadinessCases: (envId, { bucket, row, enabled }) => {
-    const asked = enabled && (bucket === "blocked" || Boolean(row));
-    return {
-      data:
-        asked && !cases.isError
-          ? cases.names.map((name, at) => ({ key: `k${at}`, name }))
-          : undefined,
-      isError: asked && cases.isError,
-      isLoading: false,
-    };
-  },
 }));
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
   ...(await importOriginal()),
-  useRetryAgentVersion: () => ({ mutate: retryAgent, isPending: false }),
+  useRetryAgentVersion: () => ({ mutate: retryAgent, reset }),
   useEnvironmentVersions: () => ({ data: { agent: agentVersions } }),
-  useDrafts: () => ({ data: drafts }),
   useChangeCredentials: () => ({
     mutate: saveCredentials,
     isPending: false,
@@ -73,14 +45,8 @@ vi.mock(
 );
 
 vi.mock("src/api/simulate-environments/readinessFix", () => ({
-  // Fixtures name a state; the server sends active alongside it.
-  fixIsActive: (run) =>
-    run?.active ??
-    ["queued", "fixing", "waiting_on_you", "saving", "checking"].includes(
-      run?.state,
-    ),
+  fixIsActive: (run) => Boolean(run?.active),
   useFixRun: () => ({ data: fixRun }),
-  useFollowFixRun: () => {},
   useStartGroupFix: () => ({
     mutate: startFix,
     isPending: false,
@@ -88,7 +54,27 @@ vi.mock("src/api/simulate-environments/readinessFix", () => ({
   }),
 }));
 
+vi.mock("../../../../hooks/useSimulationAccess", () => ({
+  default: () => ({ canEdit, canRun: true }),
+}));
+
 const { default: ReadyToRunSection } = await import("../ReadyToRunSection");
+const { readinessView } = await import("../readinessView");
+
+// As the run plan renders it: it owns the report.
+function Section({ error, ...props }) {
+  return (
+    <ReadyToRunSection
+      envId="env-1"
+      picks={{}}
+      readiness={{ data: error ? undefined : report, isError: !!error, error }}
+      view={error ? null : readinessView(report)}
+      {...props}
+    />
+  );
+}
+Section.propTypes = { error: PropTypes.object };
+const details = (name = /^Details for/) => screen.getByRole("button", { name });
 
 const blockedReport = (recheckScope) => ({
   pairing: {
@@ -152,36 +138,41 @@ const groupedReport = (progress = null, held = null) => {
 const picks = { agent: "agent-v2" };
 
 beforeEach(() => {
-  loading = false;
-  readinessError = null;
-  recheckPending = false;
   recheckResult = {};
-  cases = { names: ["Refund over limit"], isError: false };
-  recheck.mockReset();
-  refetch.mockReset();
-  retryAgent.mockReset();
-  saveCredentials.mockReset();
+  cases = [];
   agentVersions = [];
   fixRun = null;
-  drafts = undefined;
-  startFix.mockReset();
+  canEdit = true;
+  vi.clearAllMocks();
 });
 
 describe("ReadyToRunSection", () => {
   it("says it waits for a saved version instead of failing", () => {
-    readinessError = { statusCode: 404, error: "versioning_disabled" };
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(
+      <Section error={{ statusCode: 404, error: "versioning_disabled" }} />,
+    );
     expect(screen.getByTestId("ready-to-run-no-versions")).toBeInTheDocument();
     expect(screen.queryByText(/Couldn't check/)).toBeNull();
   });
 
+  it("shows a re-check as running from the click, with nothing to press on the last results", () => {
+    report = blockedReport("pair");
+    recheckResult = { isPending: true };
+    const onSendingChange = vi.fn();
+    render(<Section onSendingChange={onSendingChange} />);
+    expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
+    expect(
+      screen.getByText(/Checking these versions · runs wait/),
+    ).toHaveAttribute("aria-live", "polite");
+    expect(screen.queryByRole("button", { name: /^Details for/ })).toBeNull();
+    expect(onSendingChange).toHaveBeenLastCalledWith(true);
+  });
+
   it("closes an open fix when other versions are picked", async () => {
     report = blockedReport("pair");
-    const { rerender } = render(
-      <ReadyToRunSection envId="env-1" picks={picks} />,
-    );
+    const { rerender } = render(<Section picks={picks} />);
     await userEvent.click(screen.getByRole("button", { name: /^Details for/ }));
-    rerender(<ReadyToRunSection envId="env-1" picks={{ agent: "agent-v3" }} />);
+    rerender(<Section picks={{ agent: "agent-v3" }} />);
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: /^Details for/ }),
@@ -189,77 +180,21 @@ describe("ReadyToRunSection", () => {
     );
   });
 
-  it("clears what it told the popup when it goes away", () => {
-    report = blockedReport("pair");
-    const onView = vi.fn();
-    const { unmount } = render(
-      <ReadyToRunSection envId="env-1" picks={picks} onView={onView} />,
-    );
-    unmount();
-    expect(onView).toHaveBeenLastCalledWith(null);
-  });
-
-  it("lets keyboard users open a fix", async () => {
-    report = blockedReport("pair");
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    const fix = screen.getByRole("button", { name: /^Details for/ });
-    expect(fix).toHaveAttribute("aria-expanded", "false");
-    await userEvent.click(fix);
-    expect(fix).toHaveAttribute("aria-expanded", "true");
-  });
-
-  it("announces when a check starts", () => {
-    report = blockedReport("pair");
-    recheckPending = true;
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    expect(
-      screen.getByText(/Checking these versions · runs wait/),
-    ).toHaveAttribute("aria-live", "polite");
-  });
-
   it("explains a refused re-check with the server's words", () => {
     report = blockedReport("pair");
     recheckResult = {
       isError: true,
-      error: { message: "Usage limit reached" },
+      error: { message: "Usage limit reached", statusCode: 402 },
     };
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
     expect(screen.getByText(/Usage limit reached/)).toBeVisible();
   });
 
   it("says when these versions can't be checked", () => {
     report = blockedReport("pair");
     recheckResult = { data: { validation: { state: "unavailable" } } };
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
     expect(screen.getByText(/can't be checked/)).toBeVisible();
-  });
-
-  it("holds Run until the report is read again after retrying the agent's start", async () => {
-    report = blockedReport("agent");
-    let refreshed;
-    refetch.mockReturnValue(
-      new Promise((resolve) => {
-        refreshed = resolve;
-      }),
-    );
-    const onView = vi.fn();
-    render(<ReadyToRunSection envId="env-1" picks={picks} onView={onView} />);
-    await userEvent.click(screen.getByRole("button", { name: /^Details for/ }));
-    await userEvent.click(
-      screen.getByRole("button", { name: "Retry the agent's start" }),
-    );
-    const [, options] = retryAgent.mock.calls[0];
-    await act(async () => {
-      options.onSettled();
-    });
-    expect(refetch).toHaveBeenCalled();
-    expect(onView).toHaveBeenLastCalledWith(
-      expect.objectContaining({ canRun: false }),
-    );
-    await act(async () => refreshed());
-    expect(onView).toHaveBeenLastCalledWith(
-      expect.objectContaining({ canRun: true }),
-    );
   });
 
   it("keeps one fix open at a time", async () => {
@@ -274,7 +209,7 @@ describe("ReadyToRunSection", () => {
         action: "Make the world return to its seeded state",
       },
     });
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
 
     const [first, second] = screen.getAllByRole("button", {
       name: /^Details for/,
@@ -308,7 +243,7 @@ describe("ReadyToRunSection", () => {
         grading: { gradable: 0, not_gradable: [] },
       },
     };
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
     expect(screen.getByText(/Not checked yet/)).toBeVisible();
     expect(screen.queryByText(/ready: /i)).toBeNull();
   });
@@ -323,7 +258,7 @@ describe("ReadyToRunSection", () => {
     };
     report.rows[0].consequence = "Check again before trusting these cases";
     report.rows[0].checked_at = new Date().toISOString();
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
 
     await userEvent.click(screen.getByRole("button", { name: /^Details for/ }));
     expect(screen.getByText("Last check")).toBeVisible();
@@ -336,58 +271,10 @@ describe("ReadyToRunSection", () => {
     expect(recheck).toHaveBeenCalledWith(picks);
   });
 
-  it("shows the check in progress as soon as a re-check is sent", () => {
-    report = blockedReport("pair");
-    recheckPending = true;
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
-    expect(
-      screen.getByText(/Checking these versions · runs wait/),
-    ).toBeVisible();
-    // The lines are the last results until the check ends: no Fix on them.
-    expect(screen.queryByRole("button", { name: /^Details for/ })).toBeNull();
-  });
-
-  it("says the pair is being checked in place of its blockers, and holds Run", () => {
-    report = {
-      ...blockedReport("pair"),
-      validation: { state: "validating", error: null },
-      answer: { kind: "validating" },
-    };
-    const onView = vi.fn();
-    render(<ReadyToRunSection envId="env-1" picks={picks} onView={onView} />);
-    expect(screen.getByText(/Checking these versions together…/)).toBeVisible();
-    expect(screen.queryByText(/blocker/)).toBeNull();
-    expect(screen.queryByText(/Not checked yet/)).toBeNull();
-    expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
-    expect(onView).toHaveBeenLastCalledWith(
-      expect.objectContaining({ state: "checking", canRun: false }),
-    );
-  });
-
-  it("holds Run from the moment a re-check is sent", () => {
-    report = blockedReport("pair");
-    recheckPending = true;
-    const onView = vi.fn();
-    render(<ReadyToRunSection envId="env-1" picks={picks} onView={onView} />);
-    expect(onView).toHaveBeenLastCalledWith(
-      expect.objectContaining({ canRun: false }),
-    );
-  });
-
-  it("holds Run until the report has loaded", () => {
-    loading = true;
-    const onView = vi.fn();
-    render(<ReadyToRunSection envId="env-1" picks={picks} onView={onView} />);
-    expect(onView).toHaveBeenLastCalledWith(
-      expect.objectContaining({ canRun: false }),
-    );
-  });
-
   it("opens a fix with the server's instruction and re-checks the pair", async () => {
     report = blockedReport("pair");
-    cases.names = ["A", "B", "C", "D"];
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    cases = ["A", "B", "C", "D"];
+    render(<Section picks={picks} />);
     expect(screen.getByText("· 1 blocker to fix")).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: /^Details for/ }));
@@ -404,22 +291,20 @@ describe("ReadyToRunSection", () => {
 
   it("retries the agent version when the fix is the agent's own startup", async () => {
     report = blockedReport("agent");
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
 
     await userEvent.click(screen.getByRole("button", { name: /^Details for/ }));
     await userEvent.click(
       screen.getByRole("button", { name: "Retry the agent's start" }),
     );
-    expect(retryAgent).toHaveBeenCalledWith(
-      { versionId: "agent-v2" },
-      expect.anything(),
-    );
+    expect(retryAgent).toHaveBeenCalledWith({ versionId: "agent-v2" });
     expect(recheck).not.toHaveBeenCalled();
   });
 
-  it("takes the values the default's start check found missing, in place of Retry", async () => {
+  it("takes the values the default's start check found missing, in place of Retry, only while Fix is offered", async () => {
     report = blockedReport("agent");
     report.rows[0].fix.type = "preflight";
+    report.fix_groups = {};
     agentVersions = [
       {
         id: "agent-v2",
@@ -432,9 +317,15 @@ describe("ReadyToRunSection", () => {
         },
       },
     ];
-    render(<ReadyToRunSection envId="env-1" picks={{}} />);
+    const onOpenAgentVersions = vi.fn();
+    const { rerender } = render(
+      <Section onOpenAgentVersions={onOpenAgentVersions} />,
+    );
 
-    await userEvent.click(screen.getByRole("button", { name: /^Details for/ }));
+    await userEvent.click(details());
+    expect(
+      screen.queryByRole("button", { name: "Open agent versions" }),
+    ).toBeNull();
     expect(screen.getByLabelText("Name 1")).toHaveValue("RETELL_API_KEY");
     // Only the missing names, fixed: nothing to rename, add or drop.
     expect(screen.getByLabelText("Name 1")).toHaveAttribute("readonly");
@@ -451,11 +342,18 @@ describe("ReadyToRunSection", () => {
       { values: { RETELL_API_KEY: "secret" }, files: undefined },
       expect.anything(),
     );
+
+    report = { ...report, fix_groups: undefined };
+    rerender(<Section onOpenAgentVersions={onOpenAgentVersions} />);
+    expect(screen.queryByLabelText("Name 1")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Open agent versions" }),
+    ).toBeVisible();
   });
 
   it("shows today's flat list when the server doesn't group fixes", () => {
     report = blockedReport("pair");
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
     expect(screen.getByRole("button", { name: /^Details for/ })).toBeVisible();
     expect(screen.queryByText("Needs you")).toBeNull();
     expect(screen.queryByText("Builder chat can fix")).toBeNull();
@@ -464,7 +362,7 @@ describe("ReadyToRunSection", () => {
 
   it("groups the fixes and sends the ticked builder lines to the chat", async () => {
     report = groupedReport();
-    render(<ReadyToRunSection envId="env-1" picks={{}} />);
+    render(<Section />);
     expect(screen.getByText("Needs you")).toBeVisible();
     expect(screen.getByText("Builder chat can fix")).toBeVisible();
     expect(screen.queryByTestId("fix-chat")).toBeNull();
@@ -486,13 +384,25 @@ describe("ReadyToRunSection", () => {
       environment: { id: "e3", label: "v3" },
       suite: null,
     };
-    render(<ReadyToRunSection envId="env-1" picks={{}} />);
+    render(<Section />);
     expect(screen.getByText("Fixed in environment v3")).toBeVisible();
+  });
+
+  it("keeps sending to the chat from a role that can't edit", () => {
+    report = groupedReport();
+    canEdit = false;
+    render(<Section />);
+    expect(
+      screen.getByRole("button", { name: "Fix with builder chat" }),
+    ).toBeDisabled();
+    screen
+      .getAllByRole("checkbox")
+      .forEach((box) => expect(box).toBeDisabled());
   });
 
   it("sends nothing once every builder line is unticked", async () => {
     report = groupedReport();
-    render(<ReadyToRunSection envId="env-1" picks={{}} />);
+    render(<Section />);
     await userEvent.click(
       screen.getByRole("checkbox", {
         name: "Fix tools wired to the test world with the builder chat",
@@ -503,11 +413,10 @@ describe("ReadyToRunSection", () => {
     ).toBeDisabled();
   });
 
-  it("adds ticked lines to a running fix, despite the fix's own unsaved changes", async () => {
+  it("adds ticked lines to a running fix", async () => {
     report = groupedReport();
-    fixRun = { state: "fixing", rows: [] };
-    drafts = { any: true };
-    render(<ReadyToRunSection envId="env-1" picks={{}} />);
+    fixRun = { state: "fixing", active: true, rows: [] };
+    render(<Section />);
     expect(screen.getByRole("button", { name: "Fixing…" })).toBeDisabled();
     await userEvent.click(
       screen.getByRole("checkbox", {
@@ -534,7 +443,7 @@ describe("ReadyToRunSection", () => {
       fix: { type: "recheck", recheck: { scope: "pair", path: "/x/" } },
       fix_group: "recheck",
     });
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
     expect(screen.getAllByRole("checkbox")).toHaveLength(2);
     const [, groupButton] = screen.getAllByRole("button", { name: "Re-check" });
     await userEvent.click(groupButton);
@@ -543,28 +452,24 @@ describe("ReadyToRunSection", () => {
 
   it("drops a fix refusal once the fix run moves on", () => {
     report = groupedReport();
-    fixRun = { state: "fixing" };
-    const { rerender } = render(
-      <ReadyToRunSection envId="env-1" picks={picks} />,
-    );
+    fixRun = { state: "fixing", active: true };
+    const { rerender } = render(<Section picks={picks} />);
     resetFix.mockClear();
     fixRun = { state: "done" };
-    rerender(<ReadyToRunSection envId="env-1" picks={picks} />);
+    rerender(<Section picks={picks} />);
     expect(resetFix).toHaveBeenCalled();
   });
 
   it("points to the builder chat only while a fix runs", () => {
     report = groupedReport();
-    fixRun = { state: "fixing", rows: ["tool_routing"] };
-    const { unmount } = render(
-      <ReadyToRunSection envId="env-1" picks={picks} />,
-    );
+    fixRun = { state: "fixing", active: true, rows: ["tool_routing"] };
+    const { unmount } = render(<Section picks={picks} />);
     expect(screen.getByTestId("fix-chat-note")).toHaveTextContent(
       "Fixing: Tools wired to the test world · follow it in the builder chat",
     );
     unmount();
     fixRun = { state: "done" };
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
     expect(screen.queryByTestId("fix-chat-note")).toBeNull();
   });
 
@@ -573,7 +478,7 @@ describe("ReadyToRunSection", () => {
       "unsaved changes",
       "unsaved_changes",
       {},
-      "Save or discard the unsaved changes first, then send fixes to the chat.",
+      "Save or discard the unsaved changes first, then try again.",
     ],
     [
       "non-default picks",
@@ -583,7 +488,7 @@ describe("ReadyToRunSection", () => {
     ],
   ])("holds sending fixes with %s, and says why", (_, held, picked, why) => {
     report = groupedReport(null, held);
-    render(<ReadyToRunSection envId="env-1" picks={picked} />);
+    render(<Section picks={picked} />);
     const send = screen.getByRole("button", {
       name: "Fix with builder chat",
     });
@@ -607,7 +512,7 @@ describe("ReadyToRunSection", () => {
       reason: message ? { code: "x", message } : null,
       waiting_on: state === "waiting_on_other" ? "start" : null,
     });
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<Section picks={picks} />);
     expect(screen.getByText(text)).toBeVisible();
     if (message) expect(screen.getByText(message)).toBeVisible();
   });

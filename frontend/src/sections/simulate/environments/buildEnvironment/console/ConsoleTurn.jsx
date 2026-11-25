@@ -3,6 +3,8 @@ import { useMemo, useState } from "react";
 import { Box, Button, Stack, Typography, Collapse } from "@mui/material";
 import Iconify from "src/components/iconify";
 
+import ViewerLock from "../../components/ViewerLock";
+import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
 import { CONSOLE_COPY } from "../build.constants";
 import AskUserQuestionCard from "./AskUserQuestionCard";
 import ChatMarkdown from "./ChatMarkdown";
@@ -53,7 +55,7 @@ export function Turn({ turn }) {
 
   if (turn.role === "user") {
     return (
-      <Stack alignItems="flex-end" spacing={0.25}>
+      <Stack alignItems="flex-end" spacing={0.25} data-message-id={turn.id}>
         <Box
           sx={{
             maxWidth: "82%",
@@ -102,7 +104,11 @@ export function Turn({ turn }) {
         </Typography>
       )}
       {(turn.steps || []).map((step, i) => (
-        <div key={step.id ?? i} data-message-id={step.id ?? undefined}>
+        <div
+          key={step.id ?? i}
+          data-message-id={step.id ?? undefined}
+          data-answer-id={step.answerId}
+        >
           <Step step={step} />
         </div>
       ))}
@@ -118,14 +124,20 @@ export function Turn({ turn }) {
         >
           {/* The fix's outcome can carry the builder's own markdown. */}
           <ChatMarkdown text={turn.card.text} small />
-          <Button
-            size="small"
-            variant="contained"
-            onClick={turn.card.onAction}
-            sx={{ mt: 1 }}
+          <ViewerLock
+            locked={turn.card.locked}
+            title={WORKSPACE_COPY.viewer.run}
           >
-            {turn.card.action}
-          </Button>
+            <Button
+              size="small"
+              variant="contained"
+              disabled={turn.card.locked}
+              onClick={turn.card.onAction}
+              sx={{ mt: 1 }}
+            >
+              {turn.card.action}
+            </Button>
+          </ViewerLock>
         </Box>
       )}
     </Stack>
@@ -144,6 +156,7 @@ Turn.propTypes = {
     card: PropTypes.shape({
       text: PropTypes.string,
       action: PropTypes.string,
+      locked: PropTypes.bool,
       onAction: PropTypes.func,
     }),
   }),

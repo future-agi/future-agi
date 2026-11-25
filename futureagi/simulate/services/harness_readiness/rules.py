@@ -24,9 +24,11 @@ from simulate.services.harness_readiness.catalogue import (
 )
 from simulate.services.harness_readiness.evidence import (
     Evidence,
+    cancel_connection,
     connection,
     hidden_material,
     observed,
+    provider_label,
     readings,
 )
 from simulate.services.harness_readiness.findings import (
@@ -273,7 +275,12 @@ def rows(
             certified=evidence.source == "pair_certificate"
             and stale != "harness_version",
         )
-        row["consequence"] = consequence(row, connection(pairing.runtime))
+        where = (
+            cancel_connection(pairing.runtime)
+            if capability.id == "cancel"
+            else connection(pairing.runtime)
+        )
+        row["consequence"] = consequence(row, where, provider_label(pairing.runtime))
         rows.append(row)
     fix_groups.annotate(rows)
     return rows
@@ -530,7 +537,13 @@ _AGENT_GAP_FIXES: dict[str, tuple[str, str]] = {
         " arguments the agent sends, or test it in an environment built for them",
         "{target} takes the agent's arguments in the test world and its check passes",
     ),
+    "production_only": (
+        "Upload a new agent version that serves {target} from its tools service, or remove it",
+        "{target} runs in the test world instead of reaching production",
+    ),
 }
+# Gaps only a new agent version closes: the fix opens the agent's versions, not the tool's routing.
+_AGENT_VERSION_FIXES = frozenset({"production_only"})
 
 # World failures a sealed environment's chat cannot change: the row's step instead.
 _REBUILD_ACTIONS: dict[str, str] = {
@@ -602,12 +615,13 @@ _CONSEQUENCES: dict[str, dict[str, str]] = {
     },
     "reset": {
         "supported": "Every trial starts from the same starting point, agent included",
-        "partial": "The world resets between trials; the agent may carry its own memory",
+        "partial": "World resets: the agent may remember earlier attempts",
         "partial:isolation_not_run": "The world resets between trials, but cases run at"
         " the same time were not shown to stay apart",
         "blocked": "Trials can see each other's changes, so repeated results are not"
         " independent",
         "unavailable": "No starting records of ours to reset for this connection",
+        "unavailable:live_system": "A live system isn't assumed resettable",
     },
 }
 _SHARED_CONSEQUENCES: dict[Status, str] = {
@@ -631,6 +645,22 @@ _CANCEL_BY_CONNECTION = {
 _CANCEL_CONFIRMED = (
     "A Stop ends the agent with its test sandbox, so a stopped run spends nothing more"
 )
+_CANCEL_PROVIDER_CONFIRMED = (
+    "A Stop ends the provider's call too, so a stopped run spends nothing more"
+)
+_CANCEL_CLEANUP_FAILED = (
+    "The last stop wasn't confirmed (cleanup failed); the agent may keep running"
+)
+_CANCEL_PROVIDER = {
+    "untested": "Not measured until you stop a run; until then a stop may not end the"
+    " {provider} call",
+    "provider_call_open": "On the last stop, {provider} didn't confirm every call"
+    " ended; an open call keeps charging",
+    "provider_unchecked": "Not measured yet: we couldn't check with {provider} that"
+    " the last stop's calls ended",
+    "partial": "Stopping ends our side of the call; {provider} may keep the call open"
+    " and charge for it",
+}
 _UNMEASURED = (
     "No check measures this yet; results that depend on it are not verified either way"
 )
@@ -648,8 +678,8 @@ _OBSERVED: dict[str, dict[str, str]] = {
         " on an open stream",
         "unavailable:voice_call": "Voice cases are heard over the call; no chat stream"
         " applies",
-        "unavailable:transport_not_qualified": "This transport is not supported for"
-        " runs until it is approved for runs",
+        "unavailable:transport_not_qualified": "This connection is not supported for runs until it is"
+        " approved",
         "untested": "How this connection replies is not recorded, so where a case ends"
         " is not verified",
     },
@@ -681,7 +711,9 @@ _OBSERVED: dict[str, dict[str, str]] = {
 }
 
 
-def consequence(row: RowView, where: str | None = None) -> str:
+def consequence(
+    row: RowView, where: str | None = None, provider: str | None = None
+) -> str:
     """What ``row``'s status means for the cases, in plain words; ``where`` is the
     agent's connection, which decides where it starts and what a Stop can end."""
     if not row["measured"]:
@@ -699,8 +731,21 @@ def consequence(row: RowView, where: str | None = None) -> str:
         return "The agent runs on its own side and its start checks passed, so every case can begin"
     if row["id"] == "cancel":
         if row["status"] == "supported":
-            return _CANCEL_CONFIRMED
-        return _CANCEL_BY_CONNECTION.get(where or "", _CANCEL_BY_CONNECTION["provider"])
+            return (
+                _CANCEL_CONFIRMED if where == "sandbox" else _CANCEL_PROVIDER_CONFIRMED
+            )
+        if row["reason_code"] == "cleanup_failed":
+            return _CANCEL_CLEANUP_FAILED
+        if where is None or where == "provider":
+            key = (
+                row["reason_code"]
+                if row["reason_code"] in _CANCEL_PROVIDER
+                else "untested"
+                if row["status"] == "untested"
+                else "partial"
+            )
+            return _CANCEL_PROVIDER[key].format(provider=provider or "the provider")
+        return _CANCEL_BY_CONNECTION[where]
     own = _CONSEQUENCES.get(row["id"], {})
     status = row["status"]
     text = (
@@ -780,7 +825,9 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
         # Only a new agent or environment version changes the documents compared.
         return {
             "type": code,
-            "category": "tool_routing",
+            "category": "agent_version"
+            if code in _AGENT_VERSION_FIXES
+            else "tool_routing",
             "target": names[0] if names else None,
             "action": action.format(target=", ".join(names)),
             "would": would.format(target=", ".join(names)),

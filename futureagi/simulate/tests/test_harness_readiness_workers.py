@@ -299,7 +299,7 @@ def _placed(key, *, contract=CONTRACT, evidence=None, calls=()):
     return selection._place(
         _case(key),
         {},
-        proved=True,
+        view=None,
         voice=False,
         many=False,
         pair_validating=False,

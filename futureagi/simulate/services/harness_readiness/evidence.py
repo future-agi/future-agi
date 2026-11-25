@@ -636,11 +636,22 @@ def _reset(evidence: Evidence, runtime: HarnessAgentVersionRuntime | None) -> Re
             "The world did not return to its starting records",
             evidence=seen,
         )
+    if runtime is not None and _live_system(runtime):
+        return Reading(
+            "not_applicable",
+            "live_system",
+            "A live system isn't assumed resettable",
+            evidence=seen,
+        )
     if reset == "not_applicable" and isolation in (None, "not_applicable"):
         return Reading("not_applicable", evidence=seen)
     if reset != "passed":
         return Reading("not_run", evidence=seen)
-    if runtime is not None and not _started_in_sandbox(runtime):
+    if (
+        runtime is not None
+        and not _started_in_sandbox(runtime)
+        and not _treated_as_sandbox(runtime)
+    ):
         return Reading(
             "limited",
             "external_agent",
@@ -657,10 +668,38 @@ def _reset(evidence: Evidence, runtime: HarnessAgentVersionRuntime | None) -> Re
     return Reading("passed", evidence=seen)
 
 
+def _treated_as_sandbox(runtime: HarnessAgentVersionRuntime) -> bool:
+    from simulate.services.harness_cancel import treated_as_sandbox
+
+    return treated_as_sandbox((runtime.agent_payload or {}).get("connector"))
+
+
+def _live_system(runtime: HarnessAgentVersionRuntime) -> bool:
+    payload = runtime.agent_payload or {}
+    return payload.get("mode") == "connect_only" and payload.get("connector") in (
+        "vapi",
+        "retell",
+    )
+
+
 def _started_in_sandbox(runtime: HarnessAgentVersionRuntime) -> bool:
     from simulate.services.harness_agent_versions import _payload_source
 
     return _payload_source(runtime)["kind"] in _SANDBOX_SOURCES
+
+
+def provider_label(runtime: HarnessAgentVersionRuntime | None) -> str | None:
+    from simulate.services.harness_cancel import provider_name
+
+    if runtime is None or connection(runtime) != "provider":
+        return None
+    return provider_name((runtime.agent_payload or {}).get("connector"))
+
+
+def cancel_connection(runtime: HarnessAgentVersionRuntime | None) -> str | None:
+    if runtime is not None and _treated_as_sandbox(runtime):
+        return "sandbox"
+    return connection(runtime)
 
 
 def connection(runtime: HarnessAgentVersionRuntime | None) -> str | None:
@@ -679,6 +718,8 @@ def _cancel(pairing: Pairing) -> Reading:
     """The agent version's latest Stop of a run whose sandbox existed, as the cancel
     path recorded it. Only a sandbox the agent ran in, verified gone, confirms the
     agent stopped; an agent outside it is confirmed by its own side, not ours."""
+    from simulate.services.harness_cancel import is_unchecked
+
     if pairing.agent_version is None:
         return Reading(
             "not_run", "stop_not_observed", "No run of this agent stopped yet"
@@ -707,6 +748,17 @@ def _cancel(pairing: Pairing) -> Reading:
     seen: list[EvidenceCheck] = [
         {"check": "stop_requested", "result": stopped.isoformat()}
     ]
+    confirmed_by = attempt.job.cancel_confirmed_by
+    confirmed_at = (attempt.job.cancel_confirmed_at or stopped).isoformat()
+    if confirmed_by == HostedHarnessJob.CancelConfirmation.CLEANUP_FAILED:
+        seen.append({"check": "cleanup_failed", "result": confirmed_at})
+        return Reading(
+            "limited",
+            "cleanup_failed",
+            "The last Stop could not confirm that our test sandbox was removed",
+            evidence=seen,
+            checked_at=confirmed_at,
+        )
     if attempt.cleanup_verified_at is None:
         return Reading(
             "limited",
@@ -719,6 +771,25 @@ def _cancel(pairing: Pairing) -> Reading:
         {"check": "sandbox_absent", "result": attempt.cleanup_verified_at.isoformat()}
     )
     if connection(pairing.runtime) != "sandbox":
+        if confirmed_by == HostedHarnessJob.CancelConfirmation.PROVIDER_CALL_ENDED:
+            seen.append({"check": "provider_call_ended", "result": confirmed_at})
+            return Reading("passed", evidence=seen, checked_at=confirmed_at)
+        if confirmed_by == HostedHarnessJob.CancelConfirmation.PROVIDER_CALL_OPEN:
+            seen.append({"check": confirmed_by, "result": confirmed_at})
+            return Reading(
+                "limited",
+                confirmed_by,
+                "The last Stop ended our side; the provider did not confirm every"
+                " call ended",
+                evidence=seen,
+                checked_at=confirmed_at,
+            )
+        if is_unchecked(confirmed_by):
+            return Reading(
+                "not_run",
+                "provider_unchecked",
+                "The last Stop could not be checked with the provider",
+            )
         return Reading(
             "limited",
             "stop_unconfirmed",

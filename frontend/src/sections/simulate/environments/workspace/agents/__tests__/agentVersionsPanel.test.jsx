@@ -515,6 +515,10 @@ describe("AgentVersionsPanel", () => {
     const dialog = screen.getByRole("dialog", {
       name: "Make v6 the default agent version?",
     });
+    // A new agent may be checked with the environment before it moves.
+    expect(dialog).toHaveTextContent(
+      "If it hasn't been checked with this environment yet, it's checked first. Until the check ends, runs keep using the current default.",
+    );
     await user.click(
       within(dialog).getByRole("button", { name: "Make default" }),
     );

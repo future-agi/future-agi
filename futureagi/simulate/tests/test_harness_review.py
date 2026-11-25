@@ -1,3 +1,4 @@
+import copy
 import json
 
 import jsonpatch
@@ -59,6 +60,68 @@ def test_a_changed_tool_is_one_change_whose_patch_applies_only_to_what_was_read(
     # Another save changed the same tool underneath: the decision cannot land on content nobody saw.
     with pytest.raises(jsonpatch.JsonPatchTestFailed):
         jsonpatch.apply_patch({**TOOLS[1], "description": "Refund"}, change["patch"])
+
+
+def test_a_list_edit_that_shifts_indexes_tests_each_value_where_its_op_meets_it():
+    # An add before a replace moves the replaced value to a later index than the saved document has.
+    before = {**TOOLS[1], "examples": ["f", "a"]}
+    after = {**TOOLS[1], "examples": ["y", "f", "e"]}
+    default = _tree({"tools": [TOOLS[0], before]})
+    draft = _tree({"tools": [TOOLS[0], after]})
+
+    [change] = compute_changes(default, draft)
+
+    assert jsonpatch.apply_patch(before, change["patch"]) == after
+    assert any(op["op"] == "test" for op in change["patch"])
+    # Still refused when the scenario changed underneath.
+    with pytest.raises(jsonpatch.JsonPatchTestFailed):
+        jsonpatch.apply_patch({**before, "examples": ["f", "b"]}, change["patch"])
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # jsonpatch's diff here fails to apply: its replace lands on a string after the add shifts the list.
+        (["a", {"k": "a"}], ["b", {"k": "b"}, "a"]),
+        # Here its diff applies but builds another value than the draft's.
+        (["a", {"k": "a"}, "b", "a"], ["b", {"k": "b"}]),
+    ],
+)
+def test_a_dict_moved_and_edited_in_a_list_gives_a_patch_that_builds_the_draft(
+    was, now
+):
+    before = {**TOOLS[1], "examples": was}
+    after = {**TOOLS[1], "examples": now}
+
+    [change] = compute_changes(
+        _tree({"tools": [TOOLS[0], before]}), _tree({"tools": [TOOLS[0], after]})
+    )
+
+    assert jsonpatch.apply_patch(before, change["patch"]) == after
+    with pytest.raises(jsonpatch.JsonPatchTestFailed):
+        jsonpatch.apply_patch({**before, "examples": ["c"]}, change["patch"])
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # jsonpatch's remove raises TypeError on this diff: it must fall back, never 500.
+        ([{"k": "a"}, ["a", "b"], "a", {"k": "a"}], ["a", ["a"]]),
+        # Its diff adds the draft's own objects, and a later op edited them: the check must not compare a changed draft.
+        ([{"k": "b"}, "b", ["a"]], ["b", {"k": ["a"]}, ["a", "b"], {"k": "b"}]),
+    ],
+)
+def test_a_patch_is_checked_on_copies_and_leaves_the_draft_as_it_was(was, now):
+    before = {**TOOLS[1], "examples": was}
+    after = {**TOOLS[1], "examples": now}
+    draft = _tree({"tools": [TOOLS[0], after]})
+    seen = copy.deepcopy(after)
+
+    [change] = compute_changes(_tree({"tools": [TOOLS[0], before]}), draft)
+
+    # The draft's own value is as it was before the review read it.
+    assert after == seen
+    assert jsonpatch.apply_patch(copy.deepcopy(before), change["patch"]) == seen
 
 
 def test_reordering_items_is_not_a_change_and_an_unchanged_draft_has_none():
@@ -244,6 +307,30 @@ def test_a_scenario_summary_names_its_check_files_in_words_and_never_its_index_e
     assert [one["summary"] for one in compute_changes(default, draft)] == [
         "Change scenario ghost",
         "Change files of scenario refund",
+    ]
+
+
+def test_a_scenario_summary_names_the_scenario_by_its_name_and_by_its_key_without_one():
+    named = {"name": "Refund a late order", "tests": "refunds once"}
+    unnamed = {"tests": "looks up"}
+    default = _tree(
+        {},
+        **{
+            "scenarios/refund_late/scenario.json": named,
+            "scenarios/lookup/scenario.json": unnamed,
+        },
+    )
+    draft = _tree(
+        {},
+        **{
+            "scenarios/refund_late/scenario.json": {**named, "tests": "refunds twice"},
+            "scenarios/lookup/scenario.json": {**unnamed, "tests": "looks up twice"},
+        },
+    )
+
+    assert sorted(one["summary"] for one in compute_changes(default, draft)) == [
+        "Change tests of scenario Refund a late order",
+        "Change tests of scenario lookup",
     ]
 
 
@@ -1210,6 +1297,82 @@ def test_the_older_scenario_folder_is_read_only_when_the_suite_has_no_scenarios_
     assert [key for key in item_index(files) if key.startswith("scenario:")] == [
         "scenario:s1"
     ]
+
+
+def test_a_file_import_cites_file_and_row():
+    from simulate.services.harness_versioning.review_saved import record_sources
+
+    default = _tree({"tools": TOOLS})
+    edited = _tree(
+        {"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]}
+    )
+    [source] = record_sources(
+        None,
+        default,
+        edited,
+        origin="import",
+        user=None,
+        revision=2,
+        at="t",
+        used_files=[
+            {"file_id": "knowledge/orders.csv", "row": 7},
+            {"file_id": "f-2", "row": None, "name": "Refund policy.pdf"},
+            {"file_id": "", "row": 3},
+            {"file_id": "C:\\data\\refunds.csv", "row": 1},
+            {"file_id": "s3://b/rates.csv?v=2#top", "row": 2},
+            {"file_id": "/", "row": 5},
+        ],
+    )["tool:issue_refund"]
+    # Each file carries the name a person reads: given, or the last part of its path in the environment.
+    assert source["used"] == [
+        {"kind": "file", "id": "knowledge/orders.csv", "row": 7, "name": "orders.csv"},
+        {"kind": "file", "id": "f-2", "row": None, "name": "Refund policy.pdf"},
+        {
+            "kind": "file",
+            "id": "C:\\data\\refunds.csv",
+            "row": 1,
+            "name": "refunds.csv",
+        },
+        {
+            "kind": "file",
+            "id": "s3://b/rates.csv?v=2#top",
+            "row": 2,
+            "name": "rates.csv",
+        },
+        {"kind": "file", "id": "/", "row": 5, "name": "/"},
+    ]
+
+
+def test_a_retry_adds_no_second_file_source():
+    from simulate.services.harness_versioning.review_saved import record_sources
+
+    default = _tree({"tools": TOOLS})
+    edited = _tree(
+        {"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]}
+    )
+    files = [{"file_id": "f-1", "row": 7}]
+    first = record_sources(
+        None,
+        default,
+        edited,
+        origin="import",
+        user=None,
+        revision=2,
+        at="t1",
+        used_files=files,
+    )
+    again = record_sources(
+        first,
+        default,
+        edited,
+        origin="import",
+        user=None,
+        revision=2,
+        at="t2",
+        used_files=files,
+    )
+    assert again == first
+    assert len(again["tool:issue_refund"]) == 1
 
 
 def test_stored_review_records_are_read_into_their_shapes_and_bad_entries_left_out():

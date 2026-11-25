@@ -15,6 +15,7 @@ from simulate.models import (
 from simulate.models.test_execution import CallExecution
 from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.tests import test_harness_versioning_record as record_tests
+from simulate.tests.harness_validation import prove_pair
 from simulate.tests.test_harness_amend_archive import NAMES, _key
 from simulate.tests.test_harness_versioning_backfill import (
     storage as storage,  # noqa: F401 - fixture
@@ -117,6 +118,8 @@ def test_a_test_condition_set_in_the_editor_runs_with_its_seed_shows_in_world_ch
         suite_version=environment.suite_version, scenario_key=_key(NAMES[0])
     )
     assert member.content["faults"] == [FAULT]
+    # The saved pair proved, as its validation leaves it before a run takes its cases.
+    prove_pair(environment)
 
     # 2. Run it with seed 42: the run keeps the seed and hands the guest the scenario's condition.
     run = _post_run(
