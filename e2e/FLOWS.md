@@ -3785,3 +3785,30 @@
 - the environment opens on its workspace with its name
 - Run simulation is disabled and its tooltip says "You don't have permission to start runs."
 - Rename environment is disabled
+
+### SIM-E2E-038 — a person reviews a read design, removes a tool and approves exactly what is on screen
+
+**Goal:** A developer reviews the design read from their agent, takes out a tool the test world should not have, and approves the design they see so the build starts from it
+
+**Spec:** `flows/simulate/design-review-approve.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed an environment whose read design waits for approval (e2e/lib/design-review-seed.ts)
+2. open the environment
+3. remove the notify tool from the design
+4. read the design again (GET harness-environments/<id>/design-review/)
+5. approve and build
+
+**Backend state verified:**
+
+- the review is approved with one edit that removes notify
+- the approved design is stored on the environment, apart from the copy the review opened with
+- the design read back after approval marks notify removed and is approved
+
+**Browser observations:**
+
+- notify leaves the design and the page says it was removed
+- approve sends the revision the page shows
