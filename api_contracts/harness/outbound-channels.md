@@ -326,7 +326,7 @@ use chunked transfer.
 
 `kind` vocabulary (closed): `recording_combined`, `recording_stereo`,
 `recording_customer`, `recording_assistant`, `transcript`, `tool_trace`,
-`result`, `build`, `trace`, `log`, `other`. (Local sealer mapping:
+`screenshot`, `result`, `build`, `trace`, `log`, `other`. (Local sealer mapping:
 `agent-tool-calls.jsonl` → `tool_trace`; `result.json` → `result`.)
 
 **Formats:** recordings mp4 (AAC-LC, ≥16 kHz; stereo = customer left,
@@ -354,9 +354,9 @@ level off the job record):
 
 | level | must upload | must not upload |
 |---|---|---|
-| `metadata-only` | `build`, `result`, `log` | recordings, `trace`, `tool_trace`, `transcript` |
-| `traces` | + `trace`, `tool_trace`, `transcript` | recordings |
-| `traces-and-recordings` | + recordings | — |
+| `metadata-only` | `build`, `result`, `log` | recordings, `screenshot`, `trace`, `tool_trace`, `transcript` |
+| `traces` | + `trace`, `tool_trace`, `transcript` | recordings, `screenshot` |
+| `traces-and-recordings` | + recordings, `screenshot` | — |
 | `full` | same as traces-and-recordings, plus `other` is admitted | — |
 | `local-only` | rejected at hosted admission (`local_only_not_hosted`) | |
 

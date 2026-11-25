@@ -110,6 +110,8 @@ _ARTIFACT_KINDS = {
     "tool_trace",
     # The world's records at a trial's end with its action log, kept so a fixed check can grade it again.
     "world_state",
+    # A picture of the browser's page in a trial. Kept where recordings are kept, since it can show what was on the screen.
+    "screenshot",
     "result",
     "build",
     "trace",
