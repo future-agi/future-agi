@@ -37,7 +37,10 @@ export const useFalconSocket = () => {
   const connectRef = useRef(null);
   const contextTokenRef = useRef(null);
   const authFailuresRef = useRef(0);
-  const refreshingRef = useRef(false);
+  // Each socket gets an id; a token refresh only acts for the socket whose
+  // rejection started it, and only while no newer socket has been opened.
+  const socketIdRef = useRef(0);
+  const refreshingRef = useRef(null);
 
   const {
     appendTextDelta,
@@ -60,10 +63,10 @@ export const useFalconSocket = () => {
   // After the server rejects a token, make sure the next attempt carries a
   // current one before reconnecting.
   const refreshTokenThenReconnect = useCallback(
-    async (rejectedToken) => {
-      if (refreshingRef.current) return;
+    async (rejectedToken, socketId) => {
+      if (refreshingRef.current === socketId) return;
 
-      refreshingRef.current = true;
+      refreshingRef.current = socketId;
       let canRetry;
       try {
         canRetry = await refreshRejectedSocketToken(
@@ -71,8 +74,13 @@ export const useFalconSocket = () => {
           contextTokenRef.current,
         );
       } finally {
-        refreshingRef.current = false;
+        if (refreshingRef.current === socketId) refreshingRef.current = null;
       }
+
+      // A newer socket was opened while refreshing (for example after a
+      // workspace switch); its own close decides whether to reconnect.
+      if (socketIdRef.current !== socketId) return;
+
       if (!canRetry) {
         // Nothing to refresh with; a new sign-in brings a new token.
         authFailuresRef.current = MAX_AUTH_FAILURES;
@@ -120,6 +128,8 @@ export const useFalconSocket = () => {
     const url = `${protocol}://${wsHost}/ws/falcon-ai/?${wsParams.toString()}`;
 
     const ws = new WebSocket(url);
+    socketIdRef.current += 1;
+    const socketId = socketIdRef.current;
     socketRef.current = ws;
 
     ws.onopen = () => {
@@ -344,7 +354,7 @@ export const useFalconSocket = () => {
       if (event.code === AUTH_REJECTED_CLOSE_CODE) {
         authFailuresRef.current += 1;
         if (authFailuresRef.current >= MAX_AUTH_FAILURES) return;
-        refreshTokenThenReconnect(token);
+        refreshTokenThenReconnect(token, socketId);
         return;
       }
 

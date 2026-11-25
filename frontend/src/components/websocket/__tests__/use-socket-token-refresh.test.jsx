@@ -328,4 +328,49 @@ describe("WebSocketProvider token handling", () => {
 
     expect(sockets()).toHaveLength(1);
   });
+
+  it("does not let a stale token refresh reconnect after a newer socket closed", async () => {
+    signIn("token-1");
+    localStorage.setItem("accessToken", "token-1");
+    let finishRefresh;
+    mocks.get.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishRefresh = () => {
+            localStorage.setItem("accessToken", "token-2");
+            resolve({ data: {} });
+          };
+        }),
+    );
+
+    renderProvider();
+    const first = lastSocket();
+    // An error schedules a retry, then the server rejects the token, so a
+    // refresh is in flight while that retry is still pending.
+    await act(async () => {
+      first.readyState = FakeWebSocket.CLOSED;
+      first.emit("error");
+      first.emit("close", { code: 4003 });
+    });
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+
+    // The pending retry opens a replacement socket, which closes with 1006
+    // (no reconnect).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(sockets()).toHaveLength(2);
+    await act(async () => {
+      lastSocket().readyState = FakeWebSocket.CLOSED;
+      lastSocket().emit("close", { code: 1006 });
+    });
+
+    // The first socket's refresh finishes afterwards and must not reconnect.
+    await act(async () => {
+      finishRefresh();
+      await vi.advanceTimersByTimeAsync(120000);
+    });
+
+    expect(sockets()).toHaveLength(2);
+  });
 });

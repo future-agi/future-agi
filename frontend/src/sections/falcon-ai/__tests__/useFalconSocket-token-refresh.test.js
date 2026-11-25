@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   auth: { user: null },
+  workspaceId: "ws-1",
   get: vi.fn(),
 }));
 
@@ -11,7 +12,7 @@ vi.mock("src/auth/hooks", () => ({
 }));
 
 vi.mock("src/contexts/WorkspaceContext", () => ({
-  useWorkspace: () => ({ currentWorkspaceId: "ws-1" }),
+  useWorkspace: () => ({ currentWorkspaceId: mocks.workspaceId }),
 }));
 
 vi.mock("src/config-global", () => ({
@@ -115,6 +116,7 @@ describe("useFalconSocket token handling", () => {
     globalThis.WebSocket = FakeWebSocket;
     FakeWebSocket.instances = [];
     mocks.get.mockReset();
+    mocks.workspaceId = "ws-1";
     useFalconStore.getState().resetAll();
     localStorage.clear();
     localStorage.setItem("rememberMe", "true");
@@ -302,5 +304,45 @@ describe("useFalconSocket token handling", () => {
     });
 
     expect(sockets()).toHaveLength(1);
+  });
+
+  it("does not let a stale token refresh reconnect after a newer socket's auth close", async () => {
+    signIn("token-1");
+    localStorage.setItem("accessToken", "token-1");
+    let finishRefresh;
+    mocks.get.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishRefresh = () => {
+            localStorage.setItem("accessToken", "token-2");
+            resolve({ data: {} });
+          };
+        }),
+    );
+
+    const view = renderHook(() => useFalconSocket());
+    await act(async () => {
+      lastSocket().acceptThenReject();
+    });
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+
+    // The workspace changes while the refresh is in flight, so the hook
+    // opens a replacement socket, which the server then closes for good.
+    mocks.workspaceId = "ws-2";
+    view.rerender();
+    expect(sockets()).toHaveLength(2);
+    expect(lastSocket().url).toContain("workspace_id=ws-2");
+    await act(async () => {
+      lastSocket().open();
+      lastSocket().closeWith(4001);
+    });
+
+    // The first socket's refresh finishes afterwards and must not reconnect.
+    await act(async () => {
+      finishRefresh();
+      await vi.advanceTimersByTimeAsync(120000);
+    });
+
+    expect(sockets()).toHaveLength(2);
   });
 });
