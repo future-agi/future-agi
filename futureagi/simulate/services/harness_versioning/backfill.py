@@ -16,7 +16,6 @@ import time
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
-from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -48,7 +47,9 @@ from simulate.services.harness_versioning.versions import (
     _land,
     _outgoing_pair,
     _remember_pair,
+    folder_name,
     note_revision,
+    placed_scenarios,
     prepare_pieces,
     recorded_revisions,
 )
@@ -218,65 +219,23 @@ def split_archive(job: Any, body: bytes) -> _Archive:
     )
 
 
-def _json_document(body: bytes | None) -> Any:
-    if not body:
-        return None
-    try:
-        return json.loads(body)
-    except ValueError:
-        return None
-
-
 def _archive_scenarios(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
     """Each scenario in the archive, keyed.
 
-    The index entry is merged with its folder's ``scenario.json``; the folder document wins,
-    because that is what a run replays. An entry finds its folder by folder, key or name,
-    and takes its key from the folder when it has none.
+    Each scenario is placed in its folder as a Save places it (``placed_scenarios``),
+    so both record the same ``folder``. The index entry is merged with its folder's
+    ``scenario.json``; the folder document wins, because that is what a run replays,
+    apart from ``folder``, which is the one the scenario was placed in. An entry takes
+    its key from the folder when it has none.
     """
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
-    documents: dict[str, dict[str, Any]] = {}
-    for path in sorted(suite):
-        parts = path.split("/")
-        if len(parts) == 3 and parts[2] == "scenario.json":
-            document = _json_document(suite[path])
-            if isinstance(document, dict):
-                documents.setdefault(parts[1], document)
-    by_token: dict[str, str] = {}
-    for folder in documents:
-        by_token.setdefault(_scenario_token(folder), folder)
-    by_name: dict[str, str] = {}
-    for folder, document in documents.items():
-        if token := _scenario_token(document.get("name")):
-            by_name.setdefault(token, folder)
-    index = _json_document(suite.get("scenarios.json"))
-    entries = (
-        [one for one in index if isinstance(one, dict)]
-        if isinstance(index, list)
-        else [{"folder": f"scenarios/{folder}"} for folder in documents]
-    )
     scenarios = []
-    for entry in entries:
-        named = PurePosixPath(str(entry.get("folder") or "").strip()).name
-        folder = next(
-            (
-                found
-                for found in (
-                    named if named in documents else None,
-                    by_token.get(_scenario_token(entry.get("folder"))),
-                    by_token.get(_scenario_token(entry.get("scenario_key"))),
-                    by_name.get(_scenario_token(entry.get("name"))),
-                )
-                if found
-            ),
-            "",
+    for one in placed_scenarios(suite):
+        document = {**one.record, **(one.document or {})}
+        if one.folder:
+            document["folder"] = one.record["folder"]
+        document["scenario_key"] = str(
+            document.get("scenario_key") or one.folder or ""
         )
-        document = {**entry, **documents.get(folder, {})}
-        if folder and PurePosixPath(str(document.get("folder") or "")).name != folder:
-            # The folder it was read from, never another one its document names.
-            document["folder"] = f"scenarios/{folder}"
-        document["scenario_key"] = str(document.get("scenario_key") or folder or "")
         scenarios.append(document)
     return scenarios
 
@@ -367,10 +326,6 @@ def _live_rows(models: Models, job: Any) -> list[Any]:
     )
 
 
-def _folder_name(value: object) -> str:
-    return PurePosixPath(str(value or "").strip()).name
-
-
 def match_members(rows: list[Any], scenarios: list[dict[str, Any]]) -> MemberMatch:
     """Rows matched to archive scenarios: by physical folder first, then every key
     match, then names; each row once.
@@ -386,7 +341,7 @@ def match_members(rows: list[Any], scenarios: list[dict[str, Any]]) -> MemberMat
     by_folder: dict[str, Any] = {}
     shared: set[str] = set()
     for row in rows:
-        if folder := _folder_name(getattr(row, "folder", "")):
+        if folder := folder_name(getattr(row, "folder", "")):
             if folder in by_folder:
                 shared.add(folder)
             by_folder.setdefault(folder, row)
@@ -405,7 +360,7 @@ def match_members(rows: list[Any], scenarios: list[dict[str, Any]]) -> MemberMat
     used: set[Any] = set()
     paired: dict[int, tuple[Any, dict[str, Any], int]] = {}
     for position, document in enumerate(scenarios, start=1):
-        row = by_folder.get(_folder_name(document.get("folder")))
+        row = by_folder.get(folder_name(document.get("folder")))
         if row is not None and row.id not in used:
             used.add(row.id)
             paired[position] = (row, document, position)

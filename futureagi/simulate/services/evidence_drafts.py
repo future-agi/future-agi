@@ -34,7 +34,10 @@ from simulate.models.harness_versioning import HashKind
 from simulate.selectors.evidence_import import source_noun
 from simulate.services.harness_usage import require_harness_authoring
 from simulate.services.harness_versioning import archives, drafts
-from simulate.services.harness_versioning.versions import suite_documents
+from simulate.services.harness_versioning.versions import (
+    folder_name,
+    suite_documents,
+)
 from simulate.services.hosted_harness import HostedHarnessError
 from tracer.utils.pii_scrubber import find_pii, find_pii_basic, redact
 
@@ -406,11 +409,12 @@ def _additions(
 
 
 def _identity(document: dict) -> str:
-    """A scenario's identity in a suite: the folder it was read from, else its key,
+    """A scenario's identity in a suite: the folder it was read from, spelled as it
+    is, so two folders that differ only in case or separator stay two; else its key,
     else its name."""
-    return _token(
-        document.get("folder") or document.get("scenario_key") or document.get("name")
-    )
+    if folder := folder_name(document.get("folder")):
+        return f"scenarios/{folder}"
+    return _token(document.get("scenario_key") or document.get("name"))
 
 
 def record_start(

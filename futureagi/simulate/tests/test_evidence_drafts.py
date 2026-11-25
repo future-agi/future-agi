@@ -463,6 +463,17 @@ def test_a_suite_read_from_its_folders_keeps_each_folder_apart_from_its_key():
     ]
 
 
+def test_folders_differing_only_in_spelling_are_two_scenarios_at_the_start():
+    """The start counts ``refund-a`` and ``refund_a`` as two scenarios, so a turn that
+    replaces one never reads as having added nothing."""
+    identity = evidence_drafts._identity
+
+    assert identity({"folder": "scenarios/refund-a"}) != identity(
+        {"folder": "scenarios/refund_a"}
+    )
+    assert identity({"folder": "refund_a"}) == identity({"folder": "scenarios/refund_a"})
+
+
 def test_a_case_takes_the_folder_named_for_it_never_a_copy_carrying_its_key(
     environment, cases, storage
 ):
