@@ -17,8 +17,10 @@ export const REAL_CLOCK: BoundaryClock = {
 
 /**
  * Latest acceptable dispatch of the first post-expiry probe, measured from the
- * stored instant to the moment the request is handed to the client. Measured on
- * both E2E stack topologies; see the flow's PR for the observed offsets.
+ * stored instant to the moment the request is handed to the client. Over ten
+ * runs across the distributed and standalone stacks this wait dispatched 2-50 ms
+ * after the target (the previous clock poll: 121-609 ms), so 1 s leaves room for
+ * runner jitter while still failing a wake that has slept through the boundary.
  */
 export const DISPATCH_LIMIT_MS = 1000;
 
