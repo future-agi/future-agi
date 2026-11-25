@@ -27,6 +27,7 @@ const CompareDataRightSection = ({
   setColumns,
   selectedColumns,
   onComparisonExpired,
+  emptyCompareId,
   hideScenarioFeatures = false,
 }) => {
   const [columnPopoverOpen, setColumnPopoverOpen] = useState(false);
@@ -64,16 +65,31 @@ const CompareDataRightSection = ({
     setColumnPopoverOpen(false);
   };
 
+  const [recovery, setRecovery] = useState(null);
   const { mutate: handleDownloadCompareDataset, isPending: isDownloading } =
     useDownloadCompare({
       compareId,
       selectedDatasetsValues,
       baseColumn,
-      onComparisonExpired,
+      onComparisonExpired: () => {
+        setRecovery({
+          id: compareId.current,
+          baseColumn,
+          selectedDatasetsValues,
+        });
+        onComparisonExpired?.();
+      },
     });
-  // Empty joins still need download's typed-expiration recovery. Neither rows,
-  // columns nor a cached comparison ID determines whether a download is valid.
-  const canDownload = Boolean(baseColumn) && selectedDatasetsValues.length > 1;
+  // Empty snapshots have no stored CSV. Allow normal expiry recovery once;
+  // if the fresh response also has zero rows, another attempt cannot succeed.
+  const confirmedEmpty =
+    Boolean(emptyCompareId) &&
+    emptyCompareId === compareId?.current &&
+    recovery?.baseColumn === baseColumn &&
+    recovery?.selectedDatasetsValues === selectedDatasetsValues &&
+    recovery?.id !== emptyCompareId;
+  const canDownload =
+    Boolean(baseColumn) && selectedDatasetsValues.length > 1 && !confirmedEmpty;
 
   const handleColumnSelect = (column, parentId) => {
     let copy = [...selectedColumns];
@@ -250,6 +266,7 @@ const CompareDataRightSection = ({
         onClick={() => handleDownloadCompareDataset()}
         disabled={!canDownload || isDownloading}
         aria-label="Download comparison CSV"
+        title={confirmedEmpty ? "No rows to download" : undefined}
         aria-busy={isDownloading}
       >
         {isDownloading ? (
@@ -286,6 +303,7 @@ CompareDataRightSection.propTypes = {
   columns: PropTypes.arrayOf(PropTypes.object),
   compareId: PropTypes.any,
   onComparisonExpired: PropTypes.func,
+  emptyCompareId: PropTypes.string,
   hideScenarioFeatures: PropTypes.bool,
   setColumns: PropTypes.func,
   selectedColumns: PropTypes.array,

@@ -476,6 +476,31 @@ describe("DevelopDetailView comparison toolbar", () => {
     });
   });
 
+  it("stops offering CSV when a fresh rebuild confirms an empty download", async () => {
+    const user = userEvent.setup();
+    mocks.post.mockResolvedValueOnce(tableResponse({ empty: true }));
+    renderView();
+    await loadPage();
+    mocks.post.mockRejectedValueOnce({
+      statusCode: 404,
+      code: "compare_not_found",
+    });
+    grid.api.refreshServerSide.mockClear();
+    await user.click(downloadButton());
+    await waitFor(() =>
+      expect(grid.api.refreshServerSide).toHaveBeenCalledWith({ purge: true }),
+    );
+    mocks.post.mockResolvedValueOnce(
+      tableResponse({ empty: true, compareId: NEW_COMPARE_ID }),
+    );
+    await loadPage();
+    expect(downloadButton()).toBeDisabled();
+    expect(downloadButton()).toHaveAttribute("title", "No rows to download");
+    act(() => mocks.selectorProps.setBaseColumnInParent("other"));
+    await loadPage();
+    expect(downloadButton()).toBeEnabled();
+  });
+
   it.each([
     { baseColumn: "" },
     { selectedDatasets: [] },

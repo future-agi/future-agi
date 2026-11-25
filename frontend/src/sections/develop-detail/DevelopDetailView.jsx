@@ -123,6 +123,7 @@ const DevelopDetailView = () => {
   const { refreshGrid } = useDevelopDetailContext();
 
   const compareId = useRef(null);
+  const [emptyCompareId, setEmptyCompareId] = useState(null);
   const { mutate: deleteCompare } = useDeleteCompare();
 
   const shouldHideDevelopBar = pathname.includes("/preview/");
@@ -303,6 +304,7 @@ const DevelopDetailView = () => {
         <CompareDataRightSection
           hideScenarioFeatures={hideScenarioFeatures}
           compareId={compareId}
+          emptyCompareId={emptyCompareId}
           refreshGrid={refreshGrid}
           onComparisonExpired={() => {
             // Build a fresh comparison for the same selection.
@@ -429,6 +431,7 @@ const DevelopDetailView = () => {
               setDatasetInfo={setDatasetInfo}
               selectedColumns={selectedColumns}
               setCompareColumnDefs={setCompareColumnDefs}
+              onEmptyComparison={setEmptyCompareId}
               columns={columns}
             />
           </ShowComponent>

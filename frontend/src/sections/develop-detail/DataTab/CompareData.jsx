@@ -56,6 +56,7 @@ const CompareData = ({
   columns,
   selectedColumns,
   setCompareColumnDefs,
+  onEmptyComparison,
   compareId,
 }) => {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.dataGridPadded);
@@ -454,6 +455,7 @@ const CompareData = ({
                 ? [{ headerName: baseColumn, colId: "compare-join-key", sortable: true }]
                 : [],
             };
+            onEmptyComparison?.(responseCompareId);
             setHasData(false);
             if (requestCompareId || request.startRow > 0) {
               // A later block's success([], 0) alone cannot retire all old SSRM
@@ -713,6 +715,7 @@ const CompareData = ({
       clearComparisonRows,
       setColumns,
       setCompareColumnDefs,
+      onEmptyComparison,
       showSummary?.vals,
     ],
   );
@@ -907,6 +910,7 @@ CompareData.propTypes = {
   baseColumn: PropTypes.string,
   selectedDatasetsValues: PropTypes.array,
   setCompareColumnDefs: PropTypes.func,
+  onEmptyComparison: PropTypes.func,
   diffMode: PropTypes.bool,
   compareId: PropTypes.any,
 };
