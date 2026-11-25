@@ -1,8 +1,9 @@
 import structlog
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import ModelChoices
 from tfc.constants.api_calls import APICallTypeChoices
+
+logger = structlog.get_logger(__name__)
 
 model_to_api_call_type = {
     ModelChoices.TURING_LARGE: APICallTypeChoices.TURING_LARGE_EVALUATOR.value,
@@ -19,17 +20,17 @@ def _get_api_call_type(model: str, template=None, runtime_config=None):
     Pass the eval template (and the run's config) when the caller's model may
     be empty, so a saved Jev template is still logged as a Jev run.
     """
-    from tfc.ee_gates import is_jev_model
+    from evaluations.decision_models import uses_jev_billing
 
     try:
         if template is not None:
             from model_hub.utils.jev_templates import binding_model
 
-            if is_jev_model(
+            if uses_jev_billing(
                 binding_model(template, model=model, runtime_config=runtime_config)
             ):
                 return APICallTypeChoices.JEV_EVALUATOR.value
-        if is_jev_model(model):
+        if uses_jev_billing(model):
             return APICallTypeChoices.JEV_EVALUATOR.value
         if not model:
             return APICallTypeChoices.TURING_LARGE_EVALUATOR.value
@@ -60,15 +61,11 @@ def _get_billing_event_type(api_call_type: str, *models, evaluator=None) -> str:
     knew the model ran Jev passes the legacy type it used; the models and the
     evaluator that actually ran decide.
     """
-    from tfc.ee_gates import is_jev_model
+    from evaluations.decision_models import uses_jev_billing
 
-    is_jev = any(is_jev_model(model) for model in models)
+    is_jev = any(uses_jev_billing(model) for model in models)
     if not is_jev and evaluator is not None:
-        try:
-            from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator
-        except ImportError:
-            JevEvaluator = None
-        is_jev = JevEvaluator is not None and isinstance(evaluator, JevEvaluator)
+        is_jev = _is_jev_evaluator(evaluator)
     if not is_jev:
         return api_call_type
     from ee.usage.schemas.event_types import BillingEventType
@@ -83,7 +80,17 @@ def _is_jev_evaluator(evaluator) -> bool:
         from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator
     except ImportError:
         return False
-    return isinstance(evaluator, JevEvaluator)
+    from evaluations.decision_models import uses_jev_billing
+
+    if isinstance(evaluator, JevEvaluator):
+        return True
+    try:
+        from ee.decisions.evaluator import DecisionEvaluator
+    except ImportError:
+        return False
+    return isinstance(evaluator, DecisionEvaluator) and uses_jev_billing(
+        evaluator._model
+    )
 
 
 def _emit_jev_usage(evaluator, *, org_id: str, run_id: str) -> bool:
@@ -91,11 +98,16 @@ def _emit_jev_usage(evaluator, *, org_id: str, run_id: str) -> bool:
     ee.jev.metering events at the flat per-run eval fee, with ids stable per
     run attempt. Emits nothing and returns False for any other evaluator, which
     the caller bills as before."""
+    return _emit_jev_usage_billed(evaluator, org_id=org_id, run_id=run_id) is not None
+
+
+def _emit_jev_usage_billed(evaluator, *, org_id: str, run_id: str):
+    """``_emit_jev_usage``, returning the credits it billed, or None for an evaluator
+    that is not Jev's."""
     if not _is_jev_evaluator(evaluator):
-        return False
+        return None
     try:
         from ee.jev.metering import emit_usage_events
     except ImportError:
-        return False
-    emit_usage_events(evaluator, org_id=org_id, cell_or_run_id=run_id)
-    return True
+        return None
+    return emit_usage_events(evaluator, org_id=org_id, cell_or_run_id=run_id)

@@ -1,5 +1,7 @@
-import { test as base, expect, request as pwRequest } from '@playwright/test';
+import { request as pwRequest } from '@playwright/test';
+import { test as base, expect } from './backend-request';
 import type { APIRequestContext, Browser, BrowserContext } from '@playwright/test';
+import { firstHopOptions } from './backend-transport';
 import { ApiClient, Tokens } from './api-client';
 import { authInitScript } from './auth';
 import { E2E } from './env';
@@ -44,9 +46,10 @@ export class ScopeActors {
     }
   }
 
-  headers(actor: ScopeActor): Record<string, string> {
-    return { Authorization: `Bearer ${actor.tokens.access}`,
-      'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId };
+  headers(actor?: ScopeActor): Record<string, string> {
+    const headers: Record<string, string> = actor ? { Authorization: `Bearer ${actor.tokens.access}`,
+      'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId } : {};
+    return firstHopOptions(E2E.apiUrl, E2E.apiUrl, { headers }).headers;
   }
 
   withWorkspace(actor: ScopeActor, workspaceId: string): ScopeActor {
@@ -65,7 +68,7 @@ export class ScopeActors {
     actor?: ScopeActor, params?: Record<string, string | number>): Promise<ScopeResponse<T>> {
     if (!path.startsWith('/') || path.startsWith('//')) throw new Error('H1 needs a relative public API path');
     const response = await req.fetch(`${E2E.apiUrl}${path}`, {
-      method, data, params, headers: actor ? this.headers(actor) : {}, maxRedirects: 0,
+      method, data, params, headers: this.headers(actor), maxRedirects: 0,
     });
     this.receipts.push({ method, path: path.replace(/accept-invitation\/.+/, 'accept-invitation/<redacted>/'),
       status: response.status(), organizationId: actor?.organizationId ?? null,
@@ -154,6 +157,11 @@ export class ScopeActors {
     this.emptyWorkspace = created.body.result.workspace;
     this.member = await this.invite('member', 3, [this.ownerA.workspaceId, this.emptyWorkspace.id]);
     this.viewer = await this.invite('viewer', 1, [this.ownerA.workspaceId]);
+  }
+
+  /** Additional non-admin members in owner A's default workspace. */
+  async inviteMember(label: string): Promise<ScopeActor> {
+    return this.invite(label, 3, [this.ownerA.workspaceId]);
   }
 
   async openContext(browser: Browser, actor: ScopeActor): Promise<BrowserContext> {

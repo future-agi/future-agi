@@ -108,6 +108,29 @@ def validate_jev_mapping(template_like, *, output, choice_scores, multi_choice, 
         question_type = "choice"
     if not question_type or raw.get("question_type", question_type) != question_type:
         _reject("JEV_MAPPING_INVALID", "jev_mapping.question_type")
+    from evaluations.decision_models import get_decision_model
+
+    decision = get_decision_model(config.get("model"))
+    if decision and decision.unavailable_reason:
+        _reject("DECISION_MODEL_UNAVAILABLE", "model", decision.unavailable_reason)
+    if decision and question_type not in decision.question_types:
+        _reject(
+            "DECISION_OUTPUT_UNSUPPORTED",
+            "output",
+            "The selected decision model does not support this output type.",
+        )
+    choice_count = len(choice_scores) if isinstance(choice_scores, dict) else 0
+    if (
+        decision
+        and question_type == "choice"
+        and (decision.min_choices, decision.max_choices) != (1, 255)
+        and not decision.min_choices <= choice_count <= decision.max_choices
+    ):
+        _reject(
+            "DECISION_CHOICES_UNSUPPORTED",
+            "choice_scores",
+            f"The selected decision model requires {decision.min_choices} to {decision.max_choices} choices.",
+        )
     for name, keys in [
         ("pass", {"criteria_true", "criteria_false", "threshold_source"}),
         ("choice", {"labels", "descriptions"}),

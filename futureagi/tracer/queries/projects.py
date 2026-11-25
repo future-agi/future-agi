@@ -39,15 +39,17 @@ def _tag_substring_filter(
     pattern = f"%{esc}%"
     table = Project._meta.db_table
     cond = RawSQL(
-        f'EXISTS (SELECT 1 FROM jsonb_array_elements_text('
-        f'CASE WHEN jsonb_typeof("{table}".tags) = \'array\' '
-        f'THEN "{table}".tags ELSE \'[]\'::jsonb END) AS _tag WHERE _tag ILIKE %s)',
+        f"EXISTS (SELECT 1 FROM jsonb_array_elements_text("
+        f"CASE WHEN jsonb_typeof(\"{table}\".tags) = 'array' "
+        f"THEN \"{table}\".tags ELSE '[]'::jsonb END) AS _tag WHERE _tag ILIKE %s)",
         (pattern,),
         output_field=BooleanField(),
     )
     queryset = queryset.annotate(**{alias: cond})
     return (
-        queryset.exclude(**{alias: True}) if negate else queryset.filter(**{alias: True})
+        queryset.exclude(**{alias: True})
+        if negate
+        else queryset.filter(**{alias: True})
     )
 
 

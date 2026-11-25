@@ -154,7 +154,7 @@ const KeyValueRow = ({ label, value }) => {
         ) : (
           <Typography
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               lineHeight: 1.5,
               color: value == null ? "text.disabled" : "text.primary",
               whiteSpace: "pre-wrap",
@@ -359,7 +359,7 @@ const ScenarioView = ({ data }) => {
           </Stack>
           <Typography
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               lineHeight: 1.55,
               color: "text.primary",
               whiteSpace: "pre-wrap",

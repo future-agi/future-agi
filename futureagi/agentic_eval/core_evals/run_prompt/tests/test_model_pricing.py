@@ -124,6 +124,23 @@ class TestTokenBasedPricing:
         assert result["total_cost"] == 0.000585
         assert result["pricing_source"] == "available_models"
 
+    @pytest.mark.requires_ee
+    def test_calculate_cost_prices_cached_vertex_gemini_37_flash_input_separately(self):
+        # The Vertex name carries the same cache-read rate as the Gemini API name,
+        # so cached input is not charged at the full input rate.
+        result = calculate_total_cost(
+            "vertex_ai/gemini-3.7-flash",
+            {
+                "prompt_tokens": 1000,
+                "cached_input_tokens": 800,
+                "completion_tokens": 100,
+            },
+        )
+
+        assert result["prompt_cost"] == 0.00021
+        assert result["completion_cost"] == 0.000375
+        assert result["total_cost"] == 0.000585
+        assert result["pricing_source"] == "available_models"
 
     def test_calculate_cost_prices_gemini_38_flash(self):
         result = calculate_total_cost(
@@ -143,7 +160,10 @@ class TestTokenBasedPricing:
         """Test that evaluator aliases use catalog pricing instead of fallback."""
         expected_pricing = {
             "turing_large": {"input_per_1M_tokens": 5.5, "output_per_1M_tokens": 27.5},
-            "turing_large_xl": {"input_per_1M_tokens": 1.25, "output_per_1M_tokens": 10},
+            "turing_large_xl": {
+                "input_per_1M_tokens": 1.25,
+                "output_per_1M_tokens": 10,
+            },
             "turing_small": {"input_per_1M_tokens": 3.3, "output_per_1M_tokens": 16.5},
             "turing_flash": {"input_per_1M_tokens": 1.1, "output_per_1M_tokens": 5.5},
         }
@@ -792,8 +812,7 @@ class TestPricingStructureValidation:
             pricing = model["pricing"]
             has_token = self._TOKEN_KEYS.issubset(pricing)
             has_char = bool(
-                {"input_per_1k_characters", "input_per_1M_characters"}
-                & set(pricing)
+                {"input_per_1k_characters", "input_per_1M_characters"} & set(pricing)
             )
             assert has_token or has_char, (
                 f"Chat model {model['model_name']} missing token/character pricing keys"
@@ -802,8 +821,7 @@ class TestPricingStructureValidation:
     def test_tts_models_have_character_pricing(self):
         """TTS models must carry character or token keys."""
         tts_models = [
-            m for m in AVAILABLE_MODELS
-            if m.get("mode") == "tts" and m.get("pricing")
+            m for m in AVAILABLE_MODELS if m.get("mode") == "tts" and m.get("pricing")
         ]
 
         for model in tts_models:
@@ -817,8 +835,7 @@ class TestPricingStructureValidation:
     def test_stt_models_have_minute_pricing(self):
         """STT models must carry minute keys and no higher-precedence keys."""
         stt_models = [
-            m for m in AVAILABLE_MODELS
-            if m.get("mode") == "stt" and m.get("pricing")
+            m for m in AVAILABLE_MODELS if m.get("mode") == "stt" and m.get("pricing")
         ]
 
         for model in stt_models:
@@ -836,7 +853,8 @@ class TestPricingStructureValidation:
         """Image models must carry per_image/quality keys and no
         higher-precedence keys that would win the cost branch."""
         image_models = [
-            m for m in AVAILABLE_MODELS
+            m
+            for m in AVAILABLE_MODELS
             if m.get("mode") == "image_generation" and m.get("pricing")
         ]
 
@@ -845,9 +863,9 @@ class TestPricingStructureValidation:
             assert self._IMAGE_KEYS & set(pricing), (
                 f"Image model {model['model_name']} missing per_image/quality pricing"
             )
-            forbidden = (
-                self._TOKEN_KEYS | self._CHAR_KEYS | self._MINUTE_KEYS
-            ) & set(pricing)
+            forbidden = (self._TOKEN_KEYS | self._CHAR_KEYS | self._MINUTE_KEYS) & set(
+                pricing
+            )
             assert not forbidden, (
                 f"Image model {model['model_name']} has higher-precedence keys "
                 f"{forbidden} that would shadow image pricing in calculate_total_cost"

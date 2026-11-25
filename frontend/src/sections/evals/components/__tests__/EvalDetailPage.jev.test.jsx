@@ -55,6 +55,10 @@ vi.mock("../../hooks/useCompositeEval", () => ({
   useUpdateCompositeEval: () => ({}),
 }));
 vi.mock("src/utils/axios", () => ({ default: {}, endpoints: {} }));
+vi.mock("src/api/evaluations/decision-models", () => ({
+  default: () => ({ data: [] }),
+  decisionModelsQueryKey: ["eval-decision-models"],
+}));
 vi.mock("src/components/custom-model-dropdown/KeysDrawer", () => ({
   default: () => null,
 }));
@@ -86,6 +90,9 @@ vi.mock("../LLMPromptEditor", () => ({
         onChange={(e) => onModelChange(e.target.value)}
       >
         <option value="jev-latest">Jev latest</option>
+        <option value="decision/openrouter/openai/gpt-6-luna-decisions">
+          GPT-6 Luna Decisions via OpenRouter
+        </option>
         <option value="turing_large">Turing Large</option>
       </select>
     </>
@@ -169,6 +176,42 @@ const mapping = (type, extra = {}) => ({
 });
 
 describe("Jev editor save and test contract", () => {
+  it("persists an OpenRouter decision route and typed criteria without inheriting the native Jev gate", async () => {
+    const model = "decision/openrouter/openai/gpt-6-luna-decisions";
+    mocks.data.config.model = model;
+    mocks.locked = true;
+    render(<EvalDetailPage />);
+    expect(
+      screen.getByText(
+        "This decision model returns typed decisions with probabilities; no written reasoning.",
+      ),
+    ).toBeInTheDocument();
+    expect(test()).toBeEnabled();
+    await edit();
+    await userEvent.type(
+      screen.getByLabelText("Describe a pass (true)"),
+      "Explicitly confirmed",
+    );
+    await userEvent.click(save());
+    await waitFor(() => expect(mocks.create).toHaveBeenCalled());
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model,
+        jev_mapping: mapping("noul", {
+          pass: { criteria_true: "Explicitly confirmed", criteria_false: "" },
+        }),
+      }),
+    );
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config_snapshot: expect.objectContaining({
+          model,
+          jev_mapping: expect.objectContaining({ question_type: "noul" }),
+        }),
+      }),
+    );
+  });
+
   it("shows typed-decision guidance and saves optional pass criteria with threshold zero in template and version", async () => {
     render(<EvalDetailPage />);
     expect(

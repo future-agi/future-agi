@@ -41,7 +41,10 @@ from simulate.views.prompt_simulation import (
     PromptSimulationScenariosView,
 )
 from tfc.constants.roles import OrganizationRoles
-from tfc.middleware.workspace_context import clear_workspace_context, set_workspace_context
+from tfc.middleware.workspace_context import (
+    clear_workspace_context,
+    set_workspace_context,
+)
 
 User = get_user_model()
 
@@ -73,11 +76,13 @@ class E2EPromptSimulationTestCase(TestCase):
             is_default=True,
             created_by=self.user,
         )
-        self.organization_membership = OrganizationMembership.no_workspace_objects.create(
-            user=self.user,
-            organization=self.org,
-            role=OrganizationRoles.OWNER,
-            is_active=True,
+        self.organization_membership = (
+            OrganizationMembership.no_workspace_objects.create(
+                user=self.user,
+                organization=self.org,
+                role=OrganizationRoles.OWNER,
+                is_active=True,
+            )
         )
         WorkspaceMembership.no_workspace_objects.create(
             workspace=self.workspace,

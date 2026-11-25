@@ -96,7 +96,7 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
                   alignItems="center"
                 >
                   <Stack direction="row" spacing={1} alignItems="center">
-                    <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
+                    <Typography sx={{ fontSize: 12, fontWeight: 500 }}>
                       v{cfg.version}
                     </Typography>
                     {cfg.is_active && (

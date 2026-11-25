@@ -23,6 +23,7 @@ class PropertyKind(StrEnum):
     EVAL_CONFIG = "eval_config"
     ANNOTATION = "annotation"
     DATASET_COLUMN = "dataset_column"
+    METRIC_FIELD = "metric_field"
 
 
 class PropertyCategory(StrEnum):
@@ -31,6 +32,7 @@ class PropertyCategory(StrEnum):
     ANNOTATION_METRIC = "annotation_metric"
     CUSTOM_ATTRIBUTE = "custom_attribute"
     CUSTOM_COLUMN = "custom_column"
+    METRIC = "metric"
 
 
 class PropertyRole(StrEnum):
@@ -48,6 +50,20 @@ DETAIL_FIELD_ALLOWLIST = frozenset(
         "eval_template_id",
         "attribute_types",
         "attribute_types_exact",
+        "metric_id",
+        "project_id",
+        "version_id",
+        "version",
+        "kind",
+        "level",
+        "source_level",
+        "projection",
+        "value_format",
+        "value_labels",
+        "definition_hash",
+        "group_dims",
+        "operators",
+        "filterable",
     }
 )
 
@@ -142,7 +158,16 @@ def _canonicalize_details(details: Mapping[str, Any]) -> dict[str, Any]:
 
     canonical: dict[str, Any] = {}
     for key, value in details.items():
-        if key in {"unit", "data_type"}:
+        if key in {
+            "unit",
+            "data_type",
+            "kind",
+            "level",
+            "source_level",
+            "projection",
+            "value_format",
+            "definition_hash",
+        }:
             validate_text(
                 value,
                 field=f"details.{key}",
@@ -150,14 +175,44 @@ def _canonicalize_details(details: Mapping[str, Any]) -> dict[str, Any]:
                 allow_empty=True,
             )
             canonical[key] = value
-        elif key == "eval_template_id":
-            canonical[key] = canonical_uuid(value, field="details.eval_template_id")
+        elif key in {"eval_template_id", "metric_id", "project_id", "version_id"}:
+            canonical[key] = canonical_uuid(value, field=f"details.{key}")
+        elif key == "version":
+            _require_uint(value, bits=32, field_name="details.version", positive=True)
+            canonical[key] = value
+        elif key == "filterable":
+            if type(value) is not bool:
+                raise TypeError("details.filterable must be a bool")
+            canonical[key] = value
+        elif key == "value_labels":
+            if not isinstance(value, Mapping) or set(value) - {"match", "other"}:
+                raise ValueError("details.value_labels must map match/other labels")
+            for label, text in value.items():
+                validate_text(
+                    text,
+                    field=f"details.value_labels.{label}",
+                    max_bytes=MAX_IDENTITY_COMPONENT_BYTES,
+                    # Display labels may contain whitespace accepted by the
+                    # write contract; B06 compares them verbatim, not as IDs.
+                    allow_controls=True,
+                )
+            canonical[key] = dict(value)
+        elif key in {"group_dims", "operators"}:
+            if not isinstance(value, list | tuple):
+                raise TypeError(f"details.{key} must be a list")
+            for index, item in enumerate(value):
+                validate_text(
+                    item,
+                    field=f"details.{key}[{index}]",
+                    max_bytes=MAX_IDENTITY_COMPONENT_BYTES,
+                )
+            canonical[key] = list(value)
         elif key in {"choices", "choice_options"}:
-            if not isinstance(value, (list, tuple)):
+            if not isinstance(value, list | tuple):
                 raise TypeError(f"details.{key} must be a list")
             canonical[key] = list(value)
         elif key == "attribute_types":
-            if not isinstance(value, (list, tuple)):
+            if not isinstance(value, list | tuple):
                 raise TypeError("details.attribute_types must be a list")
             attribute_types: list[str] = []
             for index, attribute_type in enumerate(value):
@@ -175,7 +230,7 @@ def _canonicalize_details(details: Mapping[str, Any]) -> dict[str, Any]:
                 raise TypeError("details.attribute_types_exact must be a bool")
             canonical[key] = value
         elif key == "allowed_aggregations":
-            if not isinstance(value, (list, tuple)):
+            if not isinstance(value, list | tuple):
                 raise TypeError("details.allowed_aggregations must be a list")
             aggregations: list[str] = []
             for index, aggregation in enumerate(value):
