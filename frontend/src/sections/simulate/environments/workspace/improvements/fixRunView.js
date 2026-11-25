@@ -132,6 +132,7 @@ export const OUR_FAILURES = new Set([
   "fix_workflow_lost",
   "fix_dispatch_failed",
   "fix_variations_failed",
+  "fix_variations_timeout",
   "scheduler_unavailable",
 ]);
 
