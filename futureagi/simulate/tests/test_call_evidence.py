@@ -1484,3 +1484,55 @@ def test_only_the_seed_store_is_read_from_the_environment_archive():
         files = reader.environment_files(uuid.uuid4())
 
     assert files == {"store.json": b'{"rows": {}}'}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("said", "secret"),
+    [
+        ("Authorization: Basic QWxhZGRpbjpvcGVuc2VzYW1l", "QWxhZGRpbjpvcGVuc2VzYW1l"),
+        ("Authorization: Token abcdef123456", "abcdef123456"),
+        ("password: two words", "words"),
+        ('{"password": "pass with spaces", "order": 7}', "with spaces"),
+    ],
+)
+def test_a_secret_is_masked_to_the_end_of_its_value(voice_call, said, secret):
+    _turn(voice_call, "user", f"{said}\nThe order is 7.", 0)
+
+    text = json.dumps(_one(voice_call, Kind.TRANSCRIPT).content)
+
+    assert secret not in text
+    assert "The order is 7." in text
+
+
+@pytest.mark.django_db
+def test_a_value_under_a_secrets_name_is_masked_as_the_kit_masks_it(
+    execution, scenario
+):
+    trace = [
+        {
+            "name": "lookup_order",
+            "arguments": {
+                "x-goog-api-key": "v-1",
+                "session_cookie": "c-1",
+                "client_credential": {"id": "u-1", "key": "k-1"},
+                "passphrase": "pp-1",
+                "order": 7,
+            },
+            "headers": {"X-Custom": "h-1"},
+        }
+    ]
+    call = _call(
+        execution, scenario, provider_call_data={"livekit": {"tool_calls": trace}}
+    )
+    with _hosted():
+        (entry,) = _one(call, Kind.TOOL_CALLS).content
+
+    assert entry["arguments"] == {
+        "x-goog-api-key": "[REDACTED]",
+        "session_cookie": "[REDACTED]",
+        "client_credential": "[REDACTED]",
+        "passphrase": "[REDACTED]",
+        "order": 7,
+    }
+    assert entry["headers"] == {"X-Custom": "[REDACTED]"}
