@@ -58,6 +58,7 @@ export default function RerunPlanDrawer({
   request,
   sourceRun,
   scenarioStatus,
+  onGradeSource,
 }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
@@ -184,7 +185,11 @@ export default function RerunPlanDrawer({
     envVersion: pickedEnv,
   }) => {
     onClose();
-    if (picked?.length) addEvals(picked);
+    if (picked?.length) {
+      addEvals(picked);
+      /* Same test on both sides: the run it repeats is graded with them too. */
+      if (sourceRun && !request?.fresh) onGradeSource?.(picked);
+    }
     const current = currentAgentVersion(envState)?.label;
     const runId = protoRunId(envId, Date.now().toString(36));
     navigate(
@@ -379,5 +384,6 @@ RerunPlanDrawer.propTypes = {
   patch: PropTypes.func,
   request: PropTypes.object,
   sourceRun: PropTypes.object,
+  onGradeSource: PropTypes.func,
   scenarioStatus: PropTypes.object,
 };

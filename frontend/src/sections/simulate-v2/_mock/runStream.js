@@ -869,9 +869,12 @@ export function buildRun({
     const evalResults = evals.map((ev) => {
       const threshold = ev.threshold ?? 0.8;
       const isCulprit = ev.id === culpritId;
+      /* An evaluation added after the run read its saved calls: drawn by
+         hash, so every number the run already drew stays as it was. */
+      const draw = ev.late ? unit(`${seed}:${sc.id}:${ev.id}:late`) : null;
       const base = isCulprit
-        ? threshold * (0.2 + r() * 0.6)
-        : threshold + (1 - threshold) * (0.25 + r() * 0.75);
+        ? threshold * (0.2 + (draw ?? r()) * 0.6)
+        : threshold + (1 - threshold) * (0.25 + (draw ?? r()) * 0.75);
       const score = Math.min(1, Math.round(base * 100) / 100);
       const passedIt = score >= threshold;
       return {

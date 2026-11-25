@@ -103,7 +103,7 @@ import {
   isCandidateRun,
   runIdentityOf,
 } from "../_mock/runIdentity";
-import { isConnectOnly, runPinsOf } from "../_mock/envModel";
+import { evalVersionOf, isConnectOnly, runPinsOf } from "../_mock/envModel";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { REPLAY_HEADER, stubbedToolNames } from "../_mock/replay";
 import FromImprovement from "./FromImprovement";
@@ -894,6 +894,44 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     patch({
       runs: (envState.runs || []).map((r) =>
         r.id === sourceRun.id ? withRegradeRecord(r, rec) : r,
+      ),
+    });
+  };
+  /* Suggested evaluations picked on a re-run grade this run's saved calls
+     too (no new calls), so the re-run and this run still compare. */
+  const gradeSourceWith = (picked) => {
+    if (!sourceRun) return;
+    const had = sourceRun.evals || envState.evals || [];
+    const idOf = (e) => (typeof e === "string" ? e : e?.id);
+    const have = new Set(had.map(idOf));
+    const fresh = picked.filter((e) => !have.has(e.id));
+    if (!fresh.length) return;
+    /* The environment's evaluations move a version as they're added, and
+       this run now reads under that one — no "test repaired" offer. */
+    const envIds = new Set((envState.evals || []).map(idOf));
+    const rec = {
+      evalVersion: evalVersionOf({
+        ...envState,
+        evalChanges: [
+          ...(envState.evalChanges || []),
+          ...(fresh.some((e) => !envIds.has(e.id)) ? [{}] : []),
+        ],
+      }),
+      label: fresh.map((e) => e.name || e.id).join(", "),
+      addedEvals: fresh.map((e) => e.id),
+      scenarioIds: [],
+      summary: `${tasks.length} ${tasks.length === 1 ? "scenario" : "scenarios"} read again · no new calls`,
+      before: resultCountsOf(tasks),
+      at: new Date().toISOString(),
+    };
+    patch({
+      runs: (envState.runs || []).map((r) =>
+        r.id === sourceRun.id
+          ? {
+              ...withRegradeRecord(r, rec),
+              evals: [...had, ...fresh.map((e) => ({ ...e, late: true }))],
+            }
+          : r,
       ),
     });
   };
@@ -2502,6 +2540,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   .replace(/^./, (c) => c.toUpperCase())}
                 {`. Re-grade it so its scores use the repaired test — ${regrade.stateSaved ? "the stored traces and end-states, read again" : "the stored traces, read again (the end state wasn't saved, so only the conversation checks are re-graded)"}: ${regrade.scenarioIds.length} scenarios, no new calls. The earlier result is kept. What that changes is the test's, not the agent's.`}
               </>
+            ) : latestRegrade.addedEvals ? (
+              `Re-evaluated with ${latestRegrade.label} · previous result kept · no new calls.`
             ) : latestRegrade.toolCalls ? (
               /* Tool call evaluation: what it caught, said plainly. */
               (() => {
@@ -3665,6 +3705,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
         request={rerunPlan}
         sourceRun={sourceRun}
         scenarioStatus={scenarioStatus}
+        onGradeSource={gradeSourceWith}
       />
 
       {/* ── trace drawer ── */}

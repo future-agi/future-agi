@@ -1625,7 +1625,7 @@ export default function RunPlanDialog({
             <KV
               label="Evaluations"
               detail={
-                showSuggested && !baseline && pickable.length > 0 ? (
+                showSuggested && pickable.length > 0 ? (
                   <Box sx={{ pb: 1 }}>
                     {pickable.length > 0 && (
                       <Stack
@@ -1692,6 +1692,19 @@ export default function RunPlanDialog({
                         })}
                       </Stack>
                     )}
+                    {/* A re-run grades like its source: a pick grades the
+                        source's saved calls too, so the two still compare. */}
+                    {baseline && (
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          color: "text.tertiary",
+                          mt: 0.75,
+                        }}
+                      >
+                        {`Also grades ${fromRun || "the run"}'s saved calls · no new calls · so both runs still compare`}
+                      </Typography>
+                    )}
                   </Box>
                 ) : null
               }
@@ -1700,7 +1713,7 @@ export default function RunPlanDialog({
                 <Typography sx={VALUE_SX}>
                   {evalNames}
                   {/* A re-run grades with the same evaluations, so its
-                      result compares; adding one is for a new run. */}
+                      result compares; one added here grades both runs. */}
                   {baseline && (
                     <Box
                       component="span"
@@ -1709,7 +1722,7 @@ export default function RunPlanDialog({
                       {`· same as ${fromRun || baseline.label || "the run"}`}
                     </Box>
                   )}
-                  {!baseline && pickable.length > 0 && (
+                  {pickable.length > 0 && (
                     <Box
                       component="button"
                       type="button"
@@ -1720,20 +1733,27 @@ export default function RunPlanDialog({
                         color: "text.tertiary",
                         ml: 0.75,
                         "&:hover": { color: "text.primary" },
+                        /* A re-run's row already ends "same as Run N":
+                           the link takes its own line, not a wrapped dot. */
+                        ...(baseline && { display: "block", ml: 0 }),
                       }}
                     >
-                      {addEvalIds.length
-                        ? `· +${addEvalIds.length} added`
-                        : `· +${pickable.length} suggested`}
+                      {`${baseline ? "" : "· "}${
+                        addEvalIds.length
+                          ? `+${addEvalIds.length} added`
+                          : `+${pickable.length} suggested`
+                      }`}
                     </Box>
                   )}
                 </Typography>
                 <Tooltip
                   arrow
                   title={
-                    pickable.length
-                      ? "Suggested evaluations score a run only if you pick them. The scenarios' own checks always run."
-                      : "The scenarios' own checks always run."
+                    baseline
+                      ? `A re-run grades like ${fromRun || "the run"}. A suggested evaluation you pick grades both, so they still compare.`
+                      : pickable.length
+                        ? "Suggested evaluations score a run only if you pick them. The scenarios' own checks always run."
+                        : "The scenarios' own checks always run."
                   }
                 >
                   <Box
