@@ -60,6 +60,8 @@ def spans(ch_database, monkeypatch):
             job=JOB,
             at=START + timedelta(minutes=5),
             extra=None,
+            span_id=None,
+            service="",
         ):
             attrs = {
                 **({"fi.simulator.call_execution_id": call} if call else {}),
@@ -69,11 +71,11 @@ def spans(ch_database, monkeypatch):
             column = model_column or ""
             pairs = ", ".join(f"'{key}', '{value}'" for key, value in attrs.items())
             client.execute(
-                "INSERT INTO spans (project_id, observation_type, start_time, trace_id,"
-                " id, model, cost, attrs_string, resource_attrs,"
+                "INSERT INTO spans (project_id, observation_type, service_name,"
+                " start_time, trace_id, id, model, cost, attrs_string, resource_attrs,"
                 " created_at, updated_at, _version) VALUES"
-                f" ('{project}', '{kind}',"
-                f" '{at:%Y-%m-%d %H:%M:%S}', '{trace}', '{uuid.uuid4()}',"
+                f" ('{project}', '{kind}', '{service}',"
+                f" '{at:%Y-%m-%d %H:%M:%S}', '{trace}', '{span_id or uuid.uuid4()}',"
                 f" '{column}', {cost}, map({pairs}),"
                 f""" '{{"fi": {{"simulation": {{"job_id": "{job}"}}}}}}',"""
                 " now64(), now64(), 1)"
@@ -174,6 +176,33 @@ def test_a_span_counts_for_the_call_it_names_before_its_trace_s(spans, monkeypat
         second: (["m2"], 1),
     }
     assert usage[second].cost_usd == pytest.approx(0.02)
+
+
+@pytest.mark.integration
+def test_a_span_exported_twice_counts_once_with_its_priced_copy(spans, monkeypatch):
+    _traced(monkeypatch)
+    call, trace = str(uuid.uuid4()), str(uuid.uuid4())
+    spans(trace, call=call)
+    # An agent with two exporters sends each model call twice, under two service
+    # names: one copy unpriced, the other priced. The table keeps both rows.
+    for cost in (0.01, 0.02):
+        span_id = str(uuid.uuid4())
+        spans(trace, kind="llm", model="m1", service="omega", span_id=span_id)
+        spans(
+            trace,
+            kind="llm",
+            model="m1",
+            cost=cost,
+            service="agent",
+            span_id=span_id,
+            extra={"fi.span.kind": "LLM", "llm.model_name": "m1"},
+        )
+
+    usage = run_traces_v3.run_usage(SimpleNamespace())
+
+    assert usage == {
+        call: CallUsage(models=["m1"], llm_spans=2, cost_usd=pytest.approx(0.03))
+    }
 
 
 @pytest.mark.integration
