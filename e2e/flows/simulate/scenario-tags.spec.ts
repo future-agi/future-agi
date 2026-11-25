@@ -8,7 +8,7 @@ const UI_READY = 60_000;
 // Path from futureagi/simulate/urls.py (harness-environments/<id>/scenario-tags).
 const ENVIRONMENTS = '/simulate/api/harness-environments';
 // Copy from frontend/.../workspace/scenarios/scenarios.constants.js (SCENARIO_TAGS_COPY, SCENARIOS_COPY).
-const TAG = 'Tag';
+const TAG_TIP = 'Add or remove a tag on the selected scenarios';
 const NEW_TAG = 'Type a new tag and press Enter';
 const added = (tag: string, n: number) => `Added ${tag} to ${n} scenario${n === 1 ? '' : 's'}`;
 const openRow = (name: string) => `Open ${name}`;
@@ -42,7 +42,7 @@ test('SIM-E2E-039: a person tags one scenario of an environment and only that sc
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=scenarios`);
     const row = page.getByRole('row', { name: openRow(tagged) });
     await row.getByRole('checkbox').check({ timeout: UI_READY });
-    await page.getByRole('button', { name: TAG, exact: true }).click({ timeout: UI_READY });
+    await page.getByRole('button', { name: TAG_TIP, exact: true }).click({ timeout: UI_READY });
     const input = page.getByPlaceholder(NEW_TAG);
     await input.fill(tag, { timeout: UI_READY });
     await input.press('Enter');
