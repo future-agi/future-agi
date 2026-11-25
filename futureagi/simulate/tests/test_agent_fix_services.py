@@ -1624,69 +1624,26 @@ class TestCheckRunStatus:
     @pytest.mark.parametrize(
         ("cause", "owner"),
         [
-            (
-                "chat_target_failed: HTTPCallFailure: The read operation timed out",
-                FailureOwner.OURS,
-            ),
-            ("chat_target_failed: ReadTimeout: ", FailureOwner.OURS),
-            ("chat_target_failed: ReadTimeout: timed out", FailureOwner.OURS),
-            ("chat_target_failed: ConnectTimeout: timed out", FailureOwner.USER),
-            (
-                "depends_on/depends_on_timeout (agent): agent: started_check did not "
-                "pass within 180.0s; last output",
-                FailureOwner.OURS,
-            ),
-            (
-                "chat_target_failed: HTTPCallFailure: Completed tool evidence "
-                "collection failed: invalid or duplicate tool event identity",
-                FailureOwner.USER,
-            ),
-            (
-                "chat_target_failed: HTTPCallFailure: Error code: 400 - Function call "
-                "is missing a thought_signature in functionCall parts.",
-                FailureOwner.USER,
-            ),
-            (
-                "chat_target_failed: HTTPCallFailure: [Errno 111] Connection refused",
-                FailureOwner.USER,
-            ),
-            (
-                "chat_target_failed: HTTPCallFailure: [Errno 110] Connection timed out",
-                FailureOwner.USER,
-            ),
-            (
-                "BundleAuthorError: target_runtime_configuration_missing: "
-                "environment:LIVEKIT_URL",
-                FailureOwner.USER,
-            ),
-        ],
-        ids=[
-            "chat-timed-out",
-            "chat-timeout-error",
-            "agent-slow-to-reply",
-            "agent-never-accepted",
-            "agent-slow-to-start",
-            "duplicate-tool-ids",
-            "agent-model-refused",
-            "agent-gone",
-            "agent-never-accepted-wrapped",
-            "setup-missing",
+            ("dependency_not_ready_in_time", FailureOwner.OURS),
+            ("chat_target_timeout", FailureOwner.OURS),
+            ("agent_not_ready_in_time", FailureOwner.USER),
+            ("agent_exited_before_ready", FailureOwner.USER),
+            ("chat_target_refused", FailureOwner.USER),
+            ("unknown", FailureOwner.USER),
+            (None, FailureOwner.USER),
+            ("new_cause", FailureOwner.USER),
         ],
     )
-    def test_a_certification_that_ran_out_of_time_is_ours(self, cause, owner):
+    def test_certification_ownership_uses_cause(self, cause, owner):
         failure = {
             "domain": "environment",
             "code": "authoring_runtime_validation_failed",
-            "message": "Generated environment failed real-runtime validation after "
-            f"bounded repair: {cause}",
+            "message": "Readiness failed" if owner == FailureOwner.OURS else "depends_on/depends_on_timeout",
         }
-
+        if cause is not None:
+            failure["cause"] = cause
         assert check_failure(failure).owner == owner
-        # The same words on another of the environment's failures stay the user's.
-        assert (
-            check_failure({**failure, "code": "provider_credentials_invalid"}).owner
-            == FailureOwner.USER
-        )
+        assert check_failure({**failure, "code": "provider_credentials_invalid"}).owner == FailureOwner.USER
 
     def test_a_failed_run_and_its_errored_trials_say_who_can_fix_them(self, source_run):
         fix_run = _fix_run(source_run)

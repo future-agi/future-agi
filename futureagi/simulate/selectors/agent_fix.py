@@ -422,16 +422,7 @@ def ran_at(run: HostedHarnessJob, trials: int | None = None) -> int:
 
 # A plan's limit, met mid-run, is the user's to lift even though the platform reports it.
 _USER_FAILURE_CODES = frozenset({"usage_exhausted"})
-# Certification reports every failure as the environment's. A chat that timed out waiting
-# for the agent's reply, or an agent slower to come up than the wait (infrastructure on any
-# other run), says nothing about the agent. A reply that failed, or a connection the
-# agent's own process refused or never accepted, stays the user's.
 _CERTIFY_FAILED = "authoring_runtime_validation_failed"
-_CERTIFY_TIMED_OUT = re.compile(
-    r"chat_target_failed: (?!Connect|[^;\n]*\bConnection timed out\b)"
-    r"(?:\w*Timeout\w*|\w+: [^;\n]*\btimed out\b)"
-    r"|depends_on/depends_on_timeout"
-)
 
 
 def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
@@ -442,8 +433,12 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
     code = str(failure.get("code") or "unknown")
     message = str(failure.get("message") or "")
     user = failure.get("domain") == "environment" or code in _USER_FAILURE_CODES
-    if code == _CERTIFY_FAILED and _CERTIFY_TIMED_OUT.search(message):
-        user = False
+    if code == _CERTIFY_FAILED:
+        cause = failure.get("cause")
+        if cause in ("dependency_not_ready_in_time", "chat_target_timeout"):
+            user = False
+        elif cause in ("agent_not_ready_in_time", "agent_exited_before_ready", "chat_target_refused"):
+            user = True
     return CheckFailure(
         owner=FailureOwner.USER if user else FailureOwner.OURS,
         code=code,
