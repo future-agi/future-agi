@@ -474,7 +474,7 @@ An assertion that cannot fail is worse than no assertion, because it reads as co
 ### Skills v1.1 transport fixtures
 
 The managed overlays start `skills-fakes` on container port 8080 and host
-`127.0.0.1:${E2E_SKILLS_FIXTURE_PORT:-28084}`. `lib/skills-fixtures.ts` registers an
+`127.0.0.1:${E2E_SKILLS_FIXTURE_PORT:-28085}`. `lib/skills-fixtures.ts` registers an
 isolated synthetic-credential namespace, declarative OpenAI tool/answer rules and
 recorded synthetic GitHub metadata/ref/archive responses. Unknown credentials,
 unrecorded URLs and ambiguous rules fail closed; the service never proxies live
@@ -1049,20 +1049,28 @@ A resolution or build failure fails the producer; it does not try an older SDK
 or skip cases. The dispatch input `sdk-ref` selects a separate live suite and
 does not override the Skills pair.
 
-**What gets built.** CI checks out both resolved full SHAs and gives the SDK
-copies of the OpenAPI and MCP blobs from the tested product commit (including
-PR merge and merge-queue commits). Both SDK layouts use `--backend-commit`
-and `--mcp-tools` to record those inputs:
+**What gets built.** CI checks out both resolved full SHAs. The SDK's committed
+contract snapshot decides how it is synced against the tested product commit
+(including PR merge and merge-queue commits):
 
-- **Scoped preview:** `sdkgen/contracts/SOURCE.json` names the non-Skills SDK
-  baseline (`non_skills_sdk_commit` and `non_skills_slice_sha256`). CI supplies
-  that commit via `--skills-baseline-sdk` and requires the SDK's non-Skills
-  baseline check to pass.
-- **Full sync or released checkout:** `SOURCE.json` either lacks both baseline
-  fields (a full commit-pinned sync) or is absent (a release sync, which records
-  `BACKEND_VERSION`). CI runs a full commit-pinned sync without a preview
-  baseline; it does not change the release pin. A `SOURCE.json` with only one of
-  the two baseline fields fails the build.
+- **Scoped sync (`x-contract-sources`):** `sdkgen/contracts/swagger.json`
+  records, per scope (SQL, Epoch, Skills), the product commit and the OpenAPI,
+  MCP manifest and `tools.yaml` hashes it was synced from, plus `other`: the
+  SDK baseline (`sdk_commit`, `slice_sha256`, `openapi_sha256`) for everything
+  outside those scopes. From the SDK checkout, CI reads `baseline` from the
+  committed `x-contract-sources.other.sdk_commit` (never a pin) and runs
+  `python3 -EBs sdkgen/sync_scoped_contract.py "$GITHUB_WORKSPACE" "$GITHUB_SHA" "$baseline"`,
+  then `sdkgen/generate.py --only python typescript`, the same with `--check`,
+  and `sdkgen/check_skills_baseline.py`. The recorded scopes must match the
+  product commit, the SQL tools must match the SDK catalog, and the baseline
+  slice must match its recorded digest. Partial or mixed (legacy plus scoped)
+  provenance fails the build.
+- **Legacy layouts** (`--backend-commit` and `--mcp-tools`): a scoped preview
+  whose `sdkgen/contracts/SOURCE.json` names the non-Skills baseline
+  (`non_skills_sdk_commit`, `non_skills_slice_sha256`, checked via
+  `--skills-baseline-sdk`), or a full commit-pinned or release sync (no
+  baseline fields, or no `SOURCE.json` with a `BACKEND_VERSION`). A
+  `SOURCE.json` with only one of the two baseline fields fails the build.
 
 Both modes regenerate and check the Python and TypeScript clients and reject
 changes outside the generator-owned files. Product CI checks the **shipped
@@ -1081,9 +1089,11 @@ that artifact and the same verified SDK wheel.
 
 **What to verify.** The schema-2 `pair.json` contains the three full commits in
 `sources` and the two resolved branch names in `branches`. `contract.sync_mode`
-is `full` or `scoped`; `contract.source` records the `SOURCE.json` metadata,
-and `contract.sha256` contains hashes of the three regenerated files
-(`swagger.json`, `mcp-tools.json`, and `SOURCE.json`). `artifacts` records the
+is `full` or `scoped`. For the scoped sync, `contract.source` is the
+regenerated `x-contract-sources` and `contract.sha256` hashes `swagger.json`;
+for the legacy layouts, `contract.source` is the `SOURCE.json` metadata and
+`contract.sha256` hashes `swagger.json`, `mcp-tools.json` and `SOURCE.json`.
+`artifacts` records the
 filename and SHA-256 for each of `sdk_python`, `traceai_python`, `sdk_ts`,
 `traceai_ts`, and `semconv_ts`. The producer emits the pair receipt digest and
 SDK wheel digest separately from the artifact. Consumers verify the supplied

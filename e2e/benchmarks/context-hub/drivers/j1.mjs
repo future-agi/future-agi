@@ -3,6 +3,7 @@ import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
 import { unzipSync } from 'fflate';
 import { chromium, expect as playwrightExpect } from '@playwright/test';
+import { firstHopOptions } from '../../../lib/backend-transport.ts';
 import { MeasuredOperator } from '../../../lib/skills-r3/measured-operator.mjs';
 import { digest, requireValue, sha256 } from '../../../lib/skills-r3/canonical.mjs';
 import { filesDigest, performUpdate } from './j1-update.mjs';
@@ -217,7 +218,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await page.route('**/skills/intake/*/accept/', async route => {
             if (!dropped || attempts.length === 1) attempts.push({ bodyHash: digest(route.request().postData()), key: route.request().headers()['idempotency-key'] });
             if (!dropped) {
-              const response = await route.fetch();
+              const response = await route.fetch(firstHopOptions(route.request(), input.apiUrl, {}));
               assert.equal(response.status(), 200);
               dropped = true;
               ledger.fault('lost-import-response', 'response-lost-after-commit');

@@ -106,7 +106,7 @@ test('SKILLS-E2E-130: install a reviewed bundle and observe a Deep Agents turn',
     const { traceId } = run('deep_agent.py', { context, digest: parent.digest, credential: ctxCredential,
       api: E2E.apiUrl, collector: E2E.collectorUrl, org: actor.organizationId, workspace: actor.workspaceId,
       apiKey: actor.apiKey, secretKey: actor.secretKey, fixture: fixture.namespace, marker, request: prompt,
-      modelUrl: `http://localhost:${process.env.E2E_SKILLS_FIXTURE_PORT ?? '28084'}/v1` });
+      modelUrl: `http://localhost:${process.env.E2E_SKILLS_FIXTURE_PORT ?? '28085'}/v1` });
     const ledger = await fixture.ledger();
     expect(ledger.map(e => e.status)).toEqual([200, 200]);
     expect(ledger[0].messages?.some(m => m.role === "system" && JSON.stringify(m.content).includes(name))).toBe(true);

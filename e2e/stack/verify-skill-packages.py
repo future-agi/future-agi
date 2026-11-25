@@ -17,11 +17,45 @@ ROLES = {
     "traceai_ts": ("skills-ts-runtime/packages", r"traceai-fi-core-\d[\w.+-]*\.tgz"),
     "semconv_ts": ("skills-ts-runtime/packages", r"traceai-fi-semantic-conventions-\d[\w.+-]*\.tgz"),
 }
+PRODUCT_SCOPES = ("sql", "epoch", "skills")
 
 
 def digest(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def hex_digest(value, size):
+    return isinstance(value, str) and re.fullmatch(rf"[0-9a-f]{{{size}}}", value) is not None
+
+
+def verify_scoped_source(source, product=None):
+    """Validate x-contract-sources, including consistency between the three product scopes."""
+    if not isinstance(source, dict) or set(source) != {*PRODUCT_SCOPES, "other"}:
+        raise ValueError("Invalid scoped contract provenance: expected sql, epoch, skills and other")
+    other = source["other"]
+    if (not isinstance(other, dict) or set(other) != {"sdk_commit", "slice_sha256", "openapi_sha256"}
+            or not hex_digest(other["sdk_commit"], 40) or not hex_digest(other["slice_sha256"], 64)
+            or not hex_digest(other["openapi_sha256"], 64)):
+        raise ValueError("Invalid scoped contract provenance: SDK baseline")
+    hashes = ("openapi_sha256", "mcp_sha256", "tools_yaml_sha256")
+    inputs = None
+    seen_tools = set()
+    for scope in PRODUCT_SCOPES:
+        row = source[scope]
+        if (not isinstance(row, dict) or set(row) != {"backend_commit", *hashes, "tools"}
+                or not hex_digest(row["backend_commit"], 40) or not all(hex_digest(row[key], 64) for key in hashes)
+                or (product is not None and row["backend_commit"] != product)):
+            raise ValueError(f"Invalid scoped contract provenance: {scope} product inputs")
+        current = tuple(row[key] for key in ("backend_commit", *hashes))
+        if inputs is not None and current != inputs:
+            raise ValueError(f"Invalid scoped contract provenance: inconsistent {scope} product inputs")
+        inputs = current
+        tools = row["tools"]
+        if (not isinstance(tools, list) or not tools or not all(isinstance(t, str) and t.strip() for t in tools)
+                or tools != sorted(set(tools)) or seen_tools.intersection(tools)):
+            raise ValueError(f"Invalid scoped contract provenance: {scope} tool inventory")
+        seen_tools.update(tools)
 
 
 def verify_provenance(document, product):
@@ -31,20 +65,34 @@ def verify_provenance(document, product):
     contract = document.get("contract", {})
     source = contract.get("source", {})
     hashes = contract.get("sha256", {})
-    baseline_fields = {"non_skills_sdk_commit", "non_skills_slice_sha256"}
     mode = contract.get("sync_mode")
-    if mode == "scoped":
-        if (not re.fullmatch(r"[0-9a-f]{40}", source.get("non_skills_sdk_commit", ""))
-                or not re.fullmatch(r"[0-9a-f]{64}", source.get("non_skills_slice_sha256", ""))):
-            raise ValueError("Invalid scoped contract provenance")
-    elif mode != "full" or baseline_fields.intersection(source):
-        raise ValueError("Invalid contract provenance for sync mode")
-    if (source.get("backend_commit") != product
-            or set(hashes) != {"swagger.json", "mcp-tools.json", "SOURCE.json"}
-            or not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (
-                *hashes.values(), source.get("openapi_sha256", ""), source.get("mcp_sha256", ""),
-            ))):
+    if not isinstance(hashes, dict) or not isinstance(source, dict):
         raise ValueError("Invalid regenerated contract provenance")
+    if source.keys() & {*PRODUCT_SCOPES, "other"}:
+        verify_scoped_source(source, product)
+        if mode != "scoped" or set(hashes) != {"swagger.json"} or not hex_digest(hashes["swagger.json"], 64):
+            raise ValueError("Invalid scoped contract provenance: expected scoped mode and only a swagger.json digest")
+        return
+
+    # Older commit-pinned SDKs emit two sidecars, including on their Skills-only preview.
+    if (mode != verify_legacy_source(source) or source["backend_commit"] != product
+            or set(hashes) != {"swagger.json", "mcp-tools.json", "SOURCE.json"}
+            or not all(hex_digest(value, 64) for value in hashes.values())):
+        raise ValueError("Invalid regenerated contract provenance")
+
+
+def verify_legacy_source(source):
+    fields = {"backend_commit", "openapi_sha256", "mcp_sha256"}
+    if (not isinstance(source, dict) or not hex_digest(source.get("backend_commit"), 40)
+            or not all(hex_digest(source.get(key), 64) for key in ("openapi_sha256", "mcp_sha256"))):
+        raise ValueError("Invalid legacy contract provenance")
+    if set(source) == fields:
+        return "full"
+    if (set(source) == fields | {"non_skills_sdk_commit", "non_skills_slice_sha256"}
+            and hex_digest(source.get("non_skills_sdk_commit"), 40)
+            and hex_digest(source.get("non_skills_slice_sha256"), 64)):
+        return "scoped"
+    raise ValueError("Invalid or partial legacy contract provenance")
 
 
 def verify(dist, lock_sha, sources):

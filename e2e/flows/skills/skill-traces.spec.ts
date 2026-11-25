@@ -1,11 +1,11 @@
 import { test, expect, createTraceScenario, installedPythonSdkVersion } from '../../lib/skill-trace-scenario';
+import { backendRequestContext } from '../../lib/backend-transport';
 import { test as mockTest } from '../../lib/mock-model-fixtures';
 import { test as scopeTest } from '../../lib/scope-actors';
 import { E2E } from '../../lib/env';
 import type { Page, TestInfo } from '@playwright/test';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { POLL } from '../../lib/state-probe';
-
 const meta = (n: number, goal: string, steps: string[], checks: string[]) => ({ tag: ['@flow'],
   annotation: flowAnnotation({ id: `SKILLS-E2E-${100 + n}`, area: 'skills', userGoal: goal, steps, backendChecks: checks }) });
 test.describe.configure({ timeout: 180000 });
@@ -352,7 +352,7 @@ mockTest.describe('F10 background-safe eval fixture', () => {
     ['Run a real application request', 'Register a local mock-routed evaluator and run a historical evaluation', 'Read the eval cell in Loaded by'],
     ['The durable task completes and only the single evaluated trace contributes to coverage']),async ({actor,request,page,probe,mockModel}) => {
     mockTest.setTimeout(300000);
-    const s = await createTraceScenario(actor,request);
+    const s = await createTraceScenario(actor, backendRequestContext(request, E2E.apiUrl));
     try {
       const trace = s.emit('python',[s.agent('billing',[s.refund],false)])!;
       const [project] = await probe.pg<{id:string}>('SELECT id FROM tracer_project WHERE organization_id=$1 AND name=$2',[actor.organizationId,s.project]);

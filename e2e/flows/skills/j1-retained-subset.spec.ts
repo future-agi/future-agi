@@ -3,10 +3,10 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { test, expect } from '../../lib/scope-actors';
+import { fetchRoute } from '../../lib/backend-request';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { authInitScript } from '../../lib/auth';
 import { E2E } from '../../lib/env';
-
 type File = { path: string; content: string };
 type Plan = { id: string; inventory: { items: { key: string; name: string; blockers: unknown[] }[]; rejected: { path: string; reason: string }[] } };
 type Receipt = { item_key: string; result: { resource_id: string; published: boolean } };
@@ -83,7 +83,7 @@ test('SKILLS-E2E-010: retain all supported members and recover one lost import r
       const request = route.request();
       if (!dropped || attempts.length === 1) attempts.push({ body: request.postData(), key: request.headers()['idempotency-key'] });
       if (!dropped) {
-        const response = await route.fetch();
+        const response = await fetchRoute(route);
         assert.equal(response.status(), 200);
         dropped = true;
         await route.abort('failed');

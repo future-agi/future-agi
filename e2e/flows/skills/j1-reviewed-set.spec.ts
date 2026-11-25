@@ -3,11 +3,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { strToU8, unzipSync, zipSync } from 'fflate';
 import { test, expect } from '../../lib/scope-actors';
+import { fetchRoute } from '../../lib/backend-request';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { authInitScript } from '../../lib/auth';
 import { E2E } from '../../lib/env';
 import { skillDigest } from '../../lib/skills-consumption';
-
 type File = { path: string; content: string };
 type Item = { key: string; name: string; blockers: unknown[] };
 type Plan = { id: string; fingerprint: string; inventory: { items: Item[] } };
@@ -87,7 +87,7 @@ test('SKILLS-E2E-012: review, import and publish a retained set in one decision,
       const request = route.request();
       if (!dropped || attempts.length === 1) attempts.push({ body: request.postData(), key: request.headers()['idempotency-key'] });
       if (!dropped) {
-        const response = await route.fetch();
+        const response = await fetchRoute(route);
         assert.equal(response.status(), 200);
         dropped = true;
         await route.abort('failed');

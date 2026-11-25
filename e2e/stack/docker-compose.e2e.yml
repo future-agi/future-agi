@@ -282,7 +282,7 @@ services:
     volumes:
       - ./e2e/stack/skills-fakes/server.mjs:/srv/server.mjs:ro
     ports:
-      - "127.0.0.1:${E2E_SKILLS_FIXTURE_PORT:-28084}:8080"
+      - "127.0.0.1:${E2E_SKILLS_FIXTURE_PORT:-28085}:8080"
     restart: "no"
   mock-llm:
     image: node:22-alpine

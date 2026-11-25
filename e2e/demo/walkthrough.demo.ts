@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../lib/backend-request';
 import type { Locator, Page } from '@playwright/test';
 import { E2E } from '../lib/env';
 import { sendTrace } from '../lib/otlp';

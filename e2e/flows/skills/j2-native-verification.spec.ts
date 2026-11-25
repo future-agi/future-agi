@@ -100,7 +100,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     const production = await req('POST', `contexts/${contextId}/bindings/`, { name: 'support-app production', kind: 'runtime', selector: { version: 6 }, update_mode: 'manual', profile: 'support-app', profile_version: '1', repository: null, expected_report_interval_seconds: 3600 });
     await writeFile(process.env.J2_PREPARE_OUT!, JSON.stringify({
       userId: (await actor.api.get<{ id: string }>('/accounts/user-info/')).id, v4Id: v4.id, production: { bindingId: production.id, revision: production.revision }, apiKey: actor.apiKey, secretKey: actor.secretKey, collectorInternalUrl: 'http://app:4318',
-      appUrl: E2E.appUrl, apiUrl: E2E.apiUrl, pgUrl: E2E.pgUrl, chUrl: E2E.chUrl, chPassword: E2E.chPassword, fixtureOrigin: `http://localhost:${process.env.E2E_SKILLS_FIXTURE_PORT ?? '28084'}`,
+      appUrl: E2E.appUrl, apiUrl: E2E.apiUrl, pgUrl: E2E.pgUrl, chUrl: E2E.chUrl, chPassword: E2E.chPassword, fixtureOrigin: `http://localhost:${process.env.E2E_SKILLS_FIXTURE_PORT ?? '28085'}`,
       providerNamespace: nativeNamespace, runtimeContainer: RUNTIME_CONTAINER, contextId, contextName: `${prefix}-support`,
       versions: { recorded: 4, head: 6 }, skills, requests: REQUESTS, recordedRoot: ROOT.recorded, recordedRootSha256: createHash('sha256').update(ROOT.recorded).digest('hex'),
       controlRoots: { wordingOnly: ROOT.wordingOnly, overbroad: ROOT.overbroad },

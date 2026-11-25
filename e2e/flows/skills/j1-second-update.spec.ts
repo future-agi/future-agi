@@ -3,11 +3,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { unzipSync } from 'fflate';
 import { test, expect } from '../../lib/scope-actors';
+import { fetchRoute } from '../../lib/backend-request';
 import { authInitScript } from '../../lib/auth';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { skillDigest } from '../../lib/skills-consumption';
-
 // ROUND3-PLAN J1 steps 5–6 and e2e-flow-approvals.md: source-v2 prerequisite,
 // deliberately NOT the complete 15-member cold/configured job or native delivery.
 // Wire/locators: RetainedMigrationPanel, MigrationPlanPanel, SkillEditorSession,
@@ -158,7 +158,7 @@ test('SKILLS-E2E-011: preserve a personal draft before replacing a diverged reta
       if (route.request().method() !== 'POST') return route.continue();
       attempts.push({ key: route.request().headers()['idempotency-key'], body: route.request().postData() });
       if (attempts.length === 1) {
-        assert.equal((await route.fetch()).status(), 200);
+        assert.equal((await fetchRoute(route)).status(), 200);
         await route.abort('failed');
       } else await route.continue();
     });

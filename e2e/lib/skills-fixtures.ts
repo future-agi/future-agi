@@ -26,7 +26,7 @@ export class SkillsFixtures {
   /** `namespace` pins a runtime-owned synthetic credential (the native runtime's provider key). */
   constructor(namespace?: string) {
     this.namespace = namespace ?? `e2e-skills-${randomUUID()}`;
-    const port = process.env.E2E_SKILLS_FIXTURE_PORT ?? '28084';
+    const port = process.env.E2E_SKILLS_FIXTURE_PORT ?? '28085';
     if (!/^\d{1,5}$/.test(port) || Number(port) > 65535 || Number(port) === 0) throw new Error('Invalid fixture port');
     this.origin = `http://localhost:${port}`;
   }

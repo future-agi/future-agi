@@ -6,6 +6,7 @@ import runpy
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 code = runpy.run_path(str(Path(__file__).with_name("verify-skill-packages.py")))
 verify, stage = code["verify"], code["stage"]
@@ -27,11 +28,14 @@ class PairLockTests(unittest.TestCase):
             "semconv_ts": "traceai-fi-semantic-conventions-1.3.0.tgz",
         }
         self.branches = {"sdk": "feat/skills", "traceai": "dev"}
+        inputs = {"backend_commit": self.sources["product"], "openapi_sha256": "1" * 64,
+                  "mcp_sha256": "2" * 64, "tools_yaml_sha256": "3" * 64}
         self.contract = {
             "sync_mode": "scoped",
-            "source": {"backend_commit": self.sources["product"], "non_skills_sdk_commit": "d" * 40,
-                       **dict.fromkeys(("openapi_sha256", "mcp_sha256", "non_skills_slice_sha256"), "e" * 64)},
-            "sha256": dict.fromkeys(("swagger.json", "mcp-tools.json", "SOURCE.json"), "f" * 64),
+            "source": {**{scope: {**inputs, "tools": [tool]} for scope, tool in
+                          (("sql", "run_sql"), ("epoch", "get_epoch"), ("skills", "list_skills"))},
+                       "other": {"sdk_commit": "d" * 40, "slice_sha256": "e" * 64, "openapi_sha256": "4" * 64}},
+            "sha256": {"swagger.json": "f" * 64},
         }
         self.items = {}
         for role, name in self.names.items():
@@ -65,26 +69,42 @@ class PairLockTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Package does not match"):
             verify(self.dist, expected, self.sources)
 
-    def test_missing_provenance_is_rejected(self):
-        self.contract["source"]["backend_commit"] = "1" * 40
-        with self.assertRaisesRegex(ValueError, "contract provenance"):
-            verify(self.dist, self.lock(), self.sources)
-        self.contract["source"]["backend_commit"] = self.sources["product"]
-        del self.contract["sha256"]["SOURCE.json"]
-        with self.assertRaisesRegex(ValueError, "contract provenance"):
-            verify(self.dist, self.lock(), self.sources)
+    def test_partial_or_inconsistent_scoped_provenance_is_rejected(self):
+        source = self.contract["source"]
+        for scope in source:
+            missing = {k: v for k, v in source.items() if k != scope}
+            with self.subTest(missing=scope), patch.dict(self.contract, source=missing):
+                with self.assertRaisesRegex(ValueError, "contract provenance"):
+                    verify(self.dist, self.lock(), self.sources)
+        for scope, key, value in [("sql", "backend_commit", "1" * 40), ("epoch", "openapi_sha256", "e" * 64),
+                                  ("skills", "mcp_sha256", "e" * 64), ("sql", "tools_yaml_sha256", "e" * 64),
+                                  ("skills", "tools", []), ("skills", "tools", ["run_sql"]),
+                                  ("other", "sdk_commit", "branch"), ("other", "slice_sha256", None),
+                                  ("other", "openapi_sha256", "")]:
+            with self.subTest(scope=scope, key=key), patch.dict(source[scope], {key: value}):
+                with self.assertRaisesRegex(ValueError, "contract provenance"):
+                    verify(self.dist, self.lock(), self.sources)
+        for wrong in [{}, {"swagger.json": ""}, {**self.contract["sha256"], "SOURCE.json": "e" * 64}]:
+            with patch.dict(self.contract, sha256=wrong), self.assertRaisesRegex(ValueError, "contract provenance"):
+                verify(self.dist, self.lock(), self.sources)
         del self.branches["sdk"]
         with self.assertRaisesRegex(ValueError, "branch"):
             verify(self.dist, self.lock(), self.sources)
 
-    def test_baseline_provenance_matches_sync_mode(self):
-        del self.contract["source"]["non_skills_sdk_commit"]
-        with self.assertRaisesRegex(ValueError, "contract provenance"):
-            verify(self.dist, self.lock(), self.sources)
+    def test_legacy_receipts_are_distinct_from_scoped_swagger(self):
         self.contract["sync_mode"] = "full"
         with self.assertRaisesRegex(ValueError, "contract provenance"):
             verify(self.dist, self.lock(), self.sources)
-        del self.contract["source"]["non_skills_slice_sha256"]
+        source = {"backend_commit": self.sources["product"], "openapi_sha256": "e" * 64, "mcp_sha256": "f" * 64}
+        self.contract["source"] = source
+        with self.assertRaisesRegex(ValueError, "contract provenance"):
+            verify(self.dist, self.lock(), self.sources)
+        self.contract["sha256"].update({"mcp-tools.json": "f" * 64, "SOURCE.json": "e" * 64})
+        self.assertEqual(verify(self.dist, self.lock(), self.sources), self.items)
+        source.update(non_skills_sdk_commit="d" * 40, non_skills_slice_sha256="e" * 64)
+        with self.assertRaisesRegex(ValueError, "contract provenance"):
+            verify(self.dist, self.lock(), self.sources)
+        self.contract["sync_mode"] = "scoped"
         self.assertEqual(verify(self.dist, self.lock(), self.sources), self.items)
 
     def test_missing_extra_and_wrongly_named_packages_are_rejected(self):

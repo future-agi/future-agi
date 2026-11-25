@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -18,12 +19,14 @@ MCP_GENERATOR = 'futureagi/mcp_server/tool_generation.py'
 MCP_PACKAGE = 'futureagi/mcp_server'
 SKILLS = '/model-hub/skills/'
 HTTP_METHODS = {'get', 'put', 'post', 'delete', 'patch', 'head', 'options', 'trace'}
-CONTRACTS = ('swagger.json', 'mcp-tools.json', 'SOURCE.json')
+LEGACY_CONTRACTS = ('swagger.json', 'mcp-tools.json', 'SOURCE.json')
+SDK_SWAGGER = 'sdkgen/contracts/swagger.json'
+# The driver runs with -I; share the receipt schema without changing its import path.
+verifier = runpy.run_path(str(Path(__file__).with_name('verify-skill-packages.py')))
 # Exact generator-owned paths, not entire directories: per-resource subclasses and
 # catalog entries are hand-written. A new scaffold must be committed in the SDK first.
 GENERATED = (
-    {f'sdkgen/contracts/{name}' for name in CONTRACTS}
-    | {f'python/fi/platform/{name}' for name in (
+    {f'python/fi/platform/{name}' for name in (
         '_wire_definitions.json', 'models.py', '_operations.py', 'resources/base.py', 'resources/__init__.py',
     )}
     | {f'typescript/futureagi/src/platform/{name}' for name in (
@@ -32,14 +35,14 @@ GENERATED = (
 )
 
 
-def check_changes(sdk):
+def check_changes(sdk, outputs=('swagger.json',)):
     def paths(*args):
         return set(subprocess.check_output(['git', '-C', sdk, *args], text=True).split('\0')) - {''}
 
     # Include staged, unstaged and untracked files (even ignored files). Generator
     # commands run with -B so their own bytecode is not a checkout change.
     changed = paths('diff', '--no-renames', '--name-only', '-z', 'HEAD') | paths('ls-files', '--others', '-z')
-    unexpected = changed - GENERATED
+    unexpected = changed - GENERATED - {f'sdkgen/contracts/{name}' for name in outputs}
     if unexpected:
         raise ValueError(f'SDK regeneration touched files outside the generated outputs: {sorted(unexpected)}')
 
@@ -105,22 +108,22 @@ def reached_models(doc, operation):
 
 def check_tool(name, endpoint, declared, tool):
     if tool is None or endpoint != (tool['request']['method'].upper(), tool['request']['path']):
-        raise ValueError(f'SDK Skills MCP tool absent or bound differently in the tested backend: {name}')
+        raise ValueError(f'SDK MCP tool absent or bound differently in the tested backend: {name}')
     hints = tool.get('annotations', {})
     if 'access' in declared:
         access = declared['access']
         if (access not in {'read', 'write', 'destructive'}
                 or hints.get('readOnlyHint') is not (access == 'read')
                 or hints.get('destructiveHint') is not (access == 'destructive')):
-            raise ValueError(f'SDK Skills MCP access differs for {name}')
+            raise ValueError(f'SDK MCP access differs for {name}')
     if 'open_world' in declared and hints.get('openWorldHint') is not declared['open_world']:
-        raise ValueError(f'SDK Skills MCP open_world differs for {name}')
+        raise ValueError(f'SDK MCP open_world differs for {name}')
     for param, cap in declared.get('max_page_size', {}).items():
         schema = tool['inputSchema']['properties'].get(param, {})
         mapping = tool['request']['parameters']
         if (param not in [*mapping['query'], *mapping['body']] or schema.get('type') != 'integer'
                 or type(schema.get('maximum')) is not int or type(cap) is not int or schema['maximum'] != cap):
-            raise ValueError(f'SDK Skills MCP max_page_size differs for {name}.{param}')
+            raise ValueError(f'SDK MCP max_page_size differs for {name}.{param}')
     # Other explicit fields (including group or stability) must have an equal
     # backend value. Do not silently accept new, unmapped catalog settings.
     for key in declared.keys() - {'access', 'open_world', 'max_page_size'}:
@@ -128,7 +131,7 @@ def check_tool(name, endpoint, declared, tool):
         if key == 'stability' and declared[key] == 'stable' and tool.get(key, 'stable') == 'stable':
             continue
         if key not in tool or declared[key] != tool[key]:
-            raise ValueError(f'SDK Skills MCP {key} differs for {name}')
+            raise ValueError(f'SDK MCP {key} differs for {name}')
 
 
 def check_slice(api, swagger, catalog, sdk_catalog):
@@ -185,8 +188,16 @@ def sha(data):
 
 
 def run_sdk(sdk, *args):
-    # stdout of this driver is reserved for the verified JSON receipt.
-    subprocess.run([sys.executable, '-IB', *args], cwd=sdk, stdout=sys.stderr, check=True)
+    # Ignore Python environment/user site and skip bytecode, but keep sdkgen/ on
+    # sys.path: sync_scoped_contract.py imports sibling modules. Reserve stdout for the receipt.
+    subprocess.run([sys.executable, '-EBs', *args], cwd=sdk, stdout=sys.stderr, check=True)
+
+
+def generate_clients(sdk, *, check_baseline):
+    run_sdk(sdk, 'sdkgen/generate.py', '--only', 'python', 'typescript')
+    run_sdk(sdk, 'sdkgen/generate.py', '--check', '--only', 'python', 'typescript')
+    if check_baseline:
+        run_sdk(sdk, 'sdkgen/check_skills_baseline.py')
 
 
 def check_catalog_provenance(root, product, raw_api, raw_tools):
@@ -221,30 +232,94 @@ def check_catalog_provenance(root, product, raw_api, raw_tools):
         raise ValueError('Product MCP catalog was not generated from the committed OpenAPI file')
 
 
-def regenerate(root, sdk, product):
-    # Keep the expected bytes independent of the generator's writable inputs.
-    raw_api, raw_tools = blob(root, product, OPENAPI), blob(root, product, MCP)
-    api_hash, mcp_hash = sha(raw_api), sha(raw_tools)
-    catalog = json.loads(raw_tools)
-    check_catalog_provenance(root, product, raw_api, raw_tools)
+def shipped_sql_tools(sdk_catalog, product_catalog):
+    """SQL shares the observability group; only sql.* operations with MCP mappings ship in this scope."""
+    product_tools = {tool['name']: tool for tool in product_catalog['tools']}
+    names = set()
+    for entry in sdk_catalog['operations']:
+        if not entry['id'].startswith('sql.'):
+            continue
+        mapping = entry['surfaces'].get('mcp')
+        if mapping is None or mapping is False:
+            continue
+        name = mapping.get('name') or entry['id'].replace('.', '_')
+        if name in names:
+            raise ValueError(f'Duplicate SDK SQL MCP tool: {name}')
+        op = entry['operation']
+        check_tool(name, (op['method'].upper(), op['path']), mapping, product_tools.get(name))
+        names.add(name)
+    return sorted(names)
 
+
+def regenerate_scoped(root, sdk, snapshot, inputs, catalog, sdk_catalog):
+    contracts = sdk / 'sdkgen/contracts'
+    if ({'x-source-sha256', 'x-skills-only-baseline-sha256'} & snapshot.keys()
+            or any((contracts / name).exists() for name in ('SOURCE.json', 'mcp-tools.json'))):
+        raise ValueError('Mixed legacy and scoped contract provenance')
+    recorded = snapshot['x-contract-sources']
+    verifier['verify_scoped_source'](recorded)
+    baseline = recorded['other']['sdk_commit']
+    baseline_raw = blob(sdk, baseline, SDK_SWAGGER)
+    old = json.loads(baseline_raw)
+    # The baseline itself may have already synced SQL/Epoch; its release OpenAPI
+    # digest is distinct from the digest of its actual Swagger slice.
+    release_hash = (old['x-contract-sources']['other']['openapi_sha256'] if 'x-contract-sources' in old
+                    else old['x-source-sha256'])
+    if recorded['other'] != {'sdk_commit': baseline, 'slice_sha256': sha(baseline_raw), 'openapi_sha256': release_hash}:
+        raise ValueError('Scoped SDK baseline does not match its committed slice')
+
+    product = inputs['backend_commit']
+    inputs = {**inputs, 'tools_yaml_sha256': sha(blob(root, product, MCP_CATALOG))}
+    # SQL is a fixed subset of observability in this SDK; epoch and skills each
+    # take a complete group from the tested product's generated MCP inventory.
+    tools = {scope: sorted(t['name'] for t in catalog['tools'] if t['group'] == scope) for scope in ('epoch', 'skills')}
+    tools['sql'] = shipped_sql_tools(sdk_catalog, catalog)
+    if recorded['sql']['tools'] != tools['sql']:
+        raise ValueError('Recorded scoped SQL tool inventory differs from the paired SDK catalog')
+    expected = {scope: {**inputs, 'tools': names} for scope, names in tools.items()}
+    expected['other'] = recorded['other']
+    verifier['verify_scoped_source'](expected, product)
+    if recorded['skills']['backend_commit'] == product and recorded != expected:
+        raise ValueError('Recorded scoped inputs disagree with the same product commit')
+
+    run_sdk(sdk, 'sdkgen/sync_scoped_contract.py', root.resolve(), product, baseline)
+    generate_clients(sdk, check_baseline=True)
+    check_changes(sdk)
+    raw = (sdk / SDK_SWAGGER).read_bytes()
+    swagger = json.loads(raw)
+    source = swagger.get('x-contract-sources')
+    if source != expected or {'x-source-sha256', 'x-skills-only-baseline-sha256'} & swagger.keys():
+        raise ValueError('Regenerated scoped snapshot does not match the committed contract inputs')
+    return swagger, {'sync_mode': 'scoped', 'source': source, 'sha256': {'swagger.json': sha(raw)}}
+
+
+def regenerate_legacy(sdk, snapshot, inputs, raw_api, raw_tools, catalog):
     contracts = sdk / 'sdkgen/contracts'
     metadata = contracts / 'SOURCE.json'
+    inventory = contracts / 'mcp-tools.json'
+    if (not verifier['hex_digest'](snapshot.get('x-source-sha256'), 64) or metadata.exists() != inventory.exists()):
+        raise ValueError('Missing or partial legacy contract provenance')
+    expected_source = dict(inputs)
+    product = inputs['backend_commit']
     baseline_args = []
-    expected_source = {'backend_commit': product, 'openapi_sha256': api_hash, 'mcp_sha256': mcp_hash}
-    recorded = json.loads(metadata.read_bytes()) if metadata.exists() else {}
-    scoped_keys = {'non_skills_sdk_commit', 'non_skills_slice_sha256'} & recorded.keys()
-    if scoped_keys and len(scoped_keys) != 2:
-        raise ValueError('SDK SOURCE.json has partial Skills baseline metadata')
-    # Scoped preview: both baseline fields present. Full commit-pinned sync (SOURCE.json
-    # without them) and released checkouts (no SOURCE.json) regenerate in full mode.
-    if scoped_keys:
-        baseline = recorded['non_skills_sdk_commit']
-        if not re.fullmatch(r'[0-9a-f]{40}', str(baseline)):
-            raise ValueError('SDK SOURCE.json baseline is not a full commit')
-        baseline_hash = sha(blob(sdk, baseline, 'sdkgen/contracts/swagger.json'))
-        expected_source.update(non_skills_sdk_commit=baseline, non_skills_slice_sha256=baseline_hash)
-        baseline_args = ['--skills-baseline-sdk', baseline]
+    if metadata.exists():
+        recorded = json.loads(metadata.read_bytes())
+        mode = verifier['verify_legacy_source'](recorded)
+        if (recorded['openapi_sha256'] != snapshot['x-source-sha256']
+                or recorded['mcp_sha256'] != json.loads(inventory.read_bytes()).get('x-source-sha256')
+                or ('x-skills-only-baseline-sha256' in snapshot) != (mode == 'scoped')):
+            raise ValueError('Inconsistent legacy contract provenance')
+        if mode == 'scoped':
+            baseline = recorded['non_skills_sdk_commit']
+            baseline_hash = sha(blob(sdk, baseline, SDK_SWAGGER))
+            if (baseline_hash != recorded['non_skills_slice_sha256']
+                    or baseline_hash != snapshot['x-skills-only-baseline-sha256']):
+                raise ValueError('Legacy SDK baseline does not match its committed slice')
+            expected_source.update(non_skills_sdk_commit=baseline, non_skills_slice_sha256=baseline_hash)
+            baseline_args = ['--skills-baseline-sdk', baseline]
+    elif ('x-skills-only-baseline-sha256' in snapshot or not (contracts / 'BACKEND_VERSION').is_file()
+          or not re.fullmatch(r'v\d+\.\d+\.\d+', (contracts / 'BACKEND_VERSION').read_text().strip())):
+        raise ValueError('No complete release or commit-pinned contract provenance')
 
     with tempfile.TemporaryDirectory() as tmp:
         api_input, mcp_input = Path(tmp) / 'swagger.json', Path(tmp) / 'tools.generated.json'
@@ -254,22 +329,36 @@ def regenerate(root, sdk, product):
                 '--mcp-tools', mcp_input, *baseline_args)
         if api_input.read_bytes() != raw_api or mcp_input.read_bytes() != raw_tools:
             raise ValueError('SDK sync changed its committed contract inputs')
-    run_sdk(sdk, 'sdkgen/generate.py', '--only', 'python', 'typescript')
-    run_sdk(sdk, 'sdkgen/generate.py', '--check', '--only', 'python', 'typescript')
-    if baseline_args:
-        run_sdk(sdk, 'sdkgen/check_skills_baseline.py')
-    check_changes(sdk)
-    files = {name: (contracts / name).read_bytes() for name in CONTRACTS}
-    swagger, tools, source = (json.loads(files[name]) for name in CONTRACTS)
-    if (source != expected_source or swagger['x-source-sha256'] != api_hash or tools['x-source-sha256'] != mcp_hash
+    generate_clients(sdk, check_baseline=bool(baseline_args))
+    check_changes(sdk, LEGACY_CONTRACTS)
+    files = {name: (contracts / name).read_bytes() for name in LEGACY_CONTRACTS}
+    swagger, tools, source = (json.loads(files[name]) for name in LEGACY_CONTRACTS)
+    if (source != expected_source or 'x-contract-sources' in swagger
+            or swagger['x-source-sha256'] != inputs['openapi_sha256']
+            or tools['x-source-sha256'] != inputs['mcp_sha256']
             or swagger.get('x-skills-only-baseline-sha256') != expected_source.get('non_skills_slice_sha256')):
         raise ValueError('Regenerated snapshot does not match the committed contract inputs')
     if tools['tools'] != [{'name': name} for name in sorted(t['name'] for t in catalog['tools'])]:
         raise ValueError('SDK tool inventory does not match the tested catalog')
-    sdk_catalog = yaml.safe_load((sdk / 'sdkgen/catalog/operations.yaml').read_bytes())
-    coverage = check_slice(json.loads(raw_api), swagger, catalog, sdk_catalog)
-    return {'sync_mode': 'scoped' if baseline_args else 'full', 'source': source, 'coverage': coverage,
-            'sha256': {name: sha(data) for name, data in files.items()}}
+    return swagger, {'sync_mode': 'scoped' if baseline_args else 'full', 'source': source,
+                     'sha256': {name: sha(data) for name, data in files.items()}}
+
+
+def regenerate(root, sdk, product):
+    # Select the layout from the paired commit and compute expected hashes from
+    # Git objects, independently of both the working tree and generator outputs.
+    sdk_commit = subprocess.check_output(['git', '-C', sdk, 'rev-parse', 'HEAD'], text=True).strip()
+    snapshot = json.loads(blob(sdk, sdk_commit, SDK_SWAGGER))
+    raw_api, raw_tools = blob(root, product, OPENAPI), blob(root, product, MCP)
+    inputs = {'backend_commit': product, 'openapi_sha256': sha(raw_api), 'mcp_sha256': sha(raw_tools)}
+    catalog = json.loads(raw_tools)
+    check_catalog_provenance(root, product, raw_api, raw_tools)
+    sdk_catalog = yaml.safe_load(blob(sdk, sdk_commit, 'sdkgen/catalog/operations.yaml'))
+    if 'x-contract-sources' in snapshot:
+        swagger, receipt = regenerate_scoped(root, sdk, snapshot, inputs, catalog, sdk_catalog)
+    else:
+        swagger, receipt = regenerate_legacy(sdk, snapshot, inputs, raw_api, raw_tools, catalog)
+    return {**receipt, 'coverage': check_slice(json.loads(raw_api), swagger, catalog, sdk_catalog)}
 
 
 if __name__ == '__main__':

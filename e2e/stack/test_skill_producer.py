@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 HERE = Path(__file__).parent
 resolve = runpy.run_path(str(HERE / 'resolve-skill-refs.py'))['resolve']
@@ -18,6 +18,21 @@ check_slice = checker['check_slice']
 
 def listing(*branches):
     return ''.join(f'{index:040x}\trefs/heads/{branch}\n' for index, branch in enumerate(branches, 1))
+
+
+def commit(repo, files):
+    for name, content in files.items():
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
+    def git(*args):
+        return subprocess.check_output(['git', '-C', repo, *args], text=True).strip()
+
+    git('init', '-q')
+    git('add', '.')
+    git('-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'fixture')
+    return git('rev-parse', 'HEAD')
 
 
 class BranchTests(unittest.TestCase):
@@ -153,21 +168,10 @@ class ContractTests(unittest.TestCase):
             tools_bytes = json.dumps({**self.catalog, 'source_contract_sha256': api_sha}).encode()
             tools_sha = hashlib.sha256(tools_bytes).hexdigest()
 
-            def commit(repo, files):
-                for name, content in files.items():
-                    path = repo / name
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(content)
-                def git(*args):
-                    return subprocess.check_output(['git', '-C', repo, *args], text=True).strip()
-                git('init', '-q')
-                git('add', '.')
-                git('-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'fixture')
-                return git('rev-parse', 'HEAD')
-
             revision = commit(product, {checker['OPENAPI']: api_bytes, checker['MCP']: tools_bytes})
             commit(sdk, {'sdkgen/catalog/operations.yaml': json.dumps({'operations': [self.entry]}).encode(),
-                         'sdkgen/contracts/swagger.json': b'{}', 'sdkgen/contracts/BACKEND_VERSION': b'v1.0.0'})
+                         'sdkgen/contracts/swagger.json': json.dumps({'x-source-sha256': 'f' * 64}).encode(),
+                         'sdkgen/contracts/BACKEND_VERSION': b'v1.0.0'})
             # A released SDK has neither SOURCE.json nor mcp-tools.json. A
             # writable product tree is not the input or the provenance authority.
             (product / checker['OPENAPI']).write_text('{}')
@@ -191,21 +195,137 @@ class ContractTests(unittest.TestCase):
                 receipt = regenerate(product, sdk, revision)
             self.assertEqual(receipt['sync_mode'], 'full')
             # A full commit-pinned sync leaves SOURCE.json without baseline fields; it also selects full mode.
-            (sdk / 'sdkgen/contracts/SOURCE.json').write_text(json.dumps({'backend_commit': 'f' * 40}))
-            subprocess.check_call(['git', '-C', sdk, 'add', '.'])
-            subprocess.check_call(['git', '-C', sdk, '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'full sync'])
+            commit(sdk, {})
             calls.clear()
             with patch.dict(regenerate.__globals__, run_sdk=fixture_run, check_catalog_provenance=lambda *_: None):
                 self.assertEqual(regenerate(product, sdk, revision)['sync_mode'], 'full')
             # Partial baseline metadata is rejected rather than guessed.
-            (sdk / 'sdkgen/contracts/SOURCE.json').write_text(json.dumps({'non_skills_sdk_commit': 'a' * 40}))
-            subprocess.check_call(['git', '-C', sdk, 'add', '.'])
-            subprocess.check_call(['git', '-C', sdk, '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'partial'])
+            partial = {**source, 'non_skills_sdk_commit': 'a' * 40}
+            commit(sdk, {'sdkgen/contracts/SOURCE.json': json.dumps(partial).encode()})
             with patch.dict(regenerate.__globals__, run_sdk=fixture_run, check_catalog_provenance=lambda *_: None), self.assertRaisesRegex(ValueError, 'partial'):
                 regenerate(product, sdk, revision)
             self.assertEqual(receipt['source'], source)
             self.assertEqual(calls[1:], [('sdkgen/generate.py', '--only', 'python', 'typescript'),
                                          ('sdkgen/generate.py', '--check', '--only', 'python', 'typescript')])
+
+    def test_scoped_sync_uses_committed_inputs_and_the_recorded_sdk_baseline(self):
+        regenerate = checker['regenerate']
+
+        def encode(value):
+            return json.dumps(value).encode()
+
+        def sha(raw):
+            return hashlib.sha256(raw).hexdigest()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, sdk = Path(tmp) / 'product', Path(tmp) / 'sdk'
+            tools = {'sql': ['cancel_sql', 'run_sql'], 'epoch': ['get_epoch'], 'skills': ['list_skills']}
+            catalog = copy.deepcopy(self.catalog)
+            sdk_ops = [self.entry]
+            for op_id, name, path in [('sql.run', 'run_sql', '/tracer/sql-query/run/'),
+                                      ('sql.cancel', 'cancel_sql', '/tracer/sql-query/{id}/cancel/')]:
+                endpoint = {'method': 'POST', 'path': path}
+                mapping = {'name': name, 'group': 'observability'}
+                catalog['tools'].append({**mapping, 'request': endpoint})
+                sdk_ops.append({'id': op_id, 'operation': endpoint, 'surfaces': {'mcp': mapping}})
+            for name, group in [('list_traces', 'observability'), ('get_epoch', 'epoch')]:
+                catalog['tools'].append({'name': name, 'group': group, 'request': {'path': '/unrelated/'}})
+            api_bytes, mcp_bytes, yaml_bytes = encode(self.api), encode(catalog), b'tools: {}\n'
+            revision = commit(root, {checker['OPENAPI']: api_bytes, checker['MCP']: mcp_bytes,
+                                     checker['MCP_CATALOG']: yaml_bytes})
+            # A baseline can already be a scoped snapshot from before Skills existed.
+            old_inputs = {'backend_commit': '1' * 40, 'openapi_sha256': '2' * 64,
+                          'mcp_sha256': '3' * 64, 'tools_yaml_sha256': '4' * 64}
+            release_hash = '5' * 64
+            older = {k: {**old_inputs, 'tools': tools[k]} for k in ('sql', 'epoch')}
+            older['other'] = {'sdk_commit': '6' * 40, 'slice_sha256': '7' * 64, 'openapi_sha256': release_hash}
+            baseline_raw = encode({'x-contract-sources': older})
+            path = 'sdkgen/contracts/swagger.json'
+            baseline = commit(sdk, {path: baseline_raw})
+            recorded = {k: {**old_inputs, 'tools': names} for k, names in tools.items()}
+            recorded['other'] = {'sdk_commit': baseline, 'slice_sha256': sha(baseline_raw),
+                                 'openapi_sha256': release_hash}
+            commit(sdk, {path: encode({'x-contract-sources': recorded}),
+                         'sdkgen/catalog/operations.yaml': encode({'operations': sdk_ops})})
+            expected = {k: {'backend_commit': revision, 'openapi_sha256': sha(api_bytes), 'mcp_sha256': sha(mcp_bytes),
+                            'tools_yaml_sha256': sha(yaml_bytes), 'tools': names} for k, names in tools.items()}
+            expected['other'] = recorded['other']
+            output = {'x-contract-sources': expected, **self.swagger}
+            for name in ('OPENAPI', 'MCP', 'MCP_CATALOG'):
+                (root / checker[name]).write_bytes(b'dirty working tree')
+
+            def sync(repo, script, *args):
+                if script == 'sdkgen/sync_scoped_contract.py':
+                    (repo / path).write_bytes(encode(output))
+
+            command = Mock(side_effect=sync)
+            with patch.dict(regenerate.__globals__, run_sdk=command, check_catalog_provenance=lambda *_: None):
+                receipt = regenerate(root, sdk, revision)
+                self.assertEqual([c.args for c in command.call_args_list], [
+                    (sdk, 'sdkgen/sync_scoped_contract.py', root.resolve(), revision, baseline),
+                    (sdk, 'sdkgen/generate.py', '--only', 'python', 'typescript'),
+                    (sdk, 'sdkgen/generate.py', '--check', '--only', 'python', 'typescript'),
+                    (sdk, 'sdkgen/check_skills_baseline.py'),
+                ])
+                self.assertEqual(receipt['sync_mode'], 'scoped')
+                self.assertEqual(receipt['source'], expected)
+                self.assertEqual(receipt['sha256'], {'swagger.json': sha(encode(output))})
+                self.assertEqual(receipt['coverage']['skills_operations']['sdk'], 1)
+
+                for scope, key in [('sql', 'backend_commit'), ('epoch', 'openapi_sha256'), ('skills', 'mcp_sha256'),
+                                   ('sql', 'tools_yaml_sha256'), ('other', 'sdk_commit'), ('other', 'slice_sha256'),
+                                   ('other', 'openapi_sha256'), ('skills', 'tools')]:
+                    with self.subTest(scope=scope, key=key), patch.dict(expected[scope], {key: 'stale'}):
+                        with self.assertRaisesRegex(ValueError, 'committed contract inputs'):
+                            regenerate(root, sdk, revision)
+
+                # The catalog still ships cancel_sql, even if both receipts omit it.
+                with patch.dict(expected['sql'], tools=['run_sql']):
+                    with self.assertRaisesRegex(ValueError, 'committed contract inputs'):
+                        regenerate(root, sdk, revision)  # regenerated receipt alone is incomplete
+                    incomplete = {**recorded, 'sql': {**recorded['sql'], 'tools': ['run_sql']}}
+                    commit(sdk, {path: encode({'x-contract-sources': incomplete})})
+                    command.reset_mock()
+                    with self.assertRaisesRegex(ValueError, 'SQL tool inventory'):
+                        regenerate(root, sdk, revision)
+                    command.assert_not_called()
+
+            # Malformed committed input cannot be repaired by overwriting it, or
+            # bypassed by invoking the release sync when the sidecars are absent.
+            broken_records = [None, {k: v for k, v in recorded.items() if k != 'skills'},
+                              {**recorded, 'epoch': {**recorded['epoch'], 'mcp_sha256': '0' * 64}},
+                              {**recorded, 'other': {**recorded['other'], 'slice_sha256': '0' * 64}},
+                              {**recorded, **{k: {**recorded[k], 'backend_commit': revision} for k in tools}}]
+            for snapshot in [{}, {'x-source-sha256': sha(api_bytes), 'x-contract-sources': recorded},
+                             *({'x-contract-sources': r} for r in broken_records)]:
+                commit(sdk, {path: encode(snapshot)})
+                command.reset_mock()
+                with patch.dict(regenerate.__globals__, run_sdk=command, check_catalog_provenance=lambda *_: None):
+                    with self.assertRaises(ValueError):
+                        regenerate(root, sdk, revision)
+                command.assert_not_called()
+
+    def test_sql_tool_name_alone_does_not_prove_its_product_binding(self):
+        endpoint = {'method': 'POST', 'path': '/tracer/sql-query/{id}/cancel/'}
+        entry = {'id': 'sql.cancel', 'operation': endpoint, 'surfaces': {'mcp': {'name': 'cancel_sql'}}}
+        sdk_catalog = {'operations': [entry, {**entry, 'id': 'sql.sdk_only', 'surfaces': {'mcp': False}}]}
+        tool = {'name': 'cancel_sql', 'request': endpoint}
+        shipped = checker['shipped_sql_tools']
+        self.assertEqual(shipped(sdk_catalog, {'tools': [tool]}), ['cancel_sql'])
+        for rows in ([], [{**tool, 'request': {**endpoint, 'method': 'GET'}}],
+                     [{**tool, 'request': {**endpoint, 'path': '/tracer/sql-query/run/'}}]):
+            with self.subTest(rows=rows), self.assertRaisesRegex(ValueError, 'bound differently.*cancel_sql'):
+                shipped(sdk_catalog, {'tools': rows})
+
+    def test_sdk_scripts_can_import_siblings_without_leaving_bytecode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sdk = Path(tmp)
+            scripts = sdk / 'sdkgen'
+            scripts.mkdir()
+            (scripts / 'sdk_sibling.py').write_text('ok = True\n')
+            (scripts / 'driver.py').write_text('from sdk_sibling import ok\nassert ok\n')
+            checker['run_sdk'](sdk, 'sdkgen/driver.py')
+            self.assertFalse((scripts / '__pycache__').exists())
 
     def test_catalog_must_be_what_the_committed_generator_renders(self):
         provenance = checker['check_catalog_provenance']
