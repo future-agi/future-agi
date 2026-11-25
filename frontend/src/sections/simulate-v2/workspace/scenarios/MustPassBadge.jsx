@@ -24,13 +24,18 @@ export default function MustPassBadge({
   onToggle,
   locked = false,
   label = false,
+  /* The run it is failing in ("Run 2"), when it's marked and not passing. */
+  failingIn = null,
 }) {
   const theme = useTheme();
   const mode = theme.palette.mode === "dark" ? "dark" : "light";
   if (!row?.critical) return null;
   const canToggle = !!onToggle && !locked;
   return (
-    <Tooltip arrow title={MUST_PASS_TIP}>
+    <Tooltip
+      arrow
+      title={failingIn ? `Must pass · failing in ${failingIn}` : MUST_PASS_TIP}
+    >
       <Box
         component={canToggle ? "button" : "span"}
         type={canToggle ? "button" : undefined}
@@ -71,8 +76,8 @@ export default function MustPassBadge({
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            bgcolor: SUBTLE[mode],
-            color: FG[mode],
+            bgcolor: failingIn ? "status.danger.bg" : SUBTLE[mode],
+            color: failingIn ? "status.danger.fg" : FG[mode],
             flexShrink: 0,
           }}
         >
@@ -102,4 +107,5 @@ MustPassBadge.propTypes = {
   onToggle: PropTypes.func,
   locked: PropTypes.bool,
   label: PropTypes.bool,
+  failingIn: PropTypes.string,
 };

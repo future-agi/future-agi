@@ -1,5 +1,5 @@
 /*
-  The scenarios table's "Last 3 runs" column, as plain data.
+  The scenarios table's "Recent runs" column, as plain data.
 
   A scenario is passed, flaky (some trials passed, some failed) or failed in
   each run it was in. The column shows the last three of those, oldest first.
@@ -30,6 +30,11 @@ const trialCountOf = (h) => {
   const passed = samples.filter((s) => s === "passed").length;
   return `${passed} of ${samples.length} trials`;
 };
+const STATUS_WORD = {
+  passed: "Passed",
+  flaky: "Flaky",
+  failed: "Failed",
+};
 
 /* A run's result speaks for the current agent only when it ran on the same
    agent and environment version. A missing stamp is given the benefit. */
@@ -42,13 +47,18 @@ export const isOtherAgent = (current, h) =>
 
 export const dotTitleOf = (dot, current = null, envLabel = (v) => v) => {
   if (!dot.comparable) return "Ran on an earlier version of this scenario";
-  const word =
-    dot.status === "flaky" && dot.trials ? `flaky (${dot.trials})` : dot.status;
   const ran = [
     dot.agentVersion && `agent ${dot.agentVersion}`,
     dot.envVersion && `env ${envLabel(dot.envVersion)}`,
   ].filter(Boolean);
-  const head = [dot.name, ...ran, word].join(" · ");
+  const head = [
+    dot.name,
+    ...ran,
+    STATUS_WORD[dot.status] || dot.status,
+    dot.trials,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return dot.otherAgent && current?.agent
     ? `${head} — not the current agent (${current.agent})`
     : head;

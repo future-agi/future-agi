@@ -71,6 +71,16 @@ import ScenarioCites from "../workspace/scenarios/ScenarioCites";
  * · edit · approve (add a proposed scenario).
  * `bare` drops the collapsible row, for the detail drawer.
  */
+/* "Passed every trial" · "1 flaky" · "1 failed, 1 flaky" — the runs in words. */
+const runsWord = (scored) => {
+  const flaky = scored.filter((h) => h.status === "flaky").length;
+  const failed = scored.filter((h) => h.status === "failed").length;
+  if (!flaky && !failed) return "Passed every trial";
+  return [failed && `${failed} failed`, flaky && `${flaky} flaky`]
+    .filter(Boolean)
+    .join(", ");
+};
+
 export default function ScenarioDetail({
   row,
   env,
@@ -774,10 +784,20 @@ function DrawerSheet({
           "& > * + *": { borderLeft: "1px solid", borderColor: "divider" },
         }}
       >
+        {/* Runs, not trials: with trials the dots live one per trial in
+            "Trials by run" below, so this figure says it in words. */}
         <Figure
-          label={history.length ? `Last ${history.length} runs` : "Runs"}
+          label={history.length ? "Recent runs" : "Runs"}
           value={scored.length ? `${passedRuns}/${scored.length}` : "—"}
-          sub={history.length ? <RunDots history={history} /> : "Not run yet"}
+          sub={
+            !history.length ? (
+              "Not run yet"
+            ) : history.some((h) => h.samples?.length > 1) ? (
+              runsWord(scored)
+            ) : (
+              <RunDots history={history} />
+            )
+          }
         />
         <Figure
           label="Sub-goals"

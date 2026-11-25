@@ -387,12 +387,15 @@ export const currentVersionName = (env, envState, piece = "both", long = false) 
  * the Scenarios tab says it made ("→ scenarios v3"). The newest snapshot that
  * moved the scenarios at or just after that moment.
  */
-export const scenarioVersionAt = (env, envState, iso) => {
+export const scenarioVersionAt = (env, envState, iso, afterBuild = false) => {
   const t = ms(iso);
   const list = envSnapshotsOf(env, envState).filter((s) => s.scenChanged);
   if (!list.length) return null;
   const hit = list.find((s) => (s.endMs || 0) + SAME_ACTION_MS >= t && (s.startMs || 0) - SAME_ACTION_MS <= t)
     || [...list].reverse().find((s) => (s.startMs || 0) <= t + SAME_ACTION_MS);
+  /* An addition after the build is never in the first version: when no
+     snapshot's time covers it, it made the first change that followed. */
+  if (afterBuild && list.length > 1 && (!hit || hit === list[0])) return list[1];
   return hit || list[0];
 };
 

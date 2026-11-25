@@ -486,13 +486,14 @@ export default function ScenariosStep({
   /* The scenario version a batch made ("v3"), read from the times its rows
      were stored with — a seeded row with none was in the first set. The
      times a batch header shows for those are display-only. */
-  const scenarioVersionOfRows = (rows) => {
+  const scenarioVersionOfRows = (rows, afterBuild = false) => {
     const stored = new Map(selected.map((r) => [r.id, r.addedAt]));
     const times = (rows || [])
       .map((r) => Date.parse(stored.get(r.id) || ""))
       .filter(Boolean);
-    const at = times.length ? new Date(Math.min(...times)).toISOString() : null;
-    return scenarioVersionAt(env, envState, at)?.scenLabel || null;
+    /* The latest row: the version is made when the last one lands. */
+    const at = times.length ? new Date(Math.max(...times)).toISOString() : null;
+    return scenarioVersionAt(env, envState, at, afterBuild)?.scenLabel || null;
   };
   /* `?asOf=<version>` (History's "View scenarios as of …") opens the suite as
      of the last batch in that scenario version. */
@@ -2563,7 +2564,7 @@ export default function ScenariosStep({
                   versionOf={(b) =>
                     b.rows.length && b.rows.every((r) => r.proposed)
                       ? null
-                      : scenarioVersionOfRows(b.rows)
+                      : scenarioVersionOfRows(b.rows, b.meta.source !== "derived")
                   }
                   view={view}
                   tableProps={{
@@ -2672,9 +2673,10 @@ export default function ScenariosStep({
                         groups={orgGroups}
                         rows={selected}
                         stateOf={stateOf}
-                        /* Imported drafts wait in their review, not in the suite. */
+                        /* Proposals aren't in the set until added — the same
+                           count as the header's "N scenarios". */
                         total={
-                          selected.filter((r) => !(r.proposed && r.traceImport))
+                          selected.filter((r) => !r.proposed && !r.archived)
                             .length
                         }
                         active={filters.group?.[0] || null}
@@ -2734,7 +2736,7 @@ export default function ScenariosStep({
                       trailing={
                         <Tooltip
                           arrow
-                          title="Proved: its solution really ran on this environment version. Kept as written: it runs, but nothing has proved its check can fail — each scenario says why. Not proved: its proof failed or no longer holds."
+                          title={`${proofCounts.proved} proved · ${proofCounts.kept} kept as written · ${proofCounts.notProved} not proved${proofCounts.noControl ? ` · ${proofCounts.noControl} without a wrong-way example` : ""}`}
                         >
                           <Typography
                             noWrap
@@ -2745,7 +2747,10 @@ export default function ScenariosStep({
                               fontVariantNumeric: "tabular-nums",
                             }}
                           >
-                            {`${proofCounts.proved} proved · ${proofCounts.kept} kept as written · ${proofCounts.notProved} not proved${proofCounts.noControl ? ` · ${proofCounts.noControl} without a wrong-way example` : ""}`}
+                            {/* What needs doing; the full breakdown is on hover. */}
+                            {proofCounts.notProved
+                              ? `· ${proofCounts.notProved} not proved`
+                              : `· All ${proofCounts.proved + proofCounts.kept} proved`}
                           </Typography>
                         </Tooltip>
                       }

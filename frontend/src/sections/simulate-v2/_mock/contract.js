@@ -1,3 +1,4 @@
+import { inferTools } from "./toolInference";
 /**
  * The agent contract, and what makes a scenario runnable.
  *
@@ -231,13 +232,13 @@ export const subTasksFor = (row, env) => {
         : id.includes("-edge-")
           ? "edge"
           : "core";
+  /* The tools this scenario is about (named in its text, or clearly implied)
+     — never tools picked at random, so a lookup scenario isn't graded on
+     issuing a refund. */
   const refTools =
     kind === "rule" || kind === "adversarial"
       ? [] /* rule/adversarial scenarios settle by holding a line, not by tool use */
-      : Array.from(
-          { length: Math.min(2 + (i % 2), Math.max(tools.length, 1)) },
-          (_, n) => tools[(i + n) % Math.max(tools.length, 1)]?.name,
-        ).filter(Boolean);
+      : inferTools(row, tools);
 
   const opener = (
     talks

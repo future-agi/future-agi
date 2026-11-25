@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
@@ -19,6 +19,7 @@ import { onOpenReviewChanges } from "./reviewChangesBus";
 import { reviewCountsOf } from "../_mock/editReview";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { currentEnvSnapshot, snapshotOfWorld } from "../_mock/envSnapshot";
+import { runPlan } from "../_mock/proofs";
 import { validatingOf, validatingSaveBlock } from "../_mock/validating";
 import useEnvViewAs from "./useEnvViewAs";
 
@@ -54,6 +55,12 @@ export default function VersionBar({
   const envV = currentEnvVersion(env, envState);
   /* Viewing an older version names that version and its own suite. */
   const scenarioCount = scenariosInSet(envState, viewAs || envV.label).length;
+  /* How many of them a run would play — the run plan's own count. */
+  const canRun = useMemo(
+    () => (viewAs || !env ? null : runPlan(env, envState).run.length),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [viewAs, env, envState?.scenarios, envState?.envVersions, envState?.activeEnvVersion],
+  );
   const agentV = currentAgentVersion(envState);
   /* "main @ 3f9a2c1" for a code agent, "v2" for any other. */
   const agentName = agentV
@@ -222,7 +229,7 @@ export default function VersionBar({
             <Box
               component="span"
               sx={{ typography: "s3", color: "text.tertiary" }}
-            >{` · ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"}`}</Box>
+            >{` · ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"}${canRun != null && canRun < scenarioCount ? ` · ${canRun} can run` : ""}`}</Box>
           </Typography>
         </Tooltip>
 

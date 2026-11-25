@@ -21,6 +21,7 @@ import {
   IconButton,
   Tooltip,
   Checkbox,
+  alpha,
   Menu,
   MenuItem,
   ListItemIcon,
@@ -35,9 +36,8 @@ import {
   currentEnvVersion,
 } from "../../_mock/versions";
 import { ScenarioRowContext } from "./scenarioRowContext";
-import MustPassMark from "./MustPassMark";
+import MustPassBadge from "./MustPassBadge";
 import {
-  HISTORY_DOTS,
   anyScenarioRan,
   currentVersionOf,
   recentDotsOf,
@@ -73,6 +73,7 @@ const selectableCheckboxSx = {
 const PASS = "status.success.solid";
 const FAIL = "status.danger.solid";
 const FLAKY = "status.warning.solid";
+const STATUS_KEY = { passed: "success", failed: "danger", flaky: "warning" };
 
 /* Shown on row hover only — so thirty rows of icons don't shout. */
 
@@ -137,19 +138,6 @@ const COLUMNS = [
     w: 380,
     tip: "A status shows only when the scenario needs something",
   },
-  {
-    id: "subgoals",
-    label: "Sub-goals",
-    w: 96,
-    align: "right",
-    tip: "Sub-goals met in the scenario's latest run, of all it's graded on",
-  },
-  {
-    id: "runs",
-    label: `Last ${HISTORY_DOTS} runs`,
-    w: 104,
-    tip: "Last three runs, oldest to latest. Faded: ran on another agent or environment version. Hollow: ran on an earlier version of this scenario.",
-  },
   { id: "persona", label: "Actor", w: 170 },
   {
     id: "org",
@@ -158,6 +146,26 @@ const COLUMNS = [
     tip: SHOW_TAGS
       ? "Tags describe and filter; groups select scenarios for a run"
       : "The suites this scenario is in — a suite is an exact set to run",
+  },
+  {
+    id: "subgoals",
+    label: "Sub-goals",
+    w: 88,
+    align: "right",
+    tip: "Sub-goals met in the scenario's latest run, of all it's graded on",
+  },
+  {
+    id: "mustPass",
+    label: "Must pass",
+    w: 84,
+    align: "center",
+    tip: "Must pass: reported on its own in every run, and an Epoch can't ship a change that breaks it. A run never fails or stops because of it. Optional scenarios show nothing.",
+  },
+  {
+    id: "runs",
+    label: "Recent runs",
+    w: 116,
+    tip: "Last three runs, oldest to latest. Outlined: another agent or environment version.",
   },
   /* What the scenario is about — the same words as the drawer. After the
      status columns, so how it's doing stays in view in a narrow pane. */
@@ -377,13 +385,12 @@ function SubGoalsCell({ total, latest, env, envState }) {
         <Typography
           sx={{
             typography: "s2",
-            fontSize: 13,
             color: "text.secondary",
             fontVariantNumeric: "tabular-nums",
             cursor: "default",
           }}
         >
-          {total}
+          {`— of ${total}`}
         </Typography>
       </Tooltip>
     );
@@ -397,7 +404,6 @@ function SubGoalsCell({ total, latest, env, envState }) {
         <Typography
           sx={{
             typography: "s2",
-            fontSize: 13,
             color: "text.tertiary",
             fontVariantNumeric: "tabular-nums",
             cursor: "default",
@@ -413,7 +419,7 @@ function SubGoalsCell({ total, latest, env, envState }) {
     <Stack spacing={0.25} sx={{ py: 0.25 }}>
       <Typography
         sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
-      >{`${latest.name} · ${met} of ${results.length} met`}</Typography>
+      >{`${latest.name} · met in every trial: ${met} of ${results.length}`}</Typography>
       {results.map((g) => (
         <Typography
           key={g.key || g.text}
@@ -429,7 +435,6 @@ function SubGoalsCell({ total, latest, env, envState }) {
       <Typography
         sx={{
           typography: "s2",
-          fontSize: 13,
           fontVariantNumeric: "tabular-nums",
           cursor: "default",
           color: "text.secondary",
@@ -459,6 +464,15 @@ SubGoalsCell.propTypes = {
   envState: PropTypes.object,
 };
 
+/* "Run 2" when a must-pass row failed or was flaky in its latest run. */
+const failingInOf = (row, latestOf) => {
+  const latest = row?.critical && latestOf ? latestOf(row) : null;
+  const t = latest?.task;
+  return t && !t.pulled && (t.status === "failed" || t.status === "flaky")
+    ? latest.name
+    : null;
+};
+
 /* The last three runs as dots, oldest to latest: green passed, red failed,
    amber flaky. Hollow when that run played an earlier version of the
    scenario. A scenario that never ran shows nothing. */
@@ -466,7 +480,7 @@ function RunDots({ history, version, current, envLabel }) {
   const dots = recentDotsOf(history, version, undefined, current, envLabel);
   if (!dots.length) return null;
   return (
-    <Stack direction="row" spacing={0.75} alignItems="center">
+    <Stack direction="row" spacing={0.5} alignItems="center">
       {dots.map((d) => {
         const color = d.comparable
           ? { passed: PASS, failed: FAIL, flaky: FLAKY }[d.status]
@@ -477,14 +491,26 @@ function RunDots({ history, version, current, envLabel }) {
               role="img"
               aria-label={d.title}
               sx={{
-                width: 10,
-                height: 10,
+                width: 8,
+                height: 8,
                 borderRadius: "50%",
                 flexShrink: 0,
-                bgcolor: color || "transparent",
-                border: color ? "none" : "1.5px solid",
-                borderColor: "text.disabled",
-                opacity: d.otherAgent ? 0.4 : 1,
+                bgcolor: !color
+                  ? "transparent"
+                  : d.otherAgent
+                    ? (t) =>
+                        alpha(
+                          t.palette.status[STATUS_KEY[d.status]].solid,
+                          0.25,
+                        )
+                    : color,
+                border: color
+                  ? d.otherAgent
+                    ? "1.5px solid"
+                    : "none"
+                  : "1px solid",
+                borderColor: color && d.otherAgent ? color : "text.disabled",
+                boxSizing: "border-box",
               }}
             />
           </Tooltip>
@@ -797,7 +823,6 @@ export default function ScenarioTable({
                   spacing={0.75}
                   sx={{ minWidth: 0 }}
                 >
-                  {row.critical && !archived && <MustPassMark />}
                   <Tooltip
                     arrow
                     enterDelay={400}
@@ -807,8 +832,6 @@ export default function ScenarioTable({
                       noWrap
                       sx={{
                         typography: "s2",
-                        fontSize: 13,
-                        lineHeight: "18px",
                         fontWeight: 500,
                         minWidth: 120,
                         flexShrink: 1,
@@ -912,28 +935,6 @@ export default function ScenarioTable({
                 <TableCell sx={cellSx}>{result.render(row)}</TableCell>
               )}
 
-              {/* SUB-GOALS — met in the latest run, of all. */}
-              <TableCell align="right" sx={cellSx}>
-                <SubGoalsCell
-                  total={goals.length}
-                  latest={latestOf ? latestOf(row) : null}
-                  env={env}
-                  envState={envState}
-                />
-              </TableCell>
-
-              {/* LAST RUNS — how it's been doing (once there are runs). */}
-              {runsShown && (
-                <TableCell sx={cellSx}>
-                  <RunDots
-                    history={historyOf ? historyOf(row) : null}
-                    version={currentVersionOf(row)}
-                    current={currentRunVersions}
-                    envLabel={vl}
-                  />
-                </TableCell>
-              )}
-
               {/* PERSONA — who calls, in one line. */}
               <TableCell className="scn-dim" sx={cellSx}>
                 <Stack
@@ -964,9 +965,7 @@ export default function ScenarioTable({
                     noWrap
                     sx={{
                       typography: "s2",
-                      fontSize: 13,
-                      lineHeight: "18px",
-                      color: "text.primary",
+                      color: "text.secondary",
                       minWidth: 0,
                     }}
                   >
@@ -994,6 +993,42 @@ export default function ScenarioTable({
                   ].join(" · ")}
                 />
               </TableCell>
+
+              {/* SUB-GOALS — met in the latest run, of all. */}
+              <TableCell align="right" sx={cellSx}>
+                <SubGoalsCell
+                  total={goals.length}
+                  latest={latestOf ? latestOf(row) : null}
+                  env={env}
+                  envState={envState}
+                />
+              </TableCell>
+
+              {/* REQUIREMENT — the must-pass badge; optional rows show nothing. */}
+              <TableCell align="center" sx={cellSx} onClick={stop}>
+                <MustPassBadge
+                  row={row}
+                  failingIn={failingInOf(row, latestOf)}
+                  locked={locked || !!row.archived}
+                  onToggle={
+                    onStateAction && !readOnly
+                      ? () => onStateAction("blocker", row, !row.critical)
+                      : undefined
+                  }
+                />
+              </TableCell>
+
+              {/* LAST RUNS — how it's been doing (once there are runs). */}
+              {runsShown && (
+                <TableCell sx={cellSx}>
+                  <RunDots
+                    history={historyOf ? historyOf(row) : null}
+                    version={currentVersionOf(row)}
+                    current={currentRunVersions}
+                    envLabel={vl}
+                  />
+                </TableCell>
+              )}
 
               {/* BRIEF and PASSES WHEN — one line each, the whole text on hover. */}
               <TableCell className="scn-dim" sx={cellSx}>

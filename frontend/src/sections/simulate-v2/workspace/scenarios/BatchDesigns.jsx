@@ -63,7 +63,10 @@ const plural = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
 const headline = (b) =>
   b.meta.source === "derived"
     ? `${who(b)} built the environment`
-    : `${who(b)} ${b.rows.length && b.rows.every((r) => r.proposed) ? "proposed" : "added"} ${plural(b.rows.length)}`;
+    : b.rows.length && b.rows.every((r) => r.proposed)
+      ? /* Says it isn't in runs yet — the button below adds them. */
+        `${who(b)} proposed ${plural(b.rows.length)} · not in runs yet`
+      : `${who(b)} added ${plural(b.rows.length)}`;
 /* "→ scenarios v3" — the scenario version this batch made. */
 const howAndWhen = (b, version) =>
   [
@@ -260,7 +263,9 @@ function BatchHeader({
             }}
             sx={{ flexShrink: 0 }}
           >
-            {batch.rows.length === 1 ? "Add" : `Add all ${batch.rows.length}`}
+            {batch.rows.length === 1
+              ? "Add to scenarios"
+              : `Add ${batch.rows.length} to scenarios`}
           </Button>
         )}
         {/* The same Hide / Show control as the timeline (v1) — an outlined

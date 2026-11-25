@@ -37,8 +37,8 @@ describe("recentDotsOf", () => {
       ],
       "1.0.0",
     );
-    expect(a.title).toBe("Run 1 · flaky (2 of 3 trials)");
-    expect(b.title).toBe("Run 2 · failed");
+    expect(a.title).toBe("Run 1 · Flaky · 2 of 3 trials");
+    expect(b.title).toBe("Run 2 · Failed");
   });
   it("shows fewer dots, or none, for a scenario that ran less", () => {
     expect(recentDotsOf([h(1, "passed")], "1.0.0")).toHaveLength(1);
@@ -72,10 +72,10 @@ describe("dots from another agent or environment version", () => {
     );
     expect(a.otherAgent).toBe(true);
     expect(a.title).toBe(
-      "Run 2 · agent v1 · env v3 · flaky (2 of 3 trials) — not the current agent (v4)",
+      "Run 2 · agent v1 · env v3 · Flaky · 2 of 3 trials — not the current agent (v4)",
     );
     expect(b.otherAgent).toBe(false);
-    expect(b.title).toBe("Run 3 · agent v4 · env v3 · passed");
+    expect(b.title).toBe("Run 3 · agent v4 · env v3 · Passed");
   });
   it("fades a dot from another environment version", () => {
     const [d] = recentDotsOf(

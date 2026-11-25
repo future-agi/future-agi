@@ -13,6 +13,7 @@
   One scenario's protection, from its marks and its latest run (`latest`:
   { task, name } — the environment's latest run it was in).
     marked   · the user marked it, or wrote it must-pass
+    markedFailing · marked, but failed or flaky in the latest run — not protected
     memory   · kept from a released fix
     passing  · passed every trial in the latest run
     open     · nothing holds it — it fails sometimes, or hasn't run
@@ -32,6 +33,14 @@ export const protectionOf = (row, latest) => {
     };
   }
   if (row.critical) {
+    const t = latest?.task;
+    if (t && !t.pulled && (t.status === "failed" || t.status === "flaky")) {
+      return {
+        id: "markedFailing",
+        label: "Must pass · failing now",
+        line: `It ${t.status === "flaky" ? "passed only some trials" : "failed"} in ${latest.name}, so it isn't holding anything yet.`,
+      };
+    }
     return {
       id: "marked",
       label: "Must pass",
@@ -63,6 +72,7 @@ export const protectionOf = (row, latest) => {
 export const protectionTally = (rows, latestOf) => {
   const out = {
     marked: 0,
+    markedFailing: 0,
     memory: 0,
     passing: 0,
     open: 0,

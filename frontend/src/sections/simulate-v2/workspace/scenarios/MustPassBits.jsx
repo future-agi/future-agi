@@ -23,30 +23,35 @@ export function ProtectionLine({ tally, trailing = null, actions = null }) {
       direction="row"
       alignItems="center"
       spacing={1}
-      flexWrap="wrap"
-      rowGap={0.25}
-      sx={{ px: 0.25, mb: 1.25 }}
+      sx={{ px: 0.25, mb: 1, minWidth: 0 }}
     >
       <Iconify
         icon="solar:shield-check-linear"
         width={16}
         sx={{ color: "text.tertiary", flexShrink: 0 }}
       />
-      <Typography sx={{ typography: "s2", color: "text.secondary", ...num }}>
-        <Box
-          component="span"
-          sx={{ color: "text.primary", fontWeight: 600 }}
-        >{`Epochs can't break ${held} of ${tally.total}`}</Box>
-        {parts.length > 0 && ` — ${parts.join(" · ")}`}
-      </Typography>
+      {/* One short line; why each is protected is on hover. */}
+      <Tooltip arrow title={parts.join(" · ")}>
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            color: "text.primary",
+            fontWeight: 600,
+            cursor: "default",
+            ...num,
+          }}
+        >{`Protected ${held} of ${tally.total}`}</Typography>
+      </Tooltip>
       {tally.open > 0 && (
         <Tooltip
           arrow
           title="Not reliably passing yet — mark the ones that must never break as must-pass."
         >
           <Typography
+            noWrap
             sx={{
-              typography: "s2",
+              typography: "s3",
               color: "text.tertiary",
               cursor: "help",
               borderBottom: "1px dotted",
@@ -58,8 +63,29 @@ export function ProtectionLine({ tally, trailing = null, actions = null }) {
           </Typography>
         </Tooltip>
       )}
+      {tally.markedFailing > 0 && (
+        <Tooltip
+          arrow
+          title="Marked must-pass, but failed or flaky in the latest run, so not protected until it passes."
+        >
+          <Typography
+            noWrap
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              cursor: "help",
+              borderBottom: "1px dotted",
+              borderColor: "text.disabled",
+              ...num,
+            }}
+          >
+            {`${tally.markedFailing} must-pass failing now`}
+          </Typography>
+        </Tooltip>
+      )}
       {/* Right of the line: the proof counts, moved out of the toolbar. */}
-      {trailing && <Box sx={{ ml: "auto !important" }}>{trailing}</Box>}
+      {trailing}
+      <Box sx={{ flex: 1 }} />
       {actions}
     </Stack>
   );
