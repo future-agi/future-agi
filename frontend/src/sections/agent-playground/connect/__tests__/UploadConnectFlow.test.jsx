@@ -42,6 +42,17 @@ vi.mock("src/pages/dashboard/harness/sourceUpload", () => ({
   uploadErrorText: () => "The upload failed",
 }));
 
+const checkState = vi.hoisted(() => ({
+  ready: true,
+  status: "idle",
+  result: undefined,
+  error: null,
+  run: vi.fn(),
+  reset: vi.fn(),
+}));
+
+vi.mock("../useConnectPreflight", () => ({ default: () => checkState }));
+
 vi.mock("src/auth/hooks", async (importOriginal) => ({
   ...(await importOriginal()),
   useAuthContext: () => ({ role: "Member" }),
@@ -75,6 +86,7 @@ const pick = (name) =>
   );
 
 beforeEach(() => {
+  checkState.ready = true;
   sessionStorage.clear();
   mockConnect.mockReset();
   mockUpload.mockReset();

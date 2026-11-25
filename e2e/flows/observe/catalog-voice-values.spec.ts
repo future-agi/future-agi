@@ -1,12 +1,12 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { request as playwrightRequest, type Request, type Response } from '@playwright/test';
+import type { Request, Response } from '@playwright/test';
+import { newBackendRequest } from '../../lib/backend-request';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace, type OtlpAttributes } from '../../lib/otlp';
 import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
-
 // Public routes: tracer/urls.py; ProjectSerializer; TraceVoiceCallListQuerySerializer;
 // dashboard serializers. CallLogs/helper.jsx uses readQuery on this same list.
 const PROJECT = '/tracer/project/';
@@ -173,7 +173,7 @@ test('OBS-E2E-008: native and custom voice filters select only the current proje
   };
   page.on('request', started); page.on('requestfailed', failed);
   page.on('response', listener);
-  const req = await playwrightRequest.newContext();
+  const req = await newBackendRequest();
   let outcome = 'running', failure: string | undefined;
   try {
     const headers = { Authorization: `Bearer ${actor.tokens.access}`,

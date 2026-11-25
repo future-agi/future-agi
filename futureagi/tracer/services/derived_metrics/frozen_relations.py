@@ -208,7 +208,11 @@ class FrozenRelations:
 
     def __init__(self, store, *, org_id, project_id, attempt_id, source):
         self.store = store
-        self.scope = tuple(map(str, (org_id, project_id, attempt_id)))
+        self.scope: tuple[str, str, str] = (
+            str(org_id),
+            str(project_id),
+            str(attempt_id),
+        )
         self.source_sha256 = sha256(canonical(source)).hexdigest()
         self.handles = {}
         self.names = []

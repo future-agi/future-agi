@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
 from tfc.capabilities.errors import CapabilityDenied
 from tfc.capabilities.registry import (
     FEATURE_REGISTRY,
@@ -23,17 +24,12 @@ from tfc.licensing.types import (
     DeploymentLocation,
 )
 
+preserve_capability_service = capability_testing.preserve_capability_service
+
 
 @pytest.fixture(autouse=True)
-def oss_flavor():
+def oss_flavor(preserve_capability_service):
     """Configure the capability service as an OSS image (no EE code)."""
-    service.configure(
-        flavor=DeploymentFlavor.OSS,
-        location=DeploymentLocation.SELF_HOSTED,
-        license_resolver=None,
-        cloud_plan_resolver=None,
-    )
-    yield
     service.configure(
         flavor=DeploymentFlavor.OSS,
         location=DeploymentLocation.SELF_HOSTED,

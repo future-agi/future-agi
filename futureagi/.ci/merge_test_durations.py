@@ -10,8 +10,9 @@ reported (its shard failed before the upload, or the test was deselected).
     merge_test_durations.py PLAN SHARD_FILE [SHARD_FILE ...] > .test_durations
     merge_test_durations.py --compact [--whole PART] PLAN SHARD_FILE [...]
 
-Without options the result holds every test. That is what the timings job
-saves for the next runs' plan, and it is the exact input: pytest-split gives a
+Without options the result holds every measured test but the few with an id
+longer than MAX_ID_LENGTH (below). That is what the timings job saves for the
+next runs' plan, and it is the closest input: pytest-split gives a
 test WITHOUT a time the average of its suite's known times. In a suite with a
 few very long tests that average is many seconds, thousands of near-instant
 tests then carry weight they do not have, and the shard that holds a very
@@ -27,8 +28,9 @@ Metrics suite, the one with the very long tests, is exact there too. For the
 main suite both forms gave the same split in that replay.
 
 Times are rounded to a tenth of a millisecond, and a test whose id is longer
-than MAX_ID_LENGTH is left out (a few generated parameter ids are hundreds of
-kilobytes long).
+than MAX_ID_LENGTH is left out in both forms: a few generated parameter ids
+are hundreds of kilobytes long, and one of them would be most of the file.
+pytest-split plans each of them with its suite's average time, not its own.
 
 Standard library only.
 """
@@ -39,6 +41,15 @@ import sys
 
 MIN_SECONDS = 0.05
 MAX_ID_LENGTH = 300
+# A long test's weight decides how much else pytest-split puts in its group.
+# Several metrics tests take one of two paths from run to run (one of them
+# 329-517 s or 1093-1099 s), so keeping only the last sample let one fast run
+# fill the group of a test that is slow half the time, and the shard ran past
+# its timeout. A test that weighed LONG_SECONDS or more now loses at most a
+# tenth of its weight per run; a test that got faster for good converges in
+# about ten dev runs. A slower sample always applies in full.
+LONG_SECONDS = 60.0
+DECAY = 0.9
 
 
 def merge(plan, shards):
@@ -49,6 +60,9 @@ def merge(plan, shards):
         for test, seconds in shard.items():
             if plan.get(test) == seconds:
                 continue  # untouched by this shard
+            previous = plan.get(test)
+            if previous is not None and previous >= LONG_SECONDS:
+                seconds = max(seconds, DECAY * previous)
             # Two shards never run the same test; if two files disagree with
             # the plan, keep the longer time so the test is not under-weighted.
             if test in measured_by and merged[test] >= seconds:

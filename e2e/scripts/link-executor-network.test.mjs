@@ -16,10 +16,15 @@ test('every code-evaluation worker can reach the isolated executor without local
     cwd: root, encoding: 'utf8', env: { ...process.env,
       FUTURE_AGI_TELEMETRY_URL: 'http://127.0.0.1:9',
       CODE_EXECUTOR_LOCAL_FALLBACK: 'false',
+      LINK_EVAL_ALLOWED_HOSTS: 'must-not-forward.example',
     },
   });
   assert.equal(result.status, 0, result.stderr);
   const config = JSON.parse(result.stdout);
+  for (const [name, service] of Object.entries(config.services)) {
+    assert.equal(Object.hasOwn(service.environment ?? {}, 'LINK_EVAL_ALLOWED_HOSTS'), false,
+      `${name} must not receive the retired link setting`);
+  }
   const executorNetworks = Object.keys(config.services['code-executor'].networks);
   assert.deepEqual(executorNetworks.sort(), ['link-private', 'link-public']);
   for (const name of executorNetworks) assert.equal(config.networks[name].internal, true, name);
@@ -45,6 +50,7 @@ test('standalone supplies the same listeners and source-selected internal execut
     '-f', 'docker-compose.yml', '-f', 'e2e/stack/docker-compose.standalone-e2e.yml',
     '--profile', '*', 'config', '--format', 'json'], { cwd: root, encoding: 'utf8', env: {
       ...process.env, FUTURE_AGI_TELEMETRY_URL: 'http://127.0.0.1:9', CODE_EXECUTOR_VERSION: 'source-witness',
+      LINK_EVAL_ALLOWED_HOSTS: 'must-not-forward.example',
     } });
   assert.equal(result.status, 0, result.stderr);
   const config = JSON.parse(result.stdout);
@@ -58,9 +64,9 @@ test('standalone supplies the same listeners and source-selected internal execut
   assert.equal(config.services.app.environment.CODE_EXECUTOR_URL, 'http://code-executor-nsjail:8060');
   assert.equal(config.services.app.environment.CODE_EXECUTOR_LOCAL_FALLBACK, 'false');
   assert.equal(config.services.app.environment.FUTURE_AGI_TELEMETRY_URL, 'http://127.0.0.1:9');
-  for (const service of [executor, config.services.app]) {
-    assert.equal(service.environment.LINK_EVAL_ALLOWED_HOSTS,
-      'allowed.example,worker-allowed.example,private.example');
+  for (const [name, service] of Object.entries(config.services)) {
+    assert.equal(Object.hasOwn(service.environment ?? {}, 'LINK_EVAL_ALLOWED_HOSTS'), false,
+      `${name} must not receive the retired link setting`);
   }
   for (const [service, ip, port] of [['link-canary', '11.23.0.10', '28082'],
     ['link-worker-canary', '11.23.0.11', '28083']]) {
@@ -73,6 +79,13 @@ test('standalone supplies the same listeners and source-selected internal execut
     'worker-allowed.example': '11.23.0.11', 'private.example': '172.30.91.10' });
   const runner = readFileSync(new URL('../../bin/e2e', import.meta.url), 'utf8');
   assert.match(runner, /SERVICES=\(app postgres clickhouse mock-llm mock-google code-executor link-canary link-worker-canary\)/);
+});
+
+test('neither E2E env file configures the retired link setting', () => {
+  for (const file of ['e2e.env', 'standalone-e2e.env']) {
+    const env = readFileSync(new URL(`../stack/${file}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(env, /^\s*(?:export\s+)?LINK_EVAL_ALLOWED_HOSTS\s*=/m, file);
+  }
 });
 
 test('both CI legs build and select the executor from the checked-out source', () => {

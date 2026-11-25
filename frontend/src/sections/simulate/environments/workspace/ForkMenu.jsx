@@ -4,7 +4,6 @@ import { Box, Typography, IconButton, Menu, MenuItem } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { WORKSPACE_COPY } from "./workspace.constants";
-import { DELETE_TONE } from "../myEnvironments.constants";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 import ViewerLock from "../components/ViewerLock";
 
@@ -81,14 +80,13 @@ export default function ForkMenu({ onDelete }) {
               <Iconify
                 icon="solar:trash-bin-trash-linear"
                 width={16}
-                sx={{ mt: "2px", flexShrink: 0, color: DELETE_TONE.main }}
+                sx={{ mt: "2px", flexShrink: 0, color: "text.secondary" }}
               />
               <Box minWidth={0}>
                 <Typography
                   sx={{
                     typography: "s2",
                     fontWeight: "fontWeightSemiBold",
-                    color: DELETE_TONE.main,
                   }}
                 >
                   {WORKSPACE_COPY.deleteEnv}

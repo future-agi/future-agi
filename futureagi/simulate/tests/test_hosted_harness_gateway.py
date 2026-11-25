@@ -80,6 +80,7 @@ from simulate.services.hosted_harness_gateway import (
     _validate_resolved_egress_domains,
     _webrtc_egress_cidrs,
     attach_platform_simulator_secret_refs,
+    detect_source_api_keys,
     detect_source_connectors,
     detect_source_credentials,
     guest_failure_cause,
@@ -98,6 +99,7 @@ from simulate.services.hosted_sandbox import (
     SandboxNotFoundError,
     SandboxProviderError,
 )
+from simulate.tests.hosted_job_payloads import hosted_job_payload as _payload
 from simulate.tests.test_agent_setup_service import source_agent
 from tfc.ee_loader import has_ee
 
@@ -775,52 +777,6 @@ def test_resolved_egress_cap_applies_after_wildcard_minimization(settings):
     _validate_resolved_egress_domains(domains)
 
 
-def _payload():
-    return {
-        "schema_version": "futureagi.harness-job.v1",
-        "source": {
-            "kind": "github",
-            "repository": "future-agi/reference-agent",
-            "ref": "main",
-            "commit_sha": "a" * 40,
-            "visibility": "private",
-            "installation_id": "installation-1",
-        },
-        "agent": {"connector": "vapi", "config": {}, "secret_refs": {}},
-        "scenario_count": 1,
-        "seed": 1,
-        "runtime": {
-            "isolation": "dedicated_vm",
-            "cpu_units": 2,
-            "memory_mb": 4096,
-            "parallelism": 1,
-            "concurrency_weight": 1,
-            "max_duration_seconds": 600,
-            "network_policy": "live",
-        },
-        "security": {
-            "untrusted_source": True,
-            "read_only_source": True,
-            "allow_privileged": False,
-            "allow_host_runtime_control": False,
-            "allowed_egress_domains": ["agent.example.com"],
-        },
-        "retry": {
-            "max_infrastructure_attempts": 2,
-            "initial_backoff_seconds": 1,
-            "max_backoff_seconds": 15,
-            "retryable_domains": ["infrastructure", "connectivity"],
-        },
-        "artifacts": {
-            "level": "full",
-            "retention_days": 30,
-            "allow_bundle_download": True,
-            "max_artifact_bytes": 1024,
-        },
-        "metadata": {},
-    }
-
-
 def test_authoring_archive_resolves_uploaded_source_by_explicit_key(tmp_path, settings):
     root = tmp_path / "authoring"
     scenario = root / "uploaded-agent" / "scenarios" / "one"
@@ -1092,6 +1048,65 @@ def test_source_scan_does_not_require_adc_for_google_sdk_or_api_key_mode():
     assert required_files == []
     assert scanned == 1
     assert detect_source_credentials(b"not a tarball") == ([], [], 0)
+
+
+def test_source_scan_lists_the_api_keys_the_code_reads():
+    names = detect_source_api_keys(
+        _source_tarball(
+            {
+                "agent.py": (
+                    '"""Swap to Claude: os.getenv("ANTHROPIC_API_KEY")."""\n'
+                    "import os\n"
+                    "# To use Claude instead, set ANTHROPIC_API_KEY.\n"
+                    "# c = Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])\n"
+                    "client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])  # not os.getenv('XAI_API_KEY')\n"
+                    "register(api_key=os.getenv('FI_API_KEY'))\n"
+                    "port = os.environ['PORT']\n"
+                    "\n"
+                    "def build():\n"
+                    '    """Or os.environ.get(\'MISTRAL_API_KEY\')."""\n'
+                    "    return os.environ.get('TOGETHER_API_KEY')\n"
+                ),
+                "settings.py": (
+                    'from os import environ\ngroq = environ.get("GROQ_API_KEY", "")\n'
+                ),
+                "server.ts": (
+                    "// const claude = process.env.ANTHROPIC_API_KEY;\n"
+                    "/* const mistral = process.env['MISTRAL_API_KEY']; */\n"
+                    'const url = "https://api.example.com/v1";\n'
+                    "const tts = process.env.CARTESIA_API_KEY;\n"
+                    'const stt = process.env["DEEPGRAM_API_KEY"];\n'
+                ),
+                ".env.example": "GEMINI_API_KEY=\nFI_SECRET_KEY=\n",
+                "README.md": "Set MISTRAL_API_KEY to use Mistral.\n",
+                "node_modules/sdk/index.js": "process.env.COHERE_API_KEY",
+            }
+        )
+    )
+
+    assert names == [
+        "CARTESIA_API_KEY",
+        "DEEPGRAM_API_KEY",
+        "FI_API_KEY",
+        "GROQ_API_KEY",
+        "OPENAI_API_KEY",
+        "TOGETHER_API_KEY",
+    ]
+    assert detect_source_api_keys(b"not a tarball") == []
+
+
+def test_source_scan_reads_api_keys_only_within_the_agents_reach():
+    names = detect_source_api_keys(
+        _source_tarball(
+            {
+                "agents/support/agent.py": "os.environ['ANTHROPIC_API_KEY']\n",
+                "agents/billing/agent.py": "os.environ['OPENAI_API_KEY']\n",
+            }
+        ),
+        subfolder="agents/support",
+    )
+
+    assert names == ["ANTHROPIC_API_KEY"]
 
 
 _MONOREPO = {
