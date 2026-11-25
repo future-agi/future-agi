@@ -138,6 +138,11 @@ WRITERS = {
     "simulate/services/evaluation_denials.py::record_evaluation_denial": Filed(
         GRADES, "the grader's outcome when grading is refused for usage or credits"
     ),
+    "simulate/utils/processing_outcomes.py::record_missing_eval_input": Filed(
+        GRADES,
+        "the grader's outcome when an input is empty on this call: called "
+        "only by the two graders above, in place of their own result",
+    ),
     "simulate/services/alk_simulate_ingestion.py::_apply_harness_evaluation_outputs": Filed(
         GRADES, "the harness's own verdicts, arriving with the call's result"
     ),
