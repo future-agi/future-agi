@@ -36,6 +36,8 @@ VIEWER_REFUSALS = [
     ("patch", ENVIRONMENT, "edit an environment"),
     ("delete", ENVIRONMENT, "delete an environment"),
     ("post", f"{ENVIRONMENT}versions/agent/", "create an agent version"),
+    ("post", f"{ENVIRONMENT}versions/lock/", "lock a release"),
+    ("post", f"{ENVIRONMENT}versions/unlock/", "unlock a release"),
     ("post", f"{ENVIRONMENT}nudges/{OTHER}/answer/", "answer a rebuild prompt"),
     ("delete", f"{ENVIRONMENT}evaluations/{OTHER}/", "remove evaluations"),
     ("patch", f"{ENVIRONMENT}evaluations/{OTHER}/", "edit evaluations"),
