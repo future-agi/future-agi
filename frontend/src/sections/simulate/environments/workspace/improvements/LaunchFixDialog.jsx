@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
@@ -63,8 +63,15 @@ export default function LaunchFixDialog({
   const [costLimit, setCostLimit] = useState("");
   const [picking, setPicking] = useState(false);
 
+  const seededRun = useRef(null);
   useEffect(() => {
-    if (!options || !open) return;
+    if (!open || !options) {
+      if (!open || seededRun.current !== sourceRunId) seededRun.current = null;
+      return;
+    }
+    if (seededRun.current === sourceRunId) return;
+    seededRun.current = sourceRunId;
+    setPicking(false);
     setTargets(
       initialTargets?.length
         ? initialTargets
@@ -81,7 +88,7 @@ export default function LaunchFixDialog({
     setLatencyMargin(options.defaults.reply_latency_margin_pct ?? 0);
     setCostMargin(options.defaults.cost_margin_pct ?? 0);
     setCostLimit("");
-  }, [options, open, initialTargets]);
+  }, [options, open, initialTargets, sourceRunId]);
 
   if (!options) {
     return (
@@ -108,6 +115,11 @@ export default function LaunchFixDialog({
   }
 
   const { agent, environment, limits } = options;
+  const targetSet = new Set(targets);
+  const showOpeningNote =
+    !initialTargets ||
+    (targetSet.size === initialTargets.length &&
+      initialTargets.every((key) => targetSet.has(key)));
   const lockable = seesModels(options);
   const error = launchError({
     targets,
@@ -213,7 +225,7 @@ export default function LaunchFixDialog({
               <Typography sx={{ typography: "s2" }}>
                 {countsLine(targets.length, protectedKeys.length, limits)}
               </Typography>
-              {initialNote ? (
+              {initialNote && showOpeningNote ? (
                 <Typography
                   sx={{ typography: "s2", color: "text.secondary" }}
                   data-testid="epoch-targets-note"

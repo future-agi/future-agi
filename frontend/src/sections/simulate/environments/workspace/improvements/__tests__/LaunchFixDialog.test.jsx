@@ -44,7 +44,7 @@ function renderDialog(props = {}) {
   lastClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const view = (overrides = {}) => (
     <QueryClientProvider client={lastClient}>
       <SnackbarProvider>
         <MemoryRouter>
@@ -54,11 +54,14 @@ function renderDialog(props = {}) {
             sourceRunId="te-run-6"
             onClose={onClose}
             {...props}
+            {...overrides}
           />
         </MemoryRouter>
       </SnackbarProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const result = render(view());
+  return { ...result, update: (overrides) => result.rerender(view(overrides)) };
 }
 
 const pinOptions = (options) => {
@@ -176,9 +179,41 @@ describe("LaunchFixDialog", () => {
       screen.getByLabelText("Add a locked file"),
       "spec.json{Enter}",
     );
+    const changed = fixtureLaunchOptions("te-run-6");
+    changed.agent.name = "Updated agent";
+    axios.get.mockResolvedValueOnce({ data: changed });
     await act(() => lastClient.refetchQueries());
+    await screen.findByText("Run Epoch on Updated agent");
     expect(fixCases().getByText("11 of 12")).toBeInTheDocument();
-    expect(screen.getByText("spec.json")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect(body.locked_paths).toEqual(["spec.json"]);
+    expect(body.target_scenario_keys).not.toContain("authority-claim");
+  });
+
+  it.each(["reopen", "change source"])("starts a fresh draft on %s", async (change) => {
+    const user = userEvent.setup();
+    const { update } = renderDialog();
+    await user.type(await screen.findByLabelText("Add a locked file"), "spec.json{Enter}");
+    if (change === "reopen") {
+      update({ open: false });
+      update({ open: true });
+    } else {
+      update({ sourceRunId: "other-run" });
+    }
+    await screen.findByLabelText("Add a locked file");
+    expect(screen.queryByText("spec.json")).toBeNull();
+  });
+
+  it("hides the opening note after swapping cases at the same count", async () => {
+    const user = userEvent.setup();
+    renderDialog({ initialTargets: ["authority-claim"], initialNote: "From imported evidence" });
+    await screen.findByText("From imported evidence");
+    await openPicker(user);
+    await user.click(fixCases().getByRole("checkbox", { name: "Authority claim" }));
+    await user.click(fixCases().getByRole("checkbox", { name: /outside the return window/ }));
+    expect(screen.queryByText("From imported evidence")).toBeNull();
   });
 
   it.each([

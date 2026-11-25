@@ -180,13 +180,18 @@ export default function RunDetail({
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
-  // A finished run whose failures include cases an evidence import added offers
-  // Run Epoch on them; the launch form reads the same cached options.
+  // The header launches from failing cases without opening the diagnosis drawer.
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
     enabled: fixAllowed && !!identity && !live && !fixRun,
   });
   const epoch = epochTargets(fixOptions);
-  const improvable = epoch.imported;
+  const importedCount = epoch.imported.length;
+  const canOfferEpoch =
+    fixAllowed &&
+    identity &&
+    !live &&
+    !fixRun &&
+    fixOptions?.scenarios?.some((one) => one.failing_sub_goals?.length);
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
@@ -430,14 +435,16 @@ export default function RunDetail({
             </Button>
           </ViewerLock>
         )}
-        {improvable.length > 0 && (
+        {canOfferEpoch && (
           <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
             <Tooltip
               describeChild
               title={
-                access.canRun
-                  ? `Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`
-                  : ""
+                !access.canRun
+                  ? ""
+                  : importedCount
+                    ? `Starts an epoch from the ${importedCount} failing scenario${importedCount === 1 ? "" : "s"} that came from imported evidence.`
+                    : "Start from this run’s failing scenarios without requesting a diagnosis."
               }
             >
               <Button
@@ -445,7 +452,12 @@ export default function RunDetail({
                 size="small"
                 disabled={!access.canRun}
                 onClick={() => {
-                  setFixTargets(epoch);
+                  setFixTargets({
+                    keys: importedCount ? epoch.keys : undefined,
+                    note: importedCount
+                      ? epochTargetsNote(epoch)
+                      : "Starting from failing scenarios. No diagnosis is required.",
+                  });
                   setFixLaunching(true);
                 }}
                 startIcon={
@@ -684,7 +696,7 @@ export default function RunDetail({
           envId={env.id}
           sourceRunId={executionId}
           initialTargets={fixTargets?.keys}
-          initialNote={fixTargets ? epochTargetsNote(fixTargets) : ""}
+          initialNote={fixTargets?.note}
         />
       )}
 

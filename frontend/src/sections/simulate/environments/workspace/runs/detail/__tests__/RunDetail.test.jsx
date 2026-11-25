@@ -910,12 +910,39 @@ describe("RunDetail", () => {
       }
     });
 
-    it("is not offered when no failing case came from evidence", () => {
+    it.each(["failed", "pending", "not_requested"])(
+      "launches ordinary failing cases without requesting a %s diagnosis",
+      async (status) => {
+        const request = vi.fn();
+        useDebugAnalysis.mockReturnValue(debugHook({ ...ANALYSIS, status }, { request }));
+        fixLaunchOptions.mockReturnValue({
+          options: { scenarios: [scenario("ordinary", null, true)] },
+        });
+        renderDetail();
+        await userEvent.setup().click(screen.getByRole("button", { name: "Run Epoch" }));
+        expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
+        expect(screen.getByText(/No diagnosis is required/)).toBeInTheDocument();
+        expect(launchFix.props.initialTargets).toBeUndefined();
+        expect(request).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { status: "running" },
+      { fixRun: { id: "check", label: "check" } },
+    ])("does not offer Epoch for live or check runs with cached options", (identity) => {
+      useRunDetail.mockReturnValue({ identity: { ...IDENTITY, ...identity }, stats: STATS });
+      fixLaunchOptions.mockReturnValue({ options: { scenarios: [scenario("ordinary", null, true)] } });
+      renderDetail();
+      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
+    });
+
+    it("is not offered when all cases passed", () => {
       finished();
       fixLaunchOptions.mockReturnValue({
         options: {
           scenarios: [
-            scenario("ordinary", null, true),
+            scenario("ordinary", null, false),
             scenario("evidence-b", "import-1", false),
           ],
         },
