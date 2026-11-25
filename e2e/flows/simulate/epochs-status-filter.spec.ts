@@ -1,5 +1,6 @@
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { fetchRoute } from '../../lib/backend-request';
 import { flowAnnotation } from '../../lib/flow-meta';
 
 // The isolated E2E stack has no Enterprise license (fix_my_agent is
@@ -72,7 +73,7 @@ const endsWith = (suffix: string) => (url: URL) => url.pathname.endsWith(suffix)
 async function stubEpochList(page: Page, epochs: Json[]) {
   const asked: (string | null)[] = [];
   await page.route(endsWith('/api/capabilities/'), async (route: Route) => {
-    const response = await route.fetch();
+    const response = await fetchRoute(route);
     const json = await response.json();
     json.features = { ...json.features, fix_my_agent: { ...json.features?.fix_my_agent, allowed: true } };
     await route.fulfill({ response, json });
