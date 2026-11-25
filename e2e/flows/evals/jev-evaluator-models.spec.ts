@@ -1,8 +1,8 @@
 import type { APIResponse, Locator, Page, Route } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { fetchRoute } from '../../lib/backend-request';
 import type { StateProbe } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
-
 // The isolated E2E stack runs the OSS image with no Enterprise licence. Jev
 // evaluator models are a Community feature (futureagi/tfc/capabilities/registry.py
 // FEATURE_JEV_MODELS is not oss_locked), so the capability is allowed and a
@@ -93,7 +93,7 @@ async function fulfillEdited(route: Route, response: APIResponse, json: unknown)
  * these flows calls TypeSafe. */
 async function stubTypesafeKeyOnFile(page: Page): Promise<void> {
   await page.route(url => url.pathname === DECISION_CATALOG && url.searchParams.get('model_type') === 'decision', async route => {
-    const response = await route.fetch();
+    const response = await fetchRoute(route);
     const body = await response.json() as { results: { connections: { provider: string; is_available: boolean }[] }[] };
     for (const group of body.results) {
       for (const connection of group.connections) {

@@ -174,6 +174,7 @@ class E2ETelemetryEnvironmentTests(unittest.TestCase):
             "postgres-schema-bootstrap",
             "clickhouse-native-bootstrap",
             "clickhouse-cdc-bootstrap",
+            "metrics-schema-bootstrap",
         ):
             with self.subTest(service=name):
                 self.assertEqual(

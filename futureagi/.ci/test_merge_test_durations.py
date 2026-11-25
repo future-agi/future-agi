@@ -73,6 +73,36 @@ class MergeTest(unittest.TestCase):
         merged, by = merger.merge({"a::one": 1.0}, [{"a::one": 3.0}, {"a::one": 2.0}])
         self.assertEqual((merged, by), ({"a::one": 3.0}, {"a::one": 0}))
 
+    def test_one_fast_run_lowers_a_long_test_by_at_most_a_tenth(self):
+        plan = {"m::long": 1100.0, "m::short": 30.0}
+        merged, by = merger.merge(plan, [{"m::long": 445.0, "m::short": 10.0}])
+        self.assertEqual(merged, {"m::long": 990.0, "m::short": 10.0})
+        self.assertEqual(by, {"m::long": 0, "m::short": 0})
+
+    def test_a_slower_sample_and_short_or_new_tests_apply_in_full(self):
+        plan = {"m::was_fast": 445.0, "m::edge": merger.LONG_SECONDS - 0.1}
+        merged, _ = merger.merge(
+            plan, [{"m::was_fast": 1100.0, "m::edge": 5.0, "m::new": 500.0}]
+        )
+        self.assertEqual(
+            merged, {"m::was_fast": 1100.0, "m::edge": 5.0, "m::new": 500.0}
+        )
+
+    def test_a_test_that_got_faster_for_good_converges(self):
+        weight, runs = 1100.0, 0
+        while weight != 445.0:
+            weight = merger.merge({"m::long": weight}, [{"m::long": 445.0}])[0][
+                "m::long"
+            ]
+            runs += 1
+        self.assertEqual(runs, 9)
+
+    def test_two_shards_that_disagree_on_a_long_test_keep_the_longer_time(self):
+        merged, by = merger.merge(
+            {"m::long": 1000.0}, [{"m::long": 950.0}, {"m::long": 400.0}]
+        )
+        self.assertEqual((merged, by), ({"m::long": 950.0}, {"m::long": 0}))
+
     def test_the_committed_fallback_is_compact_and_clean(self):
         blob = committed_fallback()
         floor = json.loads(blob)

@@ -256,7 +256,15 @@ def _create_real_activity(activity_name: str, sync_wrapper: Callable) -> Callabl
             return {"result": result, "status": "completed"}
 
         except Exception as e:
-            activity.logger.error(f"Activity '{activity_name}' FAILED: {str(e)}")
+            # Preserve the local error reason. The Sentry projection reads only
+            # the code-owned fields, not the message or adapter-supplied context.
+            activity.logger.error(
+                f"Activity '{activity_name}' FAILED: {str(e)}",
+                extra={
+                    "tfc_failed_activity": activity_name,
+                    "tfc_error_type": type(e).__name__,
+                },
+            )
             raise
 
     return activity_wrapper
