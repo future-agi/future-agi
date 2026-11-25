@@ -355,19 +355,21 @@ describe("finished trial presentation", () => {
     expect(chart.queryByText(/best so far|winner/i)).toBeNull();
   });
 
-  it("explains each rejection using its verdict or its failed check", () => {
+  it("explains rejections in product words without displaying engine text", () => {
     const fix = fixOf("fix-no-improvement");
     const [first, second] = fix.candidates;
     first.verdict = {
       target_pass_rate: [0, 0.9],
-      reason: "A required case regressed.",
+      reason: "INTERNAL_VERDICT_A",
     };
-    second.verdict.reason = "";
+    second.verdict.reason = "INTERNAL_VERDICT_B";
     showTrials(fix);
     const firstRow = within(screen.getByTestId("trial-1"));
     const secondRow = within(screen.getByTestId("trial-2"));
-    expect(firstRow.getByText(first.verdict.reason)).toBeVisible();
-    expect(secondRow.getByText("Target scenarios failed")).toBeVisible();
+    expect(firstRow.queryByText(first.verdict.reason)).not.toBeInTheDocument();
+    expect(secondRow.queryByText(second.verdict.reason)).not.toBeInTheDocument();
+    expect(firstRow.getByText("No failed check was recorded.")).toBeVisible();
+    expect(secondRow.getByText("This candidate didn't improve the target scenarios.")).toBeVisible();
   });
 
   it("leads with the kept candidate even when a rejected candidate scored higher", () => {
@@ -377,6 +379,13 @@ describe("finished trial presentation", () => {
     kept.verdict.target_pass_rate = [0.1, 0.7];
     const chart = showTrials(fix);
     expect(chart.getByText(/Candidate 3 · winner ▲ 60 pts/)).toBeVisible();
+    const points = chart.getAllByTestId("trial-point");
+    const filled = points.filter((point) => {
+      const dot = point.querySelector("circle");
+      return dot.getAttribute("fill") === dot.getAttribute("stroke");
+    });
+    expect(filled).toHaveLength(1);
+    expect(within(filled[0]).getByText(String(kept.attempt))).toBeVisible();
   });
 });
 
