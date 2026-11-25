@@ -13,7 +13,6 @@ from django.db.models import Q
 from model_hub.views import run_prompt
 from tfc import ee_gates
 
-
 ERROR = "One or more tools are unavailable for this workspace."
 
 
@@ -139,7 +138,9 @@ def test_resolver_requires_an_organization(request_scope, tool_query):
     request_scope.user.organization = None
 
     with pytest.raises(ValueError, match=ERROR):
-        run_prompt._resolve_tools_for_request(request_scope, [{"id": str(uuid.uuid4())}])
+        run_prompt._resolve_tools_for_request(
+            request_scope, [{"id": str(uuid.uuid4())}]
+        )
     tool_query.assert_not_called()
 
 
@@ -195,7 +196,9 @@ def test_views_report_resolution_failure_before_mutation_or_execution(
         run_prompt, "_request_column_queryset", lambda request: column_manager
     )
     resolve = Mock(side_effect=ValueError(ERROR))
-    monkeypatch.setattr(run_prompt, "_resolve_tools_for_request", resolve, raising=False)
+    monkeypatch.setattr(
+        run_prompt, "_resolve_tools_for_request", resolve, raising=False
+    )
     monkeypatch.setattr(run_prompt, "is_model_in_catalog", lambda *a, **k: True)
     monkeypatch.setattr(ee_gates, "turing_oss_gate_response", lambda model: None)
     monkeypatch.setattr(transaction, "atomic", nullcontext)
@@ -204,12 +207,12 @@ def test_views_report_resolution_failure_before_mutation_or_execution(
     mutations.lock.side_effect = AssertionError("unexpected prompt lock")
     mutations.cells.side_effect = AssertionError("unexpected cell update")
     mutations.execute.side_effect = AssertionError("unexpected model execution")
-    monkeypatch.setattr(
-        run_prompt, "RunPrompter", SimpleNamespace(objects=mutations)
-    )
+    monkeypatch.setattr(run_prompt, "RunPrompter", SimpleNamespace(objects=mutations))
     monkeypatch.setattr(run_prompt, "_request_run_prompter_queryset", mutations.lock)
     monkeypatch.setattr(
-        run_prompt, "Cell", SimpleNamespace(objects=SimpleNamespace(filter=mutations.cells))
+        run_prompt,
+        "Cell",
+        SimpleNamespace(objects=SimpleNamespace(filter=mutations.cells)),
     )
     monkeypatch.setattr(run_prompt, "RunPrompt", mutations.execute)
     view = view_class()
