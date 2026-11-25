@@ -15,7 +15,7 @@ import json
 import uuid
 from datetime import timedelta
 from pathlib import PurePosixPath
-from typing import cast
+from typing import TypedDict, cast
 
 import structlog
 from django.db import transaction
@@ -74,6 +74,21 @@ UNOFFERED_ENDPOINTS = ("publish", "run_start")
 REPLY_CHARS = 2000
 # The reason column is a CharField, so its max_length is always set.
 REASON_LENGTH = cast(int, EvidenceImportCase._meta.get_field("reason").max_length)
+
+
+class DraftingPayload(TypedDict, total=False):
+    """The platform's part of an evidence turn's command payload."""
+
+    _origin: str
+    _evidence_import_id: str
+    _case_ids: list[str]
+    _author_id: str
+    # The suite the turn's sandbox composed its workspace with, kept the first time it
+    # is composed: how many scenarios it held, and each one's identity. A command no
+    # sandbox composed yet has neither; one from before identities were kept has only
+    # the count, taken when it was queued.
+    _starting_scenarios: int
+    _starting_keys: list[str]
 
 
 def is_evidence_command(command: HostedHarnessConversationMessage | None) -> bool:
@@ -228,7 +243,7 @@ def land(
             "takes its scenarios when this turn ends",
             status_code=409,
         )
-    payload = command.payload or {}
+    payload = cast(DraftingPayload, command.payload or {})
     with transaction.atomic():
         cases = list(
             EvidenceImportCase.objects.select_for_update().filter(
@@ -245,6 +260,7 @@ def land(
                 archive,
                 _last_words(conversation, command),
                 started=payload.get("_starting_scenarios"),
+                starting_keys=payload.get("_starting_keys"),
             )
         import_id = str(payload.get("_evidence_import_id") or "")
 
@@ -266,9 +282,11 @@ def _settle(
     last_words: str,
     *,
     started: int | None,
+    starting_keys: list[str] | None = None,
 ) -> None:
-    """``started`` is how many scenarios the suite the turn started from held, as
-    its command keeps it; None for a command from before it was kept."""
+    """``started`` is how many scenarios the suite the turn's workspace was composed
+    with held, and ``starting_keys`` each one's identity, as its command keeps them;
+    None for a command from before they were kept."""
     files = archives.read_archive(archive)
     basis = (
         drafts.fresh_draft(environment, "environment")
@@ -292,9 +310,10 @@ def _settle(
         _block(cases, ENVIRONMENT_CHANGED)
         return
     documents = suite_documents(split.suite)
+    claimed: set[str] = set()
     for case in cases:
         key = scenario_key_for(case)
-        document = _document_named(documents, key)
+        document = _document_named(documents, key=key)
         proposal = _proposal(split.suite, document, key) if document else None
         if document is None or proposal is None:
             _block([case], _with_reply(NO_SCENARIO, last_words))
@@ -311,6 +330,7 @@ def _settle(
         case.proposal_object_key = object_key
         case.environment_hash = basis.hash
         case.new_sub_goals = [one for one in added if one.get("name") in named]
+        claimed.add(_identity(document))
         case.save(
             update_fields=[
                 "status",
@@ -324,7 +344,13 @@ def _settle(
             ]
         )
     drafted = sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases)
-    grown = None if started is None else max(0, len(documents) - started)
+    grown, unmatched = _additions(
+        documents,
+        started=started,
+        starting_keys=starting_keys,
+        claimed=claimed,
+        drafted=drafted,
+    )
     # Counts only: a scenario's name is model text written from the evidence. A
     # turn whose reply says it drafted while its cases block shows here as
     # scenarios added that no case took, as folders a valid index leaves out (a
@@ -336,7 +362,7 @@ def _settle(
         started=started,
         scenarios=len(documents),
         added=grown,
-        unmatched=None if grown is None else max(0, grown - drafted),
+        unmatched=unmatched,
         unindexed=max(0, _folders(split.suite) - len(documents)),
         drafted=drafted,
         blocked=sum(c.status == EvidenceImportCase.Status.BLOCKED for c in cases),
@@ -351,11 +377,62 @@ def _folders(suite: dict[str, bytes]) -> int:
     )
 
 
-def _scenarios_at_start(environment: HostedHarnessJob) -> int:
-    """How many scenarios the suite a drafting sandbox starts from holds: the
-    suite draft over the saved suite, as the sandbox composes its workspace."""
-    basis = drafts.fresh_draft(environment, "suite") or environment.suite_version
-    return len((basis.documents or {}).get("scenarios") or []) if basis else 0
+def _additions(
+    documents: list[dict],
+    *,
+    started: int | None,
+    starting_keys: list[str] | None,
+    claimed: set[str],
+    drafted: int,
+) -> tuple[int | None, int | None]:
+    """How many scenarios the turn added, and how many of those no case took.
+
+    Added are the scenarios whose identity the composed workspace did not hold, so a
+    turn that drops one scenario and adds another under a new name adds one. A
+    command from before identities were kept counts net growth over its count."""
+    if starting_keys is not None:
+        new = {_identity(one) for one in documents} - set(starting_keys) - {""}
+        return len(new), len(new - claimed)
+    if started is None:
+        return None, None
+    grown = max(0, len(documents) - started)
+    return grown, max(0, grown - drafted)
+
+
+def _identity(document: dict) -> str:
+    """A scenario's identity in a suite: the folder it was read from, else its key,
+    else its name."""
+    return _token(
+        document.get("folder") or document.get("scenario_key") or document.get("name")
+    )
+
+
+def record_start(
+    conversation: HostedHarnessConversation, *, suite: dict[str, bytes]
+) -> None:
+    """Keep, on an evidence turn's command, the suite its sandbox's workspace was just
+    composed with: how many scenarios and which. Only the first composition counts:
+    a sandbox composed again later, after someone's edit, never moves it."""
+    command = _drafting_command(conversation)
+    if command is None or "_starting_keys" in (command.payload or {}):
+        return
+    documents = suite_documents(suite)
+    with transaction.atomic():
+        locked = (
+            HostedHarnessConversationMessage._base_manager.select_for_update()
+            .filter(id=command.id)
+            .first()
+        )
+        if locked is None or "_starting_keys" in (locked.payload or {}):
+            return
+        payload = dict(locked.payload or {})
+        payload["_starting_scenarios"] = len(documents)
+        payload["_starting_keys"] = sorted(
+            {_identity(one) for one in documents} - {""}
+        )
+        HostedHarnessConversationMessage._base_manager.filter(id=locked.id).update(
+            payload=payload
+        )
 
 
 def _added_checks(environment, basis, files, prepared) -> list[dict] | None:
@@ -391,7 +468,7 @@ def _added_checks(environment, basis, files, prepared) -> list[dict] | None:
     return [one for one in new.get("sub_goals") or [] if one.get("name") not in names]
 
 
-def _document_named(documents: list[dict], key: str) -> dict | None:
+def _document_named(documents: list[dict], *, key: str) -> dict | None:
     """The one document that names ``key``: by its folder first, then its own key,
     then its name. Two documents naming it the same way are ambiguous, and neither
     is taken."""
@@ -568,9 +645,8 @@ def start_drafting(
                 "_origin": ORIGIN,
                 "_evidence_import_id": str(locked.id),
                 "_case_ids": [str(case.id) for case in cases],
-                # Kept now, so an edit while the turn drafts never moves what
-                # the landing counts its added scenarios against.
-                "_starting_scenarios": _scenarios_at_start(environment),
+                # What the turn starts from is kept when its sandbox composes its
+                # workspace (record_start), not now: an edit before then is in it.
                 **({"_author_id": str(user.id)} if user is not None else {}),
             },
         )

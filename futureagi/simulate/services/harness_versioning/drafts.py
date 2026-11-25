@@ -1038,8 +1038,10 @@ def compose_workspace(
             sealed = archives.split_authoring(
                 archives.read_archive(archives.get_archive(key))
             ).sealed
+    from simulate.services.evidence_drafts import record_start
     from simulate.services.harness_versioning.versions import suite_documents
 
+    record_start(conversation, suite=files["suite"])
     return ComposedWorkspace(
         files=archives.compose(files["environment"], files["suite"], sealed),
         scenario_count=len(suite_documents(files["suite"])),

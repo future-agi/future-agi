@@ -109,7 +109,8 @@ def _command(environment, cases, sequence):
             "_origin": evidence_drafts.ORIGIN,
             "_evidence_import_id": str(cases[0].evidence_import_id),
             "_case_ids": [str(case.id) for case in cases],
-            # As start_drafting keeps it: the scenarios the turn starts from.
+            # As start_drafting kept it before the start was taken when the
+            # sandbox composes its workspace: a count only, taken at queueing.
             "_starting_scenarios": len(
                 (environment.suite_version.documents or {}).get("scenarios") or []
             ),
@@ -118,10 +119,12 @@ def _command(environment, cases, sequence):
     return conversation, command
 
 
-def _save(conversation, command, storage, names, *, contract=None, **files):
+def _save(
+    conversation, command, storage, names, *, contract=None, kept=NAMES[:2], **files
+):
     """The builder's save of its workspace, as the sandbox makes it."""
     body = with_authoring_basis(
-        _authoring([*NAMES[:2], *names], contract=contract, **files),
+        _authoring([*kept, *names], contract=contract, **files),
         command.payload["_environment_revision"],
     )
     key, digest = _put_conversation_checkpoint(conversation, storage, body)
@@ -347,6 +350,72 @@ def test_a_turn_queued_before_the_count_was_kept_still_lands(
         None,
     )
     assert counted["scenarios"] == 3
+
+
+def test_the_start_is_the_workspace_the_sandbox_composed(
+    environment, cases, storage, user
+):
+    """Someone's edit after the turn was queued and before its sandbox composed its
+    workspace (a scenario dropped) is in the workspace the builder starts from, so
+    the turn starts from 1 scenario and adds only the case's."""
+    conversation, command = _command(environment, cases, 18)
+    _other_edit(environment, user)
+    drafts.compose_workspace(environment, conversation)
+    key_one = evidence_drafts.scenario_key_for(cases[0])
+    key, digest = _save(conversation, command, storage, [key_one], kept=NAMES[:1])
+    _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 18)
+
+    assert {
+        k: v
+        for k, v in _counted(logs).items()
+        if k in ("started", "scenarios", "added", "unmatched")
+    } == {"started": 1, "scenarios": 2, "added": 1, "unmatched": 0}
+
+
+def test_an_edit_after_the_sandbox_composed_never_moves_the_start(
+    environment, cases, storage, user
+):
+    """A sandbox composed again after someone's edit (a restart) keeps the start
+    its first composition took."""
+    conversation, command = _command(environment, cases, 19)
+    drafts.compose_workspace(environment, conversation)
+    _other_edit(environment, user)
+    drafts.compose_workspace(environment, conversation)
+    key, digest = _save(conversation, command, storage, ["cancel_far_ahead_fee"])
+    _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 19)
+
+    assert {k: v for k, v in _counted(logs).items() if k in ("started", "added")} == {
+        "started": 2,
+        "added": 1,
+    }
+
+
+def test_a_scenario_replaced_under_another_name_counts_as_added(
+    environment, cases, storage
+):
+    """The turn dropped one scenario it started from and wrote one under a name no
+    case asked for: one added, and no case took it, though the count is unchanged."""
+    conversation, command = _command(environment, cases, 20)
+    drafts.compose_workspace(environment, conversation)
+    key, digest = _save(
+        conversation, command, storage, ["cancel_far_ahead_fee"], kept=NAMES[:1]
+    )
+    _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 20)
+
+    assert {
+        k: v
+        for k, v in _counted(logs).items()
+        if k in ("started", "scenarios", "added", "unmatched", "drafted")
+    } == {"started": 2, "scenarios": 2, "added": 1, "unmatched": 1, "drafted": 0}
 
 
 @pytest.mark.parametrize("analyzer", ["missing", "finds nothing"])

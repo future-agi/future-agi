@@ -155,16 +155,21 @@ class TestStart:
             conversation__job=environment
         ).exists()
 
-    def test_the_turn_keeps_how_many_scenarios_it_starts_from(
+    def test_the_turn_keeps_what_its_sandbox_composed_it_from(
         self, environment, cases, user, scheduled
     ):
-        """The sandbox composes the suite draft over the default, so the command
-        keeps that suite's count (a draft that dropped one of two scenarios)."""
+        """The start is taken when the sandbox composes the suite draft over the
+        default, not when the turn is queued: an edit in between (a draft that
+        dropped one of two scenarios) is in it."""
+        conversation = _start(cases, user)
+        assert "_starting_scenarios" not in _command(conversation).payload
         _other_edit(environment, user)
 
-        command = _command(_start(cases, user))
+        drafts.compose_workspace(environment, conversation)
 
-        assert command.payload["_starting_scenarios"] == 1
+        payload = _command(conversation).payload
+        assert payload["_starting_scenarios"] == 1
+        assert len(payload["_starting_keys"]) == 1
 
     def test_a_second_draft_while_one_runs_is_refused(self, cases, user, scheduled):
         _start(cases[:1], user)
