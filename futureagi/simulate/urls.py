@@ -128,6 +128,7 @@ from .views.agent_versions import (
     AgentVersionDiscardView,
     AgentVersionProductionView,
     AgentVersionRetryView,
+    AgentVersionValuesView,
     RemovedAgentVersionDeleteView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
@@ -391,6 +392,11 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/compatibility/",
         AgentVersionCompatibilityView.as_view(),
         name="agent-versions-compatibility",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/values/",
+        AgentVersionValuesView.as_view(),
+        name="agent-versions-values",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/build-preflight/",

@@ -158,6 +158,46 @@ def version_credential_names(runtime: HarnessAgentVersionRuntime) -> list[str]:
     )
 
 
+def missing_required_names(runtime: HarnessAgentVersionRuntime | None) -> list[str]:
+    """Names the reading lists as required that the version has no value for. None
+    known (no reading's list) is none missing: not knowing is not a refusal."""
+    if runtime is None or runtime.required_variable_names is None:
+        return []
+    held = set(version_credential_names(runtime))
+    return sorted({str(name) for name in runtime.required_variable_names or []} - held)
+
+
+def values_gate(
+    runtime: HarnessAgentVersionRuntime | None, *, extra_names: Iterable[str] = ()
+) -> None:
+    """Before a build, rebuild or run spends anything: refuse a version with a value
+    under a name the test environment makes itself, or one missing a value the
+    reading lists as required. ``extra_names`` are values the request itself brings.
+    The kit's own refusal stays behind this one."""
+    if runtime is None:
+        return
+    extra = {str(name) for name in extra_names}
+    values_made_by_environment(
+        {*version_credential_names(runtime), *extra},
+        generated_value_names(runtime.agent_version_id),
+    )
+    if not own_credential_set(runtime):
+        # A legacy row's values are an environment's refs, not its names.
+        return
+    missing = [name for name in missing_required_names(runtime) if name not in extra]
+    if missing:
+        raise HostedHarnessError(
+            "required_values_missing",
+            "The agent needs a value for "
+            + ", ".join(missing)
+            + ". Add "
+            + ("it" if len(missing) == 1 else "them")
+            + " in the agent's values first.",
+            status_code=422,
+            details={"names": missing},
+        )
+
+
 # Whose required names a version holds: True, its parent's copy (the next writer replaces
 # them); False, its own (a later writer adds). Absent on a version no writer has touched
 # since the mark began; see merge_required_names.
@@ -210,6 +250,45 @@ def _names_the_run_supplies(runtime: Mapping[str, Any]) -> set[str]:
         values = _section(resource, "values")
         supplied.update(str(name) for name, value in values.items() if value)
     return supplied
+
+
+def generated_value_names(version_id: Any) -> set[str]:
+    """Names the test environment makes itself for this version's agent: both
+    local-auth names of its stored contract, which the kit refuses a value under
+    (``LocalHttpAuth.reject_collisions``). Empty when no contract is stored or it
+    names none."""
+    from simulate.services.agent_contracts import stored_version_contract
+
+    contract = stored_version_contract(version_id) if version_id else None
+    try:
+        runtime = _section(contract or {}, "runtime")
+        local_auth = _section(_section(runtime, "interface"), "local_auth")
+    except ValueError:
+        return set()
+    return {
+        name
+        for name in (
+            local_auth.get("server_environment"),
+            local_auth.get("template_variable"),
+        )
+        if isinstance(name, str) and name
+    }
+
+
+def values_made_by_environment(names: Iterable[str], generated: set[str]) -> None:
+    """Refuse values under names the test environment makes itself."""
+    clash = sorted({str(name) for name in names} & generated)
+    if clash:
+        raise HostedHarnessError(
+            "value_made_by_environment",
+            "The test environment makes "
+            + ", ".join(clash)
+            + " itself, so a value of yours isn't needed. Remove "
+            + ("it" if len(clash) == 1 else "them")
+            + " from the agent's values.",
+            status_code=422,
+            details={"names": clash},
+        )
 
 
 # The bounds the scan path puts on names it takes from the sandbox
@@ -684,6 +763,27 @@ def _resolve_refs(
     return secret_set, provider_secrets
 
 
+def _remove(
+    secret_set: CredentialSet,
+    provider_secrets: dict[str, str],
+    names: Iterable[str],
+) -> None:
+    """Take names out of a set. A provider key lives in the version's provider row,
+    which is copied whole, so it can be changed here but not removed."""
+    names = {str(name) for name in names}
+    provider = sorted(names & set(hashing.PROVIDER_CREDENTIAL_ALIASES))
+    if provider:
+        raise HostedHarnessError(
+            "provider_key_not_removable",
+            "A provider key can be changed but not removed: " + ", ".join(provider),
+            status_code=422,
+            details={"names": provider},
+        )
+    for name in names:
+        secret_set.env.pop(name, None)
+        secret_set.files.pop(name, None)
+
+
 def _overlay(
     secret_set: CredentialSet,
     provider_secrets: dict[str, str],
@@ -921,6 +1021,7 @@ def create_agent_version(
     agent_payload: Mapping[str, Any] | None = None,
     secret_values: Mapping[str, str] | None = None,
     secret_files: Iterable[CredentialFile] | None = None,
+    remove_names: Iterable[str] = (),
     trigger: str,
     user: Any = None,
     activate: bool = True,
@@ -930,8 +1031,8 @@ def create_agent_version(
     draft whose preflight is queued.
 
     The credential set starts from the parent's (for a legacy parent, from ``env``'s own
-    refs) and takes the given values and files on top; provider keys go to the
-    version's own provider row. A live version with the same identity is returned
+    refs), loses ``remove_names`` and takes the given values and files on top;
+    provider keys go to the version's own provider row. A live version with the same identity is returned
     instead of a new one: made ``env``'s default when its check already passed, else
     its check is queued.
     Without ``env`` the version is the connected agent's own: no environment asked
@@ -1004,6 +1105,7 @@ def create_agent_version(
         for name in _OWN_PAYLOAD_KEYS:
             payload.pop(name, None)
         connector = str(payload.get("connector") or "")
+        _remove(secret_set, provider_secrets, remove_names)
         _overlay(secret_set, provider_secrets, secret_values, secret_files)
         family = _family(
             provider_secrets, connector, getattr(parent_row, "provider_type", None)
@@ -1356,6 +1458,7 @@ def change_credentials(
         raise _agent_versions_unavailable()
     secret_files = list(secret_files)
     names = [*secret_values, *(one.alias for one in secret_files)]
+    values_made_by_environment(names, generated_value_names(parent.id))
     # A rerun's caller checks against the rerun's own pair.
     if activate and not changed_set_runnable(environment, environment, parent, names):
         raise HostedHarnessError(

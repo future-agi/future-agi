@@ -438,6 +438,9 @@ def create_selected_harness_run(
             )
             if replayed is not None:
                 return replayed, False
+            from simulate.services.harness_agent_versions import values_gate
+
+            values_gate(resolved.runtime)
         pins = _pinned_versions(environment, resolved)
         if pins is None:
             registrations = list(

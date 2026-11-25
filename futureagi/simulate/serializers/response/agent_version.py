@@ -338,6 +338,31 @@ class AgentVersionChangeResponseSerializer(serializers.Serializer):
     version = AgentVersionResponseSerializer(read_only=True)
     created = serializers.BooleanField(read_only=True)
     up_to_date = serializers.BooleanField(read_only=True)
+    # Names the reading lists as required that the version has no value for: a
+    # build or run is refused until each has one.
+    missing_required_names = serializers.ListField(
+        child=serializers.CharField(), read_only=True
+    )
+
+
+class AgentValueNameSerializer(serializers.Serializer):
+    name = serializers.CharField(read_only=True)
+    # The reading lists it as a value the agent needs.
+    required = serializers.BooleanField(read_only=True)
+    # The test environment makes this value itself; a value of the user's is refused.
+    made_by_environment = serializers.BooleanField(read_only=True)
+
+
+class AgentVersionValuesResponseSerializer(serializers.Serializer):
+    """A version's value names; never a value."""
+
+    names = AgentValueNameSerializer(many=True, read_only=True)
+    missing_required_names = serializers.ListField(
+        child=serializers.CharField(), read_only=True
+    )
+    made_by_environment = serializers.ListField(
+        child=serializers.CharField(), read_only=True
+    )
 
 
 class AgentVersionProductionResponseSerializer(serializers.Serializer):

@@ -1515,6 +1515,10 @@ class HostedHarnessProvider:
                 *secret_values,
             ]
         try:
+            if connected_build:
+                from simulate.services.harness_agent_versions import values_gate
+
+                values_gate(connected_runtime, extra_names=secret_values)
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
