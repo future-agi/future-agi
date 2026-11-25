@@ -6,6 +6,7 @@ import {
   useEnvironmentTags,
   useSetScenarioTags,
 } from "src/api/simulate-environments/scenarioTags";
+import { MAX_TAG_LENGTH } from "./scenarios.constants";
 import { tagRefusal } from "./tagRefusal";
 
 const NO_TAGS = [];
@@ -51,6 +52,7 @@ export default function ScenarioTagCell({
       onRetryKnown={() => known.refetch()}
       disabled={locked || !scenarioKey}
       disabledReason={locked ? lockTooltip : ""}
+      maxTagLength={MAX_TAG_LENGTH}
     />
   );
 }
