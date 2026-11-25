@@ -932,7 +932,7 @@ def _mask_under(key: Any, value: Any) -> Any:
     if any(marker in name for marker in _SECRET_KEY_MARKERS):
         return _MASK
     if name == "headers" and isinstance(value, Mapping):
-        return {item: _MASK for item in value}
+        return dict.fromkeys(value, _MASK)
     return _mask(value)
 
 
