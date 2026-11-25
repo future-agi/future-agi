@@ -1248,8 +1248,9 @@ class TestProcessSpansChunkTask:
 
 
 # ---------------------------------------------------------------------------
-# TH-7131: select-all carries the grid's filters, so the dataset receives
-# exactly the rows the grid counted (not every root span in the project).
+# Select-all carries the grid's filters, so the dataset receives exactly the
+# rows the grid counted (not every root span in the project). The grid always
+# sends its ``created_at`` window, so the payloads below include it.
 # ---------------------------------------------------------------------------
 
 
@@ -1348,7 +1349,10 @@ class TestFilteredSelectAllAddsExactSelection:
                 "project": str(observe_project.id),
                 "select_all": True,
                 "trace_ids": [],
-                "filters": [_filter("trace_id", "text", "equals", target_trace_id)],
+                "filters": [
+                    _recent_window_filter(),
+                    _filter("trace_id", "text", "equals", target_trace_id),
+                ],
                 "mapping_config": self.MAPPING,
             },
             format="json",
@@ -1642,7 +1646,10 @@ class TestFilteredSelectAllAddsExactSelection:
                 "project": str(observe_project.id),
                 "select_all": True,
                 "trace_ids": [],
-                "filters": [_filter("trace_id", "text", "equals", str(uuid.uuid4()))],
+                "filters": [
+                    _recent_window_filter(),
+                    _filter("trace_id", "text", "equals", str(uuid.uuid4())),
+                ],
                 "mapping_config": self.MAPPING,
             },
             format="json",
@@ -1711,7 +1718,7 @@ class TestFilteredSelectAllAddsExactSelection:
                 "project": str(observe_project.id),
                 "select_all": True,
                 "span_ids": [child_ids[0]],
-                "filters": [],
+                "filters": [_recent_window_filter()],
                 "mapping_config": self.MAPPING,
             },
             format="json",
@@ -1797,7 +1804,10 @@ class TestFilteredSelectAllAddsExactSelection:
                 "project": str(observe_project.id),
                 "select_all": True,
                 "trace_ids": [],
-                "filters": [_filter("trace_id", "text", "equals", target_trace_id)],
+                "filters": [
+                    _recent_window_filter(),
+                    _filter("trace_id", "text", "equals", target_trace_id),
+                ],
                 "mapping_config": [{"col_name": "input", "span_field": "input"}],
             },
             format="json",

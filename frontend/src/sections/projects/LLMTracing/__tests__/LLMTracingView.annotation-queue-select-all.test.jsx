@@ -473,7 +473,7 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
     harness.spanStore.reset();
   });
 
-  // TH-7131: under select-all, Add to dataset must carry the same filters the
+  // Under select-all, Add to dataset must carry the same filters the
   // grid sends for its list, or the server falls back to the whole project.
   it("hands Add to dataset the trace grid's filters under select-all", async () => {
     const user = userEvent.setup();
