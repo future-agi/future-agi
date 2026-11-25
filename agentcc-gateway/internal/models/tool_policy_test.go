@@ -23,6 +23,20 @@ func TestAllowedToolsChoiceFiltersDeclarations(t *testing.T) {
 	}
 }
 
+func TestAllowedToolsChoiceFiltersImplicitFunction(t *testing.T) {
+	choice := AllowedToolsChoice{Mode: "required", Names: []string{"tool_b"}}
+	selected, err := choice.Filter([]Tool{
+		{Function: ToolFunction{Name: "tool_a"}},
+		{Function: ToolFunction{Name: "tool_b"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 1 || selected[0].Function.Name != "tool_b" {
+		t.Fatalf("selected = %+v, want only tool_b", selected)
+	}
+}
+
 func TestAllowedToolsChoiceFiltersMultipleNames(t *testing.T) {
 	choice, err := ParseAllowedToolsChoice(json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"required","tools":[{"type":"function","name":"tool_b"},{"type":"function","name":"tool_c"}]}}`))
 	if err != nil {

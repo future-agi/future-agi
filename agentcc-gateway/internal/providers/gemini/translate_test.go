@@ -269,19 +269,22 @@ func TestTranslateRequest_Tools(t *testing.T) {
 
 func TestTranslateRequest_AllowedToolsRestrictsDeclarations(t *testing.T) {
 	for _, tc := range []struct {
+		name     string
 		mode     string
+		toolType string
 		wantMode string
 	}{
-		{mode: "auto", wantMode: "AUTO"},
-		{mode: "required", wantMode: "ANY"},
+		{name: "auto", mode: "auto", toolType: "function", wantMode: "AUTO"},
+		{name: "required", mode: "required", toolType: "function", wantMode: "ANY"},
+		{name: "implicit_function", mode: "required", toolType: "", wantMode: "ANY"},
 	} {
-		t.Run(tc.mode, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			req := &models.ChatCompletionRequest{
 				Model:    "gemini-1.5-pro",
 				Messages: []models.Message{{Role: "user", Content: mustJSON("Hi")}},
 				Tools: []models.Tool{
 					{Type: "function", Function: models.ToolFunction{Name: "tool_a"}},
-					{Type: "function", Function: models.ToolFunction{Name: "tool_b"}},
+					{Type: tc.toolType, Function: models.ToolFunction{Name: "tool_b"}},
 				},
 				ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"` + tc.mode + `","tools":[{"type":"function","function":{"name":"tool_b"}}]}}`),
 			}

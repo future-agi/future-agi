@@ -182,6 +182,9 @@ func TestToolPolicyRestrictionsFailBeforeGeminiRequest(t *testing.T) {
 			if apiErr, ok := err.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, tc.field) {
 				t.Fatalf("non-streaming error = %v, want 400 naming %s", err, tc.field)
 			}
+			if tc.name == "unknown_allowed_tool" && err.(*models.APIError).Code != "invalid_tool_choice" {
+				t.Fatalf("error code = %q, want invalid_tool_choice", err.(*models.APIError).Code)
+			}
 			chunks, errs := p.StreamChatCompletion(context.Background(), tc.request)
 			for range chunks {
 				t.Fatal("unexpected streaming chunk")

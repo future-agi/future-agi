@@ -73,7 +73,7 @@ func (c *AllowedToolsChoice) Filter(tools []Tool) ([]Tool, error) {
 	}
 	selected := make([]Tool, 0, len(c.Names))
 	for _, tool := range tools {
-		if tool.Type == "function" && wanted[tool.Function.Name] {
+		if tool.IsFunction() && wanted[tool.Function.Name] {
 			selected = append(selected, tool)
 			delete(wanted, tool.Function.Name)
 		}
