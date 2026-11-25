@@ -249,7 +249,7 @@ class SwitchOrganizationView(APIView):
             ws_role = user.get_workspace_role(workspace) if workspace else None
 
             # Update user config (keeping the legacy key for backward compat)
-            changes = {
+            changes: dict[str, object] = {
                 "currentOrganizationId": str(selected_org.id),
                 "selected_organization_id": str(selected_org.id),
             }
