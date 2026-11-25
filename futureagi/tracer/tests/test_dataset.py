@@ -1442,7 +1442,7 @@ class TestFilteredSelectAllAddsExactSelection:
         self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
     ):
         """Reproduction: the project holds 3 traces, the filter matches 1."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         traces = _seed_ch_traces(ch_seed, observe_project, 3)
         target_trace_id, target_root_id = traces[1]
@@ -1472,7 +1472,7 @@ class TestFilteredSelectAllAddsExactSelection:
         self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
     ):
         """The grid's time window bounds select-all; older traces stay out."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         recent = _seed_ch_traces(ch_seed, observe_project, 2)
         _seed_ch_traces(ch_seed, observe_project, 3, age=timedelta(days=40))
@@ -1500,7 +1500,7 @@ class TestFilteredSelectAllAddsExactSelection:
     def test_deselected_traces_are_subtracted_and_one_row_per_trace(
         self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
     ):
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         traces = _seed_ch_traces(ch_seed, observe_project, 4, child_on_first=True)
         deselected_trace_id, _deselected_root = traces[3]
@@ -1548,7 +1548,7 @@ class TestFilteredSelectAllAddsExactSelection:
         import tracer.views.dataset as dataset_views
 
         monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_PAGE_SIZE", 2)
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         traces = _seed_ch_traces(ch_seed, observe_project, 5)
         if with_window:
@@ -1587,7 +1587,7 @@ class TestFilteredSelectAllAddsExactSelection:
 
         monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_PAGE_SIZE", 1)
         monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_MAX_PAGES", 2)
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         _seed_ch_traces(ch_seed, observe_project, 3)
 
         response = auth_client.post(
@@ -1622,7 +1622,7 @@ class TestFilteredSelectAllAddsExactSelection:
 
         monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_PAGE_SIZE", 5)
         monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_MAX_PAGES", 2)
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
 
         def checkpoint_page(**_kwargs):
             # A fresh continuation each call: progress, but no ids.
@@ -1664,7 +1664,7 @@ class TestFilteredSelectAllAddsExactSelection:
         from model_hub.services.bulk_selection import ResolveResult
         from tracer.services.clickhouse.read_budget import ReadDeadline
 
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         traces = _seed_ch_traces(ch_seed, observe_project, 2)
         deadlines = []
@@ -1713,7 +1713,7 @@ class TestFilteredSelectAllAddsExactSelection:
     ):
         from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         with patch(
             "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
             side_effect=ReadDeadlineExceeded("read deadline exceeded"),
@@ -1741,7 +1741,7 @@ class TestFilteredSelectAllAddsExactSelection:
         self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
     ):
         """A filtered select-all that resolves to 0 rows leaves no empty dataset."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         _seed_ch_traces(ch_seed, observe_project, 2)
 
         response = auth_client.post(
@@ -1772,7 +1772,7 @@ class TestFilteredSelectAllAddsExactSelection:
     ):
         from model_hub.services.bulk_selection import BulkSelectionReadIncomplete
 
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         with patch(
             "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
             side_effect=BulkSelectionReadIncomplete("scan_budget_exceeded"),
@@ -1801,7 +1801,7 @@ class TestFilteredSelectAllAddsExactSelection:
     def test_spans_tab_select_all_adds_exact_span_set(
         self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
     ):
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         trace_id = str(uuid.uuid4())
         root_id = f"ch_root_{uuid.uuid4().hex[:12]}"
@@ -1840,7 +1840,7 @@ class TestFilteredSelectAllAddsExactSelection:
         self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
     ):
         """The span resolver applies the grid's window: old spans stay out."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         trace_id = str(uuid.uuid4())
         root_id = f"ch_root_{uuid.uuid4().hex[:12]}"
@@ -1927,7 +1927,7 @@ class TestFilteredSelectAllAddsExactSelection:
         self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
     ):
         """Old clients that send no ``filters`` keep the whole-project path."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         traces = _seed_ch_traces(ch_seed, observe_project, 3)
 
@@ -1962,7 +1962,7 @@ class TestFilteredSelectAllInsertedRows:
         from model_hub.models.develop_dataset import Row
         from tracer.tasks.dataset import process_spans_chunk_task
 
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         traces = _seed_ch_traces(ch_seed, observe_project, 6, child_on_first=True)
         _seed_ch_traces(ch_seed, observe_project, 3, age=timedelta(days=40))
         deselected = [traces[4][0], traces[5][0]]
