@@ -6,6 +6,7 @@ import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import {
   CONTRACT_EDIT_COPY as E,
   CONTRACT_LISTS_COPY as L,
+  CONTRACT_TEXT_MAX,
 } from "./contract.constants";
 
 const LIST_OF = { rule: L.rules, useCase: L.useCases };
@@ -37,8 +38,11 @@ export default function ContractEditDialog({ edit, onClose, onConfirm }) {
   }
 
   const next = text.trim();
+  const tooLong = next.length > CONTRACT_TEXT_MAX;
   const isValid =
-    next.length > 0 && (edit.op !== "edit" || next !== edit.text.trim());
+    next.length > 0 &&
+    !tooLong &&
+    (edit.op !== "edit" || next !== edit.text.trim());
 
   return (
     <ModalWrapper
@@ -63,6 +67,8 @@ export default function ContractEditDialog({ edit, onClose, onConfirm }) {
         label={list.field}
         value={text}
         onChange={(e) => setText(e.target.value)}
+        error={tooLong}
+        helperText={tooLong ? E.tooLong : E.count(next.length)}
       />
     </ModalWrapper>
   );

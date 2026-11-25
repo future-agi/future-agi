@@ -167,7 +167,12 @@ export const CONTRACT_LISTS_COPY = {
   notLive: "You can change the contract once the environment is ready.",
 };
 
+export const CONTRACT_TEXT_MAX = 2000;
+
 export const CONTRACT_EDIT_COPY = {
+  count: (n) =>
+    `${n.toLocaleString()} / ${CONTRACT_TEXT_MAX.toLocaleString()} characters`,
+  tooLong: `Up to ${CONTRACT_TEXT_MAX.toLocaleString()} characters`,
   addTitle: (noun) => `Add ${noun}`,
   editTitle: (noun, id) => `Edit ${noun} ${id}`,
   removeTitle: (noun, id) => `Remove ${noun} ${id}`,
