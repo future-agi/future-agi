@@ -96,7 +96,7 @@ def _unix_microseconds(value: datetime) -> int:
 # filter shape: the published timestamp, the tombstone and the root test.
 _SPAN_MATCH_INVARIANT_AGGREGATES_SQL = (
     "argMax(start_time, _peerdb_version) AS latest_start_time,\n"
-    "                    argMax(is_deleted, _peerdb_version) AS latest_is_deleted,\n"
+    "                    argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted,\n"
     "                    argMax(tuple(parent_span_id), _peerdb_version).1"
     " AS latest_parent_span_id"
 )
@@ -1759,6 +1759,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 argMax(tuple(end_user_id), _peerdb_version).1 AS latest_end_user_id,
                 argMax(created_at, _peerdb_version) AS latest_created_at"""
 
+        # The residual runs outside the election, including on org and
+        # identity-only reads. Carry the winner's attributes only for scope
+        # filters; they are classifier input, not part of a published row.
+        private_columns = "parent_span_id"
+        if any(
+            is_skill_filter(item) and item.get("column_id") == "skill.in_scope"
+            for item in residual_filters
+        ):
+            # The v2 schema boundary rewrites this legacy JSON projection
+            # to the attributes_extra field of its packed physical winner.
+            hydrate_aggregate_fragment += ", argMax(tuple(span_attributes_raw), _peerdb_version).1 AS latest_attributes_extra"
+            select_fragment += ", latest_attributes_extra AS attributes_extra"
+            private_columns += ", attributes_extra"
+
         identity_select, identity_aggregates = self._filter_match_identity_fragments()
         match_consumer_sql = " ".join(
             (
@@ -1806,7 +1820,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             WHERE latest_is_deleted = 0{latest_time_fragment}{datetime_fragment}
               AND {predicate}
         )
-        SELECT * EXCEPT (parent_span_id)
+        SELECT * EXCEPT ({private_columns})
         FROM resolved_annotation_candidates AS latest_candidates
         WHERE {residual_predicate}
         {self._filter_order_sql()}

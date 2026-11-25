@@ -7,6 +7,7 @@ not a Python approximation of the SQL's row or anti-membership semantics.
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -212,22 +213,27 @@ def test_only_sampled_skill_filters_reference_sampling_source():
     assert "FROM sampling_source" not in live and "FROM dependency_source" not in live
 
 
-def test_in_scope_is_span_only_and_does_not_need_projected_array():
-    with pytest.raises(UnsupportedFilterShapeError):
-        compile_filters([skill("in_scope", VERSION)])
-    sql, params = compile_filters([skill("in_scope", VERSION)], mode="span")
-    assert "(toUUID(%(project_id)s), trace_id, id) IN" in sql
-    assert (
-        f"argMax(tuple({SKILL_VERSION_IDS_SQL}, is_deleted, rev.start_time), _version)"
-        in sql
-    )
-    assert "skill_version_ids" not in sql
-    assert "hasAny(scope_state.1" in sql
-    assert [VERSION] in params.values()
-    _, membership = compile_filters(
-        [skill("in_scope", [VERSION, OTHER_VERSION], op="in")], mode="span"
-    )
-    assert [VERSION, OTHER_VERSION] in membership.values()
+@pytest.mark.parametrize("table", ["spans", "sampling_source"])
+def test_in_scope_is_a_span_only_bound_row_predicate(table):
+    with pytest.raises(UnsupportedFilterShapeError, match="span-grain only"):
+        compile_filters([skill("in_scope", VERSION)], table=table)
+    with pytest.raises(UnsupportedFilterShapeError, match="operator"):
+        compile_filters(
+            [skill("in_scope", VERSION, op="contains")], mode="span", table=table
+        )
+    for op, value, expected in (
+        ("equals", VERSION, [VERSION]),
+        ("in", [VERSION, OTHER_VERSION], [VERSION, OTHER_VERSION]),
+    ):
+        sql, params = compile_filters(
+            [skill("in_scope", value, op=op)],
+            mode="span",
+            table=table,
+            skill_window=SkillEvidenceWindow.from_bounds(START, END),
+        )
+        (param,) = params
+        assert sql == f"hasAny({SKILL_VERSION_IDS_SQL}, %({param})s)"
+        assert params[param] == expected
 
 
 def test_exact_graph_does_not_compile_skill_leaves_independently():
@@ -1457,94 +1463,11 @@ def test_excluded_load_keys_do_not_consume_replay_budget(
     assert not skill_query_client.query(sql, parameters=params).result_rows
 
 
-@pytest.mark.integration
-def test_span_scope_charges_exact_window_keys_before_replay(
-    skill_query_client, monkeypatch
-):
-    from tracer.services.clickhouse.query_builders import filters as compiler_module
-
-    project = str(uuid4())
-    spans = [
-        span_row(
-            project, "stamps", name="llm.chat", start_time=START + timedelta(minutes=m)
-        )
-        for m in (15, 20, 30)
-    ]
-    deleted_only = {**spans[-1], "id": uuid4().hex[:16], "deleted": True}
-    insert_rows(skill_query_client, [*spans, deleted_only])
-    monkeypatch.setattr(compiler_module, "SKILL_REPLAY_BATCH_SIZE", 1)
-    exact = SkillEvidenceWindow.from_bounds(
-        START,
-        END,
-        [
-            _date_filter(
-                "not_between",
-                [(START + timedelta(minutes=m)).isoformat() for m in (15, 30)],
-            )
-        ],
-    )
-    broad = SkillEvidenceWindow.from_bounds(START, END)
-    compiler = ClickHouseFilterBuilderV2(
-        project_id=project, query_mode="span", skill_window=exact
-    )
-    # Observe the actual input to historical partition discovery. Testing only
-    # the final result would not detect replay of a million excluded stamps.
-    nomination = []
-    replay = compiler._skill_replay_sql
-
-    def record(keys_sql, *, span_keys):
-        nomination.append(keys_sql)
-        return replay(keys_sql, span_keys=span_keys)
-
-    monkeypatch.setattr(compiler, "_skill_replay_sql", record)
-    predicate, params = compiler.translate([skill("in_scope", VERSION)])
-    params = {**params, "project_id": project}
-    assert [
-        row[2]
-        for row in skill_query_client.query(
-            nomination[0], parameters=params
-        ).result_rows
-    ] == [spans[-1]["id"]]
-    sql = "SELECT id FROM spans WHERE project_id = %(project_id)s AND " + predicate
-    assert skill_query_client.query(sql, parameters=params).result_rows == [
-        (spans[-1]["id"],)
-    ]
-
-    # Nominate the older live revision, but still elect the later deletion.
-    insert_rows(
-        skill_query_client,
-        [
-            {
-                **spans[-1],
-                "deleted": True,
-                "created_at": END,
-                "resource_attributes": {"service.name": "delete"},
-            }
-        ],
-    )
-    assert not skill_query_client.query(sql, parameters=params).result_rows
-
-    # With the exclusion removed the two other live stamps qualify too. Scope
-    # stamps are as numerous as spans, so there is no load-style key cap (the
-    # batch size is patched to 1 above): the membership stays exact.
-    predicate, params = compile_filters(
-        [skill("in_scope", VERSION)], project=project, mode="span", skill_window=broad
-    )
-    assert {
-        row[0]
-        for row in skill_query_client.query(
-            "SELECT id FROM spans WHERE project_id = %(project_id)s AND " + predicate,
-            parameters={**params, "project_id": project},
-        ).result_rows
-    } == {spans[0]["id"], spans[1]["id"]}
-
-
 @pytest.mark.django_db
 @pytest.mark.integration
-def test_sampling_preview_elects_all_stamps_or_returns_its_read_ceiling(
+def test_sampling_preview_matches_stamps_or_returns_its_read_ceiling(
     auth_client, project, ch_seed, monkeypatch
 ):
-    from tracer.services.clickhouse.query_builders import filters as compiler_module
     from tracer.services.eval_tasks.sampling.query import READ_SETTINGS
 
     start = datetime.now(UTC) - timedelta(hours=1)
@@ -1563,7 +1486,6 @@ def test_sampling_preview_elects_all_stamps_or_returns_its_read_ceiling(
             for i in range(2)
         ]
     )
-    monkeypatch.setattr(compiler_module, "SKILL_REPLAY_BATCH_SIZE", 1)
     body = {
         "project": str(project.id),
         "row_type": "spans",
@@ -1579,8 +1501,7 @@ def test_sampling_preview_elects_all_stamps_or_returns_its_read_ceiling(
     preview = auth_client.post(url, body, format="json")
     assert preview.status_code == 200, preview.data
     assert sum(cell["eligible_rows"] for cell in preview.data["result"]["strata"]) == 2
-    # Historical key admission is not a sampling limit. The *sampling* input
-    # limit still refuses exactly at its public boundary, never a 500/prefix.
+    # The sampling read ceiling still refuses explicitly, never a 500/prefix.
     monkeypatch.setitem(READ_SETTINGS, "max_rows_to_read", 1)
     refused = auth_client.post(url, body, format="json")
     assert refused.status_code == 400 and "row/byte ceiling" in refused.content.decode()
@@ -1609,60 +1530,6 @@ def _closed_row_ids(client, project, items, *, row_type):
             sql, parameters=params, settings=READ_SETTINGS
         ).result_rows
     }
-
-
-@pytest.mark.integration
-def test_in_scope_elects_corrected_time_and_closed_scope(skill_query_client):
-    project = str(uuid4())
-    old = span_row(
-        project, "moved", name="llm.chat", resource_attributes={"service.name": "X"}
-    )
-    other = span_row(
-        project,
-        "closed-scope",
-        name="llm.chat",
-        resource_attributes={"service.name": "X"},
-    )
-    insert_rows(skill_query_client, [old, other])
-    moved = {
-        **old,
-        "start_time": START - timedelta(days=1),
-        "span_attributes": {},
-        "created_at": START + timedelta(minutes=5),
-    }
-    changed = {
-        **other,
-        "resource_attributes": {"service.name": "Y"},
-        "created_at": END + timedelta(seconds=1),
-        "span_attributes": {"fi.skills.version_ids": [OTHER_VERSION]},
-    }
-    insert_rows(skill_query_client, [moved, changed])
-    items = [
-        _date_filter("between", [START.isoformat(), END.isoformat()]),
-        skill("in_scope", VERSION),
-    ]
-    sql, params = compile_filters(items, project=project, mode="span")
-    assert (
-        skill_query_client.query(
-            "SELECT id FROM spans WHERE project_id = %(project_id)s AND " + sql,
-            parameters={**params, "project_id": project},
-        ).result_rows
-        == []
-    )
-    # A closed span-row sample must also drop "moved" (its pre-cutoff correction
-    # left the window), but SamplingQuery reads span rows only inside the event
-    # hours, so it never sees that correction. That is pre-existing behaviour
-    # shared by every sampled filter: TH-10751 (its follow-up tests include
-    # this case). Here, the post-cutoff revision must not change the match.
-    assert (
-        _closed_row_ids(
-            skill_query_client,
-            project,
-            [skill("in_scope", OTHER_VERSION)],
-            row_type="spans",
-        )
-        == set()
-    )
 
 
 @pytest.mark.integration
@@ -1754,92 +1621,605 @@ def test_fractional_window_in_raw_runtime_and_verified_summary(skill_query_clien
     assert native_rows(summary)[0]["traces"] == 1
 
 
-@pytest.mark.django_db
-@pytest.mark.integration
-def test_mounted_span_graph_charges_admissible_stamps_only(
-    auth_client, observe_project, skill_query_client, settings, monkeypatch
-):
-    from clickhouse_driver.errors import ServerException
-
-    from conftest import _ch_test_native_client
-    from tracer.services.clickhouse import graph_dispatch
-    from tracer.services.clickhouse.client import ClickHouseClient
-    from tracer.services.clickhouse.query_service import AnalyticsQueryService
-    from tracer.views import observation_span
-
-    project = str(observe_project.pk)
-    excluded_start = START + timedelta(minutes=10)
-    allowed_start = START + timedelta(minutes=20)
-    template = span_row(project, "scope", name="llm.chat", start_time=excluded_start)
-    allowed = span_row(project, "allowed", name="llm.chat", start_time=allowed_start)
-    excluded = [{**template, "id": f"{i:016x}"} for i in range(1025)]
-    # A stale allowed stamp can nominate this key. Even after a parts merge,
-    # replay must see the newer revision inside the excluded interval.
-    stale = {
-        **excluded[1],
-        "resource_attributes": {"service.name": "earlier-writer"},
-        "start_time": allowed_start,
-        "created_at": START - timedelta(seconds=1),
-    }
-    insert_rows(skill_query_client, [*excluded, stale, allowed])
-    settings.DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER = ""
-    # Exercise the mounted inline read. Neither a warm cache nor the cost
-    # estimate should keep the graph statement from reaching the test DB.
-    cache_calls = []
-
-    def cold(**kwargs):
-        cache_calls.append(kwargs.get("schedule_on_miss", True))
-        return None
-
-    monkeypatch.setattr(graph_dispatch, "_read_or_refresh_exact_graph", cold)
-    monkeypatch.setattr(
-        graph_dispatch, "estimate_raw_graph_scan_rows", lambda **kwargs: 1026
-    )
-    filters = [
+def _scope_filters(version=VERSION):
+    return [
         _date_filter("between", [START.isoformat(), END.isoformat()]),
+        skill("in_scope", version),
+    ]
+
+
+def _scope_span(project, label, *, when=START, stamped=True, **kwargs):
+    return span_row(
+        project,
+        label,
+        name="llm.chat",
+        observation_type="llm",
+        resource_attributes={"service.name": "support"},
+        start_time=when,
+        end_time=when + timedelta(milliseconds=5),
+        created_at=when,
+        updated_at=when,
+        span_attributes={"fi.skills.version_ids": [VERSION]} if stamped else {},
+        **kwargs,
+    )
+
+
+@pytest.fixture
+def unmerged_skill_client(skill_query_client):
+    # Elections, especially FINAL, must work with competing rows in distinct
+    # parts. Do not let a background merge make a raw-revision reader pass.
+    skill_query_client.command("SYSTEM STOP MERGES spans")
+    try:
+        yield skill_query_client
+    finally:
+        skill_query_client.command("SYSTEM START MERGES spans")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("reader", ["bounded", "v2_page", "cost_graph", "sampling"])
+def test_in_scope_on_elected_span_revisions(unmerged_skill_client, reader):
+    from tracer.services.clickhouse.query_builders.time_series import (
+        TimeSeriesQueryBuilder,
+    )
+    from tracer.services.clickhouse.v2.query_builders.span_list import (
+        SpanListQueryBuilderV2,
+    )
+
+    client = unmerged_skill_client
+    project = str(uuid4())
+    # Each row has a distinct cost, so the graph checks *which* spans it
+    # selected, not just a count that could still agree after swapping rows.
+    removed, added, deleted, late = spans = [
+        _scope_span(
+            project,
+            label,
+            when=START + timedelta(minutes=minute),
+            cost=cost,
+            stamped=stamped,
+        )
+        for label, minute, cost, stamped in (
+            ("removed", 20, 1, True),
+            ("added", 20, 2, False),
+            ("deleted", 20, 4, True),
+            ("late", 0, 8, False),
+        )
+    ]
+
+    for span in (added, late):
+        span["span_attributes"] = {"fi.skills.version_ids": [OTHER_VERSION]}
+
+    def check(*expected, version=VERSION):
+        items = _scope_filters(version)
+        if reader == "cost_graph":
+            sql, params = TimeSeriesQueryBuilder(
+                project_id=project,
+                filters=items,
+                observe_type="span",
+                exact_snapshot=True,
+                resolve_span_versions=True,
+                start_date=START,
+                end_date=END,
+            ).build()
+            rows = list(client.query(sql, parameters=params).named_results())
+            assert sum(r["traffic_count"] for r in rows) == len(expected)
+            assert sum(
+                r["traffic_count"] * r["avg_cost"] for r in rows
+            ) == pytest.approx(sum(span["cost"] for span in expected))
+            return
+        if reader == "sampling":
+            ids = _closed_row_ids(client, project, items, row_type="spans")
+        else:
+            builder = SpanListQueryBuilderV2(project_id=project, filters=items)
+            sql, params = (
+                builder.build_filter_match_query_from_seed_rows(spans)
+                if reader == "bounded"
+                else builder.build()
+            )
+            ids = [
+                r["id"] for r in client.query(sql, parameters=params).named_results()
+            ]
+        assert sorted(ids) == sorted(r["id"] for r in expected)
+
+    insert_rows(client, spans)
+    check(removed, deleted)
+    # Neither miss is a missing row: the same reader can see the old stamp.
+    check(added, late, version=OTHER_VERSION)
+    arrival = START + timedelta(minutes=21)
+    insert_rows(
+        client,
+        [
+            {**removed, "created_at": arrival, "span_attributes": {}},
+            {
+                **added,
+                "created_at": arrival,
+                "span_attributes": {"fi.skills.version_ids": [VERSION]},
+            },
+            # A stamped tombstone would still match if the reader forgot deletion.
+            {**deleted, "created_at": arrival, "deleted": True},
+        ],
+    )
+    check(added)
+    insert_rows(
+        client,
+        [
+            {
+                **late,
+                "created_at": END - timedelta(seconds=1),
+                "span_attributes": {"fi.skills.version_ids": [VERSION]},
+            }
+        ],
+    )
+    check(added, late)
+
+
+def _insert_legacy_scope_rows(client, rows):
+    columns = ("project_id", "trace_id", "id", "name", "start_time", "created_at")
+    client.insert(
+        "spans",
+        [
+            (
+                *(row[key] for key in columns),
+                json.dumps(row["span_attributes"]),
+                int(row.get("deleted", False)),
+                int(row["created_at"].timestamp()),
+            )
+            for row in rows
+        ],
+        column_names=[
+            *columns,
+            "span_attributes_raw",
+            "_peerdb_is_deleted",
+            "_peerdb_version",
+        ],
+    )
+
+
+@pytest.fixture(params=["v1", "v2"])
+def bounded_scope_reader(request):
+    from conftest import _ch_test_owned_database, _open_ch_test_http_client
+    from tracer.services.clickhouse.query_builders.span_list import SpanListQueryBuilder
+    from tracer.services.clickhouse.schema import SPANS_TABLE, _to_single_node_engine
+    from tracer.services.clickhouse.v2.query_builders.span_list import (
+        SpanListQueryBuilderV2,
+    )
+
+    if request.param == "v2":
+        yield (
+            request.getfixturevalue("unmerged_skill_client"),
+            SpanListQueryBuilderV2,
+            insert_rows,
+        )
+        return
+
+    with (
+        _ch_test_owned_database("test_skill_legacy_scope_") as db,
+        closing(_open_ch_test_http_client(database=db)) as client,
+    ):
+        client.command(_to_single_node_engine(SPANS_TABLE))
+        client.command("SYSTEM STOP MERGES spans")
+        try:
+            yield client, SpanListQueryBuilder, _insert_legacy_scope_rows
+        finally:
+            client.command("SYSTEM START MERGES spans")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("org_scope", [False, True])
+def test_bounded_scope_projection(bounded_scope_reader, org_scope):
+    client, builder_cls, insert = bounded_scope_reader
+    p, q = str(uuid4()), str(uuid4())
+    hit = _scope_span(p, "hit")
+    # The branches contain the same public IDs but only p retains the stamp.
+    copy = {**hit, "project_id": q}
+    miss = _scope_span(p, "sibling", stamped=False)
+    deleted = _scope_span(p, "deleted")
+    insert(client, [hit, copy, miss, deleted])
+    insert(
+        client,
+        [
+            {**copy, "created_at": END, "span_attributes": {}},
+            {**deleted, "created_at": END, "deleted": True},
+        ],
+    )
+    scope = {"project_ids": [p, q]} if org_scope else {"project_id": p}
+    seeds = [hit, miss, deleted, copy] if org_scope else [hit, miss, deleted]
+    for identity_only in (False, True):
+        sql, params = builder_cls(
+            **scope, filters=_scope_filters(), bounded_identity_only=identity_only
+        ).build_filter_match_query_from_seed_rows(seeds)
+        rows = list(client.query(sql, parameters=params).named_results())
+        assert [(str(r["project_id"]), r["id"]) for r in rows] == [(p, hit["id"])]
+        assert ("name" in rows[0]) is not identity_only
+        assert "attributes_extra" not in rows[0]
+        assert "span_attributes_raw" not in rows[0]
+
+
+@pytest.mark.integration
+def test_closed_scope_follows_span_attribute_semantics_across_physical_keys(
+    skill_query_client,
+):
+    project = str(uuid4())
+    old = _scope_span(project, "closed")
+    moved = _scope_span(project, "moved-before-cutoff")
+    for span in (old, moved):
+        span["span_attributes"]["test.scope.control"] = VERSION
+    insert_rows(skill_query_client, [old, moved])
+
+    def closed(item):
+        return _closed_row_ids(skill_query_client, project, [item], row_type="spans")
+
+    assert closed(skill("in_scope", VERSION)) == {old["id"], moved["id"]}
+    insert_rows(
+        skill_query_client,
+        [
+            {
+                **moved,
+                "start_time": START - timedelta(days=1),
+                "created_at": START + timedelta(minutes=5),
+                "span_attributes": {},
+            },
+            {
+                **old,
+                "resource_attributes": {"service.name": "Y"},
+                "created_at": END + timedelta(seconds=1),
+                "span_attributes": {"fi.skills.version_ids": [OTHER_VERSION]},
+            },
+        ],
+    )
+    # The attribute contract is about the row the reader supplies. Cross-hour
+    # logical retraction is a separate expectation, filed below, not a pass here.
+    raw_attribute = {
+        "column_id": "test.scope.control",
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": VERSION,
+        },
+    }
+    matches = closed(skill("in_scope", VERSION))
+    assert matches == closed(raw_attribute)
+    assert old["id"] in matches
+    assert closed(skill("in_scope", OTHER_VERSION)) == set()
+
+
+class _StaleSpanMatch(AssertionError):
+    """Only the documented stale match should xfail, not a SQL or fixture error."""
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("move", ["hour", "service"])
+@pytest.mark.xfail(
+    strict=True,
+    raises=_StaleSpanMatch,
+    reason="TH-10818: a changed hour or service leaves the old physical span matching",
+)
+def test_in_scope_retracts_match_across_physical_keys(unmerged_skill_client, move):
+    from tracer.services.clickhouse.v2.query_builders.span_list import (
+        SpanListQueryBuilderV2,
+    )
+
+    client = unmerged_skill_client
+    project = str(uuid4())
+    old = _scope_span(project, "moved")
+    insert_rows(client, [old])
+    sql, params = SpanListQueryBuilderV2(
+        project_id=project, filters=_scope_filters()
+    ).build()
+
+    def ids():
+        return [
+            row["id"] for row in client.query(sql, parameters=params).named_results()
+        ]
+
+    assert ids() == [old["id"]]
+    moved = (
+        {"start_time": START - timedelta(days=1)}
+        if move == "hour"
+        else {"resource_attributes": {"service.name": "Y"}}
+    )
+    insert_rows(client, [{**old, **moved, "created_at": END, "span_attributes": {}}])
+    matches = ids()
+    if matches == [old["id"]]:
+        raise _StaleSpanMatch("the old physical key still matches")
+    assert matches == []
+
+
+@pytest.mark.integration
+@pytest.mark.xfail(
+    strict=True,
+    raises=_StaleSpanMatch,
+    reason="TH-10818: direct span count filters raw revisions before merges",
+)
+def test_direct_span_count_retracts_corrected_stamp(unmerged_skill_client):
+    from tracer.services.clickhouse.v2.query_builders.span_list import (
+        SpanListQueryBuilderV2,
+    )
+
+    client = unmerged_skill_client
+    project = str(uuid4())
+    old = _scope_span(project, "direct-count")
+    insert_rows(client, [old])
+    builder = SpanListQueryBuilderV2(project_id=project, filters=_scope_filters())
+    builder.build()  # The direct count inherits the page's frozen dates.
+    sql, params = builder.build_count_query()
+    assert client.query(sql, parameters=params).result_rows == [(1,)]
+    insert_rows(client, [{**old, "created_at": END, "span_attributes": {}}])
+    counts = client.query(sql, parameters=params).result_rows
+    if counts == [(1,)]:
+        raise _StaleSpanMatch("direct count included the old stamped revision")
+    assert counts == [(0,)]
+
+
+def _insert_span_scores(client, config, scores):
+    client.insert(
+        "tracer_eval_logger_v2",
+        [
+            (uuid4(), config, span["trace_id"], span["id"], value, when, when)
+            for span, value, when in scores
+        ],
+        column_names=[
+            "id",
+            "custom_eval_config_id",
+            "trace_id",
+            "observation_span_id",
+            "output_float",
+            "created_at",
+            "updated_at",
+        ],
+    )
+
+
+def _span_graph_scores(client, project, config, filters):
+    from tracer.services.clickhouse.exact_graph_reads import EXACT_GRAPH_READ_SETTINGS
+    from tracer.services.clickhouse.v2.query_builders.eval_metrics import (
+        EvalMetricsQueryBuilderV2,
+    )
+
+    sql, params = EvalMetricsQueryBuilderV2(
+        project_id=project,
+        custom_eval_config_id=config,
+        filters=filters,
+        observe_type="span",
+        start_date=START,
+        end_date=END,
+    ).build()
+    return [
+        (r["primary_traffic"], r["value"])
+        for r in client.query(
+            sql, parameters=params, settings=EXACT_GRAPH_READ_SETTINGS
+        ).named_results()
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("change", ["remove_stamp", "tombstone"])
+def test_eval_metric_graph_filters_latest_span(unmerged_skill_client, settings, change):
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+    client = unmerged_skill_client
+    project, config = str(uuid4()), str(uuid4())
+    old = _scope_span(project, "graph-score")
+    insert_rows(client, [old])
+    _insert_span_scores(client, config, [(old, 0.75, START)])
+    filters = _scope_filters()
+    assert _span_graph_scores(client, project, config, filters) == [(1, 75)]
+    update = {"deleted": True} if change == "tombstone" else {"span_attributes": {}}
+    insert_rows(client, [{**old, "created_at": END, **update}])
+    assert _span_graph_scores(client, project, config, filters) == []
+
+
+def _excluded_minutes(start, end):
+    return _date_filter(
+        "not_between",
+        [(START + timedelta(minutes=m)).isoformat() for m in (start, end)],
+    )
+
+
+@pytest.mark.integration
+def test_eval_graph_excludes_span_time_not_score_time(skill_query_client, settings):
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+    client = skill_query_client
+    project, config = str(uuid4()), str(uuid4())
+    kept = _scope_span(project, "earlier", when=START + timedelta(minutes=5))
+    excluded = _scope_span(project, "later", when=START + timedelta(minutes=15))
+    insert_rows(client, [kept, excluded])
+    # Cross the clocks: excluding by score time instead would return 25, not 75.
+    _insert_span_scores(
+        client,
+        config,
+        [
+            (kept, 0.75, START + timedelta(minutes=15)),
+            (excluded, 0.25, START + timedelta(minutes=25)),
+        ],
+    )
+    filters = _scope_filters()
+    assert _span_graph_scores(client, project, config, filters) == [(2, 50)]
+    assert _span_graph_scores(
+        client, project, config, [*filters, _excluded_minutes(10, 20)]
+    ) == [(1, 75)]
+
+
+@pytest.mark.integration
+def test_user_detail_graph_excludes_output_not_usage_evidence(skill_query_client):
+    from tracer.services.clickhouse.v2.query_builders.user_time_series import (
+        UserDetailTimeSeriesQueryBuilderV2,
+    )
+
+    client = skill_query_client
+    project, org, user = (str(uuid4()) for _ in range(3))
+    client.insert(
+        "end_users",
+        [(project, user, org, START)],
+        column_names=["project_id", "end_user_id", "organization_id", "first_seen"],
+    )
+    kept = _scope_span(project, "kept", end_user_id=user, cost=1.25) | {
+        "name": "pydantic_ai.agent.run",
+        "observation_type": "agent",
+        "parent_span_id": "",
+    }
+    inside = START + timedelta(minutes=15)
+    excluded = _scope_span(project, "excluded", when=inside, end_user_id=user, cost=4)
+    insert_rows(client, [kept, excluded])
+
+    def counts_and_cost(filters):
+        sql, params = UserDetailTimeSeriesQueryBuilderV2(
+            project_id=project,
+            organization_id=org,
+            end_user_id=user,
+            filters=filters,
+            interval="hour",
+        ).build()
+        return [
+            (r["trace_count"], r["cost"])
+            for r in client.query(sql, parameters=params).named_results()
+        ]
+
+    filters = _scope_filters()
+    assert counts_and_cost(filters) == [(2, 5.25)]
+    filtered = [*filters, _excluded_minutes(10, 20)]
+    assert counts_and_cost(filtered) == [(1, 1.25)]
+    # The excluded child proves the kept wrapper repeats its cost. Neither
+    # contributes money, but the stamped wrapper still contributes a trace.
+    child = _scope_span(
+        project,
+        "kept",
+        when=inside,
+        end_user_id=user,
+        parent_span_id=kept["id"],
+        cost=1.25,
+    )
+    insert_rows(client, [child])
+    assert counts_and_cost(filtered) == [(1, 0)]
+
+
+@pytest.fixture
+def bounded_scope_corpus(skill_query_client, observe_project, settings, monkeypatch):
+    """Point production reader connections at the same owned DB as the writer."""
+    from conftest import _ch_test_native_client
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.v2 import query_service
+
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+    with _ch_test_native_client(database=skill_query_client.database) as driver:
+        connection = driver.connection
+        pool = ClickHouseClient(
+            host=connection.host,
+            port=connection.port,
+            user=connection.user,
+            password=connection.password,
+            database=connection.database,
+        )
+    monkeypatch.setattr(query_service, "get_v2_query_client", lambda: pool)
+    project = str(observe_project.pk)
+    spans = [
+        _scope_span(
+            project, f"list-{i}", when=START + timedelta(minutes=i), stamped=i % 2 == 1
+        )
+        for i in range(1, 6)
+    ]
+    insert_rows(skill_query_client, spans)
+    items = [
+        _date_filter(
+            "between", [START.isoformat(), (START + timedelta(minutes=6)).isoformat()]
+        ),
         skill("in_scope", VERSION),
     ]
-    exclusion = _date_filter(
-        "not_between", [excluded_start.isoformat(), allowed_start.isoformat()]
+    try:
+        yield project, items, spans
+    finally:
+        pool.close()
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+@pytest.mark.parametrize("org_scope", [False, True])
+def test_observe_scope_pages_and_totals(auth_client, bounded_scope_corpus, org_scope):
+    project, items, spans = bounded_scope_corpus
+    url = "/tracer/observation-span/list_spans_observe/"
+    query = {"filters": json.dumps(items), "page_size": 2}
+    if not org_scope:
+        query["project_id"] = project
+    expected = [row["id"] for row in spans[::-2]]
+
+    def page(**pagination):
+        response = auth_client.get(url, {**query, **pagination})
+        assert response.status_code == 200, response.data
+        result = response.data["result"]
+        return [row["span_id"] for row in result["table"]], result["metadata"]
+
+    assert page(page_number=0)[0] == expected[:2]
+    assert page(page_number=1)[0] == expected[2:]
+    first, meta = page(cursor_mode=True)
+    assert first == expected[:2] and meta["next_cursor"]
+    last, meta = page(cursor_mode=True, cursor=meta["next_cursor"])
+    assert last == expected[2:]
+    assert meta["total_rows"] == meta["total_rows_exact"] == len(expected)
+    assert not meta["has_more"]
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_scope_export_and_neighbors(auth_client, bounded_scope_corpus):
+    import csv
+    import io
+
+    project, items, spans = bounded_scope_corpus
+    query = {"project_id": project, "filters": json.dumps(items)}
+    base = "/tracer/observation-span/"
+    response = auth_client.get(base + "get_spans_export_data/", query)
+    assert response.status_code == 200
+    body = (
+        b"".join(response.streaming_content) if response.streaming else response.content
     )
+    assert [row["span_id"] for row in csv.DictReader(io.StringIO(body.decode()))] == [
+        row["id"] for row in spans[::-2]
+    ]
 
-    def post(items):
-        return auth_client.post(
-            "/tracer/observation-span/get_graph_methods/",
-            {
-                "project_id": project,
-                "interval": "hour",
-                "req_data_config": {"id": "traffic", "type": "SYSTEM_METRIC"},
-                "filters": items,
-            },
-            format="json",
-        )
+    response = auth_client.get(
+        base + "get_trace_id_by_index_spans_as_observe/",
+        {**query, "span_id": spans[2]["id"]},
+    )
+    assert response.status_code == 200, response.data
+    neighbors = response.data["result"]
+    assert neighbors["previous_trace_id"] == spans[4]["trace_id"]
+    assert neighbors["next_trace_id"] == spans[0]["trace_id"]
 
-    with _ch_test_native_client(database=skill_query_client.database) as native:
-        client = ClickHouseClient(host="unused.invalid", pool_size=1)
-        monkeypatch.setattr(client, "_create_client", lambda: native)
-        service = AnalyticsQueryService(ch_client=client)
-        monkeypatch.setattr(
-            observation_span, "V2AnalyticsQueryService", lambda: service
-        )
-        narrow = post([*filters, exclusion])
-        assert narrow.status_code == 200, narrow.data
-        assert sum(point["value"] for point in narrow.data["result"]["data"]) == 1
-        broad = post(filters)
-        assert (broad.status_code, broad.data.get("code")) == (
-            503,
-            "runtime_read_too_large",
-        )
-        assert not broad.data.get("result")
 
-        def unrelated(*args, **kwargs):
-            raise ServerException(
-                "other throwIf: while executing throwIf(x, 'Skill load replay key budget exceeded')",
-                code=395,
-            )
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_scope_bulk_selection(bounded_scope_corpus):
+    from model_hub.services.bulk_selection import _resolve_span_ids_clickhouse
 
-        monkeypatch.setattr(service, "execute_ch_query", unrelated)
-        broken = post(filters)
-        assert (broken.status_code, broken.data.get("code")) == (500, "server_error")
-    # Only the cold-cache probes ran; no background retry of the same input.
-    assert cache_calls == [False] * 3
+    project, items, spans = bounded_scope_corpus
+    result = _resolve_span_ids_clickhouse(
+        project_id=project,
+        filters=items,
+        cap=10,
+        exclude_ids=set(),
+        annotation_label_ids=[],
+    )
+    assert sorted(result.ids) == sorted(row["id"] for row in spans[::2])
+    assert result.total_matching == 3 and not result.truncated
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+@pytest.mark.parametrize("run_type", ["historical", "continuous"])
+def test_scope_eval_row_selection(bounded_scope_corpus, run_type):
+    from tracer.models.eval_task import EvalTask
+    from tracer.selectors.eval_tasks.row_resolver import resolve_desired_rows
+
+    project, items, spans = bounded_scope_corpus
+    task = EvalTask(
+        project_id=project,
+        row_type="spans",
+        run_type=run_type,
+        spans_limit=10,
+        sampling_rate=100,
+        start_time=START,
+        filters={"filters": items},
+    )
+    selected = resolve_desired_rows(task, ceiling=START + timedelta(minutes=6))
+    assert sorted(selected.matched_ids) == sorted(row["id"] for row in spans[::2])
+    if run_type == "continuous":
+        assert sorted(selected.candidate_ids) == sorted(row["id"] for row in spans)

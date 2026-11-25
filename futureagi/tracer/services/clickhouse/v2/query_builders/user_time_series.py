@@ -692,7 +692,16 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
         )
         extra_where, extra_params = filter_builder.translate(self.filters)
         self.params.update(extra_params)
-        where_clause = extra_where if extra_where else "1 = 1"
+        where_clause = extra_where or "1 = 1"
+        if any(self.is_datetime_complement_filter(item) for item in self.filters):
+            # Exclude outputs, not evidence: a child inside an excluded interval
+            # can still prove its parent's usage was a repeated summary.
+            exclusion, exclusion_params = self.bounded_datetime_exclusion_sql(
+                self.filters, param_prefix="user_detail_time_exclusion"
+            )
+            self.params.update(exclusion_params)
+            if exclusion:
+                where_clause = f"({where_clause}) AND ({exclusion})"
 
         eu_map = bounded_survivor_map_subquery(
             self.END_USER_REMAP_TABLE,

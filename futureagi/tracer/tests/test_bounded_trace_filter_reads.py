@@ -3494,7 +3494,7 @@ def test_span_match_compiles_typed_map_json_and_multi_filter_at_latest_state() -
     assert params["latest_filter_key_2"] == "quality"
     assert params["latest_filter_key_3"] == "reviewed"
     assert "JSONExtractString(span_attributes_raw, 'raw_log', 'type')" in sql
-    assert "argMax(is_deleted, _peerdb_version)" in sql
+    assert "argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted" in sql
     assert "latest_column_value_0" in sql
     assert "latest_attr_exists_1" in sql
     assert "latest_attr_exists_2" in sql

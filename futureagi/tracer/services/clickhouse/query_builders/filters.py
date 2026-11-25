@@ -2363,13 +2363,19 @@ class ClickHouseFilterBuilder:
         )
 
         sampled = self.table == ResolvedSpanSource.SAMPLING.value
-        window = self.skill_window
-        if window is None and any(
-            BaseQueryBuilder.is_datetime_filter(f) for f in filters
+        window = None
+        if any(
+            item["column_id"] != "skill.in_scope"
+            for members in groups.values()
+            for item in members
         ):
-            window = SkillEvidenceWindow.from_filters(filters)
-        if window:
-            self._params.update(window.params)
+            window = self.skill_window
+            if window is None and any(
+                BaseQueryBuilder.is_datetime_filter(f) for f in filters
+            ):
+                window = SkillEvidenceWindow.from_filters(filters)
+            if window:
+                self._params.update(window.params)
         conditions = []
         # Span-local scope must stay on the outer span, unlike trace membership.
         span_conditions = []
@@ -2380,7 +2386,6 @@ class ClickHouseFilterBuilder:
         # organization classifiers carry the per-row project explicitly.
         outer_project = "project_id" if self._org_scoped else "toUUID(%(project_id)s)"
         trace_identity = f"({outer_project}, trace_id)"
-        span_identity = f"({outer_project}, trace_id, id)"
         for members in groups.values():
             failed = any(
                 item["column_id"] == "skill.load_result"
@@ -2431,42 +2436,12 @@ class ClickHouseFilterBuilder:
                         if config["filter_op"] == "in"
                         else [config["filter_value"]]
                     )
-                    # The stamp/time on an old revision only nominates its
-                    # identity. Never let a sibling, removed stamp, moved span,
-                    # or an out-of-window tombstone supply the final witness.
-                    candidate = self._candidate_span_entity_filter("trace_id", "id")
-                    if sampled:
-                        # The sampling engine already owns this snapshot's rows,
-                        # including deletes, and its own typed read ceiling. Elect
-                        # directly from that relation: no nomination across spans,
-                        # historical replay, or 1,024-key truncation/refusal.
-                        # sampling_source is exactly dependency_source minus deletes;
-                        # a nondeleted winner therefore satisfies the snapshot fence.
-                        ctes = ""
-                        replay = f"FROM dependency_source AS rev WHERE {self._project_scope_predicate()}{candidate}"
-                    else:
-                        # Nominate with the exact window (datetime complements
-                        # included), so stamps from excluded intervals never reach
-                        # historical replay. No key cap: every in-scope span is in
-                        # the exact result, and scope stamps are as numerous as the
-                        # spans themselves, so a load-style 1,024-key refusal would
-                        # fail ordinary span lists and graphs. Replay cost is bounded
-                        # by the admitted keys, i.e. by the answer.
-                        keys = (
-                            "SELECT DISTINCT project_id, trace_id, id FROM spans "
-                            f"WHERE {self._project_scope_predicate()} AND {self._skill_key_window(window)}"
-                            f"{candidate} AND is_deleted = 0 AND hasAny({SKILL_VERSION_IDS_SQL}, %({param})s)"
-                        )
-                        ctes, replay = self._skill_replay_sql(keys, span_keys=True)
-                    condition = (
-                        window.condition if window else self._skill_window_bounds()
-                    )
+                    # As with SPAN_ATTRIBUTE, the reader supplies the row (and
+                    # owns revision election, tombstones and snapshot bounds).
                     span_conditions.append(
-                        f"{span_identity} IN (SELECT project_id, trace_id, id FROM ("
-                        f"{ctes} SELECT project_id, trace_id, id, "
-                        f"argMax(tuple({SKILL_VERSION_IDS_SQL}, is_deleted, rev.start_time), _version) AS scope_state, "
-                        f"scope_state.3 AS start_time {replay} GROUP BY project_id, trace_id, id) "
-                        f"WHERE scope_state.2 = 0 AND ({condition}) AND hasAny(scope_state.1, %({param})s))"
+                        self._scope_span_attr_inner(
+                            f"hasAny({SKILL_VERSION_IDS_SQL}, %({param})s)"
+                        )
                     )
                 else:
                     predicate = self._skill_row_predicate(item, failed=failed)
@@ -2476,6 +2451,8 @@ class ClickHouseFilterBuilder:
                         else positives
                     )
                     target.append(predicate)
+            if not (positives or negatives or explicit_result):
+                continue
             source = self.skill_live_rows_sql(failed=failed, skill_window=window)
             # Negative membership is absence of a matching row, never a row
             # with a different value. Other positive selectors still correlate.
