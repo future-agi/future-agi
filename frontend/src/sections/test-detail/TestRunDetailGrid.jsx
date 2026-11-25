@@ -7,6 +7,7 @@ import {
   getSelectedCallExecutionIdsFilter,
   getTestRunDetailColumnQuery,
   getTestRunDetailGridColumnDefs,
+  invalidateSettledRun,
   replaceToolOutputIdsWithNames,
   TestRunLoadingStatus,
   TEST_RUN_DETAIL_DEFAULT_PLACEHOLDER_COLUMNS,
@@ -360,9 +361,7 @@ const TestRunDetailGrid = () => {
       isRefreshingRef.current = true;
     } else {
       isRefreshingRef.current = false;
-      queryClient.invalidateQueries({
-        queryKey: ["test-execution-detail", executionId],
-      });
+      invalidateSettledRun(queryClient, executionId);
     }
   }, [executionId, queryClient, setStatus, applyReasonColumnVisibility]);
 

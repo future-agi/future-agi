@@ -33,7 +33,7 @@ describe("Debug failures on a finished run", () => {
     mockKpis.current = { agent_type: "voice" };
   });
 
-  it.each(["voice", "chat"])(
+  it.each(["voice", "text"])(
     "is blocked on a completed %s run with 14 connected calls",
     (agent_type) => {
       expect(
@@ -42,7 +42,7 @@ describe("Debug failures on a finished run", () => {
     },
   );
 
-  it.each(["voice", "chat"])(
+  it.each(["voice", "text"])(
     "is open on a completed %s run with exactly 15 connected calls",
     (agent_type) => {
       expect(
@@ -59,6 +59,26 @@ describe("Debug failures on a finished run", () => {
         connected_calls: 14,
       }),
     ).toEqual({ disabled: true, reason: BLOCKED_REASON });
+  });
+
+  it("is blocked on a failed text run with no connected calls", () => {
+    expect(
+      run("failed", {
+        agent_type: "text",
+        total_calls: 20,
+        connected_calls: 0,
+      }),
+    ).toEqual({ disabled: true, reason: BLOCKED_REASON });
+  });
+
+  it("is open on a failed run with 15 connected calls", () => {
+    expect(
+      run("failed", {
+        agent_type: "text",
+        total_calls: 20,
+        connected_calls: 15,
+      }),
+    ).toEqual({ disabled: false, reason: "" });
   });
 
   it("does not block on a count it was never sent", () => {

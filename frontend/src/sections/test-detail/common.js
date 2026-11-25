@@ -22,8 +22,7 @@ import { menuIcons } from "src/utils/MenuIconSet/svgIcons";
 import ColumnCellRenderer from "./CellRenderers/ColumnCellRenderer";
 import { useTestDetailStore, useTestExecutionStore } from "./states";
 import { AGENT_TYPES } from "src/sections/agents/constants";
-import useKpis from "src/hooks/useKpis";
-import { useMemo } from "react";
+import useKpis, { kpisQueryOptions } from "src/hooks/useKpis";
 import { LoadingHeader } from "./CellRenderers/ScenarioCellRenderer";
 import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
@@ -628,6 +627,13 @@ export const TestRunLoadingStatus = [
   TestRunExecutionStatus.CANCELLING,
 ];
 
+// A run that will make no more calls: Debug failures checks its connected calls.
+const FINISHED_RUN_STATUSES = [
+  TestRunExecutionStatus.COMPLETED,
+  TestRunExecutionStatus.CANCELLED,
+  TestRunExecutionStatus.FAILED,
+];
+
 // Per-call statuses for which eval data may still arrive. Used by cell
 // renderers to show a skeleton loader instead of a "-" dash while a call is
 // still in flight.
@@ -942,13 +948,25 @@ export const getCompareBaselineTooltipTitle = (status) => {
   return "";
 };
 
+/**
+ * Refetches what a run's page shows once the run stops making calls.
+ *
+ * The KPIs key is not under `["test-execution-detail", executionId]`, so the
+ * prefix match alone leaves the last in-run snapshot cached for five minutes,
+ * and Debug failures would judge a finished run by a stale connected count.
+ */
+export const invalidateSettledRun = (queryClient, executionId) => {
+  queryClient.invalidateQueries({
+    queryKey: ["test-execution-detail", executionId],
+  });
+  queryClient.invalidateQueries({
+    queryKey: kpisQueryOptions(executionId).queryKey,
+  });
+};
+
 export const useFixMyAgentBlocked = (executionId) => {
   const { data: kpis, isPending } = useKpis(executionId);
   const { status } = useTestExecutionStore();
-
-  const { callDetails } = useMemo(() => {
-    return extractKpis(kpis, kpis?.agent_type);
-  }, [kpis]);
 
   if (isPending || status === null) {
     return {
@@ -964,11 +982,9 @@ export const useFixMyAgentBlocked = (executionId) => {
       reason:
         "The test run is still running. You can debug its failures once it finishes.",
     };
-  } else if (
-    status === TestRunExecutionStatus.COMPLETED ||
-    status === TestRunExecutionStatus.CANCELLED
-  ) {
-    if (callDetails.connected_calls < 15) {
+  } else if (FINISHED_RUN_STATUSES.includes(status)) {
+    // An older backend sends no count: undefined < 15 is false, so it stays open.
+    if (kpis?.connected_calls < 15) {
       return {
         disabled: true,
         reason: "You need at least 15 connected calls to debug failures.",
