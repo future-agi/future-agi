@@ -39,9 +39,14 @@ vi.mock("src/hooks/useDeploymentMode", () => ({
 
 // The page renders null until capabilities resolve, so the entitlement hooks are
 // stubbed the same way the other hooks here are.
-vi.mock("src/hooks/useCapabilities", () => ({
-  CAPABILITY: { TURING_MODELS: "turing_models", AGENTIC_EVAL: "agentic_eval" },
+vi.mock("src/hooks/useCapabilities", async (original) => ({
+  ...(await original()),
   useFeatureLocked: () => ({ locked: false, isLoading: false }),
+  useFeatureDenied: () => false,
+}));
+vi.mock("src/api/evaluations/decision-models", () => ({
+  default: () => ({ data: [] }),
+  decisionModelsQueryKey: ["eval-decision-models"],
 }));
 
 vi.mock("src/hooks/useErrorLocalization", () => ({
