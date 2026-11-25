@@ -7,9 +7,14 @@ import React, {
   useCallback,
   useMemo,
 } from "react";
-import { useNavigate } from "react-router";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
+import {
+  getAccessToken,
+  getRefreshToken,
+  getRememberMe,
+} from "src/auth/context/jwt/utils";
 import { HOST_API } from "src/config-global";
+import axiosInstance, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
 
 export const WebSocketContext = createContext();
@@ -18,18 +23,31 @@ const RECONNECT_INTERVAL = 5000;
 const MAX_RECONNECT_DELAY = 30000; // 30 seconds max delay
 const MAX_RECONNECT_ATTEMPTS = 10; // Give up after this many consecutive failures
 const HEARTBEAT_INTERVAL = 10000;
+// The server accepts the handshake and then closes with this code when it
+// rejects the token, so "open" alone does not mean the socket is usable.
+const AUTH_REJECTED_CLOSE_CODE = 4003;
+// Stop after this many consecutive token rejections; a new token or a page
+// reload starts over.
+const MAX_AUTH_FAILURES = 3;
+
+// The REST client refreshes the access token in storage without updating the
+// auth context, so the stored token is the current one.
+const getCurrentAccessToken = (fallback) => getAccessToken() || fallback;
 
 export const WebSocketProvider = ({ children }) => {
   const { user, authenticated } = useSafeAuthContext();
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
   const reconnectAttempts = useRef(0);
-  const navigate = useNavigate();
 
   const socketRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
   const accessToken = useRef(null);
+  const socketTokenRef = useRef(null);
+  const authFailuresRef = useRef(0);
+  const refreshingRef = useRef(false);
+  const authenticatedRef = useRef(false);
   const createWebSocketConnectionRef = useRef(null);
   const messageListenersRef = useRef(new Set());
 
@@ -97,8 +115,14 @@ export const WebSocketProvider = ({ children }) => {
   }, [authenticated, closeConnection]);
 
   const attemptReconnect = useCallback(() => {
+    // The server keeps rejecting the token; only a new token reconnects.
+    if (authFailuresRef.current >= MAX_AUTH_FAILURES) {
+      return;
+    }
+
     // Don't attempt to reconnect if already trying or if connection is already open
     if (
+      refreshingRef.current ||
       reconnectTimeoutRef.current ||
       socketRef.current?.readyState === WebSocket.OPEN ||
       socketRef.current?.readyState === WebSocket.CONNECTING
@@ -139,8 +163,38 @@ export const WebSocketProvider = ({ children }) => {
     }, backoffTime);
   }, []);
 
+  // After the server rejects a token, make sure the next attempt carries a
+  // current one: reuse a token the REST client already refreshed, otherwise
+  // let an authenticated request run the REST client's single refresh.
+  const refreshTokenThenReconnect = useCallback(
+    async (rejectedToken) => {
+      if (refreshingRef.current) return;
+
+      if (getCurrentAccessToken(accessToken.current) === rejectedToken) {
+        if (!getRememberMe() || !getRefreshToken()) {
+          // Nothing to refresh with; a new sign-in brings a new token.
+          authFailuresRef.current = MAX_AUTH_FAILURES;
+          return;
+        }
+        refreshingRef.current = true;
+        try {
+          await axiosInstance.get(endpoints.auth.me);
+        } catch (e) {
+          logger.debug("WebSocket token refresh request failed", e);
+        } finally {
+          refreshingRef.current = false;
+        }
+      }
+
+      if (!authenticatedRef.current) return;
+      attemptReconnect();
+    },
+    [attemptReconnect],
+  );
+
   const createWebSocketConnection = useCallback(() => {
-    if (!accessToken.current) {
+    const token = getCurrentAccessToken(accessToken.current);
+    if (!token) {
       logger.debug("No access token found, skipping WebSocket connection.");
       return;
     }
@@ -151,21 +205,28 @@ export const WebSocketProvider = ({ children }) => {
     const isSecure = HOST_API.includes("https");
     const wsHost = HOST_API.replace(/^https?:\/\//, "").replace(/\/+$/, "");
     const protocol = isSecure ? "wss" : "ws";
-    const wsUrl = `${protocol}://${wsHost}/ws/connect/?token=${accessToken.current}`;
+    const query = new URLSearchParams({ token });
+    const wsUrl = `${protocol}://${wsHost}/ws/connect/?${query}`;
 
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
+    socketTokenRef.current = token;
 
     // Create and store event handlers
     const openHandler = () => {
       setIsConnected(true);
       setError(null);
-      reconnectAttempts.current = 0; // Reset reconnect attempts on successful connection
+      // Retry counters reset on the first server frame, not here: the server
+      // accepts the handshake before it validates the token.
       logger.debug("WebSocket connected");
       startHeartbeat();
     };
 
     const messageHandler = (event) => {
+      // Any server frame (including the heartbeat pong) means the token was
+      // accepted.
+      reconnectAttempts.current = 0;
+      authFailuresRef.current = 0;
       let message = event.data;
       try {
         message = JSON.parse(event.data);
@@ -244,12 +305,22 @@ export const WebSocketProvider = ({ children }) => {
 
       logger.debug("WebSocket closed:", event);
 
-      // if (event.code === 4003) {
-      //     console.warn('WebSocket closed with 4003 - forcing logout');
-      //     setSession(null);
-      //     resetUser();
-      //     navigate('/auth/jwt/login');
-      // } else
+      if (event.code === AUTH_REJECTED_CLOSE_CODE) {
+        authFailuresRef.current += 1;
+        if (authFailuresRef.current >= MAX_AUTH_FAILURES) {
+          logger.addBreadcrumb({
+            category: "websocket",
+            level: "warning",
+            message: `WebSocket token rejected ${authFailuresRef.current} times; not reconnecting`,
+          });
+          return;
+        }
+        if (authenticated) {
+          refreshTokenThenReconnect(socketTokenRef.current);
+        }
+        return;
+      }
+
       if (authenticated) {
         attemptReconnect();
       }
@@ -271,10 +342,10 @@ export const WebSocketProvider = ({ children }) => {
   }, [
     authenticated,
     closeConnection,
-    navigate,
     startHeartbeat,
     stopHeartbeat,
     attemptReconnect,
+    refreshTokenThenReconnect,
   ]);
 
   const sendMessage = useCallback(
@@ -305,12 +376,24 @@ export const WebSocketProvider = ({ children }) => {
 
   // Consolidated authentication state handling
   useEffect(() => {
+    authenticatedRef.current = Boolean(authenticated && user?.accessToken);
     if (authenticated && user?.accessToken) {
+      if (accessToken.current !== user?.accessToken) {
+        // A new sign-in gets a fresh budget of token rejections.
+        authFailuresRef.current = 0;
+      }
       accessToken.current = user?.accessToken;
 
+      // A scheduled retry, a refresh in flight or a token the server keeps
+      // rejecting owns the next connection; re-renders must not bypass it.
+      const retryPending =
+        reconnectTimeoutRef.current ||
+        refreshingRef.current ||
+        authFailuresRef.current >= MAX_AUTH_FAILURES;
+
       if (
-        !socketRef.current ||
-        socketRef.current.readyState !== WebSocket.OPEN
+        !retryPending &&
+        (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN)
       ) {
         createWebSocketConnection();
       }
@@ -360,6 +443,14 @@ export const WebSocketProvider = ({ children }) => {
   useEffect(() => {
     createWebSocketConnectionRef.current = createWebSocketConnection;
   }, [createWebSocketConnection]);
+
+  // A token refresh still in flight at unmount must not open a socket.
+  useEffect(
+    () => () => {
+      authenticatedRef.current = false;
+    },
+    [],
+  );
 
   const contextValue = useMemo(
     () => ({
