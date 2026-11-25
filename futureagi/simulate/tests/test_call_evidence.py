@@ -1251,3 +1251,20 @@ def test_an_artifact_is_read_only_from_the_calls_job_and_tenant(
         assert stored(own, organization.id, uuid.uuid4()) is None
         assert stored(own, uuid.uuid4(), workspace.id) is None
         assert stored(own, organization.id, workspace.id, kind="log") is None
+
+
+# --- what each artifact level allows is the ingestion's own table ---------------
+
+
+def test_the_reader_allows_what_ingestion_allows_and_nothing_at_an_unknown_level():
+    from simulate.services.hosted_harness_ingestion import (
+        _ALLOWED_ARTIFACTS,
+        _ARTIFACT_KINDS,
+    )
+
+    for level, allowed in _ALLOWED_ARTIFACTS.items():
+        trial = replace(HOSTED, artifact_level=level)
+        for kind in _ARTIFACT_KINDS:
+            assert trial.allows(kind) is (kind in allowed), (level, kind)
+    unknown = replace(HOSTED, artifact_level="no-such-level")
+    assert not any(unknown.allows(kind) for kind in _ARTIFACT_KINDS)

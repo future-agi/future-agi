@@ -35,6 +35,7 @@ from simulate.models.test_execution import CallExecution, CallTranscript
 from simulate.selectors.call_transcripts import with_speakers
 from simulate.services.agent_contracts import stored_version_contract
 from simulate.services.canonical_json import canonical_digest
+from simulate.services.hosted_harness_ingestion import _ALLOWED_ARTIFACTS
 from simulate.services.run_traces_v3 import read_run_traces, run_traces_source
 from simulate.utils.speaker_roles import SpeakerRoleResolver
 from simulate.utils.stored_transcript_roles import call_actor_label
@@ -91,13 +92,6 @@ class RunKind(StrEnum):
 MAY_BE_FROM_ANOTHER_ATTEMPT_OR_TRIAL = "may_be_from_another_attempt_or_trial"
 CUT_AT_INGESTION = "cut_at_ingestion"
 
-# What each artifact level lets a hosted run upload (the ingestion's own table).
-_LEVEL_ALLOWS = {
-    "metadata-only": frozenset({"build", "result", "log"}),
-    "traces": frozenset(
-        {"build", "result", "log", "trace", "tool_trace", "transcript", "world_state"}
-    ),
-}
 # The kit's mark on a contract whose prompt its save copied by code: from the source as
 # written, or a provider's whole prompt. Without it the excerpt is a quote.
 SYSTEM_PROMPT_COPIED = "system_prompt_copied"
@@ -149,8 +143,8 @@ class HostedTrial:
     configured_prompt: str | None = None
 
     def allows(self, artifact_kind: str) -> bool:
-        allowed = _LEVEL_ALLOWS.get(self.artifact_level)
-        return allowed is None or artifact_kind in allowed
+        # An unknown level allows nothing: ingestion refuses every upload at one.
+        return artifact_kind in _ALLOWED_ARTIFACTS.get(self.artifact_level, ())
 
 
 @dataclass
