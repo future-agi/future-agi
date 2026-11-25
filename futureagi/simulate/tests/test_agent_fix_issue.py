@@ -251,6 +251,47 @@ def _in_review(environment, issue, user, *, drafts=1):
     return _job(environment, made, created_by=user), cases[0]
 
 
+# Another import's case of ``pick`` that no longer drafts or reviews it.
+
+
+def _in_another_environment(environment, issue, pick, *, user, workspace):
+    other, _ = create_hosted_job(
+        user.organization, _payload(), idempotency_key="other", workspace=workspace
+    )
+    _import(other, None, [pick], project=issue.project)
+
+
+def _in_a_deleted_import(environment, issue, pick, **_):
+    EvidenceImport.objects.filter(
+        id=_import(environment, None, [pick], project=issue.project).id
+    ).update(deleted=True)
+
+
+def _discarded(environment, issue, pick, **_):
+    _import(environment, None, [pick], project=issue.project, status="discarded")
+
+
+def _added_and_gone_from_the_suite(environment, issue, pick, **_):
+    added = _import(environment, None, [pick], project=issue.project, status="added")
+    # The scenario it was added as is no longer in the suite.
+    added.cases.update(scenario_key="removed-since")
+    return added.cases.get()
+
+
+def _a_repeat(environment, issue, pick, **_):
+    # A repeat of an added case of another source, which is not picked.
+    original = _added_and_gone_from_the_suite(environment, issue, str(uuid.uuid4()))
+    _import(environment, None, [pick], project=issue.project, status="duplicate")
+    EvidenceImportCase.objects.filter(source_id=pick).update(duplicate_of=original)
+
+
+def _a_stale_draft(environment, issue, pick, **_):
+    made = _import(environment, None, [pick], project=issue.project)
+    EvidenceImportCase.objects.filter(evidence_import=made).update(
+        status="drafted", environment_hash="older"
+    )
+
+
 class TestSample:
     def test_a_large_issue_gives_twelve_picks_from_a_bounded_read(
         self, issue, environment, django_assert_max_num_queries
@@ -582,40 +623,30 @@ class TestCreate:
         assert not AgentFixIssueJob.no_workspace_objects.exists()
         boundaries.drafting.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "unrelated",
+        [
+            pytest.param(_in_another_environment, id="another-environment"),
+            pytest.param(_in_a_deleted_import, id="deleted-import"),
+            pytest.param(_discarded, id="discarded"),
+            pytest.param(_a_repeat, id="duplicate"),
+            pytest.param(_a_stale_draft, id="stale-draft"),
+            pytest.param(_added_and_gone_from_the_suite, id="added-gone-from-suite"),
+        ],
+    )
     def test_a_pick_no_other_import_still_reviews_is_drafted(
-        self, environment, issue, user, workspace, boundaries
+        self, environment, issue, user, workspace, boundaries, unrelated
     ):
-        picks = _members(issue, 6)
-        elsewhere, deleted, discarded, repeat, stale, gone = picks
-        other, _ = create_hosted_job(
-            user.organization, _payload(), idempotency_key="other", workspace=workspace
-        )
-        _import(other, None, [elsewhere], project=issue.project)
-        EvidenceImport.objects.filter(
-            id=_import(environment, None, [deleted], project=issue.project).id
-        ).update(deleted=True)
-        _import(
-            environment, None, [discarded], project=issue.project, status="discarded"
-        )
-        added = _import(
-            environment, None, [gone], project=issue.project, status="added"
-        )
-        # The scenario it was added as is no longer in the suite.
-        added.cases.update(scenario_key="removed-since")
-        _import(environment, None, [repeat], project=issue.project, status="duplicate")
-        EvidenceImportCase.objects.filter(source_id=repeat).update(
-            duplicate_of=added.cases.get()
-        )
-        made = _import(environment, None, [stale], project=issue.project)
-        EvidenceImportCase.objects.filter(evidence_import=made).update(
-            status="drafted", environment_hash="older"
-        )
+        # One pick per case: two picks' texts can redact to one fingerprint, and
+        # the second would be stored as a repeat of the first.
+        (pick,) = _members(issue, 1)
+        unrelated(environment, issue, pick, user=user, workspace=workspace)
 
-        with _roots(_sdk(picks)):
+        with _roots(_sdk([pick])):
             job = jobs.create_issue_job(
                 issue,
                 environment=environment,
-                member_ids=picks,
+                member_ids=[pick],
                 user=user,
                 endpoint_base_url="https://platform.test",
                 environments=_mine(environment),
@@ -625,9 +656,9 @@ class TestCreate:
             job.evidence_import.cases.order_by("position").values_list(
                 "source_id", "status"
             )
-        ) == [(one, "pending") for one in picks]
+        ) == [(pick, "pending")]
         (_made, pending), _kwargs = boundaries.drafting.call_args
-        assert len(pending) == len(picks)
+        assert pending == [str(job.evidence_import.cases.get().id)]
 
     def test_picks_of_two_kinds_or_outside_the_issue_are_refused(
         self, environment, issue, user
