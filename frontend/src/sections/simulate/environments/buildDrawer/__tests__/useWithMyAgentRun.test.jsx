@@ -1,10 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
 import {
   render as baseRender,
   act,
   fireEvent,
   screen,
+  userEvent,
   waitFor,
 } from "src/utils/test-utils";
 
@@ -45,8 +48,9 @@ const FIT = {
   total: 2,
   unmeasured: [],
 };
+let fit = FIT;
 vi.mock("src/api/harness/releases", () => ({
-  useHarnessReleaseFit: () => ({ data: FIT, isError: false }),
+  useHarnessReleaseFit: () => ({ data: fit, isError: false }),
   createHarnessAdaptation: vi.fn(),
 }));
 
@@ -92,6 +96,7 @@ const jobOf = (state, result = null, failure = null) => ({
 const RUN = { job_id: "run-1", run_test_id: "rt-1", test_execution_id: "te-1" };
 
 const onBusyChange = vi.fn();
+const onOtherWorld = vi.fn();
 const render = () => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -101,6 +106,7 @@ const render = () => {
       <ReadyEnvironmentPanel
         item={{ world, initialTab: "start" }}
         onBusyChange={onBusyChange}
+        onOtherWorld={onOtherWorld}
       />
     </QueryClientProvider>,
   );
@@ -117,6 +123,12 @@ const pass = (ms) => act(() => vi.advanceTimersByTimeAsync(ms));
 beforeEach(() => {
   navigate.mockReset();
   onBusyChange.mockReset();
+  onOtherWorld.mockReset();
+  fit = FIT;
+  vi.mocked(useSimulationAccess).mockReturnValue({
+    canEdit: true,
+    canRun: true,
+  });
   readJob.mockReset();
   createHarnessAdaptation.mockReset();
   createHarnessAdaptation.mockResolvedValue({ job: { job_id: "adapt-job" } });
@@ -168,6 +180,31 @@ describe("preparing a run", () => {
     );
   });
 
+  it("says at once why the run could not be started, and opens the environment", async () => {
+    readJob.mockResolvedValue(
+      jobOf("completed", {
+        composition_id: "env-1",
+        run_failure: {
+          code: "usage_limit_reached",
+          message: "you have used all your simulation calls",
+        },
+      }),
+    );
+    render();
+    fireEvent.click(run());
+
+    expect(
+      await screen.findByText(
+        "Your environment is ready, but its run didn't start: you have used all your simulation calls",
+      ),
+    ).toBeInTheDocument();
+    expect(preparing()).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open environment" }));
+    expect(navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/env-1",
+    );
+  });
+
   it("says why an agent that reaches no tool has no run", async () => {
     readJob.mockResolvedValue(
       jobOf("completed", {
@@ -209,6 +246,33 @@ describe("preparing a run", () => {
 });
 
 describe("while a run is being prepared", () => {
+  it("says where it goes on, which isn't listed until it's an environment", async () => {
+    readJob.mockResolvedValue(jobOf("running"));
+    render();
+    fireEvent.click(run());
+
+    expect(
+      await screen.findByText(
+        "This keeps going if you close it. Its environment shows in My environments once it's ready.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the way to another world", async () => {
+    fit = { ...FIT, unmeasured: [{ key: "reply", title: "Reply by email" }] };
+    readJob.mockResolvedValue(jobOf("running"));
+    render();
+    const other = () =>
+      screen.getByRole("button", { name: "Choose another world" });
+    expect(other()).toBeEnabled();
+    fireEvent.click(run());
+
+    await waitFor(() => expect(preparing()).toBeInTheDocument());
+    expect(other()).toBeDisabled();
+    fireEvent.click(other());
+    expect(onOtherWorld).not.toHaveBeenCalled();
+  });
+
   it("holds the tabs and the choices, and unlocks the drawer when it goes away", async () => {
     readJob.mockResolvedValue(jobOf("running"));
     const { unmount } = render();
@@ -223,6 +287,40 @@ describe("while a run is being prepared", () => {
 
     unmount();
     expect(onBusyChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe("someone who can't", () => {
+  const lockedBecause = async (control, reason) => {
+    expect(control).toBeDisabled();
+    await userEvent.hover(control.closest("span[tabindex]"));
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip")).toHaveTextContent(reason),
+    );
+    await userEvent.unhover(control.closest("span[tabindex]"));
+  };
+  const adapt = () => screen.getByRole("button", { name: "Adapt to my agent" });
+
+  it("edit can neither adapt nor run", async () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
+    });
+    render();
+
+    await lockedBecause(adapt(), WORKSPACE_COPY.viewer.create);
+    expect(run()).toBeDisabled();
+  });
+
+  it("run can still adapt", async () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: true,
+      canRun: false,
+    });
+    render();
+
+    expect(adapt()).toBeEnabled();
+    await lockedBecause(run(), WORKSPACE_COPY.viewer.run);
   });
 });
 

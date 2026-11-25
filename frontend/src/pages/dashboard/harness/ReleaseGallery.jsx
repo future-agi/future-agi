@@ -6,11 +6,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   MenuItem,
   Paper,
   Stack,
@@ -20,8 +15,11 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
+import ContentSkeleton from "src/components/content-skeleton";
+import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
-import { useAgentDefinitions } from "src/components/run-tests/common";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
+import { useConnectedAgents } from "src/api/agents/connectedAgents";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import {
@@ -31,16 +29,27 @@ import {
 } from "src/api/harness/releases";
 import { paths } from "src/routes/paths";
 
-import {
-  errorMessage,
-  shortDigest,
-} from "./harnessShared";
+import { errorMessage, shortDigest } from "./harnessShared";
 
-const CONNECTORS = [
-  { value: "retell_chat", label: "Retell chat" },
-  { value: "retell", label: "Retell voice" },
-  { value: "vapi", label: "Vapi" },
+// The agents an adaptation takes, as the agents list filters them.
+const PLATFORMS = [
+  {
+    value: "retell_chat",
+    label: "Retell chat",
+    filters: { source: ["retell"], agent_type: ["text"] },
+  },
+  {
+    value: "retell",
+    label: "Retell voice",
+    filters: { source: ["retell"], agent_type: ["voice"] },
+  },
+  {
+    value: "vapi",
+    label: "Vapi",
+    filters: { source: ["vapi"], agent_type: ["voice"] },
+  },
 ];
+const AGENTS_LIMIT = 100;
 
 // Gateway names: the `vertex_ai/` prefix keeps the call on Vertex (the platform's own key).
 const HOSTED_AGENT_MODELS = [
@@ -54,22 +63,26 @@ const originSummary = (origins = {}) =>
     .map((key) => `${origins[key]} ${key}`)
     .join(" · ");
 
-function AgentVersionPicker({ connector, agent, onAgent, version, onVersion }) {
-  const {
-    agentDefinitions = [],
-    fetchNextPage,
-    hasNextPage,
-    isLoading,
-  } = useAgentDefinitions(connector === "retell_chat" ? "text" : "voice");
+function AgentVersionPicker({ platform, agent, onAgent, version, onVersion }) {
+  const { data, isFetching, isPlaceholderData } = useConnectedAgents({
+    page: 0,
+    pageSize: AGENTS_LIMIT,
+    filters: PLATFORMS.find((one) => one.value === platform).filters,
+  });
+  // Until this platform's agents are read, the list still holds the last platform's.
+  const agents = isPlaceholderData ? [] : data?.items || [];
   const versions = useAgentDefinitionVersions({ selectedAgentId: agent?.id });
   const versionOptions = useMemo(
     () => (versions.data?.pages || []).flatMap((page) => page?.results || []),
     [versions.data],
   );
-  const loadMoreOnScroll = (load, more) => (event) => {
+  const loadMoreOnScroll = (event) => {
     const list = event.currentTarget;
-    if (more && list.scrollTop + list.clientHeight >= list.scrollHeight - 8) {
-      load();
+    if (
+      versions.hasNextPage &&
+      list.scrollTop + list.clientHeight >= list.scrollHeight - 8
+    ) {
+      versions.fetchNextPage();
     }
   };
 
@@ -78,18 +91,15 @@ function AgentVersionPicker({ connector, agent, onAgent, version, onVersion }) {
       <Autocomplete
         fullWidth
         size="small"
-        options={(agentDefinitions || []).filter(Boolean)}
-        loading={isLoading}
+        options={agents}
+        loading={isFetching}
         value={agent}
         onChange={(_, value) => {
           onAgent(value);
           onVersion(null);
         }}
-        getOptionLabel={(option) => option?.agent_name || ""}
+        getOptionLabel={(option) => option?.name || ""}
         isOptionEqualToValue={(option, value) => option?.id === value?.id}
-        ListboxProps={{
-          onScroll: loadMoreOnScroll(fetchNextPage, hasNextPage),
-        }}
         renderInput={(params) => <TextField {...params} label="Agent" />}
       />
       <Autocomplete
@@ -104,12 +114,7 @@ function AgentVersionPicker({ connector, agent, onAgent, version, onVersion }) {
           option?.version_name_display || option?.version_name || ""
         }
         isOptionEqualToValue={(option, value) => option?.id === value?.id}
-        ListboxProps={{
-          onScroll: loadMoreOnScroll(
-            versions.fetchNextPage,
-            versions.hasNextPage,
-          ),
-        }}
+        ListboxProps={{ onScroll: loadMoreOnScroll }}
         renderInput={(params) => (
           <TextField {...params} label="Agent version" />
         )}
@@ -119,7 +124,7 @@ function AgentVersionPicker({ connector, agent, onAgent, version, onVersion }) {
 }
 
 AgentVersionPicker.propTypes = {
-  connector: PropTypes.string.isRequired,
+  platform: PropTypes.string.isRequired,
   agent: PropTypes.object,
   onAgent: PropTypes.func.isRequired,
   version: PropTypes.object,
@@ -131,7 +136,7 @@ export function UseReleaseDialog({ release, open, onClose }) {
   const queryClient = useQueryClient();
   const suites = release?.suites || [];
   const [suiteId, setSuiteId] = useState(suites[0]?.id || "");
-  const [connector, setConnector] = useState("retell_chat");
+  const [platform, setPlatform] = useState(PLATFORMS[0].value);
   const [agent, setAgent] = useState(null);
   const [version, setVersion] = useState(null);
   const [name, setName] = useState(release?.name || "");
@@ -141,8 +146,7 @@ export function UseReleaseDialog({ release, open, onClose }) {
   // on another choice is replaced.
   const [idempotencyKey, setIdempotencyKey] = useState(harnessIdempotencyKey);
 
-  const ready =
-    Boolean(suiteId && version?.id && name.trim()) && !submitting;
+  const ready = Boolean(suiteId && version?.id && name.trim());
 
   const submit = async () => {
     setSubmitting(true);
@@ -167,81 +171,71 @@ export function UseReleaseDialog({ release, open, onClose }) {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Use {release?.name} with my agent</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ pt: 1 }}>
-          <TextField
-            select
-            size="small"
-            label="Scenario suite"
-            value={suiteId}
-            onChange={(event) => setSuiteId(event.target.value)}
-          >
-            {suites.map((suite) => (
-              <MenuItem key={suite.id} value={suite.id}>
-                {suite.name} · {suite.scenario_count} scenarios
-              </MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            select
-            size="small"
-            label="Agent platform"
-            value={connector}
-            onChange={(event) => {
-              setConnector(event.target.value);
-              setAgent(null);
-              setVersion(null);
-            }}
-          >
-            {CONNECTORS.map((item) => (
-              <MenuItem key={item.value} value={item.value}>
-                {item.label}
-              </MenuItem>
-            ))}
-          </TextField>
-          <AgentVersionPicker
-            connector={connector}
-            agent={agent}
-            onAgent={setAgent}
-            version={version}
-            onVersion={setVersion}
-          />
-          <TextField
-            size="small"
-            label="Environment name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-          <Typography variant="caption" color="text.secondary">
-            Adapting reads your agent as connected on the Agents page, maps its tools onto this environment
-            and proves the mapping on every scenario, then asks you to approve
-            it. The scenario suite stays as released.
-          </Typography>
-          {error && (
-            <Alert severity="error" variant="outlined">
-              {error}
-            </Alert>
-          )}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button color="inherit" onClick={onClose} disabled={submitting}>
-          Cancel
-        </Button>
-        <Button
-          variant="contained"
-          disabled={!ready}
-          onClick={submit}
-          startIcon={
-            submitting ? <CircularProgress size={14} color="inherit" /> : null
-          }
+    <ModalWrapper
+      open={open}
+      onClose={onClose}
+      title={`Use ${release?.name} with my agent`}
+      actionBtnTitle="Adapt to my agent"
+      isValid={ready}
+      isLoading={submitting}
+      onSubmit={submit}
+    >
+      <Stack spacing={2}>
+        <TextField
+          select
+          size="small"
+          label="Scenario suite"
+          value={suiteId}
+          onChange={(event) => setSuiteId(event.target.value)}
         >
-          Adapt to my agent
-        </Button>
-      </DialogActions>
-    </Dialog>
+          {suites.map((suite) => (
+            <MenuItem key={suite.id} value={suite.id}>
+              {suite.name} · {suite.scenario_count} scenarios
+            </MenuItem>
+          ))}
+        </TextField>
+        <TextField
+          select
+          size="small"
+          label="Agent platform"
+          value={platform}
+          onChange={(event) => {
+            setPlatform(event.target.value);
+            setAgent(null);
+            setVersion(null);
+          }}
+        >
+          {PLATFORMS.map((item) => (
+            <MenuItem key={item.value} value={item.value}>
+              {item.label}
+            </MenuItem>
+          ))}
+        </TextField>
+        <AgentVersionPicker
+          platform={platform}
+          agent={agent}
+          onAgent={setAgent}
+          version={version}
+          onVersion={setVersion}
+        />
+        <TextField
+          size="small"
+          label="Environment name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <Typography variant="caption" color="text.secondary">
+          Adapting reads your agent as connected on the Agents page, maps its
+          tools onto this environment and proves the mapping on every scenario,
+          then asks you to approve it. The scenario suite stays as released.
+        </Typography>
+        {error && (
+          <Alert severity="error" variant="outlined">
+            {error}
+          </Alert>
+        )}
+      </Stack>
+    </ModalWrapper>
   );
 }
 
@@ -264,8 +258,7 @@ export function HostedAgentDialog({ release, open, onClose }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(harnessIdempotencyKey);
-  const ready =
-    Boolean(suiteId && name.trim() && instructions.trim()) && !submitting;
+  const ready = Boolean(suiteId && name.trim() && instructions.trim());
 
   const submit = async () => {
     setSubmitting(true);
@@ -289,79 +282,69 @@ export function HostedAgentDialog({ release, open, onClose }) {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Run our agent on {release?.name}</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ pt: 1 }}>
-          <TextField
-            select
-            size="small"
-            label="Scenario suite"
-            value={suiteId}
-            onChange={(event) => setSuiteId(event.target.value)}
-          >
-            {suites.map((suite) => (
-              <MenuItem key={suite.id} value={suite.id}>
-                {suite.name} · {suite.scenario_count} scenarios
-              </MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            size="small"
-            multiline
-            minRows={6}
-            label="Instructions"
-            placeholder="You are the front desk of …. Use your tools to look things up and make changes."
-            value={instructions}
-            onChange={(event) => setInstructions(event.target.value)}
-          />
-          <TextField
-            select
-            size="small"
-            label="Model"
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
-          >
-            {HOSTED_AGENT_MODELS.map((item) => (
-              <MenuItem key={item.value} value={item.value}>
-                {item.label}
-              </MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            size="small"
-            label="Environment name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-          <Typography variant="caption" color="text.secondary">
-            Our agent runs in the harness and reaches this environment&apos;s
-            tools over MCP, so there is nothing to connect or adapt. Its model
-            usage counts towards the simulation.
-          </Typography>
-          {error && (
-            <Alert severity="error" variant="outlined">
-              {error}
-            </Alert>
-          )}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button color="inherit" onClick={onClose} disabled={submitting}>
-          Cancel
-        </Button>
-        <Button
-          variant="contained"
-          disabled={!ready}
-          onClick={submit}
-          startIcon={
-            submitting ? <CircularProgress size={14} color="inherit" /> : null
-          }
+    <ModalWrapper
+      open={open}
+      onClose={onClose}
+      title={`Run our agent on ${release?.name}`}
+      actionBtnTitle="Create environment"
+      isValid={ready}
+      isLoading={submitting}
+      onSubmit={submit}
+    >
+      <Stack spacing={2}>
+        <TextField
+          select
+          size="small"
+          label="Scenario suite"
+          value={suiteId}
+          onChange={(event) => setSuiteId(event.target.value)}
         >
-          Create environment
-        </Button>
-      </DialogActions>
-    </Dialog>
+          {suites.map((suite) => (
+            <MenuItem key={suite.id} value={suite.id}>
+              {suite.name} · {suite.scenario_count} scenarios
+            </MenuItem>
+          ))}
+        </TextField>
+        <TextField
+          size="small"
+          multiline
+          minRows={6}
+          label="Instructions"
+          placeholder="You are the front desk of …. Use your tools to look things up and make changes."
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
+        />
+        <TextField
+          select
+          size="small"
+          label="Model"
+          value={model}
+          onChange={(event) => setModel(event.target.value)}
+        >
+          {HOSTED_AGENT_MODELS.map((item) => (
+            <MenuItem key={item.value} value={item.value}>
+              {item.label}
+            </MenuItem>
+          ))}
+        </TextField>
+        <TextField
+          size="small"
+          label="Environment name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <Typography variant="caption" color="text.secondary">
+          Our agent runs in the harness and reaches this environment&apos;s
+          tools over MCP, so there is nothing to connect or adapt. Its model
+          usage counts towards the simulation.
+        </Typography>
+        {error && (
+          <Alert severity="error" variant="outlined">
+            {error}
+          </Alert>
+        )}
+      </Stack>
+    </ModalWrapper>
   );
 }
 
@@ -442,18 +425,26 @@ ReleaseCard.propTypes = {
 // Released environments: proved worlds and suites a hosted agent can run against without
 // authoring a new environment. `empty` renders once the list has loaded with nothing in it.
 export default function ReleaseGallery({ empty = null }) {
-  const { data: releases = [], error, isLoading } = useHarnessReleases();
+  const { data, error, isLoading, refetch } = useHarnessReleases();
+  const releases = data || [];
   const [using, setUsing] = useState(null);
   const [hosting, setHosting] = useState(null);
 
-  if (error) {
+  if (isLoading) {
     return (
-      <Alert severity="warning" variant="outlined">
-        Prebuilt environments are unavailable: {errorMessage(error)}
-      </Alert>
+      <ContentSkeleton variant="page" label="Loading prebuilt environments" />
     );
   }
-  if (!releases.length) return isLoading ? null : empty;
+  if (error && !data) {
+    return (
+      <ErrorState
+        title="Couldn't load the prebuilt environments"
+        detail={errorMessage(error)}
+        onRetry={() => refetch()}
+      />
+    );
+  }
+  if (!releases.length) return empty;
 
   return (
     <Box>

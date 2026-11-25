@@ -61,6 +61,7 @@ export const ROW_ACTION_LABEL = {
 };
 
 export const BUILDING_TOOLTIP = "Wait for setup to finish";
+export const AWAITING_APPROVAL_TOOLTIP = "Approve its design first";
 
 export const DELETE_DIALOG_COPY = {
   title: "Delete environment?",

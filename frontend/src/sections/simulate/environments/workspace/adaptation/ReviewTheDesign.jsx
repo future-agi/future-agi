@@ -17,6 +17,7 @@ import Iconify from "src/components/iconify";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import StatusBadge from "src/components/status-badge";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import { paths } from "src/routes/paths";
 import {
   approveHarnessAdaptation,
@@ -30,6 +31,9 @@ import {
 } from "src/pages/dashboard/harness/harnessShared";
 import ChatSplitPane from "../../components/ChatSplitPane";
 import BuilderConsole from "../../buildEnvironment/console/BuilderConsole";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
 
 const plural = (n, word) =>
   `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
@@ -140,7 +144,7 @@ PlanLine.propTypes = {
 
 const mono = { fontFamily: "monospace" };
 
-function Design({ design, notMade, onApprove, approving }) {
+function Design({ design, notMade, onApprove, approving, canEdit }) {
   const { world, agent, fit, check } = design;
   const tables = Object.entries(world.records).filter(([, n]) => n > 0);
   const conflicts = design.conflicts.conflicts;
@@ -171,24 +175,26 @@ function Design({ design, notMade, onApprove, approving }) {
             {`${plural(tables.length, "record")} · ${plural(world.tools.length, "tool")} · ${plural(world.rules.length, "rule")} · ${plural(design.scenarios.length, "scenario")} — nothing is built until you approve.`}
           </Typography>
         </Box>
-        <Tooltip arrow title={tip}>
-          <span>
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              disabled={!approvable || approving}
-              onClick={onApprove}
-              startIcon={
-                <Iconify icon="solar:check-circle-linear" width={16} />
-              }
-            >
-              {design.state === "building" || approving
-                ? "Building…"
-                : "Approve and build"}
-            </Button>
-          </span>
-        </Tooltip>
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.approve}>
+          <Tooltip arrow title={canEdit ? tip : ""}>
+            <span>
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                disabled={!approvable || approving || !canEdit}
+                onClick={onApprove}
+                startIcon={
+                  <Iconify icon="solar:check-circle-linear" width={16} />
+                }
+              >
+                {design.state === "building" || approving
+                  ? "Building…"
+                  : "Approve and build"}
+              </Button>
+            </span>
+          </Tooltip>
+        </ViewerLock>
       </Stack>
 
       {design.state === "failed" && (
@@ -325,6 +331,7 @@ Design.propTypes = {
   notMade: PropTypes.string,
   onApprove: PropTypes.func.isRequired,
   approving: PropTypes.bool,
+  canEdit: PropTypes.bool,
 };
 
 /**
@@ -336,6 +343,8 @@ Design.propTypes = {
 export default function ReviewTheDesign({ jobId, job, chat }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { canEdit } = useSimulationAccess();
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
   const designQuery = useHarnessAdaptationDesign(jobId);
   const design = designQuery.data;
   const refresh = () =>
@@ -423,17 +432,39 @@ export default function ReviewTheDesign({ jobId, job, chat }) {
           </Typography>
         </Stack>
         <Box flex={1} />
-        <Button
-          variant="outlined"
-          color="inherit"
-          size="small"
-          disabled={finished || cancel.isPending}
-          onClick={() => cancel.mutate()}
-          startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
-        >
-          Cancel
-        </Button>
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.cancel}>
+          <Button
+            variant="outlined"
+            color="inherit"
+            size="small"
+            disabled={finished || cancel.isPending || !canEdit}
+            onClick={() => setConfirmingCancel(true)}
+            startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
+          >
+            Cancel
+          </Button>
+        </ViewerLock>
       </Stack>
+      <ConfirmDialog
+        open={confirmingCancel}
+        onClose={() => setConfirmingCancel(false)}
+        title="Stop this adaptation?"
+        content="It will be cancelled and no environment will be made. You can adapt again from the ready environment."
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            disabled={finished}
+            onClick={() => {
+              setConfirmingCancel(false);
+              cancel.mutate();
+            }}
+          >
+            Stop adaptation
+          </Button>
+        }
+      />
       <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <ChatSplitPane
           busy={Boolean(chat.running || chat.inFlight || chat.waiting)}
@@ -461,6 +492,7 @@ export default function ReviewTheDesign({ jobId, job, chat }) {
               notMade={notMade}
               onApprove={() => approve.mutate()}
               approving={approve.isPending}
+              canEdit={canEdit}
             />
           ) : designQuery.isError ? (
             <ErrorState

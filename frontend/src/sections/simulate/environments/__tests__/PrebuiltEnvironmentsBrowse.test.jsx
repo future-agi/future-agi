@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,7 +7,12 @@ import { render } from "src/utils/test-utils";
 
 const navigate = vi.fn();
 const createHarnessAdaptation = vi.fn();
-const releases = { data: [], error: null, isLoading: false };
+const releases = {
+  data: [],
+  error: null,
+  isLoading: false,
+  refetch: vi.fn(),
+};
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -23,10 +28,24 @@ vi.mock("src/api/harness/harness", () => ({
   harnessIdempotencyKey: () => "key-1",
 }));
 
-vi.mock("src/components/run-tests/common", () => ({
-  useAgentDefinitions: () => ({
-    agentDefinitions: [{ id: "agent-1", agent_name: "Clinic chat" }],
-    isLoading: false,
+// The list answers for the filters it was asked for.
+const AGENTS = [
+  { id: "agent-1", name: "Clinic chat", source: "retell", modality: "text" },
+  { id: "agent-2", name: "Clinic voice", source: "retell", modality: "voice" },
+  { id: "agent-3", name: "Clinic line", source: "vapi", modality: "voice" },
+  { id: "agent-4", name: "Repo chat", source: "github", modality: "text" },
+];
+vi.mock("src/api/agents/connectedAgents", () => ({
+  useConnectedAgents: ({ filters }) => ({
+    data: {
+      items: AGENTS.filter(
+        (agent) =>
+          filters.source.includes(agent.source) &&
+          filters.agent_type.includes(agent.modality),
+      ),
+    },
+    isFetching: false,
+    isPlaceholderData: false,
   }),
 }));
 
@@ -73,6 +92,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     navigate.mockReset();
     createHarnessAdaptation.mockReset();
     releases.data = [CLINIC];
+    releases.error = null;
+    releases.isLoading = false;
+    releases.refetch.mockReset();
   });
 
   it("lists released environments only, never the static template catalog", () => {
@@ -106,7 +128,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     );
     await user.click(screen.getByRole("option", { name: "v1" }));
     // No key or provider id is typed: the server reads them from the version as connected.
-    expect(within(dialog).queryByLabelText("RETELL_API_KEY")).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByLabelText("RETELL_API_KEY"),
+    ).not.toBeInTheDocument();
     await user.click(
       within(dialog).getByRole("button", { name: /Adapt to my agent/ }),
     );
@@ -117,10 +141,72 @@ describe("PrebuiltEnvironmentsBrowse", () => {
         agent_version_id: "version-1",
       }),
     );
-    expect(createHarnessAdaptation.mock.calls[0][0]).not.toHaveProperty("agent");
+    expect(createHarnessAdaptation.mock.calls[0][0]).not.toHaveProperty(
+      "agent",
+    );
     expect(navigate).toHaveBeenCalledWith(
       "/dashboard/simulate/environments/job-1",
     );
+  });
+
+  it("offers the agents of the platform picked, and only those it can adapt", async () => {
+    const user = userEvent.setup();
+    renderBrowse();
+    await user.click(screen.getByRole("button", { name: /Use with my agent/ }));
+    const dialog = screen.getByRole("dialog");
+    const agentsOffered = async () => {
+      const field = within(dialog).getByRole("combobox", { name: "Agent" });
+      await user.click(field);
+      const names = screen.getAllByRole("option").map((o) => o.textContent);
+      await user.keyboard("{Escape}");
+      return names;
+    };
+
+    expect(await agentsOffered()).toEqual(["Clinic chat"]);
+    await user.click(within(dialog).getByLabelText("Agent platform"));
+    await user.click(screen.getByRole("option", { name: "Vapi" }));
+    expect(await agentsOffered()).toEqual(["Clinic line"]);
+  });
+
+  it("closes a dialog from its cross", async () => {
+    const user = userEvent.setup();
+    renderBrowse();
+    for (const name of [/Use with my agent/, /Run our agent/]) {
+      await user.click(screen.getByRole("button", { name }));
+      await user.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "Close",
+        }),
+      );
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
+  });
+
+  it("loads, rather than reading as none", () => {
+    releases.data = undefined;
+    releases.isLoading = true;
+    renderBrowse();
+
+    expect(
+      screen.getByRole("progressbar", {
+        name: "Loading prebuilt environments",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No prebuilt environments yet.")).toBeNull();
+  });
+
+  it("says when they can't be read, with a retry, and keeps a list read before", async () => {
+    releases.data = undefined;
+    releases.error = { message: "releases are down" };
+    renderBrowse();
+
+    expect(screen.getByText("releases are down")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(releases.refetch).toHaveBeenCalled();
+
+    releases.data = [CLINIC];
+    renderBrowse();
+    expect(screen.getByText("appointment_booking")).toBeInTheDocument();
   });
 
   it("says there is nothing to adopt when no environment is released", () => {
