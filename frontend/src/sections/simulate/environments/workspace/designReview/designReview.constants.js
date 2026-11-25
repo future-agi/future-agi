@@ -88,7 +88,9 @@ export const REVIEW_COPY = {
     `${plural(scenarios, "scenario")} ${scenarios === 1 ? "is" : "are"} written after you approve${
       scenarios === useCases
         ? ", one per use case"
-        : ", spread across these use cases"
+        : useCases === 1
+          ? ", all for this one use case"
+          : ", spread across these use cases"
     }.`,
   columns: (columns) => plural(columns.length, "column"),
   noTable: "No table",
@@ -118,7 +120,7 @@ export const REVIEW_COPY = {
   theRule: "The rule",
   theUseCase: "The use case",
   keepOneUseCase: "A design needs at least one use case",
-  removedFromPlan: (label) => `${label} removed from the plan.`,
+  removedFromPlan: (label) => `${label} was removed from the plan.`,
   agentStillCalls:
     "Your agent still calls it, so the world won't answer and those calls fail. Keep it unless you're testing that.",
   undo: "Undo",
