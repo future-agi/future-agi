@@ -700,7 +700,7 @@ describe("RunDialog", () => {
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(onSubmit).toHaveBeenCalledWith(
       { suite: "s2" },
-      ["k1", "k9"],
+      undefined,
       resolved({ suite: "s2" }),
       null,
     );
@@ -723,12 +723,7 @@ describe("RunDialog", () => {
     const { onSubmit } = renderDialog({ scenarioIds: undefined });
     expect(screen.getByText("Runs all 3 scenarios in v3.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenCalledWith(
-      {},
-      ["k1", "k2", "k3"],
-      DEFAULTS,
-      null,
-    );
+    expect(onSubmit).toHaveBeenCalledWith({}, undefined, DEFAULTS, null);
   });
 
   it("says unsaved changes aren't part of the run", () => {

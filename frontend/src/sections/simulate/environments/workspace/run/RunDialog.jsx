@@ -112,9 +112,8 @@ export default function RunDialog({
 
   const suite = options.suite.find((one) => one.id === selected.suite);
   const runAll = scenarioIds === undefined;
-  // Run-all of the default suite runs the server's current list; of another
-  // suite, that suite's scenarios, so it needs them. With versioning on the
-  // list may show unsaved changes, so the default's are named instead.
+  // Run-all names no scenarios: the server runs the picked suite whole. With versioning on that is a saved version,
+  // whose scenarios say how many run.
   const needsMembers =
     runAll &&
     Boolean(picks.suite || (env?.versioning?.enabled && selected.suite));
@@ -128,14 +127,13 @@ export default function RunDialog({
       ? scenarioIds.filter((key) => !memberKeys.includes(key))
       : [];
   // Selected scenarios the picked suite lacks are skipped.
-  let runIds = runAll
+  const runIds = runAll
     ? undefined
     : scenarioIds.filter((key) => !missing.includes(key));
-  if (needsMembers) runIds = memberKeys;
 
   const plan = useRunPlan(env?.id, picks, {
     enabled: open && !versions.isLoading,
-    scenarioKeys: runAll ? null : runIds,
+    scenarioKeys: runIds ?? null,
   });
   const allWarnings = plan.data?.warnings || [];
   const changed = allWarnings.filter(
@@ -146,7 +144,7 @@ export default function RunDialog({
   );
   const versioned = Boolean(env?.versioning?.enabled);
   // What readiness holds back for these picks and scenarios, and how many run.
-  const selectionKeys = runAll ? null : runIds;
+  const selectionKeys = runIds ?? null;
   // A selection is asked about only once settled: the suite's scenarios loaded and at least one picked, else the
   // server refuses the keys.
   const readiness = useReadiness(env?.id, picks, {

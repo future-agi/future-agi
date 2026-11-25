@@ -21,7 +21,6 @@ import {
   refreshAfterRunStart,
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
-import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 import { environmentVersionsKey } from "src/api/simulate-environments/versions";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
@@ -147,13 +146,9 @@ export default function EnvironmentWorkspace() {
     // `resolved` is every version the dialog resolved, defaults included; only
     // the changed `picks` are sent.
     mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
-      // Run-all reads the keys from the server list: the bootstrap
-      // `envState.scenarios` is seeded once and keeps a key an amend dropped.
-      const scenarioIds =
-        ids === undefined ? await listAllScenarioKeys(env.id) : ids;
       const selection = JSON.stringify([
         env.id,
-        scenarioIds,
+        ids ?? null,
         trials || 1,
         resolved?.agent ?? picks?.agent ?? null,
         resolved?.environment ?? picks?.environment ?? null,
@@ -168,7 +163,7 @@ export default function EnvironmentWorkspace() {
       }
       return runHarnessEnvironment(
         env.id,
-        scenarioIds,
+        ids,
         trials || 1,
         pendingSubmission.current.key,
         picks,
