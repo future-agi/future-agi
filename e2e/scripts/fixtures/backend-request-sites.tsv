@@ -23,6 +23,7 @@ flows/dashboards/catalog-source-parity.spec.ts	factory ingestion=request	1	colle
 flows/dashboards/conversation-attribute-widget.spec.ts	factory ingestion=request	1	collector
 flows/dashboards/derived-metric.spec.ts	factory req=request	1	collector
 flows/dashboards/numeric-attribute-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/preset-burst-requests.spec.ts	binding requestId,request,timestamp	1	CDP Network.requestWillBeSent event data; not an API context
 flows/dashboards/preset-burst-requests.spec.ts	factory context=browser	1	browser; not an API context
 flows/dashboards/preset-burst-requests.spec.ts	factory ingest=request	1	collector
 flows/dashboards/trace-backed-session-widget.spec.ts	factory ingestion=request	1	collector
