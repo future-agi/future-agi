@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Tab, Tooltip } from "@mui/material";
+import { Alert, Box, Stack, Tab, Tooltip } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
@@ -19,6 +19,7 @@ import WorkspaceTabLabel from "./WorkspaceTabLabel";
 import { BUILD_STATUS } from "../myEnvironments.constants";
 import TabWaiting from "./TabWaiting";
 import {
+  TAB_UNAVAILABLE_COPY,
   TAB_WAITING_COPY,
   WORKSPACE_COPY,
   WORKSPACE_TABS,
@@ -106,6 +107,9 @@ export default function WorkspacePanels({
   // Default landing is the Overview, which is also the first tab in the rail.
   const current =
     tabs.find((t) => t.id === tab) || tabs.find((t) => t.id === "overview");
+
+  const unavailable =
+    tab && tab !== current.id ? TAB_UNAVAILABLE_COPY[tab] : null;
 
   const go = (tabId) => {
     if (!tabs.some((t) => t.id === tabId)) return;
@@ -260,7 +264,8 @@ export default function WorkspacePanels({
           value={current.id}
           onChange={(_, v) => onTabChange(v)}
           variant="scrollable"
-          scrollButtons={false}
+          scrollButtons="auto"
+          allowScrollButtonsMobile
         >
           {tabs.map((t) => {
             const wait = tabWaits[t.id];
@@ -310,6 +315,15 @@ export default function WorkspacePanels({
         </CustomTabs>
       </Box>
 
+      {unavailable && (
+        <Alert
+          severity="info"
+          data-testid="tab-unavailable"
+          sx={{ mx: 2, mt: 1.5, flexShrink: 0 }}
+        >
+          {unavailable}
+        </Alert>
+      )}
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
         {renderBody()}
       </Box>
