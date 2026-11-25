@@ -26,6 +26,7 @@ from simulate.services.run_results_v3_scoring import (
     HARNESS_INCONCLUSIVE,
     HARNESS_NO_SCORE,
     HARNESS_PASSED,
+    judged_by_required_evals,
 )
 
 # Two-sided 95%.
@@ -95,7 +96,8 @@ def verdict(
 
 def failed_by_required_eval(harness_status: Any, call_outcome: Any) -> bool:
     return (
-        call_outcome == "failed"
+        judged_by_required_evals()
+        and call_outcome == "failed"
         and str(harness_status or "").lower() in _FAILED_ONLY_BY_REQUIRED_EVAL
     )
 

@@ -107,6 +107,7 @@ from simulate.services.run_results_v3_scoring import (
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
+    judged_by_required_evals,
     live_eval_specs,
     resolve_eval_scoring_spec,
     score_tokens,
@@ -747,6 +748,60 @@ class _NativeHarnessVerdict(Func):
         return sql, [*source_params, *source_params, *ids_params, *verdict_params]
 
 
+def _completed_outcome_whens(
+    failed_eval: Q, passed_eval: Q, errored_eval: Q, failed_required_eval: Q
+) -> list[When]:
+    harness_failed = When(
+        call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
+        then=Value("failed"),
+    )
+    harness_inconclusive = When(
+        call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
+        then=Value("inconclusive"),
+    )
+    harness_passed = When(
+        call_metadata__harness_outcome_status__in=list(HARNESS_PASSED),
+        then=Value("passed"),
+    )
+    if not judged_by_required_evals():
+        return [
+            harness_failed,
+            When(failed_eval, then=Value("failed")),
+            When(
+                Q(call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE))
+                & ~passed_eval,
+                then=Value("no_score"),
+            ),
+            When(errored_eval, then=Value("inconclusive")),
+            harness_inconclusive,
+            harness_passed,
+            When(passed_eval, then=Value("passed")),
+        ]
+    return [
+        harness_failed,
+        When(
+            Q(
+                call_metadata__harness_outcome_status__in=[
+                    *HARNESS_NO_SCORE,
+                    *HARNESS_INCONCLUSIVE,
+                    *HARNESS_PASSED,
+                ]
+            )
+            & failed_required_eval,
+            then=Value("failed"),
+        ),
+        When(
+            call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE),
+            then=Value("no_score"),
+        ),
+        harness_inconclusive,
+        harness_passed,
+        When(failed_eval, then=Value("failed")),
+        When(errored_eval, then=Value("inconclusive")),
+        When(passed_eval, then=Value("passed")),
+    ]
+
+
 def run_calls_queryset(
     execution: TestExecution,
     execution_ids: list[Any] | None = None,
@@ -941,36 +996,9 @@ def run_calls_queryset(
             ),
             When(status__in=list(ERRORED_CALL_STATUSES), then=Value("error")),
             When(~Q(status="completed"), then=Value("inconclusive")),
-            When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
-                then=Value("failed"),
+            *_completed_outcome_whens(
+                failed_eval, passed_eval, errored_eval, failed_required_eval
             ),
-            When(
-                Q(
-                    call_metadata__harness_outcome_status__in=[
-                        *HARNESS_NO_SCORE,
-                        *HARNESS_INCONCLUSIVE,
-                        *HARNESS_PASSED,
-                    ]
-                )
-                & failed_required_eval,
-                then=Value("failed"),
-            ),
-            When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE),
-                then=Value("no_score"),
-            ),
-            When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
-                then=Value("inconclusive"),
-            ),
-            When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_PASSED),
-                then=Value("passed"),
-            ),
-            When(failed_eval, then=Value("failed")),
-            When(errored_eval, then=Value("inconclusive")),
-            When(passed_eval, then=Value("passed")),
             default=Value("inconclusive"),
             output_field=CharField(),
         ),

@@ -53,6 +53,7 @@ from simulate.services.run_results_v3_scoring import (
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
+    judged_by_required_evals,
     live_eval_specs,
     score_tokens,
 )
@@ -464,6 +465,8 @@ def _outcome(
     errored: Truth,
     passed: Truth,
     failed_required: Truth = False,
+    *,
+    by_required: bool = False,
 ) -> str:
     """The ``result_outcome`` CASE, in its order."""
     if status in QUEUED_CALL_STATUSES:
@@ -479,6 +482,28 @@ def _outcome(
         return "error"
     if status != "completed":
         return "inconclusive"
+    if by_required:
+        return _outcome_by_required(
+            harness_status, failed, errored, passed, failed_required
+        )
+    if harness_status in _HARNESS_FAILED or failed is True:
+        return "failed"
+    if harness_status in _HARNESS_NO_SCORE and passed is not True:
+        return "no_score"
+    if errored is True or harness_status in _HARNESS_INCONCLUSIVE:
+        return "inconclusive"
+    if harness_status in _HARNESS_PASSED or passed is True:
+        return "passed"
+    return "inconclusive"
+
+
+def _outcome_by_required(
+    harness_status: str | None,
+    failed: Truth,
+    errored: Truth,
+    passed: Truth,
+    failed_required: Truth,
+) -> str:
     if harness_status in _HARNESS_FAILED:
         return "failed"
     if failed_required is True and (
@@ -798,6 +823,7 @@ def scan_call_values(
     if live_evals is None:
         live_evals = live_eval_specs(execution.run_test_id)
     live_evals.warn_invalid_thresholds()
+    by_required = judged_by_required_evals()
     judge = _Judge(
         {eval_id: live.spec for eval_id, live in live_evals.items()},
         [str(column["id"]) for column in columns],
@@ -898,6 +924,7 @@ def scan_call_values(
                         errored,
                         passed,
                         failed_required,
+                        by_required=by_required,
                     ),
                     "scores": scores,
                 }

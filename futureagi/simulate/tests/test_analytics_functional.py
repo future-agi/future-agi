@@ -662,8 +662,11 @@ class TestRunResultsV3Views:
             ("pass_fail", "Passed", False, 0.5, {}, "error", "inconclusive", None),
         ],
     )
+    @pytest.mark.parametrize("required_rule", [False, True])
     def test_configured_eval_verdict_agrees_across_rows_filters_and_analytics(
         self,
+        settings,
+        required_rule,
         auth_client,
         test_execution,
         scenario,
@@ -694,7 +697,12 @@ class TestRunResultsV3Views:
             },
         }
         pass_fail_eval_config.save(update_fields=["config"])
-        call_expected = "failed" if expected == "failed" else "passed"
+        settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = required_rule
+        call_expected = (
+            ("failed" if expected == "failed" else "passed")
+            if required_rule
+            else expected
+        )
         call = CallExecution.objects.create(
             test_execution=test_execution,
             scenario=scenario,
@@ -1523,9 +1531,19 @@ class TestRunResultsV3Views:
             }
         ]
 
-    def test_a_failed_harness_eval_leaves_a_call_with_no_scored_sub_goal_unscored(
-        self, auth_client, test_execution, analytics_call_executions
+    @pytest.mark.parametrize(
+        ("required_rule", "expected"), [(False, "failed"), (True, "no_score")]
+    )
+    def test_a_failed_harness_eval_on_a_call_with_no_scored_sub_goal(
+        self,
+        settings,
+        required_rule,
+        expected,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
     ):
+        settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = required_rule
         call = analytics_call_executions[0]
         call.status = CallExecution.CallStatus.COMPLETED
         call.call_metadata = {
@@ -1551,12 +1569,22 @@ class TestRunResultsV3Views:
         row = next(
             item for item in response.json()["results"] if item["id"] == str(call.id)
         )
-        assert row["outcome"] == "no_score"
+        assert row["outcome"] == expected
         assert row["evaluations"][0]["passed"] is False
 
-    def test_a_passing_harness_eval_leaves_a_call_whose_sub_goals_did_not_apply_unscored(
-        self, auth_client, test_execution, analytics_call_executions
+    @pytest.mark.parametrize(
+        ("required_rule", "expected"), [(False, "passed"), (True, "no_score")]
+    )
+    def test_a_passing_harness_eval_on_a_call_whose_sub_goals_did_not_apply(
+        self,
+        settings,
+        required_rule,
+        expected,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
     ):
+        settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = required_rule
         call = analytics_call_executions[0]
         call.status = CallExecution.CallStatus.COMPLETED
         call.call_metadata = {
@@ -1581,9 +1609,9 @@ class TestRunResultsV3Views:
         ).json()["results"]
 
         assert next(row for row in rows if row["id"] == str(call.id))["outcome"] == (
-            "no_score"
+            expected
         )
-        assert str(call.id) not in {row["id"] for row in passed}
+        assert (str(call.id) in {row["id"] for row in passed}) is (expected == "passed")
 
     def test_calls_rows_expose_scoring_states(
         self, auth_client, test_execution, scenario

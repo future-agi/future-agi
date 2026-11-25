@@ -122,7 +122,9 @@ def test_score_compilation_distinguishes_evaluators_types_and_choice_weights():
     ("stored_output", "expected"),
     [("Passed", "passed"), ("Failed", "failed")],
 )
-def test_reversed_pass_fail_uses_stored_final_verdict(stored_output, expected):
+def test_reversed_pass_fail_uses_stored_final_verdict(
+    settings, stored_output, expected
+):
     config = _config("pass_fail")
     result = {
         "status": "completed",
@@ -137,6 +139,8 @@ def test_reversed_pass_fail_uses_stored_final_verdict(stored_output, expected):
         status=CallExecution.CallStatus.COMPLETED,
         eval_outputs={"eval-1": result},
     )
+    assert call_outcome(call, {"eval-1": config}) == expected
+    settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = True
     assert call_outcome(call, {"eval-1": config}) == "passed"
     required = _config("pass_fail", required=True)
     assert call_outcome(call, {"eval-1": required}) == expected

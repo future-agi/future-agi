@@ -59,6 +59,7 @@ from simulate.services.run_results_v3_scoring import (
     EvalScoringSpec,
     LiveEvals,
     judge_stored_eval,
+    judged_by_required_evals,
     resolve_eval_scoring_spec,
 )
 from simulate.services.scoring_status import (
@@ -247,20 +248,21 @@ def call_outcome(
     if call.status != CallExecution.CallStatus.COMPLETED:
         return "inconclusive"
 
-    if harness_outcome in HARNESS_FAILED:
-        return "failed"
-    if harness_outcome in (
-        *HARNESS_NO_SCORE,
-        *HARNESS_INCONCLUSIVE,
-        *HARNESS_PASSED,
-    ) and _required_eval_failed(call, live_eval_configs, specs):
-        return "failed"
-    if harness_outcome in HARNESS_NO_SCORE:
-        return "no_score"
-    if harness_outcome in HARNESS_INCONCLUSIVE:
-        return "inconclusive"
-    if harness_outcome in HARNESS_PASSED:
-        return "passed"
+    if judged_by_required_evals():
+        if harness_outcome in HARNESS_FAILED:
+            return "failed"
+        if harness_outcome in (
+            *HARNESS_NO_SCORE,
+            *HARNESS_INCONCLUSIVE,
+            *HARNESS_PASSED,
+        ) and _required_eval_failed(call, live_eval_configs, specs):
+            return "failed"
+        if harness_outcome in HARNESS_NO_SCORE:
+            return "no_score"
+        if harness_outcome in HARNESS_INCONCLUSIVE:
+            return "inconclusive"
+        if harness_outcome in HARNESS_PASSED:
+            return "passed"
     verdicts = [
         verdict
         for eval_id, data in iter_live_eval_outputs(
@@ -271,10 +273,17 @@ def call_outcome(
         and (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
-    if "failed" in verdicts:
+    if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
+    # Platform evals arrive after the receipt; one that passed scores the call.
+    if harness_outcome in HARNESS_NO_SCORE and "passed" not in verdicts:
+        return "no_score"
     if "error" in verdicts:
         return "inconclusive"
+    if harness_outcome in HARNESS_INCONCLUSIVE:
+        return "inconclusive"
+    if harness_outcome in HARNESS_PASSED:
+        return "passed"
     if "passed" in verdicts:
         return "passed"
     return "inconclusive"

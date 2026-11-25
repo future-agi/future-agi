@@ -556,8 +556,9 @@ class TestVerifyApi:
             assert hidden not in text
 
     def test_a_trial_the_run_results_fail_on_a_required_eval_counts_as_failed(
-        self, environment
+        self, settings, environment
     ):
+        settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = True
         run = _verify(environment, _second_agent(environment), trials=1)
         execution = _executions(run).first()
         call = execution.call_execution

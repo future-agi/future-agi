@@ -300,14 +300,18 @@ def verify_result(run: HostedHarnessJob) -> dict[str, Any]:
     counts as neither. The range is the 95% Wilson interval of the trial pass rate,
     once the run has finished."""
     from simulate.services.run_results_v3 import call_outcome
-    from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
+    from simulate.services.run_results_v3_scoring import (
+        LiveEvals,
+        judged_by_required_evals,
+        live_eval_specs,
+    )
 
     metadata = (run.payload or {}).get("metadata") or {}
     cases = len(metadata.get("selected_scenario_keys") or [])
     live = live_eval_specs(run.run_test_id) if run.run_test_id else LiveEvals()
     configs = {eval_id: one.config for eval_id, one in live.items()}
     specs = {eval_id: one.spec for eval_id, one in live.items()}
-    judged_by_required = bool(live.required_ids())
+    judged_by_required = judged_by_required_evals() and bool(live.required_ids())
     passed = failed = total = 0
     for execution in (
         HostedHarnessExecution.no_workspace_objects.filter(job=run)
