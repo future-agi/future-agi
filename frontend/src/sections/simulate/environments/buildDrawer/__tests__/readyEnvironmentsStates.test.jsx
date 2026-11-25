@@ -1,6 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render as baseRender, fireEvent, screen } from "src/utils/test-utils";
+import {
+  render as baseRender,
+  fireEvent,
+  screen,
+  within,
+} from "src/utils/test-utils";
 
 /* The ready environments while they load, and when they can't be read. */
 
@@ -25,6 +30,7 @@ vi.mock("src/api/harness/releases", () => ({
 
 const { default: DrawerCatalog } = await import("../DrawerCatalog");
 const { default: WorldsBrowser } = await import("../starts/WorldsBrowser");
+const { readyEnvironmentFrom } = await import("../readyEnvironments");
 
 const NONE = "No ready environments are published to this workspace yet.";
 const FAILED = "Couldn't load the ready environments";
@@ -98,8 +104,55 @@ describe("the ready environments browser", () => {
     );
 
     expect(screen.getByText(FAILED)).toBeInTheDocument();
-    expect(screen.queryByText(/of 1 environments/)).toBeNull();
+    expect(screen.queryByText(/of \d+ environments/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(onRetry).toHaveBeenCalled();
+  });
+
+  const worlds = [
+    ["retail", "Retail"],
+    ["appointment_booking", "Clinic front desk"],
+  ].map(([name, title]) =>
+    readyEnvironmentFrom({
+      id: name,
+      digest: "sha256:ab",
+      name,
+      tools: [],
+      suites: [{ id: "s", name: `${name}_base`, scenario_count: 1 }],
+      catalogue: { title },
+    }),
+  );
+  const browser = () =>
+    render(
+      <WorldsBrowser
+        worlds={worlds}
+        onOpenWorld={vi.fn()}
+        onOpenSandbox={vi.fn()}
+      />,
+    );
+  const optionsOf = (index) => {
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[index]);
+    return within(screen.getByRole("listbox"))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+  };
+
+  it("counts no sandbox among them", () => {
+    browser();
+
+    expect(screen.getByText("2 of 2 environments")).toBeInTheDocument();
+    expect(optionsOf(0)).toEqual(["All types2", "Any agent", "Chat2"]);
+  });
+
+  it("filters by the domain's name", () => {
+    browser();
+
+    expect(optionsOf(1)).toEqual([
+      "All domains",
+      "Clinic front desk",
+      "Retail",
+    ]);
+    fireEvent.click(screen.getByRole("option", { name: "Clinic front desk" }));
+    expect(screen.getByText("1 of 2 environments")).toBeInTheDocument();
   });
 });

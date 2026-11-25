@@ -38,7 +38,12 @@ import { BTN_SX, T12, T14 } from "./drawerStyles";
 import { FORMS_BY_PANEL } from "./forms/formsByPanel";
 import WorldsBrowser from "./starts/WorldsBrowser";
 import { QuietTag } from "./starts/startBits";
-import { SANDBOX_ITEM, SCRATCH_ITEM, worldItem } from "./starts/startItems";
+import {
+  SANDBOX_ITEM,
+  SCRATCH_ITEM,
+  worldItem,
+  worldWayOf,
+} from "./starts/startItems";
 
 const DRAWER_WIDTH = 960;
 const SHOW_BUILD_FROM_SCRATCH = false;
@@ -109,6 +114,7 @@ export default function BuildEnvironmentDrawer({
   const {
     worlds,
     isLoading: worldsLoading,
+    isLoaded: worldsLoaded,
     error: worldsError,
     refetch: refetchWorlds,
   } = useReadyEnvironments({ enabled: open });
@@ -222,11 +228,21 @@ export default function BuildEnvironmentDrawer({
       return;
     }
     if (resumed.current) return;
+    const worldWay = worldWayOf(way);
+    // A ready environment's way waits for its list, unless another is picked meanwhile.
+    const picked = count > 0 || Boolean(agentWay);
+    if (worldWay && !worldsLoaded && !picked) return;
     resumed.current = true;
     setResumeFrom(way);
+    if (worldWay) {
+      const world = worlds.find((w) => w.id === worldWay.worldId);
+      if (world && !picked)
+        push({ kind: "setup", item: worldItem(world, worldWay.tab) });
+      return;
+    }
     const item = way && CATALOG_ITEMS.find((it) => it.id === way);
     if (item) push({ kind: "setup", item });
-  }, [open, way, push]);
+  }, [open, way, push, worlds, worldsLoaded, count, agentWay]);
 
   const setupWay = live.find((l) => l.kind === "setup")?.item?.id || "";
   const currentWay = setupWay || agentWay || "";
@@ -311,7 +327,7 @@ export default function BuildEnvironmentDrawer({
                 component="span"
                 sx={{ color: "text.secondary", fontWeight: 500, ml: 0.75 }}
               >
-                {worlds.length + 1}
+                {worlds.length}
               </Box>
             )}
           </Typography>
@@ -403,6 +419,7 @@ export default function BuildEnvironmentDrawer({
         item={layer.item}
         onBusyChange={setBusy}
         onOtherWorld={() => {
+          if (busy) return;
           back();
           setView("worlds");
         }}

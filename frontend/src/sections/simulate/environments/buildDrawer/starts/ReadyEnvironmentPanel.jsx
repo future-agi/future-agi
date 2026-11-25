@@ -28,6 +28,9 @@ import { harnessJobQuery } from "src/api/simulate-environments/environment";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
 import { BTN_SX, INPUT_SX, T12, T13 } from "../drawerStyles";
 import { modalityOfWorld } from "../worlds";
 import AgentPicker, { useWorldAgents } from "./AgentPicker";
@@ -224,27 +227,34 @@ WorldTab.propTypes = {
   onUse: PropTypes.func.isRequired,
 };
 
-/* The version adapted: the agent's active (production) version, else its latest. */
+/* The version adapted: the agent's active (production) version, else its latest. Versions come a
+   page at a time, newest first, so pages are read until the active one is found. */
 function useAdaptedVersion(agentId) {
-  const versions = useAgentDefinitionVersions({ selectedAgentId: agentId });
-  return useMemo(() => {
-    const rows = (versions.data?.pages || []).flatMap((p) => p?.results || []);
-    return {
-      version:
-        rows.find((v) => v.is_active || v.status === "active") ||
-        rows[0] ||
-        null,
-      isLoading: Boolean(agentId) && versions.isLoading,
-      error: versions.error,
-      refetch: versions.refetch,
-    };
-  }, [
-    agentId,
-    versions.data,
-    versions.isLoading,
-    versions.error,
-    versions.refetch,
-  ]);
+  const {
+    data,
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+  } = useAgentDefinitionVersions({ selectedAgentId: agentId });
+  const rows = useMemo(
+    () => (data?.pages || []).flatMap((p) => p?.results || []),
+    [data],
+  );
+  const active = rows.find((v) => v.is_active || v.status === "active");
+  const more = Boolean(agentId && !active && hasNextPage);
+  useEffect(() => {
+    if (more && !isFetching && !error) fetchNextPage();
+    // A page that lands within one render changes only `rows`.
+  }, [more, rows, isFetching, error, fetchNextPage]);
+  return {
+    version: active || (more ? null : rows[0]) || null,
+    isLoading: Boolean(agentId) && (isLoading || (more && !error)),
+    error,
+    refetch,
+  };
 }
 
 /* How the agent fits the suite, and the last fit read for this suite and version: a pairing
@@ -303,6 +313,7 @@ function Preparing({ jobId, onFailed, onClose }) {
   const completed = status?.state === "completed";
   const run = result?.run;
   const refused = result?.compose?.message;
+  const notStarted = result?.run_failure?.message || result?.run_failure?.code;
   const compositionId = result?.composition_id;
   const failure = status?.failure?.message;
   const ended = ENDED.includes(status?.state);
@@ -320,6 +331,11 @@ function Preparing({ jobId, onFailed, onClose }) {
       onFailed(failure || "Preparing your run failed");
     } else if (completed && refused) {
       onFailed(`Your run can't start: ${refused}`);
+    } else if (completed && notStarted) {
+      onFailed(
+        `Your environment is ready, but its run didn't start: ${notStarted}`,
+        compositionId,
+      );
     }
   }, [
     run,
@@ -327,11 +343,12 @@ function Preparing({ jobId, onFailed, onClose }) {
     failure,
     completed,
     refused,
+    notStarted,
     compositionId,
     navigate,
     onFailed,
   ]);
-  const overdue = completed && !run && !refused;
+  const overdue = completed && !run && !refused && !notStarted;
   useEffect(() => {
     if (!overdue) return undefined;
     const timer = setTimeout(
@@ -393,7 +410,8 @@ function Preparing({ jobId, onFailed, onClose }) {
       )}
       <Stack direction="row" alignItems="center" spacing={1}>
         <Typography sx={{ ...T12, color: "text.secondary" }}>
-          This keeps going if you close it. You can find it in My environments.
+          This keeps going if you close it. Its environment shows in My
+          environments once it&apos;s ready.
         </Typography>
         <Button size="small" color="inherit" onClick={onClose} sx={BTN_SX}>
           Close
@@ -418,6 +436,7 @@ Preparing.propTypes = {
 function UseTab({ world, onBusyChange, onOtherWorld }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { canEdit, canRun } = useSimulationAccess();
   const modality = modalityOfWorld(world);
   const { agents, isLoading } = useWorldAgents(modality);
   const [agentId, setAgentId] = useState(null);
@@ -619,6 +638,12 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
           <Typography sx={{ ...T12, color: "text.tertiary" }}>
             Review before you adopt
           </Typography>
+          {version && (
+            <Line
+              label="Agent version"
+              value={version.version_name_display || version.version_name}
+            />
+          )}
           <Line
             label="Copied"
             value={`${world.recordCount.toLocaleString()} seeded rows · ${plural(suite.scenario_count, "scenario")} · release ${world.releaseName}`}
@@ -713,33 +738,40 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
           ))}
         </Menu>
         <Box flex={1} />
-        <Button
-          variant="outlined"
-          size="small"
-          color="inherit"
-          disabled={waiting}
-          onClick={() => start("review")}
-          sx={{ ...BTN_SX, whiteSpace: "nowrap" }}
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.create}>
+          <Button
+            variant="outlined"
+            size="small"
+            color="inherit"
+            disabled={waiting || !canEdit}
+            onClick={() => start("review")}
+            sx={{ ...BTN_SX, whiteSpace: "nowrap" }}
+          >
+            Adapt to my agent
+          </Button>
+        </ViewerLock>
+        <ViewerLock
+          locked={!canEdit || !canRun}
+          title={WORKSPACE_COPY.viewer[canEdit ? "run" : "create"]}
         >
-          Adapt to my agent
-        </Button>
-        <Tooltip arrow title={runTip}>
-          <span>
-            <Button
-              variant="contained"
-              size="small"
-              color="primary"
-              disabled={waiting || none}
-              onClick={() => start("run")}
-              startIcon={<Iconify icon="solar:play-bold" width={14} />}
-              sx={{ ...BTN_SX, whiteSpace: "nowrap" }}
-            >
-              {verdict === "partial"
-                ? `Run the ${plural(measurable, "measurable case")}`
-                : "Run the same cases"}
-            </Button>
-          </span>
-        </Tooltip>
+          <Tooltip arrow title={canEdit && canRun ? runTip : ""}>
+            <span>
+              <Button
+                variant="contained"
+                size="small"
+                color="primary"
+                disabled={waiting || none || !canEdit || !canRun}
+                onClick={() => start("run")}
+                startIcon={<Iconify icon="solar:play-bold" width={14} />}
+                sx={{ ...BTN_SX, whiteSpace: "nowrap" }}
+              >
+                {verdict === "partial"
+                  ? `Run the ${plural(measurable, "measurable case")}`
+                  : "Run the same cases"}
+              </Button>
+            </span>
+          </Tooltip>
+        </ViewerLock>
       </Stack>
     </StartCard>
   );

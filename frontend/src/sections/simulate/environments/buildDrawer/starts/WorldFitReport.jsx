@@ -40,20 +40,29 @@ const VERDICT = {
   },
 };
 
-function TextLink({ children, onClick }) {
+function TextLink({ children, onClick, disabled = false }) {
   return (
     <Link
       component="button"
       type="button"
-      underline="hover"
+      underline={disabled ? "none" : "hover"}
+      disabled={disabled}
       onClick={onClick}
-      sx={{ ...T12, color: "text.secondary", whiteSpace: "nowrap" }}
+      sx={{
+        ...T12,
+        color: disabled ? "text.disabled" : "text.secondary",
+        whiteSpace: "nowrap",
+      }}
     >
       {children}
     </Link>
   );
 }
-TextLink.propTypes = { children: PropTypes.node, onClick: PropTypes.func };
+TextLink.propTypes = {
+  children: PropTypes.node,
+  onClick: PropTypes.func,
+  disabled: PropTypes.bool,
+};
 
 function PairRow({ row, agentName, agentTools, disabled, onPair }) {
   return (
@@ -265,7 +274,9 @@ export default function WorldFitReport({
               {showUnmeasured ? "Hide" : "Show which"}
             </TextLink>
             {onOtherWorld && (
-              <TextLink onClick={onOtherWorld}>Choose another world</TextLink>
+              <TextLink onClick={onOtherWorld} disabled={disabled}>
+                Choose another world
+              </TextLink>
             )}
           </Stack>
           {showUnmeasured &&

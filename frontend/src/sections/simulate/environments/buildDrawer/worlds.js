@@ -2,23 +2,6 @@
   What the ready environments' browser filters and labels by.
 */
 
-const DOMAIN_LABEL = {
-  ecommerce: "E-commerce",
-  fintech: "Finance",
-  travel: "Travel",
-  software: "Software",
-  robotics: "Robotics",
-  gaming: "Games",
-  research: "Research",
-  operations: "Operations",
-  ml: "Machine learning",
-  hardware: "Hardware",
-  support: "Support",
-  sales: "Sales",
-};
-export const domainLabelOf = (d) =>
-  DOMAIN_LABEL[d] || (d ? d.charAt(0).toUpperCase() + d.slice(1) : "Other");
-
 /** The agents a world is for: voice agents for a voice world, else chat ones. */
 export const modalityOfWorld = (world) =>
   world?.type === "voice" ? "voice" : "text";

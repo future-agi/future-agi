@@ -41,6 +41,13 @@ export const SANDBOX_ITEM = {
   },
 };
 
+/** The ready environment and tab a `worldItem` id names; null for any other way. */
+export const worldWayOf = (way) => {
+  const [, worldId, tab] =
+    /^world:(.+):(world|start|customize)$/.exec(way || "") || [];
+  return worldId ? { worldId, tab } : null;
+};
+
 /** A ready environment, opened on one of its tabs (world, start or customize). */
 export const worldItem = (world, initialTab = "world") => ({
   id: `world:${world.id}:${initialTab}`,

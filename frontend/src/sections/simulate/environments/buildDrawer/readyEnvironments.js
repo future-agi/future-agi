@@ -85,6 +85,7 @@ export function useReadyEnvironments({ enabled = true } = {}) {
   return {
     worlds,
     isLoading: query.isLoading,
+    isLoaded: Boolean(query.data),
     // Only when there is no list to show: one read before stays up.
     error: query.data ? null : query.error,
     refetch: query.refetch,

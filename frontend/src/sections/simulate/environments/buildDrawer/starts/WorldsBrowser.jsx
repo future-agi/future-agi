@@ -16,7 +16,7 @@ import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { OUTLINED_BTN_SX, T13 } from "../drawerStyles";
-import { WORLD_TYPES, domainLabelOf, filterWorlds } from "../worlds";
+import { WORLD_TYPES, filterWorlds } from "../worlds";
 import { SANDBOX_APPS } from "./sandboxApps";
 import { QuietTag } from "./startBits";
 import { SaasSandboxCard } from "./worldCards";
@@ -28,7 +28,8 @@ const SANDBOX_TYPE = {
   icon: "solar:widget-4-linear",
 };
 
-// The sandbox is one more world, pinned first, when nothing narrows it out.
+// The sandbox is pinned first, when nothing narrows it out. It isn't a ready environment, so the
+// counts leave it out.
 function sandboxMatches({ query, type, domain }) {
   if (domain !== "all" || (type !== "all" && type !== SANDBOX_TYPE.id)) {
     return false;
@@ -77,24 +78,24 @@ export default function WorldsBrowser({
   );
   const domains = useMemo(
     () =>
-      [...new Set(worlds.map((w) => w.domain))].sort((a, b) =>
-        domainLabelOf(a).localeCompare(domainLabelOf(b)),
+      [...new Map(worlds.map((w) => [w.domain, w.domainLabel]))].sort(
+        ([, a], [, b]) => a.localeCompare(b),
       ),
     [worlds],
   );
-  const total = worlds.length + 1;
+  const total = worlds.length;
   const withSandbox = sandboxMatches({ query, type, domain });
   const countOf = (id) =>
     id === "all"
       ? total
       : id === SANDBOX_TYPE.id
-        ? 1
+        ? null
         : worlds.filter((w) => w.type === id).length;
   const types = [
     { id: "all", label: "All types" },
     SANDBOX_TYPE,
     ...WORLD_TYPES,
-  ].filter((t) => countOf(t.id) > 0);
+  ].filter((t) => t.id === "all" || countOf(t.id) !== 0);
   const listed = type === SANDBOX_TYPE.id ? [] : shown;
   const clear = () => {
     setQuery("");
@@ -177,9 +178,9 @@ export default function WorldsBrowser({
           <MenuItem value="all" sx={T13}>
             All domains
           </MenuItem>
-          {domains.map((d) => (
+          {domains.map(([d, label]) => (
             <MenuItem key={d} value={d} sx={T13}>
-              {domainLabelOf(d)}
+              {label}
             </MenuItem>
           ))}
         </Select>
@@ -194,7 +195,7 @@ export default function WorldsBrowser({
         >
           {isLoading || error
             ? null
-            : `${listed.length + (withSandbox ? 1 : 0)} of ${total} environments`}
+            : `${listed.length} of ${total} environments`}
         </Typography>
       </Stack>
 
