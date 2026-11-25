@@ -856,8 +856,8 @@ export default function TraceTable({
                   <Typography
                     title={t.summary || undefined}
                     sx={{
-                      typography: "m3",
-                      fontWeight: 600,
+                      typography: "s2",
+                      fontWeight: 500,
                       maxWidth: 440,
                       display: "-webkit-box",
                       WebkitLineClamp: 2,
@@ -1810,8 +1810,8 @@ function GroupHeaderRow({
               noWrap
               title={`${group.label} · ${group.count} scenario${group.count === 1 ? "" : "s"}`}
               sx={{
-                typography: "m3",
-                fontWeight: 600,
+                typography: "s2",
+                fontWeight: 500,
                 color: "text.primary",
                 minWidth: 0,
                 /* The name keeps its room; the counts give way first. */
@@ -1857,8 +1857,8 @@ function GroupHeaderRow({
                     noWrap
                     title={`${group.label} · ${group.count} scenario${group.count === 1 ? "" : "s"}`}
                     sx={{
-                      typography: "m3",
-                      fontWeight: 600,
+                      typography: "s2",
+                      fontWeight: 500,
                       color: "text.primary",
                       minWidth: 0,
                       /* The name keeps its room; the counts give way first. */
@@ -2180,11 +2180,11 @@ function GroupLabelSizer({ text }) {
         visibility: "hidden",
         whiteSpace: "nowrap",
         maxWidth: GROUP_LABEL_FIT,
-        /* Sized at the label's own type (13px) plus room for the count dots. */
+        /* Sized at the label's own type (12px) plus room for the count dots. */
         pl: 3.5,
         pr: 4,
-        typography: "m3",
-        fontWeight: 600,
+        typography: "s2",
+        fontWeight: 500,
       }}
     >
       {text}
