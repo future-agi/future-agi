@@ -41361,7 +41361,7 @@ export const SimulateApiHarnessEnvironmentsListQueryParams = zod.object({
     .max(simulateApiHarnessEnvironmentsListQuerySearchMax)
     .optional(),
   status: zod.enum(["building", "running", "completed", "failed"]).optional(),
-  agent_type: zod.enum(["voice", "chat"]).optional(),
+  agent_type: zod.enum(["voice", "chat", "browser"]).optional(),
 });
 
 export const simulateApiHarnessEnvironmentsListResponseResultsItemLastRunPassRateMin = 0;
@@ -41380,7 +41380,7 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       description: zod.string().min(1),
       domain: zod.string().min(1),
       source_kind: zod.string().min(1),
-      agent_type: zod.enum(["voice", "chat"]),
+      agent_type: zod.enum(["voice", "chat", "browser"]),
       status: zod.enum(["building", "running", "completed", "failed"]),
       stage: zod.string().min(1),
       scenario_count: zod.number(),
@@ -41513,7 +41513,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     description: zod.string().min(1),
     domain: zod.string().min(1),
     source_kind: zod.string().min(1),
-    agent_type: zod.enum(["voice", "chat"]),
+    agent_type: zod.enum(["voice", "chat", "browser"]),
     status: zod.enum(["building", "running", "completed", "failed"]),
     stage: zod.string().min(1),
     scenario_count: zod.number(),
@@ -42118,7 +42118,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     description: zod.string().min(1),
     domain: zod.string().min(1),
     source_kind: zod.string().min(1),
-    agent_type: zod.enum(["voice", "chat"]),
+    agent_type: zod.enum(["voice", "chat", "browser"]),
     status: zod.enum(["building", "running", "completed", "failed"]),
     stage: zod.string().min(1),
     scenario_count: zod.number(),
@@ -47879,7 +47879,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       description: zod.string().min(1),
       domain: zod.string().min(1),
       source_kind: zod.string().min(1),
-      agent_type: zod.enum(["voice", "chat"]),
+      agent_type: zod.enum(["voice", "chat", "browser"]),
       status: zod.enum(["building", "running", "completed", "failed"]),
       stage: zod.string().min(1),
       scenario_count: zod.number(),

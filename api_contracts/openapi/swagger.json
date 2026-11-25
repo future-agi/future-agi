@@ -53352,7 +53352,8 @@
                         "type": "string",
                         "enum": [
                             "voice",
-                            "chat"
+                            "chat",
+                            "browser"
                         ]
                     }
                 ],
@@ -148249,7 +148250,8 @@
                     "type": "string",
                     "enum": [
                         "voice",
-                        "chat"
+                        "chat",
+                        "browser"
                     ]
                 },
                 "status": {
@@ -148520,7 +148522,8 @@
                     "type": "string",
                     "enum": [
                         "voice",
-                        "chat"
+                        "chat",
+                        "browser"
                     ]
                 },
                 "status": {

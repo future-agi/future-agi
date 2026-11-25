@@ -20534,6 +20534,7 @@ export type HarnessEnvironmentApiAgentType =
 export const HarnessEnvironmentApiAgentType = {
   voice: "voice",
   chat: "chat",
+  browser: "browser",
 } as const;
 
 export type HarnessEnvironmentApiStatus =
@@ -20623,6 +20624,7 @@ export type HarnessEnvironmentOverviewApiAgentType =
 export const HarnessEnvironmentOverviewApiAgentType = {
   voice: "voice",
   chat: "chat",
+  browser: "browser",
 } as const;
 
 export type HarnessEnvironmentOverviewApiStatus =
@@ -47121,6 +47123,7 @@ export type SimulateApiHarnessEnvironmentsListAgentType =
 export const SimulateApiHarnessEnvironmentsListAgentType = {
   voice: "voice",
   chat: "chat",
+  browser: "browser",
 } as const;
 
 export type SimulateApiHarnessEnvironmentsActorViewParams = {

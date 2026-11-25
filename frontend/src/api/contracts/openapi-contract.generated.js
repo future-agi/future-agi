@@ -29553,7 +29553,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["voice", "chat"],
+              enum: ["voice", "chat", "browser"],
             },
           },
         },
@@ -114447,7 +114447,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_type: {
           title: "Agent type",
           type: "string",
-          enum: ["voice", "chat"],
+          enum: ["voice", "chat", "browser"],
         },
         status: {
           title: "Status",
@@ -114813,7 +114813,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_type: {
           title: "Agent type",
           type: "string",
-          enum: ["voice", "chat"],
+          enum: ["voice", "chat", "browser"],
         },
         status: {
           title: "Status",

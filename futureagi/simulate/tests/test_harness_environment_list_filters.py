@@ -113,6 +113,47 @@ def test_agent_type_filter_matches_the_type_each_row_reports(
 
 
 @pytest.mark.django_db
+def test_an_environment_for_a_browser_agent_reads_and_filters_as_browser(
+    auth_client, organization, workspace
+):
+    # A browser agent is stored as chat that needs a browser: the label and the filter read the need.
+    agent = _agent(organization, workspace, "Northwind")
+    from_snapshot = _payload(_environment(agent, 1), agent={"connector": "auto"})
+    _contract(from_snapshot, {"modality": "chat", "environment_needs": ["browser"]})
+    from_version = _payload(_environment(agent, 2), agent={"connector": "auto"})
+    version = _environment_version(from_version, 1)
+    version.documents = {
+        "contract": {"modality": "chat", "environment_needs": ["browser"]}
+    }
+    version.save(update_fields=["documents"])
+    from_version = _set(from_version, environment_version=version)
+    # The default version's contract wins over the snapshot, as it does for voice.
+    superseded = _payload(_environment(agent, 3), agent={"connector": "auto"})
+    _contract(superseded, {"modality": "chat", "environment_needs": ["browser"]})
+    plain = _environment_version(superseded, 1)
+    plain.documents = {"contract": {"modality": "chat"}}
+    plain.save(update_fields=["documents"])
+    superseded = _set(superseded, environment_version=plain)
+    chat_agent = _payload(_environment(agent, 4), agent={"connector": "auto"})
+    _contract(chat_agent, {"modality": "chat"})
+    vapi = _payload(_environment(agent, 5), agent={"connector": "vapi"})
+
+    browser = _get(auth_client, workspace, agent_type="browser")
+    chat = _get(auth_client, workspace, agent_type="chat")
+    voice = _get(auth_client, workspace, agent_type="voice")
+
+    assert _ids(browser) == {str(from_snapshot.id), str(from_version.id)}
+    assert _ids(chat) == {str(superseded.id), str(chat_agent.id)}
+    assert _ids(voice) == {str(vapi.id)}
+    assert {row["agent_type"] for row in browser["results"]} == {"browser"}
+    assert {row["agent_type"] for row in chat["results"]} == {"chat"}
+    every = {
+        row["id"]: row["agent_type"] for row in _get(auth_client, workspace)["results"]
+    }
+    assert every[str(from_snapshot.id)] == "browser"
+
+
+@pytest.mark.django_db
 def test_search_matches_the_shown_name_or_the_repository(
     auth_client, organization, workspace
 ):
