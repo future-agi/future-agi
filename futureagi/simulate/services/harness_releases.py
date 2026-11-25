@@ -260,7 +260,7 @@ def _usable(model, organization):
 
 
 def visible_suite(organization, suite_id) -> HarnessSuiteRelease:
-    suite = (
+    suite: HarnessSuiteRelease | None = (
         _usable(HarnessSuiteRelease, organization)
         .select_related("environment", "environment__parent")
         .filter(id=suite_id)
@@ -430,11 +430,18 @@ def _store_suite(
     )
 
 
+def member_bytes(source: tarfile.TarFile, member: tarfile.TarInfo) -> bytes:
+    body = source.extractfile(member)
+    if body is None:
+        raise _error("release_invalid", f"{member.name} is not a regular file")
+    return body.read()
+
+
 def archive_files(archive: bytes) -> dict[str, bytes]:
     """Every regular file in a release archive, by its path in the release."""
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
         return {
-            member.name: source.extractfile(member).read()
+            member.name: member_bytes(source, member)
             for member in source.getmembers()
             if member.isfile()
         }
@@ -619,7 +626,8 @@ def _check_modality(agent_version: AgentVersion, connector: str) -> None:
 
 def _chain(suite: HarnessSuiteRelease) -> list[HarnessEnvironmentRelease]:
     environment = suite.environment
-    return [environment.parent, environment] if environment.parent_id else [environment]
+    parent = environment.parent
+    return [parent, environment] if parent is not None else [environment]
 
 
 def _admitted_parallelism(payload: dict[str, Any]) -> int:
@@ -776,8 +784,11 @@ def create_composition(
         )
     except ALKSimulateIngestionError as exc:
         raise _error("composition_invalid", str(exc)) from exc
-    rows = list(
-        scenarios[0].dataset.row_set.filter(deleted=False).order_by("order", "id")
+    dataset = scenarios[0].dataset
+    rows = (
+        list(dataset.row_set.filter(deleted=False).order_by("order", "id"))
+        if dataset is not None
+        else []
     )
     if len(scenarios) != 1 or len(rows) != len(personas):
         raise _error(
@@ -934,6 +945,16 @@ def composition_of(job: HostedHarnessJob) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def held_composition(job: HostedHarnessJob) -> dict[str, Any]:
+    """`composition_of` where the job has to be a composition."""
+    composition = composition_of(job)
+    if composition is None:
+        raise _error(
+            "composition_missing", "this environment is not a composition", 409
+        )
+    return composition
+
+
 def _voice_choice(settings: dict[str, str], prefix: str) -> str | None:
     """`provider/model` of one simulator voice stage as the gateway passes it; either half may be
     empty, and None means ALK picks both."""
@@ -1022,7 +1043,7 @@ def freeze_run_manifest(
         sandbox_runtime_reference,
     )
 
-    composition = composition_of(environment)
+    composition = held_composition(environment)
     binding = composition["binding"]
     # A tool-routed binding is scored only on the scenarios its proof proved; compose refuses the
     # rest (`scenario_unscorable`), so the run is refused here, before a sandbox starts.
@@ -1365,7 +1386,8 @@ def adaptation_payload(
         **({"pairing": pairing} if pairing else {}),
         "mode": mode,
     }
-    return json.loads(json.dumps(payload, default=str))
+    document: dict[str, Any] = json.loads(json.dumps(payload, default=str))
+    return document
 
 
 @dataclass(frozen=True)
@@ -1452,6 +1474,10 @@ def _adapt(
     if result.get("status") != "completed":
         raise _error("adaptation_result_invalid", "result.json has no final status")
     adaptation = adaptation_of(job)
+    if adaptation is None:
+        raise _error(
+            "adaptation_inputs_missing", "this environment is not an adaptation", 409
+        )
     organization = job.organization
     base = _visible(HarnessSuiteRelease, organization, adaptation["suite"]["digest"])
     agent_version = AgentVersion.no_workspace_objects.filter(
@@ -1553,6 +1579,7 @@ def complete_adaptation(
     from simulate.models import HostedHarnessConversation
 
     adaptation_result: dict[str, Any] = {}
+    failure: dict[str, Any] | None
     if output is None or not (Path(output) / "result.json").is_file():
         failure = _adaptation_failure(
             "adaptation_result_missing", "the adaptation process wrote no result.json"

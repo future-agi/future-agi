@@ -222,6 +222,7 @@ def _current_chat_workspace(job: HostedHarnessJob, checkpoint: bytes) -> bytes |
     from simulate.services.harness_releases import composition_of
 
     environment = job.environment or job
+    current: bytes | None
     if composition_of(environment) is not None:
         from simulate.services.harness_composition_edits import (
             composition_revision,

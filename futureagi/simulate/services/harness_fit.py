@@ -169,7 +169,7 @@ def agent_of(agent_version) -> dict[str, Any]:
     connector = str(definition.provider or "").strip().lower()
     provider = CONNECTOR_PROVIDERS.get(connector)
     profile = profile_for_version(agent_version) if provider else None
-    if profile is None:
+    if provider is None or profile is None:
         raise _error(
             "agent_tools_unavailable",
             "this agent's tools can't be read from its provider",

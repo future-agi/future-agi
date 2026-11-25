@@ -246,7 +246,7 @@ def _asked_to_approve() -> QuerySet[HostedHarnessConversation]:
     )
 
 
-def _awaiting_ids() -> QuerySet[HostedHarnessJob]:
+def _awaiting_ids() -> QuerySet[HostedHarnessJob, Any]:
     """Adaptations in review that are awaiting approval: the approval question is open and
     nobody has answered it. Until it is asked the mapping is still being checked (building),
     as the design says, and Approve has nothing to answer."""

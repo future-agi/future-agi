@@ -200,7 +200,9 @@ class HarnessHostedAgentViewSet(viewsets.ViewSet):
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
+        run_test = job.run_test
+        version_id = run_test.agent_version_id if run_test is not None else None
         return Response(
-            {"id": str(job.id), "agent_version_id": str(job.run_test.agent_version_id)},
+            {"id": str(job.id), "agent_version_id": str(version_id)},
             status=status.HTTP_201_CREATED,
         )

@@ -38,7 +38,8 @@ from simulate.services.harness_releases import (
     _store_suite,
     _visible,
     archive_files,
-    composition_of,
+    held_composition,
+    member_bytes,
     proof_digest,
     scenario_documents,
 )
@@ -51,7 +52,7 @@ CHANGE = "composition-change"
 
 def composition_revision(job: HostedHarnessJob) -> str:
     """The revision a composition chat edits: its current suite."""
-    return str(composition_of(job)["suite"]["digest"])
+    return str(held_composition(job)["suite"]["digest"])
 
 
 def _json(value: Any) -> bytes:
@@ -60,7 +61,7 @@ def _json(value: Any) -> bytes:
 
 def composition_workspace_archive(job: HostedHarnessJob) -> bytes:
     """The workspace a composition chat opens on (contract §7.8 layout)."""
-    composition = composition_of(job)
+    composition = held_composition(job)
     files: list[tuple[str, bytes]] = []
     for entry in composition["environment"]:
         prefix = f"releases/environment/{_hex(entry['digest'])}"
@@ -127,7 +128,7 @@ def _extract_change(checkpoint: bytes, into: Path) -> Path | None:
                 )
             target = into.joinpath(*parts)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(source.extractfile(member).read())
+            target.write_bytes(member_bytes(source, member))
             found = True
     return root if found else None
 
@@ -209,7 +210,7 @@ def _applied(
             **(composition.get("alignment") or {}),
             "unscorable": [
                 {"scenario_key": key, "reason": entry.get("reason") or ""}
-                for key, entry in sorted((proof.get("scenarios") or {}).items())
+                for key, entry in sorted(((proof or {}).get("scenarios") or {}).items())
                 if entry.get("status") == "unscorable"
             ],
         }
@@ -286,7 +287,7 @@ def promote_composition_checkpoint(
                     environment.content_updated_at = timezone.now()
                     fields += ["scenario_count", "content_updated_at"]
                 environment.save(update_fields=fields)
-                if suite is not None:
+                if suite is not None and change is not None:
                     suite_dir = change / "suite"
                     index_scenarios(
                         environment,
@@ -303,7 +304,7 @@ def promote_composition_checkpoint(
                                 for key, value in persona.items()
                                 if key != "scenario_key"
                             }
-                            for persona in personas
+                            for persona in personas or []
                         },
                     )
     if stale is not None:
