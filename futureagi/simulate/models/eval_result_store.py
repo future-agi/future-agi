@@ -151,7 +151,7 @@ class SimulateEvalResult(BaseModel):
         db_table = "simulate_eval_result"
         constraints = [
             # An ask's answers name their ask; a replaced verdict names none,
-            # and names the request that replaced it instead.
+            # and names the request that replaced it, and when, instead.
             models.CheckConstraint(
                 condition=(
                     models.Q(
@@ -161,6 +161,7 @@ class SimulateEvalResult(BaseModel):
                         origin="replaced_own_score",
                         ask__isnull=True,
                         replacement_id__isnull=False,
+                        replaced_at__isnull=False,
                     )
                 ),
                 name="eval_result_origin_matches_ask",
@@ -176,11 +177,5 @@ class SimulateEvalResult(BaseModel):
                 fields=["ask", "call_execution", "question_key"],
                 condition=models.Q(origin="ask"),
                 name="uniq_eval_result_ask_call_question",
-            ),
-        ]
-        indexes = [
-            models.Index(
-                fields=["call_execution", "question_key"],
-                name="idx_eval_result_call_question",
             ),
         ]

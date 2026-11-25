@@ -218,13 +218,6 @@ class Migration(migrations.Migration):
                 fields=["organization", "created_at"], name="idx_eval_ask_org_created"
             ),
         ),
-        migrations.AddIndex(
-            model_name="simulateevalresult",
-            index=models.Index(
-                fields=["call_execution", "question_key"],
-                name="idx_eval_result_call_question",
-            ),
-        ),
         migrations.AddConstraint(
             model_name="simulateevalresult",
             constraint=models.CheckConstraint(
@@ -237,6 +230,7 @@ class Migration(migrations.Migration):
                     models.Q(
                         ("ask__isnull", True),
                         ("origin", "replaced_own_score"),
+                        ("replaced_at__isnull", False),
                         ("replacement_id__isnull", False),
                     ),
                     _connector="OR",

@@ -12,6 +12,7 @@ import uuid
 
 import pytest
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from simulate.models import (
     CallExecution,
@@ -338,6 +339,7 @@ def _kept(call, cfg, environment, **fields):
         question_key=str(cfg.id),
         state=SimulateEvalResult.State.ANSWERED,
         replaced_verdict=fields.pop("replaced_verdict", dict(VERDICT)),
+        replaced_at=fields.pop("replaced_at", timezone.now()),
         organization=environment.run_test.organization,
         workspace=environment.run_test.workspace,
         **fields,
@@ -540,6 +542,14 @@ def test_a_replaced_row_must_name_its_request(environment, finished_run):
     call = env_evals._call(finished_run)
     with pytest.raises(IntegrityError), transaction.atomic():
         _kept(call, cfg, environment, replacement_id=None)
+
+
+@pytest.mark.django_db
+def test_a_replaced_row_must_say_when(environment, finished_run):
+    cfg = _mapped_eval(environment)
+    call = env_evals._call(finished_run)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        _kept(call, cfg, environment, replaced_at=None)
 
 
 @pytest.mark.django_db
