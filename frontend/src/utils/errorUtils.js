@@ -1,6 +1,8 @@
 import { DatasetLimitCheckFailedErrorApiCode } from "src/generated/api-contracts/api.schemas";
 import { RESPONSE_CODES } from "./constants";
 
+const VIEWER_READ_ONLY_CODE = "viewer_read_only";
+
 const DEFAULT_RATE_LIMIT_MESSAGE = "Rate limit reached.";
 const DEFAULT_RETRY_GUIDANCE = "Please try again in a few minutes.";
 
@@ -14,9 +16,10 @@ const pickMessage = (...messages) =>
 const SAFE_VALIDATION_STATUS_CODES = new Set([400, 404, 409, 422]);
 // Typed API error codes whose message the backend writes for users
 // (futureagi/tfc/utils/error_codes.py), shown whatever their status.
-const USER_FACING_ERROR_CODES = new Set(
-  Object.values(DatasetLimitCheckFailedErrorApiCode),
-);
+const USER_FACING_ERROR_CODES = new Set([
+  ...Object.values(DatasetLimitCheckFailedErrorApiCode),
+  VIEWER_READ_ONLY_CODE,
+]);
 const INTERNAL_ERROR_MARKERS =
   /DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|maximum:\s*\d+|elapsed\s+\d+/i;
 // Query text as the ORM and query builders print it (upper-case SELECT), or a

@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
 from tfc.capabilities.errors import CapabilityDenied
 from tfc.licensing.types import (
     DenialReason,
@@ -20,6 +21,9 @@ from tfc.licensing.types import (
     LicenseState,
     LicenseType,
 )
+
+check_capability_isolation = capability_testing.check_capability_isolation
+preserve_capability_service = capability_testing.preserve_capability_service
 
 
 class _FakeLicenseResolver:
@@ -50,18 +54,14 @@ def _make_active_snapshot(features: frozenset[str] | None = None) -> LicenseSnap
 
 
 @pytest.fixture()
-def active_license():
+def active_license(preserve_capability_service):
     resolver = _FakeLicenseResolver(_make_active_snapshot())
     service.configure(
         flavor=DeploymentFlavor.SELF_HOSTED_EE,
         location=DeploymentLocation.SELF_HOSTED,
         license_resolver=resolver,
     )
-    yield resolver
-    service.configure(
-        flavor=DeploymentFlavor.OSS,
-        location=DeploymentLocation.SELF_HOSTED,
-    )
+    return resolver
 
 
 class TestActiveLicense:
@@ -87,7 +87,7 @@ class TestActiveLicense:
 
 class TestGraceLicense:
     @pytest.fixture(autouse=True)
-    def grace_license(self):
+    def grace_license(self, preserve_capability_service):
         now = datetime.now(UTC)
         snapshot = LicenseSnapshot(
             state=LicenseState.GRACE,
@@ -104,11 +104,6 @@ class TestGraceLicense:
             flavor=DeploymentFlavor.SELF_HOSTED_EE,
             location=DeploymentLocation.SELF_HOSTED,
             license_resolver=resolver,
-        )
-        yield
-        service.configure(
-            flavor=DeploymentFlavor.OSS,
-            location=DeploymentLocation.SELF_HOSTED,
         )
 
     def test_grace_allows_included_feature(self):
@@ -128,7 +123,7 @@ class TestGraceLicense:
 
 class TestExpiredLicense:
     @pytest.fixture(autouse=True)
-    def expired_license(self):
+    def expired_license(self, preserve_capability_service):
         snapshot = LicenseSnapshot(
             state=LicenseState.EXPIRED,
             license_type=LicenseType.PRODUCTION,
@@ -143,11 +138,6 @@ class TestExpiredLicense:
             location=DeploymentLocation.SELF_HOSTED,
             license_resolver=resolver,
         )
-        yield
-        service.configure(
-            flavor=DeploymentFlavor.OSS,
-            location=DeploymentLocation.SELF_HOSTED,
-        )
 
     def test_expired_denies_all_paid_features(self):
         decision = service.check("falcon_ai")
@@ -161,7 +151,7 @@ class TestExpiredLicense:
 
 class TestTrialActive:
     @pytest.fixture(autouse=True)
-    def trial_license(self):
+    def trial_license(self, preserve_capability_service):
         now = datetime.now(UTC)
         snapshot = LicenseSnapshot(
             state=LicenseState.TRIAL_ACTIVE,
@@ -178,11 +168,6 @@ class TestTrialActive:
             location=DeploymentLocation.SELF_HOSTED,
             license_resolver=resolver,
         )
-        yield
-        service.configure(
-            flavor=DeploymentFlavor.OSS,
-            location=DeploymentLocation.SELF_HOSTED,
-        )
 
     def test_trial_allows_included_feature(self):
         decision = service.check("falcon_ai")
@@ -196,7 +181,7 @@ class TestTrialActive:
 
 class TestTrialExpired:
     @pytest.fixture(autouse=True)
-    def trial_expired_license(self):
+    def trial_expired_license(self, preserve_capability_service):
         snapshot = LicenseSnapshot(
             state=LicenseState.TRIAL_EXPIRED,
             license_type=LicenseType.TRIAL,
@@ -211,11 +196,6 @@ class TestTrialExpired:
             location=DeploymentLocation.SELF_HOSTED,
             license_resolver=resolver,
         )
-        yield
-        service.configure(
-            flavor=DeploymentFlavor.OSS,
-            location=DeploymentLocation.SELF_HOSTED,
-        )
 
     def test_trial_expired_denies_paid_features(self):
         decision = service.check("falcon_ai")
@@ -229,7 +209,7 @@ class TestTrialExpired:
 
 class TestMissingLicense:
     @pytest.fixture(autouse=True)
-    def missing_license(self):
+    def missing_license(self, preserve_capability_service):
         from tfc.licensing.types import MISSING_LICENSE
 
         resolver = _FakeLicenseResolver(MISSING_LICENSE)
@@ -237,11 +217,6 @@ class TestMissingLicense:
             flavor=DeploymentFlavor.SELF_HOSTED_EE,
             location=DeploymentLocation.SELF_HOSTED,
             license_resolver=resolver,
-        )
-        yield
-        service.configure(
-            flavor=DeploymentFlavor.OSS,
-            location=DeploymentLocation.SELF_HOSTED,
         )
 
     def test_missing_denies_paid_features(self):
@@ -256,7 +231,7 @@ class TestMissingLicense:
 
 class TestInvalidLicense:
     @pytest.fixture(autouse=True)
-    def invalid_license(self):
+    def invalid_license(self, preserve_capability_service):
         from tfc.licensing.types import INVALID_LICENSE
 
         resolver = _FakeLicenseResolver(INVALID_LICENSE)
@@ -264,11 +239,6 @@ class TestInvalidLicense:
             flavor=DeploymentFlavor.SELF_HOSTED_EE,
             location=DeploymentLocation.SELF_HOSTED,
             license_resolver=resolver,
-        )
-        yield
-        service.configure(
-            flavor=DeploymentFlavor.OSS,
-            location=DeploymentLocation.SELF_HOSTED,
         )
 
     def test_invalid_denies_paid_features(self):
@@ -281,6 +251,7 @@ class TestInvalidLicense:
         assert decision.allowed is True
 
 
+@pytest.mark.usefixtures("preserve_capability_service")
 class TestResolverFailure:
     def test_no_resolver_denies_paid_features(self):
         service.configure(
@@ -310,6 +281,7 @@ class _FakeCloudPlanResolver:
         return None
 
 
+@pytest.mark.usefixtures("preserve_capability_service")
 class TestCloudResolverFailure:
     def test_cloud_denies_paid_feature_when_org_id_missing(self):
         service.configure(

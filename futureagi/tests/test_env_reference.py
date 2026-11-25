@@ -317,8 +317,7 @@ def test_backend_ci_runs_when_a_file_read_here_changes() -> None:
     left out: their own CI covers them, and every push to dev runs this suite."""
     workflow = yaml.safe_load(BACKEND_CI.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["changes"]["steps"]
-    filters = next(step for step in steps if step.get("id") == "filter")["with"]
-    patterns = yaml.safe_load(filters["filters"])["backend"]
+    filter_step = next(step for step in steps if step.get("id") == "filter")
     names = [*COMPOSE_FILES, *WORD_READER_FILES]
     names += [
         str(path.relative_to(ROOT))
@@ -337,14 +336,27 @@ def test_backend_ci_runs_when_a_file_read_here_changes() -> None:
             if target.startswith("repo:")
         }
     )
-    missed = sorted(
-        name
-        for name in names
-        if not any(fnmatchcase(name, pattern) for pattern in patterns)
+    if "with" in filter_step:  # a paths-filter allowlist
+        patterns = yaml.safe_load(filter_step["with"]["filters"])["backend"]
+        missed = sorted(
+            name
+            for name in names
+            if not any(fnmatchcase(name, pattern) for pattern in patterns)
+        )
+        assert not missed, (
+            f"add these to the backend paths filter in {BACKEND_CI.name}: {missed}"
+        )
+        return
+    # The impact planner runs the backend suite for every changed path except
+    # an explicit metadata exemption list; none of these files may be exempt.
+    assert ".github/scripts/ci_scope.py" in filter_step["run"]
+    spec = importlib.util.spec_from_file_location(
+        "ci_scope", ROOT / ".github/scripts/ci_scope.py"
     )
-    assert not missed, (
-        f"add these to the backend paths filter in {BACKEND_CI.name}: {missed}"
-    )
+    planner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(planner)
+    exempt = sorted(name for name in names if name.encode() in planner.METADATA)
+    assert not exempt, f"backend CI must run when these change: {exempt}"
 
 
 # --------------------------------------------------------------------------

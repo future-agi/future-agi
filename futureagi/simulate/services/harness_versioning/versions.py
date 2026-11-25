@@ -110,6 +110,10 @@ def versioning_enabled() -> bool:
     return bool(getattr(settings, "HARNESS_VERSIONING_ENABLED", False))
 
 
+def actors_enabled() -> bool:
+    return bool(getattr(settings, "HARNESS_ACTORS_ENABLED", False))
+
+
 def environment_head(job: HostedHarnessJob) -> HostedHarnessJob | None:
     """The environment a job belongs to, read fresh; ``None`` once it is deleted."""
     return (
@@ -196,14 +200,53 @@ def _stage_outputs(pair_body: bytes) -> list[dict[str, Any]]:
     return authoring_stage_outputs_from_archive(pair_body)
 
 
+def run_contract(
+    job: HostedHarnessJob,
+    split: archives.SplitArchive,
+    *,
+    built: bool,
+    full_build: bool = True,
+) -> dict[str, Any]:
+    """The contract a version runs with, as its readers show it; recorded beside the authored one, which diffs
+    compare.
+
+    A build can amend the authored contract while it builds (a tool served from the agent's tools service instead
+    of imported, say) and seals the amended one, so a version a full build sealed from this tree has the sealed
+    contract. A save (``full_build`` False) reseals, and any other version records, the author's entries again, so
+    each tool it did not change is reached as the default version runs it, recorded here so a later read stops at
+    this version instead of walking back through its ancestry.
+    """
+    from simulate.selectors.environment_documents import (
+        reach_as_built,
+        version_contract,
+    )
+
+    default = job.environment_version
+    authored = _json(split.environment, "contract.json")
+    authored = authored if isinstance(authored, dict) else {}
+    sealed = _json(split.sealed, archives.SEALED_CONTRACT) if built else None
+    if isinstance(sealed, dict) and sealed:
+        return sealed if full_build else reach_as_built(job, sealed, authored, default)
+    if default is not None and default.contract_hash_raw == hashing.contract_hash_raw(
+        split.environment
+    ):
+        inherited = version_contract(job)
+        if inherited:
+            return inherited
+    return reach_as_built(job, authored, authored, default)
+
+
 def prepare_pieces(
     job: HostedHarnessJob,
     split: archives.SplitArchive,
     *,
     outputs: list[dict[str, Any]],
     authoring_revision: str,
+    built: bool = False,
+    full_build: bool = True,
 ) -> Pieces:
-    """Pack, key and hash both pieces and their readable documents; stores nothing."""
+    """Pack, key and hash both pieces and their readable documents; stores nothing. ``built``: the archive's sealed
+    bundle was sealed from this tree, by a full build unless ``full_build`` is False (a save's reseal)."""
     payload = job.payload or {}
     connector = str((payload.get("agent") or {}).get("connector") or "")
     environment_body = archives.pack_archive(split.environment)
@@ -213,10 +256,19 @@ def prepare_pieces(
     )
     suite_key = archives.suite_key(job.organization_id, job.id, suite_body)
     contract = _json(split.environment, "contract.json") or {}
+    from simulate.selectors.environment_documents import RUN_CONTRACT_VERSION
+
+    runs_with = run_contract(job, split, built=built, full_build=full_build)
     sub_goals = _sub_goals(split.environment)
     scenarios = suite_documents(split.suite)
     environment_documents = {
         "contract": contract,
+        # Only where it differs from the authored contract, so a version's diff still compares authored ones.
+        **(
+            {"run_contract": runs_with, "run_contract_version": RUN_CONTRACT_VERSION}
+            if runs_with != contract
+            else {}
+        ),
         "sub_goals": sub_goals,
         "sub_goal_digests": hashing.sub_goal_digests(sub_goals),
         "actor_digests": hashing.actor_digests(split.environment),
@@ -710,7 +762,12 @@ def record_authoring(
     pair_key = archives.pair_key(job.organization_id, job.id, pair_body)
     revision = authoring_content_digest(pair_body)
     pieces = prepare_pieces(
-        job, split, outputs=_stage_outputs(pair_body), authoring_revision=revision
+        job,
+        split,
+        outputs=_stage_outputs(pair_body),
+        authoring_revision=revision,
+        # Only a build seals this archive's own bundle; an edit carries an older one.
+        built=origin in PROVED_ORIGINS and SEALED_MANIFEST in split.sealed,
     )
     if origin in USER_ORIGINS:
         # Refused before anything is uploaded; checked again under the lock below.
