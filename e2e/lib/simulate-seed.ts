@@ -541,6 +541,87 @@ export function seedParticipantsCall(opts: { organizationId: string; workspaceId
   return runInlineSeed<ParticipantsSeed>('e2e-participants-', PARTICIPANTS_SEED_SCRIPT, opts);
 }
 
+/**
+ * Seeds two connected agents read from their code, each with one active version whose agent document is stored through
+ * the product's own `store_agent` (`futureagi/simulate/services/agent_setup.py`), the way the kit's reading arrives:
+ *
+ * - `withSetting`: the code reads its model from a setting. The document's `model.name` is only that setting's default,
+ *   and `extension.model_source` names the setting and the line that reads it (as the kit writes it, TH-10714).
+ * - `withoutSetting`: a model with no `model_source`, as every reading stored before the kit recorded settings.
+ *
+ * The setting's name is minted per call, so the page's sentence can only be this seed's. Built through the ORM for the
+ * same reason as `seedParticipantsCall`: no reader runs on this stack, so nothing else stores a source agent.
+ */
+export interface SourceAgentModelsSeed {
+  withSetting: { agentId: string; versionId: string; agentName: string };
+  withoutSetting: { agentId: string; versionId: string; agentName: string };
+  setting: string;
+}
+
+const SOURCE_AGENT_MODELS_SEED_SCRIPT = `
+import json
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+import django
+django.setup()
+
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from simulate.models import AgentDefinition
+from simulate.services.agent_setup import store_agent
+
+
+def source_agent(name, model_name, extension):
+    return {
+        "schema_version": "1.0", "type": "chat", "kind": "source", "name": name, "provider_ref": None,
+        "behaviour": [{"id": "main", "shape": "external", "instructions": "Answers questions.",
+                       "tools": [], "transitions": []}],
+        "tools": [],
+        "model": {"provider": None, "name": model_name, "temperature": None, "max_tokens": None},
+        "voice": None, "telephony": [], "supports": [], "direction_answer": None, "gaps": [],
+        "instrumentation": "none", "extension": extension, "setup_hash": "sh1:" + "d" * 64,
+    }
+
+
+def connected(organization, workspace, name, document):
+    agent = AgentDefinition.objects.create(
+        agent_name=name,
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        description="e2e AGENT model setting seed",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+    version = agent.create_version(description="", commit_message="first", status="active")
+    store_agent(agent_version_id=version.id, agent=document, sdk_version="0.4.0")
+    return {"agentId": str(agent.id), "versionId": str(version.id), "agentName": name}
+
+
+def main():
+    organization = Organization.objects.get(id=os.environ["SEED_ORG_ID"])
+    workspace = Workspace.objects.get(id=os.environ["SEED_WORKSPACE_ID"])
+    suffix = os.environ["SEED_SUFFIX"]
+    setting = f"E2E_{suffix.upper()}_MODEL"
+    with_setting = connected(
+        organization, workspace, f"e2e-model-setting-{suffix}-a",
+        source_agent(f"e2e_model_setting_{suffix}_a", "vertex_ai/gemini-3.7-flash",
+                     {"model_source": {"setting": setting, "path": "agent.py", "line": 19}}),
+    )
+    without_setting = connected(
+        organization, workspace, f"e2e-model-setting-{suffix}-b",
+        source_agent(f"e2e_model_setting_{suffix}_b", "gpt-4.1", {}),
+    )
+    print(json.dumps({"withSetting": with_setting, "withoutSetting": without_setting, "setting": setting}))
+
+
+main()
+`;
+
+export function seedSourceAgentModels(opts: { organizationId: string; workspaceId: string }): SourceAgentModelsSeed {
+  return runInlineSeed<SourceAgentModelsSeed>('e2e-model-setting-', SOURCE_AGENT_MODELS_SEED_SCRIPT, opts);
+}
+
 /** Runs one seed script in the backend container for the caller's org and workspace; returns its last JSON line. */
 function runInlineSeed<T>(prefix: string, script: string, opts: { organizationId: string; workspaceId: string }): T {
   const container = resolveBackendContainer();
