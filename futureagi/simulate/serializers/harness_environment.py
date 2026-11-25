@@ -11,9 +11,11 @@ from simulate.constants.harness_environment import (
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
     RUN_KIND_SIMULATE,
+    STATUS_AWAITING_APPROVAL,
     STATUS_BUILDING,
     STATUS_COMPLETED,
     STATUS_FAILED,
+    STATUS_READING,
     STATUS_RUNNING,
 )
 from simulate.constants.run_outcome import OUTCOME_STATUSES
@@ -57,7 +59,14 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     )
     status = serializers.ChoiceField(
         required=False,
-        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED),
+        choices=(
+            STATUS_READING,
+            STATUS_AWAITING_APPROVAL,
+            STATUS_BUILDING,
+            STATUS_RUNNING,
+            STATUS_COMPLETED,
+            STATUS_FAILED,
+        ),
     )
     agent_type = serializers.ChoiceField(
         required=False, choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT)
@@ -114,7 +123,14 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     source_kind = serializers.CharField()
     agent_type = serializers.ChoiceField(choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT))
     status = serializers.ChoiceField(
-        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
+        choices=(
+            STATUS_READING,
+            STATUS_AWAITING_APPROVAL,
+            STATUS_BUILDING,
+            STATUS_RUNNING,
+            STATUS_COMPLETED,
+            STATUS_FAILED,
+        )
     )
     # The fine-grained pipeline stage behind ``status``, so a caller that draws a
     # progress bar does not have to infer it from the four-state pill.
@@ -201,6 +217,8 @@ class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
 
 
 class HarnessEnvironmentStatusCountsSerializer(serializers.Serializer):
+    reading = serializers.IntegerField()
+    awaiting_approval = serializers.IntegerField()
     building = serializers.IntegerField()
     running = serializers.IntegerField()
     completed = serializers.IntegerField()

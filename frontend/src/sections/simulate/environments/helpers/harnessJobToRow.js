@@ -9,6 +9,7 @@ import {
   ENV_STATUS,
   BUILD_STATUS,
   NOT_PROVIDED,
+  READING_STAGE,
 } from "../myEnvironments.constants";
 
 // ALK reports the transports it detected in the source under
@@ -31,6 +32,7 @@ const STAGE_LED_STAGES = new Set([
   ...FINALIZING_STAGES,
   HARNESS_STAGE.CANCELED,
   AWAITING_APPROVAL_STAGE,
+  READING_STAGE,
 ]);
 
 // The harness pipeline reports fine-grained stages; the table only needs the
@@ -45,6 +47,7 @@ export const stageToStatus = (stage) => {
   if (stage === HARNESS_STAGE.CANCELED) return ENV_STATUS.CANCELLED;
   if (FINALIZING_STAGES.has(stage)) return ENV_STATUS.FINALIZING;
   if (stage === HARNESS_STAGE.RUNNING) return ENV_STATUS.RUNNING;
+  if (stage === READING_STAGE) return ENV_STATUS.READING;
   return ENV_STATUS.BUILDING;
 };
 

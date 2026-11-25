@@ -25,6 +25,7 @@ export default function LivePill({ env, building }) {
   const isCancelling = env?.status === ENV_STATUS.CANCELLING;
   const isCancelled = env?.status === ENV_STATUS.CANCELLED;
   const isFinalizing = env?.status === ENV_STATUS.FINALIZING;
+  const isReading = env?.status === ENV_STATUS.READING;
   const isBuilding = building ?? env?.buildStatus === BUILD_STATUS.BUILDING;
   const isFailed = !isBuilding && env?.buildStatus === BUILD_STATUS.FAILED;
   const isRunning =
@@ -39,11 +40,13 @@ export default function LivePill({ env, building }) {
           ? ENV_STATUS.FAILED
           : isFinalizing
             ? ENV_STATUS.FINALIZING
-            : isBuilding
-              ? ENV_STATUS.BUILDING
-              : isRunning
-                ? ENV_STATUS.RUNNING
-                : ENV_STATUS.READY;
+            : isReading
+              ? ENV_STATUS.READING
+              : isBuilding
+                ? ENV_STATUS.BUILDING
+                : isRunning
+                  ? ENV_STATUS.RUNNING
+                  : ENV_STATUS.READY;
   const label = isAwaiting
     ? WORKSPACE_COPY.awaitingApprovalLabel
     : isCancelled
@@ -54,11 +57,13 @@ export default function LivePill({ env, building }) {
           ? WORKSPACE_COPY.failedLabel
           : isFinalizing
             ? WORKSPACE_COPY.finalizingLabel
-            : isBuilding
-              ? WORKSPACE_COPY.buildingLabel
-              : isRunning
-                ? STATUS_META.running.label
-                : WORKSPACE_COPY.live;
+            : isReading
+              ? WORKSPACE_COPY.readingLabel
+              : isBuilding
+                ? WORKSPACE_COPY.buildingLabel
+                : isRunning
+                  ? STATUS_META.running.label
+                  : WORKSPACE_COPY.live;
   const tooltip = isAwaiting
     ? WORKSPACE_COPY.awaitingApprovalTooltip
     : isCancelled
@@ -69,13 +74,16 @@ export default function LivePill({ env, building }) {
           ? WORKSPACE_COPY.failedTooltip
           : isFinalizing
             ? WORKSPACE_COPY.finalizingTooltip
-            : isBuilding
-              ? WORKSPACE_COPY.buildingTooltip
-              : isRunning
-                ? WORKSPACE_COPY.runningTooltip
-                : WORKSPACE_COPY.liveTooltip;
+            : isReading
+              ? WORKSPACE_COPY.readingTooltip
+              : isBuilding
+                ? WORKSPACE_COPY.buildingTooltip
+                : isRunning
+                  ? WORKSPACE_COPY.runningTooltip
+                  : WORKSPACE_COPY.liveTooltip;
   // The in-flight states pulse; the rest sit still.
-  const pulsing = !isAwaiting && (isBuilding || isFinalizing || isCancelling);
+  const pulsing =
+    !isAwaiting && (isReading || isBuilding || isFinalizing || isCancelling);
 
   return (
     <CustomTooltip show title={tooltip} size="small" arrow>

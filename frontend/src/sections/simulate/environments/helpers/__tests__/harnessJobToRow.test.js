@@ -199,6 +199,10 @@ describe("jobStatusFor", () => {
     ["failed", cancel, ENV_STATUS.FAILED],
     ["cleaning_up", null, ENV_STATUS.FINALIZING],
     ["running", null, ENV_STATUS.RUNNING],
+    ["understanding_agent", null, ENV_STATUS.READING],
+    ["acquiring_source", null, ENV_STATUS.BUILDING],
+    ["generating_environment", null, ENV_STATUS.BUILDING],
+    ["awaiting_approval", null, ENV_STATUS.AWAITING_APPROVAL],
   ])(
     "stage %s with cancel_requested_at=%s reads %s",
     (stage, cancelAt, expected) => {
@@ -207,6 +211,15 @@ describe("jobStatusFor", () => {
       );
     },
   );
+
+  it("shows a job reading its agent as Reading in the list, while it still builds for every action", () => {
+    const row = harnessJobToRow({
+      job: { job_id: "job-1" },
+      status: { stage: "understanding_agent" },
+    });
+    expect(row.status).toBe(ENV_STATUS.READING);
+    expect(buildStatusFor("understanding_agent")).toBe(BUILD_STATUS.BUILDING);
+  });
 
   it("drives the jobs-list row, so a cancel in flight reads Cancelling there too", () => {
     const row = harnessJobToRow({
@@ -225,6 +238,10 @@ describe("envStatusFor", () => {
     ["running", ENV_STATUS.RUNNING, ENV_STATUS.RUNNING],
     ["failed", ENV_STATUS.FAILED, ENV_STATUS.FAILED],
     ["generating_scenarios", ENV_STATUS.BUILDING, ENV_STATUS.BUILDING],
+    ["understanding_agent", ENV_STATUS.BUILDING, ENV_STATUS.READING],
+    ["understanding_agent", "reading", ENV_STATUS.READING],
+    ["awaiting_approval", "awaiting_approval", ENV_STATUS.AWAITING_APPROVAL],
+    ["awaiting_approval", ENV_STATUS.BUILDING, ENV_STATUS.AWAITING_APPROVAL],
     ["completed", "completed", ENV_STATUS.READY],
   ])("stage %s with backend status %s reads %s", (stage, status, expected) => {
     expect(envStatusFor(stage, status)).toBe(expected);

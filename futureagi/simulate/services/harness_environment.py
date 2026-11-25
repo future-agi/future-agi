@@ -44,9 +44,11 @@ from simulate.constants.harness_environment import (
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
     RUN_KIND_SIMULATE,
+    STATUS_AWAITING_APPROVAL,
     STATUS_BUILDING,
     STATUS_COMPLETED,
     STATUS_FAILED,
+    STATUS_READING,
     STATUS_RUNNING,
     ActorsTab,
 )
@@ -230,7 +232,14 @@ def _blank_as_null(expression: Any) -> NullIf:
 
 
 def status_counts(queryset: QuerySet[HostedHarnessJob]) -> dict[str, int]:
-    statuses = (STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
+    statuses = (
+        STATUS_READING,
+        STATUS_AWAITING_APPROVAL,
+        STATUS_BUILDING,
+        STATUS_RUNNING,
+        STATUS_COMPLETED,
+        STATUS_FAILED,
+    )
     return queryset.order_by().aggregate(
         **{status: Count("id", filter=_status_q(status)) for status in statuses}
     )
@@ -244,7 +253,14 @@ def _status_q(status: str) -> Q:
         return Q(state__in=_TERMINAL_FAILED)
     if status == STATUS_RUNNING:
         return Q(state__in=_RUN_STATES)
-    return ~Q(state__in=known)
+    from simulate.services.harness_design_review import AWAITING_STAGE, READING_STAGE
+
+    open_jobs = ~Q(state__in=known)
+    if status == STATUS_READING:
+        return open_jobs & Q(current_stage=READING_STAGE)
+    if status == STATUS_AWAITING_APPROVAL:
+        return open_jobs & Q(current_stage=AWAITING_STAGE)
+    return open_jobs & ~Q(current_stage__in=(READING_STAGE, AWAITING_STAGE))
 
 
 def _voice_q() -> Q:
@@ -520,6 +536,12 @@ def status_for(job: HostedHarnessJob) -> str:
         return STATUS_FAILED
     if job.state in _RUN_STATES:
         return STATUS_RUNNING
+    from simulate.services.harness_design_review import AWAITING_STAGE, READING_STAGE
+
+    if job.current_stage == READING_STAGE:
+        return STATUS_READING
+    if job.current_stage == AWAITING_STAGE:
+        return STATUS_AWAITING_APPROVAL
     return STATUS_BUILDING
 
 

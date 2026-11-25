@@ -19,6 +19,8 @@ import { NOT_PROVIDED } from "../myEnvironments.constants";
 
 // The list endpoint's own status values; "completed" reads as Ready.
 const STATUS_OPTIONS = [
+  { value: "reading", label: "Reading the agent" },
+  { value: "awaiting_approval", label: "Awaiting approval" },
   { value: "building", label: "Building" },
   { value: "running", label: "Running" },
   { value: "completed", label: "Ready" },

@@ -16,6 +16,7 @@ export const RUN_STATUS = {
   queued: { role: "neutral", label: "Queued", shape: "hollow" },
   pending: { role: "neutral", label: "Pending", shape: "hollow" },
   booting: { role: "info", label: "Provisioning", shape: "live" },
+  reading: { role: "info", label: "Reading the agent", shape: "live" },
   building: { role: "info", label: "Building", shape: "live" },
   running: { role: "info", label: "Running", shape: "live" },
   in_progress: { role: "info", label: "In progress", shape: "live" },

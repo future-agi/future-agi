@@ -143,6 +143,7 @@ describe("LivePill", () => {
     [{ buildStatus: "building", status: "finalizing" }, "Finalizing"],
     [{ buildStatus: "building", status: "cancelling" }, "Cancelling"],
     [{ buildStatus: "failed", status: "cancelled" }, "Build stopped"],
+    [{ buildStatus: "building", status: "reading" }, "Reading the agent"],
   ])("labels %o as %s, not Building or Failed", (env, label) => {
     render(<LivePill env={env} />);
     expect(screen.getByText(label)).toBeInTheDocument();
