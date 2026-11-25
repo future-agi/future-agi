@@ -156,7 +156,14 @@ class _Read:
     organization_id: Any
     workspace_id: Any
     max_chars: int | None
+    shared: dict[Any, Any] = field(default_factory=dict)
     _cache: dict[str, Any] = field(default_factory=dict)
+
+    def once(self, key: tuple[Any, ...], load: Any) -> Any:
+        """``load()``, read once per key for every call that shares this read."""
+        if key not in self.shared:
+            self.shared[key] = load()
+        return self.shared[key]
 
     @property
     def metadata(self) -> Mapping[str, Any]:
@@ -188,8 +195,12 @@ def read_call_evidence(
     organization_id: Any,
     workspace_id: Any,
     max_chars: int | None = None,
+    shared: dict[Any, Any] | None = None,
 ) -> dict[Kind, Evidence]:
-    """Each asked kind of evidence for one call. Refuses a call from elsewhere."""
+    """Each asked kind of evidence for one call. Refuses a call from elsewhere.
+
+    ``shared`` keeps what calls of one run read alike (a saved contract, a seed) for
+    the next call, when one caller reads many calls."""
     if not in_workspace(call.test_execution.run_test, organization_id, workspace_id):
         raise CallNotInWorkspace(str(call.id))
     trial = hosted_trial(call)
@@ -200,6 +211,7 @@ def read_call_evidence(
         organization_id=organization_id,
         workspace_id=workspace_id,
         max_chars=max_chars,
+        shared=shared if shared is not None else {},
     )
     return {Kind(kind): _READERS[Kind(kind)](read) for kind in kinds}
 
@@ -440,7 +452,8 @@ def _world_state_start(read: _Read) -> Evidence:
     start = _mapping(read.trial_state.get("start"))
     if start.get("state") != "seeded" or start.get("against") != "sealed_seed":
         return _missing(kind, Cause.START_NOT_SEALED)
-    files = environment_files(read.trial.environment_version_id)
+    version_id = read.trial.environment_version_id
+    files = read.once(("seed", version_id), lambda: environment_files(version_id))
     if files is None:
         return _missing(kind, Cause.NO_LONGER_KEPT)
     store = _json(files.get("store.json"))
@@ -589,7 +602,11 @@ def _whole_instructions(read: _Read) -> tuple[str, str] | None:
     version = read.call.agent_version or read.call.test_execution.agent_version
     copied = _copied_prompt(read.trial.contract if read.trial else None)
     if copied is None and version is not None:
-        copied = _copied_prompt(stored_version_contract(version.id))
+        copied = _copied_prompt(
+            read.once(
+                ("contract", version.id), lambda: stored_version_contract(version.id)
+            )
+        )
     if copied is not None:
         return copied
     if read.trial is not None:
