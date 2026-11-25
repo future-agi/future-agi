@@ -485,6 +485,9 @@ class TestCreate:
             issue.save(update_fields=["deleted", "redirect_to"])
             issue = target
         assert reads.jobs_of_issues([issue]) == {issue.id: [open_job]}
+        status = reads.issue_status_page([issue], _mine(environment))[issue.pk]
+        assert status["id"] == open_job.id
+        assert status["issue"]["cluster_id"] == issue.cluster_id
         newer = _job(environment, _import(environment, issue, []))
         assert (
             reads.issue_status_page([issue], _mine(environment))[issue.pk]["id"]
