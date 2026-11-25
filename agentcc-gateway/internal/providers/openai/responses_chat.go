@@ -376,25 +376,25 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 	return out, nil
 }
 
-// ResponsesDrops names the settings omitted by a valid Responses attempt.
+// ChatRouteDrops names the settings omitted by a valid Responses attempt.
 // Called after pre-plugins/tool routing, never from the caller's original body.
 // A conversion error is still an error, not an attempt that dropped settings.
-func (p *Provider) ResponsesDrops(req *models.ChatCompletionRequest) []string {
+func (p *Provider) ChatRouteDrops(req *models.ChatCompletionRequest) (models.ChatRoute, []string) {
 	if !p.ChatNeedsResponses(req) {
-		return nil
+		return "", nil
 	}
 	drops := responsesDroppedParams(req)
 	if len(drops) == 0 {
-		return nil
+		return models.RouteResponses, nil
 	}
 	out, err := toResponsesRequest(req, req.Stream)
 	if err != nil {
-		return nil
+		return models.RouteResponses, nil
 	}
 	if _, err := json.Marshal(out); err != nil {
-		return nil
+		return models.RouteResponses, nil
 	}
-	return drops
+	return models.RouteResponses, drops
 }
 
 // responsesDroppedParams is the shared support table, so a response-cache hit

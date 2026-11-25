@@ -141,60 +141,85 @@ func basicRequest() *models.ChatCompletionRequest {
 	}
 }
 
-func TestToolPolicyRestrictionsFailBeforeGeminiRequest(t *testing.T) {
-	falseValue := false
+// A dropped setting must leave the upstream request identical to one without it.
+// The HTTP-level test checks the warning returned to the caller.
+func TestGeminiToolPolicyDropped(t *testing.T) {
+	f := false
 	for _, tc := range []struct {
-		name    string
-		request *models.ChatCompletionRequest
-		field   string
+		name     string
+		parallel *bool
+		callers  []string
 	}{
-		{
-			name:    "parallel_tool_calls",
-			request: &models.ChatCompletionRequest{Model: "gemini-1.5-pro", Tools: []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}}, ParallelToolCalls: &falseValue},
-			field:   "parallel_tool_calls",
-		},
-		{
-			name:    "allowed_callers",
-			request: &models.ChatCompletionRequest{Model: "gemini-1.5-pro", Tools: []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}, AllowedCallers: []string{"code_execution_20260120"}}}},
-			field:   "allowed_callers",
-		},
-		{
-			name:    "empty_allowed_callers",
-			request: &models.ChatCompletionRequest{Model: "gemini-1.5-pro", Tools: []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}, AllowedCallers: []string{}}}},
-			field:   "allowed_callers",
-		},
-		{
-			name:    "unknown_allowed_tool",
-			request: &models.ChatCompletionRequest{Model: "gemini-1.5-pro", Tools: []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}}, ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","name":"missing"}]}}`)},
-			field:   "allowed_tools",
-		},
+		{"parallel_tool_calls", &f, nil},
+		{"allowed_callers", nil, []string{"code_execution_20250825"}},
+		{"empty_allowed_callers", nil, []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var calls atomic.Int32
+			req := basicRequest()
+			req.Tools = []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}}
+			plain, _ := translateRequest(req)
+			want, err := json.Marshal(plain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.ParallelToolCalls = tc.parallel
+			req.Tools[0].AllowedCallers = tc.callers
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
-				w.WriteHeader(http.StatusOK)
+				got, err := io.ReadAll(r.Body)
+				if err != nil || string(got) != string(want) {
+					t.Errorf("wire request = %s (%v), want unchanged %s", got, err, want)
+				}
+				const result = `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`
+				if r.URL.Query().Get("alt") == "sse" {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "data: %s\n\n", result)
+				} else {
+					io.WriteString(w, result)
+				}
 			}))
 			defer server.Close()
 			p := newTestProvider(t, server.URL)
-			tc.request.Messages = basicRequest().Messages
-			_, err := p.ChatCompletion(context.Background(), tc.request)
-			if apiErr, ok := err.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, tc.field) {
-				t.Fatalf("non-streaming error = %v, want 400 naming %s", err, tc.field)
+			if _, err := p.ChatCompletion(context.Background(), req); err != nil {
+				t.Errorf("non-stream: %v", err)
 			}
-			if tc.name == "unknown_allowed_tool" && err.(*models.APIError).Code != "invalid_tool_choice" {
-				t.Fatalf("error code = %q, want invalid_tool_choice", err.(*models.APIError).Code)
+			req.Stream = true
+			chunks, errs := p.StreamChatCompletion(context.Background(), req)
+			for range chunks {
 			}
-			chunks, errs := p.StreamChatCompletion(context.Background(), tc.request)
+			for err := range errs {
+				if err != nil {
+					t.Errorf("stream: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestGeminiToolPolicyInvalidChoice(t *testing.T) {
+	for _, tc := range []struct{ name, choice string }{
+		{"undeclared", `{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","name":"missing"}]}}`},
+		{"malformed", `{"type":"allowed_tools","allowed_tools":{"tools":"bad"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
+			defer server.Close()
+			p := newTestProvider(t, server.URL)
+			req := basicRequest()
+			req.Tools = []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}}
+			req.ToolChoice = json.RawMessage(tc.choice)
+			_, err := p.ChatCompletion(context.Background(), req)
+			chunks, errs := p.StreamChatCompletion(context.Background(), req)
 			for range chunks {
 				t.Fatal("unexpected streaming chunk")
 			}
-			streamErr := <-errs
-			if apiErr, ok := streamErr.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, tc.field) {
-				t.Fatalf("streaming error = %v, want 400 naming %s", streamErr, tc.field)
+			for _, got := range []error{err, <-errs} {
+				if apiErr, ok := got.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || apiErr.Code != "invalid_tool_choice" || !strings.Contains(apiErr.Message, "allowed_tools") {
+					t.Errorf("error = %v, want 400 invalid_tool_choice naming allowed_tools", got)
+				}
 			}
 			if calls.Load() != 0 {
-				t.Fatalf("sent %d requests despite unsupported policy", calls.Load())
+				t.Fatalf("sent %d requests despite invalid choice", calls.Load())
 			}
 		})
 	}

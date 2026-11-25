@@ -108,10 +108,10 @@ func TestToolPolicyAcceptance(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					denied := (test == "parallel" && (provider == "gemini" || provider == "cohere")) || ((test == "callers" || test == "empty-callers") && provider != "anthropic") || ((test == "allowed-required" || test == "native-required") && provider == "cohere")
-					if test == "empty-callers" {
-						denied = true
-					}
+					denied := (test == "parallel" && provider == "cohere") ||
+						(test == "callers" && provider != "anthropic" && provider != "gemini") ||
+						(test == "empty-callers" && provider != "gemini") ||
+						((test == "allowed-required" || test == "native-required") && provider == "cohere")
 					var received []models.StreamChunk
 					if stream {
 						received, err = policystream.Collect(p.StreamChatCompletion(context.Background(), req))
@@ -142,6 +142,17 @@ func TestToolPolicyAcceptance(t *testing.T) {
 					var wire map[string]json.RawMessage
 					if err = json.Unmarshal([]byte(forwarded), &wire); err != nil {
 						t.Fatal(err)
+					}
+					if provider == "gemini" && (test == "parallel" || test == "callers" || test == "empty-callers") {
+						want := "allowed_callers"
+						if test == "parallel" {
+							want = "parallel_tool_calls"
+						}
+						_, drops := p.(*gemini.Provider).ChatRouteDrops(req)
+						if len(drops) != 1 || drops[0] != want || strings.Contains(forwarded, want) || !strings.Contains(forwarded, "restricted_tool") {
+							t.Errorf("want callable declaration, %s omitted and reported; got wire=%s drops=%v", want, forwarded, drops)
+						}
+						return
 					}
 					switch test {
 					case "permitted":

@@ -1545,7 +1545,7 @@ func (h *Handlers) resolveProviderForOrg(ctx context.Context, rc *models.Request
 // dispatchChat records translation decisions for this physical attempt and pins
 // price and attribution to the adapter that actually served the response.
 func (h *Handlers) dispatchChat(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, p providers.Provider) error {
-	noteChatResponsesRouteDrops(w, rc, p, rc.Request)
+	noteRouteDrops(w, rc, p, rc.Request)
 	resp, err := h.callChatProvider(ctx, p, rc.Request)
 	if err != nil {
 		return err
@@ -1727,7 +1727,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
 		start := time.Now()
-		noteChatResponsesRouteDrops(w, rc, callProvider, rc.Request)
+		noteRouteDrops(w, rc, callProvider, rc.Request)
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()

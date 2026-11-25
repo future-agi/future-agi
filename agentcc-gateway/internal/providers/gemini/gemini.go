@@ -200,17 +200,26 @@ func (p *Provider) releaseSemaphore() {
 	<-p.semaphore
 }
 
-// Gemini cannot enforce a single call per turn or Anthropic's caller contexts.
-// Reject those restrictions before contacting the upstream provider.
-func validateToolPolicy(req *models.ChatCompletionRequest) error {
-	var choice string
-	_ = json.Unmarshal(req.ToolChoice, &choice)
-	// NONE permits zero function calls, so it also enforces a single-call limit.
-	if choice != "none" && req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(req.Tools) > 0 {
-		return models.ErrBadRequest("unsupported_tool_policy", "gemini cannot enforce parallel_tool_calls=false")
+// ChatRouteDrops reports drops only for an otherwise valid Gemini attempt.
+func (p *Provider) ChatRouteDrops(req *models.ChatCompletionRequest) (models.ChatRoute, []string) {
+	drops := models.GeminiOmittedParams(req)
+	if len(drops) == 0 || RejectUnsupportedTools(req.Tools) != nil || validateToolPolicy(req) != nil {
+		return models.RouteGemini, nil
 	}
+	return models.RouteGemini, drops
+}
+
+func logToolPolicyDrops(req *models.ChatCompletionRequest) {
+	if drops := models.GeminiOmittedParams(req); len(drops) != 0 {
+		slog.Warn("gemini drops unenforceable tool settings", "parameters", drops)
+	}
+}
+
+func validateToolPolicy(req *models.ChatCompletionRequest) error {
+	// Non-function tools retain their raw payload; the drop ruling applies
+	// only to function declarations that we translate ourselves.
 	for _, tool := range req.Tools {
-		if tool.AllowedCallers != nil && (len(tool.AllowedCallers) != 1 || tool.AllowedCallers[0] != "direct") {
+		if !tool.IsFunction() && tool.HasNonDirectCallerPolicy() {
 			return models.ErrBadRequest("unsupported_tool_policy", "gemini cannot enforce allowed_callers")
 		}
 	}
@@ -260,6 +269,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		httpReq.Header.Set(k, v)
 	}
 
+	logToolPolicyDrops(req)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
@@ -338,6 +348,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			httpReq.Header.Set(k, v)
 		}
 
+		logToolPolicyDrops(req)
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
 			if common.TimedOut(ctx, err) {
