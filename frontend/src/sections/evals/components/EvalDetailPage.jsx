@@ -67,6 +67,8 @@ import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
+import CustomTagInput from "./CustomTagInput";
+import { withPendingTag } from "./tagUtils";
 import JevOutputConfig from "./JevOutputConfig";
 import {
   buildJevMapping,
@@ -447,6 +449,7 @@ const EvalDetailPage = () => {
       // Description and tags belong to the eval, not to a version snapshot.
       setTags(getEvalTags(evalData));
       setDescription(evalData?.description || "");
+      setCustomTagInput("");
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
