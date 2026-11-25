@@ -291,11 +291,12 @@ func TestListModels_PrefixedModelQuotesTheProviderItNames(t *testing.T) {
 
 func TestListModels_QuoteUsesEligibleInstance(t *testing.T) {
 	for _, tc := range []struct {
-		keyType, credential string
+		keyType, credential, orgProvider string
 	}{
-		{"internal", "org-key"}, {"internal", ""}, {"byok", "org-key"}, {"byok", ""},
+		{"internal", "org-key", "google"}, {"internal", "", "google"}, {"byok", "org-key", "google"}, {"byok", "", "google"},
+		{"internal", "", "custom"},
 	} {
-		t.Run(tc.keyType+"/"+tc.credential, func(t *testing.T) {
+		t.Run(tc.keyType+"/"+tc.orgProvider+"/"+tc.credential, func(t *testing.T) {
 			const key = "sk-agentcc-discovery"
 			cfg := config.DefaultConfig()
 			cfg.Auth.Enabled = true
@@ -307,7 +308,7 @@ func TestListModels_QuoteUsesEligibleInstance(t *testing.T) {
 			}
 			store := tenant.NewStore()
 			store.Set("team", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
-				"google": {Enabled: true, APIKey: tc.credential, BaseURL: "https://us-central1-aiplatform.googleapis.com", APIFormat: "gemini", Models: []string{"explicit"}},
+				tc.orgProvider: {Enabled: true, APIKey: tc.credential, BaseURL: "https://us-central1-aiplatform.googleapis.com", APIFormat: "gemini", Models: []string{"explicit"}},
 			}})
 			table := make(map[string]*modeldb.ModelInfo)
 			for _, model := range []string{"explicit", "implicit"} {

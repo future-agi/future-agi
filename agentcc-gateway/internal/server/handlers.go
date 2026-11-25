@@ -2476,18 +2476,19 @@ func (h *Handlers) ModelDB() *modeldb.ModelDB {
 	return h.modelDB.Load()
 }
 
+// discoveryModels gives list and detail the same provider for each visible ID.
+func (h *Handlers) discoveryModels(r *http.Request) []models.ModelObject {
+	var global []models.ModelObject
+	if h.globalModelsVisible(r) {
+		global = h.registry.ListAllModels()
+	}
+	return mergeModelObjects(global, h.orgScopedModels(r, global))
+}
+
 // ListModels handles GET /v1/models.
 func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
-	var allModels []models.ModelObject
-	if h.globalModelsVisible(r) {
-		allModels = h.registry.ListAllModels()
-	}
+	allModels := h.discoveryModels(r)
 	db := h.ModelDB()
-
-	if scopedModels, ok := h.orgScopedModels(r); ok {
-		allModels = mergeModelObjects(allModels, scopedModels)
-	}
-
 	quote := h.discoveryQuote(r)
 	enriched := make([]models.EnrichedModelObject, 0, len(allModels))
 	for _, m := range allModels {
@@ -2611,21 +2612,21 @@ func (h *Handlers) lookupHeaderKey(r *http.Request) *authpkg.APIKey {
 	return h.keyStore.Lookup(rawKey)
 }
 
-func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool) {
+func (h *Handlers) orgScopedModels(r *http.Request, global []models.ModelObject) []models.ModelObject {
 	if h.tenantStore == nil {
-		return nil, false
+		return nil
 	}
 	ki := h.lookupHeaderKey(r)
 	if ki == nil {
-		return nil, false
+		return nil
 	}
 	orgID := ki.Metadata["org_id"]
 	if orgID == "" {
-		return nil, false
+		return nil
 	}
 	orgCfg := h.tenantStore.Get(orgID)
 	if orgCfg == nil || orgCfg.Providers == nil {
-		return nil, false
+		return nil
 	}
 
 	// A model several providers list is owned by the one inference routes to
@@ -2633,6 +2634,10 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 	// what a request costs. A model only providers that cannot serve list keeps
 	// the first of those.
 	servable, unservable := orgProviderIDs(orgCfg)
+	globalIDs := make(map[string]bool, len(global))
+	for _, m := range global {
+		globalIDs[m.ID] = true
+	}
 	seen := make(map[string]bool)
 	result := make([]models.ModelObject, 0)
 	for _, providerName := range append(servable, unservable...) {
@@ -2644,6 +2649,9 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 			owner := providerName
 			if matches := orgModelMatches(orgCfg, servable, modelID); len(matches) > 0 {
 				owner = matches[0].providerID
+			} else if globalIDs[modelID] {
+				// An org entry without credentials cannot shadow the serving global provider.
+				continue
 			}
 			result = append(result, models.ModelObject{
 				ID:      modelID,
@@ -2652,10 +2660,7 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 			})
 		}
 	}
-	if len(result) == 0 {
-		return nil, false
-	}
-	return result, true
+	return result
 }
 
 // GetModel handles GET /v1/models/{model}.
@@ -2666,30 +2671,12 @@ func (h *Handlers) GetModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	found := func(m models.ModelObject) {
-		em := enrichModel(h.ModelDB(), m, h.discoveryQuote(r)(m))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(em)
-	}
-
-	if scopedModels, ok := h.orgScopedModels(r); ok {
-		for _, m := range scopedModels {
-			if m.ID == modelID {
-				found(m)
-				return
-			}
-		}
-	}
-
-	// The global catalog is visible only to keys that can call it.
-	var allModels []models.ModelObject
-	if h.globalModelsVisible(r) {
-		allModels = h.registry.ListAllModels()
-	}
-	for _, m := range allModels {
+	for _, m := range h.discoveryModels(r) {
 		if m.ID == modelID {
-			found(m)
+			em := enrichModel(h.ModelDB(), m, h.discoveryQuote(r)(m))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(em)
 			return
 		}
 	}
