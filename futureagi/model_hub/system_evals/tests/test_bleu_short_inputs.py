@@ -9,7 +9,9 @@ import pytest
 import yaml
 
 YAML_DIR = Path(__file__).resolve().parent.parent / "function"
-SEED_COMMAND = YAML_DIR.parent.parent / "management" / "commands" / "seed_system_evals.py"
+SEED_COMMAND = (
+    YAML_DIR.parent.parent / "management" / "commands" / "seed_system_evals.py"
+)
 
 
 @pytest.fixture(params=["bleu_score", "code_bleu"])
@@ -82,7 +84,8 @@ def test_longer_partial_matches_preserve_existing_nonzero_smoothing(metric):
 
 
 @pytest.mark.parametrize(
-    "hypothesis,reference", [("", "Paris"), ("Paris", ""), (None, None), ("  ", "Paris")]
+    "hypothesis,reference",
+    [("", "Paris"), ("Paris", ""), (None, None), ("  ", "Paris")],
 )
 def test_missing_or_empty_hypothesis_still_scores_zero(metric, hypothesis, reference):
     _, evaluate, _ = metric
