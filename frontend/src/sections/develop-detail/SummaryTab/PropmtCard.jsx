@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { Box, useTheme } from "@mui/material";
+import { chartAxisColors, seriesColor } from "src/theme/data-colors";
 import { PropmtTitle } from "./SummaryStyle";
 import ReactApexChart from "react-apexcharts";
 import PropTypes from "prop-types";
@@ -70,7 +71,7 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
     chart: {
       type: "bar",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: chartAxisColors(theme).foreColor,
       toolbar: { show: false },
     },
     theme: {
@@ -93,17 +94,23 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
       },
     },
     grid: {
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: chartAxisColors(theme).gridColor,
     },
   });
 
   // Chart options for each chart type
-  const optionsOne = generateChartOptions(chartData.avgPromptToken, "#9585D5");
+  const optionsOne = generateChartOptions(
+    chartData.avgPromptToken,
+    seriesColor(theme, 0),
+  );
   const optionsTwo = generateChartOptions(
     chartData.avgCompletionToken,
-    "#E6CAF5",
+    seriesColor(theme, 1),
   );
-  const optionsThree = generateChartOptions(chartData.avgTotalToken, "#BF75E5");
+  const optionsThree = generateChartOptions(
+    chartData.avgTotalToken,
+    seriesColor(theme, 2),
+  );
 
   if (isLoading) {
     return (
@@ -133,7 +140,7 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
           <Box
             sx={{
               p: "24px",
-              borderRadius: "16px",
+              borderRadius: "12px",
               border: "1px solid var(--border-default)",
               mb: "29px",
             }}
@@ -151,7 +158,7 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
           <Box
             sx={{
               p: "24px",
-              borderRadius: "16px",
+              borderRadius: "12px",
               border: "1px solid var(--border-default)",
               mb: "29px",
             }}
@@ -171,7 +178,7 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
           <Box
             sx={{
               p: "24px",
-              borderRadius: "16px",
+              borderRadius: "12px",
               border: "1px solid var(--border-default)",
               mb: "29px",
             }}

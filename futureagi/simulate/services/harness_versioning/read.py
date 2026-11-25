@@ -28,7 +28,11 @@ from simulate.models import (
     RunTest,
 )
 from simulate.services.harness_versioning import diffs
-from simulate.services.harness_versioning.versions import versioning_enabled
+from simulate.services.harness_versioning.versions import (
+    actors_enabled,
+    versioning_enabled,
+    with_actor_digests,
+)
 from simulate.services.hosted_harness import HostedHarnessError
 
 logger = logging.getLogger(__name__)
@@ -72,6 +76,15 @@ def require_versioning() -> None:
         raise HostedHarnessError(
             "versioning_disabled",
             "environment versioning is not enabled",
+            status_code=404,
+        )
+
+
+def require_actors() -> None:
+    if not actors_enabled():
+        raise HostedHarnessError(
+            "actors_disabled",
+            "actors are not enabled",
             status_code=404,
         )
 
@@ -512,7 +525,8 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         .defer(*_PIECE_DEFERRED)
     )
     suites = _newest_first(
-        HarnessSuiteVersion.no_workspace_objects.filter(job=job)
+        # A suite version private to a fix is never listed.
+        HarnessSuiteVersion.no_workspace_objects.filter(job=job, fix_run__isnull=True)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
     )
@@ -598,6 +612,10 @@ def _environment_diff(
         sub_goals=_digests(goals, current_id, "sub_goal_digests") or {},
         previous_files=previous_files if known else None,
         files=files or {},
+        previous_actors=previous.get("actor_digests"),
+        actors=current.get("actor_digests"),
+        previous_actor_names=previous.get("actor_names"),
+        actor_names=current.get("actor_names"),
     )
 
 
@@ -701,7 +719,12 @@ def version_diff(
     previous = _mapping(other.documents, other.id, "documents")
     current = _mapping(version.documents, version.id, "documents")
     if piece == "environment":
-        diff = _environment_diff(previous, current, other.id, version.id)
+        diff = _environment_diff(
+            with_actor_digests(other, previous),
+            with_actor_digests(version, current),
+            other.id,
+            version.id,
+        )
         return {
             "summary": diffs.summarize_environment(diff),
             "diff": diff,

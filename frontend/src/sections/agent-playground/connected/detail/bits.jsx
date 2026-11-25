@@ -1,9 +1,10 @@
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack, Typography } from "@mui/material";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // Small pieces shared by the agent detail tabs, from the designer prototype.
 
-export function Pill({ children }) {
+export function Pill({ children, tone = "neutral" }) {
   return (
     <Box
       sx={{
@@ -11,21 +12,27 @@ export function Pill({ children }) {
         height: 20,
         display: "inline-flex",
         alignItems: "center",
-        borderRadius: 0.75,
-        border: "1px solid",
-        borderColor: "divider",
+        borderRadius: "4px",
+        bgcolor: "action.selected",
         flexShrink: 0,
       }}
     >
       <Typography
-        sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}
+        sx={{
+          typography: "s2",
+          fontWeight: 500,
+          color: tone === "primary" ? "primary.main" : "text.secondary",
+        }}
       >
         {children}
       </Typography>
     </Box>
   );
 }
-Pill.propTypes = { children: PropTypes.node };
+Pill.propTypes = {
+  children: PropTypes.node,
+  tone: PropTypes.oneOf(["neutral", "primary"]),
+};
 
 export function Card({ title, action, children, sx }) {
   return (
@@ -33,7 +40,7 @@ export function Card({ title, action, children, sx }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         bgcolor: "background.paper",
         overflow: "hidden",
         minWidth: 0,
@@ -47,15 +54,15 @@ export function Card({ title, action, children, sx }) {
         alignItems="center"
         spacing={1}
         sx={{
-          px: 2,
-          py: 1.25,
+          px: 1.5,
+          minHeight: 36,
           borderBottom: "1px solid",
           borderColor: "divider",
         }}
       >
         <Typography
           component="div"
-          sx={{ typography: "s2", fontWeight: 700, flex: 1 }}
+          sx={{ typography: "m3", fontWeight: 500, flex: 1 }}
         >
           {title}
         </Typography>
@@ -77,7 +84,7 @@ Card.propTypes = {
   sx: PropTypes.object,
 };
 
-export function Row({ cells, header = false, onClick }) {
+export function Row({ cells, header = false, onClick, template }) {
   const clickable = onClick
     ? {
         role: "button",
@@ -96,10 +103,11 @@ export function Row({ cells, header = false, onClick }) {
       {...clickable}
       sx={{
         display: "grid",
-        gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))`,
+        gridTemplateColumns:
+          template ?? `repeat(${cells.length}, minmax(0, 1fr))`,
         gap: 1.5,
-        px: 2,
-        py: header ? 0.75 : 1,
+        px: 1.5,
+        minHeight: header ? 28 : ROW_HEIGHT.default,
         alignItems: "center",
         // A header row sits right under its card's title, which already
         // draws that line.
@@ -120,8 +128,7 @@ export function Row({ cells, header = false, onClick }) {
           component="div"
           noWrap
           sx={{
-            typography: "s2",
-            ...(header && { fontSize: 13 }),
+            typography: "s1",
             fontWeight: header ? 500 : 400,
             color: header ? "text.secondary" : "text.primary",
           }}
@@ -136,6 +143,7 @@ Row.propTypes = {
   cells: PropTypes.array.isRequired,
   header: PropTypes.bool,
   onClick: PropTypes.func,
+  template: PropTypes.string,
 };
 
 export function QuietTag({ children }) {
@@ -145,15 +153,13 @@ export function QuietTag({ children }) {
       sx={{
         display: "inline-flex",
         alignItems: "center",
-        px: 0.625,
+        px: 0.75,
         height: 18,
-        borderRadius: 0.75,
+        borderRadius: "4px",
         flexShrink: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        typography: "s3",
-        fontSize: 11,
-        fontWeight: 600,
+        bgcolor: "action.selected",
+        typography: "s2",
+        fontWeight: 500,
         lineHeight: 1,
         whiteSpace: "nowrap",
         color: "text.secondary",
@@ -172,3 +178,52 @@ export function LineSkeleton({ sx, ...rest }) {
   return <Skeleton sx={{ height: "1lh", ...sx }} {...rest} />;
 }
 LineSkeleton.propTypes = { sx: PropTypes.object };
+
+export function LabeledField({
+  id,
+  label,
+  required,
+  helper,
+  error,
+  sx,
+  children,
+}) {
+  const caption = error || helper;
+  return (
+    <Box sx={sx}>
+      <Typography
+        component="label"
+        htmlFor={id}
+        sx={{ display: "block", typography: "s1", fontWeight: 500, mb: 0.5 }}
+      >
+        {label}
+        {required && (
+          <Box component="span" sx={{ color: "status.danger.fg", ml: 0.5 }}>
+            *
+          </Box>
+        )}
+      </Typography>
+      {children}
+      {caption && (
+        <Typography
+          sx={{
+            typography: "s3",
+            color: error ? "status.danger.fg" : "text.subtitle",
+            mt: 0.5,
+          }}
+        >
+          {caption}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+LabeledField.propTypes = {
+  id: PropTypes.string.isRequired,
+  label: PropTypes.node.isRequired,
+  required: PropTypes.bool,
+  helper: PropTypes.node,
+  error: PropTypes.node,
+  sx: PropTypes.object,
+  children: PropTypes.node,
+};

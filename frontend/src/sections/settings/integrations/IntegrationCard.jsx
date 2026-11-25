@@ -4,9 +4,6 @@ import {
   Alert,
   Box,
   Button,
-  Card,
-  CardActionArea,
-  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -14,15 +11,21 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import { useLocation, useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { fDateTime } from "src/utils/format-time";
-import { useDeleteConnection, useStartSlackInstall } from "src/api/integrations";
+import {
+  useDeleteConnection,
+  useStartGitHubInstall,
+  useStartSlackInstall,
+} from "src/api/integrations";
 import PlatformLogo from "./PlatformLogo";
 import StatusBadge from "./StatusBadge";
-import { SKIP_SYNC_SETTINGS_PLATFORMS } from "./constants";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
+import { INSTALL_FLOWS, SKIP_SYNC_SETTINGS_PLATFORMS } from "./constants";
 import { getErrorMessage } from "./utils";
 
 export default function IntegrationCard({ connection }) {
@@ -52,6 +55,10 @@ export default function IntegrationCard({ connection }) {
   const { mutate: deleteConnection, isPending: deleting } =
     useDeleteConnection();
   const startSlackInstall = useStartSlackInstall();
+  const startGitHubInstall = useStartGitHubInstall();
+  const installFlow = INSTALL_FLOWS[connection.platform];
+  const startInstall =
+    connection.platform === "github" ? startGitHubInstall : startSlackInstall;
 
   const handleClick = () => {
     if (isActionOnly) {
@@ -74,114 +81,127 @@ export default function IntegrationCard({ connection }) {
     });
   };
 
-  const handleReconnectSlack = () => {
+  const handleReconnect = () => {
     setConnectionError("");
-    startSlackInstall.mutate(connection.id, {
+    startInstall.mutate(connection.id, {
       onSuccess: (response) => {
-        const authorizationUrl = response.data?.result?.authorization_url;
-        if (authorizationUrl) window.location.assign(authorizationUrl);
-        else setConnectionError("Could not start Slack authorization. Please try again.");
+        const installUrl = response.data?.result?.[installFlow.urlField];
+        if (installUrl) window.location.assign(installUrl);
+        else
+          setConnectionError(
+            `Could not start ${installFlow.label} authorization. Please try again.`,
+          );
       },
-      onError: (error) => setConnectionError(getErrorMessage(error, "Could not reconnect Slack.")),
+      onError: (error) =>
+        setConnectionError(
+          getErrorMessage(error, `Could not reconnect ${installFlow.label}.`),
+        ),
     });
   };
 
   return (
     <>
-      <Card variant="outlined">
-        <CardActionArea onClick={handleClick} sx={{ p: theme.spacing(2.5) }}>
-          <Box
-            display="flex"
-            alignItems="center"
-            gap={theme.spacing(2)}
-            mb={theme.spacing(1.5)}
-          >
-            <PlatformLogo platform={connection.platform} size={36} />
-            <Box flex={1} minWidth={0}>
-              <Typography
-                noWrap
-                title={displayName}
-                sx={{
-                  typography: "s1",
-                  fontWeight: "fontWeightMedium",
-                  color: "text.primary",
-                }}
-              >
-                {displayName}
-              </Typography>
-              <Typography
-                noWrap
-                title={hostUrl}
-                sx={{ typography: "s2", color: "text.disabled" }}
-              >
-                {hostUrl || "—"}
-              </Typography>
-            </Box>
-            {isActionOnly ? (
-              <Chip
-                size="small"
-                color="success"
-                label="Connected"
-                icon={<Iconify icon="solar:check-circle-bold" width={16} />}
-              />
-            ) : (
-              <StatusBadge status={connection.status} />
-            )}
+      <Section variant="panel" onClick={handleClick}>
+        <Box
+          display="flex"
+          alignItems="center"
+          gap={theme.spacing(1.5)}
+          mb={theme.spacing(1)}
+        >
+          <PlatformLogo platform={connection.platform} size={28} />
+          <Box flex={1} minWidth={0}>
+            <Typography
+              noWrap
+              title={displayName}
+              sx={{
+                typography: "s2_1",
+                fontWeight: "fontWeightSemiBold",
+                color: "text.primary",
+              }}
+            >
+              {displayName}
+            </Typography>
+            <Typography
+              noWrap
+              title={hostUrl}
+              sx={{ typography: "s2", color: "text.tertiary" }}
+            >
+              {hostUrl || "—"}
+            </Typography>
           </Box>
+          {isActionOnly && connection.status === "active" ? (
+            <RunStatusBadge
+              status="connected"
+              icon={<Iconify icon="solar:check-circle-bold" width={14} />}
+            />
+          ) : (
+            <StatusBadge status={connection.status} />
+          )}
+        </Box>
 
-          <Box
-            display="flex"
-            justifyContent="space-between"
-            mt={theme.spacing(1)}
-          >
-            {isActionOnly ? (
-              <>
-                <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                  Action integration
-                </Typography>
-                <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                  {createdAt ? `Connected ${fToNow(createdAt)}` : ""}
-                </Typography>
-              </>
-            ) : (
-              <>
-                <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                  {totalTracesSynced?.toLocaleString() || 0} traces
-                </Typography>
-                <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                  {lastSyncedAt
-                    ? `Synced ${fToNow(lastSyncedAt)}`
-                    : "Never synced"}
-                </Typography>
-              </>
-            )}
-          </Box>
-        </CardActionArea>
-      </Card>
+        <Box
+          display="flex"
+          justifyContent="space-between"
+          mt={theme.spacing(0.5)}
+        >
+          {isActionOnly ? (
+            <>
+              <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+                Action integration
+              </Typography>
+              <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+                {createdAt ? `Connected ${fToNow(createdAt)}` : ""}
+              </Typography>
+            </>
+          ) : (
+            <>
+              <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+                {totalTracesSynced?.toLocaleString() || 0} traces
+              </Typography>
+              <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+                {lastSyncedAt
+                  ? `Synced ${fToNow(lastSyncedAt)}`
+                  : "Never synced"}
+              </Typography>
+            </>
+          )}
+        </Box>
+      </Section>
 
       {isActionOnly && (
         <Dialog
           open={disconnectOpen}
           onClose={() => setDisconnectOpen(false)}
-          maxWidth="xs"
+          maxWidth={false}
+          PaperProps={{ sx: { maxWidth: 560 } }}
           fullWidth
         >
           <DialogTitle>Manage {displayName}</DialogTitle>
           <DialogContent>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {connection.platform === "slack"
-                ? `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Reconnect to renew Slack access, or disconnect to stop Error Feed notifications using this workspace.`
+              {installFlow
+                ? `Connected ${createdAt ? fDateTime(createdAt) : "—"}. ${installFlow.manageText}`
                 : `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Disconnecting will remove the API key and disable issue creation from Error Feed.`}
             </Typography>
-            {connectionError && <Alert severity="error" sx={{ mt: 2 }}>{connectionError}</Alert>}
+            {connectionError && (
+              <Alert severity="error" sx={{ mt: 2 }}>
+                {connectionError}
+              </Alert>
+            )}
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setDisconnectOpen(false)} size="small">
               Cancel
             </Button>
-            {connection.platform === "slack" && (
-              <Button onClick={handleReconnectSlack} size="small" disabled={startSlackInstall.isPending}>
-                {startSlackInstall.isPending ? "Connecting…" : "Reconnect Slack"}
+            {installFlow && (
+              <Button
+                onClick={handleReconnect}
+                size="small"
+                disabled={startInstall.isPending}
+              >
+                {startInstall.isPending
+                  ? "Connecting…"
+                  : `Reconnect ${installFlow.label}`}
               </Button>
             )}
             <Button

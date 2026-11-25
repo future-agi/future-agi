@@ -17,7 +17,7 @@ const DotsStepper = styled(MobileStepper)(({ theme }) => ({
     height: 12,
     margin: "0 6px",
     backgroundColor: theme.palette.action.disabled,
-    transition: "all 0.3s ease",
+    transition: "all 0.2s ease",
   },
   "& .MuiMobileStepper-dotActive": {
     width: 40,
@@ -53,7 +53,7 @@ export default function OssSetupShell({
           width: "100%",
           maxWidth: 480,
           px: 3,
-          py: { xs: 4, md: 4 },
+          py: 2.5,
           position: "relative",
           zIndex: 1,
           // margin auto centers vertically + horizontally, staying scrollable
@@ -66,7 +66,7 @@ export default function OssSetupShell({
           gap={0.75}
           alignItems="center"
           justifyContent="center"
-          sx={{ mb: 4 }}
+          sx={{ mb: 2.5 }}
         >
           <SvgColor
             src="/favicon/logo.svg"
@@ -78,12 +78,12 @@ export default function OssSetupShell({
           />
         </Stack>
 
-        <Stack alignItems="center" sx={{ mb: 3, mt: -1, width: "100%" }}>
+        <Stack alignItems="center" sx={{ mb: 2, mt: -1, width: "100%" }}>
           {illustration || <BlueprintSpaceship size={150} />}
         </Stack>
 
         {typeof step === "number" && (
-          <Stack alignItems="center" sx={{ mb: 4 }}>
+          <Stack alignItems="center" sx={{ mb: 3 }}>
             <DotsStepper
               variant="dots"
               steps={totalSteps}

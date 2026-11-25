@@ -90,7 +90,7 @@ export default function VersionBar({ env, envState }) {
                 {versionBar.envPrefix}{" "}
                 <Box
                   component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightBold" }}
+                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
                 >
                   {envLabel}
                 </Box>
@@ -118,7 +118,7 @@ export default function VersionBar({ env, envState }) {
                 {versionBar.agentPrefix}{" "}
                 <Box
                   component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightBold" }}
+                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
                 >
                   {agentLabel}
                 </Box>
@@ -136,7 +136,7 @@ export default function VersionBar({ env, envState }) {
                 {versionBar.suitePrefix}{" "}
                 <Box
                   component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightBold" }}
+                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
                 >
                   {named(suiteV)}
                 </Box>
@@ -178,7 +178,7 @@ export default function VersionBar({ env, envState }) {
                 sx={{
                   typography: "s2",
                   color: "text.primary",
-                  fontWeight: "fontWeightBold",
+                  fontWeight: "fontWeightSemiBold",
                 }}
               >
                 {subject.name || versionBar.unnamedAgent}
@@ -189,7 +189,7 @@ export default function VersionBar({ env, envState }) {
                   sx={{
                     typography: "s2",
                     color: "text.secondary",
-                    fontWeight: "fontWeightBold",
+                    fontWeight: "fontWeightSemiBold",
                   }}
                 >
                   {subject.active_version}

@@ -4,6 +4,7 @@ import { Drawer } from "@mui/material";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
 import { PROJECT_SOURCE } from "src/utils/constants";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
 
@@ -28,6 +29,8 @@ const TaskRunTraceDrawer = ({
     traceId,
     { enabled: open && isVoiceProject, projectId },
   );
+  // The trace branch registers inside TraceDetailDrawerV2.
+  const voiceCovered = useDrawerCovered(open && isVoiceProject);
 
   // Wait for the project's kind so a voice call never flashes the trace
   // drawer first.
@@ -42,6 +45,7 @@ const TaskRunTraceDrawer = ({
         variant="persistent"
         open={open}
         onClose={onClose}
+        sx={coveredDrawerSx(voiceCovered)}
         PaperProps={{
           sx: {
             width: "auto",
@@ -87,6 +91,9 @@ const TaskRunTraceDrawer = ({
       onClose={onClose}
       projectId={projectId}
       initialSpanId={spanId}
+      // The run evaluated this span: keep it in the tree even when the
+      // user's saved span filters would hide it.
+      keepInitialSpanVisible
       initialEvalFocus
       onPrev={onPrev}
       onNext={onNext}

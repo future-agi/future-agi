@@ -11,13 +11,15 @@ same order, so every install path prepares the datastores the same way:
      logged, not fatal, as in entrypoint.sh)
   3. migrate, then seed_system_evals
   4. ClickHouse native schema (``oss_cdc_install --phase native --apply``)
-  5. observed-attribute index: its ClickHouse database, users and grants
-  6. the eval-task search attributes on the Temporal namespace
-  7. change data capture as FI_CDC_MODE says
+  5. the Metrics ClickHouse schema (``schema_install --apply``: packaged files
+     009, 011 and 028-038), only while METRICS_ENABLED is on
+  6. observed-attribute index: its ClickHouse database, users and grants
+  7. the eval-task search attributes on the Temporal namespace
+  8. change data capture as FI_CDC_MODE says
      (``oss_outbox_cdc.ensure_installed``: capture triggers plus the drain
      schedules for ``outbox``, both removed for ``peerdb``/``off``)
-  8. register_temporal_schedules
-  9. the first admin from FAGI_ADMIN_EMAIL, FAGI_ADMIN_NAME and
+  9. register_temporal_schedules
+ 10. the first admin from FAGI_ADMIN_EMAIL, FAGI_ADMIN_NAME and
      FAGI_ADMIN_PASSWORD, when set (the chart's bootstrap.admin). The
      Standalone bootstrap leaves this one to ./bin/install's create_user.
 
@@ -258,6 +260,22 @@ def clickhouse_native_schema(log: Callable[[str], None], timeout: int) -> None:
             "create tables."
         )
     log(f"ClickHouse native schema done in {time.monotonic() - started:.1f}s")
+
+
+def metrics_schema(log: Callable[[str], None]) -> None:
+    """The ClickHouse schema Metrics reads and writes, while METRICS_ENABLED is
+    on. Each file has a receipt, so a rerun applies only what is missing; with
+    Metrics off this does nothing, and turning it on later applies the files
+    on the next bootstrap. A failure never stops the bootstrap."""
+    # A plain import: see change_data_capture.
+    import tracer.services.derived_metrics.schema_install as schema_install
+
+    log("Metrics schema ...")
+    started = time.monotonic()
+    # Advisory: a failure leaves only Metrics unavailable (its API answers
+    # metric_schema_not_installed); the rest of the install still starts.
+    run_cli(schema_install.main, ["--apply", "--advisory"])
+    log(f"Metrics schema done in {time.monotonic() - started:.1f}s")
 
 
 def property_catalog(log: Callable[[str], None], env=None) -> None:
@@ -507,6 +525,7 @@ class Command(BaseCommand):
         attempts = max(1, options["temporal_attempts"])
         migrate_and_seed(self.log)
         clickhouse_native_schema(self.log, options["clickhouse_timeout"])
+        metrics_schema(self.log)
         if options["skip_property_catalog"]:
             self.log("observed-attribute index skipped (--skip-property-catalog)")
         else:

@@ -1,7 +1,9 @@
 import requests as http_requests
 import structlog
+from django.http import Http404
 from django.utils import timezone
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -32,6 +34,10 @@ _GATEWAY_SYNC_WARNING = (
 )
 
 _DEFAULT_API_PATH_PREFIX = "/v1"
+
+# The api_format of a structured-decision provider (TypeSafe, Perplexity
+# Decider, a custom System One endpoint), and the gateway's alias for it.
+_SYSTEM_ONE_API_FORMATS = ("systemone", "typesafe")
 
 
 def _join_api_endpoint(base_url, api_path_prefix, path):
@@ -86,8 +92,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             return self._gm.success_response(
                 AgentccProviderCredentialSerializer(instance).data
             )
-        except Exception as e:
-            logger.exception("provider_credential_retrieve_error", error=str(e))
+        except (Http404, NotFound):
             return self._gm.not_found("Provider credential not found")
 
     def create(self, request, *args, **kwargs):
@@ -148,8 +153,12 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
 
     def partial_update(self, request, *args, **kwargs):
         try:
+            # Resolve the object before any write or gateway push. A missing or
+            # out-of-organization credential answers 404 below, with no writes.
             instance = self.get_object()
-            serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
+            serializer = AgentccProviderCredentialUpdateSerializer(
+                instance, data=request.data
+            )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
             try:
@@ -185,9 +194,8 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
-        except Exception as e:
-            logger.exception("provider_credential_update_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        except (Http404, NotFound):
+            return self._gm.not_found("Provider credential not found")
 
     def destroy(self, request, *args, **kwargs):
         try:
@@ -200,15 +208,16 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
-        except Exception as e:
-            logger.exception("provider_credential_delete_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        except (Http404, NotFound):
+            return self._gm.not_found("Provider credential not found")
 
     @action(detail=True, methods=["post"])
     def rotate(self, request, pk=None):
         """Rotate credentials — accepts new credentials, encrypts, and updates."""
         try:
             instance = self.get_object()
+            if not isinstance(request.data, dict):
+                return self._gm.bad_request("Request body must be a JSON object")
             credentials = request.data.get("credentials")
             if not credentials or not isinstance(credentials, dict):
                 return self._gm.bad_request(
@@ -234,9 +243,8 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
-        except Exception as e:
-            logger.exception("provider_credential_rotate_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        except (Http404, NotFound):
+            return self._gm.not_found("Provider credential not found")
 
     @action(detail=False, methods=["post"])
     def fetch_models(self, request):
@@ -252,6 +260,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         api_format = None
         api_path_prefix = None
         saved_base_url = None
+        saved_models = []
 
         if provider_name:
             organization = getattr(request, "organization", None)
@@ -282,6 +291,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 saved_base_url = base_url
                 api_format = cred.api_format
                 api_path_prefix = (cred.extra_config or {}).get("api_path_prefix")
+                saved_models = list(cred.models_list or [])
 
         # The saved key only ever goes where it was saved for: a caller who can
         # use the credential but not read it must not be able to redirect it.
@@ -320,6 +330,12 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             )
             return self._gm.bad_request(msg)
 
+        # A decision provider is never probed: a listing call is not free on
+        # every decision vendor, and its models come from the preset or the
+        # user. What was saved is the list.
+        if api_format in _SYSTEM_ONE_API_FORMATS:
+            return self._gm.success_response({"models": saved_models})
+
         try:
             models = self._fetch_models_from_provider(
                 provider_name, base_url, api_key, api_format, api_path_prefix
@@ -353,6 +369,13 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         ``provider_name`` first; falls back to ``api_format`` for custom /
         unknown providers.
         """
+        # Azure inference addresses deployment names, not catalogue model IDs.
+        # Listing deployments requires management-plane credentials this API
+        # does not accept. Require explicit deployment names instead of probing
+        # a different protocol or presenting unusable catalogue IDs.
+        if api_format == "azure":
+            return []
+
         timeout = 15
 
         # Validate user-supplied base_url and use safe session to prevent SSRF
@@ -453,7 +476,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             return sorted(m["name"] for m in data.get("models", []) if m.get("name"))
 
         # Default: OpenAI-compatible (OpenAI, Groq, Together, Fireworks, Mistral,
-        # Azure OpenAI-compat, custom/self-hosted). The version segment is the
+        # custom/self-hosted). The version segment is the
         # provider's own, so discovery probes the URL the proxy will really use.
         url = _join_api_endpoint(
             base_url or "https://api.openai.com/v1", api_path_prefix, "/models"

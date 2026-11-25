@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import {
   act,
   fireEvent,
@@ -48,17 +48,26 @@ vi.mock("../components/CreateAgentsButton", () => ({
   default: () => <button type="button">Create Agents</button>,
 }));
 
-vi.mock("src/components/tooltip/CustomTooltip", () => ({
-  default: ({ title, show, children }) => (
-    <div
-      data-testid="custom-tooltip"
-      data-title={title}
-      data-show={String(show)}
-    >
-      {children}
+// The shared header: the info text reaches it as a prop (its tooltip is the
+// header's own concern), so the page title, info and actions are surfaced here.
+vi.mock("src/components/page-header", () => ({
+  default: ({ title, description, actions }) => (
+    <div data-testid="page-header" data-description={description}>
+      <h1>{title}</h1>
+      {actions}
     </div>
   ),
 }));
+
+const mockAvailability = { current: {} };
+
+vi.mock("src/api/agents/agentConnect", () => ({
+  useConnectAvailability: () => mockAvailability.current,
+}));
+
+beforeEach(() => {
+  mockAvailability.current = { data: { readingEnabled: true } };
+});
 
 vi.mock("../hooks/useCanEditAgent", () => ({
   default: () => ({ canCreate: true, canUpdate: true, canDelete: true }),
@@ -211,24 +220,25 @@ describe("AgentsLanding", () => {
     expect(currentLocation.pathname).toBe("/dashboard/agents/connected");
   });
 
-  it("sends Connect an agent to the environments build page", () => {
+  it("sends Connect an agent to the connect page", () => {
+    renderAt("/dashboard/agents/connected");
+    fireEvent.click(screen.getByRole("button", { name: "Connect an agent" }));
+    expect(currentLocation.pathname).toBe("/dashboard/agents/connect");
+  });
+
+  it("sends Connect an agent to Environments while reading agents is off", () => {
+    mockAvailability.current = { data: { readingEnabled: false } };
     renderAt("/dashboard/agents/connected");
     fireEvent.click(screen.getByRole("button", { name: "Connect an agent" }));
     expect(currentLocation.pathname).toBe("/dashboard/simulate/environments");
     expect(currentLocation.search).toBe("?tab=build");
   });
 
-  it("explains the page in a CustomTooltip on the header info icon", () => {
+  it("explains the page in the header description", () => {
     renderAt("/dashboard/agents/connected");
-    const tip = screen
-      .getAllByTestId("custom-tooltip")
-      .find((t) =>
-        t.dataset.title?.startsWith("Build agents in the Playground"),
-      );
-    expect(tip).toBeDefined();
-    expect(tip).toHaveAttribute("data-show", "true");
-    expect(tip.dataset.title).toBe(
-      "Build agents in the Playground, or connect agents that already run somewhere else to test them in simulations.",
+    expect(screen.getByTestId("page-header")).toHaveAttribute(
+      "data-description",
+      "Build agents in the Playground or connect the ones you already run, then test them in simulations.",
     );
   });
 

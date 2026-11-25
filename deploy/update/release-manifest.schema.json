@@ -1,0 +1,962 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/future-agi/future-agi/blob/main/deploy/update/release-manifest.schema.json",
+  "title": "Future AGI release manifest (bin/update)",
+  "description": "Mirrors deploy/update/manifest.py validate_manifest(). Rules JSON Schema cannot express are enforced only there: each component image is tagged with exactly the manifest version (serving_gpu with the version plus -gpu), minimum_version is not newer than version, helm.version equals the version without its leading v, and schema_version is the JSON integer 1 or 2 (JSON Schema also accepts 1.0 and 2.0). Closed readable legacy contract-v1 and restore-backed contract-v2. Only contract-v2 standalone-cold-restore-v1 can authorize automatic apply. Legacy migration metadata is unchanged, including requires_bootstrap=true. Exact transition, platform, retained deployment, executor, migration evidence, passing suites and inputs_hash are checked at runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "product",
+    "channel",
+    "version",
+    "source_sha",
+    "published_at",
+    "minimum_version",
+    "signature",
+    "components",
+    "helm",
+    "deployment",
+    "migration"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "product": {
+      "const": "future-agi"
+    },
+    "channel": {
+      "enum": [
+        "stable",
+        "beta"
+      ]
+    },
+    "version": {
+      "$ref": "#/$defs/version"
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}(?![\\s\\S])$"
+    },
+    "published_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?![\\s\\S])$"
+    },
+    "minimum_version": {
+      "$ref": "#/$defs/version"
+    },
+    "release_notes": {
+      "type": "string",
+      "pattern": "^https://\\S+(?![\\s\\S])$"
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bundle"
+      ],
+      "properties": {
+        "bundle": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,200}(?![\\s\\S])$"
+        },
+        "identity": {
+          "$ref": "#/$defs/trimmed"
+        },
+        "issuer": {
+          "$ref": "#/$defs/trimmed"
+        }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "standalone",
+        "backend",
+        "frontend",
+        "fi_collector",
+        "agentcc_gateway",
+        "serving",
+        "serving_gpu",
+        "code_executor",
+        "simulation_runner"
+      ],
+      "properties": {
+        "standalone": {
+          "$ref": "#/$defs/component"
+        },
+        "backend": {
+          "$ref": "#/$defs/component"
+        },
+        "frontend": {
+          "$ref": "#/$defs/component"
+        },
+        "fi_collector": {
+          "$ref": "#/$defs/component"
+        },
+        "agentcc_gateway": {
+          "$ref": "#/$defs/component"
+        },
+        "serving": {
+          "$ref": "#/$defs/component"
+        },
+        "serving_gpu": {
+          "$ref": "#/$defs/component"
+        },
+        "code_executor": {
+          "$ref": "#/$defs/component"
+        },
+        "simulation_runner": {
+          "$ref": "#/$defs/component"
+        }
+      },
+      "allOf": [
+        {
+          "description": "Each component's image is its own repository, after an optional registry host (a name with a dot or a port, or localhost) that mirrors may change, tagged with a version (serving_gpu: the version plus -gpu).",
+          "properties": {
+            "standalone": {
+              "properties": {
+                "image": {
+                  "pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/standalone:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                }
+              }
+            },
+            "backend": {
+              "properties": {
+                "image": {
+                  "pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/future-agi:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                }
+              }
+            },
+            "frontend": {
+              "properties": {
+                "image": {
+                  "pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/frontend:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                }
+              }
+            },
+            "fi_collector": {
+              "properties": {
+                "image": {
+                  "pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/fi-collector:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                }
+              }
+            },
+            "agentcc_gateway": {
+              "properties": {
+                "image": {
+                  "pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/agentcc-gateway:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                }
+              }
+            },
+            "serving": {
+              "properties": {
+                "image": {
+                  "pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/serving:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                }
+              }
+            },
+            "serving_gpu": {
+              "properties": {
+                "image": {
+                  "pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/serving:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?-gpu(?![\\s\\S])$"
+                }
+              }
+            },
+            "code_executor": {
+              "properties": {
+                "image": {
+                  "pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/code-executor:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                }
+              }
+            },
+            "simulation_runner": {
+              "properties": {
+                "image": {
+                  "pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/future-agi-simulation-runner:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "helm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chart",
+        "version",
+        "digest"
+      ],
+      "properties": {
+        "chart": {
+          "description": "oci://<registry host[:port]>/<path>, untagged and without a digest.",
+          "type": "string",
+          "pattern": "^oci://[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)+(?![\\s\\S])$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files"
+      ],
+      "properties": {
+        "files": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "description": "A normalized path relative to the checkout: no leading /, no backslash, no empty, . or .. segment, no surrounding whitespace.",
+            "pattern": "^(?=\\S)(?:(?!\\.\\.?/)[^/\\\\]+/)*(?!\\.\\.?$)[^/\\\\]*[^/\\\\\\s](?![\\s\\S])$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+          }
+        }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requires_bootstrap",
+        "rollback"
+      ],
+      "properties": {
+        "requires_bootstrap": {
+          "type": "boolean"
+        },
+        "rollback": {
+          "enum": [
+            "manual",
+            "unsupported"
+          ]
+        }
+      }
+    },
+    "compatibility": {
+      "$ref": "#/$defs/compatibility"
+    }
+  },
+  "if": {
+    "properties": {
+      "channel": {
+        "const": "stable"
+      }
+    },
+    "required": [
+      "channel"
+    ]
+  },
+  "then": {
+    "properties": {
+      "version": {
+        "$ref": "#/$defs/release_version"
+      }
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+    },
+    "release_version": {
+      "description": "A version without a prerelease suffix: what the stable channel carries.",
+      "type": "string",
+      "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(?![\\s\\S])$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+    },
+    "trimmed": {
+      "type": "string",
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])$"
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "digest"
+      ],
+      "properties": {
+        "image": {
+          "type": "string",
+          "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "linux/amd64",
+              "linux/arm64"
+            ]
+          }
+        }
+      }
+    },
+    "compatibility": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contract_version",
+            "automatic_apply",
+            "requires_operator_initialization",
+            "required_env",
+            "state_domains",
+            "predecessors",
+            "automatic_rollback",
+            "validation"
+          ],
+          "properties": {
+            "contract_version": {
+              "type": "integer",
+              "const": 1
+            },
+            "automatic_apply": {
+              "type": "boolean"
+            },
+            "requires_operator_initialization": {
+              "type": "boolean"
+            },
+            "required_env": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "rule",
+                  "components"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])$"
+                  },
+                  "rule": {
+                    "type": "string",
+                    "enum": [
+                      "present",
+                      "nonempty"
+                    ]
+                  },
+                  "components": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "standalone",
+                        "backend",
+                        "frontend",
+                        "fi_collector",
+                        "agentcc_gateway",
+                        "serving",
+                        "serving_gpu",
+                        "code_executor",
+                        "simulation_runner"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "uniqueItems": true
+                  }
+                }
+              },
+              "minItems": 0,
+              "maxItems": 256
+            },
+            "state_domains": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "domain",
+                  "from_epoch",
+                  "to_epoch",
+                  "backward_read",
+                  "backward_write"
+                ],
+                "properties": {
+                  "domain": {
+                    "type": "string",
+                    "enum": [
+                      "postgres_app",
+                      "clickhouse",
+                      "object_store",
+                      "temporal",
+                      "peerdb_catalog",
+                      "peerdb_temporal",
+                      "peerdb_objects",
+                      "redis",
+                      "kafka_catalog",
+                      "shared_files",
+                      "component_protocols"
+                    ]
+                  },
+                  "from_epoch": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "to_epoch": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "backward_read": {
+                    "type": "boolean"
+                  },
+                  "backward_write": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "minItems": 0,
+              "maxItems": 11
+            },
+            "predecessors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "manifest_hash",
+                  "raw_manifest_sha256",
+                  "source_sha",
+                  "mode",
+                  "platform",
+                  "profiles",
+                  "active_components",
+                  "rollback_certified"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                  },
+                  "manifest_hash": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "raw_manifest_sha256": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "source_sha": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[0-9a-f]{40}(?![\\s\\S])$"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "standalone",
+                      "distributed"
+                    ]
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  },
+                  "profiles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])$"
+                    },
+                    "minItems": 0,
+                    "maxItems": 32,
+                    "uniqueItems": true
+                  },
+                  "active_components": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "standalone",
+                        "backend",
+                        "frontend",
+                        "fi_collector",
+                        "agentcc_gateway",
+                        "serving",
+                        "serving_gpu",
+                        "code_executor",
+                        "simulation_runner"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "uniqueItems": true
+                  },
+                  "rollback_certified": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "minItems": 0,
+              "maxItems": 64
+            },
+            "automatic_rollback": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "strategy"
+              ],
+              "properties": {
+                "strategy": {
+                  "type": "string",
+                  "enum": [
+                    "never",
+                    "images_only"
+                  ]
+                }
+              }
+            },
+            "validation": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "asset",
+                    "sha256",
+                    "inputs_hash",
+                    "run_id"
+                  ],
+                  "properties": {
+                    "asset": {
+                      "type": "string",
+                      "const": "future-agi-update-compatibility.json"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                    },
+                    "inputs_hash": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                    },
+                    "run_id": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contract_version",
+            "automatic_apply",
+            "requires_operator_initialization",
+            "required_env",
+            "predecessors",
+            "automatic_rollback",
+            "validation",
+            "qualification_policy",
+            "restore_procedure_id",
+            "backup_inventory_version",
+            "host_observation_contract",
+            "runtime_activation_contract"
+          ],
+          "properties": {
+            "contract_version": {
+              "type": "integer",
+              "const": 2
+            },
+            "automatic_apply": {
+              "type": "boolean"
+            },
+            "requires_operator_initialization": {
+              "type": "boolean"
+            },
+            "required_env": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "rule",
+                  "components"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])$"
+                  },
+                  "rule": {
+                    "type": "string",
+                    "enum": [
+                      "present",
+                      "nonempty"
+                    ]
+                  },
+                  "components": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "standalone",
+                        "backend",
+                        "frontend",
+                        "fi_collector",
+                        "agentcc_gateway",
+                        "serving",
+                        "serving_gpu",
+                        "code_executor",
+                        "simulation_runner"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "uniqueItems": true
+                  }
+                }
+              },
+              "minItems": 0,
+              "maxItems": 256
+            },
+            "predecessors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "manifest_hash",
+                  "raw_manifest_sha256",
+                  "source_sha",
+                  "mode",
+                  "platform",
+                  "profiles",
+                  "active_components",
+                  "restore_certified",
+                  "execution_deployment_hash"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                  },
+                  "manifest_hash": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "raw_manifest_sha256": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "source_sha": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[0-9a-f]{40}(?![\\s\\S])$"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "standalone",
+                      "distributed"
+                    ]
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  },
+                  "profiles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])$"
+                    },
+                    "minItems": 0,
+                    "maxItems": 32,
+                    "uniqueItems": true
+                  },
+                  "active_components": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "standalone",
+                        "backend",
+                        "frontend",
+                        "fi_collector",
+                        "agentcc_gateway",
+                        "serving",
+                        "serving_gpu",
+                        "code_executor",
+                        "simulation_runner"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "uniqueItems": true
+                  },
+                  "restore_certified": {
+                    "type": "boolean"
+                  },
+                  "execution_deployment_hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  }
+                }
+              },
+              "minItems": 0,
+              "maxItems": 64
+            },
+            "automatic_rollback": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "strategy"
+              ],
+              "properties": {
+                "strategy": {
+                  "type": "string",
+                  "enum": [
+                    "never",
+                    "restore_backup"
+                  ]
+                }
+              }
+            },
+            "validation": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "asset",
+                    "sha256",
+                    "inputs_hash",
+                    "run_id"
+                  ],
+                  "properties": {
+                    "asset": {
+                      "type": "string",
+                      "const": "future-agi-update-compatibility.json"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                    },
+                    "inputs_hash": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                    },
+                    "run_id": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "qualification_policy": {
+              "type": "string",
+              "const": "standalone-cold-restore-v1"
+            },
+            "restore_procedure_id": {
+              "type": "string",
+              "const": "standalone-inplace-cold-restore-v1"
+            },
+            "backup_inventory_version": {
+              "type": "integer",
+              "const": 2
+            },
+            "host_observation_contract": {
+              "type": "string",
+              "const": "standalone-runtime-v2"
+            },
+            "runtime_activation_contract": {
+              "type": "string",
+              "const": "standalone-compose-direct-v1"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "automatic_apply": {
+                    "const": true
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "requires_operator_initialization": {
+                    "const": false
+                  },
+                  "automatic_rollback": {
+                    "properties": {
+                      "strategy": {
+                        "const": "restore_backup"
+                      }
+                    }
+                  },
+                  "validation": {
+                    "type": "object"
+                  },
+                  "predecessors": {
+                    "minItems": 1,
+                    "items": {
+                      "properties": {
+                        "restore_certified": {
+                          "const": true
+                        },
+                        "mode": {
+                          "const": "standalone"
+                        },
+                        "profiles": {
+                          "maxItems": 0
+                        },
+                        "active_components": {
+                          "const": [
+                            "standalone"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "automatic_rollback": {
+                    "properties": {
+                      "strategy": {
+                        "const": "never"
+                      }
+                    }
+                  },
+                  "predecessors": {
+                    "items": {
+                      "properties": {
+                        "restore_certified": {
+                          "const": false
+                        },
+                        "mode": {
+                          "const": "standalone"
+                        },
+                        "profiles": {
+                          "maxItems": 0
+                        },
+                        "active_components": {
+                          "const": [
+                            "standalone"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "required": [
+          "compatibility"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "compatibility"
+          ]
+        }
+      }
+    }
+  ]
+}

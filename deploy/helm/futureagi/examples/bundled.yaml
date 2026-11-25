@@ -12,8 +12,8 @@
 #
 # Then open the UI through port-forwards (see the notes Helm prints):
 #   kubectl -n futureagi port-forward svc/futureagi-frontend 3000:80
-#   kubectl -n futureagi port-forward svc/futureagi-backend 8000:8000
-#   kubectl -n futureagi port-forward svc/futureagi-fi-collector 4318:4318   # FI_BASE_URL=http://localhost:4318
+#   kubectl -n futureagi port-forward svc/futureagi-backend 8000:8000        # FI_BASE_URL=http://localhost:8000
+#   kubectl -n futureagi port-forward svc/futureagi-fi-collector 4318:4318   # FI_TRACES_URL=http://localhost:4318
 postgres:
   mode: bundled
 clickhouse:

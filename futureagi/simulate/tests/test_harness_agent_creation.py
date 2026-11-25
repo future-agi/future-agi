@@ -39,10 +39,11 @@ from simulate.services.harness_agent_versions import (
     submitted_credentials,
 )
 from simulate.services.harness_credentials import AGENT_VERSION_FILE_KEY
-from simulate.services.harness_provider import serialize_job
+from simulate.services.harness_provider import _environment_agent_maker, serialize_job
 from simulate.services.harness_versioning import run_warnings
 from simulate.services.hosted_harness import canonical_digest, create_hosted_job
 from simulate.services.hosted_harness_gateway import PlatformSecretResolver
+from simulate.tests.test_harness_connected_versions import _connect
 from simulate.tests.test_harness_provider import _v1_payload
 from tfc.telemetry.middleware import _mask_sensitive
 
@@ -82,7 +83,7 @@ def gates():
 
         on("simulate.services.harness_provider._validate_known_hosted_egress")
         on(
-            "simulate.services.harness_agent_changes.validate_public_github_source",
+            "simulate.services.harness_agent_changes.validate_github_source",
             return_value=None,
         )
         on("simulate.services.harness_provider._validate_phone_connectivity")
@@ -579,7 +580,7 @@ class TestRequestedAgent:
         assert job.agent_version.agent_definition_id == definition_id
         assert "requested_agent_definition_id" not in job.payload["metadata"]
 
-    def test_a_customer_agent_is_not_bound_yet(
+    def test_a_customer_agent_is_bound_and_left_untouched(
         self, client, user, workspace, gates, caplog
     ):
         customer = AgentDefinition.no_workspace_objects.create(
@@ -606,11 +607,11 @@ class TestRequestedAgent:
         with caplog.at_level(logging.INFO):
             job = _job(_post(client, workspace, body))
 
-        assert job.agent_version.agent_definition_id != customer.id
+        assert job.agent_version.agent_definition_id == customer.id
         metadata = job.payload["metadata"]
-        assert metadata["requested_agent_definition_id"] == str(customer.id)
-        assert metadata["agent_definition_id"] != str(customer.id)
-        assert "reason=connected_unavailable" in caplog.text
+        assert metadata["agent_definition_id"] == str(customer.id)
+        assert metadata["agent_definition_owner"] == "connected"
+        assert "harness_environment_agent_bound" in caplog.text
         customer.refresh_from_db()
         assert (customer.description, customer.assistant_id) == ("theirs", "asst-1")
         assert before == list(
@@ -780,6 +781,7 @@ class TestRefusals:
 
         report = _side(job.agent_version_id).preflight_report
         assert report["source_scan"] == {
+            "api_keys": [],
             "detected_connectors": [],
             "required_files": [],
             "scanned_files": 0,
@@ -1003,3 +1005,209 @@ class TestSecretHygiene:
             user.organization, {}, {"VAPI_API_KEY": "val-vapi-1", "DB_URL": "val-db-1"}
         )
         _no_values(repr(submitted))
+
+
+class TestConnectedAgentCreationCheck:
+    CHECKED = CreationCheck(report={"checked": True}, required_variable_names=["DB"])
+
+    @pytest.fixture
+    def maker(self, monkeypatch):
+        calls = SimpleNamespace(asked=[], made=[])
+
+        def check(*args):
+            calls.asked.append(args)
+            return self.CHECKED
+
+        def ensure(_job, **kwargs):
+            calls.made.append(kwargs["check"])
+
+        monkeypatch.setattr(service, "check_creation_credentials", check)
+        monkeypatch.setattr(service, "ensure_environment_agent", ensure)
+
+        def make(organization, agent_definition_id, workspace, connector="auto"):
+            payload = {
+                "agent": {"secret_refs": {}, "connector": connector},
+                "metadata": {"agent_definition_id": agent_definition_id},
+            }
+            _environment_agent_maker(
+                organization, payload, {}, None, None, workspace=workspace
+            )(None)
+            return calls
+
+        return make
+
+    @pytest.fixture
+    def agent(self, user, workspace):
+        return AgentDefinition.objects.create(
+            agent_name="support",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=user.organization,
+            workspace=workspace,
+        )
+
+    def test_a_connected_agent_is_bound_without_a_creation_check(
+        self, maker, user, agent, workspace
+    ):
+        _connect(agent)
+
+        calls = maker(user.organization, str(agent.id), workspace)
+
+        assert calls.asked == []
+        assert calls.made == [CreationCheck(report={}, required_variable_names=None)]
+
+    def test_an_agent_an_environment_made_is_checked(
+        self, maker, user, agent, workspace
+    ):
+        version = _connect(agent)
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version=version
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            agent_payload={**runtime.agent_payload, "definition_owner": "environment"}
+        )
+
+        calls = maker(user.organization, str(agent.id), workspace)
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+    def test_another_workspaces_agent_is_checked(self, maker, user, agent):
+        from accounts.models.workspace import Workspace
+
+        _connect(agent)
+        elsewhere = Workspace.objects.create(
+            name="Elsewhere", organization=user.organization, created_by=user
+        )
+
+        calls = maker(user.organization, str(agent.id), elsewhere)
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+    def test_a_connector_the_agent_cannot_run_is_checked(
+        self, maker, user, agent, workspace
+    ):
+        _connect(agent)
+
+        calls = maker(user.organization, str(agent.id), workspace, connector="vapi")
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+    @pytest.mark.parametrize("case", ["not_uuid", "unknown", "other_organization"])
+    def test_a_creation_naming_no_agent_of_its_own_is_checked(
+        self, maker, user, agent, case
+    ):
+        from accounts.models import Organization
+
+        organization, agent_definition_id = {
+            "not_uuid": (user.organization, "not-a-uuid"),
+            "unknown": (user.organization, str(uuid.uuid4())),
+            "other_organization": (
+                Organization.objects.create(name="Other Org"),
+                str(agent.id),
+            ),
+        }[case]
+
+        calls = maker(organization, agent_definition_id, agent.workspace)
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+
+def _from_version(job, version_id=None):
+    version = job.agent_version
+    return _body(
+        source={"kind": "provider", "visibility": "public"},
+        metadata={
+            "name": "from version",
+            "agent_definition_id": str(version.agent_definition_id),
+            "agent_version_id": str(version_id or version.id),
+        },
+    )
+
+
+class TestBuildFromEnvironmentVersion:
+    @pytest.mark.parametrize("made", [_vapi, _phone, _livekit])
+    def test_pins_the_named_version_and_takes_its_target(
+        self, client, user, workspace, gates, made
+    ):
+        first = _job(_post(client, workspace, made()))
+        definition_id = first.agent_version.agent_definition_id
+        agents = _definitions(user.organization).count()
+        versions = AgentVersion.objects.filter(
+            agent_definition_id=definition_id
+        ).count()
+
+        job = _job(_post(client, workspace, _from_version(first)))
+
+        side = _side(first.agent_version_id)
+        stored = side.agent_payload
+        agent = job.payload["agent"]
+        assert job.agent_version_id == first.agent_version_id
+        assert agent["connector"] == stored["connector"]
+        assert agent["config"] == stored["config"]
+        assert agent["secret_refs"] == {
+            name: agent_version_secret_ref(name)
+            for name in service.version_credential_names(side)
+        }
+        assert job.payload["source"]["kind"] == "provider"
+        metadata = job.payload["metadata"]
+        assert metadata["agent_definition_owner"] == "environment"
+        assert metadata["build_agent_version_id"] == str(first.agent_version_id)
+        assert _definitions(user.organization).count() == agents
+        assert (
+            AgentVersion.objects.filter(agent_definition_id=definition_id).count()
+            == versions
+        )
+
+    def test_the_version_lends_its_provider_key(self, client, user, workspace, gates):
+        first = _job(_post(client, workspace, _vapi()))
+
+        job = _job(_post(client, workspace, _from_version(first)))
+
+        assert job.payload["agent"]["config"]["assistant_id"] == "asst-1"
+        assert job.payload["agent"]["secret_refs"] == {
+            "VAPI_API_KEY": agent_version_secret_ref("VAPI_API_KEY")
+        }
+        _no_values(json.dumps(job.payload))
+
+    def test_a_version_of_another_agent_is_refused(
+        self, client, user, workspace, gates
+    ):
+        first = _job(_post(client, workspace, _vapi()))
+        other = _job(_post(client, workspace, _vapi(assistant="asst-2")))
+        jobs = HostedHarnessJob.no_workspace_objects.count()
+
+        response = _post(
+            client, workspace, _from_version(first, other.agent_version_id)
+        )
+
+        assert response.status_code == 409, response.content
+        assert response.json()["error"] == "version_not_buildable"
+        assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+    def test_a_version_that_has_not_passed_its_check_is_refused(
+        self, client, user, workspace, gates
+    ):
+        first = _job(_post(client, workspace, _vapi()))
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=first.agent_version_id
+        ).update(preflight_status=HarnessAgentVersionRuntime.PreflightStatus.FAILED)
+        jobs = HostedHarnessJob.no_workspace_objects.count()
+
+        response = _post(client, workspace, _from_version(first))
+
+        assert response.status_code == 409, response.content
+        assert response.json()["error"] == "version_not_ready"
+        assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+    def test_a_provider_source_without_a_version_is_refused(
+        self, client, user, workspace, gates
+    ):
+        body = _body(source={"kind": "provider", "visibility": "public"})
+
+        response = _post(client, workspace, body)
+
+        assert response.status_code == 400, response.content

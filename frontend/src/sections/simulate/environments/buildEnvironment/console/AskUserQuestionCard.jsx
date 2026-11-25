@@ -1,8 +1,56 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, TextField } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  TextField,
+  Checkbox,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
+
+import ChatMarkdown from "./ChatMarkdown";
+
+// Prompts are the model's free text. Plain questions must show exactly as written,
+// so one stray signal like `# of rooms` or a single `code` span is not enough: it
+// takes two, or a table's `|---|---|` row (not just any line with a pipe in it).
+const MARKDOWN_SIGNAL =
+  /^(#{1,6} |[-*+] |\d+[.)] |> |```)|\*\*[^*\s][^*]*\*\*|`[^`\n]+`/gm;
+const TABLE_DIVIDER = /^\s*\|?\s*:?-+:?\s*\|[\s|:-]*$/m;
+const looksLikeMarkdown = (text = "") =>
+  TABLE_DIVIDER.test(text) || (text.match(MARKDOWN_SIGNAL) || []).length >= 2;
+
+function Prompt({ text, sx }) {
+  if (looksLikeMarkdown(text)) {
+    // The opening line reads as the question; anything after it, like a full
+    // design to approve, stays regular weight.
+    return (
+      <ChatMarkdown
+        text={text}
+        sx={{
+          typography: "s1",
+          "& > p:first-of-type": { fontWeight: 500 },
+          ...sx,
+        }}
+      />
+    );
+  }
+  return (
+    <Typography
+      sx={{
+        typography: "s1",
+        fontWeight: 500,
+        whiteSpace: "pre-wrap",
+        color: "text.primary",
+        ...sx,
+      }}
+    >
+      {text}
+    </Typography>
+  );
+}
+Prompt.propTypes = { text: PropTypes.string, sx: PropTypes.object };
 
 /**
  * Claude-style AskUserQuestion card, ported for use inside the
@@ -31,6 +79,7 @@ export default function AskUserQuestionCard({
   onSkip,
   resolved: resolvedProp = false,
   answerText,
+  answerFailed,
 }) {
   const [answer, setAnswer] = useState({ pick: null, picks: [], other: "" });
   const [resolved, setResolved] = useState(null);
@@ -53,7 +102,10 @@ export default function AskUserQuestionCard({
     if (question.multiSelect) {
       setAnswer((a) => {
         const has = a.picks.includes(i);
-        return { ...a, picks: has ? a.picks.filter((v) => v !== i) : [...a.picks, i] };
+        return {
+          ...a,
+          picks: has ? a.picks.filter((v) => v !== i) : [...a.picks, i],
+        };
       });
     } else {
       setAnswer((a) => ({ ...a, pick: i }));
@@ -63,7 +115,9 @@ export default function AskUserQuestionCard({
   const chosenLabels = () => {
     const labels = question.multiSelect
       ? answer.picks.map((i) => question.options[i]?.label).filter(Boolean)
-      : answer.pick != null ? [question.options[answer.pick]?.label].filter(Boolean) : [];
+      : answer.pick != null
+        ? [question.options[answer.pick]?.label].filter(Boolean)
+        : [];
     const other = answer.other.trim();
     return other ? [...labels, other] : labels;
   };
@@ -85,6 +139,8 @@ export default function AskUserQuestionCard({
         question={question}
         answer={resolved || { external: true }}
         text={resolved ? undefined : answerText}
+        // What the server made of the answer, given just now or before a reload: a failed one never keeps the check.
+        failed={answerFailed}
       />
     );
   }
@@ -92,32 +148,40 @@ export default function AskUserQuestionCard({
   return (
     <Box
       sx={{
-        borderRadius: 2,
+        borderRadius: "8px",
         border: "1px solid",
-        borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.09),
+        borderColor: "divider",
         bgcolor: "background.paper",
         overflow: "hidden",
       }}
     >
       {/* header */}
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.75, py: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 2, py: 1.5 }}
+      >
         <Box
           sx={{
-            px: 0.75, py: 0.125, borderRadius: 999, flexShrink: 0,
-            bgcolor: (t) => alpha("#B45309", t.palette.mode === "dark" ? 0.28 : 0.16),
-            color: "#B45309",
-            typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+            px: 0.75,
+            py: 0.25,
+            borderRadius: "4px",
+            flexShrink: 0,
+            bgcolor: "action.selected",
+            color: "text.secondary",
+            typography: "s3",
+            fontWeight: 500,
+            fontVariantNumeric: "tabular-nums",
           }}
         >
           {question.step}/{question.total}
         </Box>
-        <Typography sx={{ typography: "s2", fontWeight: 700, flex: 1, minWidth: 0 }}>
-          {question.prompt}
-        </Typography>
+        <Prompt text={question.prompt} sx={{ flex: 1, minWidth: 0 }} />
       </Stack>
 
       {/* options */}
-      <Stack spacing={0.5} sx={{ px: 1.25, pb: 0.75 }}>
+      <Stack spacing={0.5} sx={{ px: 1.5, pb: 1 }}>
         {question.options.map((opt, i) => (
           <AskOptionRow
             key={opt.label}
@@ -129,62 +193,57 @@ export default function AskUserQuestionCard({
             onSelect={() => pick(i)}
           />
         ))}
-        <AskOptionRow
-          label="Other"
-          selected={otherActive}
-          multi={question.multiSelect}
-          index={otherIndex + 1}
-          onSelect={() => { /* focused when the user types */ }}
-          bottomChildren={(
-            <TextField
-              size="small" fullWidth variant="outlined"
-              value={answer.other}
-              onChange={(e) => setAnswer((a) => ({ ...a, other: e.target.value }))}
-              placeholder="Type your own answer here"
-              InputProps={{
-                sx: {
-                  typography: "s2",
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
-                  "& fieldset": { border: "none" },
-                },
-              }}
-              sx={{ mt: 0.75 }}
-            />
-          )}
-        />
+        {!question.optionsOnly && (
+          <AskOptionRow
+            label="Other"
+            selected={otherActive}
+            multi={question.multiSelect}
+            index={otherIndex + 1}
+            onSelect={() => {
+              /* focused when the user types */
+            }}
+            bottomChildren={
+              <TextField
+                size="small"
+                fullWidth
+                variant="outlined"
+                value={answer.other}
+                onChange={(e) =>
+                  setAnswer((a) => ({ ...a, other: e.target.value }))
+                }
+                placeholder="Type your own answer here"
+                InputProps={{
+                  sx: {
+                    typography: "m3",
+                    bgcolor: "background.paper",
+                  },
+                }}
+                sx={{ mt: 0.75 }}
+              />
+            }
+          />
+        )}
       </Stack>
 
       {/* bottom bar */}
-      <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1.25 }}>
+      <Stack direction="row" alignItems="center" sx={{ px: 2, py: 1.5 }}>
         <Box flex={1} />
         <Stack direction="row" spacing={1}>
           {onSkip && (
             <Button
-              size="small" onClick={skip}
-              sx={{
-                typography: "s2", fontWeight: 600,
-                color: "text.primary",
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-                px: 1.5, borderRadius: 1,
-                "&:hover": {
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08),
-                },
-              }}
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={skip}
             >
               Skip
             </Button>
           )}
           <Button
-            size="small" onClick={submit} disabled={!canSubmit}
-            sx={{
-              typography: "s2", fontWeight: 600,
-              color: canSubmit ? "common.white" : "text.disabled",
-              bgcolor: canSubmit ? "#7857FC" : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.04),
-              px: 1.5, borderRadius: 1,
-              "&:hover": {
-                bgcolor: canSubmit ? "#6B4EE6" : undefined,
-              },
-            }}
+            size="small"
+            variant="contained"
+            onClick={submit}
+            disabled={!canSubmit}
           >
             Submit
           </Button>
@@ -201,62 +260,71 @@ AskUserQuestionCard.propTypes = {
   // its resolved summary from these props instead of internal submit state.
   resolved: PropTypes.bool,
   answerText: PropTypes.string,
+  // The server did not take the answer: shown failed with its reason.
+  answerFailed: PropTypes.shape({ reason: PropTypes.string }),
 };
 
-function AskOptionRow({ label, description, selected, multi, index, onSelect, bottomChildren }) {
+function AskOptionRow({
+  label,
+  description,
+  selected,
+  multi,
+  index,
+  onSelect,
+  bottomChildren,
+}) {
   return (
     <Box
       onClick={onSelect}
       sx={{
-        p: 1.25, borderRadius: 1.25, cursor: "pointer",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.05 : 0.03),
-        "&:hover": {
-          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-        },
+        p: 1.5,
+        borderRadius: "8px",
+        cursor: "pointer",
+        bgcolor: "background.neutral",
+        "&:hover": { bgcolor: "action.hover" },
       }}
     >
-      <Stack direction="row" alignItems="flex-start" spacing={1.25}>
+      <Stack direction="row" alignItems="flex-start" spacing={1.5}>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}>
+          <Typography
+            sx={{ typography: "s1", fontWeight: 500, color: "text.primary" }}
+          >
             {label}
           </Typography>
           {description && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+            >
               {description}
             </Typography>
           )}
         </Box>
         {multi ? (
-          <Box
-            sx={{
-              width: 18, height: 18, borderRadius: 0.5, flexShrink: 0, mt: "1px",
-              display: "grid", placeItems: "center",
-              border: "1.5px solid",
-              borderColor: selected ? "#7857FC" : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.22 : 0.2),
-              bgcolor: selected ? "#7857FC" : "transparent",
-              transition: "background-color .12s ease, border-color .12s ease",
-            }}
-          >
-            {selected && (
-              <Box
-                component="svg" viewBox="0 0 24 24" fill="none" stroke="#fff"
-                strokeWidth={3.25} strokeLinecap="round" strokeLinejoin="round"
-                sx={{ width: 11, height: 11, display: "block" }}
-              >
-                <polyline points="5,12.5 10,17.5 19,7" />
-              </Box>
-            )}
-          </Box>
+          // The theme's checkbox as a display: the row owns the click.
+          <Checkbox
+            checked={Boolean(selected)}
+            tabIndex={-1}
+            size="small"
+            onChange={() => {}}
+            inputProps={{ "aria-hidden": true }}
+            sx={{ p: 0, flexShrink: 0, pointerEvents: "none" }}
+          />
         ) : (
           <Box
             sx={{
-              minWidth: 22, height: 20, px: 0.75, borderRadius: 0.75, flexShrink: 0, mt: "1px",
-              display: "grid", placeItems: "center",
-              border: "1px solid",
-              borderColor: selected ? "#7857FC" : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.12),
-              bgcolor: selected ? "#7857FC" : "transparent",
-              color: selected ? "#fff" : "text.subtitle",
-              typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+              minWidth: 24,
+              height: 20,
+              px: 0.75,
+              borderRadius: "4px",
+              flexShrink: 0,
+              mt: "1px",
+              display: "grid",
+              placeItems: "center",
+              bgcolor: selected ? "text.primary" : "action.selected",
+              color: selected ? "background.paper" : "text.secondary",
+              typography: "s3",
+              fontWeight: 500,
+              fontVariantNumeric: "tabular-nums",
             }}
           >
             {index}
@@ -268,9 +336,13 @@ function AskOptionRow({ label, description, selected, multi, index, onSelect, bo
   );
 }
 AskOptionRow.propTypes = {
-  label: PropTypes.string, description: PropTypes.string,
-  selected: PropTypes.bool, multi: PropTypes.bool, index: PropTypes.number,
-  onSelect: PropTypes.func, bottomChildren: PropTypes.node,
+  label: PropTypes.string,
+  description: PropTypes.string,
+  selected: PropTypes.bool,
+  multi: PropTypes.bool,
+  index: PropTypes.number,
+  onSelect: PropTypes.func,
+  bottomChildren: PropTypes.node,
 };
 
 /**
@@ -278,44 +350,80 @@ AskOptionRow.propTypes = {
  * post-submit shape: prompt on top, chosen option(s) below with a
  * dimmed check icon, and a subtle divider.
  */
-function ResolvedSummary({ question, answer, text }) {
+function ResolvedSummary({ question, answer, text, failed }) {
   const picks = answer.skipped
     ? []
-    : (question.multiSelect
-      ? (answer.picks || []).map((i) => question.options[i]?.label).filter(Boolean)
-      : answer.pick != null ? [question.options[answer.pick]?.label].filter(Boolean) : []);
+    : question.multiSelect
+      ? (answer.picks || [])
+          .map((i) => question.options[i]?.label)
+          .filter(Boolean)
+      : answer.pick != null
+        ? [question.options[answer.pick]?.label].filter(Boolean)
+        : [];
   const other = answer.other?.trim();
   // An externally-resolved question (from a refreshed conversation) carries only
   // the answer text — show it verbatim rather than reconstructing picks.
-  const summary = text != null
-    ? text
-    : answer.skipped
-      ? "Skipped"
-      : (other && picks.length === 0 ? other : [...picks, other].filter(Boolean).join(" · "));
+  const summary =
+    text != null
+      ? text
+      : answer.skipped
+        ? "Skipped"
+        : other && picks.length === 0
+          ? other
+          : [...picks, other].filter(Boolean).join(" · ");
 
   return (
     <Box
       sx={{
-        borderRadius: 2,
-        border: "1px solid", borderColor: "divider",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
-        px: 1.75, py: 1.25,
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.neutral",
+        px: 2,
+        py: 1.5,
       }}
     >
-      <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary" }}>
-        {question.prompt}
-      </Typography>
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 0.75 }}>
+      <Prompt text={question.prompt} />
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        sx={{ mt: 0.75 }}
+        data-testid={failed ? "answer-not-taken" : "answer-taken"}
+      >
         <Iconify
-          icon={answer.skipped ? "solar:close-circle-linear" : "solar:check-circle-bold"}
+          icon={
+            failed
+              ? "solar:close-circle-bold"
+              : answer.skipped
+                ? "solar:close-circle-linear"
+                : "solar:check-circle-bold"
+          }
           width={14}
-          sx={{ color: answer.skipped ? "text.subtitle" : "primary.main", flexShrink: 0 }}
+          sx={{
+            color: failed
+              ? "error.main"
+              : answer.skipped
+                ? "text.secondary"
+                : "status.success.solid",
+            flexShrink: 0,
+          }}
         />
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           {summary}
         </Typography>
       </Stack>
+      {failed?.reason ? (
+        <Typography sx={{ typography: "s2", color: "error.main", mt: 0.5 }}>
+          {failed.reason}
+        </Typography>
+      ) : null}
     </Box>
   );
 }
-ResolvedSummary.propTypes = { question: PropTypes.object, answer: PropTypes.object, text: PropTypes.string };
+ResolvedSummary.propTypes = {
+  question: PropTypes.object,
+  answer: PropTypes.object,
+  text: PropTypes.string,
+  failed: PropTypes.shape({ reason: PropTypes.string }),
+};

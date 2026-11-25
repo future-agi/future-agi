@@ -23,7 +23,9 @@ from functools import partial
 from math import ceil
 from typing import TYPE_CHECKING, Any
 
+from tfc.routers import primary_required
 from tracer.models.eval_task import RowType, RunType
+from tracer.services.clickhouse.query_builders.session_list import ResolvedSpanSource
 from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
     is_read_budget_error,
@@ -204,17 +206,22 @@ def _eval_config_ids_for_filters(
     from tracer.models.custom_eval_config import CustomEvalConfig
 
     try:
+        # Primary: a config created or deleted moments ago changes the fence,
+        # and the reconcile pass that consumes it advances the task cursor.
         return tuple(
             str(config_id)
             for config_id in CustomEvalConfig.objects.filter(
                 project_id=project_id,
                 deleted=False,
-            ).values_list("id", flat=True)
+            )
+            .using("default")
+            .values_list("id", flat=True)
         )
     except DatabaseError:
         raise EvalTaskReadBudgetExceeded(_SAFE_EVAL_METADATA_MESSAGE) from None
 
 
+@primary_required
 def _eval_filter_metadata_for_filters(
     project_id: str,
     ui_filters: list[dict[str, Any]],
@@ -225,6 +232,12 @@ def _eval_filter_metadata_for_filters(
     builders' compatibility fallback. An explicit mapping is authoritative;
     each malformed or project-external identifier is represented by a known
     empty config set and therefore remains a deterministic no-match.
+
+    Runs on the primary: the frozen metadata decides which rows the pass
+    materializes before the cursor moves past them, so a config the user just
+    created must not read as a no-match from a lagging replica. Ordinary
+    filter browsing calls ``resolve_eval_filter_metadata`` directly and stays
+    replica-eligible.
     """
 
     eval_ids_in_order: list[str] = []
@@ -551,6 +564,66 @@ def iter_desired_rows(
     yield from _iter_id_batches(list(resolved.matched_ids), batch_size=batch_size)
 
 
+# Filter keys that may accompany an explicit id list; anything else means the
+# task is a real filter query and takes the bounded proof below. A
+# date_range is not one: this read doesn't apply it, so a task with ids and a
+# range keeps the bounded proof, which does.
+_EXPLICIT_ID_COMPANIONS = frozenset({"project_id"})
+
+
+def _explicit_id_rows(
+    task: EvalTask, *, limit: int | None, sampling_rate: float
+) -> ResolvedRowSet | None:
+    """Rows of a historical task that names its sessions or traces outright
+    (Instant eval asks about exactly the rows a person picked) or spans. One ClickHouse
+    read confirms the ids belong to the project; the time-sliced bounded proof,
+    which exists to page through filter matches, would only add latency here
+    and its 30-day default window would drop older rows the person chose."""
+    if task.run_type != RunType.HISTORICAL or sampling_rate < 100:
+        return None
+    filters = task.filters or {}
+    key = {
+        RowType.SESSIONS: "session_id",
+        RowType.TRACES: "trace_id",
+        RowType.SPANS: "span_id",
+    }.get(task.row_type)
+    if key is None:
+        return None
+    raw = filters.get(key)
+    if not isinstance(raw, list | tuple) or not raw:
+        return None
+    others = {k for k, v in filters.items() if v not in (None, "", [], {})} - {key}
+    if others - _EXPLICIT_ID_COMPANIONS:
+        return None
+    wanted = list(dict.fromkeys(str(v) for v in raw if v not in (None, "")))
+    project_id = str(task.project_id)
+    with get_reader() as reader:
+        if task.row_type == RowType.SESSIONS:
+            # Only these sessions (and their remap groups) are read, never the
+            # project's spans; each comes back under the id it was asked by.
+            present = {
+                str(root.trace_session_id)
+                for root in reader.roots_by_session_ids(wanted, project_id=project_id)
+            }
+        elif task.row_type == RowType.TRACES:
+            present = set(
+                reader.root_ids_by_trace_ids(wanted, project_ids=[project_id])
+            )
+        else:
+            present = {
+                str(row["id"])
+                for row in reader.list_by_ids(
+                    wanted, include_heavy=False, project_id=project_id, columns=["id"]
+                )
+            }
+    ids = tuple(i for i in wanted if i in present)
+    # The limit counts rows that exist: cutting before the presence check
+    # returned fewer than `limit` when some ids were gone.
+    if limit:
+        ids = ids[: int(limit)]
+    return ResolvedRowSet(ids, ids, True)
+
+
 def resolve_desired_rows(
     task: EvalTask, *, ceiling: datetime | None = None
 ) -> ResolvedRowSet:
@@ -567,6 +640,14 @@ def resolve_desired_rows(
             sampling_rate=float(sampling_rate),
         )
 
+    # An Instant eval run picked its rows (a hash-ordered sample of a view, or
+    # rows handed over) and stored them with their facets; it reads those.
+    from tracer.services.instant_eval_rows import resolve_instant_rows
+
+    instant = resolve_instant_rows(task)
+    if instant is not None:
+        return ResolvedRowSet(instant, instant, True)
+
     # A strict datetime complement can make the requested interval provably
     # empty (for example ``is_null`` on non-nullable start_time). Preserve the
     # compatibility SQL for non-empty requests, but do zero CH reads when the
@@ -580,6 +661,10 @@ def resolve_desired_rows(
         historical_ui_filters, strict=True
     ).empty:
         return ResolvedRowSet((), (), True)
+
+    explicit = _explicit_id_rows(task, limit=limit, sampling_rate=float(sampling_rate))
+    if explicit is not None:
+        return explicit
 
     if (
         task.row_type
@@ -1598,6 +1683,8 @@ def _build_sample_query(
     limit: int | None,
     created_at_floor: datetime | None = None,
     created_at_ceiling: datetime | None = None,
+    source_table: str | None = None,
+    resolved_source: ResolvedSpanSource | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Sampled-row-ids SQL for the row_type: take the UI list builder's filtered
     id set and wrap it with deterministic hash sampling, a stable order, and the
@@ -1669,7 +1756,23 @@ def _build_sample_query(
     # Continuous bounds are passed directly to ``build_id_query`` so they bind
     # on arrival time (``created_at``). Injecting the floor into ``ui_filters``
     # would make ``parse_time_range`` apply it to historical ``start_time``.
-    builder = get_v2_class(query_type)(project_id=str(project_id), filters=ui_filters)
+    source_kwargs = {}
+    if resolved_source is not None:
+        if (
+            resolved_source is not ResolvedSpanSource.SAMPLING
+            or source_table is not None
+        ):
+            raise ValueError("Unsupported resolved sampling source")
+        source_table = resolved_source.value
+        if row_type == RowType.SESSIONS:
+            source_kwargs["resolved_source"] = resolved_source
+    builder = get_v2_class(query_type)(
+        project_id=str(project_id), filters=ui_filters, **source_kwargs
+    )
+    if source_table is not None:
+        if source_table != "sampling_source":
+            raise ValueError("Unsupported internal sampling source")
+        builder.TABLE = source_table
     inner_sql, params = builder.build_id_query(
         created_at_floor=created_at_floor, created_at_ceiling=created_at_ceiling
     )
@@ -1696,7 +1799,7 @@ def _build_sample_query(
         # can't match ids from another project or soft-deleted rows.
         ot_pred = (
             f"AND {id_col} IN "
-            f"(SELECT {src} FROM spans "
+            f"(SELECT {src} FROM {source_table or 'spans'} "
             f"WHERE observation_type IN %(otypes)s "
             f"AND project_id = %(ot_project_id)s AND is_deleted = 0"
             f"{root_pred})"

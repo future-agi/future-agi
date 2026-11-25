@@ -7,13 +7,12 @@ import {
   useState,
 } from "react";
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, IconButton, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
-import { BUILD_TONES } from "../buildEnvironment/buildTones";
 import { ENV_TAB_RAIL_HEIGHT } from "../environmentOptions";
+import { subscribeBuilderChatFocus } from "../buildEnvironment/console/builderChatFocusBus";
 import {
   CHAT_PANE_COPY as COPY,
   CHAT_PANE_DEFAULT_WIDTH,
@@ -163,6 +162,8 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
 
   const collapse = useCallback(() => setOpen(false), [setOpen]);
   const expand = useCallback(() => setOpen(true), [setOpen]);
+  // Asked to show one of its messages, the chat opens.
+  useEffect(() => subscribeBuilderChatFocus(expand), [expand]);
 
   const onPointerDown = (event) => {
     // Primary button only: a right-click opens the context menu, which can
@@ -264,6 +265,7 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
       }}
     >
       <Box
+        data-builder-chat=""
         sx={{
           position: "relative",
           width: columnWidth,
@@ -337,17 +339,14 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
                   onClick={expand}
                   size="small"
                   sx={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 1,
                     color: "text.subtitle",
-                    "&:hover": {
-                      bgcolor: "action.hover",
-                      color: "text.primary",
-                    },
+                    "&:hover": { color: "text.primary" },
                   }}
                 >
-                  <Iconify icon="lucide:chevrons-right" width={16} />
+                  <Iconify
+                    icon="solar:double-alt-arrow-right-linear"
+                    width={16}
+                  />
                 </IconButton>
               </CustomTooltip>
             </Box>
@@ -355,25 +354,11 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
             <IconButton
               aria-label={COPY.open}
               onClick={expand}
+              size="small"
               sx={{
                 position: "relative",
                 mt: 0.5,
-                width: 28,
-                height: 28,
-                borderRadius: 1,
-                color: BUILD_TONES.accent,
-                bgcolor: (t) =>
-                  alpha(
-                    BUILD_TONES.accent,
-                    t.palette.mode === "dark" ? 0.16 : 0.1,
-                  ),
-                "&:hover": {
-                  bgcolor: (t) =>
-                    alpha(
-                      BUILD_TONES.accent,
-                      t.palette.mode === "dark" ? 0.26 : 0.18,
-                    ),
-                },
+                color: "text.secondary",
               }}
             >
               <Iconify icon="solar:chat-round-line-linear" width={15} />
@@ -386,8 +371,8 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
                     right: 3,
                     width: 7,
                     height: 7,
-                    borderRadius: 999,
-                    bgcolor: BUILD_TONES.accent,
+                    borderRadius: "50%",
+                    bgcolor: "status.info.solid",
                     border: "1.5px solid",
                     borderColor: "background.paper",
                   }}
@@ -431,12 +416,11 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
                 bottom: 0,
                 left: 4,
                 width: "1px",
-                bgcolor: dragging ? BUILD_TONES.accent : "transparent",
+                bgcolor: dragging ? "text.disabled" : "transparent",
                 transition: "background-color 0.15s ease",
               },
-              "&:hover::after, &:focus-visible::after": {
-                bgcolor: BUILD_TONES.accent,
-              },
+              "&:hover::after": { bgcolor: "text.disabled" },
+              "&:focus-visible::after": { bgcolor: "primary.main" },
             }}
           />
         )}

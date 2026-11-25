@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { keyframes } from "@mui/system";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, IconButton, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
@@ -99,12 +98,12 @@ export default function VoiceInput({ onTranscript, disabled }) {
             <Box
               key={i}
               sx={{
-                width: 2.5, height: 16, borderRadius: 1, bgcolor: "primary.main",
+                width: 2, height: 16, borderRadius: "1px", bgcolor: "status.info.solid",
                 animation: `${pulse} 0.9s ease-in-out ${i * 0.11}s infinite`,
               }}
             />
           ))}
-          <Typography sx={{ typography: "s3", color: "primary.main", ml: 0.75 }}>
+          <Typography sx={{ typography: "s3", color: "status.info.fg", ml: 1 }}>
             listening
           </Typography>
         </Stack>
@@ -117,8 +116,8 @@ export default function VoiceInput({ onTranscript, disabled }) {
             disabled={disabled || !supported}
             onClick={live ? stop : start}
             sx={{
-              color: live ? "primary.main" : "text.subtitle",
-              bgcolor: (t) => (live ? alpha(t.palette.primary.main, 0.1) : "transparent"),
+              color: live ? "status.info.fg" : "text.secondary",
+              bgcolor: live ? "status.info.bg" : "transparent",
             }}
           >
             <Iconify icon={live ? "solar:stop-circle-bold" : "solar:microphone-3-linear"} width={18} />

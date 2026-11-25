@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useEffect, useId, useRef, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Button, Stack, Typography } from "@mui/material";
 
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -11,7 +10,9 @@ import {
   useSaveDrafts,
 } from "src/api/simulate-environments/versions";
 import { refusalText } from "../evals/refusalText";
-import { DRAFTS_COPY as COPY } from "../workspace.constants";
+import { DRAFTS_COPY as COPY, WORKSPACE_COPY } from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { changeCount } from "./changeCount";
 
 const pieceLine = (piece, draft) =>
@@ -55,6 +56,7 @@ export default function DraftBar({
   const { data: drafts } = useDrafts(env?.id, { enabled });
   const save = useSaveDrafts(env?.id);
   const discard = useDiscardDraft(env?.id);
+  const { canEdit } = useSimulationAccess();
   const [confirming, setConfirming] = useState(false);
   const staleId = useId();
   const busyId = useId();
@@ -121,10 +123,7 @@ export default function DraftBar({
         borderBottom: "1px solid",
         borderColor: "divider",
         flexShrink: 0,
-        bgcolor: (t) =>
-          drafts.stale
-            ? alpha(t.palette.warning.main, 0.12)
-            : t.palette.background.neutral,
+        bgcolor: drafts.stale ? "status.warning.bg" : "background.neutral",
       }}
     >
       <Stack
@@ -133,8 +132,8 @@ export default function DraftBar({
         spacing={1.5}
         sx={{ flexWrap: "wrap", rowGap: 1 }}
       >
-        <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
-          <Box component="span" sx={{ fontWeight: "fontWeightBold" }}>
+        <Typography sx={{ typography: "s1", flex: 1, minWidth: 0 }}>
+          <Box component="span" sx={{ fontWeight: 500 }}>
             {COPY.title}:
           </Box>{" "}
           {drafts.pieces
@@ -147,31 +146,32 @@ export default function DraftBar({
           size="small"
           color="inherit"
           onClick={() => onViewChanges?.(drafts.pieces[0], open[0].id)}
-          sx={{ textTransform: "none" }}
         >
           {COPY.viewChanges}
         </Button>
-        <Button
-          size="small"
-          variant="outlined"
-          color="inherit"
-          disabled={holdReasons.length > 0 || pending}
-          aria-describedby={holdReasons.join(" ") || undefined}
-          onClick={() => setConfirming(true)}
-          sx={{ textTransform: "none" }}
-        >
-          {discard.isPending ? COPY.discarding : COPY.discard}
-        </Button>
-        <Button
-          size="small"
-          variant="contained"
-          disabled={saveReasons.length > 0 || pending}
-          aria-describedby={saveReasons.join(" ") || undefined}
-          onClick={onSave}
-          sx={{ textTransform: "none" }}
-        >
-          {save.isPending ? COPY.saving : COPY.save}
-        </Button>
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            disabled={!canEdit || holdReasons.length > 0 || pending}
+            aria-describedby={holdReasons.join(" ") || undefined}
+            onClick={() => setConfirming(true)}
+          >
+            {discard.isPending ? COPY.discarding : COPY.discard}
+          </Button>
+        </ViewerLock>
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
+          <Button
+            size="small"
+            variant="contained"
+            disabled={!canEdit || saveReasons.length > 0 || pending}
+            aria-describedby={saveReasons.join(" ") || undefined}
+            onClick={onSave}
+          >
+            {save.isPending ? COPY.saving : COPY.save}
+          </Button>
+        </ViewerLock>
       </Stack>
       {staleReason && (
         <Typography
@@ -200,7 +200,7 @@ export default function DraftBar({
       {error && (
         <Typography
           role="alert"
-          sx={{ typography: "s3", color: "error.main", mt: 0.5 }}
+          sx={{ typography: "s3", color: "status.danger.fg", mt: 0.5 }}
         >
           {error}
         </Typography>
@@ -210,7 +210,7 @@ export default function DraftBar({
         onClose={() => setConfirming(false)}
         title={COPY.discardTitle}
         content={
-          <Typography component="span" sx={{ typography: "s2" }}>
+          <Typography component="span" sx={{ typography: "s1" }}>
             {COPY.discardBody}
           </Typography>
         }

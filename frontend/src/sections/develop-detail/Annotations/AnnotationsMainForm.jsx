@@ -103,7 +103,7 @@ const AnnotationsMainForm = ({
 
   return (
     <Box sx={{ ...style.wrapper, gap: "5px" }}>
-      <Typography fontWeight={700} color="text.secondary">
+      <Typography fontWeight={600} color="text.secondary">
         Configure annotation view template
       </Typography>
       <form

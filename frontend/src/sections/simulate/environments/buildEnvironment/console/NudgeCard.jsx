@@ -9,6 +9,9 @@ import { changeCount } from "../../workspace/drafts/changeCount";
 import VersionDiff from "../../workspace/versions/VersionDiff";
 import { isEmptyDiff } from "../../workspace/versions/isEmptyDiff";
 import { NUDGE_COPY as COPY } from "../build.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const FILES_SHOWN = 8;
@@ -76,7 +79,7 @@ const heading = (nudge) => {
 
 const Line = ({ children, color = "text.secondary", mono }) => (
   <Typography
-    sx={{ typography: "s3", color, ...(mono && { fontFamily: MONO }) }}
+    sx={{ typography: "s1", color, ...(mono && { fontFamily: MONO }) }}
   >
     {children}
   </Typography>
@@ -175,6 +178,8 @@ export function NudgeActions({
   onStopNudge,
 }) {
   const reasonId = useId();
+  const { canEdit } = useSimulationAccess();
+  const viewerTitle = WORKSPACE_COPY.viewer.rebuild;
   const state = nudge?.state || "pending";
   const pending = state === "pending";
   const again = Boolean(nudge) && canRebuildAgain(nudge);
@@ -188,57 +193,60 @@ export function NudgeActions({
     <Stack spacing={0.75}>
       <Stack direction="row" spacing={1}>
         {(pending || again) && (
-          <Button
-            size="small"
-            variant="contained"
-            disabled={Boolean(blocked) || answering || !onRebuild}
-            onClick={onRebuild}
-            aria-label={
-              answering ? undefined : COPY.rebuildFor(rebuildText, subject)
-            }
-            aria-describedby={blocked ? reasonId : undefined}
-            sx={{ textTransform: "none" }}
-          >
-            {rebuildText}
-          </Button>
+          <ViewerLock locked={!canEdit} title={viewerTitle}>
+            <Button
+              size="small"
+              variant="contained"
+              disabled={!canEdit || Boolean(blocked) || answering || !onRebuild}
+              onClick={onRebuild}
+              aria-label={
+                answering ? undefined : COPY.rebuildFor(rebuildText, subject)
+              }
+              aria-describedby={blocked ? reasonId : undefined}
+            >
+              {rebuildText}
+            </Button>
+          </ViewerLock>
         )}
         {pending && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            disabled={answering || !onSkipNudge}
-            onClick={onSkipNudge}
-            aria-label={answering ? undefined : COPY.skipFor(subject)}
-            sx={{ textTransform: "none" }}
-          >
-            {answering && !rebuilding ? COPY.skipping : COPY.skip}
-          </Button>
+          <ViewerLock locked={!canEdit} title={viewerTitle}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              disabled={!canEdit || answering || !onSkipNudge}
+              onClick={onSkipNudge}
+              aria-label={answering ? undefined : COPY.skipFor(subject)}
+            >
+              {answering && !rebuilding ? COPY.skipping : COPY.skip}
+            </Button>
+          </ViewerLock>
         )}
         {NUDGE_ACTIVE_STATES.has(state) && nudge?.canStop !== false && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            disabled={stopping || !onStopNudge}
-            onClick={onStopNudge}
-            aria-label={stopping ? undefined : COPY.stopFor(subject)}
-            sx={{ textTransform: "none" }}
-          >
-            {stopping ? COPY.stopping : COPY.stop}
-          </Button>
+          <ViewerLock locked={!canEdit} title={viewerTitle}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              disabled={!canEdit || stopping || !onStopNudge}
+              onClick={onStopNudge}
+              aria-label={stopping ? undefined : COPY.stopFor(subject)}
+            >
+              {stopping ? COPY.stopping : COPY.stop}
+            </Button>
+          </ViewerLock>
         )}
       </Stack>
       {blocked && (
         <Typography
           id={reasonId}
-          sx={{ typography: "s3", color: "text.secondary" }}
+          sx={{ typography: "s1", color: "text.secondary" }}
         >
           {blocked}
         </Typography>
       )}
       {error && (
-        <Typography role="alert" sx={{ typography: "s3", color: "error.main" }}>
+        <Typography role="alert" sx={{ typography: "s1", color: "status.danger.fg" }}>
           {answerErrorText(error, errorFallback)}
         </Typography>
       )}
@@ -282,7 +290,7 @@ function Bucket({ title, children }) {
     <Box component="details" sx={{ "& > summary": { cursor: "pointer" } }}>
       <Box
         component="summary"
-        sx={{ typography: "s3", fontWeight: "fontWeightBold" }}
+        sx={{ typography: "s1", fontWeight: 500 }}
       >
         {title}
       </Box>
@@ -332,7 +340,7 @@ function NudgeOutcome({ nudge }) {
         <Line key={line}>{line}</Line>
       ))}
       {(summary.warnings || []).map((warning) => (
-        <Line key={warning} color="warning.main">
+        <Line key={warning} color="status.warning.fg">
           {warning}
         </Line>
       ))}
@@ -384,7 +392,7 @@ function NudgeOutcome({ nudge }) {
                 {problem.inYourUnsavedEdits && (
                   <Box
                     component="span"
-                    sx={{ ml: 0.75, color: "warning.main", fontWeight: 600 }}
+                    sx={{ ml: 1, color: "status.warning.fg", fontWeight: 500 }}
                   >
                     ({COPY.inYourEdits})
                   </Box>
@@ -422,7 +430,7 @@ export function NudgeStateLine({ focus = false, onFocused, sx, children }) {
       ref={ref}
       role="status"
       tabIndex={-1}
-      sx={{ typography: "s2", color: "text.secondary", ...sx }}
+      sx={{ typography: "s1", color: "text.secondary", ...sx }}
     >
       {children}
     </Typography>
@@ -459,7 +467,7 @@ export default function NudgeCard({ turn }) {
   const { nudge } = turn;
   if (!nudge) {
     return (
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
         {turn.text}
       </Typography>
     );
@@ -488,13 +496,13 @@ export default function NudgeCard({ turn }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         p: 1.5,
       }}
     >
       <Stack spacing={1}>
         <Box>
-          <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500 }}>
             {title}
           </Typography>
           {pending &&
@@ -506,7 +514,7 @@ export default function NudgeCard({ turn }) {
         <NudgeFacts nudge={nudge} />
         {pending ? (
           <>
-            <Typography sx={{ typography: "s2" }}>
+            <Typography sx={{ typography: "s1" }}>
               {COPY.question[nudge.target] || COPY.question.environment}
             </Typography>
             <DraftNotice draft={turn.draft} />

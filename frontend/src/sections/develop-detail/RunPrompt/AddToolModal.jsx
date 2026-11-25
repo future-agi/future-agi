@@ -124,11 +124,11 @@ const AddToolChild = ({ editTool, onClose }) => {
             alignItems: "center",
           }}
         >
-          <Typography fontWeight={700} fontSize="18px">
+          <Typography fontWeight={600} fontSize="16px">
             {isEditMode ? "Edit tool" : "Configure a tool"}
           </Typography>
           <IconButton onClick={onCloseClick}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -185,7 +185,13 @@ AddToolChild.propTypes = {
 
 const AddToolModal = (props) => {
   return (
-    <Dialog open={props.open} onClose={props.onClose} maxWidth="md" fullWidth>
+    <Dialog
+      open={props.open}
+      onClose={props.onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 960 } }}
+      fullWidth
+    >
       <AddToolChild {...props} />
     </Dialog>
   );

@@ -3,7 +3,7 @@ import { Typography } from "@mui/material";
 
 export default function Label({ children }) {
   return (
-    <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", letterSpacing: 0.4, textTransform: "uppercase", color: "text.subtitle" }}>
+    <Typography sx={{ typography: "s1", fontWeight: 500, color: "text.secondary" }}>
       {children}
     </Typography>
   );

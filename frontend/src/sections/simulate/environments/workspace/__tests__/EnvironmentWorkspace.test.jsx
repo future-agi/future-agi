@@ -1,14 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { flushSync } from "react-dom";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  queryScenarioFixture,
+  SAMPLE_ROWS,
+} from "src/api/simulate-environments/_fixtures/scenariosFixtures";
 import userEvent from "@testing-library/user-event";
 import { clearScenarioSelection } from "../../buildEnvironment/console/scenarioSelectionBus";
-import {
-  MemoryRouter,
-  Routes,
-  Route,
-  useLocation,
-} from "react-router-dom";
+import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 
 // getHarnessJob resolves the harness-backed environment; listHarnessJobs is
 // exported for parity with the other consumers of this module.
@@ -28,7 +30,9 @@ const { getHarnessJob } = await import("src/api/harness/harness");
 const axiosMod = await import("src/utils/axios");
 const axios = axiosMod.default;
 const { endpoints } = axiosMod;
-const { default: EnvironmentWorkspace } = await import("../EnvironmentWorkspace");
+const { default: EnvironmentWorkspace } = await import(
+  "../EnvironmentWorkspace"
+);
 const { default: WorkspaceExecutionDetail } = await import(
   "../runs/WorkspaceExecutionDetail"
 );
@@ -37,7 +41,12 @@ const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
 );
 const { emptyEnvState } = await import("../../store/envState");
 const { seedFromTemplate } = await import("../helpers/seedEnvState");
-const { PIPELINE_CHECKS_COPY } = await import("../../buildEnvironment/build.constants");
+const { PIPELINE_CHECKS_COPY } = await import(
+  "../../buildEnvironment/build.constants"
+);
+const { INFRASTRUCTURE_LINE } = await import(
+  "../../buildEnvironment/failureWords"
+);
 const { SAVE_GRACE_MS } = await import(
   "src/api/simulate-environments/environment"
 );
@@ -146,6 +155,9 @@ function LocationProbe() {
   return <div data-testid="location">{`${pathname}${search}`}</div>;
 }
 
+// The workspace reads theme.palette.status / .data, so render with the app theme.
+const appTheme = createTheme({ palette: palette("light") });
+
 function renderWorkspace(entry) {
   const client = new QueryClient({
     // harnessJobQuery sets its own `retry` fn (no-retry on 404), which overrides
@@ -153,26 +165,28 @@ function renderWorkspace(entry) {
     defaultOptions: { queries: { retry: false, retryDelay: 0 } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[entry]}>
-        <LocationProbe />
-        <Routes>
-          <Route
-            path="/dashboard/simulate/environments/:envId"
-            element={<EnvironmentWorkspace />}
-          >
+    <ThemeProvider theme={appTheme}>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[entry]}>
+          <LocationProbe />
+          <Routes>
             <Route
-              path="runs/:testId/:executionId"
-              element={<WorkspaceExecutionDetail />}
+              path="/dashboard/simulate/environments/:envId"
+              element={<EnvironmentWorkspace />}
+            >
+              <Route
+                path="runs/:testId/:executionId"
+                element={<WorkspaceExecutionDetail />}
+              />
+            </Route>
+            <Route
+              path="/dashboard/simulate/environments"
+              element={<div>environments-list</div>}
             />
-          </Route>
-          <Route
-            path="/dashboard/simulate/environments"
-            element={<div>environments-list</div>}
-          />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
 }
 
@@ -200,14 +214,22 @@ describe("EnvironmentWorkspace route shell", () => {
     // id 404s, since answering it would make every unknown id resolve to a
     // garbage environment.
     axios.get.mockImplementation((url) => {
-      const known = url.match(/\/harness-environments\/(job-done|job-build)\/$/);
+      const known = url.match(
+        /\/harness-environments\/(job-done|job-build)\/$/,
+      );
       if (known) {
         return Promise.resolve({
-          data: { ...DETAIL_NOT_AUTHORED, id: known[1], overview: { id: known[1] } },
+          data: {
+            ...DETAIL_NOT_AUTHORED,
+            id: known[1],
+            overview: { id: known[1] },
+          },
         });
       }
       if (/\/harness-environments\/[^/]+\/$/.test(url)) {
-        return Promise.reject(Object.assign(new Error("Not found"), { statusCode: 404 }));
+        return Promise.reject(
+          Object.assign(new Error("Not found"), { statusCode: 404 }),
+        );
       }
       return Promise.resolve({
         data:
@@ -229,11 +251,15 @@ describe("EnvironmentWorkspace route shell", () => {
 
     // The name also appears in the Overview capability graph (an SVG <text>),
     // so scope the header match to its <p>.
-    expect(await screen.findByText("Refund Copilot", { selector: "p" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByText("Refund Copilot", { selector: "p" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
-    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach((label) =>
-      expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument(),
+    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach(
+      (label) =>
+        expect(
+          screen.getByRole("tab", { name: new RegExp(label) }),
+        ).toBeInTheDocument(),
     );
     expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
   });
@@ -247,10 +273,9 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/env-1?tab=runs");
 
-    expect(await screen.findByRole("tab", { name: /Overview/ })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(
+      await screen.findByRole("tab", { name: /Overview/ }),
+    ).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
     expect(screen.queryByText("Pre-flight")).toBeNull();
   });
@@ -259,12 +284,16 @@ describe("EnvironmentWorkspace route shell", () => {
     getHarnessJob.mockReturnValue(new Promise(() => {}));
     const base = axios.get.getMockImplementation();
     axios.get.mockImplementation((url) =>
-      /\/harness-environments\/job-pending\/$/.test(url) ? new Promise(() => {}) : base(url),
+      /\/harness-environments\/job-pending\/$/.test(url)
+        ? new Promise(() => {})
+        : base(url),
     );
 
     renderWorkspace("/dashboard/simulate/environments/job-pending");
 
-    expect(await screen.findByText("Preparing for liftoff")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("status", { name: "Loading" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Environment not found")).toBeNull();
   });
 
@@ -275,7 +304,9 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/nope");
 
-    expect(await screen.findByText("Environment not found")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Environment not found"),
+    ).toBeInTheDocument();
   });
 
   it("shows a recoverable error state (not a blank page) when the fetch fails non-404", async () => {
@@ -286,7 +317,9 @@ describe("EnvironmentWorkspace route shell", () => {
 
     // The error state renders with a Retry — never the silent blank placeholder,
     // and not the 404 "not found" copy.
-    expect(await screen.findByText(/Couldn.t load this environment/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Couldn.t load this environment/),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByText("Environment not found")).toBeNull();
   });
@@ -300,7 +333,9 @@ describe("EnvironmentWorkspace route shell", () => {
         detailCalls += 1;
         // Fails until the user retries; the query's own retries count too.
         return detailCalls <= 4
-          ? Promise.reject(Object.assign(new Error("Server error"), { statusCode: 500 }))
+          ? Promise.reject(
+              Object.assign(new Error("Server error"), { statusCode: 500 }),
+            )
           : Promise.resolve({ data: DETAIL_NOT_AUTHORED });
       }
       return base(url);
@@ -310,25 +345,37 @@ describe("EnvironmentWorkspace route shell", () => {
     renderWorkspace("/dashboard/simulate/environments/job-done");
 
     expect(
-      await screen.findByText(/Couldn.t load this environment.s details/, {}, { timeout: 8000 }),
+      await screen.findByText(
+        /Couldn.t load this environment.s details/,
+        {},
+        { timeout: 8000 },
+      ),
     ).toBeInTheDocument();
     // None of the tabs render on the job poll alone: no guessed channel, no
     // "No agent attached", no sample cards.
     expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
     expect(screen.queryByText("No agent attached")).toBeNull();
     // Nor can a run start without them.
-    expect(screen.getByRole("button", { name: /Run simulation/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Run simulation/ }),
+    ).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByRole("tab", { name: /Overview/ })).toBeInTheDocument();
-    expect(screen.queryByText(/Couldn.t load this environment.s details/)).toBeNull();
+    expect(
+      await screen.findByRole("tab", { name: /Overview/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Couldn.t load this environment.s details/),
+    ).toBeNull();
   }, 15000);
 
   it("holds the tabs back, and Run with them, while the environment detail is on its way", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const base = axios.get.getMockImplementation();
     axios.get.mockImplementation((url) =>
-      /\/harness-environments\/job-done\/$/.test(url) ? new Promise(() => {}) : base(url),
+      /\/harness-environments\/job-done\/$/.test(url)
+        ? new Promise(() => {})
+        : base(url),
     );
 
     // A revisit: this environment's agent and scenarios are already in the
@@ -346,10 +393,14 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/job-done");
 
-    const runButton = await screen.findByRole("button", { name: /Run simulation/ });
+    const runButton = await screen.findByRole("button", {
+      name: /Run simulation/,
+    });
     expect(runButton).toBeDisabled();
     expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
-    expect(screen.queryByText(/scenarios, shared across agent versions/)).toBeNull();
+    expect(
+      screen.queryByText(/scenarios, shared across agent versions/),
+    ).toBeNull();
     // The tab area shows the loader rather than an empty pane.
     expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
   });
@@ -361,16 +412,23 @@ describe("EnvironmentWorkspace route shell", () => {
     axios.get.mockImplementation((url) =>
       /\/harness-environments\/job-done\/$/.test(url)
         ? Promise.resolve({
-            data: { ...DETAIL_NOT_AUTHORED, overview: { id: "job-done", scenario_count: 3 } },
+            data: {
+              ...DETAIL_NOT_AUTHORED,
+              overview: { id: "job-done", scenario_count: 3 },
+            },
           })
         : base(url),
     );
 
     renderWorkspace("/dashboard/simulate/environments/job-done");
 
-    const runButton = await screen.findByRole("button", { name: /Run simulation/ });
+    const runButton = await screen.findByRole("button", {
+      name: /Run simulation/,
+    });
     await waitFor(() => expect(runButton).toBeEnabled());
-    expect(await screen.findByRole("tab", { name: /Scenarios\s*3/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tab", { name: /Scenarios\s*3/ }),
+    ).toBeInTheDocument();
   });
 
   it("resolves a harness job: Run enabled, runs listed, row opens the detail", async () => {
@@ -380,7 +438,9 @@ describe("EnvironmentWorkspace route shell", () => {
     renderWorkspace("/dashboard/simulate/environments/job-done?tab=runs");
 
     // Header Run simulation is enabled for a built harness job.
-    const runButton = await screen.findByRole("button", { name: /Run simulation/ });
+    const runButton = await screen.findByRole("button", {
+      name: /Run simulation/,
+    });
     await waitFor(() => expect(runButton).toBeEnabled());
 
     // The populated Runs tab is the summary; its table row for Run 1 opens the
@@ -401,14 +461,33 @@ describe("EnvironmentWorkspace route shell", () => {
     const question = {
       state: "waiting_for_user",
       runtime: { available: true },
-      blocking_input: { message_id: "q1", kind: "question_requested", prompt: "How strict?" },
-      messages: [{ message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", created_at: NOW, sequence: 1 }],
+      blocking_input: {
+        message_id: "q1",
+        kind: "question_requested",
+        prompt: "How strict?",
+      },
+      messages: [
+        {
+          message_id: "q1",
+          role: "assistant",
+          kind: "question",
+          state: "completed",
+          content: "How strict?",
+          created_at: NOW,
+          sequence: 1,
+        },
+      ],
       events: [],
     };
     window.localStorage.setItem("simEnv.chatPane.collapsed", "true");
     try {
-      getHarnessJob.mockResolvedValue({ ...COMPLETED_JOB, conversation: question });
-      const first = renderWorkspace("/dashboard/simulate/environments/job-done");
+      getHarnessJob.mockResolvedValue({
+        ...COMPLETED_JOB,
+        conversation: question,
+      });
+      const first = renderWorkspace(
+        "/dashboard/simulate/environments/job-done",
+      );
       expect(await screen.findByTestId("chat-split-busy")).toBeInTheDocument();
       first.unmount();
 
@@ -419,7 +498,9 @@ describe("EnvironmentWorkspace route shell", () => {
       });
       renderWorkspace("/dashboard/simulate/environments/job-done");
       // The frozen chat says why it can't take messages; by then the state is in.
-      expect((await screen.findAllByText(/no saved workspace/i)).length).toBeGreaterThan(0);
+      expect(
+        (await screen.findAllByText(/no saved workspace/i)).length,
+      ).toBeGreaterThan(0);
       expect(screen.queryByTestId("chat-split-busy")).not.toBeInTheDocument();
     } finally {
       window.localStorage.removeItem("simEnv.chatPane.collapsed");
@@ -430,22 +511,51 @@ describe("EnvironmentWorkspace route shell", () => {
     const conversation = {
       state: "warm_idle",
       runtime: { available: true },
-      messages: [{ message_id: "m1", role: "system", kind: "status", state: "completed", content: "Agent v2 changed: prompt. Rebuild the environment?", payload: { nudge_id: "n1", nudge_target: "environment" }, created_at: NOW, sequence: 1 }],
+      messages: [
+        {
+          message_id: "m1",
+          role: "system",
+          kind: "status",
+          state: "completed",
+          content: "Agent v2 changed: prompt. Rebuild the environment?",
+          payload: { nudge_id: "n1", nudge_target: "environment" },
+          created_at: NOW,
+          sequence: 1,
+        },
+      ],
       events: [],
     };
     const nudgesAre = (state) =>
       axios.get.mockImplementation((url) => {
         if (url.endsWith("/nudges/")) {
-          return Promise.resolve({ data: [{ id: "n1", target: "environment", state, facts: {}, card_message_id: "m1" }] });
+          return Promise.resolve({
+            data: [
+              {
+                id: "n1",
+                target: "environment",
+                state,
+                facts: {},
+                card_message_id: "m1",
+              },
+            ],
+          });
         }
-        return Promise.reject(Object.assign(new Error("Not found"), { statusCode: 404 }));
+        return Promise.reject(
+          Object.assign(new Error("Not found"), { statusCode: 404 }),
+        );
       });
-    const job = { ...COMPLETED_JOB, versioning: { enabled: true, nudges_enabled: true }, conversation };
+    const job = {
+      ...COMPLETED_JOB,
+      versioning: { enabled: true, nudges_enabled: true },
+      conversation,
+    };
     window.localStorage.setItem("simEnv.chatPane.collapsed", "true");
     try {
       nudgesAre("pending");
       getHarnessJob.mockResolvedValue(job);
-      const first = renderWorkspace("/dashboard/simulate/environments/job-done");
+      const first = renderWorkspace(
+        "/dashboard/simulate/environments/job-done",
+      );
       expect(await screen.findByTestId("chat-split-busy")).toBeInTheDocument();
       first.unmount();
 
@@ -532,7 +642,9 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(
       screen.getByText("Ask, correct, or steer what it builds"),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("builder-console-stop-orbit"),
+    ).not.toBeInTheDocument();
 
     axios.post.mockReturnValue(new Promise(() => {}));
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
@@ -557,7 +669,9 @@ describe("EnvironmentWorkspace route shell", () => {
 
     // ...and the environment-workspace chrome around it is gone: no tab rail and
     // no header "Run simulation" button. The run page owns the viewport.
-    expect(screen.queryByRole("tab", { name: /Contract/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /Contract/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Run simulation/ }),
     ).not.toBeInTheDocument();
@@ -568,8 +682,9 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/job-done");
 
-    expect(await screen.findByText("Done Environment", { selector: "p" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByText("Done Environment", { selector: "p" }),
+    ).toBeInTheDocument();
     // The "Customer Support Line" fixture world (MOCK_WORLD) used to fill every
     // missing field on a real environment, so its tools, rules and description
     // rendered as this environment's own. With the overlay gone the sections are
@@ -577,7 +692,9 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.queryByText(/verify_identity/)).toBeNull();
     expect(screen.queryByText(/Goodwill credit is capped/)).toBeNull();
     expect(
-      screen.queryByText(/A returns-and-orders phone line for a mid-size retailer/),
+      screen.queryByText(
+        /A returns-and-orders phone line for a mid-size retailer/,
+      ),
     ).toBeNull();
   });
 
@@ -590,10 +707,71 @@ describe("EnvironmentWorkspace route shell", () => {
     // pool derivation must tolerate it rather than throw.
     renderWorkspace("/dashboard/simulate/environments/job-done?tab=scenarios");
 
-    expect(await screen.findByText("Done Environment", { selector: "p" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByText("Done Environment", { selector: "p" }),
+    ).toBeInTheDocument();
     // No fixture scenario content leaked in either.
     expect(screen.queryByText(/verify_identity/)).toBeNull();
+  });
+
+  it("keeps checked scenarios available after cancelling the run dialog", async () => {
+    const rows = SAMPLE_ROWS.slice(0, 3);
+    getHarnessJob.mockResolvedValue({
+      ...COMPLETED_JOB,
+      scenarios: rows,
+      versioning: { enabled: true },
+    });
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation(async (url, config) => {
+      if (url.endsWith("/scenarios/")) {
+        return { data: queryScenarioFixture(config.params, rows) };
+      }
+      if (url.endsWith("/versions/")) {
+        return { data: { agent: [], environment: [], suite: [] } };
+      }
+      if (url.endsWith("/run-plan/")) {
+        return {
+          data: {
+            runnable: true,
+            warnings: [],
+            blocked_tools: [],
+            held_back: 0,
+          },
+        };
+      }
+      return base(url, config);
+    });
+    const user = userEvent.setup();
+    renderWorkspace("/dashboard/simulate/environments/job-done?tab=scenarios");
+
+    const table = await screen.findByRole("table");
+    const [, first, second] = within(table).getAllByRole("checkbox");
+    await user.click(first);
+    await user.click(second);
+    const runSelection = () =>
+      screen.getByText("Run simulation (2)", { selector: "button" });
+    await user.click(runSelection());
+
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Run simulation" }),
+    );
+    expect(await dialog.findByText("Runs 2 selected scenarios.")).toBeVisible();
+    await user.click(dialog.getByRole("button", { name: "Edit" }));
+    // Browsers can commit Cancel's update at the portal (body) before the
+    // same click reaches the document. jsdom otherwise batches past that point.
+    document.body.addEventListener("click", () => flushSync(() => {}), {
+      once: true,
+    });
+    await user.click(dialog.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(first).toBeChecked();
+    expect(second).toBeChecked();
+    expect(runSelection()).toBeEnabled();
+
+    await user.click(screen.getByText("Done Environment", { selector: "p" }));
+    expect(first).not.toBeChecked();
+    expect(second).not.toBeChecked();
   });
 
   it("hosts the build experience in place for a still-building job", async () => {
@@ -603,11 +781,15 @@ describe("EnvironmentWorkspace route shell", () => {
 
     // The build pipeline + deriving hero render where the workspace tabs will be,
     // reading the same ["harness-job", id] poll the env resolves from.
-    expect(await screen.findByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
+    expect(
+      await screen.findByText(PIPELINE_CHECKS_COPY.heading),
+    ).toBeInTheDocument();
     // The hero shows a neutral skeleton (no derived world yet).
     expect(screen.getByText("0 tools")).toBeInTheDocument();
     // Run stays disabled until the job goes Live.
-    expect(screen.getByRole("button", { name: /Run simulation/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Run simulation/ }),
+    ).toBeDisabled();
   });
 
   it("keeps the build layout but freezes it on a terminal-failed job", async () => {
@@ -617,7 +799,12 @@ describe("EnvironmentWorkspace route shell", () => {
       status: {
         stage: "failed",
         created_at: NOW,
-        failure: { domain: "infrastructure", stage: "understanding_agent", code: "sandbox_launch_failed", message: "Sandbox launch failed" },
+        failure: {
+          domain: "infrastructure",
+          stage: "understanding_agent",
+          code: "sandbox_launch_failed",
+          message: "Sandbox launch failed",
+        },
       },
     });
 
@@ -625,11 +812,11 @@ describe("EnvironmentWorkspace route shell", () => {
 
     // The header pill reads Failed (not Building) — but the build layout (chat +
     // pipeline) stays, with the pipeline showing the failure rather than a
-    // dead-end error page.
+    // dead-end error page. An infrastructure failure reads as ours, not the agent's.
     expect(await screen.findByText("Failed")).toBeInTheDocument();
     expect(screen.queryByText("Building")).toBeNull();
     expect(screen.getByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
-    expect(screen.getByText("Sandbox launch failed")).toBeInTheDocument();
+    expect(screen.getByText(INFRASTRUCTURE_LINE)).toBeInTheDocument();
   });
 
   it("swaps the build experience for the workspace in place when the job completes", async () => {
@@ -650,7 +837,9 @@ describe("EnvironmentWorkspace route shell", () => {
     renderWorkspace("/dashboard/simulate/environments/job-build");
 
     // It starts on the build pipeline...
-    expect(await screen.findByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
+    expect(
+      await screen.findByText(PIPELINE_CHECKS_COPY.heading),
+    ).toBeInTheDocument();
     // ...and the placeholder env state is NOT seeded while building, so the real
     // derived world (not the building-time generated pool) wins once it lands.
     expect(useEnvironmentsStore.getState().byEnv["job-build"]).toBeUndefined();
@@ -659,7 +848,10 @@ describe("EnvironmentWorkspace route shell", () => {
     // build pipeline is gone — the workspace took over in place, same url.
     currentJob = COMPLETED_BUILD_JOB;
     await waitFor(
-      () => expect(screen.getByRole("button", { name: /Run simulation/ })).toBeEnabled(),
+      () =>
+        expect(
+          screen.getByRole("button", { name: /Run simulation/ }),
+        ).toBeEnabled(),
       { timeout: 6000 },
     );
     expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
@@ -675,9 +867,13 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/env-1");
 
-    expect(await screen.findByText("Refund Copilot", { selector: "p" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("Refund Copilot", { selector: "p" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
-    expect(screen.getByRole("button", { name: /Fork to edit/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Fork to edit/ }),
+    ).toBeInTheDocument();
   });
 
   // Fork is temporarily commented out in ForkMenu — re-enable this with it.

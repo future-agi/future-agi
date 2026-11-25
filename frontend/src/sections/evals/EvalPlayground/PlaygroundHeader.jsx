@@ -10,8 +10,8 @@ const PlaygroundHeader = ({ evaluationName, onClose }) => {
         <Typography typography="m2" fontWeight="fontWeightSemiBold">
           {evaluationName} - Playground
         </Typography>
-        <IconButton onClick={onClose} sx={{ px: 0.5, py: 0, height: "28px" }}>
-          <Iconify icon="mingcute:close-line" color="text.primary" />
+        <IconButton onClick={onClose} size="small">
+          <Iconify icon="solar:close-linear" color="text.primary" />
         </IconButton>
       </Stack>
       <Typography typography="s1">

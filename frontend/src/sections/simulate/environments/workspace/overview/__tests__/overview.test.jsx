@@ -62,9 +62,9 @@ describe("OverviewPanel", () => {
     );
     // …but ALK reports no per-rule origin, and the chips used to be derived by
     // position (first two CODE, last PROSE, rest PROMPT). None of them ship.
-    expect(screen.queryByText("CODE")).toBeNull();
-    expect(screen.queryByText("PROMPT")).toBeNull();
-    expect(screen.queryByText("PROSE")).toBeNull();
+    expect(screen.queryByText("Code")).toBeNull();
+    expect(screen.queryByText("Prompt")).toBeNull();
+    expect(screen.queryByText("Prose")).toBeNull();
   });
 
   it("renders real §6 world content for a backed env: empty states + real deps", () => {

@@ -94,7 +94,7 @@ test('ANNOT-E2E-001: workspace annotation choices follow UI edits without scores
     if (phase === 'edited') {
       await test.step('UI: edit Beta to Gamma on the same label', async () => {
         await page.goto('/dashboard/annotations/labels', { waitUntil: 'domcontentloaded' });
-        await page.getByPlaceholder('Search labels...').fill(name);
+        await page.getByPlaceholder('Search', { exact: true }).fill(name);
         // annotation-label-table.jsx onCellClicked opens the edit drawer.
         await page.locator('.ag-row [col-id="name"]').filter({ hasText: name }).click({ timeout: UI_READY });
         await expect(page.getByPlaceholder('Option 2', { exact: true })).toHaveValue(beta, { timeout: UI_READY });

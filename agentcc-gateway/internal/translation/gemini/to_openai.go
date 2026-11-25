@@ -1,8 +1,6 @@
 package gemini
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -51,7 +49,7 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 		for _, part := range content.Parts {
 			if part.FunctionCall != nil {
 				name := part.FunctionCall.Name
-				callIDsByName[name] = append(callIDsByName[name], newCallID())
+				callIDsByName[name] = append(callIDsByName[name], models.NewToolCallID())
 			}
 		}
 	}
@@ -90,7 +88,9 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 		if cfg.ResponseMimeType == "application/json" {
 			if len(cfg.ResponseSchema) > 0 {
 				// json_schema variant: wrap schema into OpenAI's json_schema format
+				// OpenAI requires a json_schema name; Gemini has none to give.
 				schemaWrapper, _ := json.Marshal(map[string]json.RawMessage{
+					"name":   json.RawMessage(`"response"`),
 					"schema": cfg.ResponseSchema,
 				})
 				out.ResponseFormat = &models.ResponseFormat{
@@ -324,13 +324,6 @@ func translateContent(
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-// newCallID generates a stable random call ID in the format call_{hex16}.
-func newCallID() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return "call_" + hex.EncodeToString(b)
-}
-
 // nextCallID returns the next unclaimed call ID for the given function name,
 // advancing the cursor. Falls back to a fresh ID if the pre-computed list is
 // exhausted (defensive: a functionResponse without a matching functionCall).
@@ -340,7 +333,7 @@ func nextCallID(callIDsByName map[string][]string, cursor map[string]int, name s
 		cursor[name] = idx + 1
 		return ids[idx]
 	}
-	return newCallID()
+	return models.NewToolCallID()
 }
 
 // flattenPartsText concatenates the Text fields of all parts.

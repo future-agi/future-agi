@@ -1,30 +1,28 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { MODALITY, UNIDENTIFIED_MODALITY } from "../agentTypes";
+import { NOT_PROVIDED } from "../myEnvironments.constants";
 
-const NUM_SX = {
-  typography: "s2",
-  color: "text.secondary",
-  fontVariantNumeric: "tabular-nums",
-};
+const VALUE_SX = { typography: "s1", color: "text.secondary" };
 
-const AGENT_ICON_SX = {
-  width: 22,
-  height: 22,
-  borderRadius: 0.75,
-  flexShrink: 0,
-  display: "grid",
-  placeItems: "center",
-  bgcolor: "background.neutral",
-  color: "text.secondary",
-};
+const NUM_SX = { ...VALUE_SX, fontVariantNumeric: "tabular-nums" };
+
+const DASH = "-";
+
+const Dash = () => (
+  <Typography sx={{ typography: "s1", color: "text.disabled" }}>
+    {DASH}
+  </Typography>
+);
+
+const isMissing = (value) => value == null || value === NOT_PROVIDED;
 
 export const NumberCell = ({ getValue }) => {
   const value = getValue?.();
-  // A dummy column (tools/scenarios/sub-goals) has no value in the harness
-  // payload; show a dash rather than an empty cell.
-  return <Typography sx={NUM_SX}>{value ?? "-"}</Typography>;
+  if (isMissing(value)) return <Dash />;
+  return <Typography sx={NUM_SX}>{value}</Typography>;
 };
 NumberCell.propTypes = { getValue: PropTypes.func };
 
@@ -34,16 +32,86 @@ export const AgentTypeCell = ({ getValue }) => {
     <Stack
       direction="row"
       alignItems="center"
-      spacing={0.875}
+      spacing={0.75}
       sx={{ minWidth: 0 }}
     >
-      <Box sx={AGENT_ICON_SX}>
-        <Iconify icon={m?.icon} width={13} />
-      </Box>
-      <Typography noWrap sx={{ typography: "s2" }}>
+      <Iconify
+        icon={m?.icon}
+        width={16}
+        sx={{ color: "text.tertiary", flexShrink: 0 }}
+      />
+      <Typography noWrap sx={{ ...VALUE_SX, minWidth: 0 }}>
         {m?.label}
       </Typography>
     </Stack>
   );
 };
 AgentTypeCell.propTypes = { getValue: PropTypes.func };
+
+export const NameCell = ({ row }) => {
+  const { name, envVersion } = row?.original || {};
+  return (
+    <Box sx={{ minWidth: 0, width: "100%" }}>
+      <Stack
+        direction="row"
+        alignItems="baseline"
+        spacing={0.75}
+        sx={{ minWidth: 0 }}
+      >
+        <Typography
+          noWrap
+          sx={{
+            typography: "s1",
+            fontWeight: "fontWeightMedium",
+            color: "text.primary",
+            minWidth: 0,
+          }}
+        >
+          {name}
+        </Typography>
+        {!isMissing(envVersion) && (
+          <Typography
+            component="span"
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              flexShrink: 0,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {envVersion}
+          </Typography>
+        )}
+      </Stack>
+    </Box>
+  );
+};
+NameCell.propTypes = { row: PropTypes.object };
+
+export const AgentCell = ({ row }) => {
+  const agent = row?.original?.agent;
+  if (isMissing(agent) || !agent.name) return <Dash />;
+  return (
+    <Typography noWrap sx={{ ...VALUE_SX, minWidth: 0 }}>
+      {agent.name}
+    </Typography>
+  );
+};
+AgentCell.propTypes = { row: PropTypes.object };
+
+export const LastRunCell = ({ row }) => {
+  const lastRun = row?.original?.lastRun;
+  if (isMissing(lastRun) || lastRun.rate == null) return <Dash />;
+  const title =
+    lastRun.ordinal != null
+      ? `Run ${lastRun.ordinal} · scenarios passed`
+      : "Scenarios passed";
+  return (
+    <CustomTooltip show size="small" arrow title={title}>
+      <Typography sx={{ ...NUM_SX, color: "text.primary", cursor: "default" }}>
+        {`${lastRun.rate}%`}
+      </Typography>
+    </CustomTooltip>
+  );
+};
+LastRunCell.propTypes = { row: PropTypes.object };

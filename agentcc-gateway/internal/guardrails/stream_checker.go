@@ -61,6 +61,45 @@ type StreamCheckResult struct {
 	Message string
 	// Disclaimer is set when failureAction is "disclaimer" and guardrail triggered at end.
 	Disclaimer string
+	// pipeline is the post-stage run that blocked, for StoreBlock.
+	pipeline *PipelineResult
+}
+
+// StoreBlock records a stream block on the request, as the non-streaming post
+// stage does, so its log entry lists the guardrail that stopped the stream.
+// Without it a stream stopped by an org check, on a request whose only stored
+// result is a Monitor key-policy match, would look monitor-only to log
+// ingestion and raise no guardrail.triggered event.
+func (r *StreamCheckResult) StoreBlock(rc *models.RequestContext) {
+	if r == nil || !r.Blocked || rc == nil {
+		return
+	}
+	rc.Flags.GuardrailTriggered = true
+	rc.Flags.StreamGuardrailBlocked = true
+	name := "streaming"
+	before := len(rc.GuardrailResults)
+	if r.pipeline != nil {
+		storeGuardrailResults(rc, r.pipeline)
+		// The engine records each triggered warn/log rule and stops at the
+		// first block, so the blocking rule is the last block entry.
+		for _, tg := range r.pipeline.Triggered {
+			if tg.Action == ActionBlock {
+				name = tg.Name
+			}
+		}
+		if name == "streaming" && len(r.pipeline.Triggered) > 0 {
+			name = r.pipeline.Triggered[len(r.pipeline.Triggered)-1].Name
+		}
+	}
+	if len(rc.GuardrailResults) == before {
+		rc.GuardrailResults = append(rc.GuardrailResults, models.GuardrailResult{
+			Name: name, Action: "block", Message: r.Message, Outcome: "blocked",
+		})
+	}
+	// As the non-streaming post stage does, so the audit event and the log
+	// name the check that blocked rather than an earlier logged one.
+	rc.Metadata["guardrail_name"] = name
+	rc.Metadata["guardrail_action"] = "blocked"
 }
 
 // ProcessChunk accumulates text from a stream chunk and runs guardrails
@@ -150,7 +189,8 @@ func (sc *StreamGuardrailChecker) runCheck(ctx context.Context) *StreamCheckResu
 	}
 
 	return &StreamCheckResult{
-		Blocked: true,
-		Message: msg,
+		Blocked:  true,
+		Message:  msg,
+		pipeline: result,
 	}
 }

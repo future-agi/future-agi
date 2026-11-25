@@ -19,6 +19,7 @@ import { useTestEvaluationStore } from "./states";
 import TestEvaluationPage from "./TestEvaluationPage";
 import { AGENT_TYPES } from "../agents/constants";
 import { SourceType } from "../scenarios/common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
   const { openTestEvaluation, setOpenTestEvaluation } =
@@ -124,16 +125,18 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
     setOpenTestEvaluation(false);
   }, [setOpenTestEvaluation]);
 
+  const covered = useDrawerCovered(openTestEvaluation);
   return (
     <>
       <Drawer
         anchor="right"
         open={openTestEvaluation}
+        sx={coveredDrawerSx(covered)}
         variant={onSuccessOfAdditionOfEvals ? "temporary" : "persistent"}
         onClose={onCloseHandler}
         PaperProps={{
           sx: (theme) => ({
-            width: 720,
+            width: 640,
             maxWidth: "95vw",
             height: "100vh",
             position: "fixed",

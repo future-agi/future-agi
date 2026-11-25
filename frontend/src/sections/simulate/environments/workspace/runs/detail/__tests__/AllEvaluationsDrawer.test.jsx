@@ -294,7 +294,7 @@ describe("AllEvaluationsDrawer", () => {
     expect(screen.getByRole("button", { name: "Run (1)" })).toBeDisabled();
   });
 
-  it("removes any eval, including one the harness reports, and refreshes the run's table, analytics and call details", () => {
+  it("removes any eval, including one the harness reports, and refreshes the run's table, analytics and call details", async () => {
     removeMutate.mockImplementation((_v, o) => o.onSuccess());
     const { client } = setup();
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
@@ -314,6 +314,8 @@ describe("AllEvaluationsDrawer", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Remove no_misselling" }),
     );
+    expect(removeMutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(removeMutate).toHaveBeenCalledWith(
       { id: "env-1", evalConfigId: "c1" },
       expect.any(Object),
@@ -333,12 +335,25 @@ describe("AllEvaluationsDrawer", () => {
     });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Remove refund_issued_claim" }),
+      await screen.findByRole("button", { name: "Remove refund_issued_claim" }),
     );
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
     expect(removeMutate).toHaveBeenCalledWith(
       { id: "env-1", evalConfigId: "c3" },
       expect.any(Object),
     );
+  });
+
+  it("asks before removing an eval and keeps it when the ask is dismissed", () => {
+    setup();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove no_misselling" }),
+    );
+    expect(screen.getByText("Remove this evaluation?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(removeMutate).not.toHaveBeenCalled();
   });
 
   it("keeps every eval until grading on the run finishes", async () => {
@@ -389,7 +404,7 @@ describe("AllEvaluationsDrawer", () => {
   it("opens the add flow", () => {
     const { onAddEvaluations } = setup();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Evaluations" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add evaluations" }));
     expect(onAddEvaluations).toHaveBeenCalledTimes(1);
   });
 });

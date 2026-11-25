@@ -39,6 +39,7 @@ import {
   VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
   supportsConcurrency,
+  concurrencyFieldProps,
   validateLiveKitCredentials,
 } from "../constants";
 import { ShowComponent } from "src/components/show";
@@ -52,6 +53,7 @@ import { formatDistanceToNow } from "date-fns";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
 import { MODEL_TYPES } from "../../develop-detail/RunPrompt/common";
 import { useAuthContext } from "src/auth/hooks";
+import ProviderConnectionHealth from "./ProviderConnectionHealth";
 
 const EditAgentDetails = ({
   control,
@@ -492,7 +494,7 @@ const EditAgentDetails = ({
                       flexDirection: "row",
                       alignItems: "center",
                       gap: 1,
-                      color: "blue.600",
+                      color: "status.info.fg",
                     }}
                   >
                     <SvgColor
@@ -518,12 +520,12 @@ const EditAgentDetails = ({
                       flexDirection: "row",
                       alignItems: "center",
                       gap: 0.5,
-                      color: "green.600",
+                      color: "status.success.fg",
                     }}
                   >
                     <SvgColor
                       src="/assets/icons/ic_success_fill.svg"
-                      sx={{ width: 16, height: 16, color: "green.600" }}
+                      sx={{ width: 16, height: 16, color: "status.success.fg" }}
                     />
                     <Typography
                       typography={"s3"}
@@ -566,6 +568,7 @@ const EditAgentDetails = ({
               <FormTextFieldV2
                 control={control}
                 fieldName="apiKey"
+                fieldType="password"
                 placeholder="Enter API key"
                 label="Provider API Key"
                 required={
@@ -606,6 +609,7 @@ const EditAgentDetails = ({
             <FormTextFieldV2
               control={control}
               fieldName="livekitApiKey"
+              type="password"
               placeholder="APIxxxxxxxxxxxxxxxx"
               label="LiveKit API Key"
               required={!isSourceAgent}
@@ -655,20 +659,18 @@ const EditAgentDetails = ({
                 }
                 sx={{
                   minWidth: 120,
-                  height: 40,
                   whiteSpace: "nowrap",
-                  fontSize: 13,
                   borderColor:
                     livekitValidation === "valid"
-                      ? "success.main"
+                      ? "status.success.border"
                       : livekitValidation === "invalid"
-                        ? "error.main"
+                        ? "status.danger.border"
                         : "divider",
                   color:
                     livekitValidation === "valid"
-                      ? "success.main"
+                      ? "status.success.fg"
                       : livekitValidation === "invalid"
-                        ? "error.main"
+                        ? "status.danger.fg"
                         : "text.secondary",
                 }}
               >
@@ -682,7 +684,11 @@ const EditAgentDetails = ({
               </Button>
             </Stack>
             {livekitValidation === "invalid" && livekitValidationError && (
-              <Typography typography="s3" color="error.main" sx={{ mt: -1 }}>
+              <Typography
+                typography="s3"
+                color="status.danger.fg"
+                sx={{ mt: -1 }}
+              >
                 {livekitValidationError}
               </Typography>
             )}
@@ -706,8 +712,7 @@ const EditAgentDetails = ({
               type="number"
               size="small"
               fullWidth
-              inputProps={{ min: 1, max: orgLimit }}
-              helperText={`Max simultaneous test calls. If you have multiple agent workers, set this to the total capacity across all workers (default: 5, max: ${orgLimit})`}
+              {...concurrencyFieldProps(orgLimit)}
             />
           </ShowComponent>
           <ShowComponent
@@ -838,16 +843,10 @@ const EditAgentDetails = ({
                 }
               }}
             >
-              <ToggleButton
-                value={VOICE_TRANSPORT.WEBRTC}
-                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-              >
+              <ToggleButton value={VOICE_TRANSPORT.WEBRTC}>
                 {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.WEBRTC].label}
               </ToggleButton>
-              <ToggleButton
-                value={VOICE_TRANSPORT.TELEPHONY}
-                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-              >
+              <ToggleButton value={VOICE_TRANSPORT.TELEPHONY}>
                 {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.TELEPHONY].label}
               </ToggleButton>
             </ToggleButtonGroup>
@@ -997,13 +996,6 @@ const EditAgentDetails = ({
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      maxWidth: "200px !important",
-                    },
-                  },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -1060,9 +1052,6 @@ const EditAgentDetails = ({
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: { sx: { maxWidth: "200px !important" } },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -1119,6 +1108,9 @@ const EditAgentDetails = ({
             >
               Enable if you want to monitor this agent
             </Typography>
+            {!isSourceAgent && (
+              <ProviderConnectionHealth agentDefinitionId={agentDefinitionId} />
+            )}
           </Stack>
         </ShowComponent>
       </Box>

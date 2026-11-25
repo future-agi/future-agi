@@ -249,9 +249,7 @@ def _limits(value: Any) -> dict[str, int]:
         if isinstance(limit, bool) or not isinstance(limit, int):
             raise ValueError(f"limit {key} must be an integer")
         if limit < -1 or limit > MAX_LIMIT_VALUE:
-            raise ValueError(
-                f"limit {key} must be between -1 and {MAX_LIMIT_VALUE}"
-            )
+            raise ValueError(f"limit {key} must be between -1 and {MAX_LIMIT_VALUE}")
         limits[key] = limit
     return limits
 

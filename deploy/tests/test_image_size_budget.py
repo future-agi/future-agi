@@ -12,7 +12,12 @@ import os
 import re
 import shutil
 import tempfile
-import tomllib
+# images-ci uses Python 3.11's stdlib parser. Full deploy discovery also
+# supports the updater's Python 3.9 floor with test-only tomli==2.2.1.
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -30,7 +35,11 @@ _spec = importlib.util.spec_from_file_location(
     "docs_site", ROOT / "scripts" / "docs_site.py"
 )
 docs_site = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(docs_site)
+# The documentation generator intentionally has a Python 3.11 floor. Exercise
+# its rendering assertions on 3.9 too, supplying the same test-only parser
+# backport just for module import, without changing the shipping docs tool.
+with mock.patch.dict('sys.modules', {'tomllib': tomllib}):
+    _spec.loader.exec_module(docs_site)
 
 MB = 1_000_000
 
@@ -345,6 +354,24 @@ class BudgetFileTests(unittest.TestCase):
                         projected = projected[arch]
                     if projected is not None:
                         self.assertGreater(budget.budget_for(entry, arch), projected)
+
+    def test_the_slim_layer_entries_state_their_measured_size(self):
+        # The docs render measured_mb, and the notes of -slim and of the
+        # standalone image and install that inherit its layer explain each
+        # budget with measurements: they must carry the same figure.
+        by_key = {
+            (e["image"], e.get("tag_suffix", "")): e for e in self.config["images"]
+        }
+        entries = {
+            "-slim": by_key[("futureagi/future-agi", "-slim")],
+            "standalone": by_key[("futureagi/standalone", "")],
+            "standalone_install": self.config["standalone_install"],
+        }
+        for name, entry in entries.items():
+            measured = entry["measured_mb"]
+            with self.subTest(entry=name):
+                self.assertIn(f"{measured:g} MB", entry["note"])
+                self.assertLessEqual(measured, entry["budget_mb"])
 
     def test_every_released_image_has_a_budget(self):
         workflow = (ROOT / ".github/workflows/release-images.yml").read_text()

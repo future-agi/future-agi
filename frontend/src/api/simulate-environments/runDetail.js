@@ -1,6 +1,14 @@
 import { useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  simulateV3CallExecutionWorkers,
+  simulateV3TestExecutionTrialRoutes,
+} from "src/generated/api-contracts/api";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import {
@@ -10,6 +18,7 @@ import {
   runColor,
   runStateFor,
 } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import { TRIAL_UNDER_WAY } from "src/sections/simulate/environments/workspace/runs/detail/trialChanges.constants";
 import { fetchRunCalls, runSummaryKey } from "./runCalls";
 
 /**
@@ -36,6 +45,8 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {?string} executionStatus  The execution's own status
  *                                   (`completed`, `evaluating`, …).
  * @property {string} runState      Execution lifecycle shared with the runs list.
+ * @property {?{id: string, label: string}} fixRun  The fix that started this
+ *                                   check run; null on the user's own runs.
  */
 
 /**
@@ -46,8 +57,7 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {?number} completed    `kpis.completed_calls`, both modalities;
  *                                  null while the KPIs haven't loaded or the
  *                                  field is absent — never 0, never `total`.
- * @property {number} passRate      0–100; `performance-summary.pass_rate` when
- *                                  present, else derived `passed/total`.
+ * @property {?number} passRate     0–100 from the run's row; null when unscored.
  * @property {?number} durationS    Total wall-clock seconds (`total_duration`).
  * @property {?number} avgDurationMs Mean per-call duration in ms (derived).
  * @property {?number} avgScore     `kpis.avg_score` (0–100), null if absent.
@@ -98,11 +108,10 @@ export function buildRunIdentity(row, envName = null) {
  * summary payloads, falling back to the executions row for the call counts.
  * Pure.
  * @param {?Object} kpis The `test-executions/{id}/kpis/` payload.
- * @param {?Object} perf The `…/performance-summary/` payload.
  * @param {?Object} row  The mapped executions row (count fallback).
  * @returns {RunStats}
  */
-export function buildRunStats(kpis, perf, row) {
+export function buildRunStats(kpis, row) {
   const total = row?.hasOutcomes
     ? row.total
     : kpis?.total_calls ?? row?.total ?? 0;
@@ -110,14 +119,9 @@ export function buildRunStats(kpis, perf, row) {
     ? row.failed
     : kpis?.failed_calls ?? row?.failed ?? 0;
   const passed = row?.hasOutcomes ? row.passed : Math.max(total - failed, 0);
+  const measured = row?.hasOutcomes ? row.scored : total;
 
-  const perfRate = perf?.test_run_performance_metrics?.pass_rate;
-  const passRate =
-    row?.hasOutcomes || typeof perfRate !== "number"
-      ? total
-        ? Math.round((passed / total) * 100)
-        : 0
-      : Math.round(perfRate);
+  const passRate = row ? row.passRate : null;
 
   // `completed_calls` is its own KPI field for both modalities — not the chat
   // branch's `connected_calls` (voice's `connected_voice_calls` uses a
@@ -154,7 +158,7 @@ export function buildRunStats(kpis, perf, row) {
     tokens: null,
     cost: null,
     scores: { ...evalMetrics },
-    measured: row?.hasOutcomes ? passed + failed : total,
+    measured,
     unmeasured: row?.hasOutcomes ? Math.max(total - passed - failed, 0) : 0,
     flaky: 0,
     dropped: 0,
@@ -225,10 +229,25 @@ export function useRunDetail(
         ? execution.selected_scenario_keys
         : undefined,
       trials: execution.trials ?? 1,
+      seed: execution.seed ?? null,
       pinnedAgentVersion: execution.pinned_agent_version ?? null,
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
       agentDiffers: Boolean(execution.agent_differs),
+      // Said by the server when the run replayed a build without its environment's actors.
+      buildNotice: execution.build_notice ?? null,
+      // A fix's check run: `{ id, label }` of the fix that started it, else null.
+      fixRun: execution.fix_run ?? null,
+      // How far an interrupted run got and whether it can resume; null when the
+      // backend does not say.
+      resume: execution.resume
+        ? {
+            resumable: Boolean(execution.resume.resumable),
+            finished: execution.resume.finished ?? null,
+            unfinished: execution.resume.unfinished ?? null,
+            history: execution.resume.history ?? [],
+          }
+        : null,
     };
   }, [execution, envName, summary]);
   const stats = useMemo(
@@ -276,7 +295,7 @@ export function useRunDetail(
  * @property {string} scenario     Scenario / task name.
  * @property {Array<{ name: string, passed: ?boolean }>} subGoalResults
  * @property {?string} persona     Simulated-user persona label.
- * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"} status
+ * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"cancelled"|"inconclusive"|"no_score"} status
  * @property {?string} harnessOutcomeStatus Authoritative sealed trial verdict.
  * @property {?string} executionStatus Transport lifecycle status; kept separate.
  * @property {boolean} critical    Whether the scenario is a release blocker.
@@ -389,25 +408,51 @@ function relativeTime(row, end = false) {
   return milliseconds == null ? null : milliseconds / 1000;
 }
 
+const ACTOR_OUTCOMES = {
+  committed: "Committed",
+  refused: "Refused",
+  faulted: "Failed",
+  duplicate: "Duplicate",
+  not_recorded: "Outcome not recorded",
+};
+// Null for the agent's own call.
+const worldAction = (call) =>
+  call.kind === "world_actor_action"
+    ? {
+        name: call.actor_name,
+        role: call.actor_role,
+        outcome: ACTOR_OUTCOMES[call.outcome] ?? ACTOR_OUTCOMES.not_recorded,
+      }
+    : null;
+
+/** @param {import("src/generated/api-contracts/api.schemas").SimulateRunV3FunctionCallApi[]} calls */
 export function functionCallTranscriptRows(calls = []) {
   return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;
-    const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
+    const name = call.name || call.function?.name || "tool";
+    const actor = worldAction(call);
+    const heading = actor
+      ? [actor.outcome, name].filter(Boolean).join(" · ")
+      : `Function call · ${name}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
     const result = call.result ?? call.output;
     return {
       id: call.id || `function-call-${index}`,
-      speaker_role: "tool",
+      speaker_role: actor ? "world_actor" : "tool",
+      speaker_name: actor?.name,
+      actor_role: actor?.role,
       content: [
         heading,
         args != null ? `→ args: ${displayJson(args)}` : null,
         result != null ? `← result: ${displayJson(result)}` : null,
+        actor && call.error ? `× error: ${call.error}` : null,
       ]
         .filter(Boolean)
         .join("\n"),
       start_time_seconds: relativeTime(call),
       end_time_seconds: relativeTime(call, true),
-      tool_calls: [call],
+      tool_calls: actor ? null : [call],
+      tool_label: actor ? null : call.tool_label,
     };
   });
 }
@@ -558,20 +603,20 @@ export function mapCallDetail(raw) {
 
   const isChat = raw.simulation_call_type === "text";
   const turns = callTranscript(raw).map((t) => ({
-    role: normalizeRole(t.speaker_role ?? t.role),
+    role: normalizeRole(t.speaker_role),
+    speakerName: t.speaker_name || "",
+    actorId: t.actor_id || "",
+    actorRole: t.actor_role || "",
+    channel: t.channel || "",
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,
+    toolLabel: t.tool_label ?? null,
   }));
 
   const words = turns.reduce(
     (a, s) =>
       a + (s.text ? s.text.trim().split(/\s+/).filter(Boolean).length : 0),
-    0,
-  );
-  const toolCalls = turns.reduce(
-    (count, turn) =>
-      count + (Array.isArray(turn.toolCalls) ? turn.toolCalls.length : 0),
     0,
   );
 
@@ -595,6 +640,21 @@ export function mapCallDetail(raw) {
     phone: raw.phone_number ?? null,
     provider: raw.provider ?? null,
     durationS: raw.duration ?? raw.duration_seconds ?? null,
+    persona: raw.persona ?? null,
+    // Absent without actors or faults.
+    trial_state: raw.trial_state ?? null,
+    // The attempts a rerun kept, latest first, and which attempt this call is: both counted by the server.
+    earlierAttempts: raw.earlier_attempts,
+    attemptNumber: raw.attempt_number,
+    // The World state view shows only when the call detail says actors are on.
+    actorsEnabled: raw.actors_enabled,
+    // Why the platform kept no transcript and ran none of its own evals or CSAT, in the server's words.
+    processingSkipReason: raw.processing_skipped
+      ? raw.processing_skip_reason || null
+      : null,
+    // Who took part in the call, as the server says, and whether a customer did.
+    participants: raw.participants,
+    hasCustomer: raw.has_customer,
     turns,
     stats: {
       turnCount: raw.turn_count ?? null,
@@ -605,7 +665,8 @@ export function mapCallDetail(raw) {
       // No backend field for either — GAP, MockBadged in the drawer.
       silenceS: null,
       ttfwMs: null,
-      toolCalls,
+      // Counted by the API, which leaves out hand-offs to other agents.
+      toolCalls: raw.tool_call_count,
     },
     tokens: raw.total_tokens ?? null,
     cost: raw.cost_cents != null ? raw.cost_cents / 100 : null,
@@ -659,6 +720,118 @@ const traceRow = (raw) => ({
   status: raw.status ?? null,
   latencyMs: raw.latency_ms ?? null,
 });
+
+/** A scenario's trials in one run, lined up step by step by who asked whom (or who called which tool). */
+export function useTrialRoutes(
+  testExecutionId,
+  scenarioKey,
+  toolCalls = false,
+) {
+  return useQuery({
+    queryKey: [
+      "simulation-trial-routes-v3",
+      testExecutionId,
+      scenarioKey,
+      toolCalls,
+    ],
+    queryFn: async () => {
+      const response = await simulateV3TestExecutionTrialRoutes(
+        testExecutionId,
+        { scenario_key: scenarioKey, tool_calls: toolCalls },
+      );
+      return response.data;
+    },
+    enabled: !!testExecutionId && !!scenarioKey,
+    // Switching tool-call columns keeps the table on screen until the new one arrives.
+    placeholderData: keepPreviousData,
+    // The strip says nothing when it can't read them; a call drawer must not toast about it.
+    meta: { errorHandled: true },
+  });
+}
+
+// The shortest wait before reading a pending worker record again.
+export const READ_AGAIN_MIN_MS = 1000;
+
+/**
+ * How long until a pending worker record is read again; false when none is due. Never 0, which turns polling off:
+ * a `next_read_at` already past (a late answer, a clock ahead of the server's) or unreadable still reads again.
+ */
+export const readAgainDelay = (at, now = Date.now()) => {
+  if (!at) return false;
+  const wait = Date.parse(at) - now;
+  return Number.isFinite(wait)
+    ? Math.max(wait, READ_AGAIN_MIN_MS)
+    : READ_AGAIN_MIN_MS;
+};
+
+// A multi-agent call whose record is still being collected (202): the tab stays and says so until it lands.
+export const COLLECTING_WORKERS = Object.freeze({ state: "collecting" });
+
+/**
+ * Which of a multi-agent app's workers did what in one call: COLLECTING_WORKERS while its record is still being
+ * collected (202) for a version that declares participants, null when it has none (204) or is single-agent.
+ */
+export function useCallWorkers(
+  callExecutionId,
+  callStatus = null,
+  attempt = null,
+) {
+  return useQuery({
+    queryKey: [
+      "simulation-call-workers-v3",
+      callExecutionId,
+      callStatus,
+      attempt,
+    ],
+    queryFn: async () => {
+      // An earlier attempt's record, as the rerun kept it, when one is picked.
+      const response = await simulateV3CallExecutionWorkers(
+        callExecutionId,
+        attempt ? { attempt } : undefined,
+      );
+      const record = response.status === 200 ? response.data : null;
+      return {
+        record,
+        // The API says when a read still due may change this answer; the tab reads again once, then.
+        readAgainAt: response.data?.pending ? response.data.next_read_at : null,
+        // A single-agent app's call is read too: only a declared participant makes the wait worth showing.
+        participantsDeclared: response.data?.participants_declared === true,
+      };
+    },
+    select: (read) =>
+      read.record ??
+      (read.readAgainAt && read.participantsDeclared
+        ? COLLECTING_WORKERS
+        : null),
+    // A status change re-reads the same call: its record stays shown meanwhile, never another call's or attempt's.
+    // A call that is under way again after it ended was rerun in place (same id, no attempt id): a new attempt.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === callExecutionId &&
+      previousQuery?.queryKey[3] === attempt &&
+      !(
+        TRIAL_UNDER_WAY.has(callStatus) &&
+        !TRIAL_UNDER_WAY.has(previousQuery?.queryKey[2])
+      )
+        ? previous
+        : undefined,
+    enabled: !!callExecutionId,
+    retry: false,
+    // The panel says so inline; this tab must not toast about a call the user isn't looking at.
+    meta: { errorHandled: true },
+    refetchInterval: (query) =>
+      query.state.error ? false : readAgainDelay(query.state.data?.readAgainAt),
+  });
+}
+
+/**
+ * Whether a call has workers to show: false when it has no record (no Participants tab), undefined while unread.
+ * A record still being collected and a failed read both show the tab, so the panel can say which.
+ */
+export function useHasWorkers(callExecutionId, callStatus = null) {
+  const { data, isError } = useCallWorkers(callExecutionId, callStatus);
+  if (isError) return true;
+  return data === undefined ? undefined : data !== null;
+}
 
 export function useCallTraces(executionId, callExecutionId) {
   const query = useQuery({

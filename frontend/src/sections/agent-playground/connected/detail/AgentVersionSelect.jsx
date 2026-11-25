@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import React from "react";
-import { Box, MenuItem, Select, Skeleton } from "@mui/material";
+import { Box, MenuItem, Select } from "@mui/material";
 import { MONO, ago } from "./format";
 import usePinnedVersions from "./usePinnedVersions";
 import { LineSkeleton } from "./bits";
@@ -12,7 +12,6 @@ const loadingRows = (n) =>
       key={`loading-${i}`}
       disabled
       data-testid="version-option-skeleton"
-      sx={{ typography: "s2" }}
     >
       <LineSkeleton width={26} sx={{ mr: 1 }} />
       <LineSkeleton width={52} />
@@ -52,11 +51,11 @@ export default function AgentVersionSelect({ agentId, value, onChange }) {
       onChange={(e) => onChange(e.target.value)}
       renderValue={() => {
         if (!selected) return "";
-        return selected.isActive
-          ? `${selected.label} · active`
-          : `Viewing ${selected.label}`;
+        if (selected.isActive) return `${selected.label} · in production`;
+        if (selected.isDraft) return `${selected.label} · draft`;
+        return `Viewing ${selected.label}`;
       }}
-      sx={{ height: 32, typography: "s2", fontWeight: 600, minWidth: 120 }}
+      sx={{ minWidth: 120 }}
       // Long histories scroll inside the menu instead of running off the page.
       MenuProps={{
         PaperProps: { sx: { maxHeight: 320 }, onScroll: onMenuScroll },
@@ -65,15 +64,18 @@ export default function AgentVersionSelect({ agentId, value, onChange }) {
       {/* Keeps the selected value valid for Select before any page arrives. */}
       {!selected && <MenuItem value={value} sx={{ display: "none" }} />}
       {versions.map((v) => (
-        <MenuItem key={v.id} value={v.id} sx={{ typography: "s2" }}>
+        <MenuItem key={v.id} value={v.id}>
           <Box
             component="span"
-            sx={{ fontFamily: MONO, fontWeight: 600, mr: 1 }}
+            sx={{ fontFamily: MONO, fontWeight: 500, mr: 1 }}
           >
             {v.label}
           </Box>
           <Box component="span" sx={{ color: "text.subtitle" }}>
-            {[v.isActive ? "active" : null, ago(v.createdAt)]
+            {[
+              v.isActive ? "in production" : v.isDraft ? "draft" : null,
+              ago(v.createdAt),
+            ]
               .filter(Boolean)
               .join(" · ")}
           </Box>

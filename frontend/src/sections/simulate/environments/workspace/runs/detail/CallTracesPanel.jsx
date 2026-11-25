@@ -1,8 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import { fDateTime } from "src/utils/format-time";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { formatLatency } from "src/sections/projects/LLMTracing/formatters";
 import { useLLMTracingStoreShallow } from "src/sections/projects/LLMTracing/states";
 import LLMTracingTraceDetailDrawer from "src/sections/projects/LLMTracing/LLMTracingTraceDetailDrawer";
@@ -11,12 +11,19 @@ import { CALL_TRACES_COPY } from "./callTraces.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
+// A span status as the tracer sends it ("OK", "ERROR"), in sentence case.
+const statusLabel = (status) =>
+  status.toUpperCase() === "OK"
+    ? "OK"
+    : status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+
 export default function CallTracesPanel({
   traces,
   projectId,
   testExecutionId,
   isError = false,
   onMountedChange,
+  openTrace = null,
 }) {
   const { setTraceDetailDrawerOpen, setVisibleTraces, resetStates } =
     useLLMTracingStoreShallow((state) => ({
@@ -31,7 +38,8 @@ export default function CallTracesPanel({
     );
   }, [traces, projectId, setVisibleTraces]);
 
-  useEffect(() => {
+  // Before the effects below can open a trace: an open trace with no panel mounted is cleared as stale.
+  useLayoutEffect(() => {
     onMountedChange?.(true);
     return () => {
       onMountedChange?.(false);
@@ -40,6 +48,19 @@ export default function CallTracesPanel({
       resetStates();
     };
   }, [onMountedChange, setTraceDetailDrawerOpen, resetStates]);
+
+  // A trace asked for from another tab (a Participants step) opens with the panel, which mounts per request.
+  const [opening] = useState(openTrace);
+  useEffect(() => {
+    if (!opening) return;
+    setTraceDetailDrawerOpen({
+      traceId: opening.traceId,
+      projectId,
+      testExecutionId,
+      // The step's own span, so the trace opens on it rather than at its root.
+      ...(opening.spanId ? { spanId: opening.spanId } : {}),
+    });
+  }, [opening, projectId, testExecutionId, setTraceDetailDrawerOpen]);
 
   if (isError && traces.length === 0) {
     return (
@@ -96,6 +117,10 @@ CallTracesPanel.propTypes = {
   testExecutionId: PropTypes.string,
   isError: PropTypes.bool,
   onMountedChange: PropTypes.func,
+  openTrace: PropTypes.shape({
+    traceId: PropTypes.string.isRequired,
+    spanId: PropTypes.string,
+  }),
 };
 
 function TraceRow({ trace, onOpen }) {
@@ -109,13 +134,7 @@ function TraceRow({ trace, onOpen }) {
         textAlign: "left",
         px: 1,
         py: 1,
-        "&:hover": {
-          bgcolor: (t) =>
-            alpha(
-              t.palette.text.primary,
-              t.palette.mode === "dark" ? 0.03 : 0.02,
-            ),
-        },
+        "&:hover": { bgcolor: "action.hover" },
       }}
     >
       <Stack direction="row" alignItems="center" spacing={1}>
@@ -133,15 +152,11 @@ function TraceRow({ trace, onOpen }) {
           {hasRoot ? trace.name : CALL_TRACES_COPY.noRoot}
         </Typography>
         {trace.status && (
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.subtitle",
-              textTransform: "uppercase",
-            }}
-          >
-            {trace.status}
-          </Typography>
+          <StatusBadge
+            status={trace.status}
+            label={statusLabel(trace.status)}
+            variant="dot"
+          />
         )}
       </Stack>
       <Stack

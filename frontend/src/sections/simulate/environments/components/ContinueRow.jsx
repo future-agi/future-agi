@@ -15,6 +15,7 @@ export default function ContinueRow({
   hint,
   label = "Build environment",
   onClick,
+  sticky = false,
 }) {
   return (
     <Stack
@@ -29,6 +30,14 @@ export default function ContinueRow({
         mx: -2.5,
         px: 2.5,
         pb: 0,
+        ...(sticky && {
+          mt: "auto",
+          position: "sticky",
+          bottom: 0,
+          zIndex: 1,
+          pb: 1.5,
+          bgcolor: "background.paper",
+        }),
       }}
     >
       {disabled && hint ? (
@@ -69,7 +78,6 @@ export default function ContinueRow({
             }
             sx={{
               typography: "s1",
-              fontWeight: "fontWeightBold",
               px: 2,
               flexShrink: 0,
             }}
@@ -82,6 +90,7 @@ export default function ContinueRow({
   );
 }
 ContinueRow.propTypes = {
+  sticky: PropTypes.bool,
   disabled: PropTypes.bool,
   busy: PropTypes.bool,
   hint: PropTypes.node,

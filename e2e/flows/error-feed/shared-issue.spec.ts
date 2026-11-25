@@ -39,7 +39,7 @@ base(
         "read the issue on Overview",
         "pick another trace in Traces affected",
         "open a trace from the Traces tab",
-        "open the Trends and Fix tabs",
+        "open the Trends and Root cause tabs",
         "open a restricted share link while signed out",
       ],
       browserChecks: [
@@ -47,13 +47,14 @@ base(
         "the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)",
         "picking a trace reads the sidebar through the share token for exactly that trace",
         "opening a trace reads it through the share token and shows its spans",
+        "Root cause shows the saved analysis and the eval issue's explanation from the share",
         "a restricted link shows Sign in required, with no error toast, and stays on the shared URL",
       ],
     }),
   },
   async ({ page }, testInfo) => {
-    // navigation (2 × 60 s) + seven UI_READY waits (7 × 60 s) = 540 s.
-    base.setTimeout(540_000);
+    // navigation (2 × 60 s) + eight UI_READY waits (8 × 60 s) = 600 s.
+    base.setTimeout(600_000);
 
     const minted = `e2e-share-w${testInfo.workerIndex}-${Date.now().toString(36)}`;
     const publicToken = `${minted}-public`;
@@ -186,28 +187,31 @@ base(
           .locator(".ag-row")
           .filter({ hasText: TRACE_A.slice(0, 8) })
           .click();
-        await expect(page.getByText(/Trace ID/).first()).toBeVisible({
-          timeout: UI_READY,
-        });
+        // The grid already has a "Trace ID" header. Wait for detail-response
+        // content before inspecting the request recorded by its route handler.
+        await expect(
+          page.getByText("support_agent").first(),
+          "selected shared trace spans are rendered",
+        ).toBeVisible({ timeout: UI_READY });
         expect(traceRequests).toEqual([TRACE_A]);
-        await expect(page.getByText("support_agent").first()).toBeVisible({
-          timeout: UI_READY,
-        });
       },
       { timeout: UI_READY },
     );
 
     await base.step(
-      "Trends and Fix render from the share",
+      "Trends and Root cause render from the share",
       async () => {
         await page.keyboard.press("Escape");
         await page.getByRole("tab", { name: /Trends/ }).click();
         await expect(page.getByText("Error rate").first()).toBeVisible({
           timeout: UI_READY,
         });
-        await page.getByRole("tab", { name: /Fix/ }).click();
+        await page.getByRole("tab", { name: /Root cause/ }).click();
         await expect(
           page.getByText("Showing the last saved analysis"),
+        ).toBeVisible({ timeout: UI_READY });
+        await expect(
+          page.getByText("Eval explanation", { exact: true }),
         ).toBeVisible({ timeout: UI_READY });
       },
       { timeout: UI_READY * 2 },

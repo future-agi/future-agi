@@ -7,7 +7,7 @@ import { LoadingButton } from "@mui/lab";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
-import { CONNECT_AGENT_PATH } from "../agentsTabs";
+import useConnectAgentPath from "../useConnectAgentPath";
 import { useCreateGraph } from "src/api/agent-playground/agent-playground";
 import { useAgentPlaygroundStoreShallow } from "../store";
 
@@ -29,7 +29,7 @@ const OPTIONS = [
 ];
 
 /**
- * "Create Agents" — build one in the Playground, or connect one that already
+ * "New agent" — build one in the Playground, or connect one that already
  * exists. The Playground limit only gates the Playground option; connecting
  * an agent is always available.
  */
@@ -37,6 +37,7 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const popover = usePopover();
+  const connectPath = useConnectAgentPath();
 
   const { setCurrentAgent } = useAgentPlaygroundStoreShallow((s) => ({
     setCurrentAgent: s.setCurrentAgent,
@@ -55,7 +56,7 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
   const handleSelect = (id) => {
     popover.onClose();
     if (id === "playground") createGraph();
-    else navigate(CONNECT_AGENT_PATH);
+    else navigate(connectPath);
   };
 
   return (
@@ -72,9 +73,9 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
             sx={{ height: 20, width: 20 }}
           />
         }
-        endIcon={<Iconify icon="eva:chevron-down-fill" width={18} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={20} />}
       >
-        Create Agents
+        New agent
       </LoadingButton>
 
       <CustomPopover
@@ -91,7 +92,7 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
             sx={{
               alignItems: "flex-start",
               gap: 1.5,
-              p: 1.25,
+              p: 1.5,
               borderRadius: 1,
               whiteSpace: "normal",
             }}
@@ -107,7 +108,7 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
               }}
             />
             <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
                 {option.title}
               </Typography>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>

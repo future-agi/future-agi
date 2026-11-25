@@ -25,19 +25,32 @@ export const DERIVING_LABEL = {
 };
 
 // The tab rail on the building pane: the workspace tabs, rendered pointer-dead.
-// Runs and Versions are left out — an environment that is still building (or
-// failed to build) has no runs and no versions yet.
-const NOT_WHILE_BUILDING = new Set(["runs", "versions"]);
-export const BUILDING_TABS = WORKSPACE_TABS.filter((t) => !NOT_WHILE_BUILDING.has(t.id));
+// Actors, Runs, Improvements and Versions are left out — an environment that is
+// still building (or failed to build) has no draft, runs, fixes or versions yet.
+const NOT_WHILE_BUILDING = new Set([
+  "actors",
+  "runs",
+  "improvements",
+  "versions",
+]);
+export const BUILDING_TABS = WORKSPACE_TABS.filter(
+  (t) => !NOT_WHILE_BUILDING.has(t.id),
+);
 
 export const CONSOLE_COPY = {
+  answerWithOptions: "Answer with the options above",
   working: "Working on your last message…",
   idle: "Ask, correct, or steer what it builds",
-  empty: "Answer the questions below to kick things off. You can also just start typing.",
+  empty:
+    "Answer the questions below to kick things off. You can also just start typing.",
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
-  workingDot: "Working…",
+  stopping: "Stopping…",
+  jumpToLatest: "Jump to latest",
+  newMessage: "New message",
+  jumpWorking: "Still working. Jump to latest",
+  jumpNewMessage: "New message. Jump to latest",
   frozen: "Environment is still being built",
   stop: "Stop the current turn",
   collapse: "Collapse chat",

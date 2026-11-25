@@ -22,9 +22,15 @@ HARNESS_ERROR = ("error", "errored", "cancelled", "canceled")
 HARNESS_FAILED = ("failed", "fail", "failure")
 HARNESS_INCONCLUSIVE = ("inconclusive", "unknown", "skipped")
 HARNESS_PASSED = ("passed", "pass", "success", "successful")
+# No pass or fail: sub-goals not applicable or inconclusive, and no eval decided.
+HARNESS_NO_SCORE = ("no_score",)
 QUEUED_CALL_STATUSES = ("pending", "queued")
 IN_PROGRESS_CALL_STATUSES = ("ongoing", "analyzing")
 ERRORED_CALL_STATUSES = ("failed", "cancelled")
+# A call the user stopped: its own outcome, neither an error nor a failure. A skipped scenario
+# is also stored cancelled, but nobody stopped it, so it stays an error.
+CANCELLED_CALL_STATUSES = ("cancelled",)
+SKIPPED_HARNESS_STATUSES = ("skipped",)
 
 
 @dataclass(frozen=True)

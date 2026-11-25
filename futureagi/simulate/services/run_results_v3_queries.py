@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter, defaultdict
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, TypeGuard, cast
 
 from django.core.cache import cache
 from django.db import connections, router
@@ -67,9 +67,20 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
-from simulate.semantics import SupportedProviders
+from simulate.selectors.runs import user_executions
+from simulate.services.call_provider import call_agent_provider_expression
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
-from simulate.services.run_reliability_v3 import build_reliability
+from simulate.services.harness_scenarios import (
+    NO_CALL_ACTOR,
+    SIMULATED_USER_ONLY,
+)
+from simulate.services.run_reliability_v3 import (
+    NOT_COMPARABLE,
+    build_reliability,
+    comparable_trials,
+    trial_outcomes,
+    trial_pass_from,
+)
 from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
     NormalizedEvalNumber,
@@ -79,22 +90,30 @@ from simulate.services.run_results_v3_expressions import (
     project_annotation,
 )
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
     ERRORED_CALL_STATUSES,
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
     HARNESS_FAILED,
     HARNESS_INCONCLUSIVE,
+    HARNESS_NO_SCORE,
     HARNESS_PASSED,
     IN_PROGRESS_CALL_STATUSES,
     NATIVE_FAILED,
     NATIVE_PASSED,
     QUEUED_CALL_STATUSES,
+    SKIPPED_HARNESS_STATUSES,
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
     live_eval_specs,
     resolve_eval_scoring_spec,
     score_tokens,
+)
+from simulate.types import (
+    WORKER_SUBJECT_PREFIX,
+    CallActorDelivery,
+    CallActorFacetValue,
 )
 
 OUTCOMES = tuple(OUTCOME_LABELS)
@@ -300,9 +319,7 @@ def _member_sub_goals() -> Subquery:
             Value([], output_field=JSONField()),
             output_field=JSONField(),
         )
-    )[
-        :1
-    ]
+    )[:1]
     return Subquery(member, output_field=JSONField())
 
 
@@ -721,6 +738,9 @@ class _NativeHarnessVerdict(Func):
             f"THEN {source_sql} ELSE '{{}}'::jsonb END) AS check_result(key, value) "
             "WHERE jsonb_typeof(check_result.value) = 'object' "
             "AND check_result.value->>'source' = 'harness' "
+            # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+            f"AND left(COALESCE(check_result.value->>'subject', ''), {len(WORKER_SUBJECT_PREFIX)}) "
+            f"<> '{WORKER_SUBJECT_PREFIX}' "
             f"AND NOT ({ids_sql} ? check_result.key) AND {condition})"
         )
         return sql, [*source_params, *source_params, *ids_params, *verdict_params]
@@ -760,10 +780,6 @@ def run_calls_queryset(
         if execution_ids is not None
         else Q(test_execution=execution)
     )
-    provider_cases = [
-        When(provider_call_data__has_key=provider, then=Value(provider))
-        for provider in sorted(SupportedProviders)
-    ]
     dataset_goal = Cell.all_objects.filter(
         row_id=OuterRef("row_id"),
         column__name__in=["use_case", "goal"],
@@ -905,6 +921,15 @@ def run_calls_queryset(
         result_outcome=Case(
             When(status__in=list(QUEUED_CALL_STATUSES), then=Value("queued")),
             When(status__in=list(IN_PROGRESS_CALL_STATUSES), then=Value("in_progress")),
+            # A skipped scenario is stored cancelled but nobody stopped it: an error.
+            When(
+                status__in=list(CANCELLED_CALL_STATUSES),
+                call_metadata__harness_outcome_status__in=list(
+                    SKIPPED_HARNESS_STATUSES
+                ),
+                then=Value("error"),
+            ),
+            When(status__in=list(CANCELLED_CALL_STATUSES), then=Value("cancelled")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),
@@ -916,6 +941,11 @@ def run_calls_queryset(
                 then=Value("failed"),
             ),
             When(failed_eval, then=Value("failed")),
+            When(
+                Q(call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE))
+                & ~passed_eval,
+                then=Value("no_score"),
+            ),
             When(errored_eval, then=Value("inconclusive")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
@@ -939,13 +969,7 @@ def run_calls_queryset(
         ),
         result_tokens=_safe_json_float("conversation_metrics_data", "total_tokens"),
         result_cost_cents=Cast("customer_cost_cents", FloatField()),
-        result_provider=Case(
-            *provider_cases,
-            default=Coalesce(
-                F("test_execution__agent_definition__provider"), Value("Unknown")
-            ),
-            output_field=CharField(),
-        ),
+        result_provider=call_agent_provider_expression(),
         result_scenario_key=Coalesce(
             _json_text("call_metadata", "harness_scenario_key"),
             _json_text("call_metadata", "hosted_harness_receipt", "scenario_key"),
@@ -1008,6 +1032,61 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     return sub_goal_query
 
 
+def _json_number(value: object) -> TypeGuard[int | float]:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def call_actor_delivery(took_part: Mapping[str, Any]) -> CallActorDelivery:
+    """How far an actor got in one call, by the same rule `_DELIVERY_SQL` applies in the database, malformed values
+    included: only a number above 0 delivers; with no line, a number above 0 of world actions (`acted`) is taking part
+    in the world; any other `triggered` than false, null, 0 or "" is a drop. A summary from before `drawn` counts as
+    drawn."""
+    delivered = took_part.get("delivered")
+    if _json_number(delivered) and delivered > 0:
+        return "delivered"
+    acted = took_part.get("acted")
+    if _json_number(acted) and acted > 0:
+        return "acted"
+    triggered = took_part.get("triggered", None)
+    if not (
+        triggered is None
+        or triggered is False
+        or triggered == ""
+        or (_json_number(triggered) and triggered == 0)
+    ):
+        return "dropped"
+    if took_part.get("drawn") is False:
+        return "not_drawn"
+    return "not_triggered"
+
+
+def _call_actor_planned(call_actor: str | None = None) -> Q:
+    """Calls an actor (or this one) was planned for, whether or not any of its lines reached the agent."""
+    who = " && @.actor == $who" if call_actor else ""
+    path = Value(f"$.harness_call_actors.summary[*] ? (!(@.drawn == false){who})")
+    return Q(
+        Func(
+            F("call_metadata"),
+            Func(path, template="%(expressions)s::jsonpath", output_field=TextField()),
+            # The id travels as a jsonpath variable, never as path text.
+            Value({"who": call_actor}, output_field=JSONField()),
+            function="jsonb_path_exists",
+            output_field=BooleanField(),
+        )
+    )
+
+
+def _call_actor_q(values: list[str]) -> Q:
+    """Calls each actor was planned for; ``none`` is a call no actor was planned for."""
+    query = Q(pk__in=[])
+    for value in values:
+        if value == NO_CALL_ACTOR:
+            query |= Q(call_metadata__isnull=True) | ~_call_actor_planned()
+        else:
+            query |= _call_actor_planned(value)
+    return query
+
+
 def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
     search = str(query.get("search") or "").strip()
     filters = query.get("filters") or {}
@@ -1049,6 +1128,18 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
             ~Exists(
                 CallExecution._base_manager.filter(
                     _sub_goal_q(values, pinned=pinned), pk=OuterRef("pk")
+                )
+            )
+        )
+
+    if values := filters.get("actor"):
+        queryset = queryset.filter(_call_actor_q(values))
+    if values := filters.get("actor_not"):
+        # NOT EXISTS, so a call with no actor record still counts as "not".
+        queryset = queryset.filter(
+            ~Exists(
+                CallExecution._base_manager.filter(
+                    _call_actor_q(values), pk=OuterRef("pk")
                 )
             )
         )
@@ -1207,6 +1298,110 @@ def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
     ]
 
 
+# How far an actor got in one call, as `call_actor_delivery` reads it, in SQL over one summary entry `e`.
+_DELIVERY_SQL = """
+CASE
+  WHEN jsonb_typeof(e -> 'delivered') = 'number' AND (e ->> 'delivered')::numeric > 0 THEN 'delivered'
+  WHEN jsonb_typeof(e -> 'acted') = 'number' AND (e ->> 'acted')::numeric > 0 THEN 'acted'
+  WHEN e -> 'triggered' IS NOT NULL
+       AND e -> 'triggered' NOT IN ('false'::jsonb, 'null'::jsonb, '0'::jsonb, '""'::jsonb) THEN 'dropped'
+  WHEN e -> 'drawn' = 'false'::jsonb THEN 'not_drawn'
+  ELSE 'not_triggered'
+END
+"""
+
+
+def _call_actor_facet(calls: QuerySet) -> list[CallActorFacetValue]:
+    """Calls per actor planned for them, by name and by how far it got; none when no run call had one. Counted by
+    the database in one aggregate over the calls' actor summaries on Postgres; read call by call elsewhere."""
+    database = router.db_for_read(calls.model)
+    if connections[database].vendor != "postgresql":
+        return _call_actor_facet_python(calls)
+    calls_sql, calls_params = (
+        calls.order_by().values("id", "call_metadata").query.sql_with_params()
+    )
+    sql = f"""
+        WITH summaries AS (
+            SELECT c.id, c.call_metadata -> 'harness_call_actors' -> 'summary' AS summary
+            FROM ({calls_sql}) c
+        ), planned AS (
+            SELECT s.id, e ->> 'actor' AS actor, e ->> 'name' AS name, {_DELIVERY_SQL} AS delivery
+            FROM summaries s,
+                 jsonb_array_elements(
+                     CASE WHEN jsonb_typeof(s.summary) = 'array' THEN s.summary ELSE '[]'::jsonb END
+                 ) AS e
+            WHERE jsonb_typeof(e) = 'object' AND COALESCE(e ->> 'actor', '') <> ''
+        )
+        SELECT actor, min(name), delivery, count(*) FROM planned
+        WHERE delivery <> 'not_drawn' GROUP BY actor, delivery
+        UNION ALL
+        SELECT NULL, NULL, NULL, count(*) FROM summaries s
+        WHERE s.id NOT IN (SELECT p.id FROM planned p WHERE p.delivery <> 'not_drawn')
+    """  # noqa: S608 - the calls' own query; every value is a parameter
+    with connections[database].cursor() as cursor:
+        cursor.execute(sql, calls_params)
+        found = cursor.fetchall()
+    counts: Counter = Counter()
+    deliveries: defaultdict[str, Counter] = defaultdict(Counter)
+    names = {NO_CALL_ACTOR: SIMULATED_USER_ONLY}
+    for actor, name, delivery, count in found:
+        if actor is None:
+            if count:
+                counts[NO_CALL_ACTOR] += int(count)
+            continue
+        counts[actor] += int(count)
+        deliveries[actor][delivery] += int(count)
+        names.setdefault(actor, str(name or actor))
+    return _actor_facet_values(counts, deliveries, names)
+
+
+def _actor_facet_values(
+    counts: Counter, deliveries: defaultdict[str, Counter], names: dict[str, str]
+) -> list[CallActorFacetValue]:
+    if set(counts) <= {NO_CALL_ACTOR}:
+        return []
+    return [
+        {
+            "value": value,
+            "count": count,
+            "label": names[value],
+            "delivered": deliveries[value]["delivered"],
+            "acted": deliveries[value]["acted"],
+            "dropped": deliveries[value]["dropped"],
+            "not_triggered": deliveries[value]["not_triggered"],
+        }
+        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _call_actor_facet_python(calls: QuerySet) -> list[CallActorFacetValue]:
+    """The actor facet read call by call: the reference the database's aggregate matches."""
+    counts: Counter = Counter()
+    deliveries: defaultdict[str, Counter] = defaultdict(Counter)
+    names = {NO_CALL_ACTOR: SIMULATED_USER_ONLY}
+    summaries = (
+        calls.order_by()
+        .values_list("call_metadata__harness_call_actors__summary", flat=True)
+        .iterator(chunk_size=2000)
+    )
+    for summary in summaries:
+        planned = [
+            one
+            for one in (summary if isinstance(summary, list) else [])
+            if isinstance(one, dict)
+            and one.get("actor")
+            and call_actor_delivery(one) != "not_drawn"
+        ]
+        for one in planned:
+            key = str(one["actor"])
+            counts[key] += 1
+            deliveries[key][call_actor_delivery(one)] += 1
+            names.setdefault(key, str(one.get("name") or key))
+        if not planned:
+            counts[NO_CALL_ACTOR] += 1
+    return _actor_facet_values(counts, deliveries, names)
+
+
 def run_call_facets(
     rows: Callable[[], list[dict[str, Any]]],
     calls: Callable[[], QuerySet],
@@ -1217,6 +1412,7 @@ def run_call_facets(
         return cached
     facets = _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"})
     facets["sub_goal"] = _sub_goal_facet(calls())
+    facets["actor"] = cast(list[dict[str, Any]], _call_actor_facet(calls()))
     if facets_cache_key:
         cache.set(facets_cache_key, facets, timeout=60 * 60)
     return facets
@@ -1287,7 +1483,7 @@ def build_run_comparison(
         labels: dict[str, str] = {}
         trials: dict[str, run_compare.ScenarioTrials] = {}
         fields = ["result_scenario_key", "result_scenario", "result_outcome"]
-        calls = calls.order_by()
+        calls = calls.order_by().exclude(NOT_COMPARABLE)
         if with_pairs:
             calls = calls.annotate(
                 result_receipt_sub_goals=_json_value(
@@ -1330,7 +1526,8 @@ def build_run_comparison(
         )
 
     previous = against or (
-        TestExecution.objects.filter(
+        user_executions()
+        .filter(
             run_test=execution.run_test,
             status=TestExecution.ExecutionStatus.COMPLETED,
             created_at__lt=execution.created_at,
@@ -1349,6 +1546,7 @@ def build_run_comparison(
         if with_pairs:
             current_trials = verdicts(queryset)[2]
             pairs, summary = run_compare.scenario_pairs(current_trials, {})
+            summary["excluded_not_comparable"] = queryset.filter(NOT_COMPARABLE).count()
             comparison.update(
                 pairs=pairs,
                 summary=summary,
@@ -1360,8 +1558,9 @@ def build_run_comparison(
                 },
             )
         return comparison
+    previous_calls = run_calls_queryset(previous)
     current_verdicts, current_labels, current_trials = verdicts(queryset)
-    previous_verdicts, _, previous_trials = verdicts(run_calls_queryset(previous))
+    previous_verdicts, _, previous_trials = verdicts(previous_calls)
     shared = sorted(current_verdicts.keys() & previous_verdicts.keys())
     comparison = {
         "available": True,
@@ -1381,6 +1580,11 @@ def build_run_comparison(
     if with_pairs:
         comparison.update(
             _run_pairs(execution, previous, current_trials, previous_trials)
+        )
+        # Trials of either run that did not start from the seeded records, left out of every verdict.
+        comparison["summary"]["excluded_not_comparable"] = (
+            queryset.filter(NOT_COMPARABLE).count()
+            + previous_calls.filter(NOT_COMPARABLE).count()
         )
     return comparison
 
@@ -1445,11 +1649,13 @@ def _run_pairs(
 
 
 def build_run_reliability(execution: TestExecution) -> dict[str, Any]:
-    return build_reliability(run_calls_queryset(execution), execution.trials)
+    comparable, excluded = comparable_trials(run_calls_queryset(execution))
+    return build_reliability(comparable, execution.trials, excluded)
 
 
 def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     from simulate.services.run_dashboard_v3 import build_run_dashboard
+    from simulate.services.run_outcome import call_outcome_counts, run_outcome
 
     queryset = run_calls_queryset(execution)
     configs, _ = build_evaluation_catalog(execution)
@@ -1582,7 +1788,8 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     }
 
     siblings = list(
-        TestExecution.objects.filter(
+        user_executions()
+        .filter(
             run_test=execution.run_test,
             status=TestExecution.ExecutionStatus.COMPLETED,
         )
@@ -1593,22 +1800,33 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         execution, [sibling["id"] for sibling in siblings]
     )
     trend_rows = (
-        trend_queryset.order_by()
+        trend_queryset.exclude(NOT_COMPARABLE)
+        .order_by()
         .values("test_execution_id")
         .annotate(**_aggregate_expressions(include_percentiles=False))
     )
     trend_summaries = {
         row["test_execution_id"]: _summary_from_values(row) for row in trend_rows
     }
+    trend_excluded = dict(
+        trend_queryset.filter(NOT_COMPARABLE)
+        .order_by()
+        .values("test_execution_id")
+        .annotate(excluded=Count("id"))
+        .values_list("test_execution_id", "excluded")
+    )
     trends = [
         {
             "execution_id": str(sibling["id"]),
             "started_at": sibling["started_at"],
             **trend_summaries.get(sibling["id"], _summary_from_values({})),
+            "excluded_not_comparable": trend_excluded.get(sibling["id"], 0),
         }
         for sibling in reversed(siblings)
     ]
-    reliability = build_reliability(queryset, execution.trials)
+    comparable, excluded = comparable_trials(queryset)
+    reliability = build_reliability(comparable, execution.trials, excluded)
+    run_trials = trial_pass_from(*trial_outcomes(queryset))
     comparison = build_run_comparison(execution, queryset)
     return {
         "execution": {
@@ -1617,7 +1835,15 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             "started_at": execution.started_at,
             "completed_at": execution.completed_at,
         },
-        "summary": {**summary, "evaluators": len(configs)},
+        "summary": {
+            **summary,
+            "evaluators": len(configs),
+            **run_trials,
+            # The run's verdict from its calls, by the rule the runs list reads.
+            "outcome_status": run_outcome(
+                status=execution.status, counts=call_outcome_counts(summary["outcomes"])
+            )["outcome_status"],
+        },
         "scenario_risk": risk,
         "reliability": reliability,
         "turn_distribution": list(turn_distribution.values()),
@@ -1630,7 +1856,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             ),
         ),
         "dashboard": build_run_dashboard(
-            queryset, summary, evaluations, risk, comparison
+            queryset, summary, evaluations, risk, comparison, trials=run_trials
         ),
         "failure_breakdown": [
             {

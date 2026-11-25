@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { useNavigate } from "react-router-dom";
 import {
   Box, Button, Stack, Tab, Typography,
@@ -13,6 +12,9 @@ import { packStats } from "../helpers/packStats";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { seedFromTemplate } from "../workspace/helpers/seedEnvState";
 import SectionCard from "../components/SectionCard";
+import ViewerLock from "../components/ViewerLock";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 import LocalScaffoldCard from "./LocalScaffoldCard";
 import {
   AGENT_STAT_VALUE,
@@ -36,10 +38,13 @@ import {
  * scaffold). Rendered as the standalone Use-template page and inline as a
  * detail pane, so it takes a base `template` rather than owning a route.
  */
+const sentenceCase = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
 export default function TemplateBuildPanel({ template, showName = false }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState(BUILD_MODES.CLOUD);
   const adopt = useAdoptTemplate();
+  const { canEdit } = useSimulationAccess();
   const adoptEnvironment = useEnvironmentsStore((s) => s.adoptEnvironment);
   const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
 
@@ -75,17 +80,12 @@ export default function TemplateBuildPanel({ template, showName = false }) {
         <Box>
           <Stack direction="row" alignItems="center" spacing={0.75}>
             <Iconify icon={surfaceIconFor(template.surface)} width={13} sx={{ color: "text.subtitle" }} />
-            <Typography
-              sx={{
-                typography: "s3", color: "text.subtitle", fontWeight: "fontWeightBold",
-                letterSpacing: 0.5,
-              }}
-            >
-              {(template.surface || "").toUpperCase()}
+            <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 500 }}>
+              {sentenceCase(template.surface || "")}
             </Typography>
           </Stack>
-          <Typography sx={{ typography: "m2", fontWeight: "fontWeightBold", mt: 0.5 }}>{template.name}</Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>{template.tagline}</Typography>
+          <Typography sx={{ typography: "m1", fontWeight: 500, mt: 0.5 }}>{template.name}</Typography>
+          <Typography sx={{ typography: "s1", color: "text.secondary", mt: 0.25 }}>{template.tagline}</Typography>
         </Box>
       )}
 
@@ -111,38 +111,40 @@ export default function TemplateBuildPanel({ template, showName = false }) {
       {mode === BUILD_MODES.CLOUD && (
         <>
           <SectionCard title={CLOUD_CARD.title} subtitle={CLOUD_CARD.subtitle}>
-            <Stack sx={{ p: 2.5 }} spacing={1.75}>
+            <Stack sx={{ p: 1.5 }} spacing={1.5}>
               {CLOUD_BULLETS.map((row) => (
                 <Stack key={row.text} direction="row" spacing={1.25} alignItems="flex-start">
                   <Iconify icon={row.icon} width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
-                  <Typography sx={{ typography: "s2", color: "text.secondary" }}>{row.text}</Typography>
+                  <Typography sx={{ typography: "s1", color: "text.secondary" }}>{row.text}</Typography>
                 </Stack>
               ))}
             </Stack>
             <Stack
               direction="row" alignItems="center" spacing={1.5}
-              sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}
+              sx={{ px: 1.5, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}
             >
-              <Button
-                variant="contained" color="primary"
-                onClick={handleAdopt}
-                disabled={adopt.isPending}
-                startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold", whiteSpace: "nowrap" }}
-              >
-                {TEMPLATE_ADOPT_LABEL}
-              </Button>
+              <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.create}>
+                <Button
+                  variant="contained" color="primary"
+                  onClick={handleAdopt}
+                  disabled={!canEdit || adopt.isPending}
+                  startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
+                  sx={{ whiteSpace: "nowrap" }}
+                >
+                  {TEMPLATE_ADOPT_LABEL}
+                </Button>
+              </ViewerLock>
             </Stack>
           </SectionCard>
 
           <SectionCard title={STATS_CARD.title} subtitle={STATS_CARD.subtitle}>
-            <Stack sx={{ px: 2.5, py: 2 }} spacing={1.25}>
+            <Stack sx={{ px: 1.5, py: 1.5 }} spacing={1.25}>
               {stats.map((s) => (
                 <Stack key={s.label} direction="row" spacing={2}>
-                  <Typography sx={{ typography: "s2", color: "text.subtitle", width: 96, flexShrink: 0 }}>
+                  <Typography sx={{ typography: "s1", color: "text.subtitle", width: 96, flexShrink: 0 }}>
                     {s.label}
                   </Typography>
-                  <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{s.value}</Typography>
+                  <Typography sx={{ typography: "s1", fontWeight: 500 }}>{s.value}</Typography>
                 </Stack>
               ))}
             </Stack>
@@ -150,15 +152,14 @@ export default function TemplateBuildPanel({ template, showName = false }) {
 
           <Box
             sx={{
-              p: 2, borderRadius: 1.25, border: "1px solid",
-              borderColor: (t) => alpha(t.palette.success.main, 0.3),
-              bgcolor: (t) => alpha(t.palette.success.main, t.palette.mode === "dark" ? 0.08 : 0.04),
+              p: 1.5, borderRadius: "8px",
+              bgcolor: "status.success.bg",
             }}
           >
             <Stack direction="row" spacing={1.25} alignItems="flex-start">
-              <Iconify icon={NOTHING_TOUCHES_PRODUCTION.icon} width={16} sx={{ color: "success.main", flexShrink: 0, mt: "1px" }} />
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                <Box component="span" sx={{ fontWeight: "fontWeightBold", color: "text.primary" }}>
+              <Iconify icon={NOTHING_TOUCHES_PRODUCTION.icon} width={16} sx={{ color: "status.success.fg", flexShrink: 0, mt: "1px" }} />
+              <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+                <Box component="span" sx={{ fontWeight: 500, color: "text.primary" }}>
                   {NOTHING_TOUCHES_PRODUCTION.heading}
                 </Box>{" "}
                 {NOTHING_TOUCHES_PRODUCTION.body}

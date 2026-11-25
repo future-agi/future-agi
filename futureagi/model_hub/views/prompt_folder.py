@@ -56,8 +56,9 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_create(serializer)
             except IntegrityError as e:
-                if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(
-                    e
+                if (
+                    "unique_prompt_folder_name_organization_workspace_not_deleted"
+                    in str(e)
                 ):
                     return self._duplicate_name_response()
                 raise
@@ -115,8 +116,9 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_update(serializer)
             except IntegrityError as e:
-                if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(
-                    e
+                if (
+                    "unique_prompt_folder_name_organization_workspace_not_deleted"
+                    in str(e)
                 ):
                     return self._duplicate_name_response()
                 raise

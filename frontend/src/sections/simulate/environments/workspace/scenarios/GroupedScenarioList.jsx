@@ -1,9 +1,9 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, IconButton, Tooltip, Checkbox } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import ScenarioDetail from "./ScenarioDetail";
 import { UnsavedMark } from "./ScenarioTableCells";
 import {
@@ -19,13 +19,8 @@ import { ENV_SHAPE, GROUP_SHAPE } from "./scenarios.shapes";
 // carry this on their tooltip while locked.
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
-// Match the table's monochrome checkbox so the two views read identically.
-const selectableCheckboxSx = {
-  p: 0,
-  color: "text.disabled",
-  "&.Mui-checked": { color: "text.primary" },
-  "&.MuiCheckbox-indeterminate": { color: "text.primary" },
-};
+// The theme's checkbox, without its padding, so the two views line up.
+const selectableCheckboxSx = { p: 0 };
 
 const onKeyActivate = (fn) => (e) => {
   if (e.key === "Enter" || e.key === " ") {
@@ -37,11 +32,11 @@ const onKeyActivate = (fn) => (e) => {
 // The grouped body: each use-case section as a collapsible block with a sticky
 // header. The per-row edit pencil opens the editor through onEdit; remove works
 // through onRemove.
-export default function GroupedScenarioList({ groups, env, onEdit, onRemove, onHideGroup, selection, locked = false }) {
+export default function GroupedScenarioList({ groups, env, onEdit, onRemove, onHideGroup, selection, locked = false, lockTooltip = LOCK_TOOLTIP }) {
   return (
     <Box>
       {groups.map((g) => (
-        <CollapsibleGroup key={g.id} group={g} env={env} onEdit={onEdit} onRemove={onRemove} onHideGroup={onHideGroup} selection={selection} locked={locked} />
+        <CollapsibleGroup key={g.id} group={g} env={env} onEdit={onEdit} onRemove={onRemove} onHideGroup={onHideGroup} selection={selection} locked={locked} lockTooltip={lockTooltip} />
       ))}
     </Box>
   );
@@ -56,9 +51,10 @@ GroupedScenarioList.propTypes = {
   // in the design; supplying this adds them, matching the table.
   selection: PropTypes.object,
   locked: PropTypes.bool,
+  lockTooltip: PropTypes.string,
 };
 
-function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection, locked = false }) {
+function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection, locked = false, lockTooltip = LOCK_TOOLTIP }) {
   const [open, setOpen] = useState(true);
 
   // Selection is opt-in and drops out entirely on a locked template, mirroring
@@ -76,17 +72,14 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
         onKeyDown={onKeyActivate(() => setOpen((o) => !o))}
         sx={{
           position: "sticky", top: 0, zIndex: 2, cursor: "pointer",
-          px: 2.5, py: 1.75,
+          px: 1.5, minHeight: ROW_HEIGHT.default,
           bgcolor: "background.neutral",
           borderBottom: "1px solid", borderColor: "divider",
           borderTop: "1px solid", borderTopColor: "divider",
           // The header is sticky, so rows scroll under it: tint on top of the
           // solid background rather than replacing it with a see-through one.
           "&:hover": {
-            backgroundImage: (t) => {
-              const tint = alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05);
-              return `linear-gradient(${tint}, ${tint})`;
-            },
+            backgroundImage: (t) => `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`,
           },
         }}
       >
@@ -106,15 +99,13 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
           width={15}
           sx={{ color: "text.secondary", flexShrink: 0 }}
         />
-        <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold", color: "text.primary", flex: 1, minWidth: 0 }}>
+        <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary", flex: 1, minWidth: 0 }}>
           {group.label}
         </Typography>
         <Typography
           sx={{
-            px: 1, py: 0.25, borderRadius: 0.75,
-            typography: "s3", fontWeight: "fontWeightBold", color: "text.secondary",
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.09 : 0.06),
-            fontVariantNumeric: "tabular-nums", flexShrink: 0, letterSpacing: 0.2,
+            typography: "s3", color: "text.secondary",
+            fontVariantNumeric: "tabular-nums", flexShrink: 0,
           }}
         >
           {/* The whole-suite total for this group (from the server), even when
@@ -145,8 +136,8 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
           <Stack
             divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
             sx={{
-              borderLeft: "2px solid",
-              borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
+              borderLeft: "1px solid",
+              borderColor: "divider",
             }}
           >
             {group.rows.map((s) => (
@@ -173,7 +164,7 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                   )}
                   <ScenarioDetail row={s} env={env} />
                 </Box>
-                <Tooltip arrow title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.editLabel}>
+                <Tooltip arrow title={locked ? lockTooltip : SCENARIOS_COPY.editLabel}>
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, flexShrink: 0 }}>
                     <IconButton
                       size="small"
@@ -185,7 +176,7 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                     </IconButton>
                   </Box>
                 </Tooltip>
-                <Tooltip arrow title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.removeLabel}>
+                <Tooltip arrow title={locked ? lockTooltip : SCENARIOS_COPY.removeLabel}>
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, mr: 1.5, flexShrink: 0 }}>
                     <IconButton
                       size="small"
@@ -213,4 +204,5 @@ CollapsibleGroup.propTypes = {
   onHideGroup: PropTypes.func,
   selection: PropTypes.object,
   locked: PropTypes.bool,
+  lockTooltip: PropTypes.string,
 };

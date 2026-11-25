@@ -352,9 +352,6 @@ const CustomEvalsFormChild = ({
             variant="contained"
             size="small"
             color="error"
-            sx={{
-              paddingX: theme.spacing(3),
-            }}
             onClick={() => {
               setOpenConfirmDialog(false);
               if (action === "back") {
@@ -397,18 +394,12 @@ const CustomEvalsFormChild = ({
               onClick={onBack}
               variant="outlined"
               sx={{
-                borderRadius: theme.spacing(0.5),
-                paddingX: theme.spacing(1.5),
-                paddingY: theme.spacing(0.5),
                 borderColor: "action.hover",
               }}
               startIcon={
-                <Iconify
-                  icon="lucide:chevron-left"
-                  sx={{
-                    width: theme.spacing(2),
-                    height: theme.spacing(2),
-                    marginRight: "-4px",
+                <Iconify width={16}
+                  icon="solar:alt-arrow-left-linear"
+                  sx={{ marginRight: "-4px",
                     // background:'red',
                   }}
                 />
@@ -434,7 +425,7 @@ const CustomEvalsFormChild = ({
               }}
             >
               <Iconify
-                icon="line-md:close"
+                icon="solar:close-linear"
                 sx={{
                   width: theme.spacing(4),
                   height: theme.spacing(2),
@@ -477,11 +468,10 @@ const CustomEvalsFormChild = ({
                 sx={{
                   padding: 0,
                   paddingY: 0,
-                  height: theme.spacing(4),
                 }}
               >
                 <Iconify
-                  icon="line-md:close"
+                  icon="solar:close-linear"
                   sx={{
                     width: theme.spacing(4),
                     height: theme.spacing(2),
@@ -906,7 +896,7 @@ const CustomEvalsFormChild = ({
                           }}
                         >
                           <Iconify
-                            icon={"mi:expand"}
+                            icon={"solar:full-screen-linear"}
                             sx={{
                               width: "16px",
                               height: "16px",
@@ -959,7 +949,7 @@ const CustomEvalsFormChild = ({
                   {disableVariableEdit && (
                     <Box
                       sx={{
-                        backgroundColor: "blue.o10",
+                        backgroundColor: "status.info.bg",
                         padding: "6px 12px",
                         borderRadius: "8px",
                         display: "flex",
@@ -967,7 +957,10 @@ const CustomEvalsFormChild = ({
                         gap: 1.5,
                       }}
                     >
-                      <Iconify icon="tabler:info-circle" color="blue.500" />
+                      <Iconify
+                        icon="solar:info-circle-linear"
+                        color="status.info.fg"
+                      />
                       <Typography typography={"s2"}>
                         Rule prompt can be re-written but variables cannot be
                         changed
@@ -1102,10 +1095,9 @@ const CustomEvalsFormChild = ({
                     }}
                     startIcon={
                       <SvgColor
+                        width={20}
                         src="/assets/icons/action_buttons/ic_add.svg"
                         sx={{
-                          height: 20,
-                          width: 20,
                           color: "primary.main",
                         }}
                       />
@@ -1187,7 +1179,7 @@ const CustomEvalsFormChild = ({
                                   sx={{
                                     height: "12px",
                                     width: "12px",
-                                    borderRadius: "2px",
+                                    borderRadius: "4px",
                                   }}
                                 />
                                 <Typography typography="s1" noWrap>
@@ -1210,11 +1202,11 @@ const CustomEvalsFormChild = ({
                                 }}
                               >
                                 <Box
-                                  bgcolor={"green.200"}
+                                  bgcolor={"status.success.bg"}
                                   sx={{
                                     height: "12px",
                                     width: "12px",
-                                    borderRadius: "2px",
+                                    borderRadius: "4px",
                                   }}
                                 />
                                 <Typography typography="s1" noWrap>
@@ -1237,11 +1229,11 @@ const CustomEvalsFormChild = ({
                                 }}
                               >
                                 <Box
-                                  bgcolor={"red.200"}
+                                  bgcolor={"status.danger.bg"}
                                   sx={{
                                     height: "12px",
                                     width: "12px",
-                                    borderRadius: "2px",
+                                    borderRadius: "4px",
                                   }}
                                 />
                                 <Typography typography="s1" noWrap>
@@ -1260,13 +1252,13 @@ const CustomEvalsFormChild = ({
                                     currentValue === "neutral"
                                       ? "primary.light"
                                       : currentValue === "pass"
-                                        ? "green.200"
-                                        : "red.200"
+                                        ? "status.success.border"
+                                        : "status.danger.border"
                                   }
                                   sx={{
                                     height: "12px",
                                     width: "12px",
-                                    borderRadius: "2px",
+                                    borderRadius: "4px",
                                   }}
                                 />
                               )}
@@ -1370,10 +1362,9 @@ const CustomEvalsFormChild = ({
                       }}
                       startIcon={
                         <SvgColor
+                          width={16}
                           src={`/assets/icons/evals_use_case/${button.icon}.svg`}
                           sx={{
-                            width: "16px",
-                            height: "16px",
                             color: iconColor(isSelected),
                           }}
                         />

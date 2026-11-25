@@ -7,15 +7,16 @@ import json
 import math
 import re
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, cast, get_args
 
 from django.core.cache import cache
 from django.db import connections, router
 from django.utils import timezone
 
 from model_hub.models.develop_dataset import Cell
+from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES
 from simulate.models import (
     CallExecution,
     HostedHarnessExecution,
@@ -23,21 +24,37 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
+from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
+from simulate.services.call_provider import (
+    call_agent_provider,
+    call_agent_provider_expression,
+)
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_scenarios import (
     authored_scenarios_for_calls,
     call_row_metadata,
     pinned_scenarios,
 )
+from simulate.services.harness_workers import recorded_worker_names
+from simulate.services.hosted_harness_ingestion import (
+    STARTED_BY_KEY,
+    STARTED_BY_TASK,
+    SUB_GOAL_PASSED,
+    WORLD_ACTIONS_KEY,
+    sub_goal_result,
+)
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
     HARNESS_FAILED,
     HARNESS_INCONCLUSIVE,
+    HARNESS_NO_SCORE,
     HARNESS_PASSED,
     NATIVE_FAILED,
     NATIVE_PASSED,
+    SKIPPED_HARNESS_STATUSES,
     EvalScoringSpec,
     LiveEvals,
     judge_stored_eval,
@@ -50,6 +67,12 @@ from simulate.services.scoring_status import (
     normalize_eval_entry,
     scoring_input_from_call,
 )
+from simulate.types import (
+    SubGoalEntry,
+    SubGoalUnscored,
+    is_worker_subject,
+    worker_subject_id,
+)
 from simulate.utils.eval_summary import iter_live_eval_outputs
 
 OUTCOME_LABELS = {
@@ -58,7 +81,10 @@ OUTCOME_LABELS = {
     "passed": "Passed",
     "failed": "Failed",
     "inconclusive": "Inconclusive",
+    "no_score": "No score",
     "error": "Error",
+    # Stopped by the user: neither an error nor a failure.
+    "cancelled": "Cancelled",
 }
 
 # The call fields and call_metadata keys build_call_rows reads; a page loads only these.
@@ -103,6 +129,7 @@ CALL_ROW_METADATA_KEYS = (
     "harness_outcome_status",
     "harness_scenario_key",
     "harness_trial_index",
+    STARTED_BY_KEY,
     *SCORING_META_KEYS,
 )
 
@@ -189,6 +216,11 @@ def call_outcome(
         CallExecution.CallStatus.ANALYZING,
     }:
         return "in_progress"
+    if (
+        call.status in CANCELLED_CALL_STATUSES
+        and harness_outcome not in SKIPPED_HARNESS_STATUSES
+    ):
+        return "cancelled"
     if harness_outcome in HARNESS_ERROR:
         return "error"
     if call.status in {
@@ -204,11 +236,16 @@ def call_outcome(
         for eval_id, data in iter_live_eval_outputs(
             call.eval_outputs, set(live_eval_configs)
         )
-        if (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
+        # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+        if not (isinstance(data, dict) and is_worker_subject(data.get("subject")))
+        and (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
+    # Platform evals arrive after the receipt; one that passed scores the call.
+    if harness_outcome in HARNESS_NO_SCORE and "passed" not in verdicts:
+        return "no_score"
     if "error" in verdicts:
         return "inconclusive"
     if harness_outcome in HARNESS_INCONCLUSIVE:
@@ -220,27 +257,23 @@ def call_outcome(
     return "inconclusive"
 
 
-def _provider(call: CallExecution) -> str | None:
-    if isinstance(call.provider_call_data, dict):
-        for name, payload in call.provider_call_data.items():
-            if isinstance(payload, dict) and payload:
-                return str(name)
-    agent = call.test_execution.agent_definition
-    return getattr(agent, "provider", None) if agent else None
-
-
 def function_calls(call: CallExecution) -> list[dict[str, Any]]:
-    """Return provider-recorded function calls without exposing provider internals."""
-    provider_data = call.provider_call_data
-    if not isinstance(provider_data, dict):
-        return []
+    """Provider-recorded function calls without provider internals; a hosted call's world actors' actions follow the
+    agent's calls, each with its `actor_id`."""
+    return recorded_calls(call.provider_call_data, call.call_metadata)
+
+
+def recorded_calls(provider_data: object, metadata: object) -> list[dict[str, Any]]:
+    """`function_calls` from a call's stored provider data and metadata, so an earlier attempt's snapshot reads alike."""
     calls: list[dict[str, Any]] = []
-    for payload in provider_data.values():
+    for payload in (provider_data if isinstance(provider_data, dict) else {}).values():
         if not isinstance(payload, dict) or not isinstance(
             payload.get("tool_calls"), list
         ):
             continue
         calls.extend(item for item in payload["tool_calls"] if isinstance(item, dict))
+    actions = (metadata if isinstance(metadata, dict) else {}).get(WORLD_ACTIONS_KEY)
+    calls.extend(one for one in actions or [] if isinstance(one, dict))
     return calls
 
 
@@ -456,6 +489,54 @@ def eval_rows(
     return rows
 
 
+def sub_goal_entries(
+    raw_sub_goals: Iterable[object], worker_names: Mapping[str, str] | None = None
+) -> list[SubGoalEntry]:
+    """The call's sub-goals as the results list them, each with its verdict and whose check it is; ``worker_names``
+    names each worker by its contract id."""
+    entries: list[SubGoalEntry] = []
+    for item in raw_sub_goals:
+        name = item.get("name") if isinstance(item, dict) else item
+        if not name:
+            continue
+        result = sub_goal_result(item) if isinstance(item, dict) else None
+        entry: SubGoalEntry = {
+            "name": str(name),
+            "passed": SUB_GOAL_PASSED.get(result),
+            "subject_kind": "task",
+            "display_name": str(name),
+        }
+        if isinstance(item, dict):
+            if result in get_args(SubGoalUnscored):
+                entry["result"] = cast(SubGoalUnscored, result)
+                entry["reason"] = str(item.get("reason") or "")
+            if isinstance(item.get("evidence"), list):
+                # What it was decided from: world_state, tool_calls, transcript, recording.
+                entry["evidence"] = [str(one) for one in item["evidence"]]
+            if item.get("subject") not in (None, "task"):
+                entry["subject"] = str(item["subject"])
+            worker = worker_subject_id(item.get("subject"))
+            if worker is not None:
+                entry["subject_kind"] = "worker"
+                entry["worker_id"] = worker
+                entry["display_name"] = (
+                    f"{name} ({(worker_names or {}).get(worker) or worker})"
+                )
+        entries.append(entry)
+    return entries
+
+
+def receipt_sub_goals(metadata: Mapping[str, object] | None) -> list[SubGoalEntry]:
+    """The judged sub-goals a call's metadata holds, its receipt's first."""
+    receipt = (metadata or {}).get("hosted_harness_receipt")
+    raw = (receipt.get("sub_goals") if isinstance(receipt, dict) else None) or (
+        metadata or {}
+    ).get("sub_goals")
+    return sub_goal_entries(
+        raw if isinstance(raw, list) else [], recorded_worker_names(metadata)
+    )
+
+
 def receipt_sub_goal_names(metadata: Any) -> set[str]:
     receipt = (
         metadata.get("hosted_harness_receipt") if isinstance(metadata, dict) else None
@@ -576,6 +657,101 @@ def build_evaluation_catalog(
     return columns, live_eval_ids
 
 
+# A receipt failure's typed fields, which a reader can have without its message.
+_FAILURE_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def _failure_fields(receipt: Mapping[str, Any]) -> dict[str, str | None]:
+    failure = receipt.get("failure")
+    failure = failure if isinstance(failure, Mapping) else {}
+    domain, code = failure.get("domain"), failure.get("code")
+    return {
+        "failure_domain": domain if domain in HARNESS_FAILURE_DOMAINS else None,
+        "failure_code": (
+            code if isinstance(code, str) and _FAILURE_CODE.fullmatch(code) else None
+        ),
+    }
+
+
+# What each reason an actor did not reach the agent means, as the reader of a run reads it.
+_ACTOR_MISSING_WHY = {
+    "not_triggered": "never came in",
+    "not_delivered": "came in but never spoke",
+    "not_listed": "is not an actor in this environment",
+    "no_world_door": "could not act: this agent's tools run where no actor can act",
+    "no_private_token": "could not act in the world",
+}
+_SCENARIO_FAILURE_PREFIX = "inconclusive: scenario problem, not the agent's: "
+# A call the run was stopped before it finished, counted as cancelled.
+_STOPPED = "Stopped before it finished: the run was cancelled"
+
+
+def _scenario_failure_reason(receipt: Mapping[str, Any]) -> str | None:
+    """Why a call held as the scenario's problem (an actor that never reached the agent, worker limits the sealed
+    world could not enforce) is inconclusive, in the reader's words; None for any other failure, whose message is
+    not written for the reader."""
+    failure = receipt.get("failure")
+    if (
+        not isinstance(failure, Mapping)
+        or failure.get("code") not in SCENARIO_FAILURE_CODES
+    ):
+        return None
+    message = str(failure.get("message") or "")
+    detail = message.removeprefix(_SCENARIO_FAILURE_PREFIX)
+    if failure.get("code") == "actor_missing":
+        detail = re.sub(
+            r"\((\w+)(?::\s*([^)]*))?\)",
+            lambda found: "({}{})".format(
+                _ACTOR_MISSING_WHY.get(
+                    found.group(1), found.group(1).replace("_", " ")
+                ),
+                f": {found.group(2)}" if found.group(2) else "",
+            ),
+            detail,
+        )
+    return (
+        f"Inconclusive, a problem of the scenario, not the agent: {detail}"
+        if detail
+        else ("Inconclusive, a problem of the scenario, not the agent")
+    )
+
+
+# The unscored sub-goal results a call with no score counts, in order, each with its words.
+_UNSCORED_RESULTS = (
+    ("not_applicable", "not applicable"),
+    ("inconclusive", "inconclusive"),
+    ("unmeasured", "not measured"),
+)
+
+
+def _unscored_reason(
+    outcome: str, sub_goal_results: Sequence[SubGoalEntry]
+) -> str | None:
+    """What a call with no pass or fail has instead, counted by sub-goal result: "2 not applicable, 1 inconclusive";
+    None for any other outcome, or when no sub-goal says."""
+    if outcome != "no_score":
+        return None
+    counts = [
+        (sum(1 for goal in sub_goal_results if goal.get("result") == result), words)
+        for result, words in _UNSCORED_RESULTS
+    ]
+    return ", ".join(f"{count} {words}" for count, words in counts if count) or None
+
+
+# Failures whose message the harness writes for the reader of a run, shown as it is.
+_READER_FAILURES = frozenset({"duplicate_commit", "evidence_unmeasured"})
+
+
+def _reader_failure_reason(receipt: Mapping[str, Any]) -> str | None:
+    """A failure the harness explains in the reader's words (the agent repeated a write after its answer was lost and
+    the world committed it twice); None for any other failure."""
+    failure = receipt.get("failure")
+    if not isinstance(failure, Mapping) or failure.get("code") not in _READER_FAILURES:
+        return None
+    message = str(failure.get("message") or "").strip()
+    return message or None
+
+
 def build_call_rows(
     execution: TestExecution,
     calls: list[CallExecution] | None = None,
@@ -589,6 +765,7 @@ def build_call_rows(
     if calls is None:
         calls = list(
             CallExecution.objects.filter(test_execution=execution)
+            .annotate(result_provider=call_agent_provider_expression())
             .select_related("scenario", "test_execution__agent_definition")
             .order_by("-updated_at")
         )
@@ -650,6 +827,9 @@ def build_call_rows(
             or row_dimensions.get("persona")
             or scenario_metadata.get("persona")
         )
+        if metadata.get(STARTED_BY_KEY) == STARTED_BY_TASK:
+            # A run the scenario's own task started has no person, whatever persona the row was provisioned with.
+            persona_details = None
         persona = persona_details.get("name") if persona_details else None
         goal = (
             getattr(call, "result_goal", None)
@@ -671,18 +851,9 @@ def build_call_rows(
             or (harness_scenario.sub_goals if harness_scenario else None)
             or []
         )
-        sub_goal_results = []
-        for item in raw_sub_goals:
-            name = item.get("name") if isinstance(item, dict) else item
-            if not name:
-                continue
-            held = item.get("held") if isinstance(item, dict) else None
-            sub_goal_results.append(
-                {
-                    "name": str(name),
-                    "passed": held if isinstance(held, bool) else None,
-                }
-            )
+        sub_goal_results = sub_goal_entries(
+            raw_sub_goals, recorded_worker_names(metadata)
+        )
         ideal_outcome = (
             row_data.get("outcome")
             or scenario_dimensions.get("outcome")
@@ -721,6 +892,7 @@ def build_call_rows(
             call, live_eval_configs, specs, scoring=scoring, names=names
         )
         receipt_sub_goals = receipt_sub_goal_names(metadata)
+        outcome = call_outcome(call, live_eval_configs, specs)
         for evaluation in evaluations:
             harness_columns[evaluation["id"]] = {
                 "id": evaluation["id"],
@@ -746,13 +918,23 @@ def build_call_rows(
                 # TODO: drop once clients read sub_goal_results.
                 "sub_goals": [goal["name"] for goal in sub_goal_results],
                 "sub_goal_results": sub_goal_results,
-                "outcome": call_outcome(call, live_eval_configs, specs),
+                "outcome": outcome,
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
+                # Why it was skipped, when the harness gave a reason; why an actor's call is inconclusive; a stopped call.
+                "outcome_reason": receipt.get("reason")
+                or _scenario_failure_reason(receipt)
+                or _reader_failure_reason(receipt)
+                or (
+                    _STOPPED
+                    if call.status == CallExecution.CallStatus.CANCELLED
+                    else None
+                )
+                or _unscored_reason(outcome, sub_goal_results),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,
-                "provider": _provider(call),
+                "provider": call_agent_provider(call),
                 "started_at": call.started_at,
                 "completed_at": call.completed_at,
                 "duration_seconds": call.duration_seconds,
@@ -774,6 +956,7 @@ def build_call_rows(
                 "csat": _csat_score(metrics),
                 "ended_reason": call.ended_reason,
                 "error_message": call.error_message,
+                **_failure_fields(receipt),
                 "evaluations": evaluations,
                 "scoring_status": scoring.status,
                 "csat_status": scoring.csat_status,
