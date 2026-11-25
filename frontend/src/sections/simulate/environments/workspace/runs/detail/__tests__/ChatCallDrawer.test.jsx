@@ -52,9 +52,23 @@ vi.mock("../CallWorkersPanel", () => ({
   },
 }));
 
+// The browser's entry: what it was given, and only once it is opened.
+vi.mock("../TrialBrowserPanel", () => ({
+  default: function BrowserStub({ callExecutionId, attempt }) {
+    return (
+      <div
+        data-testid="trial-browser-stub"
+        data-call={callExecutionId}
+        data-attempt={String(attempt)}
+      />
+    );
+  },
+}));
+
 const { default: ChatCallDrawer } = await import("../ChatCallDrawer");
 const { STATUS_META } = await import("../../runs.constants");
 const { TRIAL_CHANGES_COPY } = await import("../trialChanges.constants");
+const { TRIAL_BROWSER_COPY } = await import("../trialBrowser.constants");
 
 describe("ChatCallDrawer share", () => {
   it("opens the share dialog for the call execution", async () => {
@@ -546,5 +560,45 @@ describe("ChatCallDrawer trial picker", () => {
     );
     await user.click(screen.getByRole("button", { name: "Trial 1, Passed" }));
     expect(onPickTrial).toHaveBeenCalledWith("c1");
+  });
+});
+
+describe("ChatCallDrawer browser", () => {
+  it("shows the Browser entry only for a trial of a browser environment, and reads it only once opened", async () => {
+    mocks.callDetail = { actorsEnabled: false, trial_state: null };
+    const { unmount } = render(
+      <ChatCallDrawer
+        task={{ id: "call-execution-plain", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("tab", { name: TRIAL_BROWSER_COPY.tab }),
+    ).toBeNull();
+    unmount();
+
+    mocks.callDetail = {
+      actorsEnabled: false,
+      trial_state: null,
+      browserEnvironment: true,
+    };
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-execution-browser", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    // No count on the entry, and nothing asked until it is opened.
+    expect(
+      screen.getByRole("tab", { name: TRIAL_BROWSER_COPY.tab }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("trial-browser-stub")).toBeNull();
+    await userEvent.click(
+      screen.getByRole("tab", { name: TRIAL_BROWSER_COPY.tab }),
+    );
+    const panel = screen.getByTestId("trial-browser-stub");
+    expect(panel).toHaveAttribute("data-call", "call-execution-browser");
+    expect(panel).toHaveAttribute("data-attempt", "null");
+    mocks.callDetail = null;
   });
 });

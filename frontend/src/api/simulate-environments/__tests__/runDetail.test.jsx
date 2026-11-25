@@ -334,6 +334,17 @@ describe("mapCallDetail", () => {
     },
   );
 
+  it("says a trial is of a browser environment only when the server says so", () => {
+    const base = { id: "chat-1", simulation_call_type: "text", transcript: [] };
+    expect(
+      mapCallDetail({ ...base, browser_environment: true }).browserEnvironment,
+    ).toBe(true);
+    expect(
+      mapCallDetail({ ...base, browser_environment: false }).browserEnvironment,
+    ).toBe(false);
+    expect(mapCallDetail(base).browserEnvironment).toBe(false);
+  });
+
   it("reads a hosted chat's message content lists as text (real Retell chat shape)", () => {
     // Each transcript row is one chat message whose content is a list of
     // OpenAI-style {role, content} items, not a string.
