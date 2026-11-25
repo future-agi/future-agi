@@ -44,7 +44,10 @@ from simulate.tests.test_harness_versioning_backfill import (
 )
 from simulate.tests.test_harness_versioning_record import _authoring, _scenario
 from simulate.tests.test_harness_versioning_runs import _run
-from simulate.tests.test_hosted_harness_gateway import _Daytona
+from simulate.tests.test_hosted_harness_gateway import (
+    _Daytona,
+    assert_only_the_entrypoints_are_harness_steps,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -503,6 +506,12 @@ class TestLaunchHit:
         copy = "cp -a /work/authoring/environment-bundle /work/bundle"
         assert check in command and SOURCE_DIGEST in command
         assert command.index(check) < command.index(copy)
+        # The source check is a step of its own, without the means to run customer processes.
+        steps = gateway.client.sandbox.process.session_request.steps
+        checking = [step for step in steps if check in step.command]
+        assert len(checking) == 1 and not checking[0].harness
+        assert len([step for step in steps if step.harness]) == 2
+        assert_only_the_entrypoints_are_harness_steps(steps)
         assert "sys.exit(78)" in command
         assert "--certify-only" not in command
         assert "/work/certify-job.json" not in gateway.client.sandbox.fs.uploads
@@ -516,6 +525,30 @@ class TestLaunchHit:
         assert "generic-harness/certification.json" in files
         assert f"scenarios/{NAMES[0]}/scenario.json" in files
         assert run.bundle_digest == BUNDLE_DIGEST
+
+    def test_an_extend_runs_after_authoring_without_the_grant(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _environment(user, workspace, "asm-launch-extend", storage)
+        run = _run(environment)
+        payload = dict(run.payload)
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            "scenario_extend": {"target_count": 3, "guidance": ["add a refund case"]},
+        }
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(payload=payload)
+        run.refresh_from_db()
+
+        _launch(gateway, run)
+
+        # The scenarios CLI, its sub-agents and their tools hold no means to start another user.
+        steps = gateway.client.sandbox.process.session_request.steps
+        extend = [
+            step for step in steps if "fi.alk.harness.cli scenarios" in step.command
+        ]
+        assert len(extend) == 1 and not extend[0].harness
+        assert steps.index(extend[0]) == 1
+        assert_only_the_entrypoints_are_harness_steps(steps)
 
     def test_a_second_run_reuses_the_assembled_archive(
         self, user, workspace, storage, monkeypatch
@@ -681,6 +714,117 @@ class TestLaunchHit:
         assert "outcome" not in run.payload["metadata"]["assembly"]
 
 
+CAST = json.dumps(
+    {"actors": [{"id": "alex_vance", "name": "Alex Vance", "channel": "chat_message"}]}
+)
+
+
+class TestCast:
+    """A bundle sealed before its environment listed actors is certified again, never replayed without them."""
+
+    @pytest.mark.parametrize(
+        "sealed, outcome",
+        [({}, "miss"), ({"environment-bundle/actors.json": CAST}, "hit")],
+        ids=["sealed before the cast", "sealed with the cast"],
+    )
+    def test_a_cached_bundle_is_replayed_only_with_its_environment_s_actors(
+        self, user, workspace, storage, settings, sealed, outcome
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            f"asm-cast-{outcome}",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST, **sealed}),
+        )
+        run = _run(environment)
+
+        assert assembly.prepare_launch(run).outcome == outcome
+        assert (_row(environment).state == "ready") == (outcome == "hit")
+
+    def test_an_environment_without_actors_replays_its_bundle_as_before(
+        self, user, workspace, storage, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(user, workspace, "asm-cast-none", storage)
+
+        assert assembly.prepare_launch(_run(environment)).hit
+
+    def _uncast(self, user, workspace, storage, settings, key):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        return _environment(
+            user,
+            workspace,
+            key,
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+
+    def test_a_bundle_is_certified_again_once_per_cast_even_when_its_new_seal_still_lacks_it(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._uncast(user, workspace, storage, settings, "asm-cast-twice")
+        first = _run(environment, key="r1")
+        assert not assembly.prepare_launch(first).hit
+        attempt = register_attempt(
+            first.id, endpoint_base_url="https://platform.example.com"
+        ).attempt
+        first.refresh_from_db()
+        # The new seal has no actors.json either.
+        HostedHarnessGateway._sync_authoring_progress(attempt, _fill_sandbox())
+        assert _row(environment).state == "ready"
+
+        assert assembly.prepare_launch(_run(environment, key="r2")).hit
+
+    def test_of_two_launches_on_one_row_only_one_certifies_it_again(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._uncast(user, workspace, storage, settings, "asm-cast-race")
+        seen_by_one, seen_by_other = _row(environment), _row(environment)
+
+        one, other = _run(environment, key="r1"), _run(environment, key="r2")
+        assert assembly._recertify(seen_by_one, "sha256:cast", one) is True
+        assert assembly._recertify(seen_by_other, "sha256:cast", other) is False
+
+    def test_with_certifying_off_a_bundle_sealed_before_the_cast_is_replayed_and_kept(
+        self, user, workspace, storage
+    ):
+        environment = _environment(
+            user,
+            workspace,
+            "asm-cast-off",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+
+        run = _run(environment)
+        assert assembly.prepare_launch(run).hit
+        assert _row(environment).state == "ready"
+        # Replayed without the environment's actors: said on the run.
+        assert run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
+
+    def test_a_bundle_sealed_with_the_cast_is_opened_once(
+        self, user, workspace, storage, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            "asm-cast-once",
+            storage,
+            body=_sealed_authoring(
+                **{"actors.json": CAST, "environment-bundle/actors.json": CAST}
+            ),
+        )
+        assert assembly.prepare_launch(_run(environment, key="r1")).hit
+
+        with patch.object(assembly, "_cached_files") as opened:
+            assert assembly.prepare_launch(_run(environment, key="r2")).hit
+
+        opened.assert_not_called()
+
+
 class TestTodaysPath:
     def _unassembled(self, setup, user, workspace, storage, settings):
         key = f"asm-today-{setup}"
@@ -809,6 +953,155 @@ class TestLaunchMiss:
             gateway.client.sandbox.fs.uploads["/work/authoring.tar.gz"]
             == (storage.objects[default_pair])
         )
+
+    @pytest.mark.parametrize(
+        "sealed, outcome",
+        [({}, "miss"), ({"environment-bundle/actors.json": CAST}, "miss_fallback")],
+        ids=["sealed before the cast", "sealed with the cast"],
+    )
+    def test_a_default_pair_miss_whose_seal_predates_the_cast_certifies_with_it(
+        self, sealed, outcome, user, workspace, storage, gateway, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            f"asm-fallback-cast-{outcome}",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST, **sealed}),
+        )
+        _uncache(environment)
+        run = _run(environment)
+
+        with capture_logs() as logs:
+            _launch(gateway, run)
+
+        outcomes = [one["outcome"] for one in logs if "outcome" in one]
+        assert outcome in outcomes
+        # Certified in the run's own sandbox, with the cast, instead of replaying a seal without it.
+        assert ("--certify-only" in _command(gateway)) == (outcome == "miss")
+
+    def _castless(self, user, workspace, storage, settings, key):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            key,
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+        _uncache(environment)
+        return environment
+
+    def test_a_certify_for_the_cast_that_failed_is_claimed_again_by_the_next_launch(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._castless(
+            user, workspace, storage, settings, "asm-cast-retry"
+        )
+        first = _run(environment, key="r1")
+        assert assembly.prepare_launch(first).outcome == "miss"
+
+        assembly.mark_failed(first, "the certify did not pass")
+        assert _row(environment).certificate is None
+
+        assert assembly.prepare_launch(_run(environment, key="r2")).outcome == "miss"
+
+    def test_a_launch_that_replays_a_build_without_the_cast_says_so_on_the_run(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._castless(
+            user, workspace, storage, settings, "asm-cast-lost"
+        )
+        certifying = _run(environment, key="r0")
+        cast = assembly._cast(certifying.environment_version)
+        # Another launch is certifying this row for the cast: this one replays the build it has.
+        assert assembly._claim_cast(_row(environment), cast, certifying)
+        run = _run(environment, key="r1")
+
+        assert assembly.prepare_launch(run) is None
+        run.refresh_from_db()
+        assert run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
+
+    @pytest.mark.parametrize(
+        "cached", [True, False], ids=["cached bundle", "default-pair miss"]
+    )
+    def test_with_certifying_off_a_build_without_the_cast_is_read_once_per_cast(
+        self, cached, user, workspace, storage, settings, monkeypatch
+    ):
+        environment = _environment(
+            user,
+            workspace,
+            f"asm-cast-read-once-{cached}",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+        if not cached:
+            _uncache(environment)
+        reads = []
+        real_get = archives.get_archive
+        monkeypatch.setattr(
+            archives, "get_archive", lambda key: (reads.append(key), real_get(key))[1]
+        )
+
+        first, second = _run(environment, key="r1"), _run(environment, key="r2")
+        checked = (
+            _row(environment).object_key
+            if cached
+            else first.payload["metadata"]["authoring_object_key"]
+        )
+        read_by = []
+        for run in (first, second):
+            before = reads.count(checked)
+            assembly.prepare_launch(run)
+            read_by.append(reads.count(checked) - before)
+            run.refresh_from_db()
+            assert (
+                run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
+            )
+
+        # The first launch reads it (a cached one also once more, to compose the run's archive); the next never does.
+        assert read_by[0] >= 1 and read_by[1] == 0
+
+    def test_of_two_misses_on_one_row_only_one_certifies_it_for_the_cast(
+        self, user, workspace, storage, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            "asm-fallback-cast-race",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+        _uncache(environment)
+        seen_by_one, seen_by_other = _row(environment), _row(environment)
+        one, other = _run(environment, key="r1"), _run(environment, key="r2")
+
+        assert assembly._claim_cast(seen_by_one, "sha256:cast", one) is True
+        assert assembly._claim_cast(seen_by_other, "sha256:cast", other) is False
+
+    @pytest.mark.parametrize("ended", ["failed", "canceled"])
+    def test_a_certify_for_the_cast_whose_run_ended_without_marking_the_row_is_claimed_again(
+        self, ended, user, workspace, storage, settings
+    ):
+        """The certifying run failed on the platform's side (or was canceled), so nothing marked the row failed: its
+        claim lapses with it, and the next default launch certifies again instead of replaying the build without the
+        environment's actors."""
+        environment = self._castless(
+            user, workspace, storage, settings, f"asm-cast-ended-{ended}"
+        )
+        first = _run(environment, key="r1")
+        assert assembly.prepare_launch(first).outcome == "miss"
+        assert _row(environment).certificate["claimed_by"] == str(first.id)
+        HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(state=ended)
+
+        later = _run(environment, key="r2")
+
+        assert assembly.prepare_launch(later).outcome == "miss"
+        assert _row(environment).certificate["claimed_by"] == str(later.id)
+        later.refresh_from_db()
+        assert "notice" not in later.payload["metadata"]["assembly"]
 
     def test_certifying_is_off_so_other_pins_cannot_run(self, user, workspace, storage):
         environment = _environment(user, workspace, "asm-fallback-pinned", storage)
@@ -940,6 +1233,15 @@ class TestLaunchMiss:
         assert attempt.state == HostedHarnessAttempt.State.RUNNING
         command = _command(gateway)
         assert "--certify-only --bundle-output /work/bundle " in command
+        # Certify is an entrypoint too: it runs the suite's customer processes, so it is a harness
+        # step, and the copies around it are not.
+        steps = gateway.client.sandbox.process.session_request.steps
+        harness = [step.command for step in steps if step.harness]
+        assert len(harness) == 3 and "--certify-only" in harness[1]
+        assert [step.command for step in steps if not step.harness] == [
+            step.command for step in assembly.certify_steps() if not step.harness
+        ]
+        assert_only_the_entrypoints_are_harness_steps(steps)
         assert "--target-secrets" not in command
         assert "--provider-profile-cache" not in command
         uploads = gateway.client.sandbox.fs.uploads
@@ -1541,3 +1843,22 @@ class TestRerun:
         run = HostedHarnessJob.no_workspace_objects.get(id=result["job"]["job_id"])
         assert run.environment_version_id == environment.environment_version_id
         assert "rerun_of" not in run.payload["metadata"]
+
+
+def test_certify_is_today_s_command_with_only_its_entrypoint_a_harness_step():
+    """Joined, the certify steps are byte for byte the command a provider that cannot isolate runs."""
+    assert assembly.certify_command() == (
+        "if [ -f /work/authoring/scenarios.json ]; then "
+        f"cp /work/authoring/scenarios.json {assembly.SUITE_INDEX_PATH}; fi && "
+        "python -m fi.alk.harness.hosted_authoring_entrypoint "
+        f"{assembly.CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
+        "--certify-only --bundle-output /work/bundle "
+        "&& rm -rf /work/authoring/environment-bundle "
+        "&& cp -a /work/bundle /work/authoring/environment-bundle"
+    )
+    assert [step.harness for step in assembly.certify_steps()] == [
+        False,
+        True,
+        False,
+        False,
+    ]

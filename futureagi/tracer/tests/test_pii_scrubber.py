@@ -668,23 +668,15 @@ class TestUnscrubbedBatchRetry:
         """Sentry attaches frame variables to error events; the re-store holds the batch."""
         import logging
 
-        import sentry_sdk
         from redis.exceptions import RedisError
         from sentry_sdk.integrations.logging import LoggingIntegration
 
-        from tfc.logging import sentry as project_sentry
+        from tfc.tests.sentry_capture import sentry_capture
         from tfc.utils.payload_storage import get_payload_storage
         from tracer.utils import trace_ingestion
         from tracer.utils.pii_scrubber import PIIScrubError
 
         sentinel = b"raw-batch-sentinel-5c1e jane@acme.com"
-        events = []
-        scrub = project_sentry._get_before_send()  # the project's own scrubber
-
-        def capture(event, hint):
-            events.append(scrub(event, hint))
-            return None  # nothing leaves the test
-
         redis = mock.Mock()
         redis.setex.side_effect = RedisError("OOM command not allowed")
         storage = get_payload_storage()
@@ -692,17 +684,11 @@ class TestUnscrubbedBatchRetry:
         monkeypatch.setattr(storage, "_redis_client", redis)
         spans = [{"project_name": "proj", "attributes": {"fi.input.value": "x"}}]
         task = trace_ingestion.bulk_create_observation_span_task
-        sentry_sdk.init(
-            dsn="https://public@sentry.invalid/1",
-            before_send=capture,
-            include_local_variables=True,  # as tfc/logging/sentry.py sets them
+        with sentry_capture(
+            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            include_local_variables=True,
             attach_stacktrace=True,
-            default_integrations=False,
-            integrations=[
-                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
-            ],
-        )
-        try:
+        ) as transport:
             with (
                 mock.patch(
                     "ee.usage.deployment.DeploymentMode.is_oss", return_value=True
@@ -731,9 +717,9 @@ class TestUnscrubbedBatchRetry:
                 mock.patch.object(task, "apply_async") as enqueued,
             ):
                 task._original_func("payload:in", "org", "user", "ws", "protobuf")
-        finally:
-            sentry_sdk.init()  # no DSN: no client
-
         redis.setex.assert_called_once()  # the re-store reached Redis and failed
         enqueued.assert_not_called()
-        assert b"raw-batch-sentinel" not in json.dumps(events, default=str).encode()
+        assert (
+            b"raw-batch-sentinel"
+            not in json.dumps(transport.events, default=str).encode()
+        )

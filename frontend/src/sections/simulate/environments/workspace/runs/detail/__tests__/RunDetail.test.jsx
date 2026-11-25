@@ -9,6 +9,7 @@ import {
   waitForElementToBeRemoved,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
 import {
   MemoryRouter,
   useLocation,
@@ -296,7 +297,15 @@ RunAnalyticsStub.propTypes = {
 };
 vi.mock("../RunAnalytics", () => ({ default: RunAnalyticsStub }));
 
-function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
+function CallDrawerStub({
+  task,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+  onClose,
+  onOpenTrial,
+}) {
   if (!task) return null;
   return (
     <div>
@@ -313,6 +322,9 @@ function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
       <button type="button" onClick={onNext} disabled={!hasNext}>
         next call
       </button>
+      <button type="button" onClick={() => onOpenTrial("x1", 3)}>
+        open trial x1 at step 3
+      </button>
     </div>
   );
 }
@@ -323,6 +335,7 @@ CallDrawerStub.propTypes = {
   onPrev: PropTypes.func,
   onNext: PropTypes.func,
   onClose: PropTypes.func,
+  onOpenTrial: PropTypes.func,
 };
 vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
 
@@ -864,6 +877,39 @@ describe("RunDetail", () => {
       ).toBeInTheDocument();
     });
 
+    it("locks Export, Run Epoch and Debug failures for a Viewer, saying why", async () => {
+      const user = userEvent.setup();
+      vi.mocked(useSimulationAccess).mockReturnValue({
+        canEdit: false,
+        canRun: false,
+      });
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: { scenarios: [scenario("evidence-a", "import-1", true)] },
+      });
+      try {
+        renderDetail();
+
+        for (const [name, reason] of [
+          ["Export", "You don't have permission to export run results."],
+          ["Run Epoch", "You don't have permission to start runs."],
+          ["Debug failures", "You don't have permission to start runs."],
+        ]) {
+          const button = screen.getByRole("button", { name });
+          expect(button).toBeDisabled();
+          await user.hover(button.parentElement);
+          expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+          await user.unhover(button.parentElement);
+          await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+        }
+      } finally {
+        vi.mocked(useSimulationAccess).mockReturnValue({
+          canEdit: true,
+          canRun: true,
+        });
+      }
+    });
+
     it("is not offered when no failing case came from evidence", () => {
       finished();
       fixLaunchOptions.mockReturnValue({
@@ -1207,6 +1253,7 @@ describe("RunDetail", () => {
         pinnedAgentVersion: { id: "a4", label: "v4" },
         environmentVersion: { id: "e1", label: "v1" },
         suiteVersion: { id: "s2", label: "v2" },
+        seed: "7902065059689103066",
       },
       stats: STATS,
       isLoading: false,
@@ -1216,6 +1263,7 @@ describe("RunDetail", () => {
     await user.click(screen.getByRole("button", { name: "rerun ticked" }));
     expect(onStartRun).toHaveBeenCalledWith(["scenario-a"], 2, {
       initialPicks: { agent: "a4", environment: "e1", suite: "s2" },
+      seed: "7902065059689103066",
     });
   });
 
@@ -1576,6 +1624,20 @@ describe("RunDetail", () => {
     expect(onNext).toHaveBeenCalledTimes(1);
   });
 
+  it("gives the drawer the table's live row for the open call, not the row it opened with", async () => {
+    const user = userEvent.setup();
+    callListNavigation.mockReturnValue({
+      hasPrev: false,
+      hasNext: false,
+      openRow: { id: "c1", simulationCallType: "voice", status: "live-status" },
+      onPrev: vi.fn(),
+      onNext: vi.fn(),
+    });
+    renderDetail();
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    expect(screen.getByText(/live-status/)).toBeInTheDocument();
+  });
+
   it("opens the stepped-to call and has the table follow to its page", async () => {
     const user = userEvent.setup();
     renderDetail();
@@ -1839,6 +1901,48 @@ describe("RunDetail ?rowId=", () => {
     expect(locationText()).toBe("?foo=1|REPLACE");
   });
 
+  it("keeps a step link while its call opens and drops it on another call", async () => {
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?rowId=x1&participantsStep=3"] });
+
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("participantsStep=3");
+
+    act(() =>
+      navArgs().onStep({
+        task: { id: "c51", simulationCallType: "voice" },
+        source: "table",
+        page: 2,
+      }),
+    );
+    expect(locationText()).toBe("?rowId=c51|REPLACE");
+  });
+
+  it("opens another trial from the trials table at its step, even off the table page", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("rowId=x1");
+    expect(locationText()).toContain("participantsStep=3");
+  });
+
+  it("keeps the open call when a trial picked from the trials table can't be found", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: undefined, error: { statusCode: 404 } });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    await waitFor(() => expect(locationText()).toContain("rowId=c1"));
+    expect(screen.getByText("drawer:c1")).toBeInTheDocument();
+  });
+
   it("writes a row opened from Analytics to the URL", async () => {
     const user = userEvent.setup();
     renderDetail();
@@ -1847,5 +1951,28 @@ describe("RunDetail ?rowId=", () => {
     await user.click(screen.getByRole("button", { name: "open from chart" }));
 
     expect(locationText()).toBe("?rowId=c9|REPLACE");
+  });
+});
+
+describe("RunDetail build notice", () => {
+  it("says when the run used a build without the environment's actors, and says nothing otherwise", () => {
+    const notice =
+      "This run used a build without the environment's actors, so none of them came in.";
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, buildNotice: notice },
+      stats: STATS,
+      isLoading: false,
+    });
+    const { unmount } = renderDetail();
+    expect(screen.getByTestId("run-build-notice")).toHaveTextContent(notice);
+    unmount();
+
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    expect(screen.queryByTestId("run-build-notice")).toBeNull();
   });
 });

@@ -9,29 +9,59 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import asdict
 from itertools import islice
-from typing import Any
+from typing import Any, get_args
 
 import structlog
 from django.db.models import QuerySet
-from django.http import StreamingHttpResponse
+from django.http import Http404, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import CallExecution, TestExecution
+from simulate.selectors.call_detail import (
+    call_actors,
+    comparability,
+    earlier_attempts,
+    has_customer,
+    participants,
+    tagged_function_calls,
+    tool_call_count,
+    transcript_turns,
+    trial_state,
+)
+from simulate.selectors.call_workers import call_workers, scenario_trial_routes
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
+from simulate.serializers.call_detail_v3 import (
+    CallCallActorSerializer,
+    CallParticipantSerializer,
+    EarlierAttemptSerializer,
+    FunctionCallSerializer,
+    TrialStateSerializer,
+)
+from simulate.serializers.call_workers_v3 import (
+    CallWorkersPendingSerializer,
+    CallWorkersQuerySerializer,
+    CallWorkersResponseSerializer,
+    TrialRoutesQuerySerializer,
+    TrialRoutesResponseSerializer,
+)
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.serializers.trial_pass import TrialPassFieldsSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.harness_versioning.versions import actors_enabled
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -64,6 +94,7 @@ from simulate.services.scoring_status import (
     scoring_counts,
 )
 from simulate.services.test_executor import build_eval_configs_map
+from simulate.types import SubjectKind
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -126,6 +157,8 @@ class RunCallFiltersSerializer(serializers.Serializer):
             "goal_not",
             "sub_goal",
             "sub_goal_not",
+            "actor",
+            "actor_not",
             "status",
             "status_not",
             "goal_outcome",
@@ -143,6 +176,10 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
+            # Refuses null and surrogate characters, which the database cannot hold.
+            serializers.ListField(
+                child=serializers.CharField(allow_blank=True)
+            ).run_validation(selected)
         invalid_statuses = {
             *value.get("status", []),
             *value.get("status_not", []),
@@ -203,7 +240,9 @@ class OutcomeCountsSerializer(serializers.Serializer):
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
+    cancelled = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
+    no_score = serializers.IntegerField()
 
 
 class RunSummarySerializer(serializers.Serializer):
@@ -272,10 +311,18 @@ class RunExecutionSerializer(serializers.Serializer):
     # ``agent_version`` is the version's name; this is the run's agent pin.
     pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
     agent_differs = serializers.BooleanField(required=False, default=False)
+    build_notice = serializers.CharField(
+        allow_null=True,
+        required=False,
+        help_text="Said when the run replayed a build without its environment's actors.",
+    )
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
     trials = serializers.IntegerField(required=False, min_value=1, default=1)
+    # The seed the run drew its personas and variations from: the same seed draws them again. Decimal text: a drawn
+    # seed is up to 2^63 - 1, past what a JSON number keeps exactly.
+    seed = serializers.CharField(allow_null=True, required=False)
     agent_type = serializers.CharField(allow_null=True)
     resume = RunResumeSerializer()
     summary = RunSummarySerializer()
@@ -317,6 +364,26 @@ class CostBreakdownSerializer(serializers.Serializer):
 class SubGoalResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     passed = serializers.BooleanField(allow_null=True)
+    result = serializers.ChoiceField(
+        choices=["not_applicable", "inconclusive", "unmeasured"], required=False
+    )
+    reason = serializers.CharField(required=False, allow_blank=True)
+    evidence = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="What the check was decided from: world_state, tool_calls, transcript, recording.",
+    )
+    # `worker:<id>` for a worker's own check, reported beside the task verdict; absent for the task's.
+    subject = serializers.CharField(required=False)
+    subject_kind = serializers.ChoiceField(
+        choices=get_args(SubjectKind), default="task"
+    )
+    worker_id = serializers.CharField(
+        required=False, help_text="The worker whose own check this is."
+    )
+    display_name = serializers.CharField(
+        help_text="What the results show: its name, with the worker's name when it is one worker's own check."
+    )
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -334,6 +401,7 @@ class RunCallSerializer(serializers.Serializer):
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
+    outcome_reason = serializers.CharField(required=False, allow_null=True)
     execution_status = serializers.CharField()
     modality = serializers.CharField()
     provider = serializers.CharField(allow_null=True)
@@ -369,9 +437,29 @@ class FacetValueSerializer(serializers.Serializer):
     count = serializers.IntegerField()
 
 
+class LabelledFacetValueSerializer(FacetValueSerializer):
+    label = serializers.CharField()  # type: ignore[assignment]  # the API field is named label
+
+
+class CallActorFacetValueSerializer(LabelledFacetValueSerializer):
+    delivered = serializers.IntegerField(
+        help_text="Calls where at least one of the actor's lines reached the agent."
+    )
+    acted = serializers.IntegerField(
+        help_text="Calls where the actor said no line but took part through the world, by its actions."
+    )
+    dropped = serializers.IntegerField(
+        help_text="Calls where the actor was due but neither spoke a line nor acted in the world."
+    )
+    not_triggered = serializers.IntegerField(
+        help_text="Calls the actor was planned for but never triggered in."
+    )
+
+
 class RunFacetsSerializer(serializers.Serializer):
     goal = FacetValueSerializer(many=True)
     sub_goal = FacetValueSerializer(many=True)
+    actor = CallActorFacetValueSerializer(many=True, required=False)
     status = FacetValueSerializer(many=True)
 
 
@@ -444,8 +532,12 @@ class AnalyticsExecutionSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
 
 
-class AnalyticsSummarySerializer(RunSummarySerializer):
+class AnalyticsSummarySerializer(RunSummarySerializer, TrialPassFieldsSerializer):
     evaluators = serializers.IntegerField()
+    outcome_status = serializers.ChoiceField(
+        choices=OUTCOME_STATUSES,
+        help_text="The run's verdict from its calls: no_score when it completed with only unscored calls.",
+    )
 
 
 class RiskSerializer(RunSummarySerializer):
@@ -488,6 +580,9 @@ class ReliabilitySerializer(serializers.Serializer):
     pass_hat_k_scenarios = serializers.IntegerField()
     pass_hat_k_passed = serializers.IntegerField()
     pass_hat_k_excluded = serializers.IntegerField()
+    excluded_not_comparable = serializers.IntegerField(
+        help_text="Trials left out because they did not start from the seeded records."
+    )
     trials_passed = serializers.IntegerField()
     trials_evaluated = serializers.IntegerField()
     pass_rate_interval = ReliabilityIntervalSerializer(allow_null=True)
@@ -548,6 +643,7 @@ class ModalityBreakdownSerializer(RunSummarySerializer):
 class TrendSerializer(RunSummarySerializer):
     execution_id = serializers.UUIDField()
     started_at = serializers.DateTimeField(allow_null=True)
+    excluded_not_comparable = serializers.IntegerField()
 
 
 class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
@@ -566,19 +662,6 @@ class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
     trends = TrendSerializer(many=True)
 
 
-class FunctionCallSerializer(serializers.Serializer):
-    id = serializers.CharField(required=False)
-    name = serializers.CharField(required=False)
-    arguments = serializers.JSONField(required=False)
-    result = serializers.JSONField(required=False)
-    output = serializers.JSONField(required=False)
-    duration_ms = serializers.FloatField(required=False)
-    start_time_ms = serializers.IntegerField(required=False)
-
-    class Meta:
-        ref_name = "SimulateRunV3FunctionCall"
-
-
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     goal = serializers.CharField()
     scenario_details = serializers.CharField(allow_null=True)
@@ -592,6 +675,34 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    tool_call_count = serializers.IntegerField(
+        help_text="The agent's tool calls, from the tool trace when the call has one, else the transcript; a world "
+        "actor's action is not one, and a hand-off to another agent is a Participants step, not one of them."
+    )
+    call_actors = CallCallActorSerializer(many=True)
+    participants = CallParticipantSerializer(
+        many=True,
+        help_text="Who else took part: each actor who spoke, in the order they first spoke, then each world actor "
+        "who acted. Never an actor planned for the call who did not join.",
+    )
+    has_customer = serializers.BooleanField(
+        help_text="The simulated person spoke in the call; false when an actor's message or the scenario's task "
+        "started it and the person never spoke."
+    )
+    trial_state = TrialStateSerializer(allow_null=True)
+    earlier_attempts = EarlierAttemptSerializer(many=True)
+    attempt_number = serializers.IntegerField(
+        help_text="Which attempt this call is, counted from 1: one more than its earlier attempts."
+    )
+    actors_enabled = serializers.BooleanField(
+        help_text="Whether actors, test conditions and the World changes record are on for this deployment; false "
+        "hides the World changes view."
+    )
+    comparable = serializers.BooleanField(
+        help_text="False when the trial did not start from the seeded records; it is then left out of "
+        "repeatability, pass^k and run comparisons."
+    )
+    not_comparable_reason = serializers.CharField(allow_null=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -611,6 +722,16 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "tool_call_count",
+            "call_actors",
+            "participants",
+            "has_customer",
+            "trial_state",
+            "earlier_attempts",
+            "attempt_number",
+            "actors_enabled",
+            "comparable",
+            "not_comparable_reason",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -621,6 +742,9 @@ def _execution_for_request(request, execution_id) -> TestExecution:
     organization = getattr(request, "organization", None) or getattr(
         request.user, "organization", None
     )
+    if organization is None:
+        # Never a filter on a null organization.
+        raise Http404
     return get_object_or_404(
         TestExecution.objects.select_related(
             "run_test",
@@ -675,9 +799,16 @@ def _execution_payload(
             (execution.execution_metadata or {}).get("selected_scenario_keys") or []
         ),
         "trials": execution.trials or 1,
+        "seed": str(job.seed) if job is not None else None,
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
+        # Said when the run replayed a build without its environment's actors.
+        "build_notice": (
+            ((job.payload or {}).get("metadata") or {}).get("assembly") or {}
+        ).get("notice")
+        if job is not None
+        else None,
     }
 
 
@@ -801,7 +932,7 @@ class RunCallsV3View(APIView):
             version = execution.completed_at or execution.updated_at
             # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
-                f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v4:{execution.id}:{version.timestamp()}"
                 f":{calls_page['execution_summary']['total']}"
             )
         response = {
@@ -860,6 +991,12 @@ def build_call_execution_detail(
         ).data
     )
     normalized = row[0]
+    actors = call_actors(call.call_metadata)
+    data["transcript"] = transcript_turns(
+        data.get("transcript") or [],
+        actors,
+        chat=call.simulation_call_type == CallExecution.SimulationCallType.TEXT,
+    )
     # A sub-goal check is a harness verdict too, but it belongs to the
     # scenario, not the eval list. Tag each metric so the UI can tell.
     sub_goal_names = receipt_sub_goal_names(call.call_metadata)
@@ -868,6 +1005,7 @@ def build_call_execution_detail(
             metric["kind"] = (
                 "sub_goal" if metric.get("name") in sub_goal_names else "evaluation"
             )
+    calls = tagged_function_calls(function_calls(call))
     data.update(
         {
             "goal": normalized["goal"],
@@ -883,7 +1021,17 @@ def build_call_execution_detail(
             "csat_score": normalized["csat"],
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
-            "function_calls": function_calls(call),
+            "function_calls": calls,
+            "tool_call_count": tool_call_count(data["transcript"], calls),
+            "call_actors": actors,
+            "participants": participants(call.call_metadata, data["transcript"], calls),
+            "has_customer": has_customer(data["transcript"]),
+            # Attempted, refused and committed per participant, and what each actor chose: kept apart.
+            "trial_state": trial_state(call, calls=calls),
+            "earlier_attempts": (attempts := earlier_attempts(call)),
+            "attempt_number": len(attempts) + 1,
+            "actors_enabled": actors_enabled(),
+            **comparability(call),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],
@@ -900,22 +1048,100 @@ class CallExecutionV3DetailView(APIView):
         operation_id="simulate_v3_call_execution_detail",
     )
     def get(self, request, call_execution_id, *args, **kwargs):
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
-        )
-        call = get_object_or_404(
+        call = _call_for_request(
+            request,
+            call_execution_id,
             CallExecution.objects.select_related(
                 "scenario",
                 "test_execution__run_test",
                 "test_execution__agent_definition",
                 "test_execution__simulator_agent",
             ).prefetch_related("transcripts", "chat_messages", "snapshots"),
-            run_test_workspace_filter(request, "test_execution__run_test"),
-            id=call_execution_id,
-            test_execution__run_test__organization=organization,
-            test_execution__run_test__deleted=False,
         )
         return Response(build_call_execution_detail(call, request=request))
+
+
+def _call_for_request(
+    request: Request,
+    call_execution_id: uuid.UUID | str,
+    calls: QuerySet[CallExecution] | None = None,
+) -> CallExecution:
+    """One call the requester's organization and workspace may read, or 404."""
+    organization = getattr(request, "organization", None) or getattr(
+        request.user, "organization", None
+    )
+    if organization is None:
+        raise Http404
+    return get_object_or_404(
+        (
+            calls
+            if calls is not None
+            else CallExecution.objects.select_related("test_execution__run_test")
+        ),
+        run_test_workspace_filter(request, "test_execution__run_test"),
+        id=call_execution_id,
+        test_execution__run_test__organization=organization,
+        test_execution__run_test__deleted=False,
+    )
+
+
+class CallExecutionV3WorkersView(APIView):
+    """Which of a multi-agent app's participants did what in this trial, read from the traces the app sent."""
+
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        query_serializer=CallWorkersQuerySerializer,
+        responses={
+            200: CallWorkersResponseSerializer,
+            202: CallWorkersPendingSerializer,
+            204: "No hand-off to other agents was seen in this call or in the earlier attempt asked for",
+        },
+        operation_id="simulate_v3_call_execution_workers",
+    )
+    def get(self, request, call_execution_id, *args, **kwargs):
+        call = _call_for_request(request, call_execution_id)
+        reply = call_workers(
+            call, request.validated_query_data.get("attempt"), timezone.now()
+        )
+        if reply.record is not None:
+            return Response(
+                CallWorkersResponseSerializer(reply.record).data, status=reply.status
+            )
+        if reply.next_read_at is not None:
+            return Response(
+                CallWorkersPendingSerializer(
+                    {
+                        "pending": True,
+                        "next_read_at": reply.next_read_at,
+                        "participants_declared": reply.participants_declared,
+                    }
+                ).data,
+                status=reply.status,
+            )
+        return Response(status=reply.status)
+
+
+class RunTrialRoutesV3View(APIView):
+    """One scenario's trials in the run lined up by who asked whom, and the first step where they went different ways."""
+
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        query_serializer=TrialRoutesQuerySerializer,
+        responses={200: TrialRoutesResponseSerializer},
+        operation_id="simulate_v3_test_execution_trial_routes",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        query = request.validated_query_data
+        routes = scenario_trial_routes(
+            execution,
+            query["scenario_key"],
+            timezone.now(),
+            tool_calls=query.get("tool_calls", False),
+        )
+        return Response(TrialRoutesResponseSerializer(routes).data)
 
 
 class RunAnalyticsV3View(APIView):

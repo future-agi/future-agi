@@ -35,7 +35,6 @@ from .response.agent_definition import (
 from .response.agent_version import (
     AgentVersionActivateResponseSerializer,
     AgentVersionCreateResponseSerializer,
-    AgentVersionDeleteResponseSerializer,
     AgentVersionListResponseSerializer,
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
@@ -100,7 +99,6 @@ __all__ = [
     "AgentVersionListResponseSerializer",
     "AgentVersionCreateResponseSerializer",
     "AgentVersionActivateResponseSerializer",
-    "AgentVersionDeleteResponseSerializer",
     "AgentVersionRestoreResponseSerializer",
     # Persona
     # "PersonaResponseSerializer",

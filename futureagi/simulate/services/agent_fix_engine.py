@@ -320,7 +320,7 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
                 fix_label=request.label
             )
             run.fix_label = request.label
-            transaction.on_commit(lambda: _dispatch(run))
+            transaction.on_commit(lambda: dispatch_run(run))
     return run
 
 
@@ -371,7 +371,7 @@ def _finished_earlier(
     return None
 
 
-def _dispatch(run: HostedHarnessJob) -> None:
+def dispatch_run(run: HostedHarnessJob) -> None:
     """Start the check run's workflow; if it cannot start, the run fails at once instead of
     waiting queued for a workflow that will never come."""
     retry = run.payload["retry"]

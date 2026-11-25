@@ -45,6 +45,10 @@ TOOL_GROUPS = {
         "name": "Simulation",
         "description": "Agent definitions, versions, personas, scenarios, simulator agents, test runs, and call analysis",
     },
+    "epoch": {
+        "name": "Epoch",
+        "description": "Debug failures on a finished run, turn evidence into tests, and run, follow and ship an Epoch",
+    },
     "prompts": {
         "name": "Prompt Workbench",
         "description": "Manage prompt templates, versions, labels, folders, simulations, and evaluations",
@@ -74,6 +78,7 @@ DEFAULT_TOOL_GROUPS = [
     "experiments",
     "agents",
     "simulation",
+    "epoch",
     "prompts",
     "usage",
     "gateway",

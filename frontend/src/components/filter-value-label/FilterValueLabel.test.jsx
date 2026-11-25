@@ -190,6 +190,50 @@ describe("FilterValueLabel", () => {
     expect(screen.getByText("unknown-id")).toBeInTheDocument();
   });
 
+  // A saved project chip whose bounded first page came back empty (the
+  // page-fill wall published `values: []` with a continuation) must keep
+  // reading the chain instead of settling on the raw project id.
+  it("follows the value chain until a saved id resolves", () => {
+    const fetchNextPage = vi.fn();
+    mockState.current = {
+      data: [],
+      isLoading: false,
+      hasNextPage: true,
+      isFetchingNextPage: false,
+      fetchNextPage,
+    };
+    const filter = { ...baseFilter, value: ["p1"] };
+    const { container, rerender } = renderLabel(filter);
+    expect(fetchNextPage).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".MuiSkeleton-root")).toBeInTheDocument();
+    expect(screen.queryByText("p1")).not.toBeInTheDocument();
+
+    mockState.current = {
+      data: DEFAULT_OPTIONS,
+      isLoading: false,
+      hasNextPage: true,
+      isFetchingNextPage: false,
+      fetchNextPage,
+    };
+    rerender(<FilterValueLabel filter={filter} source="traces" />);
+    expect(screen.getByText("Project Alpha")).toBeInTheDocument();
+    expect(fetchNextPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the raw id once the value chain ends or fails", () => {
+    const fetchNextPage = vi.fn();
+    mockState.current = {
+      data: [],
+      isLoading: false,
+      hasNextPage: true,
+      isFetchNextPageError: true,
+      fetchNextPage,
+    };
+    renderLabel({ ...baseFilter, value: ["p1"] });
+    expect(fetchNextPage).not.toHaveBeenCalled();
+    expect(screen.getByText("p1")).toBeInTheDocument();
+  });
+
   it("shows a skeleton instead of raw ids while resolving", () => {
     mockState.current = { data: [], isLoading: true };
     const { container } = renderLabel({ ...baseFilter, value: ["p1", "p2"] });

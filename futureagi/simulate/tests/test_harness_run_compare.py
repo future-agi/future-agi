@@ -152,6 +152,20 @@ class TestTrialPassed:
             after.passed, after.decided, before.passed, before.decided
         ) == ("inconclusive", None)
 
+    def test_only_not_applicable_sub_goals_leave_the_trial_undecided(self):
+        # The harness sends a not applicable sub-goal as held, with its verdict beside it.
+        skipped = {"name": "a", "held": True, "verdict": "not_applicable"}
+
+        assert run_compare.trial_passed([skipped], "passed") is None
+        assert (
+            run_compare.trial_passed([skipped, {"name": "b", "held": True}], "passed")
+            is True
+        )
+        assert (
+            run_compare.trial_passed([skipped, {"name": "b", "held": False}], "passed")
+            is False
+        )
+
     def test_without_sub_goals_the_receipt_status_decides(self):
         assert run_compare.trial_passed(None, "passed") is True
         assert run_compare.trial_passed([], "failed") is False

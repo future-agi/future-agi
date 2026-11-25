@@ -35,6 +35,10 @@ QUEUE_XL = "tasks_xl"
 #   released Agent Learning Kit as a child process (plan §9.1)
 QUEUE_RUNNER = "simulation_runner"
 
+# How long one agent reading or scan activity may run: sandbox, upload, the
+# reading itself and clean-up.
+READING_ACTIVITY_TIMEOUT_SECONDS = 3000
+
 
 # =============================================================================
 # Scalability Constants
@@ -94,6 +98,8 @@ AGENT_FIX_WATCH_TICK_SECONDS = 120
 AGENT_FIX_VARIATIONS_WRITE_MINUTES = 60
 AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES = 15
 AGENT_FIX_VARIATIONS_TICK_SECONDS = 60
+# Run Epoch from an Error Feed issue: the wait between looks at its baseline run.
+AGENT_FIX_ISSUE_TICK_SECONDS = 60
 
 
 # =============================================================================

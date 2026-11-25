@@ -14,7 +14,7 @@ from django.db import IntegrityError, transaction
 from rest_framework import status
 
 from accounts.models import Organization, Workspace
-from accounts.tests.test_rbac_regressions import WORKSPACE_WRITE_DENIED, _viewer_client
+from accounts.tests.test_rbac_regressions import _viewer_client
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.models import EvidenceImport, EvidenceImportCase
@@ -650,7 +650,7 @@ class TestRefused:
         response = _create(viewer, environment, dataset, rows, columns)
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert WORKSPACE_WRITE_DENIED in str(response.data)
+        assert response.data["code"] == "viewer_read_only"
 
 
 class TestStored:

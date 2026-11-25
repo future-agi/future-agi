@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 )
 
 // TopicGuardrail restricts conversations to allowed topics or blocks forbidden topics.
 type TopicGuardrail struct {
-	allowedTopics    []topicMatcher
-	forbiddenTopics  []topicMatcher
+	allowedTopics   []topicMatcher
+	forbiddenTopics []topicMatcher
+	configErr       error
 }
 
 type topicMatcher struct {
@@ -23,7 +25,7 @@ type topicMatcher struct {
 
 // New creates a TopicGuardrail from rule config.
 func New(cfg map[string]interface{}) *TopicGuardrail {
-	g := &TopicGuardrail{}
+	g := &TopicGuardrail{configErr: validateConfig(cfg)}
 	if cfg == nil {
 		return g
 	}
@@ -38,7 +40,47 @@ func New(cfg map[string]interface{}) *TopicGuardrail {
 	return g
 }
 
-func (g *TopicGuardrail) Name() string           { return "topic-restriction" }
+// ValidateConfig reports constructor-time topic shape errors for selected
+// policies. Validation is opt-in; legacy Check still skips malformed entries.
+func (g *TopicGuardrail) ValidateConfig() error { return g.configErr }
+
+func validateConfig(cfg map[string]interface{}) error {
+	for _, key := range []string{"allowed_topics", "forbidden_topics"} {
+		value, present := cfg[key]
+		if !present {
+			continue
+		}
+		list, ok := value.([]interface{})
+		if !ok {
+			return fmt.Errorf("topic-restriction %s must be an array of topic objects", key)
+		}
+		// Empty outer arrays intentionally impose no topic restriction.
+		for _, item := range list {
+			entry, ok := item.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("topic-restriction %s must contain only topic objects", key)
+			}
+			if name, present := entry["name"]; present {
+				if _, ok := name.(string); !ok {
+					return fmt.Errorf("topic-restriction %s topic name must be a string", key)
+				}
+			}
+			keywords, ok := entry["keywords"].([]interface{})
+			if !ok || len(keywords) == 0 {
+				return fmt.Errorf("topic-restriction %s keywords must be a nonempty array of strings", key)
+			}
+			for _, keyword := range keywords {
+				text, ok := keyword.(string)
+				if !ok || !utf8.ValidString(text) {
+					return fmt.Errorf("topic-restriction %s keywords must contain only valid text strings", key)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (g *TopicGuardrail) Name() string            { return "topic-restriction" }
 func (g *TopicGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // ChecksRequestTextOnly marks that Check reads only request messages.

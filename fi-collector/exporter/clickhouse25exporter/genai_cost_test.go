@@ -34,15 +34,15 @@ func newRecordingPricer(t *testing.T) *recordingPricer {
 	return &recordingPricer{table: tbl, inner: pricing.New(tbl, nil)}
 }
 
-func (r *recordingPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+func (r *recordingPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32, projectID string) (float64, bool) {
 	r.models = append(r.models, model)
-	return r.inner.TokenCost(ctx, orgID, model, p, c)
+	return r.inner.TokenCost(ctx, orgID, model, p, c, projectID)
 }
 
-func (r *recordingPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+func (r *recordingPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32, projectID string) (float64, bool) {
 	r.models = append(r.models, model)
 	r.openRouterModels = append(r.openRouterModels, model)
-	return r.inner.OpenRouterTokenCost(ctx, orgID, model, p, c)
+	return r.inner.OpenRouterTokenCost(ctx, orgID, model, p, c, projectID)
 }
 
 func (r *recordingPricer) askedAsOpenRouter(model string) bool {

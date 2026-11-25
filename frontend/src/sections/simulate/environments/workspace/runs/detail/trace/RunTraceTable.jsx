@@ -60,6 +60,16 @@ const tickableIds = (rows) =>
 
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
+// "Rowan (5; 1 dropped, 1 not triggered)"
+const callActorChoiceLabel = (item) => {
+  if (item.count == null) return item.label;
+  const missed = [
+    item.dropped && `${item.dropped} dropped`,
+    item.not_triggered && `${item.not_triggered} not triggered`,
+  ].filter(Boolean);
+  return `${item.label} (${[item.count, missed.join(", ")].filter(Boolean).join("; ")})`;
+};
+
 export default function RunTraceTable({
   executionId,
   onOpenCall,
@@ -136,6 +146,8 @@ export default function RunTraceTable({
     if (filters.goal_not?.length) next.goal_not = filters.goal_not;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
+    if (filters.callActor?.length) next.actor = filters.callActor;
+    if (filters.callActor_not?.length) next.actor_not = filters.callActor_not;
     if (filters.status?.length) next.status = filters.status;
     if (filters.status_not?.length) next.status_not = filters.status_not;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
@@ -200,7 +212,7 @@ export default function RunTraceTable({
     runActive = false,
     isLoading,
     error,
-  } = useRunCalls(executionId, listQuery);
+  } = useRunCalls(executionId, { ...listQuery, keepPrevious: true });
 
   // Calls ticked for a re-run. The selection survives paging: "all matching"
   // is a mode with the unticked calls as exceptions, never a list of ids.
@@ -383,6 +395,27 @@ export default function RunTraceTable({
     () => (facets.sub_goal ?? []).map((item) => item.value),
     [facets.sub_goal],
   );
+  const callActorFacet = facets.actor;
+  const callActorField = useMemo(
+    () =>
+      callActorFacet?.length
+        ? [
+            {
+              value: "callActor",
+              label: "Actor",
+              type: "enum",
+              choices: callActorFacet.map((item) => item.value),
+              choiceLabels: Object.fromEntries(
+                callActorFacet.map((item) => [
+                  item.value,
+                  callActorChoiceLabel(item),
+                ]),
+              ),
+            },
+          ]
+        : [],
+    [callActorFacet],
+  );
   const filterFields = useMemo(
     () => [
       {
@@ -397,6 +430,7 @@ export default function RunTraceTable({
         type: "enum",
         choices: subGoalOptions,
       },
+      ...callActorField,
       {
         value: "status",
         label: "Status",
@@ -405,7 +439,7 @@ export default function RunTraceTable({
         choiceLabels: OUTCOME_LABELS,
       },
     ],
-    [goalOptions, subGoalOptions],
+    [goalOptions, subGoalOptions, callActorField],
   );
   // Calls handed over from a diagnosis issue; shown as their own chip rather than
   // a Filter-panel field, since the panel cannot express an id list.

@@ -10,12 +10,14 @@ import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { prepareSourceForBuild } from "./prepareSourceForBuild";
 import { clampParallelism } from "../parallelism.constants";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
+import { clearBuildDrafts } from "../buildDrawer/buildDraft";
 
 /**
- * The inline build machine shared by every source panel. A panel calls:
+ * The inline build machine shared by every Build environment drawer form. A
+ * form calls:
  *   - `runPreflight(source)` when the user clicks "Run preflight" — POSTs hosted
  *     preflight with the source's credential values (write-only); the
- *     credential report feeds <RuntimePreflight>.
+ *     credential report feeds the form's preflight result.
  *   - `resetPreflight()` on any form edit — a green result for one source must
  *     never build a different one.
  *   - `commitBuild()` on "Build environment" (only enabled once `readyToSubmit`)
@@ -76,9 +78,13 @@ export default function usePanelBuild() {
       // Only the redacted draft is staged for build; the raw credentialValues
       // ride the preflight and create requests (write-only) and are never persisted.
       setPrepared(result.draft);
-      heldValues.current = result.credentialValues;
+      heldValues.current =
+        result.buildCredentialValues ?? result.credentialValues;
       buildKey.current = harnessIdempotencyKey();
-      preflight.mutate({ draft: result.draft, credentialValues: result.credentialValues });
+      preflight.mutate({
+        draft: result.draft,
+        credentialValues: result.credentialValues,
+      });
     },
     [preflight, parallelism],
   );
@@ -88,7 +94,8 @@ export default function usePanelBuild() {
     // that has since changed.
     runSeq.current += 1;
     setPreparing(false);
-    if (preflight.data || preflight.error || preflight.isPending) preflight.reset();
+    if (preflight.data || preflight.error || preflight.isPending)
+      preflight.reset();
     setPrepared(null);
     heldValues.current = null;
     buildKey.current = null;
@@ -103,8 +110,16 @@ export default function usePanelBuild() {
   );
 
   const commitBuild = useCallback(() => {
-    if (!prepared || !preflight.data?.ready_to_submit || !preflight.data?.credentials || committing) return;
-    const agentName = preflight.data.credentials.probe?.find((p) => p.ok && p.target_name)?.target_name;
+    if (
+      !prepared ||
+      !preflight.data?.ready_to_submit ||
+      !preflight.data?.credentials ||
+      committing
+    )
+      return;
+    const agentName = preflight.data.credentials.probe?.find(
+      (p) => p.ok && p.target_name,
+    )?.target_name;
     const draft = {
       ...(parallelismEnabled ? prepared : { ...prepared, parallelism: 1 }),
       ...(agentName ? { agentName } : {}),
@@ -113,47 +128,64 @@ export default function usePanelBuild() {
     // on a back-navigation; the create call below is what actually builds it.
     setDraft(draft);
     setCommitting(true);
-    build.mutate({
-      draft,
-      credentialValues: heldValues.current || {},
-      idempotencyKey: buildKey.current,
-    }, {
-      onSuccess: ({ envId, skipped }) => {
-        heldValues.current = null;
-        buildKey.current = null;
-        // A skipped (un-preflightable) draft never reaches here — preflight
-        // rejects it before ready_to_submit — but guard rather than route to an
-        // id the workspace can't resolve.
-        if (skipped || !envId) {
+    build.mutate(
+      {
+        draft,
+        credentialValues: heldValues.current || {},
+        idempotencyKey: buildKey.current,
+      },
+      {
+        onSuccess: ({ envId, skipped }) => {
+          heldValues.current = null;
+          buildKey.current = null;
+          // A skipped (un-preflightable) draft never reaches here — preflight
+          // rejects it before ready_to_submit — but guard rather than route to an
+          // id the workspace can't resolve.
+          if (skipped || !envId) {
+            setCommitting(false);
+            enqueueSnackbar("This source can't be built yet.", {
+              variant: "error",
+            });
+            return;
+          }
+          clearBuildDrafts();
+          navigate(paths.dashboard.simulate.environments.detail(envId));
+        },
+        // A create failure (e.g. the sandbox is unavailable) must surface, not
+        // silently strand the user on the form.
+        onError: (error) => {
           setCommitting(false);
-          enqueueSnackbar("This source can't be built yet.", { variant: "error" });
-          return;
-        }
-        navigate(paths.dashboard.simulate.environments.detail(envId));
+          if (!handleCreditError(error)) {
+            enqueueSnackbar(errorMessage(error), { variant: "error" });
+          }
+        },
       },
-      // A create failure (e.g. the sandbox is unavailable) must surface, not
-      // silently strand the user on the form.
-      onError: (error) => {
-        setCommitting(false);
-        if (!handleCreditError(error)) {
-          enqueueSnackbar(errorMessage(error), { variant: "error" });
-        }
-      },
-    });
-  }, [prepared, preflight.data, committing, parallelismEnabled, setDraft, build, navigate, handleCreditError]);
+    );
+  }, [
+    prepared,
+    preflight.data,
+    committing,
+    parallelismEnabled,
+    setDraft,
+    build,
+    navigate,
+    handleCreditError,
+  ]);
 
-  const status = preparing || preflight.isPending
-    ? "running"
-    : preflight.error
-      ? "error"
-      : preflight.data
-        ? "done"
-        : "idle";
+  const status =
+    preparing || preflight.isPending
+      ? "running"
+      : preflight.error
+        ? "error"
+        : preflight.data
+          ? "done"
+          : "idle";
 
   return {
     status,
     result: preflight.data,
-    readyToSubmit: preflight.data?.ready_to_submit === true && !!preflight.data?.credentials,
+    readyToSubmit:
+      preflight.data?.ready_to_submit === true && !!preflight.data?.credentials,
     committing,
     parallelism,
     parallelismInput,

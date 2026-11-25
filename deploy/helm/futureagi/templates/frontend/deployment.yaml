@@ -132,4 +132,11 @@ spec:
                 path: tls.crt
               - key: {{ $f.tls.keyKey }}
                 path: tls.key
+                {{- if (include "futureagi.podSecurityContext" (dict "root" $ "uid" 101 "overrides" $f.podSecurityContext) | fromYaml).fsGroup }}
+                # 0440: root-owned and readable by the pod's fsGroup, not by
+                # other users. Without a rendered fsGroup (OpenShift
+                # adaptation, or the fsGroup removed) the Secret default 0644
+                # keeps it readable and the entrypoint warns about the mode.
+                mode: 288
+                {{- end }}
         {{- end }}

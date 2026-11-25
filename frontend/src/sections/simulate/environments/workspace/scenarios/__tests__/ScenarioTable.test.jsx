@@ -13,7 +13,6 @@ const renderTable = (props = {}) => {
   render(
     <ScenarioTable
       rows={rows}
-      env={env}
       onEdit={() => {}}
       onRemove={() => {}}
       selectedIds={[]}
@@ -71,7 +70,6 @@ describe("ScenarioTable — hide group", () => {
       <ScenarioTable
         rows={rows}
         groups={groups}
-        env={env}
         onEdit={() => {}}
         onRemove={() => {}}
         onHideGroup={onHideGroup}
@@ -99,19 +97,35 @@ describe("ScenarioTable — opening a row", () => {
 
     onOpen.mockClear();
     fireEvent.click(boxes[1]);
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+    );
     expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("opens a focused row with Enter", () => {
     const onOpen = vi.fn();
     renderTable({ rows: served, onOpen });
-    const row = screen.getByRole("row", { name: `Open ${served[0].name || served[0].title}` });
+    const row = screen.getByRole("row", {
+      name: `Open ${served[0].name || served[0].title}`,
+    });
     row.focus();
     fireEvent.keyDown(row, { key: "Enter" });
     expect(onOpen).toHaveBeenCalledWith(served[0]);
   });
+});
 
-
-
+describe("ScenarioTable actors", () => {
+  it("names who else is in a scenario under its summary, as the row resolves them", () => {
+    renderTable({
+      rows: [
+        {
+          ...rows[0],
+          callActors: [{ id: "friend", name: "Rowan", instruction: "" }],
+        },
+        rows[1],
+      ],
+    });
+    expect(screen.getAllByText("With Rowan")).toHaveLength(1);
+  });
 });

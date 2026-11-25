@@ -116,18 +116,25 @@ func (r *Router) HasTargets(model string) bool {
 
 // Select picks a provider for the given model using the configured strategy.
 func (r *Router) Select(model string) (*RoutingResult, error) {
-	return r.selectMatching(model, nil, false)
+	return r.SelectForScope(model, nil, false, nil)
 }
 
 // SelectExactModel picks a provider for the given model but only from targets
 // that preserve the requested model name, when any target does. When every
 // target overrides it, the name is an alias and the overrides serve it.
 func (r *Router) SelectExactModel(model string) (*RoutingResult, error) {
-	return r.selectMatching(model, nil, true)
+	return r.SelectExactModelExcluding(model, nil)
 }
 
-func (r *Router) selectMatching(model string, exclude map[string]bool, requireExactModel bool) (*RoutingResult, error) {
-	// Copy healthy targets under read lock to avoid racing with SetHealthy.
+// SelectExactModelExcluding preserves exact model matching when retrying selection.
+func (r *Router) SelectExactModelExcluding(model string, exclude map[string]bool) (*RoutingResult, error) {
+	return r.SelectForScope(model, exclude, true, nil)
+}
+
+// SelectForScope retains operator health filtering except for targets served by
+// an independent credential. Evaluate that predicate outside the router lock:
+// resolving an org adapter can involve validating an endpoint.
+func (r *Router) SelectForScope(model string, exclude map[string]bool, requireExactModel bool, independent func(string) bool) (*RoutingResult, error) {
 	r.mu.RLock()
 	targets := r.modelTargets[model]
 	if requireExactModel && !anyTargetKeepsModel(targets, model) {
@@ -135,7 +142,7 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 	}
 	healthy := make([]RoutingTarget, 0, len(targets))
 	for _, t := range targets {
-		if !t.Healthy {
+		if !t.Healthy && independent == nil {
 			continue
 		}
 		if exclude != nil && exclude[t.ProviderID] {
@@ -148,6 +155,16 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 	}
 	r.mu.RUnlock()
 
+	if independent != nil {
+		eligible := healthy[:0]
+		for _, target := range healthy {
+			if target.Healthy || independent(target.ProviderID) {
+				target.Healthy = true // Request-local eligibility, never shared state.
+				eligible = append(eligible, target)
+			}
+		}
+		healthy = eligible
+	}
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("no routing targets for model %q", model)
 	}
@@ -205,7 +222,7 @@ func (r *Router) SetHealthy(providerID string, healthy bool) {
 
 // SelectExcluding picks a provider, excluding the given provider IDs.
 func (r *Router) SelectExcluding(model string, exclude map[string]bool) (*RoutingResult, error) {
-	return r.selectMatching(model, exclude, false)
+	return r.SelectForScope(model, exclude, false, nil)
 }
 
 // TargetCount returns the number of routing targets for a model.

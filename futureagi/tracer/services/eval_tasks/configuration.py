@@ -8,7 +8,7 @@ from django.utils import timezone
 from tracer.models.eval_task import EvalTask, RunType
 
 
-def continuous_coverage_floor(task: EvalTask, *, now: datetime) -> datetime | None:
+def continuous_coverage_floor(task: EvalTask, *, now: datetime) -> datetime:
     """Where a continuous task's cursor-less reconcile must start.
 
     ``start_time`` (``created_at`` before the first start) is the floor this

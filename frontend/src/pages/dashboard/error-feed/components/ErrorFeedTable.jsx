@@ -25,6 +25,12 @@ import DataTablePagination from "src/components/data-table/DataTablePagination";
 import ErrorStatusChip from "./ErrorStatusChip";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
+import {
+  issueEpochStatus,
+  issueKey,
+  useIssueEpochs,
+} from "src/api/errorFeed/epochFromIssue";
+import EpochIssueIcon from "../epoch/EpochIssueIcon";
 import { FEED_PAGE_STATE } from "../feedPageState";
 import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
@@ -372,6 +378,8 @@ export default function ErrorFeedTable({
   );
 
   const rows = useMemo(() => rowsProp ?? [], [rowsProp]);
+  // Each visible issue's latest epoch, in one read for the page.
+  const { jobs: epochs } = useIssueEpochs(rows.map((r) => r.cluster_id));
   const showError = pageState === FEED_PAGE_STATE.ERROR;
   const showNoProjects = pageState === FEED_PAGE_STATE.NO_PROJECTS;
   const showSkeleton =
@@ -529,26 +537,33 @@ export default function ErrorFeedTable({
                         gap={0.5}
                         justifyContent="center"
                       >
-                        <Tooltip
-                          title={row.error.name}
-                          placement="top-start"
-                          arrow
-                        >
-                          <Typography
-                            typography="s2_1"
-                            fontWeight="fontWeightMedium"
-                            color="text.primary"
-                            sx={{
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              maxWidth: 420,
-                              display: "block",
-                            }}
+                        <Stack direction="row" alignItems="center" gap={0.75}>
+                          <Tooltip
+                            title={row.error.name}
+                            placement="top-start"
+                            arrow
                           >
-                            {row.error.name}
-                          </Typography>
-                        </Tooltip>
+                            <Typography
+                              typography="s2_1"
+                              fontWeight="fontWeightMedium"
+                              color="text.primary"
+                              sx={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                maxWidth: 420,
+                                display: "block",
+                              }}
+                            >
+                              {row.error.name}
+                            </Typography>
+                          </Tooltip>
+                          <EpochIssueIcon
+                            status={issueEpochStatus(
+                              epochs[issueKey(row.project_id, row.cluster_id)],
+                            )}
+                          />
+                        </Stack>
                         <Stack direction="row" alignItems="center" gap={0.75}>
                           <SourceTag source={row.source} />
                           <ErrorTypeTag type={row.error.type} />

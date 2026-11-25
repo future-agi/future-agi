@@ -113,13 +113,28 @@ class HarnessConversationRuntimeSerializer(serializers.Serializer):
     available = serializers.BooleanField()
 
 
+class HarnessConversationBlockingInputSerializer(serializers.Serializer):
+    """The question or confirmation the builder waits on, as the runtime asked it."""
+
+    message_id = serializers.CharField()
+    kind = serializers.CharField(
+        help_text="question_requested or confirmation_requested."
+    )
+    prompt = serializers.CharField(required=False, allow_blank=True)
+    options = serializers.ListField(child=serializers.JSONField(), required=False)
+    options_only = serializers.BooleanField(
+        required=False,
+        help_text="True when only one of its options answers it: free text is not an answer.",
+    )
+
+
 class HarnessConversationReadSerializer(serializers.Serializer):
     conversation_id = serializers.UUIDField()
     job_id = serializers.UUIDField()
     state = serializers.CharField()
     stage = serializers.CharField()
     active_invocation_id = serializers.CharField(allow_null=True)
-    blocking_input = serializers.JSONField(allow_null=True)
+    blocking_input = HarnessConversationBlockingInputSerializer(allow_null=True)
     messages = HarnessConversationMessageSerializer(many=True)
     events = HarnessConversationEventReadSerializer(many=True)
     event_watermark = serializers.IntegerField(min_value=0)

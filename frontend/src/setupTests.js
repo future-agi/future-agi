@@ -8,6 +8,10 @@ vi.mock("react-apexcharts", () => ({
   default: () => null,
 }));
 
+vi.mock("src/sections/simulate/environments/hooks/useSimulationAccess", () => ({
+  default: vi.fn(() => ({ canEdit: true, canRun: true })),
+}));
+
 // Add any additional global test setup here
 // For example, you might want to mock certain modules globally:
 

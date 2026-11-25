@@ -780,6 +780,7 @@ def _preflight(payload):
 
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
     # The advisory under test is the parallelism echo; source scanning and the

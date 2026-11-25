@@ -213,7 +213,7 @@
       <section class="doc" id="status-colors">
         <header>
           <h2>Status and data colours</h2>
-          <p class="muted">Six status roles, each with a tint, a border, readable text, a solid fill and a label colour for that fill. Chart and category colours are a separate set of eight, so a chart series never reads as “failed”. <code>dataMono</code> is a quieter set of eight purple shades for charts that read better in one colour family, such as cost by group.</p>
+          <p class="muted">Six status roles, each with a tint, a border, readable text, a solid fill and a label colour for that fill. Chart and category colours are a separate set of eight, so a chart series never reads as “failed”. <code>dataMono</code> is a quieter set of eight purple shades for charts that read better in one colour family, such as cost by group. <code>dataBrand</code> is the brand set of four (purple, then the guide's green, red and amber) for category and answer charts that should read in the product's own colours, such as Insights and Instant eval.</p>
         </header>
         <div class="demo" data-demo>
           <div class="stack">
@@ -221,6 +221,7 @@
             <div class="row"><span class="ds-badge ds-badge--solid ds-badge--success">Success</span><span class="ds-badge ds-badge--solid ds-badge--warning">Warning</span><span class="ds-badge ds-badge--solid ds-badge--danger">Danger</span><span class="ds-badge ds-badge--solid ds-badge--info">Info</span><span class="ds-badge ds-badge--solid ds-badge--discovery">Discovery</span></div>
             <div class="row" data-fill="data"></div>
             <div class="row" data-fill="dataMono"></div>
+            <div class="row" data-fill="dataBrand" data-count="4"></div>
           </div>
         </div>
         <div class="tscroll"><table class="spec" id="statusTable"><thead><tr><th>Role</th><th>Means</th><th>Light · fg / bg / solid</th><th>Dark · fg / bg / solid</th></tr></thead><tbody></tbody></table></div>
@@ -806,7 +807,7 @@
         <div class="tscroll"><table class="spec"><thead><tr><th>Part</th><th>Spec</th></tr></thead><tbody>
           <tr><td>Sidebar</td><td><code>size.sidebar.expanded</code> 200, collapsed 52. <code>bg.canvas</code>, right <code>border.default</code>, padding 8, 12 between groups.</td></tr>
           <tr><td>Workspace switcher</td><td>36 high: Future AGI mark (22 tile), product name 12/600, workspace in <code>caption</code> <code>fg.tertiary</code>, up-down chevron. Collapse button beside it.</td></tr>
-          
+
           <tr><td>Items</td><td>24 high, no gap, padding 0 8, <code>radius.md</code>. 14px icon, 8px to the label. Label <code>body-sm</code> 12 regular in <code>fg.default</code>. Hover <code>bg.hover</code>. Current: <code>bg.selected</code>, weight 500. Counts and shortcuts right-aligned in <code>fg.tertiary</code>.</td></tr>
           <tr><td>Icons</td><td>14px Solar linear (collapsed rail too) in <code>icon.default</code>; the current item's icon is <code>fg.default</code>. No colour: the current page stands out by fill, weight and tone.</td></tr>
           <tr><td>Section labels</td><td>20 high, 11 medium in <code>fg.secondary</code>, sentence case, no divider rule. Collapsible: the chevron appears on hover.</td></tr>

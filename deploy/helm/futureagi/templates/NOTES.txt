@@ -93,16 +93,20 @@ WARNING  Bundled datastores run as single replicas with no backups, for evaluati
 {{- end }}
 
 4. Send traces (OpenTelemetry, with an API key created in the UI)
+{{- $sdkApiUrl := $apiUrl | default "http://localhost:8000" }}
 {{ if $otlpUrl }}
-   Future AGI SDKs: FI_BASE_URL={{ $otlpUrl }}
+   Future AGI SDKs: FI_BASE_URL={{ $sdkApiUrl }} FI_TRACES_URL={{ $otlpUrl }}
    Public:          OTLP/HTTP {{ $otlpUrl }}/v1/traces
 {{- else if $appUrl }}
-   Future AGI SDKs: FI_BASE_URL=http://localhost:4318, through
+   Future AGI SDKs: FI_BASE_URL={{ $sdkApiUrl }} FI_TRACES_URL=http://localhost:4318, through
                     kubectl -n {{ $ns }} port-forward svc/{{ $collector }} 4318:{{ $v.fiCollector.service.httpPort }}
                     (set urls.otlp once fi-collector is exposed: the app shows it to SDK users)
 {{- else }}
-   Future AGI SDKs: FI_BASE_URL=http://localhost:4318 (the fi-collector port-forward above)
+   Future AGI SDKs: FI_BASE_URL={{ $sdkApiUrl }} FI_TRACES_URL=http://localhost:4318
+                    (the backend and fi-collector port-forwards above)
 {{- end }}
+   SDK versions:    pip install -U "fi-instrumentation-otel>=1.5.0", or npm install "@traceai/fi-core@^1.4.0":
+                    older SDKs ignore FI_TRACES_URL; with one, set FI_BASE_URL to the collector URL instead.
    In the cluster:  OTLP/gRPC {{ $collector }}.{{ $ns }}.svc:{{ $v.fiCollector.service.grpcPort }}
                     OTLP/HTTP http://{{ $collector }}.{{ $ns }}.svc:{{ $v.fiCollector.service.httpPort }}/v1/traces
 {{- /* ---- Enterprise: edition, license and sign-in ---- */ -}}

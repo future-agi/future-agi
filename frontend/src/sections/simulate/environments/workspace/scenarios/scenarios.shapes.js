@@ -36,6 +36,34 @@ export const SCENARIO_SHAPE = PropTypes.shape({
   critical: PropTypes.bool,
   persona: PERSONA_SHAPE,
   subTasks: PropTypes.arrayOf(SUB_TASK_SHAPE),
+  callActors: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string,
+      name: PropTypes.string,
+      role: PropTypes.string,
+      channel: PropTypes.string,
+      side: PropTypes.oneOf(["caller", "world"]),
+      effective_trigger: PropTypes.object,
+      when_label: PropTypes.string,
+      timeout_label: PropTypes.string,
+      instruction: PropTypes.string,
+      actions: PropTypes.arrayOf(PropTypes.object),
+    }),
+  ),
+  doorProblem: PropTypes.shape({
+    code: PropTypes.oneOf(["fault_unreachable", "actor_no_door"]),
+    message: PropTypes.string,
+  }),
+  faults: PropTypes.arrayOf(
+    PropTypes.shape({
+      action: PropTypes.string,
+      mode: PropTypes.string,
+      on_call: PropTypes.number,
+      delay_seconds: PropTypes.number,
+      status: PropTypes.number,
+      message: PropTypes.string,
+    }),
+  ),
   conversationBranch: PropTypes.oneOfType([
     PropTypes.string,
     PropTypes.arrayOf(PropTypes.string),

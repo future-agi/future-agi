@@ -1,0 +1,62 @@
+name: Fresh backend database control
+description: Qualify a schema-only recipe before it can be reused by a shard.
+inputs:
+  profile:
+    description: Backend setup profile
+    default: baseline
+  handoff:
+    description: Transfer a qualified recipe to shards of this run
+    default: 'false'
+outputs:
+  artifact:
+    description: Immutable same-run artifact name, empty unless a dump qualified
+    value: ${{ steps.result.outputs.artifact }}
+  recipe:
+    description: Runtime and checkout identity of the qualified dump
+    value: ${{ steps.result.outputs.recipe }}
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/backend-test-packages/environment
+      with:
+        profile: ${{ inputs.profile }}
+    - id: key
+      shell: bash
+      working-directory: futureagi
+      run: |
+        key=$(bash "$GITHUB_ACTION_PATH/key.sh")
+        echo "key=$key" >> "$GITHUB_OUTPUT"
+    - id: cached
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        key: ${{ steps.key.outputs.key }}
+        path: ${{ runner.temp }}/migrated-db
+    - shell: bash
+      working-directory: futureagi
+      env:
+        CACHE_HIT: ${{ steps.cached.outputs.cache-hit }}
+        RECIPE: ${{ steps.key.outputs.key }}
+      run: bash "$GITHUB_ACTION_PATH/producer.sh"
+    - if: steps.cached.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        key: ${{ steps.key.outputs.key }}
+        path: ${{ runner.temp }}/migrated-db
+    - id: result
+      if: inputs.handoff == 'true'
+      shell: bash
+      env:
+        RECIPE: ${{ steps.key.outputs.key }}
+      run: |
+        if [[ ! -f "$RUNNER_TEMP/migrated-db/cold-only" ]]; then
+          echo "artifact=backend-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "recipe=$RECIPE" >> "$GITHUB_OUTPUT"
+        fi
+    - if: steps.result.outputs.artifact != ''
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ steps.result.outputs.artifact }}
+        path: ${{ runner.temp }}/migrated-db/
+        if-no-files-found: error
+        retention-days: 1
+        compression-level: 0

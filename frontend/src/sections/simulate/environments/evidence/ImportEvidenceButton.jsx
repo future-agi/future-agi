@@ -11,7 +11,11 @@ import ImportTranscriptDialog from "./ImportTranscriptDialog";
 // The Scenarios tab's way in: Observe evidence and dataset rows are picked
 // where they live, and their import opens back here for review. A transcript
 // the person has is added here, and its review opens at once.
-export default function ImportEvidenceButton({ envId, onImported }) {
+export default function ImportEvidenceButton({
+  envId,
+  onImported,
+  disabled = false,
+}) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -22,6 +26,7 @@ export default function ImportEvidenceButton({ envId, onImported }) {
         variant="outlined"
         startIcon={<Iconify icon="solar:import-linear" width={16} />}
         onClick={() => setOpen(true)}
+        disabled={disabled}
       >
         {EVIDENCE_COPY.importButton}
       </Button>
@@ -74,4 +79,5 @@ export default function ImportEvidenceButton({ envId, onImported }) {
 ImportEvidenceButton.propTypes = {
   envId: PropTypes.string.isRequired,
   onImported: PropTypes.func.isRequired,
+  disabled: PropTypes.bool,
 };

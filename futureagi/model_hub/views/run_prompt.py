@@ -1949,7 +1949,7 @@ class PreviewRunPromptColumnView(APIView):
             )
 
             responses = []
-            value_infos = {"metadata": {"usage": {}, "cost": {}}}
+            value_infos: dict[str, Any] = {"metadata": {"usage": {}, "cost": {}}}
             for row in rows:
                 try:
                     output_format = config.get("output_format", "string")

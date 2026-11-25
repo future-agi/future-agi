@@ -145,15 +145,19 @@ def test_service_native_unlimited_read_restores_pool_and_keeps_diagnostics_bound
     assert socket.gettimeout() == socket_timeout
     owner._return_client.assert_called_once_with(native)
 
+    # The read below is timed on the wall clock, and 123 ms was exhausted in
+    # CI before the query was sent. 20 s cannot be missed, is under the
+    # default read ceiling (30 s) and over every socket timeout of the
+    # fixture, so both asserts still fail if the caller's deadline is dropped.
     def diagnostic(*args, **kwargs):
-        assert 0 < socket.gettimeout() <= 0.123
+        assert 10 < socket.gettimeout() <= 20
         if not locked or allow_settings:
-            assert kwargs["settings"]["max_execution_time"] == 0.123
+            assert kwargs["settings"]["max_execution_time"] == 20.0
             assert kwargs["settings"]["max_result_rows"] == 2
         return [], []
 
     native.execute.side_effect = diagnostic
-    owner.execute_read("SELECT 1", timeout_ms=123, settings={"max_result_rows": 2})
+    owner.execute_read("SELECT 1", timeout_ms=20_000, settings={"max_result_rows": 2})
     assert socket.gettimeout() == socket_timeout
     assert connection.send_receive_timeout == receive
     assert owner._read_admission.acquire(blocking=False)

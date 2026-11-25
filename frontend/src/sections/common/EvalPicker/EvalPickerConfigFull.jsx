@@ -31,6 +31,7 @@ import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show/ShowComponent";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
+import { activeTaskCompositeMapping } from "src/sections/tasks/taskEvalMapping";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import { ROW_TYPE_LABELS } from "src/utils/constants";
@@ -56,7 +57,7 @@ import useDecisionBinding, {
   normalizeDecisionOutput,
 } from "./useDecisionBinding";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
-import { useCompositeChildrenUnionKeys } from "src/sections/evals/hooks/useCompositeChildrenKeys";
+import { useCompositeChildrenInputs } from "src/sections/evals/hooks/useCompositeChildrenKeys";
 import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
@@ -245,6 +246,12 @@ const EvalPickerConfigFull = ({
   );
   const [promptMessageError, setPromptMessageError] = useState("");
   const [sourceMapping, setSourceMapping] = useState({});
+  // Readiness reports describe the currently visible schema, not user edits.
+  // In particular, a warm partial schema must not replace a saved binding.
+  const [taskPathEdits, setTaskPathEdits] = useState({});
+  const rememberTaskPath = useCallback((key, path) => {
+    setTaskPathEdits((prev) => ({ ...prev, [key]: path }));
+  }, []);
   const sourceRef = useRef(null);
 
   const localFormFilters = useWatch({
@@ -363,10 +370,53 @@ const EvalPickerConfigFull = ({
   // `useCompositeDetail` only when the selected template is composite so
   // single-eval picks don't pay the round-trip cost. `compositeChildWeights`
   // is the state that flows into `composite_weight_overrides` on save.
-  const { data: compositeDetail } = useCompositeDetail(templateId, isComposite);
-  const compositeUnionKeys = useCompositeChildrenUnionKeys(
-    compositeDetail?.children || [],
-  );
+  const compositeQuery = useCompositeDetail(templateId, isComposite);
+  const compositeDetail = compositeQuery.data;
+  const taskComposite = source === "task" && isComposite;
+  const childInputs = useCompositeChildrenInputs(compositeDetail?.children, {
+    taskComposite,
+  });
+  const childInputsFailed =
+    taskComposite && (compositeQuery.isError || childInputs.isError);
+  const refreshingInputs =
+    taskComposite &&
+    (compositeQuery.isPending ||
+      compositeQuery.isFetching ||
+      compositeQuery.isPaused ||
+      childInputs.isLoading);
+  const schemaBlocker = childInputsFailed
+    ? "Failed to load child evaluation inputs."
+    : refreshingInputs
+      ? "Loading child evaluation inputs."
+      : taskComposite && childInputs.unknown
+        ? "Cannot determine child inputs. Check the child entry point or declare its required keys."
+        : "";
+  // Keep the editor (and its typed paths) mounted with the last complete
+  // schema during background refreshes. Never submit using that stale schema.
+  const lastSchema = useRef(null);
+  useEffect(() => {
+    if (taskComposite && !schemaBlocker) lastSchema.current = childInputs;
+  }, [taskComposite, schemaBlocker, childInputs]);
+  const hasUsableSchema = lastSchema.current ||
+    (Array.isArray(compositeDetail?.children) && childInputs.hasData);
+  const visibleSchema = (schemaBlocker && lastSchema.current) || childInputs;
+  const compositeUnionKeys = visibleSchema.keys;
+  const taskMapping = useMemo(() => {
+    if (!taskComposite) return sourceMapping;
+    return activeTaskCompositeMapping(childInputs.keys, {
+      ...evalData?.mapping,
+      ...sourceMapping,
+      ...taskPathEdits,
+    });
+  }, [taskComposite, childInputs.keys, evalData?.mapping, sourceMapping, taskPathEdits]);
+  const taskMappingBlocked =
+    taskComposite &&
+    (Boolean(schemaBlocker) ||
+      !childInputs.required.every((key) => Object.hasOwn(taskMapping, key)));
+  const retrySchema = () => {
+    if (compositeQuery.isError) compositeQuery.refetch();
+    childInputs.retry?.();
+  };
   const [compositeChildWeights, setCompositeChildWeights] = useState({});
   const compositePopulatedRef = useRef(false);
   useEffect(() => {
@@ -489,11 +539,14 @@ const EvalPickerConfigFull = ({
 
   const hasDataInjection = useMemo(
     () =>
+      // A composite containing an agent is classified as "agent", but its
+      // other children still need their explicit task inputs.
+      (!taskComposite || compositeUnionKeys.length === 0) &&
       evalType === "agent" &&
       (source === "task" || source === "tracing") &&
       Array.isArray(contextOptions) &&
       contextOptions.some((o) => o && o !== "variables_only"),
-    [evalType, source, contextOptions],
+    [evalType, source, contextOptions, taskComposite, compositeUnionKeys.length],
   );
 
   const visibleCodeParamEntries = useMemo(() => {
@@ -1184,6 +1237,7 @@ const EvalPickerConfigFull = ({
   ]);
 
   const handleAdd = useCallback(() => {
+    if (taskMappingBlocked) return;
     if (decision.blockedReason) {
       enqueueSnackbar(decision.blockedReason, { variant: "error" });
       return;
@@ -1281,7 +1335,7 @@ const EvalPickerConfigFull = ({
         evalTemplateId: templateId,
         userEvalId,
         name: resolvedName,
-        mapping: sourceMapping,
+        mapping: taskMapping,
         evalTemplate: fullEval || evalData,
         evalType,
         templateType,
@@ -1340,6 +1394,8 @@ const EvalPickerConfigFull = ({
     fagiLocked,
     model,
     sourceMapping,
+    taskMapping,
+    taskMappingBlocked,
     evalType,
     outputType,
     selectedVersionId,
@@ -1375,7 +1431,7 @@ const EvalPickerConfigFull = ({
     decisionRunConfig,
   ]);
 
-  if (isLoading) {
+  if (isLoading || (refreshingInputs && !hasUsableSchema && !childInputsFailed)) {
     return (
       <Box
         sx={{
@@ -1391,7 +1447,7 @@ const EvalPickerConfigFull = ({
     );
   }
 
-  if (!templateId || (isError && !fullEval)) {
+  if (!templateId || (isError && !fullEval) || (childInputsFailed && !hasUsableSchema)) {
     return (
       <Box
         sx={{
@@ -1412,8 +1468,11 @@ const EvalPickerConfigFull = ({
         <Typography variant="body2" color="text.secondary">
           {!templateId
             ? "No template ID found for this evaluation."
-            : "Failed to load evaluation details."}
+            : childInputsFailed
+              ? "Failed to load child evaluation inputs."
+              : "Failed to load evaluation details."}
         </Typography>
+        {childInputsFailed && <Button onClick={retrySchema}>Retry loading inputs</Button>}
         <Button
           size="small"
           variant="outlined"
@@ -2154,6 +2213,7 @@ const EvalPickerConfigFull = ({
                     errorLocalizerEnabled={errorLocalizerActive}
                     initialMapping={evalData?.mapping}
                     initialRunTestId={sourceId}
+                    sourceColumns={sourceColumns}
                     {...compositeSourceModeProps}
                   />
                 )}
@@ -2184,7 +2244,11 @@ const EvalPickerConfigFull = ({
                     hasDataInjection={hasDataInjection}
                     initialProjectId={sourceId}
                     initialRowType={sourceRowType}
-                    initialMapping={evalData?.mapping}
+                    requiredVariables={taskComposite ? visibleSchema.required : undefined}
+                    initialMapping={taskComposite
+                      ? { ...evalData?.mapping, ...taskPathEdits }
+                      : evalData?.mapping}
+                    onMappingEdit={taskComposite ? rememberTaskPath : undefined}
                     errorLocalizerEnabled={errorLocalizerActive}
                     localFilters={localApiFilters}
                     onReadinessChange={handleReadinessChange}
@@ -2351,6 +2415,14 @@ const EvalPickerConfigFull = ({
                 : "Map all variables to enable testing & adding"}
             </Typography>
           )}
+        {schemaBlocker && (
+          <Typography variant="caption" role="status">
+            {schemaBlocker}
+            {childInputsFailed && (
+              <Button size="small" onClick={retrySchema}>Retry loading inputs</Button>
+            )}
+          </Typography>
+        )}
         {isDirty && sourceReady && !testPassed && !testError && (
           <Typography
             variant="caption"
@@ -2442,7 +2514,7 @@ const EvalPickerConfigFull = ({
                       color="primary"
                       size="small"
                       onClick={handleTestEvaluation}
-                      disabled={testDisabled}
+                      disabled={testDisabled || taskMappingBlocked}
                       startIcon={
                         isTesting ? (
                           <CircularProgress size={14} />
@@ -2557,7 +2629,7 @@ const EvalPickerConfigFull = ({
                   size="small"
                   loading={isSaving}
                   onClick={handleAdd}
-                  disabled={addDisabled}
+                  disabled={addDisabled || taskMappingBlocked}
                 >
                   {primaryLabel ||
                     (source === "composite"

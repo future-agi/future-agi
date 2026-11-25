@@ -301,9 +301,16 @@ func flushPendingStop(ctx context.Context, state *streamState, events chan<- []b
 		state.currentBlockType = ""
 	}
 
-	var outputTokens int
+	// Carry the prompt count too, not only the output count. Providers such
+	// as Gemini and Vertex report usage only on their last chunk, after
+	// message_start has gone out with zero usage, so this is the only event
+	// that can tell the client what the input cost.
+	var usage ResponseUsage
 	if state.pendingUsage != nil {
-		outputTokens = state.pendingUsage.CompletionTokens
+		usage = ResponseUsage{
+			InputTokens:  state.pendingUsage.PromptTokens,
+			OutputTokens: state.pendingUsage.CompletionTokens,
+		}
 	}
 
 	emit(ctx, events, sseFrame("message_delta", MessageDeltaEvent{
@@ -311,7 +318,7 @@ func flushPendingStop(ctx context.Context, state *streamState, events chan<- []b
 		Delta: MessageDelta{
 			StopReason: state.pendingStopReason,
 		},
-		Usage: ResponseUsage{OutputTokens: outputTokens},
+		Usage: usage,
 	}))
 
 	emit(ctx, events, sseFrame("message_stop", MessageStopEvent{Type: "message_stop"}))

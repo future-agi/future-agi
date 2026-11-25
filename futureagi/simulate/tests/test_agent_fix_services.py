@@ -4,6 +4,7 @@ import io
 import re
 import subprocess
 import tarfile
+import threading
 from contextlib import ExitStack
 from datetime import timedelta
 from decimal import Decimal
@@ -56,8 +57,10 @@ from simulate.selectors.agent_fix import (
     committed_usd,
     engine_brief,
     eval_review,
+    fix_runs_for_read,
     graded_check_runs,
     is_retryable,
+    launch_blocker,
     launch_options,
     limited_validation,
     ran_at,
@@ -76,6 +79,7 @@ from simulate.services.agent_fix_runs import (
     retry_fix_run,
     split_held_back,
 )
+from simulate.services.agent_setup import store_agent
 from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
 from simulate.services.harness_run_evals import queue_evals_for_finished_calls
 from simulate.services.harness_versioning.versions import record_authoring
@@ -89,6 +93,7 @@ from simulate.services.hosted_harness import (
 from simulate.services.hosted_harness_gateway import _source_object_key
 from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.run_traces_v3 import CallUsage
+from simulate.tests.test_agent_setup_service import source_agent
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
 from simulate.tests.test_harness_environment_regrade import _mapped_eval
@@ -107,6 +112,7 @@ from simulate.utils.test_execution_utils import (
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.settings import settings as default_settings
 from tracer.services.clickhouse.client import CHError
+from tracer.services.simulation_project import agent_of_run, ensure_simulation_project
 
 pytestmark = pytest.mark.django_db
 
@@ -233,6 +239,7 @@ def _fix_run(
         max_minutes=30,
     )
     environment = source_run.environment
+    fields.setdefault("started_at", timezone.now())
     return AgentFixRun.no_workspace_objects.create(
         organization_id=environment.organization_id,
         workspace_id=environment.workspace_id,
@@ -241,7 +248,6 @@ def _fix_run(
         base_agent_version_id=source_run.agent_version_id,
         state=state,
         request=request.model_dump(mode="json"),
-        started_at=timezone.now(),
         **fields,
     )
 
@@ -256,6 +262,19 @@ def _launch(source_run, user, targets=(KEYS[0],)):
         max_minutes=30,
         user=user,
     )
+
+
+def _measured_by_the_sandbox(source_run, instrumentation="none"):
+    """The run's agent as a source agent that names ``instrumentation``: with "none", only
+    the sandbox's own measuring saw its model calls, in the agent's hidden project."""
+    execution = source_run.test_execution
+    version = execution.agent_version or execution.run_test.agent_version
+    store_agent(
+        agent_version_id=version.id,
+        agent=source_agent(instrumentation=instrumentation),
+        sdk_version="0.2.3",
+    )
+    ensure_simulation_project(agent_of_run(execution))
 
 
 def _tree(files=AGENT):
@@ -448,6 +467,8 @@ def test_fewer_cases_than_the_verified_minimum_can_never_hold_back_four():
         # Four held-back cases from two cases of the run: not enough to verify.
         (["a", "a-v1", "a-v2", "b"], {"a-v1": "a", "a-v2": "a"}, True),
         (["a", "b", "c", "d-v1"], {"d-v1": "d"}, False),
+        # Nothing held back: proven on the targets only, not limited validation.
+        ([], {}, False),
     ],
 )
 def test_verified_needs_held_back_cases_from_four_different_cases(
@@ -694,6 +715,153 @@ class TestRetry:
         assert not is_retryable(failed)
         assert _refusal(retry_fix_run, failed, user=user) == ("fix_not_retryable", 409)
 
+    def test_a_retry_that_fails_is_not_retried_again(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks
+    ):
+        # Once is per epoch, not per row: each retry would spend again.
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_deadline", "message": "m"},
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(failed, user=user)
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.FAILED,
+            started_at=timezone.now(),
+            failure={"code": "fix_deadline", "message": "m"},
+        )
+        retried.refresh_from_db()
+
+        assert (is_retryable(retried), is_retryable(failed)) == (False, False)
+        with pytest.raises(HostedHarnessError) as caught:
+            retry_fix_run(retried, user=user)
+        assert (caught.value.code, caught.value.status_code, caught.value.message) == (
+            "fix_not_retryable",
+            409,
+            "This epoch was the retry. Run a new epoch from the run's Debug failures.",
+        )
+        assert failed.retries.count() == 1
+
+    @pytest.mark.parametrize("from_the_retry", [False, True])
+    @pytest.mark.parametrize("code", ["fix_dispatch_failed", "fix_queue_timeout"])
+    def test_a_retry_that_never_started_leaves_the_one_retry(
+        self,
+        source_run,
+        user,
+        temporal,
+        django_capture_on_commit_callbacks,
+        code,
+        from_the_retry,
+    ):
+        # It could not be scheduled, or waited too long for a slot: it spent nothing.
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_engine_died", "message": "m"},
+        )
+        unstarted = _fix_run(
+            source_run,
+            state=State.FAILED,
+            retried_from=failed,
+            started_at=None,
+            failure={"code": code, "message": "m"},
+        )
+
+        assert (is_retryable(failed), is_retryable(unstarted)) == (True, True)
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(unstarted if from_the_retry else failed, user=user)
+
+        # Either Retry starts the failed epoch again, so its check runs are reused.
+        assert (retried.state, retried.retried_from_id) == (State.QUEUED, failed.id)
+        temporal.start.assert_called_once_with(str(retried.id))
+        assert (is_retryable(failed), is_retryable(unstarted)) == (False, False)
+
+    def test_a_retry_read_before_another_retry_started_is_refused(
+        self, source_run, user
+    ):
+        # Two Retry clicks at once: the second read the epoch before the first made its
+        # retry, which then started and ended before the second makes one.
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_engine_died", "message": "m"},
+        )
+        read = fix_runs_for_read(
+            AgentFixRun.no_workspace_objects.filter(id=failed.id)
+        ).get()
+        _fix_run(
+            source_run,
+            state=State.FAILED,
+            retried_from=failed,
+            started_at=timezone.now(),
+            failure={"code": "fix_sandbox_prepare_failed", "message": "m"},
+        )
+
+        assert _refusal(retry_fix_run, read, user=user) == ("fix_not_retryable", 409)
+        assert failed.retries.count() == 1
+
+    @pytest.mark.django_db(transaction=True)
+    def test_a_retry_waits_for_one_being_made_at_the_same_time(self, source_run, user):
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_engine_died", "message": "m"},
+        )
+        holding, release, checked = (threading.Event() for _ in range(3))
+        refused, made = [], []
+
+        def checking(*args, **kwargs):
+            # The second Retry is past its first check, so it read no retry yet.
+            checked.set()
+            return launch_blocker(*args, **kwargs)
+
+        def first():
+            # What the first Retry does under the epoch's lock: its retry starts and ends.
+            try:
+                with transaction.atomic():
+                    AgentFixRun.no_workspace_objects.select_for_update().get(
+                        id=failed.id
+                    )
+                    _fix_run(
+                        source_run,
+                        state=State.FAILED,
+                        retried_from=failed,
+                        started_at=timezone.now(),
+                        failure={"code": "fix_sandbox_prepare_failed", "message": "m"},
+                    )
+                    holding.set()
+                    release.wait(timeout=30)
+            finally:
+                connection.close()
+
+        def second():
+            try:
+                made.append(retry_fix_run(failed, user=user))
+            except HostedHarnessError as exc:
+                refused.append(exc.code)
+            finally:
+                connection.close()
+
+        holder = threading.Thread(target=first)
+        holder.start()
+        assert holding.wait(timeout=30)
+        retrier = threading.Thread(target=second)
+        with patch(
+            "simulate.services.agent_fix_runs.launch_blocker", side_effect=checking
+        ):
+            retrier.start()
+            assert checked.wait(timeout=30)
+            # Without a check under the lock, it makes a second retry once the first
+            # commits.
+            retrier.join(timeout=2)
+            release.set()
+            holder.join(timeout=30)
+            retrier.join(timeout=30)
+
+        assert (refused, made) == (["fix_not_retryable"], [])
+        assert failed.retries.count() == 1
+
     @pytest.mark.parametrize(
         "state",
         [
@@ -708,7 +876,13 @@ class TestRetry:
         fix_run = _fix_run(source_run, state=state)
 
         assert not is_retryable(fix_run)
-        assert _refusal(retry_fix_run, fix_run, user=user) == ("fix_not_retryable", 409)
+        with pytest.raises(HostedHarnessError) as caught:
+            retry_fix_run(fix_run, user=user)
+        assert (caught.value.code, caught.value.status_code, caught.value.message) == (
+            "fix_not_retryable",
+            409,
+            "Only a failed epoch can be retried.",
+        )
 
     def test_a_retry_reads_what_the_failed_fix_finished_instead_of_paying_again(
         self, source_run, user, temporal, django_capture_on_commit_callbacks
@@ -2609,6 +2783,26 @@ class TestLaunchConstraints:
             request.cost_limit_usd,
         ) == (["m1"], True, True, 25, 25, None)
 
+    @pytest.mark.parametrize(
+        ("instrumentation", "spans", "measured"),
+        [("none", True, True), ("none", False, False), ("traceai", True, False)],
+    )
+    def test_a_fix_from_a_run_the_sandbox_measured_says_so(
+        self, source_run, user, instrumentation, spans, measured
+    ):
+        # An agent that names no tracing was seen only by the sandbox's own measuring, so
+        # the fix page and the pull request say so, once that measuring exported spans.
+        # A self-traced agent's never do.
+        _measured_by_the_sandbox(source_run, instrumentation)
+        usage = self._source_usage(
+            source_run,
+            [CallUsage(models=["gpt-5"], llm_spans=1, cost_usd=0.01)] if spans else [],
+        )
+        with patch(TRACED, _usage(usage)):
+            fix_run = _launch(source_run, user)
+
+        assert fix_run.request.get("measured_automatically") is measured
+
     def test_an_untraced_agent_s_fix_measures_nothing_it_cannot_see(
         self, source_run, user
     ):
@@ -3503,7 +3697,7 @@ class TestPullRequestDescription:
         assert len(re.findall(r"(?<!\\)\|", target)) == 4
         assert "| ``a`b\\|c.py`` | +1 | −1 |" in body
 
-    def test_a_verified_fix_reads_each_check_as_the_fix_page_says_it(self, source_run):
+    def test_a_normal_result_reads_each_check_as_the_fix_page_says_it(self, source_run):
         candidate, title, body = self._described(
             source_run,
             diagnosis={"causes": _CAUSES},
@@ -3513,13 +3707,14 @@ class TestPullRequestDescription:
 
         assert title == "Epoch: fix 2 diagnosed causes in 3 files"
         # The fix page's headline: the pass rates and the must-pass cases it broke.
+        # A normal result carries no strength label.
         assert (
-            "Verified by Epoch: held-back pass rate 25% → 75%, target pass rate"
-            " 0% → 63%, broke none\n\n### Verdict" in body
+            "Checked by Epoch: held-back pass rate 25% → 75%, target pass rate"
+            " 0% → 63%, broke none\n\n### Verdict\n\n| Check |" in body
         )
+        assert "Verified" not in title and "Verified" not in body
         # The engine's own reason is not product text: the checks say it in words.
         assert "passed every tier" not in body
-        assert "### Verdict: Verified" in body
         # The fix page's words for each check, from the verdict's own numbers.
         table, decided = body.split("<details><summary>How it was decided</summary>")
         for row in (
@@ -3608,6 +3803,14 @@ class TestPullRequestDescription:
                 "limited validation, known regression",
                 "Epoch (limited validation, known regression): fix 2 causes in 3 files",
                 id="both-marks",
+            ),
+            # The longer mark leaves no room for the causes.
+            pytest.param(
+                2,
+                ["agent.py", "config.yaml", "prompts/booking.md"],
+                "proven on the targets only, known regression",
+                "Epoch (proven on the targets only, known regression): change 3 files",
+                id="both-marks-targets-only",
             ),
         ],
     )

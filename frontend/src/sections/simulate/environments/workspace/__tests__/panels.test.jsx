@@ -37,6 +37,9 @@ vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
 vi.mock("../contract/RlContractPanel", () => ({
   default: () => <div>contract-body</div>,
 }));
+vi.mock("../actors/ActorsTab", () => ({
+  default: () => <div>actors-body</div>,
+}));
 vi.mock("../scenarios/ScenariosStep", () => ({
   default: () => <div>scenarios-body</div>,
 }));
@@ -110,6 +113,18 @@ describe("WorkspacePanels", () => {
   afterEach(() =>
     runsApi.useEnvironmentRuns.mockImplementation(realUseEnvironmentRuns),
   );
+
+  it("opens the actors tab when the environment says it has one", () => {
+    renderPanels({ env: { ...ENV, actorsTab: "edit" }, tab: "actors" });
+    expect(screen.getByRole("tab", { name: "Actors" })).toBeInTheDocument();
+    expect(screen.getByText("actors-body")).toBeInTheDocument();
+  });
+
+  it("falls back to Overview for ?tab=actors when the environment has no cast to show", () => {
+    renderPanels({ tab: "actors" });
+    expect(screen.queryByRole("tab", { name: "Actors" })).toBeNull();
+    expect(screen.getByText(/^overview-body/)).toBeInTheDocument();
+  });
 
   it("renders all workspace tabs with Overview first and Settings last once a run exists", () => {
     renderPanels({ envState: baseEnvState({ runs: [{ id: "r1" }] }) });

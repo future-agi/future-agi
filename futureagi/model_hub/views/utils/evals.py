@@ -544,7 +544,7 @@ def run_eval_func(
                 else 0
             )
 
-            billed = 0
+            billed: float | None = 0
             if (
                 emit is not None
                 and UsageEvent is not None

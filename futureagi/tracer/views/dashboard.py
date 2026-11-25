@@ -2609,6 +2609,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     query={
                         "category": query_params.get("category", ""),
                         "source": query_params.get("source", ""),
+                        "context": query_params.get("context", ""),
+                        "level": query_params.get("level", ""),
                         "property_kind": "",
                         "role": query_params.get("role", ""),
                         "per_eval_config": query_params.get("per_eval_config", False),
@@ -3745,8 +3747,29 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             window_start = cursor_state.window_start
                             window_end = cursor_state.window_end
                         else:
-                            window_start = _FILTER_VALUE_RETAINED_START
                             window_end = datetime.now(UTC)
+                            window_start = _FILTER_VALUE_RETAINED_START
+                            if project_ids and batch_lane == "span_system":
+                                # Same retained-data floor as the fixed-scope
+                                # lane: without it a workspace walk issues
+                                # empty slice continuations all the way back
+                                # to 1970 (~60 sequential requests), each one
+                                # another chance for a transient failure.
+                                window_start = retained_attribute_window_start(
+                                    AttributeReadSelector(
+                                        typed_only=True,
+                                        json_attribute_mode="arrays",
+                                        wall_timeout_ms=(
+                                            filter_value_deadline.remaining_ms(
+                                                ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
+                                            )
+                                        ),
+                                    ).retained_window_start(
+                                        project_ids,
+                                        window_end=window_end,
+                                    ),
+                                    window_end=window_end,
+                                )
                         if not project_ids:
                             return self._gm.success_response(
                                 _empty_batched_filter_value_payload(
@@ -6174,6 +6197,14 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 frozen_annotation_label_ids_by_project
             )
         query_config["allow_sampled"] = False
+
+        if all(
+            metric.get("source") == "derived_metrics"
+            for metric in query_config["metrics"]
+        ):
+            from tracer.services.derived_metrics.integrations import dashboard_result
+
+            return self._gm.success_response(dashboard_result(query_config, workspace))
 
         query_config["metrics"] = self._normalize_metric_sources(
             query_config["metrics"]
