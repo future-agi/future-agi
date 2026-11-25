@@ -25,7 +25,6 @@ from simulate.selectors.agent_fix import (
     eval_review,
     is_retryable,
     limited_validation,
-    live_source_execution,
     overridable_regressions,
     verdict_tiers,
 )
@@ -352,8 +351,11 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     for its page) in the context, so its issues are read once."""
 
     environment_id = serializers.UUIDField()
-    # The run's test execution, as for launch; null once the run is deleted.
-    source_run_id = serializers.SerializerMethodField()
+    # The run's test execution, as for launch; null once the run is deleted
+    # (selectors.agent_fix.fix_runs_for_read).
+    source_run_id = serializers.UUIDField(
+        source="source_execution_id", allow_null=True
+    )
     base_agent_version_id = serializers.UUIDField()
     request = AgentFixRequestSerializer()
     report = AgentFixReportSerializer(allow_null=True)
@@ -366,7 +368,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     check_runs = serializers.SerializerMethodField()
     # The fix's place among the environment's fixes, and its run's among its runs.
     number = serializers.IntegerField(allow_null=True)
-    source_run_number = serializers.SerializerMethodField()
+    source_run_number = serializers.IntegerField(allow_null=True)
     step = serializers.SerializerMethodField()
     plan = AgentFixPlanSerializer(allow_null=True)
     diagnosis = AgentFixDiagnosisSerializer(allow_null=True)
@@ -383,22 +385,6 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     issue = serializers.SerializerMethodField()
     # Run from an Error Feed issue, which `issue` alone can't say once the issue is gone.
     from_issue = serializers.SerializerMethodField()
-
-    @swagger_serializer_method(
-        serializer_or_field=serializers.UUIDField(allow_null=True)
-    )
-    def get_source_run_id(self, fix_run: AgentFixRun) -> UUID | None:
-        execution = live_source_execution(fix_run)
-        return execution.id if execution else None
-
-    @swagger_serializer_method(
-        serializer_or_field=serializers.IntegerField(allow_null=True)
-    )
-    def get_source_run_number(self, fix_run: AgentFixRun) -> int | None:
-        """Its place among the environment's runs; a deleted run has none."""
-        if live_source_execution(fix_run) is None:
-            return None
-        return fix_run.source_run_number
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_retryable(self, fix_run: AgentFixRun) -> bool:
