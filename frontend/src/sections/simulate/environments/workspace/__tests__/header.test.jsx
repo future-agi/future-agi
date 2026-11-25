@@ -624,6 +624,15 @@ describe("VersionBar", () => {
     expect(screen.getByText("1 scenario, shared across agent versions")).toBeInTheDocument();
   });
 
+  it("says being built, not before versioning, while the build runs", () => {
+    versionsResponse.current = { agent: [], environment: [], suite: [] };
+    render(
+      <VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} building />,
+    );
+    expect(screen.getByText("being built")).toBeInTheDocument();
+    expect(screen.queryByText("before versioning")).toBeNull();
+  });
+
   it("says none, not before versioning, when there is no default agent", () => {
     versionsResponse.current = { ...VERSIONS, agent: [] };
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);

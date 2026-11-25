@@ -18,7 +18,7 @@ import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 // shows, after the agent under test when one is connected. Until runs are pinned
 // to versions, the agent shown is the environment's default agent version, not
 // a claim about which one a run used.
-export default function VersionBar({ env, envState }) {
+export default function VersionBar({ env, envState, building = false }) {
   const subject = env?.testSubject;
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, error } = useEnvironmentVersions(env?.id, {
@@ -37,7 +37,11 @@ export default function VersionBar({ env, envState }) {
   const suiteV = data?.defaults?.suite;
   const versioned = Boolean(envV || agentV || suiteV);
   const named = (version) => version.label || VERSIONS_COPY.unlabelled;
-  const envLabel = envV ? named(envV) : versionBar.beforeVersioning;
+  const envLabel = envV
+    ? named(envV)
+    : building
+      ? versionBar.beingBuilt
+      : versionBar.beforeVersioning;
   const agentLabel = agentV ? named(agentV) : versionBar.noAgent;
   const fromSuite = showPairing && suiteV?.scenarioCount != null;
   const scenarioCount = fromSuite
@@ -236,4 +240,5 @@ VersionBar.propTypes = {
   envState: PropTypes.shape({
     scenarios: PropTypes.arrayOf(PropTypes.any),
   }),
+  building: PropTypes.bool,
 };

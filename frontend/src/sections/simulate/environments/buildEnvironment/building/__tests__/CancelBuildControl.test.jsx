@@ -34,6 +34,23 @@ describe("CancelBuildControl", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("says Try again resumes an approved build, and a new build is needed otherwise", () => {
+    const { unmount } = renderControl({
+      envId: "env-1",
+      building: true,
+      resumable: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Cancel build/ }));
+    expect(
+      screen.getByText(/Try again picks it up in this environment/),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderControl({ envId: "env-1", building: true });
+    fireEvent.click(screen.getByRole("button", { name: /Cancel build/ }));
+    expect(screen.getByText(/You can start a new build/)).toBeInTheDocument();
+  });
+
   it("confirms, then cancels the build through the mutation", async () => {
     renderControl({ envId: "env-1", building: true });
 

@@ -149,7 +149,7 @@ const rangeOf = (steps) =>
 
 export function phaseRows(
   step,
-  { stopped = false, readsAgent = false, counts = {} } = {},
+  { stopped = false, kept = false, readsAgent = false, counts = {} } = {},
 ) {
   const phases = buildPhases(readsAgent || step.phase === "agent");
   const at = phases.findIndex((phase) => phase.id === step.phase);
@@ -158,7 +158,7 @@ export function phaseRows(
     const base = { id: phase.id, label: phase.label, range: rangeOf(steps) };
     if (index < at) {
       const made = madeNote(phase.id, counts);
-      const word = stopped ? "Kept" : "Done";
+      const word = stopped && kept ? "Kept" : "Done";
       return {
         ...base,
         state: "done",
@@ -184,7 +184,13 @@ export function phaseRows(
   });
 }
 
-export function keptLine(step, counts = {}, designApproved = false) {
+export function keptLine(
+  step,
+  counts = {},
+  { designApproved = false, retryFrom = null } = {},
+) {
+  if (retryFrom !== "checks")
+    return designApproved ? "Your design is kept." : "";
   const done = (phaseId) =>
     BUILD_STEPS.filter((one) => one.phase === phaseId).every(
       (one) => one.no < step.no,

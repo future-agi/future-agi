@@ -63,6 +63,7 @@ describe("phaseRows", () => {
   it("keeps finished phases, stops at one and leaves the rest not run", () => {
     const rows = phaseRows(stepOfStage("validating_environment"), {
       stopped: true,
+      kept: true,
       counts: { tools: 3, tables: 2 },
     });
     expect(rows.map((row) => [row.label, row.state, row.note])).toEqual([
@@ -74,6 +75,14 @@ describe("phaseRows", () => {
       ],
       ["Running the release checks", "next", "Not run"],
     ]);
+  });
+
+  it("calls a finished phase done, not kept, when a retry starts over", () => {
+    const rows = phaseRows(stepOfStage("connecting_agent"), {
+      stopped: true,
+      counts: { tools: 3 },
+    });
+    expect(rows.find((row) => row.id === "world").note).toBe("Done · 3 tools");
   });
 
   it("leaves out the step count while no step of the phase is done", () => {
@@ -110,19 +119,26 @@ describe("the stopped build's words", () => {
     );
   });
 
-  it("says nothing was kept only when nothing was", () => {
-    expect(keptLine(stepOfStage("generating_environment"))).toBe("");
-    expect(
-      keptLine(stepOfStage("connecting_agent"), { tables: 2, scenarios: 3 }),
-    ).toBe("The world and its 2 tables are kept, and its 3 scenarios too.");
-  });
-
-  it("counts the tools only when there are some", () => {
-    const step = stepOfStage("generating_scenarios");
-    expect(keptLine(step, { tools: 3 })).toBe(
+  it("keeps the world and scenarios only when a retry starts at the checks", () => {
+    const step = stepOfStage("connecting_agent");
+    const checks = { retryFrom: "checks" };
+    expect(keptLine(step, { tables: 2, scenarios: 3 }, checks)).toBe(
+      "The world and its 2 tables are kept, and its 3 scenarios too.",
+    );
+    expect(keptLine(step, { tools: 3 }, checks)).toBe(
       "The world and its 3 tools are kept.",
     );
-    expect(keptLine(step, { tools: 0 })).toBe("The world is kept.");
+    expect(keptLine(step, { tools: 0 }, checks)).toBe("The world is kept.");
+  });
+
+  it("keeps only the design when a retry starts over", () => {
+    const step = stepOfStage("connecting_agent");
+    const counts = { tables: 2, scenarios: 3 };
+    expect(
+      keptLine(step, counts, { designApproved: true, retryFrom: "start" }),
+    ).toBe("Your design is kept.");
+    expect(keptLine(step, counts, { retryFrom: "start" })).toBe("");
+    expect(keptLine(stepOfStage("generating_environment"))).toBe("");
   });
 });
 

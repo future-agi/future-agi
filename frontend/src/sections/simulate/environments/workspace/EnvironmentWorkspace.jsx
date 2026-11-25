@@ -745,7 +745,7 @@ export default function EnvironmentWorkspace() {
       )}
 
       {!detailLoading && !detailFailed && (
-        <VersionBar env={env} envState={envState} />
+        <VersionBar env={env} envState={envState} building={building} />
       )}
       <DraftBar
         env={env}
