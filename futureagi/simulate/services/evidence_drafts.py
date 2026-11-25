@@ -776,8 +776,14 @@ def sweep() -> dict[str, int]:
             job = evidence_import.drafting_job
             if job is None or job.created_at > stale_before:
                 continue
-            _block(list(waiting), TIMED_OUT)
-            timed_out += 1
+            # One conditional write: a case its landing drafted since the read above
+            # is no longer pending, so it keeps its draft.
+            if waiting.update(
+                status=EvidenceImportCase.Status.BLOCKED,
+                reason=TIMED_OUT[:REASON_LENGTH],
+                updated_at=timezone.now(),
+            ):
+                timed_out += 1
         forgotten += _forgotten(evidence_import)
     return {"timed_out": timed_out, "forgotten": forgotten}
 

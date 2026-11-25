@@ -521,6 +521,52 @@ class TestSettleAndForget:
         } == {evidence_drafts.TIMED_OUT}
         assert not any(_gone(conversation).values())
 
+    @pytest.mark.parametrize("landed, timed_out", [(1, 1), (2, 0)])
+    def test_the_sweep_never_blocks_a_case_that_landed_while_it_ran(
+        self, cases, user, scheduled, landed, timed_out
+    ):
+        """A landing that drafts cases after the sweep read them as waiting, just
+        before its timeout write, keeps them drafted; only cases still waiting block."""
+        from django.db import connection
+
+        conversation = _start(cases[:2], user)
+        HostedHarnessJob._base_manager.filter(id=conversation.job_id).update(
+            created_at=timezone.now()
+            - evidence_drafts.DRAFTING_TIMEOUT
+            - timedelta(minutes=1)
+        )
+        table = EvidenceImportCase._meta.db_table
+        drafted = [case.id for case in cases[:landed]]
+        injected = []
+
+        def land_first(execute, sql, params, many, context):
+            if (
+                not injected
+                and sql.lstrip().upper().startswith("UPDATE")
+                and table in sql
+            ):
+                injected.append(sql)
+                EvidenceImportCase.objects.filter(id__in=drafted).update(
+                    status="drafted", reason=""
+                )
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(land_first):
+            swept = evidence_drafts.sweep()
+
+        assert injected
+        statuses = {
+            case.id: (case.status, case.reason)
+            for case in EvidenceImportCase.objects.filter(
+                id__in=[c.id for c in cases[:2]]
+            )
+        }
+        assert {statuses[case_id] for case_id in drafted} == {("drafted", "")}
+        assert [
+            statuses[case.id] for case in cases[:2] if case.id not in drafted
+        ] == [("blocked", evidence_drafts.TIMED_OUT)] * (2 - landed)
+        assert swept["timed_out"] == timed_out
+
     def test_a_young_turn_is_left_to_finish(self, cases, user, scheduled):
         conversation = _start(cases, user)
 
