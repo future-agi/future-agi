@@ -2,6 +2,7 @@
 improvement engine (in its sandbox) say to each other."""
 
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -420,6 +421,8 @@ class LaunchScenario(BaseModel):
     failing_sub_goals: list[str]
     # The evidence import that added this scenario to the suite; None for any other scenario.
     evidence_import_id: str | None = None
+    # Its split in the run's release; None off a release, or when it can't be scored.
+    split: Literal["train", "test"] | None = None
 
 
 class LaunchSuggested(BaseModel):
@@ -484,3 +487,7 @@ class LaunchOptions(BaseModel):
     blocked: LaunchBlocked | None = None
     # Set when a launch that writes variations would be refused, with the reason.
     variations_blocked: LaunchBlocked | None = None
+    # What chooses the held-back cases: the run's release's test split, or a sample.
+    held_back_from: Literal["release", "sample"] = "sample"
+    # The label of the run's release; None off a release.
+    release_label: str | None = None

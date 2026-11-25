@@ -2,6 +2,7 @@
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
@@ -54,6 +55,7 @@ from simulate.services.harness_usage import (
     require_agent_fix_usage,
     require_harness_authoring,
 )
+from simulate.services.harness_versioning.releases import release_splits
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     request_cancellation,
@@ -105,6 +107,62 @@ def split_held_back(
             held.extend(family)
             searched.subtract(names)
     return held
+
+
+@dataclass(frozen=True)
+class HeldBack:
+    """The failing cases a fix holds back, and the release whose test split chose them;
+    no label when a hash sample of the run did."""
+
+    keys: list[str]
+    release_label: str | None = None
+
+
+def held_back_keys(
+    source_run: HostedHarnessJob,
+    failing: Mapping[str, list[str]],
+    parents: Mapping[str, str] | None = None,
+) -> HeldBack:
+    """The failing cases the worker never sees. On a run of a released pair they are the
+    failing cases of its test split, however few, and a variation goes with the case it
+    varies. On any other run, split_held_back samples them."""
+    release = release_splits(
+        source_run.environment_version_id, source_run.suite_version_id
+    )
+    if release is None:
+        return HeldBack(split_held_back(str(source_run.id), failing, parents))
+    parents = parents or {}
+    return HeldBack(
+        [
+            key
+            for key, names in failing.items()
+            if names and parents.get(key, key) in release.test_keys
+        ],
+        release.label,
+    )
+
+
+def release_test_keys(source_run: HostedHarnessJob) -> frozenset[str]:
+    """The run's scenarios in its release's test split; none off a release."""
+    release = release_splits(
+        source_run.environment_version_id, source_run.suite_version_id
+    )
+    return release.test_keys if release else frozenset()
+
+
+def all_in_test_split(cases: int, *, picked: bool = True) -> HostedHarnessError:
+    """The refusal of a fix whose every failing case is in the test split: it would have
+    nothing to learn from. A user who ``picked`` the cases is told how to pick others."""
+    message = (
+        f"All {cases} failing cases are in the test split. Pick failing cases from the"
+        " train split, or run the train split."
+        if picked
+        else f"All {cases} failing cases are in the test split, so the Epoch has"
+        " nothing to learn from."
+    )
+    return HostedHarnessError(
+        "fix_targets_all_test", message, status_code=422, details={"cases": cases}
+    )
 
 
 def launch_fix_run(
@@ -164,6 +222,16 @@ def launch_fix_run(
             f"{', '.join(unproven)}",
             status_code=400,
         )
+    # A must-pass case steers the search, so a test-split one would teach the fix.
+    if protected_scenario_keys and (
+        set(protected_scenario_keys) & release_test_keys(source_run)
+    ):
+        raise HostedHarnessError(
+            "fix_protected_in_test",
+            "Cases in the test split can't be must-pass: the Epoch would learn from"
+            " them.",
+            status_code=422,
+        )
     by_scenario = {key: ran[key].failing_sub_goals for key in target_scenario_keys}
     failing = list(
         dict.fromkeys(name for names in by_scenario.values() for name in names)
@@ -175,6 +243,9 @@ def launch_fix_run(
             status_code=422,
         )
     failing_cases = sum(1 for names in by_scenario.values() if names)
+    held_back = held_back_keys(source_run, by_scenario)
+    if held_back.release_label and len(held_back.keys) == failing_cases:
+        raise all_in_test_split(failing_cases)
     # Below the floor the fix first writes variations of each failing case.
     variations = failing_cases < settings.AGENT_FIX_MIN_FAILING_CASES
     if failing_cases < fewest_failing_cases():
@@ -216,7 +287,7 @@ def launch_fix_run(
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
         protected_scenario_keys=list(protected_scenario_keys),
-        held_back_scenario_keys=split_held_back(str(source_run.id), by_scenario),
+        held_back_scenario_keys=held_back.keys,
         failing_sub_goals=failing,
         surfaces=surfaces,
         locked_paths=locked_paths,

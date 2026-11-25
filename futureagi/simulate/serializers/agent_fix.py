@@ -4,6 +4,7 @@ from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from simulate.models import AgentFixCandidate, AgentFixRun
+from simulate.models.harness_versioning import TaskSplit
 from simulate.pydantic_schemas.agent_fix import (
     ALLOWED_MODELS_MAX,
     BUDGET_CREDITS_MAX,
@@ -621,6 +622,13 @@ class AgentFixLaunchScenarioSerializer(serializers.Serializer):
         help_text="The evidence import that added this scenario to the suite; null for "
         "any other scenario. A failing one offers Run Epoch from that evidence.",
     )
+    split = serializers.ChoiceField(
+        choices=TaskSplit.values,
+        allow_null=True,
+        help_text="Its split in the run's release; null off a release, or when it "
+        "can't be scored. A test-split case is never must-pass, and a failing one is "
+        "held back.",
+    )
 
 
 class AgentFixLaunchSuggestedSerializer(serializers.Serializer):
@@ -678,3 +686,11 @@ class AgentFixLaunchOptionsSerializer(serializers.Serializer):
     blocked = AgentFixFailureSerializer(allow_null=True)
     # Set when a launch that first writes variations would be refused, with the reason.
     variations_blocked = AgentFixFailureSerializer(allow_null=True)
+    held_back_from = serializers.ChoiceField(
+        choices=["release", "sample"],
+        help_text="What chooses the held-back cases: the run's release's test split, "
+        "or a sample of the run's failing cases.",
+    )
+    release_label = serializers.CharField(
+        allow_null=True, help_text="The label of the run's release; null off a release."
+    )

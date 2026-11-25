@@ -48,6 +48,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
+from simulate.models.harness_versioning import TaskSplit
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
@@ -1596,6 +1597,9 @@ def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
 
 def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     """Everything the launch form shows and prefills for a finished run of an environment."""
+    # Imported here: the releases module imports this one.
+    from simulate.services.harness_versioning.releases import release_splits
+
     environment = source_run.environment
     kind = _kind_or_none(environment)
     version_id = (
@@ -1616,8 +1620,17 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     imported = {
         key: origin.import_id for origin in origins for key in origin.scenario_keys
     }
+    release = release_splits(
+        source_run.environment_version_id, source_run.suite_version_id
+    )
+    splits = release.splits if release else {}
     scenarios = [
-        one.model_copy(update={"evidence_import_id": imported.get(one.key)})
+        one.model_copy(
+            update={
+                "evidence_import_id": imported.get(one.key),
+                "split": splits.get(one.key),
+            }
+        )
         for one in scenarios
     ]
     failing = sum(1 for one in scenarios if one.failing_sub_goals)
@@ -1666,7 +1679,12 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             target_scenario_keys=[
                 one.key for one in scenarios if one.failing_sub_goals
             ],
-            protected_scenario_keys=[one.key for one in scenarios if one.passed],
+            # A test-split case can't be must-pass: the search would learn from it.
+            protected_scenario_keys=[
+                one.key
+                for one in scenarios
+                if one.passed and one.split != TaskSplit.TEST
+            ],
         ),
         surfaces=launch_surfaces(offered),
         defaults=LaunchDefaults(
@@ -1697,4 +1715,6 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         )
         if variations_blocked
         else None,
+        held_back_from="release" if release else "sample",
+        release_label=release.label if release else None,
     )

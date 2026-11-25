@@ -51,7 +51,7 @@ from simulate.selectors.agent_fix import (
     written_variations,
 )
 from simulate.services.agent_fix_engine import start_check_run
-from simulate.services.agent_fix_runs import close_fix_run, split_held_back
+from simulate.services.agent_fix_runs import close_fix_run, held_back_keys
 from simulate.services.agent_fix_sandbox import claim
 from simulate.services.harness_scenarios import pair_scenarios
 from simulate.services.harness_versioning import archives, drafts
@@ -655,9 +655,9 @@ def _settle(
     settled = request.model_copy(
         update={
             "target_scenario_keys": [*request.target_scenario_keys, *kept],
-            "held_back_scenario_keys": split_held_back(
-                str(fix_run.source_run_id), failing, kept
-            ),
+            "held_back_scenario_keys": held_back_keys(
+                _source_run(fix_run), failing, kept
+            ).keys,
             "failing_sub_goals": list(
                 dict.fromkeys(name for names in failing.values() for name in names)
             ),

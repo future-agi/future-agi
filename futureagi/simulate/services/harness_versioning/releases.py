@@ -194,6 +194,51 @@ def _locked_release(environment_version_id: Any, suite_version_id: Any):
     ).first()
 
 
+@dataclass(frozen=True)
+class ReleaseSplit:
+    """A release's splits, as the keys of its suite's scorable scenarios."""
+
+    label: str
+    splits: Mapping[str, str]
+
+    @property
+    def test_keys(self) -> frozenset[str]:
+        return frozenset(
+            key for key, split in self.splits.items() if split == TaskSplit.TEST
+        )
+
+
+def release_splits(
+    environment_version_id: Any, suite_version_id: Any
+) -> ReleaseSplit | None:
+    """The splits of the release of this pair; None when no release names it. An
+    unlocked release counts too: its splits never move. Relocking a pair makes a new
+    release with the same splits, so the newest one only gives the label."""
+    if environment_version_id is None or suite_version_id is None:
+        return None
+    label = (
+        HarnessRelease.no_workspace_objects.filter(
+            environment_version_id=environment_version_id,
+            suite_version_id=suite_version_id,
+        )
+        .order_by("-locked_at")
+        .values_list("label", flat=True)
+        .first()
+    )
+    if label is None:
+        return None
+    tasks = scorable_tasks(suite_version_id)
+    assigned = _assigned(tasks)
+    return ReleaseSplit(
+        label=label,
+        splits={
+            task.key: assigned[task.scenario_id]
+            for task in tasks
+            if task.scenario_id in assigned
+        },
+    )
+
+
 def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
     """What locking the default pair would give, or the reason it can't be locked."""
     from simulate.services.harness_agent_versions import _busy

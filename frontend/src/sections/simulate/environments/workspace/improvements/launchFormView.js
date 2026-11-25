@@ -12,8 +12,33 @@ export const heldBackCount = (picked) =>
 export const needsVariations = (picked, limits) =>
   picked > 0 && picked < (limits?.cases_min ?? 0);
 
-export function countsLine(picked, protectedCount, limits) {
-  const held = heldBackCount(picked);
+// The run's scenarios in its release's test split; none off a release.
+export const testSplitKeys = (options) =>
+  (options?.scenarios || [])
+    .filter((s) => s.split === "test")
+    .map((s) => s.key);
+
+const onRelease = (options) => options?.held_back_from === "release";
+
+// How many picked failing cases are held back: on a release, those in its
+// test split, however few; otherwise one in three, from twelve.
+export function heldBackOf(options, targets) {
+  if (!onRelease(options)) return heldBackCount(targets.length);
+  const test = new Set(testSplitKeys(options));
+  return targets.filter((key) => test.has(key)).length;
+}
+
+export function heldBackNote(options) {
+  if (!onRelease(options) || !options.release_label) return null;
+  return `Held back: release ${options.release_label}'s test split. It learns only from the train split.`;
+}
+
+export function countsLine(
+  picked,
+  protectedCount,
+  limits,
+  held = heldBackCount(picked),
+) {
   let failing = `${picked} failing to fix`;
   if (held) {
     failing = `${picked} failing: ${picked - held} to fix, ${held} held back to prove it`;
@@ -153,8 +178,13 @@ export function launchError({
   models = [],
   seenModels = [],
   costLimit = "",
+  testKeys = [],
 }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
+  // Every case held back: the epoch would have nothing to learn from.
+  if (testKeys.length && targets.every((key) => testKeys.includes(key))) {
+    return `All ${targets.length} failing cases are in the test split. Pick failing cases from the train split, or run the train split.`;
+  }
   if (targets.length < limits.scenarios_min) {
     // Only for a backend older than dev: the current schema requires cases_min and
     // variations_per_case. Remove this branch once every environment runs current dev.

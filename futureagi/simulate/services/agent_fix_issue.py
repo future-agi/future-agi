@@ -58,7 +58,12 @@ from simulate.selectors.agent_fix_issue import (
 from simulate.selectors.evidence_import import MAX_SOURCES
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_engine import dispatch_run
-from simulate.services.agent_fix_runs import launch_fix_run, require_variation_room
+from simulate.services.agent_fix_runs import (
+    all_in_test_split,
+    launch_fix_run,
+    release_test_keys,
+    require_variation_room,
+)
 from simulate.services.evidence_drafts import forget, start_drafting
 from simulate.services.evidence_import import (
     add_to_suite,
@@ -509,11 +514,15 @@ def advance_issue_job(job_id: str) -> bool:
             _set_ending(job, _baseline_failed())
             return True
         launch = IssueLaunch.model_validate(job.launch)
+        # A test-split case is never must-pass: the search would learn from it.
+        test = release_test_keys(run)
         try:
             fix_run = launch_fix_run(
                 run,
                 target_scenario_keys=[one.key for one in ran if one.failing_sub_goals],
-                protected_scenario_keys=[one.key for one in ran if one.passed],
+                protected_scenario_keys=[
+                    one.key for one in ran if one.passed and one.key not in test
+                ],
                 surfaces=launch.surfaces,
                 locked_paths=launch.locked_paths,
                 budget_usd=launch.budget_credits / 100,
@@ -531,6 +540,9 @@ def advance_issue_job(job_id: str) -> bool:
             )
             if refusal is None or refusal.retryable:
                 raise
+            if refusal.code == "fix_targets_all_test":
+                # Nobody picked these cases, so there are no others to pick.
+                refusal = all_in_test_split(refusal.details["cases"], picked=False)
             _set_ending(job, IssueJobEnding(code=refusal.code, message=refusal.message))
             return True
         job.fix_run = fix_run

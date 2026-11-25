@@ -23,6 +23,8 @@ import {
   blockedReason as blockedReasonOf,
   costLimitOf,
   countsLine,
+  heldBackNote,
+  heldBackOf,
   isTraced,
   callsUnmeasured,
   seesModels,
@@ -30,6 +32,7 @@ import {
   tracesUnreadable,
   launchError,
   reviewSentence,
+  testSplitKeys,
   variationsNote,
 } from "./launchFormView";
 
@@ -117,10 +120,12 @@ export default function LaunchFixDialog({
     models,
     seenModels: seenModelsOf(options),
     costLimit,
+    testKeys: testSplitKeys(options),
   });
   const blockedReason = blockedReasonOf(options, targets.length);
   const draftBlocks = blockedByDraft(options, targets.length);
   const variations = variationsNote(targets.length, limits, agent.kind);
+  const releaseNote = heldBackNote(options);
   const startDisabled = !!blockedReason || !!error || launch.isPending;
   const agentLine = [
     `${agent.name} · agent v${agent.version_number}`,
@@ -211,8 +216,21 @@ export default function LaunchFixDialog({
             </Row>
             <Row k="Scenarios">
               <Typography sx={{ typography: "s2" }}>
-                {countsLine(targets.length, protectedKeys.length, limits)}
+                {countsLine(
+                  targets.length,
+                  protectedKeys.length,
+                  limits,
+                  heldBackOf(options, targets),
+                )}
               </Typography>
+              {releaseNote && (
+                <Typography
+                  sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
+                  data-testid="epoch-held-back-note"
+                >
+                  {releaseNote}
+                </Typography>
+              )}
               {initialNote ? (
                 <Typography
                   sx={{ typography: "s2", color: "text.secondary" }}
