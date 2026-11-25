@@ -6,10 +6,10 @@ import subprocess
 import tempfile
 from typing import Any, List
 
+import jinja2
 import Levenshtein
 import numpy as np
 import requests
-import jinja2
 from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core_evals.fi_evals.grounded.similarity import CosineSimilarity
