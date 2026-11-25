@@ -3,6 +3,7 @@ import { sendTrace } from '../../lib/otlp';
 import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { DISPATCH_LIMIT_MS, boundaryDispatchError, probeAtBoundary } from '../../lib/expiry-boundary';
 
 // frontend/src/utils/axios.js keys endpoints; accounts/serializers/org_api_key.py.
 const CREATE = '/accounts/key/generate_secret_key/';
@@ -239,32 +240,30 @@ test('SET-E2E-003: optional-expiry keys stop access and remain distinguishable f
     // Empty OTLP export is a valid request, accepted before expiry. Authentication
     // assertions are single calls, not polled or retried.
     const target = rows[0].expires_at.getTime();
+    const exportEmpty = () => request.post(`${E2E.collectorUrl}/v1/traces`, {
+      headers, data: { resourceSpans: [] },
+    });
+    let refused: Awaited<ReturnType<typeof exportEmpty>>;
     if (kind === 'near') {
       const before = await request.post(`${E2E.collectorUrl}/v1/traces`, {
         headers, data: { resourceSpans: [] },
       });
-      const completedAt = Date.now();
+      const acceptedAt = Date.now();
+      // The first refusal goes out as soon as the wall clock crosses the stored
+      // instant; only its dispatch time is bounded, not its response latency.
+      const crossed = await probeAtBoundary(target, UI_READY, exportEmpty);
+      refused = crossed.result;
+      await testInfo.attach('near-expiry-boundary', {
+        body: JSON.stringify({ keyId: key.key_id, target: iso, acceptedStatus: before.status(),
+          acceptedBeforeTargetMs: target - acceptedAt, dispatchedAfterTargetMs: crossed.dispatchedAt - target,
+          refusedStatus: refused.status(), limitMs: DISPATCH_LIMIT_MS }),
+        contentType: 'application/json',
+      });
       expect(before.status()).toBe(200);
-      expect(completedAt, 'accepted request must complete before stored expiry').toBeLessThan(target);
-
-      const deadline = performance.now() + UI_READY;
-      for (;;) {
-        const remaining = target - Date.now();
-        const budget = deadline - performance.now();
-        if (budget <= 0) throw new Error(`Clock did not reach expiry ${target} within the wait budget`);
-        if (remaining <= 0) break;
-        await new Promise(resolve => setTimeout(resolve, Math.min(remaining, budget)));
-      }
-    }
-    const dispatchedAt = Date.now();
-    const refused = await request.post(`${E2E.collectorUrl}/v1/traces`, {
-      headers, data: { resourceSpans: [] },
-    });
-    if (kind === 'near') {
-      // Measure dispatch, not response latency. One second is the admin widget's
-      // timestamp resolution, not a grace period before sending the probe.
-      expect(dispatchedAt).toBeGreaterThanOrEqual(target);
-      expect(dispatchedAt - target, 'missed stored expiry boundary (ms)').toBeLessThanOrEqual(1000);
+      expect(acceptedAt, 'accepted request must complete before stored expiry').toBeLessThan(target);
+      expect(boundaryDispatchError(crossed.dispatchedAt, target), 'stored expiry boundary').toBeNull();
+    } else {
+      refused = await exportEmpty();
     }
     expect(refused.status()).toBe(401);
     expect((await refused.json()).code).toBe('api_key_expired');
