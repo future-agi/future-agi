@@ -91240,6 +91240,111 @@ export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateBody =
       ),
   });
 
+export const tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseCallsItemToolCallsItemStartTimeMsMin = 0;
+
+export const tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseNextCursorMin = 0;
+
+export const tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseTotalCallsMin = 0;
+
+export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse =
+  zod.object({
+    calls: zod.array(
+      zod.object({
+        call_execution_id: zod.string().uuid(),
+        status: zod.string().min(1),
+        simulation_call_type: zod.string().min(1),
+        scenario: zod.string().min(1),
+        call_summary: zod.union([zod.string(), zod.null()]),
+        error_message: zod.union([zod.string(), zod.null()]),
+        ended_reason: zod.union([zod.string(), zod.null()]),
+        transcript: zod.array(
+          zod.object({
+            id: zod.string().uuid(),
+            speaker: zod.string().min(1),
+            content: zod.string(),
+            start_time: zod.number(),
+            end_time: zod.number(),
+          }),
+        ),
+        goals: zod.union([
+          zod.object({
+            use_case: zod.union([zod.string().min(1), zod.null()]),
+            sub_goals: zod.array(zod.string().min(1)),
+            expected_outcome: zod.union([zod.string().min(1), zod.null()]),
+          }),
+          zod.null(),
+        ]),
+        situation: zod.union([zod.string().min(1), zod.null()]),
+        persona: zod.union([
+          jsonValueSchema.describe("Any valid JSON value."),
+          zod.null(),
+        ]),
+        evaluations: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            value: zod.union([zod.string(), zod.null()]),
+            passed: zod.union([zod.boolean(), zod.null()]),
+            reason: zod.union([zod.string(), zod.null()]),
+          }),
+        ),
+        agent_prompt: zod.union([zod.string().min(1), zod.null()]),
+        tool_calls: zod
+          .array(
+            zod.object({
+              name: zod.string().min(1),
+              arguments: zod
+                .union([
+                  jsonValueSchema.describe("Any valid JSON value."),
+                  zod.null(),
+                ])
+                .optional(),
+              result: zod
+                .union([
+                  jsonValueSchema.describe("Any valid JSON value."),
+                  zod.null(),
+                ])
+                .optional(),
+              ok: zod
+                .union([
+                  jsonValueSchema.describe("Any valid JSON value."),
+                  zod.null(),
+                ])
+                .optional(),
+              error: zod
+                .union([
+                  jsonValueSchema.describe("Any valid JSON value."),
+                  zod.null(),
+                ])
+                .optional(),
+              refused: zod
+                .union([
+                  jsonValueSchema.describe("Any valid JSON value."),
+                  zod.null(),
+                ])
+                .optional(),
+              start_time_ms: zod
+                .number()
+                .min(
+                  tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseCallsItemToolCallsItemStartTimeMsMin,
+                )
+                .optional(),
+            }),
+          )
+          .optional(),
+      }),
+    ),
+    next_cursor: zod
+      .number()
+      .min(
+        tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseNextCursorMin,
+      ),
+    total_calls: zod
+      .number()
+      .min(
+        tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseTotalCallsMin,
+      ),
+  });
+
 export const tracerInternalErrorFeedV2ClaimsCreateBodyWorkerIdMax = 255;
 
 export const tracerInternalErrorFeedV2ClaimsCreateBodyEngineVersionMax = 20;

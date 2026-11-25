@@ -37880,6 +37880,87 @@ export interface SimulationEvidenceRequestApi {
   cursor: number;
 }
 
+export interface SimulationEvidenceTurnApi {
+  id: string;
+  /** @minLength 1 */
+  speaker: string;
+  content: string;
+  start_time: number;
+  end_time: number;
+}
+
+export interface SimulationEvidenceGoalsApi {
+  use_case: string | null;
+  sub_goals: string[];
+  expected_outcome: string | null;
+}
+
+export interface SimulationEvidenceEvaluationApi {
+  /** @minLength 1 */
+  name: string;
+  value: string | null;
+  passed: boolean | null;
+  reason: string | null;
+}
+
+export type SimulationEvidenceToolApiArguments = {
+  [key: string]: unknown;
+} | null;
+
+export type SimulationEvidenceToolApiResult = { [key: string]: unknown } | null;
+
+export type SimulationEvidenceToolApiOk = { [key: string]: unknown } | null;
+
+export type SimulationEvidenceToolApiError = { [key: string]: unknown } | null;
+
+export type SimulationEvidenceToolApiRefused = {
+  [key: string]: unknown;
+} | null;
+
+export interface SimulationEvidenceToolApi {
+  /** @minLength 1 */
+  name: string;
+  arguments?: SimulationEvidenceToolApiArguments;
+  result?: SimulationEvidenceToolApiResult;
+  ok?: SimulationEvidenceToolApiOk;
+  error?: SimulationEvidenceToolApiError;
+  refused?: SimulationEvidenceToolApiRefused;
+  /** @minimum 0 */
+  start_time_ms?: number;
+}
+
+export type SimulationEvidenceCallApiPersona = {
+  [key: string]: unknown;
+} | null;
+
+export interface SimulationEvidenceCallApi {
+  call_execution_id: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  simulation_call_type: string;
+  /** @minLength 1 */
+  scenario: string;
+  call_summary: string | null;
+  error_message: string | null;
+  ended_reason: string | null;
+  transcript: SimulationEvidenceTurnApi[];
+  goals: SimulationEvidenceGoalsApi | null;
+  situation: string | null;
+  persona: SimulationEvidenceCallApiPersona;
+  evaluations: SimulationEvidenceEvaluationApi[];
+  agent_prompt: string | null;
+  tool_calls?: SimulationEvidenceToolApi[];
+}
+
+export interface SimulationEvidenceResponseApi {
+  calls: SimulationEvidenceCallApi[];
+  /** @minimum 0 */
+  next_cursor: number;
+  /** @minimum 0 */
+  total_calls: number;
+}
+
 export interface ClaimInvestigationsRequestApi {
   /**
    * @minLength 1
