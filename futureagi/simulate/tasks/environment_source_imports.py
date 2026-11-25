@@ -36,7 +36,7 @@ def expire_environment_source_import(object_key: str) -> dict[str, bool]:
     return {"expired": True}
 
 
-@temporal_activity(time_limit=600, max_retries=20, retry_delay=60, queue="default")
+@temporal_activity(time_limit=14400, max_retries=3, retry_delay=60, queue="simulation_runner")
 def generate_environment_source_scenarios(generation_id: str) -> dict:
     from simulate.services.harness_source_generation import process
 

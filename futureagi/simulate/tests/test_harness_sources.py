@@ -134,9 +134,6 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
             assert snapshot["snapshot_id"] == "snapshot-kb"
             assert tree[pin_path] == harness_sources._canonical(pin)
             assert json.loads(tree[bundled_pin_path]) == previous_pin
-            for key in payload["generated_scenario_keys"]:
-                tree[f"scenarios/{key}/setup.py"] = b"def setup(world): pass\n"
-                tree[f"scenarios/{key}/ready.py"] = b"def ready(world): return True\n"
             sealed = {
                 assembly.SEALED_MANIFEST: json.dumps(
                     {
@@ -153,7 +150,7 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
             if certified:
                 sealed[assembly.CERTIFICATE] = certifies(new_seal).encode()
             for case in trusted_scenarios:
-                folder = f"scenarios/{case['native']['scenario_key']}"
+                folder = f"scenarios/{case['native']['name']}"
                 for name in ("scenario.json", "setup.py", "ready.py"):
                     path = f"{folder}/{name}"
                     sealed[f"environment-bundle/{path}"] = tree[path]
@@ -325,6 +322,8 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
         case = {
             "id": f"grounded-case-{number}",
             "purpose": "Use the approved support reference.",
+            "policy_reference": f"Support reference {number}.",
+            "starting_facts": [],
             "citations": [{"source_id": source_id, "page": 1, "row": None}],
             "proof_digest": "sha256:" + str(number) * 64,
         }
@@ -337,6 +336,44 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
         trusted_scenarios.append(
             {"scenario": {}, "native": native, "source_case": case}
         )
+
+    def authored_patch(owner, files, pin, cases):
+        from simulate.services.harness_reviewed_builds import _semantic_source_digest
+
+        patch, index, proofs = {}, [], {}
+        for item in trusted_scenarios:
+            native = item["native"]
+            folder = "scenarios/" + native["name"]
+            setup = b"def setup(world): pass\n"
+            ready = b"def ready(world): return True\n"
+            patch.update(
+                {
+                    folder + "/scenario.json": json.dumps(native).encode(),
+                    folder + "/setup.py": setup,
+                    folder + "/ready.py": ready,
+                }
+            )
+            index.append(
+                {**native, "steps": len(native.get("solution") or []), "folder": folder}
+            )
+            proofs[native["scenario_key"]] = {
+                "holds": True,
+                "ready": True,
+                "solvable": True,
+                "not_vacuous": True,
+                "reviewed_source_digest": _semantic_source_digest(
+                    item["source_case"], native, setup, ready
+                ),
+            }
+        return {
+            **patch,
+            "scenarios.json": json.dumps(index).encode(),
+            "proofs.json": json.dumps(proofs).encode(),
+        }
+
+    monkeypatch.setattr(
+        "simulate.services.harness_source_writer.author_additions", authored_patch
+    )
     completed = harness_source_generation.process(generation.id)
     assert completed["state"] == "completed"
     assert len(completed["generated_scenarios"]) == len(templates)
@@ -747,3 +784,33 @@ def test_participant_visibility_fails_closed(user, workspace, request, monkeypat
         )
     assert caught.value.code == "participant_isolation_unavailable"
     assert drafts.fresh_draft(environment, "environment") is None
+
+
+@pytest.mark.parametrize("writer_exit", [0, 1])
+def test_writer_cleanup_preserves_result_or_writer_error(monkeypatch, writer_exit):
+    from unittest.mock import Mock
+
+    from simulate.services import harness_source_writer as writer
+
+    provider = Mock(name="provider", max_egress_domains=8)
+    provider.name = "e2b"
+    sandbox = provider.create.return_value
+    sandbox.delete.side_effect = ConnectionError("sandbox cleanup interrupted")
+    sandbox.process.exec.return_value.exit_code = writer_exit
+    files = {"scenarios.json": b"[]"}
+    sandbox.fs.download_file.return_value = archives.pack_archive(files)
+    monkeypatch.setattr(
+        writer.gateway, "HostedHarnessGateway", lambda: SimpleNamespace(client=provider)
+    )
+    monkeypatch.setattr(writer.gateway, "_platform_simulator_material", lambda: {})
+    monkeypatch.setattr(writer.gateway, "_alk_source_overlay", lambda: None)
+    owner = SimpleNamespace(
+        pk="test", payload={"runtime": {"cpu_units": 2, "memory_mb": 2048}}
+    )
+    if writer_exit:
+        with pytest.raises(HostedHarnessError) as exc:
+            writer.author_additions(owner, files, {}, [])
+        assert exc.value.code == "source_writer_failed"
+    else:
+        assert writer.author_additions(owner, files, {}, []) == files
+    sandbox.delete.assert_called_once()

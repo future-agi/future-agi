@@ -164,6 +164,7 @@ def _generate(generation, owner):
             "The scenario processor returned an invalid result.",
             status_code=422,
         )
+    result["source_task"] = f"Test the behavior of {task}"
     return result, {item["source_id"] for item in receipt["bindings"]}, snapshot
 
 
@@ -193,6 +194,8 @@ def _seal(
                 "mode": "existing_environment",
                 "generated_scenario_keys": generated_keys,
                 "distinct_case_budget": requested_count,
+                "writer_proved": True,
+                "source_task": result["source_task"],
                 "schema_digest": schema_digest,
                 "snapshot": snapshot,
                 "authoring_archive_base64": base64.b64encode(
@@ -210,15 +213,11 @@ def _seal(
     split = archives.split_authoring(output)
     digest, resealed_agent_source = assembly.manifest_facts(split.sealed)
     metadata = drafts._sealed_metadata(split) if digest else {}
-    generated_scripts = {
-        f"scenarios/{key}/{name}"
-        for key in generated_keys
-        for name in ("setup.py", "ready.py")
-    }
     if (
-        split.environment != environment
-        or any(split.suite.get(path) != content for path, content in suite.items())
-        or not (split.suite.keys() - suite.keys()) <= generated_scripts
+        {k: v for k, v in split.environment.items() if k != "reviewed-source.json"}
+        != {k: v for k, v in environment.items() if k != "reviewed-source.json"}
+        or split.environment.get("reviewed-source.json") != sources._canonical(pin)
+        or split.suite != suite
         or not digest
         or digest == previous_digest
         or digest != response.get("bundle_digest")
@@ -238,64 +237,35 @@ def _prepare(generation, owner, result, approved_ids, snapshot):
     sides = drafts.edit_sides(owner)
     files = sides["suite"]
     existing = versions.suite_documents(files)
-    generated = []
-    held = {item.get("scenario_key") for item in existing}
-    seen_cases = set()
-    for draft in result["scenarios"]:
-        if not isinstance(draft, dict):
-            raise HostedHarnessError(
-                "source_generation_invalid",
-                "The scenario processor returned an invalid result.",
-                status_code=422,
-            )
-        native = draft.get("native")
-        case = draft.get("source_case")
-        if not isinstance(native, dict) or not isinstance(case, dict):
-            raise HostedHarnessError(
-                "source_generation_invalid",
-                "The scenario processor returned an invalid result.",
-                status_code=422,
-            )
-        key = native.get("scenario_key")
-        citations = case.get("citations") or []
-        if (
-            not isinstance(key, str)
-            or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", key)
-            or key in held
-            or not isinstance(native.get("name"), str)
-            or not isinstance(case.get("id"), str)
-            or case.get("id") in seen_cases
-            or not isinstance(native.get("fixture"), dict)
-            or (native.get("fixture") or {}).get("reviewed_source") != case
-            or not isinstance(citations, list)
-            or not citations
-            or any(
-                not isinstance(item, dict) or item.get("source_id") not in approved_ids
-                for item in citations
-            )
-        ):
-            raise HostedHarnessError(
-                "source_generation_invalid",
-                "The scenario processor returned an unverified source case.",
-                status_code=422,
-            )
-        held.add(key)
-        seen_cases.add(case.get("id"))
-        folder = "scenarios/" + key
-        if folder + "/scenario.json" in files:
-            raise _conflict()
-        files[folder + "/scenario.json"] = sources._canonical(native)
-        existing.append({**native, "folder": folder})
-        generated.append(
-            {"scenario_key": key, "name": native["name"], "citations": citations}
-        )
-    if not 1 <= len(generated) <= generation.requested_count:
-        raise HostedHarnessError(
-            "source_generation_incomplete",
-            "The processor did not return every requested grounded scenario.",
-            status_code=422,
-        )
-    files["scenarios.json"] = sources._canonical(existing)
+    from simulate.services.harness_source_writer import author_additions
+
+    cases = {r["source_case"]["id"]: r["source_case"] for r in result["scenarios"]}
+    if not 1 <= len(cases) == len(result["scenarios"]) <= generation.requested_count:
+        raise _unsealed()
+    schema_digest = generation.review.basis["schema_digest"]
+    pin = {
+        "id": result["snapshot_id"],
+        "digest": result["snapshot_digest"],
+        "schema_digest": schema_digest,
+    }
+    patch = author_additions(
+        owner, {**sides["environment"], **files}, pin, cases.values()
+    )
+    try:
+        goals = patch.pop("added-sub-goals.json", None)
+        generated = _merge_additions(files, existing, patch, cases, approved_ids)
+        if goals:
+            catalogue = json.loads(sides["environment"]["sub_goals.json"])
+            known = {goal["name"] for goal in catalogue["sub_goals"]}
+            used = {g for row in existing for g in row.get("sub_goals", [])}
+            for goal in json.loads(goals):
+                if goal["name"] in known or goal["name"] not in used:
+                    raise _unsealed()
+                known.add(goal["name"])
+                catalogue["sub_goals"].append(goal)
+            sides["environment"]["sub_goals.json"] = sources._canonical(catalogue)
+    except (KeyError, AttributeError, TypeError, ValueError):
+        raise _unsealed() from None
     archive, digest = _seal(
         owner,
         sides["environment"],
@@ -307,6 +277,67 @@ def _prepare(generation, owner, result, approved_ids, snapshot):
         requested_count=generation.requested_count,
     )
     return archive, digest, generated
+
+
+def _merge_additions(files, existing, patch, cases, approved_ids):
+    from simulate.services.harness_reviewed_builds import _semantic_source_digest
+
+    generated = []
+    proofs = json.loads(files.get("proofs.json", b"{}"))
+    additions = json.loads(patch.pop("scenarios.json"))
+    added_proofs = json.loads(patch.pop("proofs.json"))
+    held = {row.get("scenario_key") for row in existing}
+    for row in additions:
+        key, name = row["scenario_key"], row["name"]
+        folder = "scenarios/" + name + "/"
+        if (
+            not re.fullmatch(r"[a-zA-Z0-9_-]+", name)
+            or name.startswith(("source-case-", "source_case_"))
+            or key in held
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", key)
+            or row["folder"] != folder[:-1]
+        ):
+            raise _unsealed()
+        held.add(key)
+        body = json.loads(patch[folder + "scenario.json"])
+        if row != {
+            **body,
+            "steps": len(body.get("solution") or []),
+            "folder": folder[:-1],
+        }:
+            raise _unsealed()
+        case = body["fixture"]["reviewed_source"]
+        proof = added_proofs.pop(key)
+        if (
+            cases.pop(case["id"], None) != case
+            or any(c["source_id"] not in approved_ids for c in case["citations"])
+            or proof.get("reviewed_source_digest")
+            != _semantic_source_digest(
+                case, body, patch[folder + "setup.py"], patch[folder + "ready.py"]
+            )
+        ):
+            raise _unsealed()
+        if folder + "scenario.json" in files or key in proofs:
+            raise _unsealed()
+        for path in [path for path in patch if path.startswith(folder)]:
+            rel = path[len(folder) :]
+            if rel not in {
+                "setup.py",
+                "ready.py",
+                "scenario.json",
+            } and not re.fullmatch(r"checks/[a-zA-Z0-9_-]+\.py", rel):
+                raise _unsealed()
+            files[path] = patch.pop(path)
+        proofs[key] = proof
+        generated.append(
+            {"name": name, "scenario_key": key, "citations": case["citations"]}
+        )
+        existing.append(row)
+    if cases or added_proofs or patch:
+        raise _unsealed()
+    files["proofs.json"] = sources._canonical(proofs)
+    files["scenarios.json"] = sources._canonical(existing)
+    return generated
 
 
 @transaction.atomic
@@ -332,8 +363,7 @@ def _apply(generation_id, archive, digest, generated):
             piece: sources._ref_from(generation.basis[piece])
             for piece in ("environment", "suite")
         },
-        pieces={"suite"},
-        checked={"environment"},
+        pieces={"suite", "environment"},
     )
     if write is None or write.suite is None:
         raise _conflict()

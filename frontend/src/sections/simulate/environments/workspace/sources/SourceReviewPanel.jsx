@@ -97,8 +97,17 @@ function SourceReviewEditor({
     (tables.length
       ? tables.includes(table)
       : Boolean(repairBody.schema_repairs?.length));
+  const unmappedRecords = sources.filter(
+    ({ pin }) =>
+      pin?.role === "seed_records" &&
+      !mappingIndexes.some(
+        (index) => mappings[index]?.source_id === pin.source_id,
+      ),
+  );
   const canAccept =
-    state === "ready" && Boolean(digest && scope?.schema_digest);
+    state === "ready" &&
+    Boolean(digest && scope?.schema_digest) &&
+    !unmappedRecords.length;
 
   const doRepair = () =>
     reprepare.mutate({
@@ -248,6 +257,13 @@ function SourceReviewEditor({
         ))}
         {state === "ready" && (
           <>
+            {unmappedRecords.map(({ pin, filename }) => (
+              <Alert key={pin.source_id} severity="warning">
+                {mappings.some(({ source_id }) => source_id === pin.source_id)
+                  ? `Select a field mapping for ${filename} to include its records.`
+                  : `No fields in ${filename} match the destination table. Cancel this review and choose a file with matching columns.`}
+              </Alert>
+            ))}
             {mappings.map(({ source_id: sourceId, mapping }, index) => (
               <FormControlLabel
                 key={`${sourceId}-${mapping.source_field}-${index}`}

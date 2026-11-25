@@ -384,6 +384,23 @@ describe("SourcesPanel", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
+  it("explains why records without a matching field cannot be added", async () => {
+    sessionStorage.setItem(storageKey, ready.id);
+    serverReview = {
+      ...ready,
+      preview: {
+        ...ready.preview,
+        proposals: { ...ready.preview.proposals, field_mappings: [] },
+      },
+    };
+    mount();
+    expect(
+      await screen.findByText(/No fields in orders.csv match/),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add to draft" })).toBeDisabled();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
   it("blocks an older Environment basis and permits cancelling the stale review", async () => {
     sessionStorage.setItem(storageKey, ready.id);
     serverReview = ready;

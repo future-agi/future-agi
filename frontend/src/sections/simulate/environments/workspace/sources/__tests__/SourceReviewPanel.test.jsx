@@ -89,7 +89,21 @@ describe("Prebuild source review", () => {
           state: "ready",
           revision: 3,
           draft_digest: "sha256:repaired",
-          preview: { ...preview, draft_digest: "sha256:repaired" },
+          preview: {
+            ...preview,
+            draft_digest: "sha256:repaired",
+            proposals: {
+              field_mappings: [
+                {
+                  source_id: "orders",
+                  mapping: {
+                    source_field: "order_id",
+                    target_field: "order_id",
+                  },
+                },
+              ],
+            },
+          },
         };
         return { data: serverReview };
       })
