@@ -12,9 +12,22 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
     usage_coverage_sql,
 )
 
-_LIVE_SESSION_SPANS = f"""
-    SELECT *, {usage_coverage_sql(attrs="spans.attrs_string", prefix="spans.", include_summary=True)} AS usage_coverage,
-        {source_summary_sql(attrs="spans.attrs_string")} AS source_summary_present
+_AGGREGATE_SPAN_COLUMNS = (
+    "trace_id, id, start_time, end_time, parent_span_id, name, "
+    "observation_type, service_name, cost, total_tokens, prompt_tokens, "
+    "completion_tokens, end_user_id"
+)
+
+_TRACES_SPAN_COLUMNS = (
+    "trace_id, id, start_time, parent_span_id, name, observation_type, "
+    "service_name, latency_ms, cost, total_tokens, prompt_tokens, "
+    "completion_tokens, input, output"
+)
+
+
+_LIVE_SESSION_SPANS_TEMPLATE = f"""
+    SELECT {{columns}},
+        {usage_coverage_sql(attrs="spans.attrs_string", prefix="spans.", include_summary=True)} AS usage_coverage{{extra_usage}}
     FROM spans FINAL
     PREWHERE project_id = %(project_id)s
       AND (observation_type, service_name, toStartOfHour(start_time), trace_id, id) IN (
@@ -26,6 +39,26 @@ _LIVE_SESSION_SPANS = f"""
       )
     WHERE trace_session_id IN %(session_group_ids)s AND is_deleted = 0
 """
+
+
+def _live_session_spans_sql(columns: str, *, include_source_summary: bool) -> str:
+    extra_usage = (
+        f", {source_summary_sql(attrs='spans.attrs_string')} AS source_summary_present"
+        if include_source_summary
+        else ""
+    )
+    return _LIVE_SESSION_SPANS_TEMPLATE.format(columns=columns, extra_usage=extra_usage)
+
+
+_LIVE_SESSION_SPANS = _live_session_spans_sql(
+    _TRACES_SPAN_COLUMNS, include_source_summary=True
+)
+_LIVE_SESSION_AGGREGATE_SPANS = _live_session_spans_sql(
+    _AGGREGATE_SPAN_COLUMNS, include_source_summary=True
+)
+_LIVE_SESSION_TRACE_SPANS = _live_session_spans_sql(
+    _TRACES_SPAN_COLUMNS, include_source_summary=False
+)
 
 # Do not let a profile or optimizer move mutable session membership ahead of
 # replacement, or prune the newest version with a mutable-column skip index.
@@ -63,15 +96,27 @@ def build_session_detail_aggregate_query(project_id, session_group_ids):
             max(usage_source_summary_present) AS source_summary_present,
             sum(usage_request_count) AS observed_request_count
         FROM (
-            SELECT trace_id, min(start_time) AS trace_start, max(end_time) AS trace_end,
-                {usage_aggregate_sql(prefix="live_session_spans.", coverage="live_session_spans.usage_coverage", source_summary="live_session_spans.source_summary_present")},
-                argMaxIfState(end_user_id,
-                    tuple(start_time, trace_id, id, observation_type, service_name),
-                    isNotNull(end_user_id)
-                        AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000')
-                ) AS user_state
-            FROM ({_LIVE_SESSION_SPANS}) AS live_session_spans
-            GROUP BY trace_id
+            SELECT
+                trace_id,
+                trace_start,
+                trace_end,
+                user_state,
+                usage_metrics.2 AS usage_cost,
+                usage_metrics.3 AS usage_total_tokens,
+                usage_metrics.6 AS usage_source_summary_present,
+                usage_metrics.7 AS usage_request_count
+            FROM (
+                SELECT trace_id, min(start_time) AS trace_start, max(end_time) AS trace_end,
+                    {usage_aggregate_sql(prefix="live_session_spans.", coverage="live_session_spans.usage_coverage", source_summary="live_session_spans.source_summary_present", materialized=True)},
+                    argMaxIfState(end_user_id,
+                        tuple(start_time, trace_id, id, observation_type, service_name),
+                        isNotNull(end_user_id)
+                            AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000')
+                    ) AS user_state
+                FROM ({_LIVE_SESSION_AGGREGATE_SPANS}) AS live_session_spans
+                GROUP BY trace_id
+            ) AS session_trace_usage_raw
+            ARRAY JOIN trace_usage_metrics AS usage_metrics
         ) AS session_trace_usage
         {_FINAL_SETTINGS}
     """,
@@ -95,9 +140,15 @@ def build_session_detail_traces_query(project_id, session_group_ids, *, limit, o
     return (
         f"""
         SELECT
-            trace_id, trace_messages.1 AS input, trace_messages.2 AS output,
-            root_latency_ms, total_cost, trace_min_start_time, total_tokens,
-            input_tokens, output_tokens
+            trace_id,
+            trace_messages.1 AS input,
+            trace_messages.2 AS output,
+            root_latency_ms,
+            usage_metrics.2 AS total_cost,
+            trace_min_start_time,
+            usage_metrics.3 AS total_tokens,
+            usage_metrics.4 AS input_tokens,
+            usage_metrics.5 AS output_tokens
         FROM (
         SELECT
             toString(trace_id) AS trace_id,
@@ -121,15 +172,12 @@ def build_session_detail_traces_query(project_id, session_group_ids, *, limit, o
             ) AS trace_messages,
             min(CASE WHEN parent_span_id IS NULL OR parent_span_id = ''
                      THEN latency_ms ELSE NULL END) AS root_latency_ms,
-            {usage_aggregate_sql(prefix="live_session_spans.", coverage="live_session_spans.usage_coverage")},
-            usage_cost AS total_cost,
-            min(start_time) AS trace_min_start_time,
-            usage_total_tokens AS total_tokens,
-            usage_prompt_tokens AS input_tokens,
-            usage_completion_tokens AS output_tokens
-        FROM ({_LIVE_SESSION_SPANS}) AS live_session_spans
+            {usage_aggregate_sql(prefix="live_session_spans.", coverage="live_session_spans.usage_coverage", materialized=True)},
+            min(start_time) AS trace_min_start_time
+        FROM ({_LIVE_SESSION_TRACE_SPANS}) AS live_session_spans
         GROUP BY trace_id
         ) AS session_traces
+        ARRAY JOIN trace_usage_metrics AS usage_metrics
         ORDER BY trace_min_start_time ASC, trace_id ASC
         LIMIT %(limit)s OFFSET %(offset)s
         {_FINAL_SETTINGS}

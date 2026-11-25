@@ -2443,7 +2443,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
             UNION DISTINCT
             SELECT end_user_id
             FROM end_users FINAL
-            WHERE end_user_id IN %(candidate_end_user_ids)s
+            WHERE {self._project_predicate("end_users")}
+              AND end_user_id IN %(candidate_end_user_ids)s
         ),
         candidate_span_identities AS (
             SELECT DISTINCT

@@ -51,8 +51,8 @@
     },
     {
       "path": "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
-      "before_sha256": "5c59bfeebdf31fdcfe99364f086f5ddc1f305fc214ef18520a4cb2400d599748",
-      "after_sha256": "865a7b9ad1fc7370858c981d695f8ef8a92bdc99b34132287bc2f83226f1ac3a",
+      "before_sha256": "865a7b9ad1fc7370858c981d695f8ef8a92bdc99b34132287bc2f83226f1ac3a",
+      "after_sha256": "0513e7322cf9a6705a7144fe4c0fe6bf4adc0f8ad764481c4acb1be53b580226",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -133,8 +133,8 @@
           "clickhouse:tracer_trace",
           "clickhouse:traces"
         ],
-        "mitigation": "Pure SQL transformation; the caller submits DDL and records the original file hash per topology. The new branch adds ON CLUSTER once at the ordinary view declaration, leaves the SELECT unchanged, and does not rewrite its engine. It changes the packaged derived_metrics view on the selected cluster, not its backing rows. Existing table/projection transforms retain their prior potentially rewriting DDL. Restore the prior view on every replica or restore the failed transition's backup; reverting code alone does not undo executed DDL.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "mitigation": "Merge of main into dev: adds main's reviewed dictionary handling (#4162) to dev's rewriter. Replicated mode now appends ON CLUSTER to CREATE [OR REPLACE] DICTIONARY [IF NOT EXISTS] as well as to ordinary views, tables, MVs and ALTER TABLE; no other rewrite changes. Dev side: Pure SQL transformation; the caller submits DDL and records the original file hash per topology. The new branch adds ON CLUSTER once at the ordinary view declaration, leaves the SELECT unchanged, and does not rewrite its engine. It changes the packaged derived_metrics view on the selected cluster, not its backing rows. Existing table/projection transforms retain their prior potentially rewriting DDL. Restore the prior view on every replica or restore the failed transition's backup; reverting code alone does not undo executed DDL. Main side: Replicated-mode rewriter now appends ON CLUSTER to CREATE [OR REPLACE] DICTIONARY [IF NOT EXISTS], with the same object-name grammar as tables and MVs. Table, MV and ALTER handling is unchanged. Affects only dictionary DDL over traces, end_users and trace_sessions (read by spans via dictGet). Exercised with 028 on two-replica production-chart rehearsals (17 and 18 Nov).",
+        "review": "https://github.com/future-agi/future-agi/pull/4162#discussion_r4608730344",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
@@ -157,6 +157,27 @@
         ],
         "mitigation": "Add status and config_hash to direct-write eval rows using ADD COLUMN IF NOT EXISTS, then create three metric stores and the committed-only ordinary view with IF NOT EXISTS. No SQL backfill or deletion; existing eval reads see defaults where columns were absent. A partial apply can be replayed after shape checks. Keep additive objects on code rollback; restore the sealed snapshot for exact pre-update state.",
         "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/v2/schema/028_reconcile_metadata_dictionaries.sql",
+      "before_sha256": null,
+      "after_sha256": "4fa7df992ce443f48b762fc32a92deeb72462dbf5e95b3cb300f0eda2b40defc",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:traces",
+          "clickhouse:end_users",
+          "clickhouse:trace_sessions",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Forward-only metadata repair. CREATE OR REPLACE DICTIONARY for trace_dict, end_users_dict and trace_sessions_dict, byte-identical to 015/017/018, runs ON CLUSTER through the fixed rewriter so every replica holds the dictionaries. No source table is altered, rewritten or replayed; each replica loads the dictionary the way the first replica already does. Rollback: the identical earlier definitions. Exercised on two-replica production-chart rehearsals (17 and 18 Nov).",
+        "review": "https://github.com/future-agi/future-agi/pull/4162#discussion_r4608730337",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
@@ -353,8 +374,8 @@
     },
     {
       "path": "futureagi/tracer/services/derived_metrics/compaction_ranges.py",
-      "before_sha256": null,
-      "after_sha256": "16137f64ab245ba2dea629ccae0a4b18356bea75c9b694ee742aee4b519050e5",
+      "before_sha256": "16137f64ab245ba2dea629ccae0a4b18356bea75c9b694ee742aee4b519050e5",
+      "after_sha256": "9c99453cacaf5ad5bca6e3736a54d24b2e02e84b89ffdeff559630e62ed8a257",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -379,15 +400,15 @@
           "clickhouse:processes"
         ],
         "mitigation": "On a proven local ReplacingMergeTree destination, reconcile the original send, persist the cleanup intent, synchronously delete only its org/project/attempt/generation and sealed key range, then prove zero rows before replay. Ambiguous mutations block replay; do not assume disconnect or missing log proves completion. Only an unpublished namespace is deleted; shared parts can still incur rewrite I/O. Abort/replan from the committed parent; a DELETE has no inverse.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
     },
     {
       "path": "futureagi/tracer/services/derived_metrics/frozen_relations.py",
-      "before_sha256": null,
-      "after_sha256": "a49afe527a561cbedc32a6d0eca621ef3a3bda4db02bc5685a59fdddcde10236",
+      "before_sha256": "a49afe527a561cbedc32a6d0eca621ef3a3bda4db02bc5685a59fdddcde10236",
+      "after_sha256": "dafcb7c8f0556544087dd5c71ef6b4bd257902defbb0677f4ef8255c6a36f93d",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -408,7 +429,7 @@
           "clickhouse:tracer_eval_logger_v2"
         ],
         "mitigation": "Only session-local Memory tables are written. SessionCapture checks count/bytes/content on replay of immutable inputs on a new socket; FrozenRelations cannot adopt a lost handle and requires replanning. Caps are 1M rows/128 MiB per SessionCapture and 250k rows/128 MiB cumulative per FrozenRelations registry, with at most 512 names. Overflow aborts rather than truncating. Drop on exit or disconnect; abort the unpublished attempt, not a durable table.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
@@ -475,8 +496,8 @@
     },
     {
       "path": "futureagi/tracer/services/derived_metrics/refresh.py",
-      "before_sha256": null,
-      "after_sha256": "b3e308ea2f7f222e4fc93c4a6bf6993e0afb11eff9edf97b0c5b08db6225c512",
+      "before_sha256": "b3e308ea2f7f222e4fc93c4a6bf6993e0afb11eff9edf97b0c5b08db6225c512",
+      "after_sha256": "223c473756882d3261f0a40aa2873ab17264200edcb2c913985fc23224621d0a",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -502,49 +523,34 @@
           "clickhouse:tracer_eval_logger_v2"
         ],
         "mitigation": "Both delete forms target all ten live stores, never raw telemetry. Lightweight DELETE synchronously masks only grace-aged, closed, unreachable attempt IDs (at most 100 by default) before marking collection. Heavy scrub synchronously removes unregistered rows no newer than a generation high-water frozen under the project lock. Empty probes avoid needless mutations; repetitive scrub reaps late excluded writes. New writers are refused while an organization/project erasure is pending or a metric/version erasure for the project is running. Span fold-only quarters from the prior head are re-folded only after retirement evidence covers them. No down mutation; stop GC and use governed recovery if an incorrect deletion occurred.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
     },
     {
       "path": "futureagi/tracer/services/derived_metrics/retention.py",
-      "before_sha256": null,
-      "after_sha256": "e6b451a042432abd83168b86d0fc9e3676493d393ca3fd0b4840e20b4d059363",
+      "before_sha256": "75aa69f17cc5d419d25a87970360ada0aa2b2e7ca75add1eb4163d772069b820",
+      "after_sha256": "e84c785657c9d967ed4af454e82c9f0b77417ff186a296967206cdf48387e868",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
-          "clickhouse_change",
-          "clickhouse_mutation",
-          "clickhouse_rewrite"
+          "clickhouse_change"
         ],
         "tables": [
           "clickhouse:metric_field_values",
-          "clickhouse:metric_field_values_checkpoint",
-          "clickhouse:metric_bucket_totals",
-          "clickhouse:metric_bucket_totals_checkpoint",
-          "clickhouse:metric_unit_state",
-          "clickhouse:metric_source_dependencies",
-          "clickhouse:metric_bucket_retired_parts",
-          "clickhouse:list_current_root_facts",
-          "clickhouse:list_current_members",
-          "clickhouse:list_current_user_activity",
-          "clickhouse:spans",
-          "clickhouse:end_user_id_remap",
-          "clickhouse:trace_session_id_remap",
-          "clickhouse:tracer_eval_logger",
-          "clickhouse:tracer_eval_logger_v2"
+          "clickhouse:metric_field_values_checkpoint"
         ],
-        "mitigation": "Publish the safe retained head and retire or revoke affected visibility before physical expiry; durable scope and shard receipts govern synchronous ALTER DELETE on all ten live stores. Claimed erasure work deletes, requires every earlier metric submission for that scope on this shard to report drained (otherwise it fails for retry instead of completing), then re-deletes and verifies count() = 0; expiry and unpublished-replan cleanup also verify the scrub. collect_garbage's early unclaimed attempt purge stays best-effort. For organization, project, metric and version erasure, the project lease is invalidated before native deletes; a metric/version erasure with no remaining definition also aborts open attempts. A subject-erasure retry after a published checkpoint repeats only the physical phase. Predicates are repeatable, but project/org erase can rewrite many shared parts. No inverse for privacy purge; do not re-expose data by reversing to a revoked head or blindly restoring a pre-erasure backup.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "mitigation": "Read-only change to the span-owner cleanup probe: its span input selects one winner per logical key across the allowlisted committed field-value branches and the frozen draft capture instead of collapsing twice. Tenant, project and generation/attempt fences, the owner relation, the dependency probe and standalone expiry are unchanged; no DDL, insert, delete or setting change, and the 512 MiB per-query cap is unchanged. Million-field native CI measured the probe at 309 MB versus 534 MB before. Rollback is a code revert; no stored state changes.",
+        "review": "https://github.com/future-agi/future-agi/pull/4374#discussion_r4688903614",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
     },
     {
       "path": "futureagi/tracer/services/derived_metrics/service.py",
-      "before_sha256": null,
-      "after_sha256": "c8bd82efc797252b92b271bee285f01cf17f53e8c346ad174a5dfa6d6b22fe79",
+      "before_sha256": "c8bd82efc797252b92b271bee285f01cf17f53e8c346ad174a5dfa6d6b22fe79",
+      "after_sha256": "44302f30e2e3bae3a3120be7403a2f2465da5d34fbc79ed03b46411c158a954f",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -561,15 +567,15 @@
           "clickhouse:derived_metric_commits"
         ],
         "mitigation": "When a preview has eval inputs or requests evidence, materialize reduced rows once into a UUID-named Memory relation on the leased connection. Scoped reads, admission/cancellation and a shared 15s budget limit the preview. DROP TEMPORARY IF EXISTS is repeatable; disconnect on drop failure so private rows cannot return to the pool. Preview itself writes no persisted result; the separate legacy run path keeps its attempt/commit publication.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
     },
     {
       "path": "futureagi/tracer/services/derived_metrics/snapshots.py",
-      "before_sha256": null,
-      "after_sha256": "d8e5061f065c66b0bb1f384700c4d6f620071d659f124a554e4ab31f5ca03d49",
+      "before_sha256": "d8e5061f065c66b0bb1f384700c4d6f620071d659f124a554e4ab31f5ca03d49",
+      "after_sha256": "15998bdfc1278ae698bb6aea1240d8429246aaf5cfb846211d84dc3c1ba050f2",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -592,15 +598,15 @@
           "clickhouse:query_log"
         ],
         "mitigation": "Synchronous ALTER DELETE plus zero-row verification handles five snapshot stores. Retry cleanup is bound to its run and attempt snapshot/result; whole-run, project or org cleanup is distinct. Shared result/sketch namespaces require durable dispatch CAS and drain evidence before reuse. Repeated scoped deletes converge, but can rewrite shared parts. There is no inverse for purge; re-run only a permitted, retained capture, never an erased one.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
     },
     {
       "path": "futureagi/tracer/services/derived_metrics/span_evidence.py",
-      "before_sha256": null,
-      "after_sha256": "6c596666f8ef62cb015edfd4a2e524ab6f498a8becac4f1cf071f47ebe097633",
+      "before_sha256": "6c596666f8ef62cb015edfd4a2e524ab6f498a8becac4f1cf071f47ebe097633",
+      "after_sha256": "6c52bafb2c3f90f27f283614b60fc4288db928a949e88e68506337e283a79f49",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -620,15 +626,15 @@
           "clickhouse:metric_bucket_retired_parts"
         ],
         "mitigation": "Capture bounded winning span-field pages in a same-socket Memory table, with 50,000 rows or 64 MiB maxima and fail-closed coverage/overflow checks. Writes within the capture are temporary; a retry allocates a fresh name, and a recoverable budget failure may subdivide the page. Drop in finally or disconnect; discard unverified preparation rather than publishing partial evidence or reversing durable data.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
     },
     {
       "path": "futureagi/tracer/services/derived_metrics/span_sampling.py",
-      "before_sha256": null,
-      "after_sha256": "b619e7a4c1335f3af652ccc1b2f377c4a226083ea54bf46fe977964212bd5d3b",
+      "before_sha256": "b619e7a4c1335f3af652ccc1b2f377c4a226083ea54bf46fe977964212bd5d3b",
+      "after_sha256": "ab7f1b01cf74d399630c87f541c88dd2d5c7ca29da2dd649851f110969b42b52",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -641,7 +647,81 @@
           "clickhouse:sampling_replay"
         ],
         "mitigation": "Store only ambiguous sampler span-ID/quarter keys in a fresh session Memory table; bounds are 50,000 rows and 64 MiB across populations. A recoverable page-budget retry can replay and compare the exact frozen rows from a query-local external table; unrelated session loss aborts. DROP TEMPORARY IF EXISTS or disconnect clears state, so no persistent rollback is needed.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "deploy/standalone/bin/bootstrap.py",
+      "before_sha256": "fbf8c6a36f72adba275ad3c7f11a9bda2095ee424730dc3567a8b4badedd76b3",
+      "after_sha256": "473950a5fe018504ccdac4b96fb9623c783b64e3dec1f37628aadc3aeee43246",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:eval_per_config",
+          "clickhouse:eval_per_config_mv",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:derived_metric_inputs",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits",
+          "clickhouse:derived_metrics",
+          "clickhouse:metric_field_values",
+          "clickhouse:metric_field_values_checkpoint",
+          "clickhouse:metric_bucket_totals",
+          "clickhouse:metric_bucket_totals_checkpoint",
+          "clickhouse:metric_unit_state",
+          "clickhouse:metric_source_dependencies",
+          "clickhouse:metric_bucket_retired_parts",
+          "clickhouse:list_current_root_facts",
+          "clickhouse:list_current_members",
+          "clickhouse:list_current_user_activity",
+          "clickhouse:derived_metric_snapshot_units",
+          "clickhouse:derived_metric_snapshot_buckets",
+          "clickhouse:schema_versions"
+        ],
+        "mitigation": "Adds only the Metrics schema step; existing statements are unchanged. While METRICS_ENABLED is on it runs the packaged receipt-based runner on files 009, 011 and 028-038 (CREATE/ADD COLUMN IF NOT EXISTS and view replacement; 011's materialized view is protected by its receipt). No backfill, mutation or TTL change, never --force, skipped on hosted production. A failure or drift is logged at ERROR and startup continues with only Metrics unavailable. Rollback: older code ignores the new tables; no data is dropped.",
+        "review": "https://github.com/future-agi/future-agi/pull/4309#discussion_r4657946974",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tfc/management/commands/bootstrap_install.py",
+      "before_sha256": "1f6504e06ce50f8f2e9feab146b2d6252fc73977489e906ced4a4a2b28ecc080",
+      "after_sha256": "46ca8571505b08339bc91588b5001bcfc48ff7539ca50232eb3d97fb1c307652",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:eval_per_config",
+          "clickhouse:eval_per_config_mv",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:derived_metric_inputs",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits",
+          "clickhouse:derived_metrics",
+          "clickhouse:metric_field_values",
+          "clickhouse:metric_field_values_checkpoint",
+          "clickhouse:metric_bucket_totals",
+          "clickhouse:metric_bucket_totals_checkpoint",
+          "clickhouse:metric_unit_state",
+          "clickhouse:metric_source_dependencies",
+          "clickhouse:metric_bucket_retired_parts",
+          "clickhouse:list_current_root_facts",
+          "clickhouse:list_current_members",
+          "clickhouse:list_current_user_activity",
+          "clickhouse:derived_metric_snapshot_units",
+          "clickhouse:derived_metric_snapshot_buckets",
+          "clickhouse:schema_versions"
+        ],
+        "mitigation": "Adds only the Metrics schema step; existing statements are unchanged. While METRICS_ENABLED is on it runs the packaged receipt-based runner on files 009, 011 and 028-038 (CREATE/ADD COLUMN IF NOT EXISTS and view replacement; 011's materialized view is protected by its receipt). No backfill, mutation or TTL change, never --force, skipped on hosted production. A failure or drift is logged at ERROR and startup continues with only Metrics unavailable. Rollback: older code ignores the new tables; no data is dropped.",
+        "review": "https://github.com/future-agi/future-agi/pull/4309#discussion_r4657946974",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }

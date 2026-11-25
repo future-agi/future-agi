@@ -1,6 +1,6 @@
 eval_id: 39
 name: contains_valid_link
-description: Checks for a reachable URL on an operator-approved public host. Only http and https links are checked; links with another scheme and scheme-relative //host links (which are not resolved as https) never count as valid, and only http(s) links count toward the 20-link limit.
+description: Checks for at least one link with valid http or https URL format. This is a format check only; no DNS lookup or network request is made, and reachability is not checked. Hostnames need labels and a TLD; literal IPs must be public addresses. Ports must be valid. Other schemes and scheme-relative //host links are invalid; only http(s) links count toward the 20-link limit.
 eval_tags:
 - Output Validation
 visible_ui: true
@@ -18,8 +18,8 @@ config:
   config_params_desc:
     text: The input text to be evaluated for valid links
   code: |
-    # Kept identical in both self-contained system-eval programs. The executor
-    # receives only the YAML code, not the model_hub Python package.
+    # Helpers mirror common/utils/link_format.py. The executor receives only
+    # this self-contained code, not the backend package.
     def _links(text):
         import re
 
@@ -86,7 +86,7 @@ config:
             if not explicit:
                 candidate = "http://" + candidate
             result.append(candidate)
-            # Only http(s) links are requested; the others are never valid.
+            # Only http(s) links count toward the limit; the others are never valid.
             checked += _web_link(candidate)
             if checked > 20:
                 raise ValueError("Too many links to validate")
@@ -97,160 +97,84 @@ config:
         return url.lower().startswith(("http://", "https://"))
 
 
-    def _link_status(url, deadline):
-        import http.client
+    def _valid_link(url):
+        """Check URL syntax only; never resolve a hostname or contact a destination."""
         import ipaddress
-        import os
-        import queue
         import re
-        import socket
-        import threading
-        import time
-        from urllib.parse import urlsplit, urlunsplit
+        from urllib.parse import urlsplit
 
-        def refused():
-            return ValueError("Link destination is not permitted")
-
-        def hostname(value):
-            value = value.rstrip(".").encode("idna").decode("ascii").lower()
-            if not value or len(value) > 253:
-                raise refused()
+        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url):
+            return False
+        if any(char in url for char in '\\<>"{}|^`') or re.search(r"%(?![0-9a-fA-F]{2})", url):
+            return False
+        try:
+            parsed = urlsplit(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                return False
+            if parsed.username is not None or parsed.password is not None:
+                return False
+            # urlsplit accepts an empty port and junk after a bracketed IP. Neither
+            # is a well-formed authority. Port validity is syntactic, not a service policy.
+            if not re.fullmatch(r"(?:\[[0-9a-fA-F:.]+\]|[^:\[\]]+)(?::[0-9]+)?", parsed.netloc):
+                return False
+            if parsed.port is not None and not 0 < parsed.port < 65536:
+                return False
+            host = parsed.hostname.removesuffix(".").encode("idna").decode("ascii").lower()
+            if not host or len(host) > 253 or "%" in host:
+                return False
             try:
-                return str(ipaddress.ip_address(value))
+                address = ipaddress.ip_address(host)
             except ValueError:
-                if not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in value.split(".")):
-                    raise refused()
-                return value
+                labels = host.split(".")
+                if len(labels) < 2 or not all(
+                    re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                    for label in labels
+                ):
+                    return False
+                # Require a TLD, not an integer, abbreviated IP or single-label host.
+                if not re.fullmatch(r"[a-z]{2,}|xn--[a-z0-9-]+", labels[-1]):
+                    return False
+                host.encode("ascii").decode("idna")
+                return True
+            # Literal addresses must have public-address form. This classifies only
+            # the supplied literal: domain names are never resolved or geo-located.
+            return (
+                address.is_global
+                and not address.is_reserved
+                and not address.is_multicast
+                and not (address.version == 6 and (
+                    address.is_site_local or address.ipv4_mapped or address.sixtofour or address.teredo
+                ))
+            )
+        except (ValueError, UnicodeError):
+            return False
 
-        if any(ord(char) <= 32 or ord(char) == 127 for char in url) or "\\" in url:
-            raise refused()
-        parsed = urlsplit(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username is not None or parsed.password is not None:
-            raise refused()
-        host = hostname(parsed.hostname)
-        port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
-        if not 0 < port < 65536 or port in {6379, 5432, 3306, 27017, 9200, 11211, 2379}:
-            raise refused()
-        # Deployment authority only: input/kwargs cannot enable a destination.
-        setting = os.environ.get("LINK_EVAL_ALLOWED_HOSTS", "")
-        if len(setting) > 8192:
-            raise refused()
-        allowed = {hostname(item.strip()) for item in setting.split(",") if item.strip()}
-        if host not in allowed or host in {"metadata", "metadata.google.internal", "metadata.goog", "instance-data", "instance-data.ec2.internal"}:
-            raise refused()
 
-        def remaining():
-            budget = deadline - time.monotonic()
-            if budget <= 0:
-                raise TimeoutError("Link validation timed out")
-            return budget
-
-        # A bounded resolver wait; a stalled resolver thread cannot keep an eval
-        # alive. All DNS answers must be public, not just the chosen first address.
-        answers = queue.Queue(maxsize=1)
-        def resolve():
-            try:
-                answers.put(socket.getaddrinfo(host, port, type=socket.SOCK_STREAM))
-            except OSError:
-                answers.put([])
-        threading.Thread(target=resolve, daemon=True).start()
+    def _evaluate_links(text, require_all):
         try:
-            records = answers.get(timeout=remaining())
-        except queue.Empty:
-            raise TimeoutError("Link validation timed out") from None
-        if not records:
-            raise ValueError("Link host could not be resolved")
-        for family, kind, proto, canonname, address in records:
-            ip = ipaddress.ip_address(address[0])
-            # Transition/tunnel addresses do not establish a directly public peer.
-            # Azure's WireServer is publicly numbered but is a metadata service;
-            # mirror the product's never-allowed metadata exception explicitly.
-            if not ip.is_global or ip.is_reserved or ip.is_multicast or str(ip) == "168.63.129.16" or (ip.version == 6 and (ip.is_site_local or ip.ipv4_mapped or ip.sixtofour or ip.teredo)):
-                raise refused()
-        connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-        connection = connection_type(host, port, timeout=remaining())
-        guard = threading.Lock()
-        state = {"expired": False, "watch": None}
-        opened = []
-        def expire():
-            with guard:
-                state["expired"] = True
-                watch = state["watch"]
-            if watch is not None:
-                try:
-                    watch.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-        def pinned_connection(*args, **kwargs):
-            # Try each validated numeric sockaddr in order, as
-            # socket.create_connection does, without another DNS lookup.
-            error = None
-            for family, kind, proto, canonname, address in records:
-                budget = remaining()
-                raw = socket.socket(family, kind, proto)
-                # TLS wrapping takes over raw's descriptor; a duplicate still
-                # refers to the same connection, so expire() can always end it.
-                watch = raw.dup()
-                opened.extend((raw, watch))
-                with guard:
-                    expired = state["expired"]
-                    state["watch"] = watch
-                if expired:
-                    raise TimeoutError("Link validation timed out")
-                try:
-                    raw.settimeout(budget)
-                    raw.connect(address)
-                    return raw
-                except OSError as exc:
-                    error = exc
-                    raw.close()
-                    watch.close()
-            remaining()
-            raise error
-        # Keep Host and TLS verification/SNI on the original hostname while
-        # connecting to the validated numeric sockaddr without another DNS lookup.
-        connection._create_connection = pinned_connection
-        timer = threading.Timer(remaining(), expire)
-        timer.daemon = True
-        timer.start()
-        try:
-            path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
-            connection.request("HEAD", path, headers={"Connection": "close"})
-            with connection.getresponse() as response:
-                remaining()
-                # http.client neither follows redirects nor reads proxy settings.
-                return response.status
-        except Exception:
-            with guard:
-                expired = state["expired"]
-            if expired:
-                raise TimeoutError("Link validation timed out") from None
-            raise
-        finally:
-            timer.cancel()
-            connection.close()
-            for sock in opened:
-                sock.close()
-
-
-    def evaluate(input, output, expected, context, **kwargs):
-        import time
-        try:
-            links = _links(kwargs.get("text", output or ""))
+            links = _links(text)
+            if require_all:
+                if not links:
+                    return {"score": 1.0, "reason": "No links found in output, so none are invalid"}
+                if not all(_web_link(link) for link in links):
+                    return {"score": 0.0, "reason": "Found invalid links (not http or https)"}
+                if all(_valid_link(link) for link in links):
+                    return {"score": 1.0, "reason": f"All {len(links)} link(s) are valid"}
+                return {"score": 0.0, "reason": "Found links with invalid format"}
             web_links = [link for link in links if _web_link(link)]
             if not web_links:
                 if links:
                     return {"score": 0.0, "reason": "No valid link found (not http or https)"}
                 return {"score": 0.0, "reason": "No link found in output"}
-            status = _link_status(web_links[0], time.monotonic() + 5)
-            if status == 200:
-                return {"score": 1.0, "reason": "Link found and valid (status 200)"}
-            return {"score": 0.0, "reason": f"Link returned status {status}"}
-        except (ValueError, TimeoutError) as error:
-            # Only our fixed policy messages, never URLs or socket diagnostics.
-            reason = str(error)
-            if reason not in {"Link destination is not permitted", "Link validation timed out", "Link host could not be resolved", "Too many links to validate"}:
-                reason = "Link destination is not permitted"
-            return {"score": 0.0, "reason": reason}
+            if any(_valid_link(link) for link in web_links):
+                return {"score": 1.0, "reason": "Link found with valid format"}
+            return {"score": 0.0, "reason": "No link with valid format found"}
+        except ValueError:
+            return {"score": 0.0, "reason": "Too many links to validate"}
         except Exception:
+            # Fixed explanations never include submitted URLs or parser diagnostics.
             return {"score": 0.0, "reason": "Link could not be validated"}
+
+
+    def evaluate(input, output, expected, context, **kwargs):
+        return _evaluate_links(kwargs.get("text", output or ""), require_all=False)

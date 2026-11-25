@@ -13,10 +13,10 @@ type SpanRow = { id: string; parent_span_id: string; name: string; trace_name: s
 const wire = (r: Request): Record<string, unknown> => r.method() === 'POST'
   ? r.postDataJSON() : Object.fromEntries(new URL(r.url()).searchParams);
 
-test('OBS-E2E-063: collector trace is found by its root Trace Name', {
+test('OBS-E2E-066: collector trace is found by its root Trace Name', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-063', area: 'observe',
+    id: 'OBS-E2E-066', area: 'observe',
     userGoal: 'A developer finds a new collector trace by its root name and sees that name on its spans',
     steps: ['send two distinct collector traces', 'open the new Observe project',
       'filter the trace list by a substring of the first root name',

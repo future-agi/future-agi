@@ -64,6 +64,7 @@ import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
+import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
 
 /**
@@ -105,7 +106,7 @@ export default function RunDetail({
   // The open call, where it was opened from ("table", "analytics" or "link")
   // and, after a prev/next step, the table page it sits on so the table can
   // follow. Mirrored in `?rowId=`.
-  const { openCall, showCall } = useOpenCallParam({
+  const { openCall, showCall, openById } = useOpenCallParam({
     executionId,
     tableQuery,
     tableShown: tab === "tasks",
@@ -127,6 +128,7 @@ export default function RunDetail({
     live: identity?.status === "running",
     onStep: showCall,
   });
+  const openTask = callNav.openRow ?? openCall?.task ?? null;
   // The All Evaluations drawer and the table's eval column menus share one
   // edit form, one confirm and one re-run request, so a re-run sent from
   // either holds both.
@@ -380,17 +382,22 @@ export default function RunDetail({
             {backed ? "Run evals" : "Add evals"}
           </Button>
         </ViewerLock>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={exportResults}
-          disabled={live || exporting}
-          startIcon={
-            <Iconify icon="solar:download-minimalistic-linear" width={15} />
-          }
+        <ViewerLock
+          locked={!access.canEdit}
+          title={WORKSPACE_COPY.viewer.export}
         >
-          {exporting ? "Exporting…" : "Export"}
-        </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={exportResults}
+            disabled={!access.canEdit || live || exporting}
+            startIcon={
+              <Iconify icon="solar:download-minimalistic-linear" width={15} />
+            }
+          >
+            {exporting ? "Exporting…" : "Export"}
+          </Button>
+        </ViewerLock>
         {resumeState?.resumable && (
           <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
             <Button
@@ -424,36 +431,45 @@ export default function RunDetail({
           </ViewerLock>
         )}
         {improvable.length > 0 && (
-          <Tooltip
-            describeChild
-            title={`Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
-          >
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => {
-                setFixTargets(epoch);
-                setFixLaunching(true);
-              }}
-              startIcon={
-                <Iconify icon="solar:magic-stick-3-linear" width={15} />
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Tooltip
+              describeChild
+              title={
+                access.canRun
+                  ? `Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`
+                  : ""
               }
             >
-              Run Epoch
-            </Button>
-          </Tooltip>
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={!access.canRun}
+                onClick={() => {
+                  setFixTargets(epoch);
+                  setFixLaunching(true);
+                }}
+                startIcon={
+                  <Iconify icon="solar:magic-stick-3-linear" width={15} />
+                }
+              >
+                Run Epoch
+              </Button>
+            </Tooltip>
+          </ViewerLock>
         )}
         {!fixRun && (
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            onClick={() => setDebugging(true)}
-            disabled={live}
-            startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
-          >
-            Debug failures
-          </Button>
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={() => setDebugging(true)}
+              disabled={!access.canRun || live}
+              startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+            >
+              Debug failures
+            </Button>
+          </ViewerLock>
         )}
       </Stack>
       {creditBanner}
@@ -624,7 +640,18 @@ export default function RunDetail({
       )}
 
       <CallDrawer
-        task={openCall?.task ?? null}
+        task={openTask}
+        trials={trialsOf(callNav.rows, openTask)}
+        onPickTrial={(id) => {
+          const row = callNav.rows.find((one) => one.id === id);
+          if (row)
+            showCall({
+              task: row,
+              source: openCall?.source ?? "table",
+              page: openCall?.page ?? null,
+            });
+        }}
+        onOpenTrial={openById}
         executionId={backed ? executionId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}

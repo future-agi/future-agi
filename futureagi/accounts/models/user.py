@@ -146,7 +146,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Users with deactivated memberships should NOT get this fallback.
         if self.organization_id and self.organization_id == organization.id:
             # Only use fallback if user has no membership records at all for this org
-            has_any_membership = OrganizationMembership.no_workspace_objects.filter(
+            has_any_membership = OrganizationMembership._base_manager.filter(
                 user=self, organization=organization
             ).exists()
             if not has_any_membership:
@@ -185,7 +185,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Users with deactivated memberships should NOT get this fallback.
         if self.organization_id and self.organization_id == target_org.id:
             # Only use fallback if user has no membership records at all for this org
-            has_any_membership = OrganizationMembership.no_workspace_objects.filter(
+            has_any_membership = OrganizationMembership._base_manager.filter(
                 user=self, organization=target_org
             ).exists()
             if not has_any_membership:

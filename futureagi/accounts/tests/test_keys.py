@@ -618,6 +618,7 @@ class TestGetSecretKeysRowContent:
             "created_at",
             "enabled",
             "type",
+            "can_switch",
             "expires_at",
             "is_expired",
         }

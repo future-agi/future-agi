@@ -218,7 +218,15 @@ describe("AgentEnvironmentsTab", () => {
     );
   });
 
-  it("offers Build environment only for a code agent a member can edit", () => {
+  it("enables Build environment for a hosted agent", () => {
+    renderTab();
+    expect(
+      screen.getByRole("button", { name: "Build environment" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps Build environment from a viewer", () => {
+    auth.role = "workspace_viewer";
     renderTab();
     expect(
       screen.getByRole("button", { name: "Build environment" }),
@@ -374,10 +382,7 @@ describe("AgentEnvironmentsTab", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Build environment" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Build environment" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
   });
 
   it("shows a load error as an error", () => {

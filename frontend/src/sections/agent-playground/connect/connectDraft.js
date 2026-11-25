@@ -8,9 +8,9 @@ const DRAFT_KEYS = {
 const keyOf = (source = GITHUB_SOURCE) =>
   DRAFT_KEYS[source] || DRAFT_KEYS[GITHUB_SOURCE];
 
-export function readConnectDraft(source) {
+export function readConnectDraft(source, key) {
   try {
-    const raw = sessionStorage.getItem(keyOf(source));
+    const raw = sessionStorage.getItem(key || keyOf(source));
     const draft = raw ? JSON.parse(raw) : null;
     return draft && typeof draft === "object" ? draft : null;
   } catch {
@@ -18,18 +18,18 @@ export function readConnectDraft(source) {
   }
 }
 
-export function saveConnectDraft(draft, source) {
+export function saveConnectDraft(draft, source, key) {
   try {
-    sessionStorage.setItem(keyOf(source), JSON.stringify(draft));
+    sessionStorage.setItem(key || keyOf(source), JSON.stringify(draft));
     return true;
   } catch {
     return false;
   }
 }
 
-export function clearConnectDraft(source) {
+export function clearConnectDraft(source, key) {
   try {
-    sessionStorage.removeItem(keyOf(source));
+    sessionStorage.removeItem(key || keyOf(source));
     return true;
   } catch {
     return false;

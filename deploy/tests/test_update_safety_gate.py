@@ -3,6 +3,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -259,6 +260,155 @@ class GeneratorRegistryTests(unittest.TestCase):
         self.path.symlink_to(target)
         with self.assertRaises(gate.GateError):
             gate.check_generators(self.root, self.registry)
+
+
+class ClickHouseReviewChainTests(unittest.TestCase):
+    """A scheduled run compares two releases; a path may change several times between them.
+
+    The registry keeps one row per path (the latest review), so A -> B -> C
+    across two reviewed pull requests leaves only the B -> C row. The gate
+    accepts A -> C only through reviewed rows from the registry's own history.
+    """
+
+    PATH = "product/schema.py"
+    REGISTER = "deploy/update/clickhouse-change-reviews.json"
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="schema-chain-fixture-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+                    "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+        self.git("init", "-q", "-b", "main")
+        self.sources = {"schema_version": 1, "sources": [{"pattern": "product/**",
+                        "reason": "Product schema sources require review on every change."}], "exclusions": []}
+        self.sources_by_name = {name: f"ALTER TABLE spans ADD COLUMN {name.lower()} String\n" for name in "ABC"}
+        self.blobs = {name: gate.content_sha(source.encode()) for name, source in self.sources_by_name.items()}
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, env=self.env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def commit(self, name, source, reviews):
+        target = self.root / self.PATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source)
+        register = self.root / self.REGISTER
+        register.parent.mkdir(parents=True, exist_ok=True)
+        register.write_text(json.dumps({"schema_version": 1, "changes": reviews}))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", name)
+        return self.git("rev-parse", "HEAD")
+
+    def row(self, before, after):
+        return {"path": self.PATH, "before_sha256": self.blobs.get(before, before), "after_sha256": self.blobs[after],
+                "declaration": reviewed([{"table": "clickhouse:spans", "risk_class": "clickhouse_change"}])}
+
+    def check(self, base, history=True):
+        current = json.loads((self.root / self.REGISTER).read_text())
+        return gate.check_clickhouse_changes(
+            self.root, [("M", self.PATH)], base, self.sources, current, registry(),
+            history=(lambda: gate.review_history(self.root, base, registry())) if history else None)
+
+    def chain(self, middle_row=True, tamper=False):
+        base = self.commit("A", "ALTER TABLE spans ADD COLUMN a String\n", [])
+        self.commit("B", "ALTER TABLE spans ADD COLUMN b String\n",
+                    [self.row("A", "B")] if middle_row else [])
+        last = self.row("B", "C") if not tamper else None
+        if tamper:
+            last = self.row("0" * 64, "C")
+        self.commit("C", "ALTER TABLE spans ADD COLUMN c String\n", [last])
+        return base
+
+    def test_two_reviewed_changes_since_the_release_pass_as_a_chain(self):
+        base = self.chain()
+        self.assertEqual(len(self.check(base)), 1)
+        # The exact comparison alone, as before this change, refuses it.
+        with self.assertRaisesRegex(gate.GateError, "exact base-to-head change"):
+            self.check(base, history=False)
+
+    def test_a_step_without_its_review_breaks_the_chain(self):
+        base = self.chain(middle_row=False)
+        with self.assertRaisesRegex(gate.GateError, "no chain of reviewed changes"):
+            self.check(base)
+
+    def test_a_link_that_does_not_start_at_the_previous_blob_breaks_the_chain(self):
+        base = self.chain(tamper=True)
+        with self.assertRaisesRegex(gate.GateError, "no chain of reviewed changes"):
+            self.check(base)
+
+    def test_a_change_merged_without_any_review_row_still_fails_the_nightly(self):
+        # An admin merge that skipped the review: the path has no row at all.
+        base = self.commit("A", "ALTER TABLE spans ADD COLUMN a String\n", [])
+        self.commit("B", "ALTER TABLE spans ADD COLUMN b String\n", [self.row("A", "B")])
+        self.commit("C", "ALTER TABLE spans ADD COLUMN c String\n", [])
+        with self.assertRaisesRegex(gate.GateError, "human-reviewed declarations"):
+            self.check(base)
+
+    def declared(self, before, after, table):
+        return {**self.row(before, after),
+                "declaration": reviewed([{"table": table, "risk_class": "clickhouse_change"}])}
+
+    def test_every_reviewed_link_keeps_its_tables(self):
+        # A -> B declares spans, B -> C declares events: the release keeps both.
+        base = self.commit("A", self.sources_by_name["A"], [])
+        self.commit("B", self.sources_by_name["B"], [self.declared("A", "B", "clickhouse:spans")])
+        self.commit("C", self.sources_by_name["C"], [self.declared("B", "C", "clickhouse:events")])
+        [required] = self.check(base)
+        self.assertEqual(required["tables"], ["clickhouse:spans", "clickhouse:events"])
+
+    def test_a_carried_forward_row_for_contents_the_file_never_had_links_nothing(self):
+        # The file goes A -> C in this span. A registry-only commit carries an
+        # old A -> B row forward, and the current row reviews B -> C: B never
+        # existed here, so no reviewed chain leads from A to C.
+        base = self.commit("A", self.sources_by_name["A"], [])
+        register = self.root / self.REGISTER
+        register.write_text(json.dumps({"schema_version": 1, "changes": [self.row("A", "B")]}))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "registry only")
+        self.commit("C", self.sources_by_name["C"], [self.row("B", "C")])
+        with self.assertRaisesRegex(gate.GateError, "no chain of reviewed changes"):
+            self.check(base)
+
+    def test_an_exact_review_passes_without_reading_history(self):
+        # A corrected draft left an invalid row in the history; the current row
+        # reviews exactly the whole span, so the history is never read.
+        base = self.commit("A", self.sources_by_name["A"], [])
+        broken = self.row("A", "B")
+        broken["after_sha256"] = "not-a-hash"
+        (self.root / self.REGISTER).write_text(json.dumps({"schema_version": 1, "changes": [broken]}))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "draft")
+        self.commit("C", self.sources_by_name["C"], [self.row("A", "C")])
+        self.assertEqual(len(self.check(base)), 1)
+
+    def test_non_ddl_edits_between_reviewed_changes_need_no_row(self):
+        # A and B hold only a SELECT, so a pull request making A -> B needs no
+        # review; B -> C adds the first CREATE and has its exact review.
+        base = self.commit("A", "QUERY = 'SELECT 1'\n", [])
+        self.commit("B", "QUERY = 'SELECT 2'\n", [])
+        self.sources_by_name["B"] = "QUERY = 'SELECT 2'\n"
+        self.blobs["B"] = gate.content_sha(self.sources_by_name["B"].encode())
+        self.commit("C", self.sources_by_name["C"], [self.row("B", "C")])
+        [required] = self.check(base)
+        self.assertEqual(required["tables"], ["clickhouse:spans"])
+        # Without the history (a pull request), the exact rule still applies.
+        with self.assertRaisesRegex(gate.GateError, "exact base-to-head change"):
+            self.check(base, history=False)
+
+    def test_an_invalid_past_registry_version_fails(self):
+        base = self.commit("A", "ALTER TABLE spans ADD COLUMN a String\n", [])
+        broken = self.row("A", "A")
+        broken["after_sha256"] = "not-a-hash"
+        target = self.root / self.PATH
+        target.write_text("ALTER TABLE spans ADD COLUMN b String\n")
+        (self.root / self.REGISTER).write_text(json.dumps({"schema_version": 1, "changes": [broken]}))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "B")
+        self.commit("C", "ALTER TABLE spans ADD COLUMN c String\n", [self.row("B", "C")])
+        with self.assertRaisesRegex(gate.GateError, "invalid after_sha256"):
+            self.check(base)
 
 
 class ClickHouseRegistryTests(unittest.TestCase):
@@ -559,7 +709,7 @@ class InspectedNonClickHousePinsTests(unittest.TestCase):
         'fi-collector/pkg/ingestbench/integration_test.go':
             ('3cbb292f8fdadcd6fa35039c97953ebe204a40d1035a642c95405f1438058ae9', 'CREATE TABLE', 159),
         'futureagi/tfc/utils/error_codes.py':
-            ('1bc9edd0fef6457da2e447830695e5b10c1d227b5ad641ea9ff6f8d1376c48c0', 'CREATE USER', 361),
+            ('e72aa57b9322ae66b1364e721446da18c048c27b2d0dd0d745ec9cd3bdced17e', 'CREATE USER', 361),
         'futureagi/tracer/services/instant_eval_answers.py':
             ('2bc88346e3d762a1f6fb9fdf3d8de38f81e820bb049300c5f4b242faa9caf80c', 'DELETE FROM', 173),
     }
@@ -700,6 +850,36 @@ class StaticEntryPointTests(unittest.TestCase):
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = gate.main(['--root', str(self.root), *flags, '--base', 'fixture', '--compose-model', str(self.model), '--json'])
         return code, out.getvalue(), err.getvalue()
+
+    def test_only_a_release_tag_base_reads_the_review_chain(self):
+        # A pull request, push or merge group passes a commit: its ClickHouse
+        # change must match one review row exactly. Only the release-span
+        # comparison (an exact release tag) may use the reviewed chain.
+        import contextlib
+        import io
+        from unittest.mock import patch
+        for base, chained in (('0' * 39 + '1', False), ('fixture', False), ('v1.59.0-pr1.abc', False),
+                              ('v1.59.0', True)):
+            seen = []
+            def capture(*args, history=None, **kwargs):
+                seen.append(history)
+                return []
+            with patch.object(gate, 'changed_paths', return_value=[]), \
+                    patch.object(gate, 'base_commit', return_value='merge-base'), \
+                    patch.object(gate, 'repository_paths', return_value=[]), \
+                    patch.object(gate, 'check_clickhouse_changes', side_effect=capture), \
+                    patch.object(gate, 'review_history', return_value={}) as history, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = gate.main(['--root', str(self.root), '--static', '--base', base,
+                                  '--compose-model', str(self.model), '--json'])
+                self.assertEqual(code, 0, base)
+                self.assertEqual(len(seen), 1, base)
+                self.assertEqual(seen[0] is not None, chained, base)
+                if chained:
+                    self.assertEqual(seen[0](), {})
+                    history.assert_called_once_with(self.root, 'merge-base', unittest.mock.ANY)
+                else:
+                    history.assert_not_called()
 
     migration = 'futureagi/tracer/migrations/existing.py'
     migration_source = ('from django.db import migrations\n\n'
@@ -870,48 +1050,15 @@ class StaticEntryPointTests(unittest.TestCase):
 
 class WorkflowWiringTests(unittest.TestCase):
     def test_update_safety_filter_covers_every_scanned_source_change(self):
-        import fnmatch
-        import re
         text = (ROOT / ".github/workflows/backend-ci.yml").read_text()
-        filters = text.split("          filters: |\n", 1)[1].split("      - id: always", 1)[0]
-        groups, current = {}, None
-        for line in filters.splitlines():
-            match = re.fullmatch(r"            (\w+):", line)
-            if match:
-                current = match[1]
-                groups[current] = []
-            match = re.fullmatch(r"              - '([^']+)'", line)
-            if match:
-                groups[current].append(match[1])
-        job = text.split("  update-safety:\n", 1)[1].split("\n  plan:", 1)[0]
-        condition = next(line.strip()[4:] for line in job.splitlines() if line.strip().startswith("if: "))
-        names = re.findall(r"needs\.changes\.outputs\.(\w+) == 'true'", condition)
-        self.assertTrue(names, condition)
-        self.assertEqual(condition, " || ".join("needs.changes.outputs." + name + " == 'true'" for name in names))
-        self.assertIn("update_safety", names)
-        outputs = text.split("    outputs:\n", 1)[1].split("    steps:", 1)[0]
-        for name in names:
-            self.assertIn("steps.filter.outputs." + name, outputs)
-
-        # This path is outside the enumerated backend/bootstrap roots. Its
-        # extensionless Bash shebang and DDL make it a real gate-scanned source.
-        path = "docs/rebuild-catalog"
+        self.assertIn('git show "$policy:$file"', text)
+        self.assertIn('update_safety: ${{ steps.filter.outputs.update_safety }}', text)
+        self.assertIn("if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.update_safety == 'true'", text)
+        # Shebang, not suffix, makes this a scanned input. The planner's complete
+        # diff fixtures exercise this source outside the old backend roots.
         content = b'#!/usr/bin/env bash\nclickhouse-client --query "DROP TABLE spans"\n'
-        self.assertTrue(gate.source_blob(path, content))
+        self.assertTrue(gate.source_blob("docs/rebuild-catalog", content))
         self.assertTrue(gate.schema_statements(content))
-        # paths-filter uses picomatch, where '*.go' does not cross directories,
-        # unlike fnmatch below; the gate finds shell sources by shebang, which no
-        # path pattern can express. Only the catch-all is a sound trigger.
-        self.assertEqual(groups["update_safety"], ["**"])
-        self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in groups["update_safety"]),
-                        path + " skips the required update-safety job")
-
-        for path in ("fi-collector/pkg/server/server.go", "agentcc-gateway/cmd/agentcc/main.go",
-                     "agentcc-gateway/internal/server/server.go", "new/schema.sql", "new/bootstrap.sh", "new/module.py",
-                     "deploy/new/start", "bin/new-start", "scripts/new-start"):
-            with self.subTest(path=path):
-                self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for name in names for pattern in groups[name]),
-                                path + " skips the required update-safety job")
         self.assertIn("        update-safety,", text.split("  backend-tests:\n", 1)[1])
 
     def test_backend_gate_is_required_and_uses_oss_settings(self):
@@ -932,8 +1079,12 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_update_static_gate_has_backend_and_bootstrap_triggers(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text()
         triggers = text.split("permissions:", 1)[0]
+        # Both triggers list each path (pull requests on dev's list, pushes on
+        # the push list), and the same list in ci_scope.py selects the jobs.
+        policy = (ROOT / ".github/scripts/ci_scope.py").read_text()
         for path in ('"futureagi/**"', '"bin/lib/**"', '"scripts/check_update_safety.py"'):
             self.assertEqual(triggers.count(path), 2)
+            self.assertEqual(policy.count("\n    " + path + ",\n"), 1)
         job = text.split("  safety:\n", 1)[1].split("\n  unit:", 1)[0]
         self.assertIn("--static --base", job)
         self.assertNotIn("up -d", job)
@@ -949,6 +1100,86 @@ class GitComparisonTests(unittest.TestCase):
                                  ("A", "futureagi/example/migrations/untracked.py")])
         self.assertEqual(command.call_args_list[1].args[1:], ("merge-base", "pr-base", "HEAD"))
         self.assertIn("merge-base", command.call_args_list[2].args)
+
+
+class ShippedReleaseRestoreTests(unittest.TestCase):
+    """Release-tag restoration: a changed migration may only carry the latest release's exact text."""
+
+    path = "futureagi/example/migrations/0001_seed.py"
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="gate-shipped-restore-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.run_git("init", "-q", "-b", "main")
+        self.commit("v1 text\n", tag="v1.0.0")
+        self.commit("v1.1 text\n", tag="v1.1.0")
+        self.commit("release candidate text\n", tag="v1.2.0-rc1")
+        self.run_git("checkout", "-q", "-b", "side")
+        self.commit("unreachable text\n", tag="v9.0.0")
+        self.run_git("checkout", "-q", "main")
+        self.commit("developer edit\n")
+
+    def run_git(self, *args):
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=fixture", "-c", "user.email=fixture@example.com",
+                        "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args], check=True, capture_output=True)
+
+    def commit(self, text, tag=None):
+        target = self.root / self.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+        self.run_git("add", "-A")
+        self.run_git("commit", "-q", "-m", text.strip())
+        if tag:
+            self.run_git("tag", tag)
+
+    def restore(self, text):
+        (self.root / self.path).write_text(text)
+        return gate.shipped_release_restore(self.root, self.path)
+
+    def test_latest_reachable_plain_release_is_the_baseline(self):
+        self.assertEqual(gate.latest_release_tag(self.root), "v1.1.0")
+
+    def test_restoring_the_latest_release_text_is_allowed_and_named(self):
+        tag, blob = self.restore("v1.1 text\n")
+        self.assertEqual(tag, "v1.1.0")
+        self.assertRegex(blob, r"^[0-9a-f]{40}$")
+
+    def test_other_texts_are_refused(self):
+        for text in ("developer edit, changed again\n", "v1 text\n", "release candidate text\n",
+                     "unreachable text\n", "v1.1 text"):
+            with self.subTest(text=text):
+                self.assertIsNone(self.restore(text))
+
+    def test_versions_order_numerically_not_lexically(self):
+        for tag in ("v1.2.0", "v1.10.0", "v1.9.0"):
+            self.commit(f"{tag} text\n", tag=tag)
+        self.assertEqual(gate.latest_release_tag(self.root), "v1.10.0")
+        self.assertEqual(self.restore("v1.10.0 text\n")[0], "v1.10.0")
+        self.assertIsNone(self.restore("v1.9.0 text\n"))
+
+    def test_the_gate_module_binds_each_top_level_name_once(self):
+        import ast
+        import collections
+        tree = ast.parse((ROOT / "scripts/check_update_safety.py").read_text())
+        names = collections.Counter()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names[node.name] += 1
+            elif isinstance(node, ast.Assign):
+                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names[node.target.id] += 1
+        self.assertEqual([name for name, count in names.items() if count > 1], [])
+
+    def test_a_tree_git_cannot_read_has_no_release(self):
+        with tempfile.TemporaryDirectory(prefix="gate-not-a-repo-") as other:
+            self.assertIsNone(gate.latest_release_tag(Path(other)))
+
+    def test_no_reachable_release_fails_closed(self):
+        for tag in ("v1.0.0", "v1.1.0"):
+            self.run_git("tag", "-d", tag)
+        self.assertIsNone(self.restore("v1.1 text\n"))
 
 
 class DeclarationTests(unittest.TestCase):

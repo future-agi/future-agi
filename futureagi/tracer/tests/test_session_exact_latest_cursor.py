@@ -213,7 +213,7 @@ def _values_where(sql):
     return re.sub(r"'(?:\\.|[^'\\])*'|\b(?:SELECT|PREWHERE|WHERE)\b|[()]", token, sql)
 
 
-def _inline_execute(chdb, sql, params, rows, remaps):
+def _inline_execute(chdb, sql, params, rows, remaps, *, as_driver=False):
     context = SimpleNamespace(server_info=SimpleNamespace(get_timezone=lambda: "UTC"))
     rendered = sql % escape_params(params, context)
     # Inline remaps are already latest state and VALUES has no FINAL operator.
@@ -242,10 +242,33 @@ def _inline_execute(chdb, sql, params, rows, remaps):
     maps = (
         f"SELECT * FROM values('old_id UUID, new_id UUID', {literals['remaps'][1:-1]})"
     )
-    assert rendered.lstrip().startswith("WITH")
-    rendered = f"WITH spans AS ({spans}), trace_session_id_remap AS ({maps}), {rendered.lstrip()[4:]}"
-    result = str(chdb.query(_values_where(rendered), "JSONEachRow"))
-    return [json.loads(line) for line in result.splitlines() if line]
+    # Canonical-ID lookup is a plain SELECT; page reads have their own WITH. Keep
+    # EXPLAIN outside the statement when the selector estimates a slice first.
+    body = rendered.lstrip()
+    explain = "EXPLAIN ESTIMATE " if body.startswith("EXPLAIN ESTIMATE") else ""
+    if explain:
+        body = body[len("EXPLAIN ESTIMATE") :].lstrip()
+    assert body.startswith(("WITH", "SELECT")), body
+    tail = ", " + body[4:] if body.startswith("WITH") else " " + body
+    rendered = (
+        f"{explain}WITH spans AS ({spans}), trace_session_id_remap AS ({maps}){tail}"
+    )
+    rendered = _values_where(rendered)
+    if not as_driver:
+        result = str(chdb.query(rendered, "JSONEachRow"))
+        return [json.loads(line) for line in result.splitlines() if line]
+    envelope = json.loads(str(chdb.query(rendered, "JSON")))
+    data = envelope["data"]
+    # The public selector consumes native datetime objects (including cursor
+    # boundaries); only the direct SQL assertions above that boundary read JSON.
+    for field in envelope["meta"]:
+        if re.match(r"(?:Nullable\()?DateTime", field["type"]):
+            for row in data:
+                if row[field["name"]] is not None:
+                    row[field["name"]] = datetime.fromisoformat(row[field["name"]])
+    return SimpleNamespace(
+        data=data, columns=[field["name"] for field in envelope["meta"]]
+    )
 
 
 def _adversarial_rows(start, end):

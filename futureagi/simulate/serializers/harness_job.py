@@ -82,6 +82,23 @@ def check_credential_values(values: Mapping[str, Any]) -> list[str]:
     return problems
 
 
+# An agent's own chat reply deadline in the harness job's agent config, as `voice_call_timeout_seconds` is for voice.
+CHAT_CALL_TIMEOUT_KEY = "chat_call_timeout_seconds"
+# The harness never waits past a build's own budget.
+MAX_CHAT_CALL_TIMEOUT_SECONDS = 3300
+
+
+def _chat_call_timeout(raw: object) -> bool:
+    """Whether a chat reply deadline is a number of seconds, or a number written as text, the harness can use."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return False
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return False
+    return 0 < seconds <= MAX_CHAT_CALL_TIMEOUT_SECONDS
+
+
 class RunVersionLabelSerializer(serializers.Serializer):
     """A pinned version as a run shows it: its id and label such as "v3"."""
 
@@ -169,6 +186,16 @@ VOICE_CONNECTORS = ("livekit", "vapi", "retell", "phone")
 # Connectors that reach an already-running agent, so the run carries no source tree.
 PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone", "livekit"}
 
+
+def names_agent_version(agent, metadata) -> bool:
+    metadata = metadata or {}
+    return (
+        agent.get("connector") == "auto"
+        and bool(metadata.get("agent_definition_id"))
+        and bool(metadata.get("agent_version_id"))
+    )
+
+
 # Mirrors the SDK's own E.164 rule so a malformed number is refused at admission.
 _E164 = re.compile(r"^\+[1-9]\d{6,14}$")
 _PHONE_FIXED_NATIONAL_DIGITS = (("91", 10), ("1", 10))
@@ -244,6 +271,14 @@ class HarnessAgentSerializer(serializers.Serializer):
         for name in ("inbound", "target_speaks_first"):
             if name in value and not isinstance(value[name], bool):
                 raise serializers.ValidationError(f"{name} must be a boolean")
+        # How long one chat reply may take; absent, the harness keeps its 300 s default. Capped at the build's budget.
+        if CHAT_CALL_TIMEOUT_KEY in value and not _chat_call_timeout(
+            value[CHAT_CALL_TIMEOUT_KEY]
+        ):
+            raise serializers.ValidationError(
+                f"{CHAT_CALL_TIMEOUT_KEY} must be a number of seconds above 0 and at most "
+                f"{MAX_CHAT_CALL_TIMEOUT_SECONDS}"
+            )
         secret_names = ("token", "secret", "password", "api_key", "private_key")
         invalid = []
         for key, item in value.items():
@@ -617,9 +652,13 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                     }
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}
-        elif source["kind"] == "provider" and (
-            agent["connector"] not in PROVIDER_TARGET_CONNECTORS
-            or not provider_target_mode
+        elif (
+            source["kind"] == "provider"
+            and not names_agent_version(agent, attrs.get("metadata"))
+            and (
+                agent["connector"] not in PROVIDER_TARGET_CONNECTORS
+                or not provider_target_mode
+            )
         ):
             raise serializers.ValidationError(
                 {

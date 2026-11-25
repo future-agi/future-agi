@@ -385,7 +385,7 @@
     {
       "pattern": "futureagi/conftest.py",
       "reason": "Inspected pytest collection and disposable database fixtures, not product startup.",
-      "sha256": "8913dc51a719dc94677182ba400cf89d0fec32cadedd3c724c90ee8d03588267"
+      "sha256": "9917fbc5c3bc0630555485dc37fbf706b0ace207537e9b893c3dd961a2ae324f"
     },
     {
       "pattern": "futureagi/tracer/services/clickhouse/v2/test_property_catalog_schema_contract.py",
@@ -434,8 +434,8 @@
     },
     {
       "pattern": "futureagi/tfc/utils/error_codes.py",
-      "reason": "Inspected old and new blobs: CREATE USER occurs only in the user-evaluation-template error text returned by get_error_message to the API response; the trace-name change adds only a display message and moves the existing match from line 357 to 361. No removed ClickHouse operation.",
-      "sha256": "1bc9edd0fef6457da2e447830695e5b10c1d227b5ad641ea9ff6f8d1376c48c0"
+      "reason": "Inspected old and new blobs: CREATE USER occurs only in the user-evaluation-template error text returned by get_error_message to the API response; the added Jev error mapping, Viewer read-only message and API key expiry messages and the removed duplicate MEMBER_NOT_IN_ORG entry do not execute SQL. The trace-name display message moves the existing match from line 357 to 361. No removed ClickHouse operation.",
+      "sha256": "e72aa57b9322ae66b1364e721446da18c048c27b2d0dd0d745ec9cd3bdced17e"
     },
     {
       "pattern": "fi-collector/pkg/ingestbench/bench_test.go",

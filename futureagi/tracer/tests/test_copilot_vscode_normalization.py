@@ -29,7 +29,7 @@ def test_real_vscode_capture_retains_spans_and_counts_requests_once():
         MessageToDict(request, preserving_proto_field_name=True)
     )
     normalize_span_attributes(parsed)
-    project = SimpleNamespace(id="project")
+    project = SimpleNamespace(id="project", trace_type="observe")
     with patch("tracer.utils.otel.calculate_cost_from_tokens", return_value=0):
         rows = [
             _convert_single_span(
