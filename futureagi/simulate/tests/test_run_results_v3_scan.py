@@ -937,6 +937,19 @@ def _corpus_entries(output_type: Any) -> list[dict[str, Any]]:
             "source": source,
         }
         entries.append({k: v for k, v in fields.items() if v is not _ABSENT})
+    # An eval whose input was empty: kept apart from errors, but the call is not scored on it.
+    for status, reason_code, output in itertools.product(
+        ["skipped", "completed", " Pending", _ABSENT],
+        ["input_missing", "Input_Missing", "other", None, 7, _ABSENT],
+        ["Passed", _ABSENT],
+    ):
+        fields = {
+            "status": status,
+            "reason_code": reason_code,
+            "output": output,
+            "output_type": output_type,
+        }
+        entries.append({k: v for k, v in fields.items() if v is not _ABSENT})
     return entries
 
 

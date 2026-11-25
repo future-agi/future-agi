@@ -5,6 +5,7 @@
 ### Features
 
 - **simulate:** A run's critical issues summary and its Fix My Agent analysis start only when a person presses Refresh. Finishing a run, a rerun, a late verdict or opening a page no longer starts them, and a summary found before the run's latest grading says so. In the SDK's simulation runs and analytics responses with `summary=true`, the new `eval_explanation_summary_requested` is false while nobody has asked for a summary since the run's verdicts last changed: a script should not wait for a `pending` summary.
+- **simulate:** An eval whose input is empty on a call (say the call has no summary) is stored as skipped with the reason "input missing" and the empty field names, not as an evaluator error, and the eval is no longer marked failed for it. The run's eval table counts these calls in a new "Input missing" column (`input_missing` on each eval row of run analytics), apart from "Could not run". The call's outcome is unchanged: a call one of whose evals never ran stays "inconclusive", even when its other evals passed.
 
 ### Bug Fixes
 

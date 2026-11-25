@@ -341,3 +341,59 @@ def test_run_analytics_count_missing_inputs_apart_and_the_counts_add_up(
     assert row["measured"] + row["errored"] + row["input_missing"] + row[
         "missing"
     ] == len(stored)
+
+
+# --- the call is not "passed" when one of its evals never ran ------------------
+
+
+@pytest.mark.django_db
+def test_a_call_with_an_eval_that_never_ran_stays_inconclusive(
+    test_execution, scenario, run_test, eval_template, eval_config
+):
+    """On dev the empty input was an evaluator error, so the call read
+    "inconclusive". Stored as missing, it must still not read "passed" because
+    another eval passed: the call's outcome, the eval-only outcome and the
+    scanned outcome all agree."""
+    from simulate.services.run_results_v3 import call_outcome
+    from simulate.services.run_results_v3_queries import run_calls_queryset
+    from simulate.services.run_results_v3_scan import scan_call_values
+
+    other = SimulateEvalConfig.objects.create(
+        name=f"Eval {uuid.uuid4().hex[:6]}",
+        eval_template=eval_template,
+        run_test=run_test,
+        mapping={"summary": "call.call_summary"},
+        config={},
+        status=StatusType.COMPLETED.value,
+    )
+    call = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=scenario,
+        phone_number="+15550000001",
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.VOICE,
+        eval_outputs={
+            str(other.id): {
+                "status": "completed",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+            str(eval_config.id): {
+                "status": "skipped",
+                "reason_code": INPUT_MISSING,
+                "missing_fields": ["summary"],
+                "output": None,
+                "output_type": "Pass/Fail",
+            },
+        },
+    )
+
+    live = {str(config.id): config for config in (eval_config, other)}
+    assert call_outcome(call, live) == "inconclusive"
+    row = run_calls_queryset(test_execution).get(id=call.id)
+    assert (row.result_outcome, row.result_eval_outcome) == (
+        "inconclusive",
+        "inconclusive",
+    )
+    (scanned,) = scan_call_values(test_execution, [], "-started_at")
+    assert scanned["result_outcome"] == "inconclusive"
