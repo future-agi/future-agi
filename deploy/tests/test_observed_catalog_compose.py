@@ -525,7 +525,8 @@ class ProductionCatalogContractTests(unittest.TestCase):
             "worker-simulation-runner": "futureagi/future-agi-simulation-runner:contract-test",
         }
         for name in ("backend", "postgres-schema-bootstrap", "clickhouse-native-bootstrap",
-                     "clickhouse-cdc-bootstrap", "peerdb-init", "peerdb-temporal-init"):
+                     "clickhouse-cdc-bootstrap", "metrics-schema-bootstrap", "peerdb-init",
+                     "peerdb-temporal-init"):
             expected[name] = "futureagi/future-agi:contract-test"
         for name in services:
             if name.startswith("worker") and name != "worker-simulation-runner":
@@ -558,6 +559,7 @@ class ProductionCatalogContractTests(unittest.TestCase):
             "peerdb-temporal-init": [],
             "peerdb-init": ["--wait-for-mirrors", "--timeout", "900"],
             "clickhouse-cdc-bootstrap": ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"],
+            "metrics-schema-bootstrap": ["--check", "--advisory"],
         }
         for name, command in expected.items():
             self.assertEqual(services[name]["command"], command)
