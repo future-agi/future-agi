@@ -432,6 +432,10 @@ def _check_capability(organization: Any) -> None:
         ) from None
 
 
+def _no_description(error: BaseException) -> dict | None:
+    return None
+
+
 def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
     from agentic_eval.core_evals.run_prompt.litellm_models import (
         MissingProviderKeyError,
@@ -447,7 +451,7 @@ def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
 
     # A build without ee has no decision models to key: it catches nothing here.
     gateway_errors: tuple[type[Exception], ...] = ()
-    describe: Callable[[BaseException], dict | None] = lambda error: None
+    describe: Callable[[BaseException], dict | None] = _no_description
     try:
         from ee.decisions import errors as decision_errors
     except ImportError:
