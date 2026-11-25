@@ -1134,11 +1134,25 @@ class TestWhatACodingAgentReads:
         assert reasons == (
             {f"{_cause_read(read)} ProcessRuntimeError: {detail}"} if read else {raw}
         )
+        job = _as(api_client, keys.user, "get", f"/simulate/api/harness-jobs/{run.id}/")
+        assert job.status_code == 200, job.content
+        assert reasons == {job.json()["status"]["failure"]["person_message"]}
         run.refresh_from_db()
         assert run.failure["message"] == raw
 
-    def test_a_person_s_calls_read_a_run_s_start_timeout_in_plain_words(
-        self, api_client, environment, keys
+    @pytest.mark.parametrize(
+        "code,expected",
+        [
+            ("depends_on_timeout", START_TIMEOUT_LINE),
+            (
+                "sandbox_launch_failed",
+                "Stopped — an issue occurred while running this. Run it again; "
+                "it doesn't count against the agent.",
+            ),
+        ],
+    )
+    def test_a_person_reads_the_same_infrastructure_failure_on_the_job_and_calls(
+        self, api_client, environment, keys, code, expected
     ):
         created = _as(
             api_client,
@@ -1157,7 +1171,7 @@ class TestWhatACodingAgentReads:
         run.failure = {
             "domain": "infrastructure",
             "stage": "running",
-            "code": "depends_on_timeout",
+            "code": code,
             "message": raw,
         }
         run.save(update_fields=["state", "failure", "updated_at"])
@@ -1169,7 +1183,10 @@ class TestWhatACodingAgentReads:
                 test_execution_id=created.json()["test_execution_id"]
             ).values_list("ended_reason", flat=True)
         )
-        assert reasons == {START_TIMEOUT_LINE}
+        assert reasons == {expected}
+        job = _as(api_client, keys.user, "get", f"/simulate/api/harness-jobs/{run.id}/")
+        assert job.status_code == 200, job.content
+        assert reasons == {job.json()["status"]["failure"]["person_message"]}
         run.refresh_from_db()
         assert run.failure["message"] == raw
 

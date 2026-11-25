@@ -12,7 +12,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.authentication import viewer_denied
-from simulate.selectors.held_back import coding_agent_key, coding_agent_run
+from simulate.selectors.held_back import (
+    coding_agent_failure_message,
+    coding_agent_key,
+    coding_agent_run,
+    person_failure_message,
+)
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessScenarioListResponseSerializer,
@@ -312,9 +317,21 @@ class HarnessJobViewSet(viewsets.ViewSet):
         five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
         `job.source`, which name every case of the suite."""
         response = get_harness_provider().retrieve(request, pk)
-        if coding_agent_key(request) is None or response.status_code != 200:
+        if response.status_code != 200:
             return response
-        return Response(coding_agent_run(response.data))
+        if coding_agent_key(request) is not None:
+            return Response(coding_agent_run(response.data))
+        job_status = response.data.get("status") or {}
+        failure = job_status.get("failure")
+        if isinstance(failure, dict) and failure.get("message"):
+            metadata = (response.data.get("job") or {}).get("metadata") or {}
+            message = (
+                coding_agent_failure_message(failure)
+                if metadata.get("coding_agent_key_id")
+                else person_failure_message(failure)
+            )
+            job_status["failure"] = {**failure, "person_message": message}
+        return response
 
     @viewer_denied("cancel a build")
     @validated_request(
