@@ -42,7 +42,8 @@ test('SIM-E2E-017: the Tools card shows each tool\'s inputs with units, what it 
   await test.step('browser: a tool\'s contract, and Unsupported for the production-only one', async () => {
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=world`);
     await page.getByRole('button', { name: 'Show the contract of lookup_order' }).click({ timeout: UI_READY });
-    await expect(page.getByText('status (string), total (integer, cents, USD)')).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByText('status (string)')).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByText('total (integer, cents, USD)')).toBeVisible();
     await expect(page.getByText('Reads', { exact: true })).toBeVisible();
     await expect(page.getByText("None of the world's tables")).toBeVisible();
     await expect(page.getByText('Restored to the seed before every trial')).toBeVisible();
