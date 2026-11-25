@@ -336,6 +336,7 @@ from tfc.utils.storage import (
     upload_file_to_s3,
     upload_image_to_s3,
 )
+from tfc.utils.storage_client import PrivateBucketMissing
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -931,6 +932,8 @@ def _prepare_compare_dataset_impl(
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=4)
 
+    except PrivateBucketMissing:
+        raise
     except Exception as e:
         logger.exception(f"Error in preparing compare dataset: {str(e)}")
     finally:
@@ -14797,7 +14800,7 @@ class CompareDatasetsView(APIView):
                         column_config,
                         dataset_info,
                         dynamic_sources,
-                    )
+                    ).result()
 
                 # Leaving the executor block waits for the page writer, so the
                 # comparison is complete here unless writing it failed. Later
@@ -14848,6 +14851,17 @@ class CompareDatasetsView(APIView):
 
             return self._gm.success_response(compare_json)
 
+        except PrivateBucketMissing:
+            return Response(
+                build_error_envelope(
+                    "The private dataset comparison bucket does not exist. "
+                    "Create it and configure COMPARE_BUCKET_NAME "
+                    "(Helm: objectStorage.compareBucket).",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    code="compare_bucket_missing",
+                ),
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except CompareStorageUnavailable:
             return _compare_storage_unavailable_response()
         except Exception as e:
