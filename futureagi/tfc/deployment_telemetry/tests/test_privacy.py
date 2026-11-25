@@ -359,7 +359,7 @@ def test_sentry_scrubs_a_sensitive_harness_request(path):
         },
     }
 
-    scrubbed = _scrub_deployment_telemetry_event(event)
+    scrubbed = _scrub_event(event)
 
     assert "data" not in scrubbed["request"]
     assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]

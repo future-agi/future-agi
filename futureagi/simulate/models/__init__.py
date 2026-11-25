@@ -23,6 +23,13 @@ from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
 )
+from .harness_release import (
+    HarnessAgentBinding,
+    HarnessEnvironmentRelease,
+    HarnessRunManifest,
+    HarnessSuiteRelease,
+    HostedAgentSpec,
+)
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
@@ -32,14 +39,6 @@ from .harness_versioning import (
     HarnessSuiteValidation,
     HarnessSuiteVersion,
 )
-from .harness_release import (
-    HarnessAgentBinding,
-    HarnessEnvironmentRelease,
-    HarnessRunManifest,
-    HarnessSuiteRelease,
-    HostedAgentSpec,
-)
-from .eval_config import SimulateEvalConfig
 from .hosted_harness import (
     HostedHarnessArtifact,
     HostedHarnessAttempt,

@@ -240,7 +240,15 @@ class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
 
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(
-        choices=("livekit", "vapi", "retell", "retell_chat", "phone", "auto", HOSTED_AGENT)
+        choices=(
+            "livekit",
+            "vapi",
+            "retell",
+            "retell_chat",
+            "phone",
+            "auto",
+            HOSTED_AGENT,
+        )
     )
     mode = serializers.ChoiceField(
         choices=("connect_only", "environment_backed", "provider_import"),
@@ -480,14 +488,18 @@ class HarnessAgentSerializer(serializers.Serializer):
         config = attrs.get("config") or {}
         if attrs.get("mode") or attrs.get("secret_refs") or attrs.get("call_direction"):
             raise serializers.ValidationError(
-                {"agent": "our hosted agent takes no mode, credentials or call direction"}
+                {
+                    "agent": "our hosted agent takes no mode, credentials or call direction"
+                }
             )
         if set(config) != set(HOSTED_AGENT_CONFIG) or not all(
             isinstance(config[name], str) and config[name].strip()
             for name in HOSTED_AGENT_CONFIG
         ):
             raise serializers.ValidationError(
-                {"config": f"a hosted agent's config is exactly {', '.join(HOSTED_AGENT_CONFIG)}"}
+                {
+                    "config": f"a hosted agent's config is exactly {', '.join(HOSTED_AGENT_CONFIG)}"
+                }
             )
         if config["model"] not in HOSTED_AGENT_MODELS:
             raise serializers.ValidationError(
@@ -677,10 +689,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         ) in {"connect_only", "provider_import"}
         no_source = PROVIDER_TARGET_CONNECTORS | {HOSTED_AGENT}
         if source is None:
-            if (
-                agent["connector"] not in no_source
-                or not provider_target_mode
-            ):
+            if agent["connector"] not in no_source or not provider_target_mode:
                 raise serializers.ValidationError(
                     {
                         "source": "required unless a hosted agent ID or phone number is connected"
@@ -690,9 +699,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         elif (
             source["kind"] == "provider"
             and not names_agent_version(agent, attrs.get("metadata"))
-            and (
-                agent["connector"] not in no_source or not provider_target_mode
-            )
+            and (agent["connector"] not in no_source or not provider_target_mode)
         ):
             raise serializers.ValidationError(
                 {
