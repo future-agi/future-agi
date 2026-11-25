@@ -41,7 +41,7 @@ from simulate.selectors.agent_fix_wording import (
     plural,
     regressions,
 )
-from simulate.services.agent_fix_engine import ChangedFile, load_object, patch_files
+from simulate.services.agent_fix_engine import ChangedFile, counted_files, load_object
 from simulate.services.agent_fix_runs import (
     base_moved,
     record_override,
@@ -612,11 +612,13 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     winner = candidate.outcome == AgentFixCandidate.Outcome.WINNER
     review = eval_review(candidate.fix_run) if winner else None
     # Counted the way the candidate's stored files were, from the patch that ships.
-    files = patch_files(patch)
+    # When git cannot count them, the pull request still opens, with no change line.
+    counted = counted_files(candidate.fix_run, patch)
+    files = counted or []
     names = FixNames(candidate.fix_run)
     # The epoch page's words: the read takes them from the same place.
     wording = candidate_wording(
-        candidate, tiers, review=review, files=files, names=names
+        candidate, tiers, review=review, files=counted, names=names
     )
     held = held_back_cases(candidate.fix_run)
     limited = too_few_held_back(candidate.fix_run)

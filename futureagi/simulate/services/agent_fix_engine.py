@@ -148,11 +148,11 @@ def patch_files(patch: bytes) -> list[ChangedFile]:
     return files
 
 
-def _counted_files(fix_run: AgentFixRun, patch: bytes) -> list[list[Any]] | None:
-    """The patch's files to store with the candidate; None, said in the log, when git
-    could not count them: the candidate still stands, and reads with no change line."""
+def counted_files(fix_run: AgentFixRun, patch: bytes) -> list[ChangedFile] | None:
+    """The patch's files; None, said in the log, when git could not count them. What
+    reads them then has no change line, and nothing else stops."""
     try:
-        return [list(one) for one in patch_files(patch)]
+        return patch_files(patch)
     except (subprocess.SubprocessError, ValueError) as exc:
         logger.warning(
             "agent_fix_patch_not_counted",
@@ -188,6 +188,9 @@ def add_candidate(
         prepared = kind.prepare_candidate(fix_run, files, attempt)
         patch_key = _object_key(fix_run, f"candidate-{attempt}.patch")
         _put(patch_key, patch, "text/x-diff")
+        # Counted here, outside the fix's lock too, so reading the candidate never
+        # reads its patch.
+        files = counted_files(fix_run, patch)
         try:
             with transaction.atomic():
                 locked = _locked_running(fix_run.id)
@@ -197,8 +200,9 @@ def add_candidate(
                     attempt=attempt,
                     agent_version=version,
                     patch_object_key=patch_key,
-                    # Counted once here, so reading the candidate never reads its patch.
-                    changed_files=_counted_files(fix_run, patch),
+                    changed_files=None
+                    if files is None
+                    else [list(one) for one in files],
                     summary=summary[:4000],
                 )
         except IntegrityError as exc:

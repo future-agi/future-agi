@@ -517,6 +517,22 @@ describe("FixFinishedView, protected cases it could not be held to", () => {
   });
 });
 
+describe("FixDecisionDrawer, must-pass scenarios broken", () => {
+  it("shows the server's count of scenarios, not of checks", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    // Two broken checks on one scenario: one scenario broke.
+    winner.verdict.must_pass_regressions = [
+      "refund-flow: greeted",
+      "refund-flow: refunded",
+    ];
+    winner.wording = { ...winner.wording, must_pass_broken: 1 };
+    renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
+    const row = screen.getByText("Must-pass scenarios broken").parentElement;
+    expect(within(row).getByText("1")).toBeInTheDocument();
+  });
+});
+
 describe("FixDecisionDrawer without a kept trial", () => {
   const checkNames = (trial) =>
     trial

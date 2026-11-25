@@ -85,6 +85,7 @@ const candidate = (fixId, attempt, outcome, extra = {}) => ({
         : "Held-back pass rate 17% → 83%. No must-pass scenario broke.",
     must_pass:
       outcome === "rejected" ? "" : "None of the 9 must-pass scenarios broke.",
+    must_pass_broken: 0,
     changes: "Changes instructions.md: 3 lines added, 1 removed.",
     caveats: [],
   },

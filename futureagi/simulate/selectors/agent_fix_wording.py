@@ -2,7 +2,6 @@
 body both take them from here, so the two never say different things: plain sentences,
 which the pull request only escapes as Markdown."""
 
-import re
 from functools import cached_property
 from math import floor
 from typing import Any
@@ -32,6 +31,8 @@ class CandidateWording(BaseModel):
     headline: str = ""
     # The must-pass check's result; blank before the check ran.
     must_pass: str = ""
+    # The must-pass scenarios it broke, each counted once.
+    must_pass_broken: int = 0
     # The files its patch changes; None when they were not counted.
     changes: str | None = None
     # What a reviewer must know before trusting it.
@@ -74,14 +75,16 @@ def changes_line(files: list[ChangedFile]) -> str:
     )
 
 
+def _scenarios(checks: list[str] | None) -> int:
+    """How many scenarios these checks are on: a check is sent as "scenario key: check",
+    and one scenario may have several."""
+    return len({str(check).partition(": ")[0] for check in checks or []})
+
+
 def _noise(verdict: dict) -> str:
-    """The must-pass scenarios that passed less often within normal noise, counted once
-    each: a check is sent as "scenario key: check", and one scenario may have several."""
-    cases = {
-        str(check).partition(": ")[0]
-        for check in verdict.get("must_pass_within_noise") or []
-    }
-    return f" ({len(cases)} moved within normal noise)" if cases else ""
+    """The must-pass scenarios that passed less often within normal noise."""
+    moved = _scenarios(verdict.get("must_pass_within_noise"))
+    return f" ({moved} moved within normal noise)" if moved else ""
 
 
 def _must_pass_status(verdict: dict, tiers: list[VerdictTier]) -> str:
@@ -96,7 +99,7 @@ def _must_pass_status(verdict: dict, tiers: list[VerdictTier]) -> str:
 
 
 def _broke(verdict: dict) -> str:
-    broke = len(verdict.get("must_pass_regressions") or [])
+    broke = _scenarios(verdict.get("must_pass_regressions"))
     if not broke:
         return "A must-pass scenario broke."
     return f"{plural(broke, 'must-pass scenario', 'must-pass scenarios')} broke."
@@ -136,21 +139,6 @@ def headline(verdict: dict, tiers: list[VerdictTier]) -> str:
     return ""
 
 
-# A slug: lowercase words or numbers joined by underscores or hyphens.
-_SLUG = re.compile(r"[a-z0-9]+(?:[_-][a-z0-9]+)+")
-
-
-def display_name(name: str) -> str:
-    """A scenario's name as a person reads it. Some are stored as a slug
-    ("reschedule_appointment_out_of_hours_recovery"), which reads as words in sentence
-    case. Any other name, such as "Check-in" or "COVID-19", is kept as written."""
-    name = name.strip()
-    if not _SLUG.fullmatch(name):
-        return name
-    words = " ".join(re.split(r"[_-]", name))
-    return words[:1].upper() + words[1:]
-
-
 class FixNames:
     """What a fix's scenarios and checks are called where a person reads them. Each is
     read once, when first needed; a key or a sub-goal's id is never one of them."""
@@ -163,9 +151,9 @@ class FixNames:
         """Each scenario's name by its key: the inventory the engine is briefed with,
         which names the flaky protected cases too."""
         return {
-            one.key: display_name(one.name)
+            one.key: one.name.strip()
             for one in inventory(self._fix_run)
-            if display_name(one.name)
+            if one.name.strip()
         }
 
     @cached_property
@@ -223,7 +211,7 @@ def flaky_protected(report: dict, names: FixNames) -> list[str]:
     for key, checks in rows.items():
         # The engine names a row from the same inventory, so its name is the fallback.
         name = names.scenarios.get(key) or next(
-            (display_name(str(row["name"])) for row in checks if row.get("name")), ""
+            (str(row["name"]).strip() for row in checks if row.get("name")), ""
         )
         if not name:
             unnamed += 1
@@ -310,6 +298,7 @@ def candidate_wording(
     return CandidateWording(
         headline=headline(verdict, tiers),
         must_pass=must_pass_line(verdict, candidate.fix_run.plan or {}, tiers),
+        must_pass_broken=_scenarios(verdict.get("must_pass_regressions")),
         changes=None if files is None else changes_line(files),
         caveats=caveats(candidate, review, names),
     )

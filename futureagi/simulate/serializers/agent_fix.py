@@ -341,15 +341,17 @@ class AgentFixCandidateWordingSerializer(serializers.Serializer):
     headline = serializers.CharField(allow_blank=True)
     # The must-pass check's result; blank before the check ran.
     must_pass = serializers.CharField(allow_blank=True)
-    # The files and lines its patch changes; null when the patch could not be read.
+    # The must-pass scenarios it broke, each counted once.
+    must_pass_broken = serializers.IntegerField(min_value=0)
+    # The files and lines its patch changes; null when they were not counted.
     changes = serializers.CharField(allow_null=True)
     # What a reviewer must know before trusting it.
     caveats = serializers.ListField(child=serializers.CharField())
 
 
 class AgentFixCandidateDetailSerializer(AgentFixCandidateSerializer):
-    """A candidate in one epoch's read, with its words. They read its patch, so a list
-    leaves them out."""
+    """A candidate in one epoch's read, with its words. They read the fix's eval review
+    and its scenarios' names, so a list leaves them out."""
 
     wording = serializers.SerializerMethodField()
 

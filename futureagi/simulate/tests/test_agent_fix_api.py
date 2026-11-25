@@ -36,7 +36,6 @@ from simulate.selectors.agent_fix import (
     engine_brief,
     inventory,
 )
-from simulate.selectors.agent_fix_wording import display_name
 from simulate.serializers.agent_fix import AgentFixLaunchSerializer
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
@@ -2347,8 +2346,7 @@ class TestUserApi:
         assert pull["body"].startswith("**Known regression.**")
         # By the scenario's name in the environment, never by its key.
         key, _ = self.REGRESSED.split(": ")
-        stored = next(one.name for one in inventory(fix_run) if one.key == key)
-        name = display_name(stored)
+        name = next(one.name for one in inventory(fix_run) if one.key == key)
         assert f"- Must-pass scenario “{name}”" in pull["body"]
         assert f"“{key}”" not in pull["body"]
         assert f"> {self.REASON}" in pull["body"]

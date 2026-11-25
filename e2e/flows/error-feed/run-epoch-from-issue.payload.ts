@@ -220,6 +220,7 @@ export function readyEpoch(ids: Ids): Json {
         wording: {
           headline: 'Held-back pass rate 25% → 75%. No must-pass scenario broke.',
           must_pass: 'None of the 3 must-pass scenarios broke.',
+          must_pass_broken: 0,
           changes: 'Changes agent.py: 4 lines added, 1 removed.',
           caveats: [],
         },
@@ -246,6 +247,7 @@ export function readyEpoch(ids: Ids): Json {
         wording: {
           headline: 'Held-back pass rate 25% → 50%. No must-pass scenario broke.',
           must_pass: 'None of the 3 must-pass scenarios broke.',
+          must_pass_broken: 0,
           changes: null,
           caveats: [],
         },

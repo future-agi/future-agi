@@ -1,6 +1,8 @@
 """An epoch's result in words: the epoch page's read and the pull request's body say the
 same sentences, from the patch that ships."""
 
+import subprocess
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -15,14 +17,15 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix_wording import (
     EVALS_INCOMPLETE,
     FixNames,
+    candidate_wording,
     changes_line,
-    display_name,
     flaky_protected,
     headline,
     must_pass_check,
     must_pass_line,
     regressions,
 )
+from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_engine import patch_files
 from simulate.tests.test_agent_fix_services import (
@@ -71,9 +74,8 @@ _SCENARIOS = [
     InventoryScenario(
         key=_SLUG, name="Reschedule out of hours", tests="", use_case="", sub_goals=[]
     ),
-    # Stored as a slug, as some environments store it.
     InventoryScenario(
-        key="late-booking", name="late_booking", tests="", use_case="", sub_goals=[]
+        key="late-booking", name="Late booking", tests="", use_case="", sub_goals=[]
     ),
     InventoryScenario(key="refund", name="", tests="", use_case="", sub_goals=[]),
 ]
@@ -90,7 +92,6 @@ _RAW = (
     _SLUG,
     "slot_unavailable_handled",
     "late-booking",
-    "late_booking",
     "“refund”",
     "“asks”",
 )
@@ -342,6 +343,49 @@ class TestCountedWhenStored:
         assert "\\303" not in body
 
 
+class TestCountedOutsideTheLock:
+    def test_the_patch_is_counted_before_the_fix_is_locked(self, source_run, storage):
+        fix_run = _fix_run(source_run)
+        order = []
+        count, lock = engine.counted_files, engine._locked_running
+
+        def counting(*args):
+            order.append("count")
+            return count(*args)
+
+        def locking(*args):
+            order.append("lock")
+            return lock(*args)
+
+        with (
+            patch.object(engine, "counted_files", side_effect=counting),
+            patch.object(engine, "_locked_running", side_effect=locking),
+        ):
+            candidate = _candidate(fix_run)
+
+        assert order == ["count", "lock"]
+        assert candidate.changed_files is not None
+
+    def test_a_patch_git_cannot_count_still_opens_its_pull_request(
+        self, source_run, storage
+    ):
+        _, candidate = _winner(source_run, storage)
+
+        with (
+            patch.object(
+                engine,
+                "patch_files",
+                side_effect=subprocess.CalledProcessError(1, "git"),
+            ),
+            patch.object(agent_fix_github, "eval_review", return_value=_DONE),
+        ):
+            title, body = agent_fix_github._description(candidate, _SHIPPED)
+
+        assert title.endswith(": change the agent")
+        assert "### What changed" not in body
+        assert "Held-back pass rate 17% → 50%." in body
+
+
 class TestNoIdsInThePullRequest:
     def test_flaky_noise_and_a_regression_are_said_by_name_only(
         self, source_run, storage, named
@@ -507,19 +551,41 @@ class TestMustPassWords:
         assert headline(verdict, rejected_at_target) == "Target pass rate 33% → 33%."
         assert must_pass_line(verdict, {"must_pass": 6}, rejected_at_target) == ""
 
-    def test_a_slug_name_reads_as_words_and_a_written_one_is_kept(self):
-        assert display_name("reschedule_appointment_out_of_hours_recovery") == (
-            "Reschedule appointment out of hours recovery"
+    def test_a_scenario_reads_by_its_stored_name_exactly(self, named):
+        scenarios, _ = named
+        scenarios.return_value = [
+            InventoryScenario(
+                key="gpt", name="gpt-4o", tests="", use_case="", sub_goals=[]
+            ),
+            InventoryScenario(
+                key="none", name="  ", tests="", use_case="", sub_goals=[]
+            ),
+        ]
+
+        # As the Scenarios tab shows it; one with no name has none, never its key.
+        assert FixNames(SimpleNamespace(environment=None)).scenarios == {
+            "gpt": "gpt-4o"
+        }
+
+    def test_broken_checks_on_one_scenario_count_once(self):
+        verdict = {
+            "must_pass_regressions": ["refund-flow: greeted", "refund-flow: refunded"]
+        }
+        failed = [VerdictTier(name="must-pass", status="failed")]
+
+        assert must_pass_line(verdict, {}, failed) == "1 must-pass scenario broke."
+        assert headline({**verdict, "target_pass_rate": [0.2, 0.6]}, failed) == (
+            "Target pass rate 20% → 60%. 1 must-pass scenario broke."
         )
-        assert display_name("late-booking") == "Late booking"
-        assert display_name("Book a ride to the airport") == (
-            "Book a ride to the airport"
+        candidate = SimpleNamespace(
+            verdict=verdict, fix_run=SimpleNamespace(plan={}), outcome="rejected"
         )
-        assert display_name("Refunds") == "Refunds"
-        assert display_name("  ") == ""
-        # Not slugs: written that way on purpose.
-        for written in ("Check-in", "COVID-19", "API_Timeout"):
-            assert display_name(written) == written
+        names = FixNames.__new__(FixNames)
+        names.__dict__.update(scenarios={}, checks={})
+        wording = candidate_wording(
+            candidate, failed, review=None, files=None, names=names
+        )
+        assert wording.must_pass_broken == 1
 
     def test_broken_checks_name_their_scenario_once_and_count_the_unnamed(self):
         names = FixNames.__new__(FixNames)

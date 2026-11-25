@@ -94,8 +94,9 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
           change: "",
         },
         {
+          // The server counts each scenario once, however many of its checks broke.
           label: "Must-pass scenarios broken",
-          value: String(v.must_pass_regressions.length),
+          value: String(winner.wording?.must_pass_broken ?? 0),
           change: "",
         },
       ].filter(Boolean)
