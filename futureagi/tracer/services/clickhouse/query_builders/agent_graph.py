@@ -18,7 +18,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import (
+    BaseQueryBuilder,
+    exact_datetime_bound_sql,
+)
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
 )
@@ -170,7 +173,10 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             plan.predicates,
             plan.contribution_predicates,
         )
-        output_window = "start_time >= %(start_date)s AND start_time < %(end_date)s"
+        # A sub-second request bound must not be truncated by the driver.
+        start_bound = exact_datetime_bound_sql(self.params, "start_date")
+        end_bound = exact_datetime_bound_sql(self.params, "end_date")
+        output_window = f"start_time >= {start_bound} AND start_time < {end_bound}"
         contribution_terms = [
             output_window,
             *(
@@ -230,8 +236,9 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         physical_window = ""
         if not plan.predicates:
             physical_window = (
-                "\n                  AND toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))"
-                "\n                  AND toStartOfHour(start_time) < toDateTime64(%(end_date)s, 6, 'UTC')"
+                "\n                  AND toStartOfHour(start_time) >= "
+                f"toStartOfHour(toDateTime64({start_bound}, 6, 'UTC'))"
+                f"\n                  AND toStartOfHour(start_time) < toDateTime64({end_bound}, 6, 'UTC')"
             )
 
         monetary_rows = graph_monetary_rows_sql(

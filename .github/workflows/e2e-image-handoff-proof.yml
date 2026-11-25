@@ -1,0 +1,170 @@
+name: E2E image handoff proof
+
+# Only a manual dispatch runs the proof. GitHub offers a dispatch-only
+# workflow only once its file is on the default branch or it has run; the push
+# trigger below (this file, on dev) runs it once with every job skipped, so it
+# can be dispatched from dev before the file reaches main.
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths: [.github/workflows/e2e-image-handoff-proof.yml]
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_VERSION: 28.5.2
+  # Keep the ~15 GB uncompressed archive on the reclaimed runner volume,
+  # separate from the daemon, its save/load scratch space and the incoming ZIP.
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
+jobs:
+  donor:
+    # The push run only registers the workflow; consumers need the donor.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      zip_digest: ${{ steps.upload.outputs.artifact-digest }}
+      archive_sha256: ${{ steps.export.outputs.archive_sha256 }}
+      manifest_digest: ${{ steps.export.outputs.manifest_digest }}
+      config_digest: ${{ steps.export.outputs.config_digest }}
+      attempt: ${{ steps.export.outputs.attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Prepare hosted runner volumes
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          scripts/reclaim-runner-disk.sh
+          sudo systemctl stop docker docker.socket
+          sudo install -d -o "$(id -u)" -g "$(id -g)" /mnt/handoff
+          mkdir "$RUNNER_TEMP/handoff"
+          df -k --output=target,avail,iavail "$RUNNER_TEMP" /mnt/handoff
+
+      # Pin both ends of the native copier. Classic overlay2 save emits a single
+      # OCI layout with uncompressed layers plus the matching Docker load view.
+      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        with:
+          version: v${{ env.DOCKER_VERSION }}
+          runtime-basedir: /mnt/handoff
+          daemon-config: '{"storage-driver":"overlay2","features":{"containerd-snapshotter":false}}'
+
+      - name: Assert copier versions and store
+        run: |
+          test "$(docker version --format '{{.Client.Version}}/{{.Server.Version}}')" = "$DOCKER_VERSION/$DOCKER_VERSION"
+          test "$(docker info --format '{{.Driver}}')" = overlay2
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        id: builder
+        with:
+          use: false
+          cache-binary: false
+
+      # Distributed branch of e2e-ci.yml: no IMAGE_VARIANT override; anonymous
+      # registry cache import only. Do not publish build caches or build records.
+      - uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          builder: ${{ steps.builder.outputs.name }}
+          context: futureagi
+          file: futureagi/Dockerfile.oss
+          platforms: linux/amd64
+          tags: futureagi/future-agi:e2e-ci
+          load: true
+          push: false
+          cache-from: type=registry,ref=ghcr.io/future-agi/future-agi/e2e-cache:backend
+
+      - name: Apply the E2E backend wrapper to the loaded base
+        run: |
+          docker build --platform linux/amd64 --build-arg BASE_TAG=e2e-ci \
+            -t futureagi/future-agi:e2e-ci -f e2e/stack/backend/Dockerfile .
+
+      - name: Free the temporary builder before serializing the final image
+        env:
+          BUILDER_NAME: ${{ steps.builder.outputs.name }}
+        run: docker buildx rm "$BUILDER_NAME"
+
+      - name: Export and verify one wrapped standard backend
+        id: export
+        run: |
+          python3 -I .github/scripts/image_handoff.py export "$RUNNER_TEMP/handoff"
+          df -k --output=target,avail,iavail "$RUNNER_TEMP" /mnt/handoff
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: upload
+        with:
+          name: ${{ steps.export.outputs.name }}
+          path: |
+            ${{ runner.temp }}/handoff/donor.json
+            ${{ runner.temp }}/handoff/image.tar
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 1
+
+  consumer:
+    needs: donor
+    strategy:
+      fail-fast: false
+      matrix:
+        copy: [1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read # read the immutable artifact and its raw ZIP by ID
+    env:
+      DONOR_ATTEMPT: ${{ needs.donor.outputs.attempt }}
+      ARTIFACT_ID: ${{ needs.donor.outputs.artifact_id }}
+      ZIP_DIGEST: ${{ needs.donor.outputs.zip_digest }}
+      ARCHIVE_SHA256: ${{ needs.donor.outputs.archive_sha256 }}
+      MANIFEST_DIGEST: ${{ needs.donor.outputs.manifest_digest }}
+      CONFIG_DIGEST: ${{ needs.donor.outputs.config_digest }}
+      CONSUMER: ${{ matrix.copy }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prepare hosted runner volumes
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          scripts/reclaim-runner-disk.sh
+          sudo systemctl stop docker docker.socket
+          sudo install -d -o "$(id -u)" -g "$(id -g)" /mnt/handoff
+          mkdir "$RUNNER_TEMP/handoff"
+          df -k --output=target,avail,iavail "$RUNNER_TEMP" /mnt/handoff
+      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        with:
+          version: v${{ env.DOCKER_VERSION }}
+          runtime-basedir: /mnt/handoff
+          daemon-config: '{"storage-driver":"overlay2","features":{"containerd-snapshotter":false}}'
+      - name: Assert copier versions and store
+        run: |
+          test "$(docker version --format '{{.Client.Version}}/{{.Server.Version}}')" = "$DOCKER_VERSION/$DOCKER_VERSION"
+          test "$(docker info --format '{{.Driver}}')" = overlay2
+
+      - name: Download raw artifact ZIP by donor ID
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          api="repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID"
+          gh api "$api" > "$RUNNER_TEMP/handoff/artifact.json"
+          gh api "$api/zip" > /mnt/handoff/download.zip
+
+      - name: Verify bytes, import, and prove the executed container identity
+        run: |
+          python3 -I .github/scripts/image_handoff.py receive "$RUNNER_TEMP/handoff" /mnt/handoff/download.zip
+          df -k --output=target,avail,iavail "$RUNNER_TEMP" /mnt/handoff
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: handoff-receipt-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.copy }}
+          path: ${{ runner.temp }}/handoff/receipt.json
+          if-no-files-found: error
+          retention-days: 14
