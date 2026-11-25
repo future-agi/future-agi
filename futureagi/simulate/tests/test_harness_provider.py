@@ -24,6 +24,7 @@ from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
 )
+from simulate.services.harness_credentials import agent_version_secret_ref
 from simulate.services.harness_provider import (
     HostedHarnessProvider,
     SandboxHarnessProvider,
@@ -1598,6 +1599,84 @@ def test_daytona_preflight_lists_six_checks_in_order(settings):
         "LIVEKIT_API_SECRET",
     ]
     assert by_id["credentials_valid"]["status"] == "skipped"
+
+
+def _preflight_with_api_keys(secret_refs, api_keys, source=None):
+    payload = _v1_payload()
+    payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": secret_refs}
+    if source is not None:
+        payload["source"] = source
+    request = SimpleNamespace(
+        validated_data=payload,
+        headers={},
+        build_absolute_uri=lambda _path: "https://harness.example.test/",
+    )
+    with patch(
+        "simulate.services.harness_provider._preflight_source_connectors",
+        return_value=([], [], 4, api_keys),
+    ):
+        response = HostedHarnessProvider().preflight(request)
+    return response, {item["id"]: item for item in response.data["checks"]}
+
+
+def test_preflight_fails_on_an_api_key_the_code_reads_but_was_not_given(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    response, by_id = _preflight_with_api_keys({}, ["ANTHROPIC_API_KEY", "FI_API_KEY"])
+
+    assert response.data["state"] == "failed"
+    assert by_id["credentials_present"]["status"] == "failed"
+    assert by_id["credentials_present"]["missing"] == ["ANTHROPIC_API_KEY"]
+    requirements = {
+        item["environment_name"]: item
+        for item in response.data["credentials"]["requirements"]
+        if item["purpose"] == "API key the agent's code reads"
+    }
+    assert {name: item["status"] for name, item in requirements.items()} == {
+        "ANTHROPIC_API_KEY": "missing",
+    }
+    assert all(item["required"] for item in requirements.values())
+
+
+def test_preflight_passes_once_every_api_key_is_given(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    refs = {
+        name: agent_version_secret_ref(name)
+        for name in ("ANTHROPIC_API_KEY", "FI_API_KEY")
+    }
+
+    response, by_id = _preflight_with_api_keys(
+        refs, ["ANTHROPIC_API_KEY", "FI_API_KEY"]
+    )
+
+    assert by_id["credentials_present"]["status"] == "passed"
+
+
+def test_only_keys_the_platform_can_verify_are_required(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    response, by_id = _preflight_with_api_keys(
+        {}, ["OPENAI_API_KEY", "WEATHER_API_KEY", "FI_API_KEY"]
+    )
+
+    assert by_id["credentials_present"]["missing"] == ["OPENAI_API_KEY"]
+
+
+def test_a_voice_provider_key_keeps_its_own_rule(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    response, by_id = _preflight_with_api_keys({}, ["VAPI_API_KEY"])
+
+    assert by_id["credentials_present"]["status"] == "passed"
+    assert not [
+        item
+        for item in response.data["credentials"]["requirements"]
+        if item["purpose"] == "API key the agent's code reads"
+    ]
 
 
 @pytest.mark.django_db
