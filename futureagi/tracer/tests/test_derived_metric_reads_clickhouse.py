@@ -12,7 +12,7 @@ from inspect import signature
 from pathlib import Path
 from time import perf_counter, perf_counter_ns, process_time_ns, thread_time_ns
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -1174,10 +1174,24 @@ def test_m10_complete_service_budget_with_source_retained_parts(
         )
 
 
+def test_m10_drains_setup_gc_before_first_cold_read(monkeypatch):
+    events = []
+    monkeypatch.setattr(gc, "collect", lambda generation=2: events.append(generation))
+    writer = Mock()
+    writer.store.execute.side_effect = StopIteration
+    with pytest.raises(StopIteration):
+        _assert_m10_service_budget(writer, None, None, 1, 4, 1, [])
+    writer.store.execute.assert_called_once_with("SYSTEM DROP MARK CACHE")
+    assert events == [2]
+
+
 def _assert_m10_service_budget(
     writer, metric, current_head, days, deltas, size, diagnostics
 ):
     window = {**WINDOW, "window_end": AT + timedelta(days=days)}
+    # Start the batch without collection debt from shard and fixture setup.
+    # Leave automatic GC enabled throughout all 36 measured service calls.
+    gc.collect()
     measurements = {}
     for mode in ["kpi", "trend", "dimension_trend"]:
         samples = []
