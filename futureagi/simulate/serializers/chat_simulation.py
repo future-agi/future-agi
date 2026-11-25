@@ -20,17 +20,13 @@ class ChatMessageContractSerializer(serializers.Serializer):
     )
     name = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     metadata = serializers.DictField(required=False, allow_null=True)
-    tool_calls = ChatToolCallSerializer(
-        many=True, required=False, allow_null=True
-    )
+    tool_calls = ChatToolCallSerializer(many=True, required=False, allow_null=True)
 
 
 class SendChatRequestSerializer(serializers.Serializer):
     """DRF contract mirror of the SendChatRequest Pydantic schema."""
 
-    messages = ChatMessageContractSerializer(
-        many=True, required=False, allow_null=True
-    )
+    messages = ChatMessageContractSerializer(many=True, required=False, allow_null=True)
     metrics = serializers.DictField(required=False, allow_null=True)
     initiate_chat = serializers.BooleanField(required=False, default=False)
 

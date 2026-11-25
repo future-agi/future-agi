@@ -476,7 +476,9 @@ def test_exact_graph_raw_candidate_page_stays_finite_and_keyset_ordered():
     )
 
     assert (
-        _builder(_system_filter()).exact_graph_candidate_witness_replays_global_membership()
+        _builder(
+            _system_filter()
+        ).exact_graph_candidate_witness_replays_global_membership()
         is False
     )
 
@@ -509,9 +511,7 @@ def test_exact_graph_candidate_reports_only_deployed_value_indexes(
         )
     )
 
-    assert (
-        builder.exact_graph_candidate_witness_has_deployed_value_index() is expected
-    )
+    assert builder.exact_graph_candidate_witness_has_deployed_value_index() is expected
 
 
 @pytest.mark.unit

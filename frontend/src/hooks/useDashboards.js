@@ -3,8 +3,9 @@ import {
   useInfiniteQuery,
   useMutation,
   useQueryClient,
+  isCancelledError,
 } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios, { endpoints, readQuery } from "src/utils/axios";
 import { getFilterValueReadState } from "src/utils/queryReadState";
 import { accumulateUniqueListContinuations } from "src/sections/projects/LLMTracing/listCursorPagination";
@@ -106,19 +107,25 @@ const validPropertyCatalogCategoryCounts = (page) => {
     !counts ||
     typeof counts !== "object" ||
     Array.isArray(counts) ||
-    Object.keys(counts).length !== PROPERTY_CATALOG_COUNT_KEYS.length ||
-    !PROPERTY_CATALOG_COUNT_KEYS.every(
-      (key) => Number.isSafeInteger(counts[key]) && counts[key] >= 0,
+    !PROPERTY_CATALOG_COUNT_KEYS.every((key) =>
+      Object.prototype.hasOwnProperty.call(counts, key),
+    ) ||
+    !Object.keys(counts).every(
+      (key) =>
+        (PROPERTY_CATALOG_COUNT_KEYS.includes(key) || key === "metric") &&
+        Number.isSafeInteger(counts[key]) &&
+        counts[key] >= 0,
     )
   ) {
     return false;
   }
   return (
     counts.all ===
-    PROPERTY_CATALOG_COUNT_KEYS.slice(1).reduce(
-      (total, key) => total + counts[key],
-      0,
-    )
+    // Accept the legacy vocabulary and the current one with optional metric.
+    // Sum only present categories; no other extra or missing keys are allowed.
+    Object.keys(counts)
+      .filter((key) => key !== "all")
+      .reduce((total, key) => total + counts[key], 0)
   );
 };
 
@@ -1271,10 +1278,46 @@ export function useDashboardFilterValues({
         : "complete";
   const lastPage = pages.at(-1);
   const browseStatus = lastPage?.browse_status;
+  const onNextPageError = useCallback(
+    (cursor, notify) => {
+      const cache = queryClient.getQueryCache();
+      return cache.subscribe(({ type, action, query: updated }) => {
+        if (
+          type === "updated" &&
+          action.type === "error" &&
+          !isCancelledError(action.error) &&
+          updated.state.fetchMeta?.fetchMore?.direction === "forward" &&
+          JSON.stringify(updated.queryKey) === queryIdentity &&
+          getFilterValueNextCursor(updated.state.data?.pages?.at(-1)) === cursor
+        ) {
+          notify();
+        }
+      });
+    },
+    [queryClient, queryIdentity],
+  );
 
   return {
     ...query,
     data: values,
+    queryIdentity,
+    onNextPageError,
+    // Unlike the picker's explicit Load more, a chip must not pay for joining
+    // another observer's request. Check the live cache and dispatch in the
+    // same turn. If the rendered page/error changed, let its observer rerender.
+    tryStartNextPage: () => {
+      const live = queryClient.getQueryState(queryKey);
+      if (
+        !query.hasNextPage ||
+        cursorChainStopped ||
+        live?.fetchStatus !== "idle" ||
+        live.data !== query.data ||
+        live.errorUpdateCount !== query.errorUpdateCount
+      ) {
+        return null;
+      }
+      return query.fetchNextPage({ cancelRefetch: false });
+    },
     continuationKey:
       !cursorChainStopped && query.hasNextPage
         ? getFilterValueNextCursor(lastPage) || null

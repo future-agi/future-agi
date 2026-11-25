@@ -1,8 +1,10 @@
 import asyncio
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qs
 
 import structlog
+from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.exceptions import ValidationError
@@ -19,6 +21,7 @@ from sockets.saml_guard import SamlSocketGuard
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
 
 logger = structlog.get_logger(__name__)
+_URL_FETCH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="falcon-url")
 
 
 class FalconAIConsumer(AsyncJsonWebsocketConsumer):
@@ -223,11 +226,19 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         url_context = ""
         if message_content:
             try:
-                from ee.falcon_ai.url_fetcher import fetch_urls_from_message
-
-                url_context = await database_sync_to_async(fetch_urls_from_message)(
-                    message_content
+                from ee.falcon_ai.url_fetcher import (
+                    extract_urls,
+                    fetch_urls_from_message,
                 )
+
+                # This path does DNS/HTTP and in-memory text parsing only, not
+                # ORM work. Keep it off both the database and model-stream pools.
+                if extract_urls(message_content):
+                    url_context = await sync_to_async(
+                        fetch_urls_from_message,
+                        thread_sensitive=False,
+                        executor=_URL_FETCH_EXECUTOR,
+                    )(message_content)
             except Exception as e:
                 logger.warning("url_fetch_error", error=str(e))
 

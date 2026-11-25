@@ -25,6 +25,17 @@ from tracer.models.observability_provider import ProviderChoices
 # -------------------------------------------------------------------
 
 
+class _Rows(list):
+    """A transcript queryset stand-in: a list that takes `with_speakers`' annotation, giving each row the speaker a
+    real annotated row carries (none, on these turns)."""
+
+    def annotate(self, **_fields):
+        for row in self:
+            if not hasattr(row, "speaker_name"):
+                row.speaker_name, row.actor_id = "", None
+        return self
+
+
 def _vapi_inbound_call(*, transcripts=None, recordings=None):
     """Mock CallExecution shaped like a VAPI inbound row: FAGI's Vapi
     account transcript, `assistant` = simulator, `user` = tested agent."""
@@ -40,7 +51,7 @@ def _vapi_inbound_call(*, transcripts=None, recordings=None):
         obj.transcripts.exclude.return_value = []
     else:
         obj.transcripts = MagicMock()
-        obj.transcripts.exclude.return_value = transcripts
+        obj.transcripts.exclude.return_value = _Rows(transcripts)
     return obj
 
 
@@ -60,7 +71,7 @@ def _vapi_outbound_call(*, transcripts=None, recordings=None):
         obj.transcripts.exclude.return_value = []
     else:
         obj.transcripts = MagicMock()
-        obj.transcripts.exclude.return_value = transcripts
+        obj.transcripts.exclude.return_value = _Rows(transcripts)
     return obj
 
 
@@ -335,7 +346,7 @@ class TestGetTranscriptSwap:
     def _mock_transcripts_qs(self, rows):
         """Build the transcripts queryset chain the serializer calls."""
         qs = MagicMock()
-        qs.exclude.return_value = rows
+        qs.exclude.return_value = _Rows(rows)
         return qs
 
     def _mock_row(self, speaker_role, content):

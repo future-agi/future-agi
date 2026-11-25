@@ -69,7 +69,7 @@ export default function WidgetCanvas({
             width={48}
             sx={{ opacity: 0.3 }}
           />
-          <Typography fontSize={13} fontWeight={500} color="text.secondary">
+          <Typography fontSize={12} fontWeight={500} color="text.secondary">
             Describe what you want to visualize
           </Typography>
           <Typography
@@ -78,7 +78,7 @@ export default function WidgetCanvas({
             textAlign="center"
             maxWidth={320}
           >
-            Falcon will analyze your trace data and build interactive
+            AI will analyze your trace data and build interactive
             visualizations
           </Typography>
         </Box>

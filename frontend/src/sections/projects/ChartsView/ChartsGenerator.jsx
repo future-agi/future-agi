@@ -160,7 +160,7 @@ const ChartsGenerator = ({
       show: true,
       position: "top",
       horizontalAlign: "left",
-      fontSize: "13px",
+      fontSize: "12px",
       labels: {
         colors: "var(--text-primary)",
       },

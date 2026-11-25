@@ -109,7 +109,7 @@ jobs:
             if (postPolicy && (!aiLine || !aiLine[1].trim())) flags.push('**`AI use:` line is empty.** Say which tool and how much of the change it produced, or `none` (policy rule 3).');
             const e2e = body.match(/^\s*E2E:\s*(.*)$/mi);
             if (postPolicy && (!e2e || !e2e[1].trim())) flags.push('**`E2E:` line is empty.** `yarn coverage` from `e2e/` tells you which marker to use.');
-            const prose = body.replace(/<!--[\s\S]*?-->/g, '').replace(/^#+ .*$/gm, '').replace(/\[[ x]\]/g, '').replace(/^\s*(Closes #|Linear:|E2E:|AI use:).*$/gm, '').trim();
+            const prose = body.replace(/<!--[\s\S]*?-->/g, '').replace(/^#+ .*$/gm, '').replace(/\[[ x]\]/g, '').replace(/^\s*(Closes #|Linear:|E2E:|AI use:|Docs:).*$/gm, '').trim();
             if (prose.length < 80) flags.push('**PR body is empty or just the template.** A few sentences on what changes and why.');
 
             // ---- 3. branches ----

@@ -359,8 +359,14 @@ class PayloadBuilder:
 
             elif provider_for_payload.startswith("vertex_ai"):
                 # Vertex AI uses JSON credentials
-                vertex_location = api_key.get("location") if isinstance(api_key, dict) else None
-                creds = {k: v for k, v in api_key.items() if k != "location"} if isinstance(api_key, dict) else api_key
+                vertex_location = (
+                    api_key.get("location") if isinstance(api_key, dict) else None
+                )
+                creds = (
+                    {k: v for k, v in api_key.items() if k != "location"}
+                    if isinstance(api_key, dict)
+                    else api_key
+                )
                 payload["vertex_credentials"] = json.dumps(creds)
                 if vertex_location:
                     payload["vertex_location"] = vertex_location

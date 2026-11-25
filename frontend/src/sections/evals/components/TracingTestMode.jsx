@@ -63,6 +63,11 @@ import {
 import { useForm, useWatch } from "react-hook-form";
 import CustomTooltip from "src/components/tooltip";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
+import {
+  activeTaskCompositeMapping,
+  isUnsupportedTaskNativePath,
+  taskNativeMappingMessage,
+} from "src/sections/tasks/taskEvalMapping";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import DateRangePill, {
   dateFilterForOption,
@@ -332,12 +337,15 @@ const MAPPING_AUTOCOMPLETE_SX = { flex: 1 };
 
 const MappingRow = React.memo(function MappingRow({
   variable,
+  optional = false,
+  commitOnInput = false,
   options,
   value,
   allowCustomFieldPath,
   disabled,
   isFetchingColumns,
   disabledTooltip,
+  errorMessage,
   onSelect,
   onType,
   onOpen,
@@ -378,10 +386,14 @@ const MappingRow = React.memo(function MappingRow({
               const next = val || "";
               setInputValue(next);
               clearTimeout(commitTimer.current);
-              commitTimer.current = setTimeout(() => {
+              const commit = () => {
                 lastCommitted.current = next;
                 onType(variable, next);
-              }, MAPPING_COMMIT_DEBOUNCE_MS);
+              };
+              // A task composite can save while an optional field is focused.
+              // Commit its draft now; attribute discovery debounces its query.
+              if (commitOnInput) commit();
+              else commitTimer.current = setTimeout(commit, MAPPING_COMMIT_DEBOUNCE_MS);
             },
           }
         : {})}
@@ -396,6 +408,10 @@ const MappingRow = React.memo(function MappingRow({
       renderInput={(params) => (
         <TextField
           {...params}
+          error={Boolean(errorMessage)}
+          helperText={
+            errorMessage ? <span role="alert">{errorMessage}</span> : undefined
+          }
           placeholder={
             isFetchingColumns
               ? "Loading columns..."
@@ -451,7 +467,7 @@ const MappingRow = React.memo(function MappingRow({
           fontWeight={600}
           sx={{ fontSize: "12px" }}
         >
-          {variable}
+          {variable}{optional ? " (optional)" : ""}
         </Typography>
       </Box>
       <Iconify
@@ -478,6 +494,8 @@ const MappingRow = React.memo(function MappingRow({
 });
 
 MappingRow.propTypes = {
+  commitOnInput: PropTypes.bool,
+  optional: PropTypes.bool,
   variable: PropTypes.string.isRequired,
   options: PropTypes.arrayOf(PropTypes.string).isRequired,
   value: PropTypes.string,
@@ -485,6 +503,7 @@ MappingRow.propTypes = {
   disabled: PropTypes.bool,
   isFetchingColumns: PropTypes.bool,
   disabledTooltip: PropTypes.string,
+  errorMessage: PropTypes.string,
   onSelect: PropTypes.func.isRequired,
   onType: PropTypes.func.isRequired,
   onOpen: PropTypes.func.isRequired,
@@ -496,6 +515,8 @@ const TracingTestMode = React.forwardRef(
       templateId,
       model = "turing_large",
       variables = [],
+      requiredVariables,
+      onMappingEdit,
       codeParams = {},
       runConfig,
       onTestResult,
@@ -504,6 +525,7 @@ const TracingTestMode = React.forwardRef(
       // Signals to EvalPickerConfigFull that all variables are mapped so
       // it can enable the Test Evaluation / Add Evaluation buttons.
       onReadyChange,
+      onReadinessChange,
       // When true, runtime context comes from data injection — no sample row needed.
       hasDataInjection = false,
       // Optional: pre-select project + row type and hide the project picker
@@ -531,6 +553,7 @@ const TracingTestMode = React.forwardRef(
       // only for source="task" — other surfaces stay locked until each
       // one's resolver is audited.
       allowCustomFieldPath = false,
+      taskMapping = false,
     },
     ref,
   ) => {
@@ -619,6 +642,11 @@ const TracingTestMode = React.forwardRef(
     const [totalRowsIsLowerBound, setTotalRowsIsLowerBound] = useState(false);
     const [listReadState, setListReadState] = useState("complete");
     const [listFailureRetryable, setListFailureRetryable] = useState(false);
+    // A stale detail must be recovered from a fresh list, never by accepting a
+    // different winner against the old reference or silently picking row zero.
+    const spanRecoveryRef = useRef(null);
+    const [spanRecoveryUnavailable, setSpanRecoveryUnavailable] =
+      useState(false);
     const [currentRowIndex, setCurrentRowIndex] = useState(0);
     const [loading, setLoading] = useState(false);
     const [listCursorRevision, advanceListCursor] = useState(0);
@@ -669,6 +697,7 @@ const TracingTestMode = React.forwardRef(
     const [loadedSpanDetail, setSpanDetail] = useState(null);
     const [loadingDetail, setLoadingDetail] = useState(false);
     const [detailError, setDetailError] = useState(null);
+    const [detailRevision, retryDetail] = useState(0);
 
     // Per-row cache so toggling rows doesn't refetch the trace or re-walk
     // the response. Span keys contain project + physical identity + winner.
@@ -682,10 +711,16 @@ const TracingTestMode = React.forwardRef(
     const [expandedCols, setExpandedCols] = useState({});
 
     // Variable mapping
-    const [mapping, setMapping] = useState(() =>
+    const [draftMapping, setMapping] = useState(() =>
       initialMapping && typeof initialMapping === "object"
         ? { ...initialMapping }
         : {},
+    );
+    const mapping = useMemo(
+      () => taskMapping && isComposite
+        ? activeTaskCompositeMapping(variables, draftMapping)
+        : draftMapping,
+      [taskMapping, isComposite, variables, draftMapping],
     );
     const [mappingSearch, setMappingSearch] = useState("");
     const {
@@ -706,12 +741,18 @@ const TracingTestMode = React.forwardRef(
       enabled: allowCustomFieldPath,
     });
 
+    const handleMappingSelect = useCallback((variable, path) => {
+      setMapping((prev) => ({ ...prev, [variable]: path }));
+      onMappingEdit?.(variable, path);
+    }, [onMappingEdit]);
+
     // ── Map-from-table: assign a column's path straight into a variable ──
     // Shared across every mapping surface — see useMapToVariable.
     const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
       variables,
       mapping,
       setMapping,
+      onAssign: onMappingEdit ? handleMappingSelect : undefined,
     });
 
     // Template ID ref (updated via imperative handle for first-test flow)
@@ -809,6 +850,29 @@ const TracingTestMode = React.forwardRef(
       const remainingMs = () =>
         Math.max(1, ANALYTICS_REQUEST_TIMEOUT_MS - (Date.now() - startedAt));
       const fetchKey = `${selectedProjectId}:${rowType}:${effectiveFilterKey}`;
+      if (spanRecoveryRef.current?.signature !== fetchKey) {
+        spanRecoveryRef.current = null;
+        setSpanRecoveryUnavailable(false);
+      }
+      const selectFreshRows = (freshRows, pending) => {
+        const recovery = spanRecoveryRef.current;
+        if (!recovery) {
+          setRows(freshRows);
+          setCurrentRowIndex(0);
+          return;
+        }
+        const index = recovery.identity
+          ? freshRows.findIndex(
+              (row) =>
+                row.project_id === selectedProjectId &&
+                getSpanReadIdentityKey(row) === recovery.identity,
+            )
+          : -1;
+        setRows(index < 0 ? [] : freshRows);
+        setCurrentRowIndex(Math.max(0, index));
+        setSpanRecoveryUnavailable(index < 0 && !pending);
+        if (index >= 0) spanRecoveryRef.current = null;
+      };
       if (listContinuationRef.current.signature !== fetchKey) {
         listContinuationRef.current = {
           signature: fetchKey,
@@ -1025,10 +1089,9 @@ const TracingTestMode = React.forwardRef(
               requestedCursorIdentities: [...requestedCursorIdentities],
             };
             setColumns(cols);
-            setRows(tableRows);
+            selectFreshRows(tableRows, true);
             setTotalRows(tableRows.length);
             setTotalRowsIsLowerBound(true);
-            setCurrentRowIndex(0);
             setListContinuationPending(true);
             return;
           }
@@ -1048,12 +1111,11 @@ const TracingTestMode = React.forwardRef(
           const total = res.metadata?.total_rows ?? tableRows.length;
 
           setColumns(cols);
-          setRows(tableRows);
+          selectFreshRows(tableRows, false);
           setTotalRows(total);
           setTotalRowsIsLowerBound(
             res.metadata?.total_rows_is_lower_bound === true,
           );
-          setCurrentRowIndex(0);
           setListContinuationPending(false);
         } catch (error) {
           if (cancelled) return;
@@ -1066,15 +1128,19 @@ const TracingTestMode = React.forwardRef(
             listContinuationRef.current = continuationSnapshot;
             setListReadState("error");
             setListFailureRetryable(true);
-            setRows(continuationSnapshot.rows);
+            if (spanRecoveryRef.current) {
+              selectFreshRows(continuationSnapshot.rows, true);
+            } else {
+              setRows(continuationSnapshot.rows);
+              setCurrentRowIndex((index) =>
+                Math.min(
+                  index,
+                  Math.max(0, continuationSnapshot.rows.length - 1),
+                ),
+              );
+            }
             setTotalRows(continuationSnapshot.rows.length);
             setTotalRowsIsLowerBound(true);
-            setCurrentRowIndex((index) =>
-              Math.min(
-                index,
-                Math.max(0, continuationSnapshot.rows.length - 1),
-              ),
-            );
             setListContinuationPending(true);
             return;
           }
@@ -1274,13 +1340,22 @@ const TracingTestMode = React.forwardRef(
           if (cancelled) return;
           detailCacheRef.current.set(cacheKey, { detail: detailData });
           setSpanDetail(detailData);
-        } catch {
+        } catch (error) {
           if (cancelled) return;
           setSpanDetail(null);
+          // 404/409 and local verification failures invalidate the reference.
+          // A network/503 failure (including span_reference_unavailable) does
+          // not: retry that exact detail read instead of resetting the list.
+          const staleReference =
+            rowType === "Span" &&
+            (error?.message === SPAN_REFERENCE_ERROR ||
+              [404, 409].includes(
+                error?.statusCode ?? error?.response?.status,
+              ));
           setDetailError(
-            rowType === "Span"
+            staleReference
               ? SPAN_REFERENCE_ERROR
-              : "Could not load this preview. Refresh the list and try again.",
+              : "Could not load this preview. Retry loading the sample row.",
           );
         } finally {
           if (!cancelled) setLoadingDetail(false);
@@ -1292,7 +1367,13 @@ const TracingTestMode = React.forwardRef(
         cancelled = true;
         controller.abort();
       };
-    }, [currentRow, currentRowIndex, rowType, selectedProjectId]);
+    }, [
+      currentRow,
+      currentRowIndex,
+      rowType,
+      selectedProjectId,
+      detailRevision,
+    ]);
 
     // ── Session detail watcher ──
     // Compose `spanDetail` from the React Query results when in Session
@@ -1427,6 +1508,20 @@ const TracingTestMode = React.forwardRef(
       expandedPrefixesRef.current = new Set();
     }, [spanDetail]);
 
+    const unsupportedTaskPath = useCallback(
+      (path) =>
+        taskMapping &&
+        isUnsupportedTaskNativePath(
+          path,
+          rowType,
+          spanDetail,
+          exactAttributeFields,
+        ),
+      [taskMapping, rowType, spanDetail, exactAttributeFields],
+    );
+    const hasUnsupportedTaskMapping =
+      Object.values(mapping).some(unsupportedTaskPath);
+
     // Mapping-dropdown source: paths walked from the previewed row (eager
     // depth) plus any type-to-deepen additions. Falls back to the row's
     // column keys before the detail has loaded.
@@ -1435,8 +1530,16 @@ const TracingTestMode = React.forwardRef(
       const genericFields = base?.length
         ? [...base, ...deepenedPaths]
         : rowFields.map((f) => f?.colId || f?.key);
-      return mergeTracingFieldNames(genericFields, exactAttributeFields);
-    }, [walkedFromDetail, deepenedPaths, rowFields, exactAttributeFields]);
+      return mergeTracingFieldNames(genericFields, exactAttributeFields).filter(
+        (path) => !unsupportedTaskPath(path),
+      );
+    }, [
+      walkedFromDetail,
+      deepenedPaths,
+      rowFields,
+      exactAttributeFields,
+      unsupportedTaskPath,
+    ]);
 
     // Untouched variables keep the same `fieldNames` reference so their
     // listboxes skip re-filtering while a sibling is being typed into.
@@ -1446,12 +1549,12 @@ const TracingTestMode = React.forwardRef(
       variables.forEach((variable) => {
         const current = mapping[variable];
         out[variable] =
-          current && !fieldSet.has(current)
+          current && !fieldSet.has(current) && !unsupportedTaskPath(current)
             ? [current, ...fieldNames]
             : fieldNames;
       });
       return out;
-    }, [variables, mapping, fieldNames]);
+    }, [variables, mapping, fieldNames, unsupportedTaskPath]);
 
     const truncatedSet = useMemo(() => {
       const merged = new Set(walkedFromDetail?.truncated || []);
@@ -1487,15 +1590,12 @@ const TracingTestMode = React.forwardRef(
       [truncatedSet, spanDetail, walkedFromDetail],
     );
 
-    const handleMappingSelect = useCallback((variable, val) => {
-      setMapping((prev) => ({ ...prev, [variable]: val }));
-    }, []);
     const handleMappingType = useCallback(
       (variable, val) => {
         handleMappingInputChange(null, val);
-        setMapping((prev) => ({ ...prev, [variable]: val }));
+        handleMappingSelect(variable, val);
       },
-      [handleMappingInputChange],
+      [handleMappingInputChange, handleMappingSelect],
     );
     const handleMappingOpen = useCallback(
       (variable, val) => {
@@ -1524,6 +1624,10 @@ const TracingTestMode = React.forwardRef(
         const next = { ...prev };
         let changed = false;
         variables.forEach((v) => {
+          // Do not override an optional input merely because a sample
+          // field happens to have the same name.
+          if (requiredVariables && !requiredVariables.includes(v)) return;
+          if (requiredVariables && next[v] === "") return;
           // Normalize legacy `span_attributes.X` values to the soft-flattened
           // form when X now exists in the dropdown — otherwise the Select
           // renders blank because the stored value has no matching MenuItem.
@@ -1552,19 +1656,114 @@ const TracingTestMode = React.forwardRef(
         });
         return changed ? next : prev;
       });
-    }, [variables, fieldNames]);
+    }, [variables, fieldNames, requiredVariables]);
 
-    // With data injection the trace/session context supplies the values, so
-    // mapping is optional; otherwise require all variables mapped + a sample row.
+    // Keep data availability separate from mapping completeness. In particular,
+    // entering an exact attribute cannot recover a failed sample-row request.
+    const allMapped = (requiredVariables ?? variables).every((v) =>
+      taskMapping && isComposite
+        ? typeof mapping[v] === "string" && mapping[v].trim().length > 0
+        : mapping[v] && String(mapping[v]).length > 0,
+    );
+    const sampleStatus =
+      loading ||
+      isPendingNewFetch ||
+      loadingDetail ||
+      (rowType === "Span" && currentRow && !spanDetail && !detailError) ||
+      (rowType === "Session" &&
+        (sessionDetailQuery.isFetching ||
+          sessionFirstTraceSpansQuery.isFetching))
+        ? "loading"
+        : detailError ||
+            (rowType === "Session" &&
+              (sessionDetailQuery.isError ||
+                sessionFirstTraceSpansQuery.isError)) ||
+            (!currentRow && listReadState === "error")
+          ? "error"
+          : currentRow
+            ? "ready"
+            : listContinuationPending
+              ? "pending"
+              : "empty";
+    const ready =
+      (hasDataInjection || (allMapped && !!currentRow)) &&
+      !hasUnsupportedTaskMapping &&
+      !(taskMapping && !hasDataInjection && sampleStatus !== "ready");
+    const canRetrySample = !!currentRow || listFailureRetryable;
+    const sampleMessage = hasDataInjection
+      ? ""
+      : sampleStatus === "error"
+        ? `Sample row could not be loaded. ${canRetrySample ? "Retry loading the sample row." : "Change the filters or date range to reload sample rows."}`
+        : sampleStatus === "loading"
+          ? "Loading sample row."
+          : sampleStatus === "pending"
+            ? "Continue search to load a sample row."
+            : sampleStatus === "empty"
+              ? spanRecoveryUnavailable
+                ? "The selected span is not available in the refreshed sample list. Change the filters or date range to choose another sample."
+                : getQueryReadMessage(listReadState) ||
+                  "No sample row matches. Change the filters or date range."
+              : "";
+    const readinessMessage = [
+      sampleMessage,
+      hasUnsupportedTaskMapping
+        ? "Replace unsupported native field mappings."
+        : !hasDataInjection && !allMapped
+          ? "Map all variables to enable testing & adding"
+          : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    // Keep the existing two-argument callback contract for other picker hosts.
     useEffect(() => {
-      if (!onReadyChange) return;
-      const allMapped =
-        variables.length === 0 ||
-        variables.every((v) => mapping[v] && String(mapping[v]).length > 0);
-      const hasRow = !!currentRow;
-      const ready = hasDataInjection || (allMapped && hasRow);
-      onReadyChange(ready, mapping);
-    }, [variables, mapping, currentRow, hasDataInjection, onReadyChange]);
+      onReadyChange?.(ready, mapping);
+      onReadinessChange?.({
+        ready,
+        allMapped,
+        sampleStatus,
+        message: readinessMessage,
+      });
+    }, [
+      ready,
+      mapping,
+      allMapped,
+      sampleStatus,
+      readinessMessage,
+      onReadyChange,
+      onReadinessChange,
+    ]);
+    const retrySampleRow = () => {
+      if (
+        rowType === "Span" &&
+        currentRow &&
+        detailError === SPAN_REFERENCE_ERROR
+      ) {
+        spanRecoveryRef.current = {
+          signature: currentFetchKey,
+          identity: getSpanReadIdentityKey(currentRow),
+        };
+        // An explicit retry starts one bounded list read from the beginning.
+        // Neither prior cursor rows nor cached details prove a fresh winner.
+        listContinuationRef.current = {
+          signature: null,
+          cursor: null,
+          cursorIdentity: null,
+          rows: [],
+          requestedCursorIdentities: [],
+        };
+        detailCacheRef.current.clear();
+        setSpanRecoveryUnavailable(false);
+        setSpanDetail(null);
+        setRows([]);
+        setLoading(true);
+        retryListRead();
+      } else if (!currentRow) retryListRead();
+      else if (rowType === "Session") {
+        if (sessionDetailQuery.isError) sessionDetailQuery.refetch();
+        if (sessionFirstTraceSpansQuery.isError)
+          sessionFirstTraceSpansQuery.refetch();
+      } else retryDetail((revision) => revision + 1);
+    };
 
     // ── Run test ──
     const handleRunTest = useCallback(async () => {
@@ -1577,7 +1776,7 @@ const TracingTestMode = React.forwardRef(
       setResult(null);
       setError(null);
 
-      if (!variables.length) {
+      if (!variables.length && !(taskMapping && isComposite && compositeAdhocConfig)) {
         onTestResult?.(
           false,
           "No variables to map — eval template may still be loading",
@@ -1706,6 +1905,7 @@ const TracingTestMode = React.forwardRef(
       isComposite,
       compositeAdhocConfig,
       startErrorLocalizerPoll,
+      taskMapping,
       codeParams,
       runConfig,
       model,
@@ -1758,7 +1958,7 @@ const TracingTestMode = React.forwardRef(
                   placeholder="Search projects..."
                   InputProps={{
                     ...params.InputProps,
-                    sx: { ...params.InputProps.sx, fontSize: "13px" },
+                    sx: { ...params.InputProps.sx, fontSize: "12px" },
                     endAdornment: loadingProjects ? (
                       <InputAdornment position="end">
                         <CircularProgress size={14} />
@@ -1776,7 +1976,7 @@ const TracingTestMode = React.forwardRef(
                     component="li"
                     key={key}
                     {...rest}
-                    sx={{ ...rest.sx, fontSize: "13px" }}
+                    sx={{ ...rest.sx, fontSize: "12px" }}
                   >
                     {option.name || option.id}
                   </Box>
@@ -2332,6 +2532,26 @@ const TracingTestMode = React.forwardRef(
             </Box>
           )}
 
+        {taskMapping &&
+          !hasDataInjection &&
+          (sampleStatus === "error" ||
+            (spanRecoveryUnavailable && sampleStatus === "empty")) && (
+            <Box role="status">
+              <Typography variant="caption" color="error.main">
+                {sampleMessage}
+              </Typography>
+              {canRetrySample && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={retrySampleRow}
+                >
+                  Retry loading sample row
+                </Button>
+              )}
+            </Box>
+          )}
+
         {/* Variable mapping */}
         {variables.length > 0 &&
           (() => {
@@ -2405,8 +2625,15 @@ const TracingTestMode = React.forwardRef(
                     <MappingRow
                       key={variable}
                       variable={variable}
+                      optional={requiredVariables && !requiredVariables.includes(variable)}
+                      commitOnInput={taskMapping && isComposite}
                       options={optionsByVariable[variable] || fieldNames}
                       value={mapping[variable] || ""}
+                      errorMessage={
+                        unsupportedTaskPath(mapping[variable])
+                          ? taskNativeMappingMessage(mapping[variable])
+                          : undefined
+                      }
                       allowCustomFieldPath={allowCustomFieldPath}
                       disabled={isLoadingRowColumns}
                       isFetchingColumns={isFetchingColumns}
@@ -2475,12 +2702,15 @@ TracingTestMode.displayName = "TracingTestMode";
 TracingTestMode.propTypes = {
   templateId: PropTypes.string,
   variables: PropTypes.array,
+  requiredVariables: PropTypes.arrayOf(PropTypes.string),
+  onMappingEdit: PropTypes.func,
   codeParams: PropTypes.object,
   runConfig: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
   onClearResult: PropTypes.func,
   onReadyChange: PropTypes.func,
+  onReadinessChange: PropTypes.func,
   hasDataInjection: PropTypes.bool,
   initialProjectId: PropTypes.string,
   initialRowType: PropTypes.string,
@@ -2489,6 +2719,7 @@ TracingTestMode.propTypes = {
   compositeAdhocConfig: PropTypes.object,
   localFilters: PropTypes.array,
   allowCustomFieldPath: PropTypes.bool,
+  taskMapping: PropTypes.bool,
 };
 
 export default TracingTestMode;

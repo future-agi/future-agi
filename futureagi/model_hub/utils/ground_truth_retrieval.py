@@ -90,9 +90,9 @@ def detect_input_column_types(
     from agentic_eval.core.utils.llm_payloads import detect_and_build_media_blocks
 
     sample = examples[0]
-    sample_keys = sorted({
-        col for _var, col, _val in _iter_inputs(sample, variable_mapping)
-    })
+    sample_keys = sorted(
+        {col for _var, col, _val in _iter_inputs(sample, variable_mapping)}
+    )
     sample_inputs = {k: sample.get(k) for k in sample_keys if sample.get(k)}
     if not sample_inputs:
         return {}
@@ -127,9 +127,7 @@ def build_ground_truth_blocks(
     from agentic_eval.core.utils.llm_payloads import build_media_content_block
 
     output_col, explanation_col = get_label_columns(role_mapping)
-    key_types = column_types or detect_input_column_types(
-        examples, variable_mapping
-    )
+    key_types = column_types or detect_input_column_types(examples, variable_mapping)
 
     # Per-example labelled framing. Header matches GT_CALIBRATION_INSTRUCTION.
     blocks: list[dict] = []
@@ -141,23 +139,25 @@ def build_ground_truth_blocks(
             if modality in {"image", "audio"} and val:
                 blocks.append({"type": "text", "text": f"- {tmpl_var}:"})
                 try:
-                    blocks.extend(
-                        build_media_content_block(val, modality, tmpl_var)
-                    )
+                    blocks.extend(build_media_content_block(val, modality, tmpl_var))
                 except Exception:
                     blocks.append({"type": "text", "text": f"  {val}"})
             else:
                 blocks.append({"type": "text", "text": f"- {tmpl_var}: {val}"})
         if output_col and output_col in example:
-            blocks.append({
-                "type": "text",
-                "text": f"Expected output: {example[output_col]}",
-            })
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": f"Expected output: {example[output_col]}",
+                }
+            )
         if explanation_col and explanation_col in example:
-            blocks.append({
-                "type": "text",
-                "text": f"Explanation: {example[explanation_col]}",
-            })
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": f"Explanation: {example[explanation_col]}",
+                }
+            )
     return blocks
 
 

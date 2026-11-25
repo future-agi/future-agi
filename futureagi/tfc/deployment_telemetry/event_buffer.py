@@ -174,9 +174,7 @@ def pending_events(
             if path.name.startswith(scoped_prefix):
                 continue
             if path.name.endswith(".json"):
-                legacy_event_id = path.name[
-                    len(EVENT_BUFFER_PREFIX) : -len(".json")
-                ]
+                legacy_event_id = path.name[len(EVENT_BUFFER_PREFIX) : -len(".json")]
                 if legacy_event_id in scoped_event_ids:
                     continue
             try:

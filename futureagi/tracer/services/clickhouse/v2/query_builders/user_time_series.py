@@ -46,8 +46,12 @@ SPANS_FILTERABLE_MATERIALIZED_COLUMNS: tuple[str, ...] = ("trace_name",)
 
 
 def latest_physical_span_rows_sql(
-    *, table: str = "spans", project_predicate: str,
-    start_hour: str, end_hour: str, mutable_columns: tuple[str, ...],
+    *,
+    table: str = "spans",
+    project_predicate: str,
+    start_hour: str,
+    end_hour: str,
+    mutable_columns: tuple[str, ...],
 ) -> str:
     """Fence trusted mutable output columns after full physical FINAL winners.
 
@@ -208,16 +212,19 @@ def _full_snapshot_latest_spans_cte(
     {cte_name} AS (
         SELECT *
         FROM ({
-            latest_physical_span_rows_sql(
-                table=table,
-                project_predicate=project_predicate,
-                start_hour="%(user_snapshot_scan_start)s",
-                end_hour="%(user_snapshot_scan_end)s",
-                mutable_columns=(
-                    "start_time", "is_deleted", "end_user_id", "trace_session_id"
-                ),
-            )
-        }) AS snapshot_spans
+        latest_physical_span_rows_sql(
+            table=table,
+            project_predicate=project_predicate,
+            start_hour="%(user_snapshot_scan_start)s",
+            end_hour="%(user_snapshot_scan_end)s",
+            mutable_columns=(
+                "start_time",
+                "is_deleted",
+                "end_user_id",
+                "trace_session_id",
+            ),
+        )
+    }) AS snapshot_spans
         WHERE snapshot_spans.is_deleted = 0
           AND snapshot_spans.start_time >=
               fromUnixTimestamp64Micro(%(user_snapshot_start_us)s, 'UTC')
@@ -452,7 +459,11 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         eu_map = survivor_map_subquery(self.END_USER_REMAP_TABLE)
         resolved_eu = resolved_id_expr("rs.end_user_id")
 
-        cost_flags = "rs.graph_cost_flags" if closed_projection else graph_cost_flags_sql(prefix="rs.")
+        cost_flags = (
+            "rs.graph_cost_flags"
+            if closed_projection
+            else graph_cost_flags_sql(prefix="rs.")
+        )
         trace_flags = ""
         bucket_flags = ""
         if self.user_membership_plan is not None:
@@ -492,9 +503,20 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                     ON rs.end_user_id = id_remap.any_id
             ) AS graph_user_population""",
             columns=(
-                "id", "parent_span_id", "name", "observation_type", "start_time",
-                "end_user_id", "latency_ms", "total_tokens", "cost", "prompt_tokens",
-                "completion_tokens", "status", "graph_cost_flags", "graph_output_match",
+                "id",
+                "parent_span_id",
+                "name",
+                "observation_type",
+                "start_time",
+                "end_user_id",
+                "latency_ms",
+                "total_tokens",
+                "cost",
+                "prompt_tokens",
+                "completion_tokens",
+                "status",
+                "graph_cost_flags",
+                "graph_output_match",
                 *member_columns,
             ),
         )
@@ -594,20 +616,31 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         """
         return query, self.params
 
-    def format_result(self, rows: list, columns: list[str]) -> dict[str, list[dict[str, Any]]]:
+    def format_result(
+        self, rows: list, columns: list[str]
+    ) -> dict[str, list[dict[str, Any]]]:
         # The inherited formatter expects dict rows for its user-specific keys.
-        rows = [row if isinstance(row, dict) else dict(zip(columns, row, strict=True)) for row in rows]
+        rows = [
+            row if isinstance(row, dict) else dict(zip(columns, row, strict=True))
+            for row in rows
+        ]
         formatted = super().format_result(rows, columns)
         assert self.start_date is not None and self.end_date is not None
         coverage = graph_cost_coverage_series(
-            builder=self, rows=rows, columns=columns, interval=self.interval,
-            start_date=self.start_date, end_date=self.end_date,
+            builder=self,
+            rows=rows,
+            columns=columns,
+            interval=self.interval,
+            start_date=self.start_date,
+            end_date=self.end_date,
         )
         if coverage:
             for metric in ("cost", "total_cost", "avg_cost_per_user"):
                 for point, companion in zip(formatted[metric], coverage, strict=True):
                     point["cost_coverage"] = {
-                        key: value for key, value in companion.items() if key != "timestamp"
+                        key: value
+                        for key, value in companion.items()
+                        if key != "timestamp"
                     }
         return formatted
 
@@ -686,7 +719,12 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
                 )""",
             start_hour="toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))",
             end_hour="toDateTime64(%(end_date)s, 6, 'UTC')",
-            mutable_columns=("start_time", "is_deleted", "end_user_id", "trace_session_id"),
+            mutable_columns=(
+                "start_time",
+                "is_deleted",
+                "end_user_id",
+                "trace_session_id",
+            ),
         )
 
         monetary_rows = graph_monetary_rows_sql(
@@ -705,9 +743,19 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
                     ON rs.trace_session_id = ts_remap.any_id
             ) AS graph_user_detail_population""",
             columns=(
-                "id", "parent_span_id", "name", "observation_type", "start_time",
-                "end_user_id", "trace_session_id", "cost", "total_tokens",
-                "prompt_tokens", "completion_tokens", "graph_cost_flags", "graph_output_match",
+                "id",
+                "parent_span_id",
+                "name",
+                "observation_type",
+                "start_time",
+                "end_user_id",
+                "trace_session_id",
+                "cost",
+                "total_tokens",
+                "prompt_tokens",
+                "completion_tokens",
+                "graph_cost_flags",
+                "graph_output_match",
             ),
         )
         query = f"""

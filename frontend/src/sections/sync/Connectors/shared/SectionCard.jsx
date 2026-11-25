@@ -19,7 +19,7 @@ const SectionCard = ({
           alignItems: "center",
         }}
       >
-        <Typography fontWeight={600} fontSize={13} color="text.primary">
+        <Typography fontWeight={600} fontSize={12} color="text.primary">
           {title}
         </Typography>
         {onActionButtonClick ? (

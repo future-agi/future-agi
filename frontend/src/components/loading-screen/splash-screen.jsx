@@ -9,19 +9,50 @@ import SvgColor from "../svg-color";
 //
 // It waits a moment before showing, so a fast load never flashes it, and the
 // line holds still when the person prefers reduced motion.
+//
+// index.html draws the same splash (#boot-splash) on the first frame. While it
+// is up, every SplashScreen keeps it instead of drawing its own, so the auth,
+// deployment and redirect checks read as one splash. It goes once no
+// SplashScreen is mounted (see releaseBootSplash).
 // ---------------------------------------------------------------------------
 
 const SHOW_AFTER_MS = 300;
 
+let mountedSplashes = 0;
+let removeTimer = null;
+
+const bootSplash = () => document.getElementById("boot-splash");
+
+// Removes the boot splash on the next frame unless another SplashScreen
+// mounts first (one gate handing over to the next in the same commit).
+export function releaseBootSplash() {
+  if (mountedSplashes > 0 || !bootSplash()) return;
+  cancelAnimationFrame(removeTimer);
+  removeTimer = requestAnimationFrame(() => {
+    if (mountedSplashes === 0) bootSplash()?.remove();
+  });
+}
+
 export default function SplashScreen({ sx, ...other }) {
+  const [holdsBoot] = useState(() => Boolean(bootSplash()));
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const id = setTimeout(() => setVisible(true), SHOW_AFTER_MS);
-    return () => clearTimeout(id);
+    mountedSplashes += 1;
+    cancelAnimationFrame(removeTimer);
+    return () => {
+      mountedSplashes -= 1;
+      releaseBootSplash();
+    };
   }, []);
 
-  if (!visible) return null;
+  useEffect(() => {
+    if (holdsBoot) return undefined;
+    const id = setTimeout(() => setVisible(true), SHOW_AFTER_MS);
+    return () => clearTimeout(id);
+  }, [holdsBoot]);
+
+  if (holdsBoot || !visible) return null;
 
   return (
     <Box

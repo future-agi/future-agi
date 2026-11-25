@@ -5,7 +5,7 @@ import re
 import traceback
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
@@ -30,7 +30,7 @@ from tracer.services.trace_investigation import record_trace_notifications
 from tracer.utils.adapters import normalize_span_attributes
 from tracer.utils.otel import bulk_convert_otel_spans_to_observation_spans
 from tracer.utils.parsers import deserialize_trace_payload
-from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+from tracer.utils.pii_scrubber import PIIScrubError, scrub_pii_in_span_batch
 from tracer.utils.pii_settings import get_pii_settings_for_projects
 from tracer.utils.usage_emit import emit_span_ingestion_usage
 
@@ -251,7 +251,12 @@ def _fetch_or_create_traces(
     if not trace_ids:
         return {}
 
-    existing_traces = {t.id: t for t in Trace.objects.filter(id__in=trace_ids)}
+    # Primary: an earlier export batch of the same trace creates it moments
+    # before this one, and a replica that has not applied it would make this
+    # batch COPY it again.
+    existing_traces = {
+        t.id: t for t in Trace.objects.using("default").filter(id__in=trace_ids)
+    }
 
     unique_new_traces = {}
     for d in parsed_data_list:
@@ -799,9 +804,53 @@ def _record_inline_omega_roots(spans: list[ObservationSpan], organization_id: st
         record_trace_notifications(deliveries=deliveries[start : start + 100])
 
 
+# The wait before each retry of a batch whose PII scrub failed. After the last
+# retry the batch is dropped.
+PII_SCRUB_RETRY_DELAYS = (
+    timedelta(minutes=1),
+    timedelta(minutes=5),
+    timedelta(minutes=15),
+)
+
+
+def _retry_unscrubbed_batch(
+    payload_key: str, payload_bytes: bytes, task_args: list, *, attempt: int, error: str
+) -> None:
+    """Enqueue the batch again after a delay, or drop it after the last retry.
+
+    The task runs once and its payload is deleted on read, so the retry stores the
+    payload again. This logs at WARNING and never raises: Sentry attaches the local
+    variables of every frame, the raw batch among them, to each error event.
+    """
+    dropped = attempt >= len(PII_SCRUB_RETRY_DELAYS)
+    if not dropped:
+        try:
+            bulk_create_observation_span_task.apply_async(
+                args=[payload_storage.store(payload_bytes), *task_args],
+                kwargs={"pii_scrub_attempt": attempt + 1},
+                task_id=f"{payload_key}-pii-retry",
+                start_delay=PII_SCRUB_RETRY_DELAYS[attempt],
+            )
+        # The store and Temporal raise many types; any of them drops the batch, logged
+        # below. Raising would hand the raw batch to Sentry in this frame's variables.
+        except Exception as exc:  # noqa: BLE001
+            dropped = True
+            error = f"{error} Retry not enqueued ({type(exc).__name__})."
+    logger.warning(
+        "pii_scrub_batch_dropped" if dropped else "pii_scrub_batch_retried",
+        attempt=attempt,
+        error=error,
+    )
+
+
 @temporal_activity(max_retries=0, time_limit=3600, queue="trace_ingestion")
 def bulk_create_observation_span_task(
-    payload_key: str, organization_id, user_id, workspace_id=None, payload_format="json"
+    payload_key: str,
+    organization_id,
+    user_id,
+    workspace_id=None,
+    payload_format="json",
+    pii_scrub_attempt: int = 0,
 ):
     """
     Temporal activity to create ObservationSpans from a batch of OTEL data using bulk operations.
@@ -813,15 +862,16 @@ def bulk_create_observation_span_task(
         workspace_id: Optional workspace ID
         payload_format: Format of the stored payload — "json" or "protobuf".
             Defaults to "json" for backward compatibility with in-flight tasks.
+        pii_scrub_attempt: How many times this batch's PII scrub failed before.
     """
     try:
         payload_bytes = payload_storage.retrieve(payload_key)
 
         if payload_bytes is None:
             # Expected race: the payload TTL'd out (or its writer hasn't landed)
-            # before this task ran. The raised ValueError below is what Temporal
-            # retries on, so this log is purely informational - WARNING avoids
-            # double-reporting the same condition as a Sentry error.
+            # before this task ran. Nothing retries the raised ValueError
+            # (max_retries=0), and it reaches Sentry, so this log is WARNING
+            # to avoid double-reporting the same condition as a Sentry error.
             logger.warning(
                 "trace_payload_not_found_in_redis",
                 payload_key=payload_key,
@@ -973,6 +1023,15 @@ def bulk_create_observation_span_task(
             source="trace_span",
         )
 
+    except PIIScrubError as exc:
+        # Raised before the first write: the transaction rolled back, nothing is stored.
+        _retry_unscrubbed_batch(
+            payload_key,
+            payload_bytes,
+            [organization_id, user_id, workspace_id, payload_format],
+            attempt=pii_scrub_attempt,
+            error=str(exc),
+        )
     except Exception as exc:
         logger.exception(
             f"Error processing spans in bulk: {exc}\n{traceback.format_exc()}"

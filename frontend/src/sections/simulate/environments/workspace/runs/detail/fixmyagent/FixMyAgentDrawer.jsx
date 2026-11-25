@@ -144,7 +144,12 @@ export default function FixMyAgentDrawer({
         <CustomTabs
           value={tab}
           onChange={(_, v) => setTab(v)}
-          sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          sx={{
+            boxShadow: "none",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
           <Tab
             value="diagnosis"
@@ -190,7 +195,7 @@ export default function FixMyAgentDrawer({
               onClick={onLaunch}
               startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
             >
-              Improve
+              Run Epoch
             </Button>
           </Box>
         )}

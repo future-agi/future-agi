@@ -33,6 +33,7 @@ from django.conf import settings
 
 from model_hub.models.develop_dataset import Cell, Row
 from simulate.models import AgentDefinition, CallExecution, Scenarios, TestExecution
+from simulate.services.call_provider import record_hosted_voice_target
 
 logger = structlog.get_logger(__name__)
 
@@ -77,8 +78,7 @@ def _leased_room_run_seconds(case_count: int, max_seconds: float) -> float:
     outer deadline.
     """
     return (
-        case_count * (max_seconds + _leased_overhead_seconds())
-        + _BASE_CLEANUP_SECONDS
+        case_count * (max_seconds + _leased_overhead_seconds()) + _BASE_CLEANUP_SECONDS
     )
 
 
@@ -326,7 +326,7 @@ def build_start_runner_job(
 
     if mode in _VOICE_MODES:
         simulator_agent = test_execution.simulator_agent or run_test.simulator_agent
-        return _build_voice_job(
+        job = _build_voice_job(
             mode=mode,
             run_id=run_id,
             run_test=run_test,
@@ -336,6 +336,18 @@ def build_start_runner_job(
             simulator_agent=simulator_agent,
             selected_keys=selected_keys,
         )
+        # Freeze the identity resolved by this job, not a fresh lookup of a
+        # mutable version or credentials at result time. Leave sibling calls
+        # untouched when rebuilding only selected attempts.
+        calls = test_execution.calls.filter(
+            scenario_id__in=ordered_ids,
+            deleted=False,
+            status=CallExecution.CallStatus.PENDING,
+        )
+        if call_execution_ids:
+            calls = calls.filter(id__in=call_execution_ids)
+        record_hosted_voice_target(calls, agent_version, job["metadata"]["provider"])
+        return job
 
     adapter, world_kind = _MODE_TO_ENVIRONMENT[mode]
 

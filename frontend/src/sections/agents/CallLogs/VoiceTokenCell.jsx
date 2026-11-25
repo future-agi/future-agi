@@ -6,7 +6,7 @@ import { fShortenNumber } from "src/utils/format-number";
 
 const BreakdownTooltip = ({ promptTokens, completionTokens, totalTokens }) => (
   <Box sx={{ p: 0.5, minWidth: 160 }}>
-    <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
+    <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
       Usage breakdown
     </Typography>
     <BRow
@@ -99,7 +99,7 @@ const VoiceTokenCell = (params) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           color: "text.disabled",
           px: 1.5,
           width: "100%",
@@ -132,11 +132,11 @@ const VoiceTokenCell = (params) => {
             alignItems: "center",
             gap: 0.25,
             whiteSpace: "nowrap",
-            fontSize: 13,
+            fontSize: 12,
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          <Typography component="span" sx={{ fontSize: 13 }}>
+          <Typography component="span" sx={{ fontSize: 12 }}>
             {fShortenNumber(promptTokens)}
           </Typography>
           <Iconify
@@ -145,7 +145,7 @@ const VoiceTokenCell = (params) => {
             sx={{ color: "text.secondary" }}
           />
           <Box component="span" sx={{ mx: 0.25 }} />
-          <Typography component="span" sx={{ fontSize: 13 }}>
+          <Typography component="span" sx={{ fontSize: 12 }}>
             {fShortenNumber(completionTokens)}
           </Typography>
           <Iconify
@@ -155,7 +155,7 @@ const VoiceTokenCell = (params) => {
           />
           <Typography
             component="span"
-            sx={{ fontSize: 13, color: "text.secondary", ml: 0.5 }}
+            sx={{ fontSize: 12, color: "text.secondary", ml: 0.5 }}
           >
             (Σ {fShortenNumber(totalTokens)})
           </Typography>
@@ -164,7 +164,7 @@ const VoiceTokenCell = (params) => {
         <Typography
           variant="body2"
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontVariantNumeric: "tabular-nums",
             whiteSpace: "nowrap",
           }}

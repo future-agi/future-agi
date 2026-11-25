@@ -95,7 +95,11 @@ describe("scenarioOutcomes", () => {
   });
 
   it("counts a held-back scenario the winner never measured as not fixed", () => {
-    const before = [task("a", "failed"), task("b", "failed"), task("c", "passed")];
+    const before = [
+      task("a", "failed"),
+      task("b", "failed"),
+      task("c", "passed"),
+    ];
     const after = [task("a", "passed")];
     expect(heldBackTally(before, after, ["a", "b", "c"])).toEqual({
       fixed: 1,

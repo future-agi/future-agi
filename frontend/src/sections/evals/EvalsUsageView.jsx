@@ -11,6 +11,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { Box, Button, Typography, useTheme } from "@mui/material";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { ShowComponent } from "src/components/show";

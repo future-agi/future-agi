@@ -147,6 +147,7 @@ def _emit_scanner_billing(
             return
 
         from tracer.models.project import Project
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -168,9 +169,9 @@ def _emit_scanner_billing(
         except ImportError:
             token_usage_properties = lambda token_usage: {}
 
-        project = Project.objects.select_related("organization").filter(
-            id=project_id
-        ).first()
+        project = (
+            Project.objects.select_related("organization").filter(id=project_id).first()
+        )
         if not project or not project.organization:
             return
 
@@ -322,9 +323,7 @@ def embed_trace_inputs(trace_ids: List[str], project_id: str) -> int:
     usable = [(inp, text) for inp, text in pairs if text and text.strip()]
     skipped = len(pairs) - len(usable)
     if not usable:
-        logger.info(
-            "no_embeddable_root_inputs", project_id=project_id, skipped=skipped
-        )
+        logger.info("no_embeddable_root_inputs", project_id=project_id, skipped=skipped)
         return 0
 
     embeddable = [inp for inp, _ in usable]

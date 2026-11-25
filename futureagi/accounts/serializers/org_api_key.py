@@ -1,6 +1,8 @@
+from django.utils import timezone
 from rest_framework import serializers
 
 from accounts.models import OrgApiKey
+from tfc.utils.error_codes import get_error_message
 
 
 class OrgApiKeySerializer(serializers.ModelSerializer):
@@ -19,6 +21,19 @@ class UserSecretKeySerializer(serializers.Serializer):
 
 class CreateSecretKeySerializer(serializers.Serializer):
     key_name = serializers.CharField(max_length=100, required=True)
+    expires_at = serializers.DateTimeField(
+        required=False,
+        allow_null=True,
+        help_text="Optional expiry. Omit or send null for a key that never expires.",
+    )
+
+    def validate_expires_at(self, value):
+        if value is not None and value <= timezone.now():
+            raise serializers.ValidationError(
+                get_error_message("API_KEY_EXPIRY_IN_PAST")
+            )
+        return value
+
     # A ``coding_agent`` key may make only the calls of a coding agent's fix loop,
     # on the one simulation environment it names.
     type = serializers.ChoiceField(

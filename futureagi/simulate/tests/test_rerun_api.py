@@ -212,9 +212,54 @@ def call_execution_te2(db, test_execution_2, scenario):
     )
 
 
+def _actor_turn(call_execution):
+    """One actor turn on the call: who spoke it is kept beside the transcript row."""
+    from simulate.models import CallTranscriptActor
+    from simulate.models.test_execution import CallTranscript
+
+    row = CallTranscript.objects.create(
+        call_execution=call_execution,
+        speaker_role=CallTranscript.SpeakerRole.ACTOR,
+        content="Add a stop.",
+    )
+    CallTranscriptActor.objects.create(
+        transcript=row, speaker_name="Rowan", actor_id="friend"
+    )
+
+
+def _snapshot_actor_turns(call_execution):
+    from simulate.models import CallTranscriptActor
+
+    snapshot = CallExecutionSnapshot.objects.get(call_execution=call_execution)
+    return [
+        (one["speaker_role"], one.get("speaker_name"), one.get("actor_id"))
+        for one in snapshot.transcripts
+        if one["speaker_role"] == "actor"
+    ], CallTranscriptActor.objects.filter(
+        transcript__call_execution=call_execution
+    ).exists()
+
+
 # ============================================================================
 # CallExecutionRerunView Tests (existing endpoint)
 # ============================================================================
+
+
+def _attempt_keys():
+    from simulate.constants.hosted_harness import TRIAL_STATE_KEY
+    from simulate.services.hosted_harness_ingestion import WORLD_ACTIONS_KEY
+
+    return {
+        TRIAL_STATE_KEY: {"state_changes": [{"who": "agent", "committed": 1}]},
+        WORLD_ACTIONS_KEY: [{"actor_id": "a1", "action": "approve"}],
+        "hosted_harness_receipt": {"sub_goals": [{"name": "s", "passed": True}]},
+    }
+
+
+def _with_attempt_keys(call):
+    CallExecution.objects.filter(id=call.id).update(
+        call_metadata={**(call.call_metadata or {}), **_attempt_keys()}
+    )
 
 
 @pytest.mark.integration
@@ -285,6 +330,23 @@ class TestCallExecutionRerunView:
         assert data["success_count"] == 1
         assert str(call_execution.id) in data["successful_reruns"]
 
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_an_evals_only_rerun_keeps_the_attempt_s_trial_and_receipt(
+        self, mock_rerun, auth_client, test_execution, call_execution
+    ):
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        _with_attempt_keys(call_execution)
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(test_execution.id),
+            {"rerun_type": "eval_only", "call_execution_ids": [str(call_execution.id)]},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        call_execution.refresh_from_db()
+        # Re-scoring the same attempt: its trial, world actions and receipt stay on the call.
+        for key, value in _attempt_keys().items():
+            assert call_execution.call_metadata[key] == value
+
     @patch(
         "simulate.temporal.client.rerun_call_executions",
         side_effect=TimeoutError("temporal dispatch timed out"),
@@ -351,6 +413,23 @@ class TestCallExecutionRerunView:
         assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
 
     @pytest.mark.requires_ee
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_rerun_call_and_eval_keeps_who_spoke_each_actor_turn(
+        self, mock_rerun, auth_client, test_execution, call_execution
+    ):
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        _actor_turn(call_execution)
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(test_execution.id),
+            {"rerun_type": "call_and_eval", "select_all": True},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        turns, left_behind = _snapshot_actor_turns(call_execution)
+        assert turns == [("actor", "Rowan", "friend")]
+        assert not left_behind
+
+    @pytest.mark.requires_ee
     @override_settings(HARNESS_PROVIDER="sandbox")
     @patch(
         "simulate.services.harness_credentials.credentials_for_rerun",
@@ -410,9 +489,7 @@ class TestCallExecutionRerunView:
         rerun_saved_job.assert_called_once_with(
             str(job_id),
             {
-                "environment_values": {
-                    "LIVEKIT_URL": "wss://example.invalid"
-                },
+                "environment_values": {"LIVEKIT_URL": "wss://example.invalid"},
                 "secret_refs": {},
                 "only": [],
             },
@@ -466,9 +543,7 @@ class TestRerunParallelismAdmission:
         HARNESS_PARALLEL_SNAPSHOT_DIGESTS=[],
         ALK_DAYTONA_DOCKERFILE="",
     )
-    def test_saved_w4_job_reruns_at_w1_when_flag_off(
-        self, db, organization, workspace
-    ):
+    def test_saved_w4_job_reruns_at_w1_when_flag_off(self, db, organization, workspace):
         from simulate.services.hosted_harness import register_attempt
 
         job = self._saved_w4_job(organization, workspace)
@@ -922,6 +997,141 @@ class TestTestExecutionRerunView:
         test_execution_2.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
         assert test_execution_2.status == TestExecution.ExecutionStatus.RUNNING
+
+    @pytest.mark.requires_ee
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_bulk_rerun_call_and_eval_keeps_who_spoke_each_actor_turn(
+        self, mock_rerun, auth_client, run_test, test_execution, call_execution
+    ):
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        _actor_turn(call_execution)
+        with CaptureQueriesContext(connection) as queries:
+            response = auth_client.post(
+                self.URL_TEMPLATE.format(run_test.id),
+                {
+                    "rerun_type": "call_and_eval",
+                    "test_execution_ids": [str(test_execution.id)],
+                },
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        # The calls are written back under a row lock, so a concurrent metadata write is not lost.
+        assert any(
+            "FOR UPDATE" in one["sql"] and '"simulate_call_execution"' in one["sql"]
+            for one in queries.captured_queries
+        )
+        turns, left_behind = _snapshot_actor_turns(call_execution)
+        assert turns == [("actor", "Rowan", "friend")]
+        assert not left_behind
+        # The bulk path keeps the closed attempt's record on the call too, by its snapshot's id.
+        from simulate.services.harness_worker_states import ATTEMPTS_KEY
+
+        call_execution.refresh_from_db()
+        snapshot = CallExecutionSnapshot.objects.get(call_execution=call_execution)
+        assert list(call_execution.call_metadata[ATTEMPTS_KEY]) == [str(snapshot.id)]
+
+    @pytest.mark.requires_ee
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_a_bulk_rerun_starts_each_new_attempt_without_the_earlier_worker_record(
+        self,
+        mock_rerun,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+    ):
+        from simulate.services.harness_worker_states import ATTEMPTS_KEY
+        from simulate.services.harness_worker_timeline import worker_timeline
+        from simulate.services.harness_workers import READ_KEY, WORKERS_KEY
+        from simulate.tests.test_harness_workers import DECLARED, RUN, SPANS
+
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        calls = (call_execution, call_execution_te2)
+        timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
+        for index, call in enumerate(calls):
+            # Each call's own record: its workers carry the call's index in their names.
+            record = {
+                **timeline,
+                "workers": [
+                    {**one, "name": f"{one['name']}-{index}"}
+                    for one in timeline["workers"]
+                ],
+                "collected_at": "2026-11-17T09:00:00+00:00",
+            }
+            CallExecution.objects.filter(id=call.id).update(
+                call_metadata={
+                    **(call.call_metadata or {}),
+                    **_attempt_keys(),
+                    WORKERS_KEY: record,
+                    READ_KEY: {"at": "2026-11-17T09:00:00+00:00", "failed": False},
+                }
+            )
+
+        from simulate.views import run_test as run_test_view
+
+        snapshot_of = run_test_view.call_snapshot
+
+        def snapshot_then_written(call):
+            # A worker read lands on the row after the rerun loaded it.
+            CallExecution.objects.filter(id=call.id).update(
+                call_metadata={**(call.call_metadata or {}), "written_meanwhile": True}
+            )
+            return snapshot_of(call)
+
+        with patch.object(run_test_view, "call_snapshot", snapshot_then_written):
+            response = auth_client.post(
+                self.URL_TEMPLATE.format(run_test.id),
+                {"rerun_type": "call_and_eval", "select_all": True},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+
+        for index, call in enumerate(calls):
+            call.refresh_from_db()
+            assert call.call_metadata["written_meanwhile"] is True
+            # The new attempt starts with none of the earlier attempt's own keys.
+            assert not {WORKERS_KEY, READ_KEY, *_attempt_keys()} & set(
+                call.call_metadata
+            )
+            url = f"/simulate/v3/call-executions/{call.id}/workers/"
+            # The new attempt has not ended: no record yet, never the earlier attempt's.
+            assert auth_client.get(url).status_code == status.HTTP_204_NO_CONTENT
+            snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
+            earlier = auth_client.get(url, {"attempt": str(snapshot.id)})
+            assert earlier.status_code == status.HTTP_200_OK, earlier.content
+            assert {one["name"] for one in earlier.json()["workers"]} == {
+                f"{one['name']}-{index}" for one in timeline["workers"]
+            }
+            # The earlier attempt keeps its trial for its own World view, and its receipt's sub-goals.
+            detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/").json()
+            [attempt] = detail.get("result", detail)["earlier_attempts"]
+            assert attempt["trial_state"]["state_changes"][0]["who"] == "agent"
+            kept = call.call_metadata[ATTEMPTS_KEY][str(snapshot.id)]
+            assert (
+                kept["hosted_harness_receipt"]
+                == _attempt_keys()["hosted_harness_receipt"]
+            )
+
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_a_bulk_evals_only_rerun_keeps_the_attempt_s_trial_and_receipt(
+        self, mock_rerun, auth_client, run_test, test_execution, call_execution
+    ):
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        _with_attempt_keys(call_execution)
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(run_test.id),
+            {"rerun_type": "eval_only", "test_execution_ids": [str(test_execution.id)]},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        call_execution.refresh_from_db()
+        for key, value in _attempt_keys().items():
+            assert call_execution.call_metadata[key] == value
 
     def test_rerun_missing_params(self, auth_client, run_test):
         """Test rerun with neither select_all nor test_execution_ids."""
@@ -2349,7 +2559,6 @@ class TestTestExecutionRuntimeContracts:
             execution.refresh_from_db()
             assert execution.status == TestExecution.ExecutionStatus.COMPLETED
 
-
     def _suite_eval_on_a_finished_harness_run(self, run_test, test_execution):
         self._hosted_job_for(test_execution, HostedHarnessJob.State.COMPLETED)
         template = EvalTemplate.objects.create(
@@ -2733,9 +2942,7 @@ class TestTestExecutionDeleteView:
 class TestEvalExplanationSummaryRefreshView:
     """Tests for POST /simulate/test-executions/<uuid>/eval-explanation-summary/refresh/"""
 
-    URL_TEMPLATE = (
-        "/simulate/test-executions/{}/eval-explanation-summary/refresh/"
-    )
+    URL_TEMPLATE = "/simulate/test-executions/{}/eval-explanation-summary/refresh/"
 
     @patch(
         "simulate.views.run_test.run_eval_summary_task.apply_async",
@@ -2798,7 +3005,10 @@ class TestOptimiserAnalysisRefreshView:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["status"] is True
-        assert response.data["result"]["status"] == AgentOptimiserRun.OptimiserStatus.FAILED
+        assert (
+            response.data["result"]["status"]
+            == AgentOptimiserRun.OptimiserStatus.FAILED
+        )
         mock_task.delay.assert_called_once()
 
         run = AgentOptimiserRun.objects.order_by("-created_at").first()

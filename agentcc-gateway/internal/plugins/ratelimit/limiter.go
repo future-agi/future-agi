@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"math"
 	"sync"
 	"time"
 )
@@ -102,7 +103,10 @@ func (r *RateLimiter) window(key string, now time.Time) (w *windowState, resetSe
 		elapsed = 0
 	}
 
-	resetSeconds = int((windowDuration - elapsed).Seconds())
+	// Rounded up: a client that waits this long, as Retry-After tells it to,
+	// must land in the next window. Truncating sent it back a fraction of a
+	// second before the reset, to be refused again.
+	resetSeconds = int(math.Ceil((windowDuration - elapsed).Seconds()))
 	if resetSeconds < 1 {
 		resetSeconds = 1
 	}

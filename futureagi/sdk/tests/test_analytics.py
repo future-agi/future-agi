@@ -9,7 +9,9 @@ Tests for the three simulation analytics endpoints:
 These endpoints use APIKeyAuthentication (x-api-key / x-secret-key headers).
 """
 
+import json
 import uuid
+from itertools import permutations
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -858,7 +860,7 @@ class TestSimulationRunsView:
 class TestSimulationAnalyticsView:
     """Happy path tests for GET /sdk/api/v1/simulation/analytics/."""
 
-    def _mock_connection_for_analytics(self, mock_conn):
+    def _mock_connection_for_analytics(self, mock_conn, eval_rows=FAKE_EVAL_ROWS):
         """Set up mock connection returning eval and kpi cursors."""
         mock_cursor_eval = _build_mock_cursor(
             [
@@ -869,7 +871,7 @@ class TestSimulationAnalyticsView:
                 "choice_value",
                 "choice_count",
             ],
-            FAKE_EVAL_ROWS,
+            eval_rows,
             single=False,
         )
         mock_cursor_kpi = _build_mock_cursor(FAKE_KPI_COLUMNS, FAKE_KPI_ROW)
@@ -948,6 +950,252 @@ class TestSimulationAnalyticsView:
         assert eval_averages["avg_accuracy"] == 50.0
         assert "avg_fluency" in eval_averages
         assert eval_averages["avg_fluency"] == 0.85
+
+    @pytest.mark.parametrize(
+        ("eval_rows", "expected_json"),
+        [
+            (
+                [
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 4),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice":{"positive":4}}',
+            ),
+            (
+                [
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 4),
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice":{"positive":4}}',
+            ),
+            (
+                [
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 4),
+                    ("eval-other", "Avg Tone__eval-choice", "choices", None, "no", 2),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice_":{"positive":4},'
+                '"avg_tone__eval-choice":{"no":2}}',
+            ),
+            (
+                [
+                    ("eval-numeric", "Tone", "choices", 4.0, None, 0),
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-numeric":4.0}',
+            ),
+            (
+                [
+                    ("eval-first", "Tone", "score", 10.0, None, 0),
+                    ("x__y", "Tone", "score", 20.0, None, 0),
+                    ("eval-other", "Tone__x", "score", 30.0, None, 0),
+                    ("y", "Tone__x", "score", 40.0, None, 0),
+                ],
+                '{"avg_tone":10.0,"avg_tone__x__y":20.0,'
+                '"avg_tone__x":30.0,"avg_tone__x__y_":40.0}',
+            ),
+            (
+                [
+                    ("eval-first", "Tone", "score", 75.0, None, None),
+                    ("eval-second", "tone", "score", 65.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-second":65.0}',
+            ),
+            (
+                [
+                    ("eval-second", "tone", "score", 65.0, None, None),
+                    ("eval-first", "Tone", "score", 75.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-second":65.0}',
+            ),
+            (
+                [
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                    ("eval-choice", "Sentiment", "choices", None, "positive", 4),
+                ],
+                '{"avg_tone":75.0,"sentiment":{"positive":4}}',
+            ),
+            (
+                [
+                    ("eval-category", "Avg Tone", "choices", None, "positive", 2),
+                    ("eval-numeric", "Tone", "choices", 4.0, None, 0),
+                ],
+                '{"avg_tone":4.0,"avg_tone__eval-category":{"positive":2}}',
+            ),
+            (
+                [
+                    ("eval-numeric", "Tone", "choices", 4.0, None, 0),
+                    ("eval-category", "Avg Tone", "choices", None, "positive", 2),
+                ],
+                '{"avg_tone":4.0,"avg_tone__eval-category":{"positive":2}}',
+            ),
+            (
+                [
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 2),
+                    ("eval-empty", "Empty", "choices", None, None, 0),
+                    ("eval-score", "Tone", "score", 75.0, None, 0),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice":{"positive":2}}',
+            ),
+            (
+                [
+                    ("eval-shared", "Tone", "Pass/Fail", 66.7, None, 0),
+                    ("eval-shared", "Tone", "score", None, None, 0),
+                    ("eval-other", "Accuracy", "score", 82.5, None, 0),
+                ],
+                '{"avg_tone":0,"avg_accuracy":82.5}',
+            ),
+            (
+                [
+                    ("eval-shared", "Tone", "score", None, None, 0),
+                    ("eval-shared", "Tone", "Pass/Fail", 66.7, None, 0),
+                    ("eval-other", "Accuracy", "score", 82.5, None, 0),
+                ],
+                '{"avg_tone":66.7,"avg_accuracy":82.5}',
+            ),
+            (
+                [
+                    ("eval-category", "Avg Tone", "choices", None, "positive", 2),
+                    ("eval-shared", "Tone", "score", None, None, 0),
+                    ("eval-shared", "Tone", "Pass/Fail", 66.7, None, 0),
+                ],
+                '{"avg_tone":66.7,"avg_tone__eval-category":{"positive":2}}',
+            ),
+        ],
+    )
+    def test_execution_id_eval_averages_keep_distinct_metrics(
+        self, sdk_client, test_execution, call_execution, eval_rows, expected_json
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL,
+                {"execution_id": str(test_execution.id)},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        averages = response.json()["result"]["eval_averages"]
+        assert averages == json.loads(expected_json)
+
+    @pytest.mark.parametrize(
+        "eval_rows",
+        permutations(
+            [
+                ("eval-shared", "Tone", "score", 75.0, None, None),
+                ("eval-shared", "tone", "score", 65.0, None, None),
+                ("eval-shared", "TONE", "score", 55.0, None, None),
+            ]
+        ),
+    )
+    def test_execution_id_repeated_metric_names_keep_prior_value(
+        self, sdk_client, test_execution, call_execution, eval_rows
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL,
+                {"execution_id": str(test_execution.id)},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        averages = response.json()["result"]["eval_averages"]
+        assert averages == {"avg_tone": eval_rows[-1][3]}
+
+    @pytest.mark.parametrize(
+        "eval_rows",
+        [
+            [
+                ("eval-a", "Tone", "score", 75.0, None, None),
+                ("eval-b", "tone", "Pass/Fail", 50.0, None, None),
+                ("eval-b", "TONE", "score", 40.0, None, None),
+            ],
+            [
+                ("eval-b", "TONE", "score", 40.0, None, None),
+                ("eval-a", "Tone", "score", 75.0, None, None),
+                ("eval-b", "tone", "Pass/Fail", 50.0, None, None),
+            ],
+        ],
+    )
+    def test_execution_id_repeated_rows_reuse_metric_key(
+        self, sdk_client, test_execution, call_execution, eval_rows
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL, {"execution_id": str(test_execution.id)}
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        last_b_value = next(row[3] for row in reversed(eval_rows) if row[0] == "eval-b")
+        assert response.json()["result"]["eval_averages"] == {
+            "avg_tone": 75.0,
+            "avg_tone__eval-b": last_b_value,
+        }
+
+    @pytest.mark.parametrize(
+        "eval_rows",
+        [
+            [
+                ("eval-errored", "Tone", "choices", None, None, 0),
+                ("eval-valid", "TONE", "choices", None, "Positive", 4),
+            ],
+            [
+                ("eval-valid", "TONE", "choices", None, "Positive", 4),
+                ("eval-errored", "Tone", "choices", None, None, 0),
+            ],
+        ],
+    )
+    def test_execution_id_errored_choice_does_not_claim_key(
+        self, sdk_client, test_execution, call_execution, eval_rows
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL, {"execution_id": str(test_execution.id)}
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["eval_averages"] == {"tone": {"positive": 4}}
 
     def test_execution_id_system_summary_populated(
         self, sdk_client, test_execution, call_execution

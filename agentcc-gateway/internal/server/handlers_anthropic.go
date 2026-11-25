@@ -72,10 +72,11 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = model
 	rc.IsStream = isStream
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	// Extract headers.
 	setAuthMetadataFromRequest(rc, r)
+	applyCacheHeaders(rc, r)
 	// Caller dimensions, from the x-agentcc-metadata header and the body's own
 	// non-spec fields. Read from the raw bytes: the native pass-through below
 	// never unmarshals this body.
@@ -142,6 +143,10 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if !completeNativeInput("anthropic", body) {
+		rc.GuardrailInputUnsupported = "Messages input contains content without a complete text projection"
+	}
+
 	// Fast path: provider natively speaks Anthropic.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
 		if rc.Metadata["model_alias"] != "" || upstreamModel != model {
@@ -176,7 +181,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	canonicalReq, drops, err := translator.RequestToCanonical(body)
 	if err != nil {
-		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, errBody, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusBadRequest,
 			Type:    models.ErrTypeInvalidRequest,
 			Message: err.Error(),
@@ -186,13 +191,15 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		w.Write(errBody)
 		return
 	}
+	canonicalReq.TranslatedFrom = "anthropic"
+	canonicalReq.Model = upstreamModel
+	canonicalReq.Stream = isStream
+	rc.TranslationDrops = drops
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.Model = upstreamModel
-	canonicalReq.Stream = isStream
 
 	if isStream {
 		h.handleAnthropicStreamViaCanonical(ctx, w, rc, provider, translator, canonicalReq)
@@ -237,7 +244,7 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	}
 
 	rc.Model = model
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 
 	timeout := h.resolveTimeout(rc, r)
@@ -281,6 +288,12 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	provider, upstreamModel, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
 	if err != nil {
 		writeAnthropicErrorFromError(w, err)
+		return
+	}
+
+	// count_tokens skips the pipeline, but not its access checks.
+	if apiErr := h.engine.CheckAccess(ctx, rc); apiErr != nil {
+		writeAnthropicErrorFromError(w, apiErr)
 		return
 	}
 
@@ -340,15 +353,17 @@ func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.Response
 	var respBody []byte
 	var statusCode int
 
-	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.processTextInspection(ctx, rc, "messages.create", func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		respBody, statusCode, callErr = ap.CreateAnthropicMessage(ctx, body, headers)
 		if callErr != nil {
 			return callErr
 		}
+		recordServedBy(rc, ap)
 		if statusCode < 400 {
 			applyAnthropicUsage(rc, respBody)
 			rc.GuardrailResponse = assistantText(anthropicResponseText(respBody))
+			setNativeOutputProjection(rc, "anthropic", respBody)
 		}
 		return nil
 	})
@@ -437,9 +452,12 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 	var statusCode int
 
 	// Post-plugins wait for the close, when the counts are known.
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	if err := h.processTextInspection(ctx, rc, "messages.create", func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		stream, statusCode, callErr = ap.StreamAnthropicMessage(ctx, body, headers)
+		if callErr == nil {
+			recordServedBy(rc, ap)
+		}
 		return callErr
 	}); err != nil {
 		writeAnthropicErrorFromError(w, err)
@@ -612,26 +630,28 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	mapping := takeToolNameMapping(canonicalReq)
 
 	var canonicalResp *models.ChatCompletionResponse
-	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.processTextInspection(ctx, rc, "messages.create", func(ctx context.Context, rc *models.RequestContext) error {
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		var callErr error
-		canonicalResp, callErr = translatedChatCompletion(ctx, provider, canonicalReq)
+		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
 			return callErr
 		}
+		recordServedBy(rc, provider)
 		rc.Response = canonicalResp
 		return nil
 	})
 	if err != nil {
 		var apiErr *models.APIError
 		if errors.As(err, &apiErr) {
-			status, body, ct := translator.ErrorFromCanonical(apiErr)
+			status, body, ct := inspectionErrorFromCanonical(w, translator, apiErr)
 			h.setAgentccHeaders(w, rc)
 			w.Header().Set("Content-Type", ct)
 			w.WriteHeader(status)
 			w.Write(body)
 			return
 		}
-		status, body, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, body, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusBadGateway,
 			Type:    models.ErrTypeServer,
 			Message: err.Error(),
@@ -648,7 +668,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 		canonicalResp = rc.Response
 	}
 	if canonicalResp == nil {
-		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, errBody, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusInternalServerError,
 			Type:    models.ErrTypeServer,
 			Message: "no response from provider",
@@ -694,7 +714,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	}
 
 	if marshalErr != nil {
-		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, errBody, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusInternalServerError,
 			Type:    models.ErrTypeServer,
 			Message: "failed to format response: " + marshalErr.Error(),
@@ -734,19 +754,27 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 
 	// Pre-plugins run before the upstream stream opens; post-plugins wait for
 	// the final chunk, which is where usage arrives.
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	if err := h.processTextInspection(ctx, rc, "messages.create", func(ctx context.Context, rc *models.RequestContext) error {
 		// Do not commit a 200/SSE response until the upstream has actually
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		for attempt := 0; attempt < 2; attempt++ {
-			rawChunkCh, errCh = translatedStreamChatCompletion(streamCtx, provider, canonicalReq)
+			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
 			if rawChunkCh == nil {
 				return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
 			}
 			chunk, err := waitForFirstStreamChunk(streamCtx, rawChunkCh, errCh)
 			if err == nil {
 				firstChunk = chunk
+				recordServedBy(rc, provider)
 				return nil
+			}
+			// A stream that never started because the deadline passed is a
+			// timeout: answer 504 now rather than retry or report a bare
+			// context error as a 500.
+			if streamCtx.Err() != nil {
+				return deadlineAsTimeout(streamCtx, err)
 			}
 			var apiErr *models.APIError
 			if attempt == 1 || !errors.As(err, &apiErr) || (apiErr.Status != http.StatusBadGateway && apiErr.Status != http.StatusGatewayTimeout) {
@@ -754,7 +782,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			}
 			select {
 			case <-streamCtx.Done():
-				return streamCtx.Err()
+				return deadlineAsTimeout(streamCtx, streamCtx.Err())
 			case <-time.After(250 * time.Millisecond):
 			}
 		}
@@ -943,22 +971,14 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	}
 }
 
-// translatedChatCompletion calls provider with a request translated from
-// another dialect: over the Responses API when the model refuses the request on
-// chat completions, as gpt-5.6 refuses function tools while it reasons.
-func translatedChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
-	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
-		return rp.ChatCompletionViaResponses(ctx, req)
+// deadlineAsTimeout is err, for a stream that could not start before ctx
+// ended, as the gateway timeout it is when ctx reached its deadline. When the
+// client left instead, nobody is reading, and err is returned as it is.
+func deadlineAsTimeout(ctx context.Context, err error) error {
+	if ctx.Err() == nil || errors.Is(ctx.Err(), context.Canceled) {
+		return err
 	}
-	return provider.ChatCompletion(ctx, req)
-}
-
-// translatedStreamChatCompletion is translatedChatCompletion for a stream.
-func translatedStreamChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
-	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
-		return rp.StreamChatCompletionViaResponses(ctx, req)
-	}
-	return provider.StreamChatCompletion(ctx, req)
+	return models.ErrGatewayTimeout("request timed out before the stream started")
 }
 
 // writeAnthropicErrorFromError converts an error to Anthropic error format.
@@ -1109,4 +1129,65 @@ func setUsageResponse(rc *models.RequestContext, promptTokens, completionTokens 
 			TotalTokens:      promptTokens + completionTokens,
 		},
 	}
+}
+
+// noteResponsesRouteDrops adds what provider's Responses route drops from a
+// translated request to the drops the route reports (x-agentcc-translation-drops
+// and the log's translation_drops). It runs in the provider call, after the
+// pre-plugins, so a request a policy changed or refused reports only what its
+// final form loses.
+func noteResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
+	rc.ResponsesCarriage = responsesCarriage(provider, req)
+	setResponsesRouteDrops(w, rc, responsesRouteDrops(provider, req))
+}
+
+// noteChatResponsesRouteDrops records what provider's Responses route drops
+// from any chat request: each as <name>_unsupported in the log's translation_drops
+// and the x-agentcc-translation-drops header, the gateway's notes channel. It
+// runs per provider attempt, so a failover attempt never keeps another's.
+func noteChatResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
+	rc.ResponsesCarriage = responsesCarriage(provider, req)
+	drops := responsesRouteDrops(provider, req)
+	names := make([]string, len(drops))
+	for i, drop := range drops {
+		names[i] = drop + "_unsupported"
+	}
+	setResponsesRouteDrops(w, rc, names)
+}
+
+// Rebuild per attempt from trusted translator notes, never from headers or
+// arbitrary metadata. A nil writer supports async/scheduled request logs;
+// their admission response precedes execution and cannot report future drops.
+func setResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, extra []string) {
+	joined := rc.SetResponsesRouteDrops(extra)
+	if w == nil {
+		return
+	}
+	if joined == "" {
+		w.Header().Del("x-agentcc-translation-drops")
+		return
+	}
+	w.Header().Set("x-agentcc-translation-drops", joined)
+}
+
+// responsesCarriage reports whether provider sends req over its Responses
+// route. The response cache stores this with the response, so a hit can name
+// what that route omits from the request the cached answer is served to.
+func responsesCarriage(provider providers.Provider, req *models.ChatCompletionRequest) bool {
+	rp, ok := provider.(interface {
+		ChatNeedsResponses(*models.ChatCompletionRequest) bool
+	})
+	return ok && rp.ChatNeedsResponses(req)
+}
+
+// responsesRouteDrops names what provider's Responses route will omit;
+// nil for any other provider, route or invalid conversion.
+func responsesRouteDrops(provider providers.Provider, req *models.ChatCompletionRequest) []string {
+	rp, ok := provider.(interface {
+		ResponsesDrops(*models.ChatCompletionRequest) []string
+	})
+	if !ok {
+		return nil
+	}
+	return rp.ResponsesDrops(req)
 }

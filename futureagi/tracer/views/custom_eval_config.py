@@ -41,7 +41,9 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
         queryset = super().get_queryset()
 
         if custom_eval_config_id:
-            queryset = queryset.filter(id=custom_eval_config_id)
+            # Primary: a config is opened, changed or deleted right after it
+            # is created, before a replica has applied it.
+            queryset = queryset.using("default").filter(id=custom_eval_config_id)
 
         eval_template_id = self.request.query_params.get("eval_template_id")
         if eval_template_id:
@@ -103,7 +105,10 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
         try:
             custom_eval_config_id = kwargs.get("pk")
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
+                # Primary: the task panel edits an eval moments after creating
+                # it, and the whole row loaded here is saved back, so a stale
+                # copy would 400 or undo the previous edit.
+                custom_eval_config = CustomEvalConfig.objects.using("default").get(
                     id=custom_eval_config_id,
                     project__organization=getattr(request, "organization", None)
                     or request.user.organization,
@@ -218,9 +223,13 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                         f"Invalid JSON in eval_tag configuration: {str(e)}"
                     )
 
-            conflicting_config = CustomEvalConfig.objects.filter(
-                query & Q(deleted=False)
-            ).first()
+            # Primary: a config created moments ago must count as a conflict,
+            # or ingestion would quietly reuse it with the old mapping.
+            conflicting_config = (
+                CustomEvalConfig.objects.using("default")
+                .filter(query & Q(deleted=False))
+                .first()
+            )
 
             if conflicting_config:
                 return self._gm.success_response(
@@ -266,17 +275,27 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             # still goes through the router for EvalGroup (likely landing
             # on `default`) and remains a pre-existing N+1. We do NOT fix
             # that here — fixing the serializer is a separate refactor.
-            queryset = (
-                CustomEvalConfig.objects.db_manager(
+            # `fresh` (the Ask page) reads the primary: it reuses an evaluator
+            # or picks a unique name from this list right after creating one.
+            # Every other caller keeps the replica-eligible alias.
+            manager = (
+                CustomEvalConfig.objects.db_manager("default")
+                if query_data.get("fresh")
+                else CustomEvalConfig.objects.db_manager(
                     DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
                 )
-                .filter(
-                    deleted=False,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
-                .all()
             )
+            from tracer.views.observation_span import _project_workspace_scope_q
+
+            # Only the request's workspace, fresh or not. CustomEvalConfig has
+            # no workspace of its own, so its manager adds no workspace
+            # filter and the organization alone spans sibling workspaces.
+            # A join on the project's workspace works on either alias, and,
+            # unlike Project's manager, keeps configs on simulation and
+            # soft-deleted projects.
+            queryset = manager.filter(
+                _project_workspace_scope_q(request), deleted=False
+            ).all()
             project_id = query_data.get("project_id")
             if project_id:
                 queryset = queryset.filter(project_id=project_id)
@@ -303,7 +322,9 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             serializer.is_valid(raise_exception=True)
 
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
+                # Primary: a re-run can follow the config's creation within the
+                # replica's lag.
+                custom_eval_config = CustomEvalConfig.objects.using("default").get(
                     id=serializer.validated_data.get("custom_eval_config_id"),
                     project__organization=getattr(request, "organization", None)
                     or request.user.organization,

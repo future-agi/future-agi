@@ -13,7 +13,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.conf import settings
@@ -49,6 +49,9 @@ from tracer.services.users_matching_walk import (
     walk_matching_activity_page,
 )
 from tracer.services.users_walk_witness import WalkedTypedFilter, typed_walk_filter
+
+if TYPE_CHECKING:
+    from tracer.services.derived_metrics.base_list_current import CurrentFactsRead
 
 logger = structlog.get_logger(__name__)
 
@@ -394,7 +397,8 @@ def _users_attr_enrichment_query(
         )
     if walked_typed_filter is not None:
         params.update(walked_typed_filter.order_params)
-        matching_activity_clauses.append(walked_typed_filter.order_clause)
+        if walked_typed_filter.order_clause:
+            matching_activity_clauses.append(walked_typed_filter.order_clause)
     matching_activity_projection = (
         ",\n        maxIf(latest_start_time, (("
         + ") OR (".join(matching_activity_clauses)
@@ -402,6 +406,14 @@ def _users_attr_enrichment_query(
         if matching_activity_clauses
         else ""
     )
+    if walked_typed_filter is not None and walked_typed_filter.canonical_values:
+        # One newest timestamp per distinct stored value, not one record per
+        # span. Python applies the very same canonical comparison as membership.
+        matching_activity_projection = """,
+        maxMapIf(
+            map(assumeNotNull(latest_attribute_value_json), latest_start_time),
+            latest_attribute_value_type = 'string'
+        ) AS canonical_string_activity"""
     sql = f"""
     WITH
     eu_survivor_map AS ({eu_map}),
@@ -432,38 +444,32 @@ def _users_attr_enrichment_query(
             argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
             argMax(start_time, _version) AS latest_start_time,
             argMax(
-                tuple(
-                    multiIf(
-                        notEmpty(JSONExtractRaw(attributes_extra, attribute_key)),
-                            JSONExtractRaw(attributes_extra, attribute_key),
-                        mapContains(attrs_bool, attribute_key),
-                            if(attrs_bool[attribute_key] != 0, 'true', 'false'),
-                        mapContains(attrs_number, attribute_key),
+                multiIf(
+                    attributes_extra NOT IN ('', '{{}}', 'null')
+                        AND notEmpty(JSONExtractRaw(attributes_extra, attribute_key)),
+                        tuple('json', JSONExtractRaw(attributes_extra, attribute_key)),
+                    mapContains(attrs_bool, attribute_key),
+                        tuple(
+                            'boolean',
+                            if(attrs_bool[attribute_key] != 0, 'true', 'false')
+                        ),
+                    mapContains(attrs_number, attribute_key),
+                        tuple(
+                            'number',
                             if(
                                 isFinite(attrs_number[attribute_key]),
                                 toString(attrs_number[attribute_key]),
                                 'null'
-                            ),
-                        mapContains(attrs_string, attribute_key),
-                            toJSONString(attrs_string[attribute_key]),
-                        ''
-                    )
+                            )
+                        ),
+                    mapContains(attrs_string, attribute_key),
+                        tuple('string', toJSONString(attrs_string[attribute_key])),
+                    tuple('', '')
                 ),
                 _version
-            ).1 AS latest_attribute_value_json,
-            argMax(
-                tuple(
-                    multiIf(
-                        notEmpty(JSONExtractRaw(attributes_extra, attribute_key)),
-                            'json',
-                        mapContains(attrs_bool, attribute_key), 'boolean',
-                        mapContains(attrs_number, attribute_key), 'number',
-                        mapContains(attrs_string, attribute_key), 'string',
-                        ''
-                    )
-                ),
-                _version
-            ).1 AS latest_attribute_value_type,
+            ) AS latest_attribute_pair,
+            latest_attribute_pair.2 AS latest_attribute_value_json,
+            latest_attribute_pair.1 AS latest_attribute_value_type,
             argMax(is_deleted, _version) AS latest_is_deleted
         FROM spans
         ARRAY JOIN %(requested_attribute_keys)s AS attribute_key
@@ -632,7 +638,9 @@ class UsersListManager:
                 filter_type = config.get("filter_type") or config.get("filterType")
                 raw_value = config.get("filter_value", config.get("filterValue"))
                 raw_values = raw_value if isinstance(raw_value, list) else [raw_value]
-                value_types = config.get("attribute_value_types")
+                value_types = config.get(
+                    "attribute_value_types", config.get("attributeValueTypes")
+                )
                 if (
                     operation not in {"equals", "in"}
                     or filter_type not in {"text", "string"}
@@ -722,6 +730,23 @@ class UsersListManager:
             }
         )
 
+    def bind_current_facts(self, read: "CurrentFactsRead | None") -> None:
+        """Borrow BL01-Q's pin; this manager never issues source authority.
+
+        The owner must retain the pin across the entire request and validate
+        source/remap freshness through publication. Native exact remains default.
+        """
+        from tracer.services.derived_metrics.base_list_current import CurrentFactsRead
+
+        if read is not None and not isinstance(read, CurrentFactsRead):
+            raise TypeError("expected a qualified current-fact read")
+        self._current_facts = read
+
+    def _bind_current_facts(self, builder: UserListQueryBuilderV2) -> None:
+        read = getattr(self, "_current_facts", None)
+        if read is not None:
+            builder.bind_current_facts(read)
+
     @staticmethod
     def _resolve_scope(
         project_id: str | None, allowed_project_ids: list[str]
@@ -782,6 +807,7 @@ class UsersListManager:
         )
         if self.empty_scope:
             return [], 0, builder
+        self._bind_current_facts(builder)
         # Build the page first: a filter/sort this path refuses is refused by
         # its shape, before any read, whether or not the window has user spans.
         query, params = builder.build_candidate_page_query()
@@ -914,6 +940,21 @@ class UsersListManager:
                 if not uid or not key:
                     continue
                 newest_match = attr_row.get("latest_matching_start_time")
+                walked = self._walked_typed_filter
+                if walked is not None and walked.canonical_values and key == walked.key:
+                    matches = [
+                        moment
+                        for raw, moment in attr_row.get(
+                            "canonical_string_activity", {}
+                        ).items()
+                        if self._candidate_value_matches(
+                            json.loads(raw),
+                            "in",
+                            list(walked.canonical_values),
+                            case_insensitive=True,
+                        )
+                    ]
+                    newest_match = max(matches, default=None)
                 if isinstance(newest_match, datetime):
                     if newest_match.tzinfo is None:
                         newest_match = newest_match.replace(tzinfo=UTC)
@@ -1572,6 +1613,7 @@ class UsersListManager:
             filters=self.filters,
             empty_scope=self.empty_scope,
         )
+        self._bind_current_facts(builder)
         query, params = builder.build_dimension_candidate_query(
             limit=limit,
             before_first_seen=before_first_seen,

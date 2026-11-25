@@ -80,6 +80,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.tasks.chat_sim",
     "simulate.tasks.alk_sim",
     "simulate.tasks.hosted_harness_usage",
+    "simulate.tasks.agent_scans",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",
     # integration tasks
@@ -481,7 +482,13 @@ def _ensure_workflows_registered() -> None:
     # (plan §9); it runs on `simulation_runner`, not the native call queues.
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.agent_fix_issue_workflow import (
+            AgentFixIssueWorkflow,
+        )
         from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
+        from simulate.temporal.workflows.agent_version_workflow import (
+            AgentVersionWorkflow,
+        )
         from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
             HostedHarnessGatewayWorkflow,
         )
@@ -495,6 +502,8 @@ def _ensure_workflows_registered() -> None:
                 SimulationRunnerWorkflow,
                 HostedHarnessGatewayWorkflow,
                 AgentFixWorkflow,
+                AgentFixIssueWorkflow,
+                AgentVersionWorkflow,
             ],
         )
     except ImportError as e:
@@ -781,10 +790,19 @@ def _ensure_activities_registered() -> None:
     # native voice queues.
     try:
         from simulate.temporal.activities.agent_fix import (
+            advance_agent_fix_issue,
+            advance_agent_fix_variations,
             close_agent_fix_run,
             launch_agent_fix_sandbox,
             release_agent_fix_sandbox,
             watch_agent_fix_engine,
+        )
+        from simulate.temporal.activities.agent_version import (
+            check_agent_version,
+            fail_agent_version,
+            read_agent_version,
+            snapshot_agent_version,
+            supersede_agent_versions,
         )
         from simulate.temporal.activities.hosted_harness_gateway import (
             cancel_hosted_harness_attempt,
@@ -809,13 +827,20 @@ def _ensure_activities_registered() -> None:
                 record_hosted_harness_launch_failure,
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
+                advance_agent_fix_variations,
+                advance_agent_fix_issue,
                 launch_agent_fix_sandbox,
                 watch_agent_fix_engine,
                 release_agent_fix_sandbox,
                 close_agent_fix_run,
+                supersede_agent_versions,
+                snapshot_agent_version,
+                read_agent_version,
+                check_agent_version,
+                fail_agent_version,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=11)
+        log.info("registered_hosted_runner_activities", count=18)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

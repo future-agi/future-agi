@@ -1,4 +1,3 @@
-
 import litellm
 from retrying import retry
 
@@ -32,7 +31,9 @@ class LitellmService(AbstractLlmService):
         Fetches response from Litellm's Completion API.
         """
         try:
-            response = litellm.completion(api_key=self._api_key, model=model, messages=messages, **kwargs)
+            response = litellm.completion(
+                api_key=self._api_key, model=model, messages=messages, **kwargs
+            )
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Error in ChatCompletion: {e}")
@@ -44,4 +45,3 @@ class LitellmService(AbstractLlmService):
 
     def json_completion(self, messages, model, **kwargs):
         raise Exception("")
-

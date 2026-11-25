@@ -326,7 +326,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
           onChange={handleValueChange}
           valueTypes={[imageType]}
           sx={{
-            fontSize: "13px",
+            fontSize: "12px",
             "& .jv-edit-input": {
               border: "1px solid var(--border-default)",
               borderRadius: "4px",

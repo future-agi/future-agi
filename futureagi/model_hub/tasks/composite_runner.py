@@ -151,8 +151,7 @@ class CompositeEvaluationRunner:
         if experiment_dataset and column:
             source = SourceChoices.EXPERIMENT_EVALUATION.value
             source_id = (
-                f"{experiment_dataset.id}-{column.id}"
-                f"-sourceid-{user_eval_metric.id}"
+                f"{experiment_dataset.id}-{column.id}-sourceid-{user_eval_metric.id}"
             )
             name = f"{user_eval_metric.name}-{column.name}"
         elif optimize and column:
@@ -317,15 +316,12 @@ class CompositeEvaluationRunner:
 
         reason_text = outcome.summary or ""
         if not reason_text:
-            failed = [
-                cr for cr in outcome.child_results if cr.status != "completed"
-            ]
+            failed = [cr for cr in outcome.child_results if cr.status != "completed"]
             if failed and len(failed) == len(outcome.child_results):
                 # Every child failed — surface a concise rollup instead of a
                 # blank cell.
                 reason_text = (
-                    "All child evaluations failed. "
-                    "See child evals for details."
+                    "All child evaluations failed. See child evals for details."
                 )
         if not reason_text:
             reason_text = "No reasoning available."

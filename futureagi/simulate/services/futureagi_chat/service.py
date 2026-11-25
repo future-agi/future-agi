@@ -330,9 +330,7 @@ class FutureAGIChatService(ChatServiceBlueprint):
             # captured via has_chat_ended below. It is scrubbed from the stored
             # conversation so the agent-under-test never sees the simulator's
             # tooling (and so the persona's own context stays text-only).
-            messages.append(
-                SimulatorMessage(role="user", content=content).to_dict()
-            )
+            messages.append(SimulatorMessage(role="user", content=content).to_dict())
 
             session.messages = messages
             session.has_chat_ended = has_chat_ended
@@ -349,9 +347,7 @@ class FutureAGIChatService(ChatServiceBlueprint):
                 # the agent-under-test only ever sees the customer's text, never
                 # the simulator's tooling. The end signal is carried by
                 # has_chat_ended / ended_reason instead.
-                output_messages=[
-                    ChatMessage(role=ChatRole.USER, content=content)
-                ],
+                output_messages=[ChatMessage(role=ChatRole.USER, content=content)],
                 message_id=str(uuid.uuid4()),
                 has_chat_ended=has_chat_ended,
                 ended_reason=ended_reason,

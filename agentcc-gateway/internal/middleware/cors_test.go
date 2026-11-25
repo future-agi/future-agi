@@ -166,8 +166,10 @@ func TestCORS_WildcardWithCredentials(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	// With credentials, must reflect the specific origin, not "*".
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
-		t.Errorf("expected specific origin with credentials, got %q", got)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("expected wildcard origin, got %q", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("expected credentials to be disabled for wildcard origin, got %q", got)
 	}
 }

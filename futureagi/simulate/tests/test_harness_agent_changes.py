@@ -1,9 +1,11 @@
 """Agent versions from pushes: which environments watch, when a head is new, and how
 its version is made, checked and activated."""
 
+import contextlib
 import copy
 import dataclasses
 import re
+import time
 import uuid
 from unittest.mock import MagicMock, patch
 from urllib.parse import unquote
@@ -12,7 +14,12 @@ import pytest
 from django.core.cache import cache
 from rest_framework.test import APIClient
 
-from simulate.models import AgentVersion, HarnessAgentVersionRuntime, HostedHarnessJob
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    HarnessAgentVersionRuntime,
+    HostedHarnessJob,
+)
 from simulate.services import harness_agent_changes as changes
 from simulate.services import harness_github as github
 from simulate.services import harness_provider
@@ -23,7 +30,7 @@ from simulate.services.harness_agent_changes import (
     observe_repository_head,
     poll_repository_heads,
     receive_push,
-    validate_public_github_source,
+    validate_github_source,
     watched_sources,
 )
 from simulate.services.harness_agent_versions import (
@@ -35,11 +42,12 @@ from simulate.services.harness_agent_versions import (
     stamp_built_commit,
     version_credential_names,
 )
-from simulate.services.harness_github import GitHubResponse
+from simulate.services.harness_github import GitHubResponse, ReadCredential
 from simulate.services.harness_provider import _preflight_source_connectors
 from simulate.services.harness_versioning.versions import move_default
 from simulate.services.hosted_harness import HostedHarnessError, _soft_delete
 from simulate.services.hosted_harness_gateway import _empty_source_archive
+from simulate.tests.test_agent_overview_api import _environment as _agent_environment
 from simulate.tests.test_harness_agent_creation import VALUES, _body, _job, _post
 from simulate.tests.test_harness_agent_creation import (  # noqa: F401 - fixture
     gates as gates,
@@ -59,6 +67,7 @@ from simulate.tests.test_harness_agent_versions import (
 from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
+from simulate.tests.test_harness_connected_versions import _completed, _connect
 from simulate.tests.test_harness_versioning_assembly import (  # noqa: F401 - fixture
     gateway as gateway,
 )
@@ -114,7 +123,7 @@ class _GitHub:
         self.calls: list[tuple[str, str, str | None]] = []
 
     def __call__(self, url, headers=None, timeout=None):
-        assert "Authorization" not in (headers or {})
+        assert (headers or {}).get("Authorization") == "Bearer test-token"
         named = _REPOSITORY.match(url)
         if named:
             self.calls.append((named[1].lower(), "", None))
@@ -139,6 +148,19 @@ class _GitHub:
             return response
         response.status_code, response.headers, response.text = 200, {"ETag": etag}, sha
         return response
+
+
+TOKEN = ReadCredential("test-token", "test-installation")
+
+
+@pytest.fixture(autouse=True)
+def read_token(settings):
+    settings.GITHUB_APP_FALLBACK_INSTALLATION_ID = "test-installation"
+    with patch(
+        "integrations.services.github_app.fallback_read_token",
+        return_value="test-token",
+    ):
+        yield
 
 
 @pytest.fixture
@@ -188,31 +210,51 @@ class TestGitHubHead:
     def test_a_head_is_cached_with_its_etag_for_a_day(self, gh):
         gh.heads[("acme/agent", "main")] = HEAD_Y
         with patch.object(changes.cache, "set", wraps=cache.set) as stored:
-            first = github_head("acme/agent", "main", purpose="t")
+            first = github_head("acme/agent", "main", credential=TOKEN, purpose="t")
         assert first == HeadResult("ok", HEAD_Y)
         key, value, timeout = stored.call_args.args
         assert value == {"etag": f'"{HEAD_Y[:8]}"', "sha": HEAD_Y}
         assert timeout >= 86400
 
-        second = github_head("acme/agent", "main", purpose="t")
+        second = github_head("acme/agent", "main", credential=TOKEN, purpose="t")
 
         assert second == HeadResult("not_modified", HEAD_Y)
         assert gh.calls[1][2] == f'"{HEAD_Y[:8]}"'
 
     def test_a_body_that_is_not_a_commit_is_an_error(self, gh):
         gh.heads[("acme/agent", "main")] = "not-a-sha"
-        assert github_head("acme/agent", "main", purpose="t").status == "error"
+        assert (
+            github_head("acme/agent", "main", credential=TOKEN, purpose="t").status
+            == "error"
+        )
 
     def test_the_default_branch_and_quoted_refs(self, gh):
         gh.heads[("acme/agent", "HEAD")] = HEAD_X
         gh.heads[("acme/agent", "feature/a b")] = HEAD_Y
-        assert github_head("acme/agent", None, purpose="t").sha == HEAD_X
+        assert (
+            github_head("acme/agent", None, credential=TOKEN, purpose="t").sha == HEAD_X
+        )
         with patch.object(github.requests, "get", side_effect=gh) as get:
-            github_head("acme/agent", "feature/a b", purpose="t")
+            github_head("acme/agent", "feature/a b", credential=TOKEN, purpose="t")
         assert get.call_args.args[0].endswith("/commits/feature/a%20b")
 
 
 class TestWatchedSources:
+    def test_an_environment_on_a_deleted_agent_is_not_watched(
+        self, user, workspace, storage
+    ):
+        from simulate.models import AgentDefinition
+
+        environment = _environment(user, workspace, "watch-deleted", storage)
+        a1 = _a1(environment)
+        assert [one.environment_id for one in watched_sources()] == [environment.id]
+
+        AgentDefinition.no_workspace_objects.filter(id=a1.agent_definition_id).update(
+            deleted=True
+        )
+
+        assert watched_sources() == []
+
     def test_selection(self, user, workspace, storage):
         environment = _environment(user, workspace, "watch-sel", storage)
         a1 = _a1(environment)
@@ -229,6 +271,7 @@ class TestWatchedSources:
             ref="main",
             commit_sha=None,
             organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
         )
         assert watched_sources(repository="ACME/Agent") == [found]
         assert watched_sources(repository="acme/other") == []
@@ -246,14 +289,18 @@ class TestWatchedSources:
             payload.clear()
             payload.update(copy.deepcopy(original))
 
-        refused = [
+        _edit_payload(
+            environment,
             lambda p: p["source"].update(visibility="private", installation_id="1"),
+        )
+        assert [one.installation_id for one in watched_sources()] == ["1"]
+
+        refused = [
             lambda p: p["source"].update(ref="b" * 40),
             lambda p: p.update(
                 source={"kind": "archive", "archive_artifact_id": str(uuid.uuid4())}
             ),
             lambda p: p.update(source={"kind": "provider"}),
-            lambda p: p["metadata"].update(agent_definition_owner="connected"),
             lambda p: p["metadata"].update(scenario_extend={"id": "x"}),
         ]
         for edit in refused:
@@ -261,6 +308,15 @@ class TestWatchedSources:
             assert watched() == [environment.id]
             _edit_payload(environment, edit)
             assert watched() == [], edit
+
+        _edit_payload(environment, restore)
+        _edit_payload(
+            environment,
+            lambda p: p["metadata"].update(
+                agent_definition_owner="connected", scenario_extend={"id": "x"}
+            ),
+        )
+        assert watched_sources() == [dataclasses.replace(found, connected=True)]
 
         _edit_payload(environment, restore)
         for state in ("running", "failed"):
@@ -360,6 +416,43 @@ class TestPush:
         assert _observe(environment) == {str(environment.id): "created"}
 
         [row] = _push_rows(environment)
+        assert row.agent_payload["source_access"]["installation_id"] == "42"
+
+    def test_a_version_from_a_push_on_a_private_source_stays_private(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "push-private", storage)
+        _edit_payload(
+            environment,
+            lambda p: p["source"].update(visibility="private", installation_id="42"),
+        )
+        a1 = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=_a1(environment).id
+        )
+        a1.agent_payload = {
+            **a1.agent_payload,
+            "source_access": {
+                **a1.agent_payload["source_access"],
+                "visibility": "private",
+                "installation_id": "42",
+            },
+        }
+        a1.save(update_fields=["agent_payload"])
+
+        with (
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=True,
+            ),
+            patch(
+                "integrations.services.github_app.branch_head", return_value=HEAD_Y
+            ) as head,
+        ):
+            assert _observe(environment) == {str(environment.id): "created"}
+
+        assert head.call_args.args == ("42",)
+        [row] = _push_rows(environment)
+        assert row.agent_payload["source_access"]["visibility"] == "private"
         assert row.agent_payload["source_access"]["installation_id"] == "42"
 
     def test_one_version_for_environments_with_the_same_facts(
@@ -1283,17 +1376,17 @@ class TestCreationCheck:
     def test_private_or_unknown_repositories_are_refused(self, response, code):
         with patch.object(changes, "github_get", return_value=response) as get:
             with pytest.raises(HostedHarnessError) as refused:
-                validate_public_github_source(
+                validate_github_source(
                     {"source": {"kind": "github", "repository": "acme/agent"}}
                 )
         assert refused.value.code == code
         assert refused.value.status_code == 422
         assert get.call_args.args == ("/repos/acme/agent",)
 
-    def test_a_private_source_is_refused_without_asking_github(self):
+    def test_a_private_source_without_its_installation_is_refused(self):
         with patch.object(changes, "github_get") as get:
             with pytest.raises(HostedHarnessError) as refused:
-                validate_public_github_source(
+                validate_github_source(
                     {
                         "source": {
                             "kind": "github",
@@ -1302,20 +1395,74 @@ class TestCreationCheck:
                         }
                     }
                 )
-        assert refused.value.code == "github_private_unsupported"
+        assert refused.value.code == "github_installation_not_connected"
+        assert refused.value.status_code == 422
         get.assert_not_called()
 
-    @pytest.mark.parametrize("status", ["rate_limited", "budget", "error"])
+    def test_a_private_source_is_identified_through_its_installation(self):
+        source = {
+            "kind": "github",
+            "repository": "acme/agent",
+            "visibility": "private",
+            "installation_id": "42",
+        }
+        with (
+            patch.object(changes, "github_get") as get,
+            patch(
+                "simulate.services.agent_connect.installation_repository_id",
+                return_value=77,
+            ) as by_installation,
+        ):
+            assert validate_github_source({"source": source}) == 77
+            assert validate_github_source({"source": source}, lookup=False) is None
+        by_installation.assert_called_once_with("42", "acme/agent")
+        get.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "status", ["rate_limited", "not_connected", "revoked", "error"]
+    )
     def test_github_out_of_reach_never_blocks_a_creation(self, status, caplog):
         with patch.object(changes, "github_get", return_value=GitHubResponse(status)):
-            validate_public_github_source(
+            validate_github_source(
                 {"source": {"kind": "github", "repository": "acme/agent"}}
             )
         assert f"harness_github_check_skipped reason={status}" in caplog.text
 
+    @pytest.mark.parametrize(
+        ("status", "code", "status_code"),
+        [
+            ("rate_limited", "github_rate_limited", 429),
+            ("not_connected", "github_not_connected", 422),
+            ("revoked", "github_installation_revoked", 422),
+            ("error", "source_unreachable", 503),
+        ],
+    )
+    def test_a_required_check_says_why_github_did_not_answer(
+        self, status, code, status_code
+    ):
+        response = GitHubResponse(status, reset_at=time.time() + 300)
+        with patch.object(changes, "github_get", return_value=response):
+            with pytest.raises(HostedHarnessError) as refused:
+                validate_github_source(
+                    {"source": {"kind": "github", "repository": "acme/agent"}},
+                    required=True,
+                )
+        assert (refused.value.code, refused.value.status_code) == (code, status_code)
+
+    def test_the_check_reads_with_the_workspace_credential(self, user, workspace):
+        with patch.object(
+            changes, "github_get", return_value=GitHubResponse("ok", {})
+        ) as get:
+            validate_github_source(
+                {"source": {"kind": "github", "repository": "acme/agent"}},
+                organization_id=workspace.organization_id,
+                workspace_id=workspace.id,
+            )
+        assert get.call_args.kwargs["credential"] == TOKEN
+
     def test_other_sources_are_not_checked(self):
         with patch.object(changes, "github_get") as get:
-            validate_public_github_source({"source": {"kind": "archive"}})
+            validate_github_source({"source": {"kind": "archive"}})
         get.assert_not_called()
 
     @pytest.mark.parametrize("versioning", [True, False])
@@ -1330,8 +1477,8 @@ class TestCreationCheck:
         with (
             patch.object(
                 changes,
-                "validate_public_github_source",
-                validate_public_github_source,
+                "validate_github_source",
+                validate_github_source,
             ),
             patch.object(
                 changes, "github_get", return_value=GitHubResponse("not_found")
@@ -1347,7 +1494,7 @@ class TestCreationCheck:
             assert response.status_code == 202, response.content
             get.assert_not_called()
 
-    def test_a_private_source_is_refused_before_it_is_cloned(
+    def test_a_private_source_without_its_installation_is_refused_before_it_is_cloned(
         self, settings, user, workspace, gates
     ):
         settings.HARNESS_PROVIDER = "hosted"
@@ -1356,8 +1503,10 @@ class TestCreationCheck:
         body = _body(values=VALUES)
         body["source"].update(visibility="private", installation_id="1")
         with (
-            patch.object(
-                changes, "validate_public_github_source", validate_public_github_source
+            patch.object(changes, "validate_github_source", validate_github_source),
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=False,
             ),
             patch.object(
                 harness_provider,
@@ -1373,7 +1522,7 @@ class TestCreationCheck:
             response = _post(api, workspace, body)
 
         assert response.status_code == 422, response.content
-        assert response.json()["error"] == "github_private_unsupported"
+        assert response.json()["error"] == "github_installation_not_connected"
         acquire.assert_not_called()
         get.assert_not_called()
 
@@ -1384,9 +1533,7 @@ class TestCreationCheck:
         api = APIClient()
         api.force_authenticate(user=user)
         body, key = _body(values=VALUES), uuid.uuid4().hex
-        with patch.object(
-            changes, "validate_public_github_source", validate_public_github_source
-        ):
+        with patch.object(changes, "validate_github_source", validate_github_source):
             with patch.object(
                 changes, "github_get", return_value=GitHubResponse("ok", {})
             ):
@@ -1407,8 +1554,12 @@ class TestCreationCheck:
         api.force_authenticate(user=user)
         body, key = _body(values=VALUES), uuid.uuid4().hex
         body["source"].update(visibility="private", installation_id="1")
-        with patch.object(
-            changes, "validate_public_github_source", validate_public_github_source
+        with (
+            patch.object(changes, "validate_github_source", validate_github_source),
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=True,
+            ),
         ):
             settings.HARNESS_VERSIONING_ENABLED = False
             first = _job(_post(api, workspace, body, key=key))
@@ -1456,6 +1607,10 @@ class TestFlagsAndDeletion:
         assert gh.calls == []
 
 
+def _checked(repository, ref="main"):
+    return changes._checked_key((repository, ref), changes.FALLBACK_SCOPE)
+
+
 def _source(ref, repository="acme/agent", n=0):
     return WatchedSource(
         environment_id=uuid.UUID(int=n + 1),
@@ -1495,7 +1650,7 @@ class TestRefsAndBudget:
 
     def test_a_push_reads_the_head_again_without_its_etag(self, gh):
         gh.heads[("acme/agent", "main")] = HEAD_Y
-        github_head("acme/agent", "main", purpose="poll")
+        github_head("acme/agent", "main", credential=TOKEN, purpose="poll")
         with (
             patch.object(changes, "watched_sources", return_value=[_source("main")]),
             patch.object(changes, "observe_repository_head", return_value={}),
@@ -1514,13 +1669,14 @@ class TestRefsAndBudget:
         assert len(gh.calls) == 1
         assert seen.call_args.kwargs["heads"] == {}
 
-    def test_the_poller_goes_round_the_oldest_checked_first(self):
+    def test_the_poller_goes_round_the_oldest_checked_first(self, settings):
+        settings.HARNESS_GITHUB_POLL_BUDGET = 5
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(12)]
         read = []
 
         def head(repository, ref, **kwargs):
             read.append(repository)
-            assert kwargs["reserve"] == 20
+            assert kwargs["credential"] == TOKEN
             return HeadResult("ok", HEAD_Y)
 
         with (
@@ -1538,17 +1694,17 @@ class TestRefsAndBudget:
         assert not set(first) & set(read)
         assert seen.call_args.kwargs["purpose"] == "poll"
 
-    @pytest.mark.parametrize("skipped_by", ["cooldown", "budget"])
+    @pytest.mark.parametrize("skipped_by", ["cooldown", "rate_limited"])
     def test_a_skipped_push_is_polled_first(self, skipped_by):
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(12)]
         for n, one in enumerate(sources):
-            cache.set(changes._checked_key(one.repository, "main"), 100 + n, 60)
+            cache.set(_checked(one.repository), 100 + n, 60)
         read = []
 
         def head(repository, ref, **kwargs):
             read.append(repository)
-            if kwargs["purpose"] == "webhook" and skipped_by == "budget":
-                return HeadResult("budget")
+            if kwargs["purpose"] == "webhook" and skipped_by == "rate_limited":
+                return HeadResult("rate_limited")
             return HeadResult("ok", HEAD_Y)
 
         def watched(repository=None, **kwargs):
@@ -1566,16 +1722,28 @@ class TestRefsAndBudget:
 
         assert read[0] == "acme/r11"
 
-    def test_one_owners_pushes_cannot_hold_every_poll_slot(self):
-        busy = [_source("main", f"busy/r{n}", n) for n in range(5)]
-        others = [_source("main", f"acme/r{n}", 10 + n) for n in range(5)]
+    def test_one_organizations_pushes_cannot_hold_every_poll_slot(self, settings):
+        settings.HARNESS_GITHUB_POLL_BUDGET = 5
+        busy = [
+            dataclasses.replace(
+                _source("main", f"busy/r{n}", n), organization_id=uuid.UUID(int=501)
+            )
+            for n in range(5)
+        ]
+        others = [
+            dataclasses.replace(
+                _source("main", f"acme/r{n}", 10 + n),
+                organization_id=uuid.UUID(int=502),
+            )
+            for n in range(5)
+        ]
         for n, one in enumerate(others + busy):
-            cache.set(changes._checked_key(one.repository, "main"), 100 + n, 60)
+            cache.set(_checked(one.repository), 100 + n, 60)
         read = []
 
         def head(repository, ref, **kwargs):
             if kwargs["purpose"] == "webhook":
-                return HeadResult("budget")
+                return HeadResult("rate_limited")
             read.append(repository)
             return HeadResult("ok", HEAD_Y)
 
@@ -1594,10 +1762,15 @@ class TestRefsAndBudget:
                     receive_push(one.repository, "refs/heads/main", "main")
                 poll_repository_heads()
 
-        assert sum(one.startswith("busy/") for one in read) == 5
-        assert {f"acme/r{n}" for n in range(5)} <= set(read)
+        assert sum(one.startswith("busy/") for one in read) == 6
+        assert [one for one in read if one.startswith("acme/")] == [
+            "acme/r0",
+            "acme/r1",
+            "acme/r2",
+            "acme/r3",
+        ]
 
-    def test_a_push_to_a_pair_many_environments_watch_counts_once(self):
+    def test_a_push_to_a_pair_many_environments_watch_marks_it_once(self):
         sources = [_source("main", "acme/agent", n) for n in range(3)]
         with (
             patch.object(changes, "watched_sources", return_value=sources),
@@ -1607,24 +1780,24 @@ class TestRefsAndBudget:
             for _ in range(2):
                 receive_push("acme/agent", "refs/heads/main", "main")
 
-        assert cache.get(f"{github._hour_key()}:poll-first:acme") == 1
-        assert cache.get(changes._checked_key("acme/agent", "main")) == -1
+        assert cache.get(_checked("acme/agent")) == -1
 
-    def test_many_owners_cannot_poll_first_past_the_hourly_cap(self, settings):
-        settings.HARNESS_GITHUB_WEBHOOK_SHARE = 1
-        settings.HARNESS_GITHUB_WEBHOOK_BUDGET = 2
-        pairs = [("busy/r0", "main"), ("busy/r1", "main")] + [
-            (f"owner{n}/agent", "main") for n in range(4)
-        ]
+    def test_any_pair_can_be_polled_first(self):
+        pairs = [(f"owner{n}/agent", "main") for n in range(6)]
         for pair in pairs:
-            changes._poll_first(pair)
+            changes._poll_first(pair, changes.FALLBACK_SCOPE)
+        assert all(cache.get(_checked(*p)) == -1 for p in pairs)
 
-        first = [p for p in pairs if cache.get(changes._checked_key(*p)) == -1]
-        assert first == [("busy/r0", "main"), ("owner0/agent", "main")]
-
-    def test_a_rate_limit_stops_the_tick_and_the_next_ones(self):
+    def test_a_rate_limited_pair_is_skipped_and_the_tick_goes_on(self):
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(4)]
-        results = iter([HeadResult("ok", HEAD_Y), HeadResult("rate_limited")])
+        results = iter(
+            [
+                HeadResult("ok", HEAD_Y),
+                HeadResult("rate_limited"),
+                HeadResult("ok", HEAD_Y),
+                HeadResult("ok", HEAD_Y),
+            ]
+        )
         with (
             patch.object(changes, "watched_sources", return_value=sources),
             patch.object(
@@ -1633,14 +1806,11 @@ class TestRefsAndBudget:
             patch.object(changes, "observe_repository_head", return_value={}),
         ):
             assert poll_repository_heads() == {"rate_limited": 1}
-            assert head.call_count == 2
-            cache.set(github.RATE_RESET_KEY, 10**12, 60)
-            assert poll_repository_heads() == {}
-            assert head.call_count == 2
+        assert head.call_count == 4
 
-    def test_low_remaining_calls_shrink_the_tick(self):
+    def test_a_tick_reads_up_to_the_poll_budget(self, settings):
+        settings.HARNESS_GITHUB_POLL_BUDGET = 3
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(6)]
-        cache.set(github.REMAINING_KEY, 22, 60)
         with (
             patch.object(changes, "watched_sources", return_value=sources),
             patch.object(
@@ -1649,7 +1819,46 @@ class TestRefsAndBudget:
             patch.object(changes, "observe_repository_head", return_value={}),
         ):
             poll_repository_heads()
-        assert head.call_count == 2
+        assert head.call_count == 3
+
+    def test_one_credential_per_workspace_a_tick_and_none_for_a_private_source(
+        self,
+    ):
+        sources = [
+            dataclasses.replace(
+                _source("main", f"acme/r{n}", n),
+                organization_id="org",
+                workspace_id=f"ws{n % 2}",
+            )
+            for n in range(4)
+        ] + [
+            dataclasses.replace(
+                _source("main", "acme/private", 9), installation_id="77"
+            )
+        ]
+        made = []
+        credentials = []
+
+        @contextlib.contextmanager
+        def credential(organization_id=None, workspace_id=None):
+            made.append(workspace_id)
+            yield ReadCredential(f"tok-{workspace_id}", workspace_id)
+
+        def head(watched, **kwargs):
+            credentials.append(kwargs["credential"])
+            return HeadResult("ok", HEAD_Y)
+
+        with (
+            patch.object(changes, "watched_sources", return_value=sources),
+            patch.object(changes, "read_credential", credential),
+            patch.object(changes, "_workspace_installation", return_value=None),
+            patch.object(changes, "read_head", side_effect=head),
+            patch.object(changes, "observe_repository_head", return_value={}),
+        ):
+            poll_repository_heads(budget=10)
+        assert sorted(made) == ["ws0", "ws1"]
+        assert credentials.count(None) == 1
+        assert {one.token for one in credentials if one} == {"tok-ws0", "tok-ws1"}
 
 
 class TestRepositoryId:
@@ -1667,9 +1876,7 @@ class TestRepositoryId:
         api = APIClient()
         api.force_authenticate(user=user)
         with (
-            patch.object(
-                changes, "validate_public_github_source", validate_public_github_source
-            ),
+            patch.object(changes, "validate_github_source", validate_github_source),
             patch.object(
                 changes,
                 "github_get",
@@ -1680,7 +1887,7 @@ class TestRepositoryId:
         job = _job(response)
 
         assert get.call_args.kwargs["purpose"] == "create"
-        assert get.call_args.kwargs["owner"] == str(job.organization_id)
+        assert get.call_args.kwargs["credential"] == TOKEN
         access = _side(_a1(job)).agent_payload["source_access"]
         assert access["repository_id"] == 918273645
         listed = api.get(
@@ -1753,8 +1960,8 @@ def test_organizations_take_turns_at_the_poll():
         _source("main", "acme/agent", 20), organization_id=uuid.UUID(int=2)
     )
     for n, one in enumerate(busy):
-        cache.set(changes._checked_key(one.repository, "main"), 100 + n, 60)
-    cache.set(changes._checked_key(other.repository, "main"), 500, 60)
+        cache.set(_checked(one.repository), 100 + n, 60)
+    cache.set(_checked(other.repository), 500, 60)
     read = []
 
     def head(repository, ref, **kwargs):
@@ -1769,3 +1976,299 @@ def test_organizations_take_turns_at_the_poll():
         poll_repository_heads(budget=2)
 
     assert read == ["busy/r0", "acme/agent"]
+
+
+class TestConnectedAgents:
+    @pytest.fixture
+    def connected(self, organization, workspace):
+        agent = AgentDefinition.objects.create(
+            agent_name="support",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+        )
+        version = _connect(agent)
+        environments = []
+        for minutes in (1, 2):
+            environment = _completed(_agent_environment(agent, minutes), version)
+            _edit_payload(
+                environment,
+                lambda p: p["metadata"].update(agent_definition_owner="connected"),
+            )
+            environments.append(environment)
+        return agent, environments
+
+    def test_a_connected_agents_environments_are_watched(self, connected):
+        agent, environments = connected
+
+        found = watched_sources(definition_id=agent.id)
+
+        assert [one.environment_id for one in found] == [one.id for one in environments]
+        assert all(one.connected for one in found)
+        assert {(one.repository, one.ref) for one in found} == {("acme/agent", "main")}
+
+    def test_a_new_head_makes_one_version_for_the_agent(self, connected):
+        agent, environments = connected
+        heads = {
+            (("acme/agent", "main"), changes.FALLBACK_SCOPE): HeadResult("ok", HEAD_Y)
+        }
+
+        with patch.object(
+            changes, "_observe_one", side_effect=AssertionError("environment path")
+        ):
+            outcomes = observe_repository_head(agent.id, heads=heads)
+
+        assert outcomes == {str(one.id): "created" for one in environments}
+        [row] = _push_versions(agent.id)
+        assert row.source["commit_sha"] == HEAD_Y
+        assert row.agent_payload["requested_by_environments"] == []
+        assert "created_for_environment" not in row.agent_payload
+
+    def test_a_head_already_made_makes_nothing(self, connected):
+        agent, environments = connected
+        heads = {
+            (("acme/agent", "main"), changes.FALLBACK_SCOPE): HeadResult("ok", HEAD_Y)
+        }
+        observe_repository_head(agent.id, heads=dict(heads))
+
+        outcomes = observe_repository_head(agent.id, heads=dict(heads))
+
+        assert outcomes == {str(one.id): "unchanged" for one in environments}
+        assert len(_push_versions(agent.id)) == 1
+
+
+class TestConnectedAgentsWithNoEnvironment:
+    @pytest.fixture
+    def agent(self, organization, workspace):
+        return AgentDefinition.objects.create(
+            agent_name="support",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+        )
+
+    @staticmethod
+    def _production(agent, **source):
+        from simulate.services.harness_agent_versions import create_agent_version
+
+        version = create_agent_version(
+            agent,
+            parent=None,
+            env=None,
+            source={
+                "kind": "github",
+                "repository": "acme/agent",
+                "ref": "main",
+                "commit_sha": HEAD_X,
+                "visibility": "public",
+                **source,
+            },
+            prompt="You help.",
+            agent_payload={"connector": "auto", "config": {}},
+            trigger="connect",
+        )
+        AgentVersion.no_workspace_objects.filter(id=version.id).update(
+            status=AgentVersion.StatusChoices.ACTIVE
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=version
+        ).update(preflight_status=HarnessAgentVersionRuntime.PreflightStatus.PASSED)
+        return version
+
+    def test_a_push_versions_a_connected_agent_with_no_environment(self, agent, gh):
+        production = self._production(agent)
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+
+        counts = receive_push("acme/agent", "refs/heads/main", "main")
+
+        assert counts == {"created": 1}
+        [row] = _push_versions(agent.id)
+        assert row.source["commit_sha"] == HEAD_Y
+        assert row.parent.agent_version_id == production.id
+
+    def test_a_private_connected_agent_is_read_through_its_installation(
+        self, agent, gh
+    ):
+        self._production(agent, visibility="private", installation_id="42")
+
+        with (
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=True,
+            ),
+            patch(
+                "integrations.services.github_app.branch_head", return_value=HEAD_Y
+            ) as head,
+        ):
+            counts = receive_push("acme/agent", "refs/heads/main", "main")
+
+        assert counts == {"created": 1}
+        assert head.call_args.args == ("42",)
+        assert head.call_args.kwargs["ref"] == "main"
+        assert gh.calls == []
+        [row] = _push_versions(agent.id)
+        assert row.source["commit_sha"] == HEAD_Y
+
+
+_READS = {
+    "poll": lambda: poll_repository_heads(budget=10),
+    "push": lambda: receive_push("acme/agent", "refs/heads/main", "main", 77),
+}
+
+
+class TestHeadsPerInstallation:
+    @pytest.fixture
+    def other(self, organization, user):
+        from accounts.models.workspace import Workspace
+
+        return Workspace.objects.create(
+            name="Other Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+
+    @staticmethod
+    def _agent(organization, workspace, name):
+        return AgentDefinition.objects.create(
+            agent_name=name,
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+        )
+
+    @staticmethod
+    def _connection(agent, user, installation_id, status):
+        from integrations.models import IntegrationConnection, IntegrationPlatform
+        from integrations.services.credentials import CredentialManager
+
+        IntegrationConnection.no_workspace_objects.create(
+            organization=agent.organization,
+            workspace=agent.workspace,
+            created_by=user,
+            platform=IntegrationPlatform.GITHUB,
+            display_name="acme",
+            host_url="https://github.com",
+            encrypted_credentials=CredentialManager.encrypt(
+                {"installation_id": installation_id}
+            ),
+            external_project_name=installation_id,
+            status=status,
+            backfill_completed=True,
+        )
+
+    @pytest.mark.parametrize("read", sorted(_READS))
+    def test_a_paused_connection_gets_no_version_from_another_workspaces_read(
+        self, read, organization, workspace, other, user, gh
+    ):
+        from integrations.models import ConnectionStatus
+
+        kept = self._agent(organization, workspace, "kept")
+        paused = self._agent(organization, other, "paused")
+        for agent, status in (
+            (kept, ConnectionStatus.ACTIVE),
+            (paused, ConnectionStatus.PAUSED),
+        ):
+            self._connection(agent, user, "42", status)
+            TestConnectedAgentsWithNoEnvironment._production(
+                agent, visibility="private", installation_id="42", repository_id=77
+            )
+
+        with patch(
+            "integrations.services.github_app.branch_head", return_value=HEAD_Y
+        ) as head:
+            counts = _READS[read]()
+
+        assert counts == {"created": 1, "head_unavailable": 1}
+        assert [row.source["commit_sha"] for row in _push_versions(kept.id)] == [HEAD_Y]
+        assert _push_versions(paused.id) == []
+        assert head.call_count == 1
+        assert gh.calls == []
+
+    @pytest.mark.parametrize("read", sorted(_READS))
+    def test_a_source_with_no_credential_does_not_hold_back_a_connected_one(
+        self, read, organization, workspace, other, user, gh
+    ):
+        from integrations.models import ConnectionStatus
+
+        unconnected = self._agent(organization, workspace, "unconnected")
+        connected = self._agent(organization, other, "connected")
+        self._connection(connected, user, "55", ConnectionStatus.ACTIVE)
+        for agent in (unconnected, connected):
+            TestConnectedAgentsWithNoEnvironment._production(agent, repository_id=77)
+        gh.heads[("id:77", "main")] = HEAD_Y
+
+        with (
+            patch(
+                "integrations.services.github_app.fallback_read_token",
+                return_value=None,
+            ),
+            patch(
+                "integrations.services.github_app.installation_token",
+                return_value="test-token",
+            ) as token,
+            patch("integrations.services.github_app.revoke_installation_token"),
+        ):
+            counts = _READS[read]()
+
+        assert counts == {"created": 1, "head_unavailable": 1}
+        assert [row.source["commit_sha"] for row in _push_versions(connected.id)] == [
+            HEAD_Y
+        ]
+        assert _push_versions(unconnected.id) == []
+        assert {call.args for call in token.call_args_list} == {("55",)}
+        assert len(gh.calls) == 1
+
+
+class TestDisconnectedInstallation:
+    def _watched(self):
+        return changes.WatchedSource(
+            environment_id=None,
+            definition_id=uuid.uuid4(),
+            parent_version_id=uuid.uuid4(),
+            repository="acme/agent",
+            ref="main",
+            commit_sha=None,
+            organization_id=uuid.uuid4(),
+            repository_id=7,
+            connected=True,
+            installation_id="4242",
+            workspace_id=uuid.uuid4(),
+        )
+
+    def test_a_disconnected_installation_makes_no_github_call(self):
+        watched = self._watched()
+        with (
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=False,
+            ) as connected,
+            patch("integrations.services.github_app.branch_head") as head,
+        ):
+            result = changes.read_head(watched, purpose="poll")
+
+        assert result == changes.HeadResult("error")
+        head.assert_not_called()
+        connected.assert_called_once_with(
+            organization_id=watched.organization_id,
+            workspace_id=watched.workspace_id,
+            installation_id="4242",
+        )
+
+    def test_a_connected_installation_still_reads_its_head(self):
+        with (
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=True,
+            ),
+            patch(
+                "integrations.services.github_app.branch_head", return_value=HEAD_X
+            ) as head,
+        ):
+            result = changes.read_head(self._watched(), purpose="webhook")
+
+        assert result == changes.HeadResult("ok", HEAD_X)
+        head.assert_called_once()

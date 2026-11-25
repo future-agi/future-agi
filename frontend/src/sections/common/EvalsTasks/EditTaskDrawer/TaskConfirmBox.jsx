@@ -130,7 +130,7 @@ export default function TaskConfirmDialog({
               color: "text.primary",
               padding: 0,
               mt: 2.8,
-              fontSize: "13px",
+              fontSize: "12px",
               fontWeight: 500,
               mb: 1.2,
             }}

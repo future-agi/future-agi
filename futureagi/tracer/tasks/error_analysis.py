@@ -9,6 +9,8 @@ Tasks for:
 
 import gc
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import TYPE_CHECKING
+from uuid import UUID
 
 import structlog
 from django.conf import settings
@@ -18,6 +20,13 @@ from django.utils import timezone
 
 from tfc.temporal import temporal_activity
 from tracer.models.trace_error_analysis import TraceErrorAnalysis
+from tracer.services.falcon_background_analysis import (
+    BackgroundAnalysisUnavailable,
+    require_background_analysis_ready,
+)
+
+if TYPE_CHECKING:
+    from ai_tools.base import BackgroundExecutionScope
 
 logger = structlog.get_logger(__name__)
 
@@ -38,7 +47,9 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         from ee.agenthub.traceerroragent.traceerror import TraceErrorAnalysisAgent
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.traceerroragent.traceerror", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.traceerroragent.traceerror", exc_info=True
+            )
         return None
     from tracer.models.project import Project
     from tracer.models.trace_error_analysis import TraceErrorAnalysis
@@ -47,8 +58,12 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
     from tracer.queries.helpers import get_default_workspace_for_project
     from tracer.services.clickhouse.v2 import get_reader
     from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
     try:
-        from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
+        from ee.usage.utils.usage_entries import (
+            log_and_deduct_cost_for_api_request,
+            refund_cost_for_api_call,
+        )
     except ImportError:
         log_and_deduct_cost_for_api_request = None
         refund_cost_for_api_call = None
@@ -182,7 +197,11 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             if BillingConfig is not None:
                 credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
                 emit(
                     UsageEvent(
                         org_id=str(organization.id),
@@ -405,280 +424,24 @@ def process_trace_error_batch(task_id: str, trace_ids: list):
         close_old_connections()
 
 
-def _falcon_analyze_single_trace(trace_id: str, project_id: str):
-    """
-    Analyze a single trace using a headless Falcon agent loop with the
-    analyze-trace-errors skill. Replaces TraceErrorAnalysisAgent.
-    """
-    import asyncio
+def _falcon_analyze_single_trace(
+    trace_id: str,
+    project_id: str,
+    *,
+    background_execution_scope: "BackgroundExecutionScope | None" = None,
+    analysis_attempt_id: UUID | None = None,
+):
+    """Refuse background execution, including previously validated assignments."""
 
-    # Falcon is gated on deployment mode (EE / Cloud) AND code presence.
-    # In OSS mode or when ee/falcon_ai/ isn't installed, skip cleanly so
-    # the enclosing task doesn't surface an ImportError.
     try:
-        from ee.usage.deployment import DeploymentMode
-
-        _is_oss = DeploymentMode.is_oss()
-    except ImportError:
-        _is_oss = True
-
-    if _is_oss:
-        logger.warning(
-            "falcon_trace_analysis_skipped_no_ee",
-            trace_id=trace_id,
-            reason="Deployment is OSS — Falcon AI requires EE license or Cloud deployment",
-        )
+        require_background_analysis_ready()
+    except BackgroundAnalysisUnavailable as exc:
         return {
             "success": False,
             "trace_id": trace_id,
-            "error": "Falcon AI not available (requires EE)",
+            "error_code": exc.code,
+            "error": str(exc),
         }
-
-    try:
-        from ee.falcon_ai.agent import AgentLoop
-        from ee.falcon_ai.models import Conversation, Skill
-    except ImportError:
-        logger.warning(
-            "falcon_trace_analysis_skipped_no_ee",
-            trace_id=trace_id,
-            reason="ee.falcon_ai not installed — unexpected for non-OSS deployment",
-        )
-        return {
-            "success": False,
-            "trace_id": trace_id,
-            "error": "Falcon AI not available (requires EE)",
-        }
-
-    from ai_tools.base import ToolContext
-    from tfc.middleware.workspace_context import set_workspace_context
-    from tracer.models.project import Project
-    from tracer.queries import deep_analysis_state
-    from tracer.queries.error_analysis import TraceErrorAnalysisDB
-
-    close_old_connections()
-
-    try:
-        # The caller passes project_id (traces live only in CH post-cutover);
-        # load the PG Project (kept) for org / user / workspace resolution.
-        project = (
-            Project.objects.select_related("organization").filter(id=project_id).first()
-        )
-        if project is None:
-            logger.error(f"Project {project_id} not found, skipping trace {trace_id}")
-            return {"success": False, "trace_id": trace_id, "error": "Project not found"}
-        org = project.organization
-
-        # Find a user in this org for the conversation
-        from accounts.models.user import User
-
-        user = User.objects.filter(organization=org).first()
-        if not user:
-            logger.error(f"No user found for org {org.id}, skipping trace {trace_id}")
-            return {"success": False, "trace_id": trace_id, "error": "No user"}
-
-        # Get workspace
-        from tracer.queries.helpers import get_default_workspace_for_project
-
-        workspace = get_default_workspace_for_project(project)
-
-        set_workspace_context(workspace=workspace, organization=org, user=user)
-        ctx = ToolContext(user=user, organization=org, workspace=workspace)
-
-        # Load the skill
-        skill = Skill.objects.filter(
-            organization=org, slug="analyze-trace-errors", is_active=True
-        ).first()
-
-        # Create a hidden conversation (filtered out from user's chat list)
-        conversation = Conversation.objects.create(
-            user=user,
-            organization=org,
-            workspace=workspace,
-            title=f"Auto-analysis: {trace_id[:8]}",
-            metadata={"hidden": True, "type": "background_analysis"},
-        )
-
-        agent = AgentLoop(tool_context=ctx, conversation=conversation, headless=True)
-
-        # Collect ALL events for comprehensive logging
-        all_events = []
-        collected_tool_calls = []
-        text_deltas = []
-
-        async def logging_callback(event):
-            etype = event.get("type", "")
-            all_events.append({"type": etype})
-
-            if etype == "tool_call_start":
-                collected_tool_calls.append(
-                    {
-                        "tool_name": event["data"].get("tool_name", ""),
-                        "params": event["data"].get("params", {}),
-                        "step": event["data"].get("step", 0),
-                        "call_id": event["data"].get("call_id", ""),
-                        "status": "started",
-                        "result_summary": "",
-                        "result_full": "",
-                    }
-                )
-            elif etype == "tool_call_result":
-                call_id = event["data"].get("call_id", "")
-                for tc in collected_tool_calls:
-                    if tc.get("call_id") == call_id:
-                        tc["status"] = event["data"].get("status", "")
-                        tc["result_summary"] = event["data"].get("result_summary", "")[
-                            :500
-                        ]
-                        tc["result_full"] = event["data"].get("result_full", "")[:2000]
-                        break
-            elif etype == "text_delta":
-                text_deltas.append(event["data"].get("delta", ""))
-            elif etype == "error":
-                logger.error(
-                    f"Falcon agent error for trace {trace_id}: {event['data']}"
-                )
-
-        import time as _time
-
-        start_time = _time.time()
-
-        async def run():
-            return await agent.run(
-                user_message=f"Analyze trace {trace_id} for errors.",
-                history_messages=[],
-                send_callback=logging_callback,
-                context_page="tracing",
-                skill=skill,
-            )
-
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(run())
-        finally:
-            loop.close()
-
-        elapsed = _time.time() - start_time
-
-        # Log what happened in the agent loop
-        event_types = [e["type"] for e in all_events]
-        logger.info(
-            f"Falcon loop for trace {trace_id[:8]}: "
-            f"elapsed={elapsed:.1f}s tools={len(collected_tool_calls)} "
-            f"events={len(all_events)} event_types={event_types} "
-            f"response_len={len(result.get('content', '') or '')} "
-            f"tokens={result.get('input_tokens', 0)}+{result.get('output_tokens', 0)}"
-        )
-
-        # Check if Falcon created an analysis — if not, create a "clean" one
-        from tracer.models.trace_error_analysis import TraceErrorAnalysis
-
-        analysis = (
-            TraceErrorAnalysis.objects.filter(trace_id=trace_id)
-            .order_by("-analysis_date")
-            .first()
-        )
-
-        if not analysis:
-            # Falcon found no errors — create a clean analysis record
-            analysis = TraceErrorAnalysis.objects.create(
-                trace_id=trace_id,
-                project=project,
-                overall_score=4.0,
-                total_errors=0,
-                high_impact_errors=0,
-                medium_impact_errors=0,
-                low_impact_errors=0,
-                recommended_priority="LOW",
-                insights="No errors found during analysis.",
-                agent_version="falcon-skill-1.0",
-            )
-        elif analysis.overall_score is None:
-            # Falcon submitted findings but didn't call submit_trace_scores.
-            # Compute fallback scores from the errors found.
-            from tracer.models.trace_error_analysis import TraceErrorDetail
-
-            details = TraceErrorDetail.objects.filter(analysis=analysis)
-            high = details.filter(impact="HIGH").count()
-            medium = details.filter(impact="MEDIUM").count()
-            low = details.filter(impact="LOW").count()
-            total = high + medium + low
-
-            # Score: start at 5, deduct per error severity
-            score = max(1.0, 5.0 - (high * 1.5) - (medium * 0.75) - (low * 0.25))
-            analysis.overall_score = round(score, 1)
-            analysis.factual_grounding_score = max(1.0, 5.0 - high)
-            analysis.factual_grounding_reason = f"Computed from {total} error(s)"
-            analysis.privacy_and_safety_score = 5.0
-            analysis.privacy_and_safety_reason = "No safety issues detected"
-            analysis.instruction_adherence_score = max(1.0, 5.0 - high - (medium * 0.5))
-            analysis.instruction_adherence_reason = f"Computed from {total} error(s)"
-            analysis.optimal_plan_execution_score = max(1.0, 5.0 - high - medium)
-            analysis.optimal_plan_execution_reason = f"Computed from {total} error(s)"
-            analysis.insights = (
-                f"Fallback scores computed from {total} detected error(s)."
-            )
-            analysis.save()
-            logger.info(f"Computed fallback scores for trace {trace_id}: score={score}")
-
-        error_count = analysis.total_errors or 0
-
-        # Done is derived from the TraceErrorAnalysis row above; release marker.
-        deep_analysis_state.clear(str(trace_id))
-
-        # Ingest embeddings for clustering if there are errors
-        if error_count > 0:
-            db = TraceErrorAnalysisDB()
-            db.ingest_trace_error_embeddings(trace_id)
-
-        # Log complete results to ClickHouse
-        try:
-            import json as _json
-
-            from tracer.services.clickhouse.client import ClickHouseClient
-
-            ch = ClickHouseClient()
-            ch.insert(
-                "falcon_analysis_log",
-                [
-                    {
-                        "conversation_id": str(conversation.id),
-                        "trace_id": str(trace_id),
-                        "project_id": project_id,
-                        "organization_id": str(org.id),
-                        "model": str(result.get("model_used") or ""),
-                        "mode": str(result.get("mode") or ""),
-                        "skill_slug": "analyze-trace-errors",
-                        "input_tokens": int(result.get("input_tokens") or 0),
-                        "output_tokens": int(result.get("output_tokens") or 0),
-                        "tool_calls": _json.dumps(collected_tool_calls, default=str),
-                        "response": str(result.get("content") or "")[:10000],
-                        "errors_found": int(error_count),
-                        "overall_score": (
-                            float(analysis.overall_score)
-                            if analysis.overall_score is not None
-                            else None
-                        ),
-                        "recommended_priority": str(
-                            analysis.recommended_priority or ""
-                        ),
-                    }
-                ],
-            )
-        except Exception as e:
-            logger.warning(f"Failed to log to ClickHouse: {str(e)}")
-
-        logger.info(
-            f"Falcon analyzed trace {trace_id}: {error_count} errors, "
-            f"score={analysis.overall_score}, elapsed={elapsed:.1f}s"
-        )
-        return {"success": True, "trace_id": trace_id, "error_count": error_count}
-
-    except Exception as e:
-        logger.exception(f"Falcon analysis failed for trace {trace_id}: {str(e)}")
-        deep_analysis_state.set_failed(str(trace_id))
-        return {"success": False, "trace_id": trace_id, "error": str(e)}
-    finally:
-        close_old_connections()
 
 
 @temporal_activity(
@@ -687,51 +450,15 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
     queue="agent_compass",
 )
 def analyze_traces_on_demand(project_id: str, trace_ids: list):
-    """
-    On-demand trace analysis triggered by Falcon.
-    Each trace is analyzed by a headless Falcon agent loop with the
-    analyze-trace-errors skill. Runs in parallel via ThreadPoolExecutor.
-    """
+    """Reject previously queued batches; no background work is admitted."""
+    # Jobs already in the queue bypass the tool. Fail the activity itself,
+    # without fan-out or mutating claims (these messages have no owner token).
     try:
-        close_old_connections()
-        successful = 0
-        failed = 0
-        total_errors = 0
+        require_background_analysis_ready()
+    except BackgroundAnalysisUnavailable as exc:
+        from temporalio.exceptions import ApplicationError
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [
-                executor.submit(_falcon_analyze_single_trace, trace_id, project_id)
-                for trace_id in trace_ids
-            ]
-
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result.get("success"):
-                        successful += 1
-                        total_errors += result.get("error_count", 0)
-                    else:
-                        failed += 1
-                except Exception as e:
-                    failed += 1
-                    logger.error(f"Error processing future: {str(e)}")
-
-        logger.info(
-            f"On-demand batch complete for project {project_id}: "
-            f"{successful} successful, {failed} failed, "
-            f"{total_errors} total errors found"
-        )
-
-        if successful > 0:
-            cluster_project_errors.delay(project_id)
-
-    except Exception as e:
-        logger.exception(
-            f"Error in on-demand analysis for project {project_id}: {str(e)}"
-        )
-        raise
-    finally:
-        close_old_connections()
+        raise ApplicationError(str(exc), type=exc.code, non_retryable=True) from exc
 
 
 @temporal_activity(

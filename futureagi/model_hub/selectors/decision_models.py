@@ -51,7 +51,7 @@ def get_decision_catalog(
     # ones); sorted() is stable, so only readiness moves a group.
     return sorted(
         groups,
-        key=lambda group: not any(
-            connection["is_available"] for connection in group["connections"]
+        key=lambda group: (
+            not any(connection["is_available"] for connection in group["connections"])
         ),
     )

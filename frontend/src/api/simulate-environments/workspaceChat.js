@@ -408,8 +408,9 @@ export function useWorkspaceChat(env, { source } = {}) {
     frozen,
     frozenReason,
     inFlight,
-    // Stop interrupts the turn, or stops the queued or running rebuild.
-    canStop: inFlight || Boolean(active),
+    // Stop interrupts the turn, or stops the queued or running rebuild. A turn paused on the person's answer, as the
+    // server says (waiting_for_user), runs nothing to stop.
+    canStop: (inFlight && !awaiting) || Boolean(active),
     // The working indicator: a turn in flight or a running rebuild, not one
     // that only waits.
     working: (inFlight && !awaiting) || activeRunning,
@@ -421,6 +422,11 @@ export function useWorkspaceChat(env, { source } = {}) {
     // frozen chat (job ended without a saved workspace, conversation retired)
     // can keep an open question on the backend, but there is nothing to do.
     waiting: !frozen && conversationWaiting(conversation),
+    // The open question takes only one of its options, as the server serves it: free text is not an answer.
+    answerWithOptions:
+      !frozen &&
+      conversationWaiting(conversation) &&
+      Boolean(conversation?.blocking_input?.options_only),
     // The chat holds Save (see draftsBlocked).
     draftsBlocked: draftsBlocked(conversation),
     // A nudge waits for an answer: the collapsed chat shows its dot.

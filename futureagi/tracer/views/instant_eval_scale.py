@@ -60,6 +60,7 @@ from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
 from tracer.services import instant_eval_users as users_service
+from tracer.services.instant_eval_rows import is_instant_task as _is_instant_task
 from tracer.services.instant_eval_run import (
     ACTIVE,
     DEFAULT_SAMPLE,
@@ -84,6 +85,7 @@ from tracer.services.instant_eval_run import (
     compute_summary,
     credits_per_answer,
     max_rows,
+    with_primary_evals,
 )
 from tracer.services.user_filter_capabilities import (
     validate_users_filter_capabilities,
@@ -1021,11 +1023,13 @@ class InstantEvalStartView(InstantEvalLicenseRequired, APIView):
         org = _org(request)
         unit = data["unit"]
         wanted = [str(c) for c in data["config_ids"]]
+        # Primary: the Ask page saves a new question and starts the run
+        # straight away, before a replica has the question.
         configs = {
             str(c.id): c
-            for c in CustomEvalConfig.objects.filter(
-                id__in=wanted, project=project, deleted=False
-            ).select_related("eval_template")
+            for c in CustomEvalConfig.objects.using("default")
+            .filter(id__in=wanted, project=project, deleted=False)
+            .select_related("eval_template")
         }
         if len(configs) != len(set(wanted)) or not all(
             (c.config or {}).get("instant_eval") for c in configs.values()
@@ -1161,31 +1165,17 @@ def _load(request, params, gm):
     project = _project(request, params["project_id"])
     if project is None:
         return None, gm.not_found("Project not found")
-    task = (
+    task = with_primary_evals(
         EvalTask.objects.filter(
             id=params["eval_task_id"], project=project, deleted=False
         )
-        .prefetch_related("evals")
-        .first()
-    )
+    ).first()
     if task is None or not _is_instant_task(task):
         # Only an Instant eval run is read (and given a run record) here: a
         # read of any other eval task would write rows and a run for it, and
         # a continuous one would then count against the org's runs forever.
         return None, gm.not_found("Eval task not found")
     return task, None
-
-
-def _is_instant_task(task) -> bool:
-    """A task the Ask page started (it carries RUN_MARKER), or a one-off task
-    whose questions are all Instant eval questions (asked through the plain
-    eval-task API)."""
-    if (task.filters or {}).get(rows_service.RUN_MARKER):
-        return True
-    if task.run_type != RunType.HISTORICAL:
-        return False
-    configs = list(task.evals.all())
-    return bool(configs) and all((c.config or {}).get("instant_eval") for c in configs)
 
 
 def ensure_rows(task, unit: str) -> None:
@@ -1199,9 +1189,12 @@ def ensure_rows(task, unit: str) -> None:
         key = {"traces": "trace_id", "spans": "observation_span_id"}.get(
             row_type, "trace_session_id"
         )
+        # Primary: the run is prepared once from these rows, so rows a
+        # replica has not applied yet would be left out of it for good.
         ids = [
             str(v)
-            for v in EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+            for v in EvalLogger.objects.using("default")
+            .filter(eval_task_id=str(task.id), deleted=False)
             .exclude(**{f"{key}__isnull": True})
             .order_by()
             .values_list(key, flat=True)
@@ -1678,7 +1671,10 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
     def _retry_failed(self, request, task, run, data):
         if run is not None and run.cancelled_at:
             return self._cancelled()
-        failed = EvalLogger.objects.filter(
+        # Primary for every use: the check, the credits, the ids whose answers
+        # are dropped and the update must all see the same failures (the
+        # update always runs on the primary).
+        failed = EvalLogger.objects.using("default").filter(
             eval_task_id=str(task.id),
             deleted=False,
             status__in=[EvalEntryStatus.ERRORED, EvalEntryStatus.SKIPPED],

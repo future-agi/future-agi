@@ -61,6 +61,8 @@ class HarnessConversationAdjustmentSerializer(serializers.Serializer):
         choices=("understand", "environment", "scenarios"), required=False
     )
     scenario_delta = serializers.IntegerField(min_value=1, required=False)
+
+
 class HarnessConversationAdjustmentResponseSerializer(serializers.Serializer):
     adjustment_id = serializers.UUIDField()
     client_request_id = serializers.CharField(
@@ -71,7 +73,6 @@ class HarnessConversationAdjustmentResponseSerializer(serializers.Serializer):
     scenario_delta = serializers.IntegerField()
     status = serializers.CharField()
     created_at = serializers.DateTimeField()
-
 
 
 class HarnessConversationMessageSerializer(serializers.Serializer):
@@ -112,13 +113,28 @@ class HarnessConversationRuntimeSerializer(serializers.Serializer):
     available = serializers.BooleanField()
 
 
+class HarnessConversationBlockingInputSerializer(serializers.Serializer):
+    """The question or confirmation the builder waits on, as the runtime asked it."""
+
+    message_id = serializers.CharField()
+    kind = serializers.CharField(
+        help_text="question_requested or confirmation_requested."
+    )
+    prompt = serializers.CharField(required=False, allow_blank=True)
+    options = serializers.ListField(child=serializers.JSONField(), required=False)
+    options_only = serializers.BooleanField(
+        required=False,
+        help_text="True when only one of its options answers it: free text is not an answer.",
+    )
+
+
 class HarnessConversationReadSerializer(serializers.Serializer):
     conversation_id = serializers.UUIDField()
     job_id = serializers.UUIDField()
     state = serializers.CharField()
     stage = serializers.CharField()
     active_invocation_id = serializers.CharField(allow_null=True)
-    blocking_input = serializers.JSONField(allow_null=True)
+    blocking_input = HarnessConversationBlockingInputSerializer(allow_null=True)
     messages = HarnessConversationMessageSerializer(many=True)
     events = HarnessConversationEventReadSerializer(many=True)
     event_watermark = serializers.IntegerField(min_value=0)
@@ -284,7 +300,9 @@ class HarnessConversationRunStartSerializer(serializers.Serializer):
         max_length=100,
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
-    operation_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    operation_id = serializers.CharField(
+        required=False, allow_blank=True, max_length=64
+    )
 
 
 class HarnessConversationOverviewQuerySerializer(serializers.Serializer):

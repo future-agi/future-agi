@@ -397,9 +397,13 @@ class TestToolListE2E:
             assert "description" in tool
             assert "category" in tool
 
-    def test_tool_count_matches_registry(self, auth_client):
+    def test_tool_count_matches_registry(self, auth_client, monkeypatch):
         from mcp_server.generated_registry import registry
 
+        # Entitled to every feature, so each available default-group tool lists.
+        monkeypatch.setattr(
+            "mcp_server.usage_helpers.check_ee_feature", lambda *_, **__: None
+        )
         response = auth_client.get(TOOL_LIST_URL)
         data = response.json()
 

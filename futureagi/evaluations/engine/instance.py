@@ -369,6 +369,7 @@ def prepare_eval_config(
     # CustomPromptEvaluator — LLM-as-judge
     elif eval_type_id == "CustomPromptEvaluator":
         config["provider"] = eval_template.config.get("provider")
+        config["fractional_score"] = eval_template.config.get("fractional_score", False)
         config["rule_prompt"] = (
             config["rule_prompt"]
             if "rule_prompt" in config
@@ -394,7 +395,12 @@ def prepare_eval_config(
 
             config["few_shot_examples"] = expand_static_few_shot_examples(
                 eval_template.config.get("few_shot_examples"),
-                organization=eval_template.organization,
+                organization=organization_id or eval_template.organization,
+                workspace_id=(
+                    workspace_id
+                    if organization_id is not None or workspace_id is not None
+                    else getattr(eval_template, "workspace_id", None)
+                ),
             )
 
         # Resolve model

@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, IconButton, Stack, Typography, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemePrompt } from "src/hooks/use-ag-theme";
 import "./MultiResult.css";
 import OutputMeta from "./OutputMeta";

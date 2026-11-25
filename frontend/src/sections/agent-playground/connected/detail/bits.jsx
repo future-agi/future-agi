@@ -4,7 +4,7 @@ import { ROW_HEIGHT } from "src/theme/sizes";
 
 // Small pieces shared by the agent detail tabs, from the designer prototype.
 
-export function Pill({ children }) {
+export function Pill({ children, tone = "neutral" }) {
   return (
     <Box
       sx={{
@@ -18,14 +18,21 @@ export function Pill({ children }) {
       }}
     >
       <Typography
-        sx={{ typography: "s2", fontWeight: 500, color: "text.secondary" }}
+        sx={{
+          typography: "s2",
+          fontWeight: 500,
+          color: tone === "primary" ? "primary.main" : "text.secondary",
+        }}
       >
         {children}
       </Typography>
     </Box>
   );
 }
-Pill.propTypes = { children: PropTypes.node };
+Pill.propTypes = {
+  children: PropTypes.node,
+  tone: PropTypes.oneOf(["neutral", "primary"]),
+};
 
 export function Card({ title, action, children, sx }) {
   return (
@@ -77,7 +84,7 @@ Card.propTypes = {
   sx: PropTypes.object,
 };
 
-export function Row({ cells, header = false, onClick }) {
+export function Row({ cells, header = false, onClick, template }) {
   const clickable = onClick
     ? {
         role: "button",
@@ -96,7 +103,8 @@ export function Row({ cells, header = false, onClick }) {
       {...clickable}
       sx={{
         display: "grid",
-        gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))`,
+        gridTemplateColumns:
+          template ?? `repeat(${cells.length}, minmax(0, 1fr))`,
         gap: 1.5,
         px: 1.5,
         minHeight: header ? 28 : ROW_HEIGHT.default,
@@ -135,6 +143,7 @@ Row.propTypes = {
   cells: PropTypes.array.isRequired,
   header: PropTypes.bool,
   onClick: PropTypes.func,
+  template: PropTypes.string,
 };
 
 export function QuietTag({ children }) {
@@ -169,3 +178,52 @@ export function LineSkeleton({ sx, ...rest }) {
   return <Skeleton sx={{ height: "1lh", ...sx }} {...rest} />;
 }
 LineSkeleton.propTypes = { sx: PropTypes.object };
+
+export function LabeledField({
+  id,
+  label,
+  required,
+  helper,
+  error,
+  sx,
+  children,
+}) {
+  const caption = error || helper;
+  return (
+    <Box sx={sx}>
+      <Typography
+        component="label"
+        htmlFor={id}
+        sx={{ display: "block", typography: "s1", fontWeight: 500, mb: 0.5 }}
+      >
+        {label}
+        {required && (
+          <Box component="span" sx={{ color: "status.danger.fg", ml: 0.5 }}>
+            *
+          </Box>
+        )}
+      </Typography>
+      {children}
+      {caption && (
+        <Typography
+          sx={{
+            typography: "s3",
+            color: error ? "status.danger.fg" : "text.subtitle",
+            mt: 0.5,
+          }}
+        >
+          {caption}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+LabeledField.propTypes = {
+  id: PropTypes.string.isRequired,
+  label: PropTypes.node.isRequired,
+  required: PropTypes.bool,
+  helper: PropTypes.node,
+  error: PropTypes.node,
+  sx: PropTypes.object,
+  children: PropTypes.node,
+};

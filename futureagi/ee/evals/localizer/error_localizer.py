@@ -23,6 +23,7 @@ from ee.evals.localizer.prompts import (
     SYSTEM_PROMPT,
 )
 from PIL import Image
+from tfc.utils.media_tools import MediaToolUnavailable, require_ffmpeg
 from tfc.utils.storage import (
     audio_bytes_from_url_or_base64,
     image_bytes_from_url_or_base64,
@@ -93,6 +94,7 @@ def _create_audio_segments(audio_input: Any) -> dict[str, dict[str, Any]]:
             if not isinstance(audio_input, bytes)
             else audio_input
         )
+        require_ffmpeg("splitting audio for error localization", ffprobe=True)
         from pydub import AudioSegment
 
         audio = AudioSegment.from_file(BytesIO(raw))
@@ -113,6 +115,8 @@ def _create_audio_segments(audio_input: Any) -> dict[str, dict[str, Any]]:
                 "start_time": start / 1000,
                 "end_time": end / 1000,
             }
+    except MediaToolUnavailable:
+        raise
     except Exception as exc:
         logger.warning(
             "el_audio_chunk_failed", error=str(exc), exc_type=type(exc).__name__
@@ -538,7 +542,22 @@ class ErrorLocalizer:
         modality: Modality,
     ) -> LocalizerResult:
         run_id = uuid.uuid4().hex[:12]
-        units, unit_blocks, image_dims = _chunk(modality, input_data, run_id)
+        try:
+            units, unit_blocks, image_dims = _chunk(modality, input_data, run_id)
+        except MediaToolUnavailable as exc:
+            # Skip, as for any input that cannot be chunked, but say why.
+            logger.warning(
+                "el_chunk_unavailable",
+                run_id=run_id,
+                modality=modality,
+                reason=str(exc),
+            )
+            return LocalizerResult(
+                analysis={},
+                selected_key=selected_input_key,
+                skip_reason=str(exc),
+                cost=self.cost,
+            )
         logger.debug(
             "el_step",
             step="[1/5]",

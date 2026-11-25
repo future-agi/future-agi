@@ -31,6 +31,10 @@ func New(keyStore *authpkg.KeyStore, enabled bool) *Plugin {
 func (p *Plugin) Name() string  { return "auth" }
 func (p *Plugin) Priority() int { return 20 } // After IP ACL (10), before RBAC/budget/guardrails.
 
+// IsAccessGate marks the key checks, allowed_ips among them, as an access
+// check (pipeline.AccessGate).
+func (p *Plugin) IsAccessGate() bool { return true }
+
 // ProcessRequest validates the API key from the Authorization header.
 func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	if !p.enabled {
@@ -106,6 +110,24 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 			return pipeline.ResultError(models.ErrForbidden(
 				"API key is not authorized from this IP address",
 			))
+		}
+	}
+
+	// Inspection authority comes from this authenticated key, not request or
+	// stored creator metadata. Direct/internal handlers also pass this seam;
+	// router dispatch alone would leave those calls without a canonical binding.
+	if rc.Inspection == nil {
+		rc.Inspection = models.InspectionFromContext(ctx)
+	}
+	if rc.Inspection != nil {
+		orgID := apiKey.Metadata["org_id"]
+		_, boundKey := rc.Inspection.Principal()
+		// Keys without an organization have no selected tenant policies. Keep
+		// their existing behavior, but never let them replace a bound principal.
+		if orgID != "" || boundKey != "" {
+			if !rc.Inspection.BindPrincipal(orgID, apiKey.ID) {
+				return pipeline.ResultError(models.ErrForbidden("Inspection principal does not match authenticated caller"))
+			}
 		}
 	}
 

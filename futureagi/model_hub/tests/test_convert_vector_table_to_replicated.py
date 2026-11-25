@@ -50,7 +50,9 @@ def test_already_replicated_is_noop():
     db = _db()
     with (
         patch(f"{MOD}.ClickHouseVectorDB", return_value=db),
-        patch(f"{MOD}._distinct_engines", return_value={"ReplicatedReplacingMergeTree"}),
+        patch(
+            f"{MOD}._distinct_engines", return_value={"ReplicatedReplacingMergeTree"}
+        ),
     ):
         out = _run("--table", "feedbacks")
     assert "already Replicated" in out
@@ -109,7 +111,9 @@ def test_execute_aborts_before_swap_when_not_converged():
         patch(f"{MOD}.expected_replica_count", return_value=3),
         patch(f"{MOD}._table_hosts", side_effect=[{"r0", "r1", "r2"}, set(), set()]),
         patch(f"{MOD}._conflicting_ids", return_value=0),
-        patch(f"{MOD}._shared_columns_same_db", return_value=["id", "eval_id", "vector"]),
+        patch(
+            f"{MOD}._shared_columns_same_db", return_value=["id", "eval_id", "vector"]
+        ),
         patch(f"{MOD}.poll_replica_parity", return_value=({"r0": 5}, False)),
     ):
         with pytest.raises(CommandError, match="did not converge"):

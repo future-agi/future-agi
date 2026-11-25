@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
 import axios, { endpoints } from "src/utils/axios";
 import { askLink, readHandoff } from "src/sections/projects/observeHandoff";
+import { EXAMPLES } from "../askExamples";
 
 const fakes = vi.hoisted(() => ({
   startAskRun: vi.fn(),
@@ -356,7 +357,7 @@ const KEY_MISSING = {
   error_code: "JEV_KEY_MISSING",
   settings_path: "/dashboard/settings/ai-providers",
 };
-const AI_PROVIDERS = "/dashboard/settings/ai-providers";
+const AI_PROVIDERS = "/dashboard/settings/ai-providers?provider=typesafe";
 
 const ESTIMATE = {
   population: 104233,
@@ -494,6 +495,12 @@ describe("a new question the server holds for its confirm", () => {
     expect(
       screen.getByText(/This reads 6,000 sessions: about 360 credits\./),
     ).toBeInTheDocument();
+    // Start is the one primary: Ask Jev, which would send it unconfirmed
+    // again, goes while the confirm is up, and Back is neutral.
+    expect(primaryButtons()).toEqual(["Start"]);
+    expect(screen.getByRole("button", { name: "Back" })).toHaveClass(
+      "MuiButton-outlined",
+    );
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
     });
@@ -589,6 +596,22 @@ describe("a new question the server holds for its confirm", () => {
   });
 });
 
+// The labels of the contained primary buttons on the page.
+const primaryButtons = () =>
+  screen
+    .queryAllByRole("button")
+    .filter((button) => button.classList.contains("MuiButton-containedPrimary"))
+    .map((button) => button.textContent.trim());
+
+// Every CSS rule emotion wrote for the element's own classes, media rules
+// included (jsdom does no layout, so the rules are what can be checked).
+function rulesFor(element) {
+  const names = Array.from(element.classList).map((name) => `.${name}`);
+  return Array.from(document.styleSheets)
+    .flatMap((sheet) => Array.from(sheet.cssRules, (rule) => rule.cssText))
+    .filter((text) => names.some((name) => text.includes(name)));
+}
+
 // jsdom can't match :focus-visible, so read the rule emotion wrote for the
 // element's own class.
 function focusRing(element) {
@@ -601,6 +624,131 @@ function focusRing(element) {
     ),
   );
 }
+
+describe("the example questions", () => {
+  it("stay shown once one is picked, the one asked disabled", async () => {
+    renderAt(askLink(PROJECT, { unit: "sessions" }));
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    const [first, second] = EXAMPLES.sessions;
+    fireEvent.click(screen.getByRole("button", { name: first.question }));
+    expect(screen.getByRole("textbox", { name: "Question 1" })).toHaveValue(
+      first.question,
+    );
+    // Still shown: the one asked can't be added twice, the others still can.
+    expect(screen.getByText("Try one")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: first.question }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("button", { name: second.question }),
+    ).not.toHaveAttribute("aria-disabled");
+  });
+});
+
+describe("the composer's layout", () => {
+  it("keeps Ask Jev in a row pinned below the questions as they grow", async () => {
+    renderAt(askLink(PROJECT, { unit: "sessions" }));
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    const actions = screen.getByTestId("ask-actions");
+    const ask = () => within(actions).getByRole("button", { name: /^Ask Jev/ });
+    expect(ask()).toBeInTheDocument();
+    const [first, second] = EXAMPLES.sessions;
+    fireEvent.click(screen.getByRole("button", { name: first.question }));
+    fireEvent.click(screen.getByRole("button", { name: second.question }));
+    // A second example adds an editor above the row, not around it.
+    const editor = screen.getByRole("textbox", { name: "Question 2" });
+    expect(
+      editor.compareDocumentPosition(actions) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(actions.contains(editor)).toBe(false);
+    expect(ask()).toBeInTheDocument();
+    // Pinned once the page scrolls, and pushed to the pane's bottom (auto
+    // top margin) while it doesn't, so it starts where it stays.
+    const sticky = rulesFor(actions).join("\n");
+    expect(sticky).toMatch(/position:\s*sticky/);
+    expect(sticky).toMatch(/bottom:\s*0/);
+    expect(sticky).toMatch(/margin-top:\s*auto/);
+    // Nothing below the row to push it up: recent questions sit with the
+    // examples.
+    expect(actions.nextElementSibling).toBeNull();
+  });
+
+  it("puts the question before the count on a phone, in the page's order", async () => {
+    // A phone-width screen: MUI's down("sm") asks for a max-width.
+    const matchMedia = window.matchMedia;
+    window.matchMedia = (query) => ({
+      matches: /max-width/.test(query),
+      media: query,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    });
+    try {
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      const count = await screen.findByText(
+        /104,233 sessions in the Sessions view/,
+      );
+      const question = screen.getByRole("textbox", { name: "Question 1" });
+      // The DOM order, so Tab and screen readers follow what is drawn.
+      expect(
+        question.compareDocumentPosition(count) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    } finally {
+      window.matchMedia = matchMedia;
+    }
+  });
+
+  it("keeps the count before the question from the sm breakpoint up", async () => {
+    renderAt(askLink(PROJECT, { unit: "sessions" }));
+    const count = await screen.findByText(
+      /104,233 sessions in the Sessions view/,
+    );
+    const question = screen.getByRole("textbox", { name: "Question 1" });
+    expect(
+      count.compareDocumentPosition(question) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("moves focus to Start when a confirm takes Ask Jev's place, and back from Back", async () => {
+    fakes.estimate.mockResolvedValue({
+      ...ESTIMATE,
+      population: 20000,
+      choices: [
+        ...ESTIMATE.choices.slice(0, 4),
+        {
+          sample_size: null,
+          rows_to_read: 20000,
+          seconds_estimate: 4010,
+          needs_confirm: true,
+          allowed: true,
+        },
+      ],
+    });
+    renderAt(askLink(PROJECT, { unit: "sessions", filters: [] }));
+    fireEvent.click(await screen.findByRole("radio", { name: /All 20,000/ }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Question 1" }), {
+      target: { value: QUESTION },
+    });
+    // As a keyboard press (or a click in most browsers) would: the button
+    // has focus when it is pressed, then goes.
+    const ask = screen.getByRole("button", {
+      name: "Ask Jev about 20,000 sessions",
+    });
+    ask.focus();
+    fireEvent.click(ask);
+    expect(screen.getByRole("button", { name: "Start" })).toHaveFocus();
+    const back = screen.getByRole("button", { name: "Back" });
+    back.focus();
+    fireEvent.click(back);
+    expect(
+      screen.getByRole("button", { name: "Ask Jev about 20,000 sessions" }),
+    ).toHaveFocus();
+  });
+});
 
 describe("the Ask page", () => {
   it("reads a sample of a big view by default and opens the run", async () => {
@@ -755,6 +903,7 @@ describe("the Ask page", () => {
     expect(
       screen.getByText(/Read 20,000 sessions\? That is about 1,200 credits/),
     ).toBeInTheDocument();
+    expect(primaryButtons()).toEqual(["Start"]);
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
     });
@@ -1290,24 +1439,24 @@ describe("the Ask page", () => {
     renderAt(
       `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(fakes.control).not.toHaveBeenCalled();
     const ask = screen
       .getByText(
-        "Cancel this run? The 8 answers so far are kept; it can't be resumed.",
+        "Stop this run? The 8 answers so far are kept; it can't be resumed.",
       )
       .closest("[role='alert']");
     // Back keeps it running.
     fireEvent.click(within(ask).getByRole("button", { name: "Back" }));
-    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(screen.queryByText(/Stop this run\?/)).toBeNull();
     expect(fakes.control).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
+      fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
     });
     expect(fakes.control).toHaveBeenCalledExactlyOnceWith("cancel", {});
-    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(screen.queryByText(/Stop this run\?/)).toBeNull();
   });
 
   it("pauses at once, without asking", async () => {
@@ -1324,7 +1473,7 @@ describe("the Ask page", () => {
       fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     });
     expect(fakes.control).toHaveBeenCalledExactlyOnceWith("pause", {});
-    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(screen.queryByText(/Stop this run\?/)).toBeNull();
   });
 
   it("says a pause is draining, and when a run waits for its workers", () => {
@@ -2623,6 +2772,80 @@ describe("a sample size typed in", () => {
   });
 
   describe("on a view too small for the fixed sizes", () => {
+    it("holds the size choices' place while the view is counted", async () => {
+      fakes.estimate.mockImplementation(() => new Promise(() => {}));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      expect(
+        await screen.findByTestId("scope-choices-loading"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("radiogroup", { name: "How many to read" }),
+      ).toBeNull();
+    });
+
+    // The block the size choices take: the skeleton while counting, the same
+    // space after a failed or empty count.
+    const reserved = () =>
+      screen.queryByTestId("scope-choices-loading") ||
+      screen.queryByTestId("scope-choices-space");
+    const footprint = (block) => ({
+      marginTop: getComputedStyle(block).marginTop,
+      heights: [...block.children].map(
+        (child) => getComputedStyle(child).height,
+      ),
+    });
+
+    it("keeps the size choices' place when the count fails or is zero", async () => {
+      fakes.estimate.mockImplementation(() => new Promise(() => {}));
+      const loading = renderAt(askLink(PROJECT, { unit: "sessions" }));
+      await screen.findByTestId("scope-choices-loading");
+      const counting = footprint(reserved());
+      expect(counting.heights).toEqual(["64px", "64px"]);
+      loading.unmount();
+
+      // The count is retried once before it fails.
+      fakes.estimate.mockRejectedValue(new Error("count failed"));
+      const failed = renderAt(askLink(PROJECT, { unit: "sessions" }));
+      expect(
+        await screen.findByText(/couldn't be counted/, {}, { timeout: 4000 }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("scope-choices-space")).toBeInTheDocument();
+      expect(footprint(reserved())).toEqual(counting);
+      failed.unmount();
+
+      fakes.estimate.mockImplementation(costed(smallEstimate(0)));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      await waitFor(() =>
+        expect(screen.getByTestId("scope-choices-space")).toBeInTheDocument(),
+      );
+      expect(
+        screen.queryByRole("radiogroup", { name: "How many to read" }),
+      ).toBeNull();
+      expect(footprint(reserved())).toEqual(counting);
+    });
+
+    it("offers a sample from inside the every-row card, adding no row", async () => {
+      fakes.estimate.mockImplementation(costed(smallEstimate(42)));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      const all = await screen.findByRole("radio", {
+        name: /Every one of the 42/,
+      });
+      expect(screen.queryByTestId("scope-choices-loading")).toBeNull();
+      // In the card, but outside the radio: its own control, never dimmed
+      // with a choice that can't run.
+      const link = within(all.parentElement).getByRole("button", {
+        name: "Read a sample instead",
+      });
+      expect(all).not.toContainElement(link);
+      fireEvent.click(link);
+      expect(
+        screen.getByRole("spinbutton", { name: "Custom sample size" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Read a sample instead" }),
+      ).toBeNull();
+    });
+
     it("reads every row by default, or a sample typed in", async () => {
       fakes.estimate.mockImplementation(costed(smallEstimate(108)));
       fakes.startAskRun.mockResolvedValue({

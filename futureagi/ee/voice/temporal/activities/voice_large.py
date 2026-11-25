@@ -905,7 +905,9 @@ async def calculate_conversation_metrics(
             return
 
         # Calculate metrics using provider-agnostic calculator
-        calculator = ConversationMetricsCalculator(voice_service_provider=engine_provider)
+        calculator = ConversationMetricsCalculator(
+            voice_service_provider=engine_provider
+        )
         metrics = calculator.calculate_metrics_from_normalized(
             normalized_data, input.is_outbound
         )

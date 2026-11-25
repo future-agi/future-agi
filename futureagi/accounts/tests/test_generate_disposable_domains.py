@@ -23,7 +23,9 @@ WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "refresh-disposable-domain
 
 
 def _load_generator_module():
-    spec = importlib.util.spec_from_file_location("generate_disposable_domains", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "generate_disposable_domains", SCRIPT_PATH
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -203,7 +205,9 @@ class TestGeneratedModuleIsSafeAgainstUntrustedDomains:
             ]
         )
 
-        spec = importlib.util.spec_from_file_location("generated_domains_under_test", out)
+        spec = importlib.util.spec_from_file_location(
+            "generated_domains_under_test", out
+        )
         module = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(module)

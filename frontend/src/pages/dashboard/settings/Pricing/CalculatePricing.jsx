@@ -226,7 +226,7 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
                 Enterprise Plan
               </Typography>
               <Typography
-                sx={{ fontWeight: 400, fontSize: "13px", maxWidth: "401px" }}
+                sx={{ fontWeight: 400, fontSize: "12px", maxWidth: "401px" }}
               >
                 Work with our sales team to design the perfect plan for your
                 business. Ready to begin? Click on{" "}
@@ -526,7 +526,7 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
                   Enterprise Plan
                 </Typography>
                 <Typography
-                  sx={{ fontWeight: 400, fontSize: "13px", maxWidth: "337px" }}
+                  sx={{ fontWeight: 400, fontSize: "12px", maxWidth: "337px" }}
                 >
                   Flexible, custom solutions for complex teams with the
                   security, performance, and support enterprises expect
@@ -549,7 +549,7 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
                     key={item || index}
                     component="li"
                     sx={{
-                      fontSize: "13px",
+                      fontSize: "12px",
                       py: 0.25,
                       display: "list-item",
                       pl: 0,

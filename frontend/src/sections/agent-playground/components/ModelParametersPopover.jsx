@@ -78,8 +78,6 @@ export default function ModelParametersPopover({
             minWidth: 320,
             maxWidth: 400,
             borderRadius: 1,
-            border: "1px solid",
-            borderColor: "divider",
           },
         },
       }}

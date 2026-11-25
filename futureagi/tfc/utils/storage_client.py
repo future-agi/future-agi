@@ -14,9 +14,10 @@ URL routing:
 import ipaddress
 import json
 import os
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import certifi
+import idna
 import structlog
 import urllib3
 from minio import Minio
@@ -33,11 +34,93 @@ STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "s3").lower()
 _client = None
 
 
+_ENDPOINT_ERROR = "Storage endpoint must be a host[:port] or an HTTP(S) URL"
+
+
+def _split_endpoint(raw_endpoint: str):
+    """(urlsplit result, whether a scheme was given) for an endpoint setting.
+
+    Surrounding whitespace is not part of the setting: a value read from a
+    secret file or a YAML block scalar ends in a newline.
+    """
+    endpoint = raw_endpoint.strip() if isinstance(raw_endpoint, str) else ""
+    if not endpoint or any(c.isspace() for c in endpoint):
+        raise ValueError(_ENDPOINT_ERROR)
+    has_scheme = "://" in endpoint
+    return urlsplit(endpoint if has_scheme else "//" + endpoint), has_scheme
+
+
 def _parse_endpoint(raw_endpoint: str) -> tuple[str, bool | None]:
-    if "://" in raw_endpoint:
-        parsed = urlparse(raw_endpoint)
-        return parsed.netloc or parsed.path, parsed.scheme == "https"
-    return raw_endpoint, None
+    """Parse a storage authority, optionally prefixed by HTTP(S).
+
+    A bare host:port is not a URL scheme. Only the authority is used: anything
+    after it (a trailing slash, a path prefix, a query or fragment) is
+    ignored, as it always was. Minio addresses buckets at the endpoint's root,
+    and generated object URLs are path-style at the root of MINIO_URL's
+    authority, the shape tfc.utils.storage.is_own_storage_url recognises.
+    Reject what cannot name a usable authority (an empty host, credentials,
+    a scheme other than HTTP(S), a bad port) rather than deferring it to the
+    first network request. Never include configuration in the error.
+    """
+    error = _ENDPOINT_ERROR
+    try:
+        parsed, has_scheme = _split_endpoint(raw_endpoint)
+        if (
+            (has_scheme and parsed.scheme not in ("http", "https"))
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.netloc.endswith(":")
+            or parsed.port == 0
+        ):
+            raise ValueError(error)
+        host = parsed.hostname
+        if ":" in host:
+            ipaddress.IPv6Address(host)
+            host = f"[{host}]"
+        else:
+            # Public MinIO hosts may be internationalized even when the SDK
+            # connects to an ASCII internal endpoint. Validate the IDNA form;
+            # the SDK connection and server_reachable_url's host comparison use
+            # it. Generated object URLs keep the configured form instead (see
+            # _configured_authority).
+            if not host.isascii():
+                host = idna.encode(host, uts46=True).decode("ascii")
+            if any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-._" for c in host):
+                raise ValueError(error)
+            if not host.strip("."):
+                raise ValueError(error)
+    except ValueError:
+        raise ValueError(error) from None
+    authority = f"{host}:{parsed.port}" if parsed.port is not None else host
+    return authority, parsed.scheme == "https" if has_scheme else None
+
+
+def _configured_authority(raw_endpoint: str) -> tuple[str, bool | None]:
+    """Validate like _parse_endpoint, but keep the host[:port] as configured.
+
+    Stored object URLs are recognised as first-party by comparing their host
+    with the raw MINIO_URL setting (tfc.utils.storage.is_own_storage_url), and
+    Falcon builds its upload URLs from that setting (public_base_url). An IDN MINIO_URL
+    must therefore stay in its configured (Unicode) form in generated URLs;
+    HTTP clients and browsers apply IDNA themselves when they connect.
+    """
+    _, scheme_hint = _parse_endpoint(raw_endpoint)
+    parsed, _ = _split_endpoint(raw_endpoint)
+    return parsed.netloc, scheme_hint
+
+
+def public_base_url(raw_endpoint: str) -> str:
+    """MINIO_URL as a base to append /<bucket>/<key> to, validated first.
+
+    Falcon has always built its upload URLs this way, keeping MINIO_URL's
+    path prefix and configured host form. Surrounding whitespace, trailing
+    slashes and any query or fragment are dropped so the result is one URL.
+    """
+    _parse_endpoint(raw_endpoint)
+    parsed, has_scheme = _split_endpoint(raw_endpoint)
+    base = parsed.netloc + parsed.path.rstrip("/")
+    return f"{parsed.scheme}://{base}" if has_scheme else base
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -172,7 +255,7 @@ def get_object_url(bucket_name: str, object_key: str) -> str:
         return f"https://storage.googleapis.com/{bucket_name}/{object_key}"
 
     if STORAGE_BACKEND == "minio":
-        host, scheme_hint = _parse_endpoint(
+        host, scheme_hint = _configured_authority(
             os.getenv("MINIO_URL", "http://localhost:9005")
         )
         scheme = "https" if scheme_hint else "http"
@@ -190,14 +273,25 @@ def server_reachable_url(file_url: str) -> str:
     """
     if STORAGE_BACKEND != "minio":
         return file_url
-    browser_host, _ = _parse_endpoint(os.getenv("MINIO_URL", "http://localhost:9005"))
-    internal_host, internal_secure = _parse_endpoint(
-        os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
-    )
-    if not browser_host or not internal_host or browser_host == internal_host:
+    try:
+        browser_host, _ = _parse_endpoint(
+            os.getenv("MINIO_URL", "http://localhost:9005")
+        )
+        internal_host, internal_secure = _parse_endpoint(
+            os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
+        )
+    except ValueError:
+        # Without both endpoints there is nothing to rewrite to; leave the URL
+        # as stored rather than failing the caller.
+        return file_url
+    if browser_host == internal_host:
         return file_url
     parsed = urlparse(file_url)
-    if parsed.netloc != browser_host:
+    try:
+        stored_host, _ = _parse_endpoint(parsed.netloc)
+    except ValueError:
+        return file_url
+    if stored_host != browser_host:
         return file_url
     scheme = "https" if internal_secure else "http"
     return parsed._replace(scheme=scheme, netloc=internal_host).geturl()

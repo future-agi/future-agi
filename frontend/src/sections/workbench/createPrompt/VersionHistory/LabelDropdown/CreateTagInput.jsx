@@ -43,7 +43,7 @@ const CreateTagInput = ({
         sx={{
           "& .MuiOutlinedInput-root": {
             height: FIELD_HEIGHT,
-            fontSize: "13px",
+            fontSize: "12px",
           },
         }}
       />

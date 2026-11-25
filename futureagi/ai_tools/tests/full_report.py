@@ -139,7 +139,9 @@ try:
                         status = (
                             "✅"
                             if tc.get("status") == "completed"
-                            else "❌" if tc.get("status") == "error" else "⏳"
+                            else "❌"
+                            if tc.get("status") == "error"
+                            else "⏳"
                         )
                         params_str = json.dumps(tc.get("params", {}), default=str)[:80]
                         print(
@@ -176,7 +178,7 @@ print(f"  With errors: {with_errors}")
 print(f"  Total error details: {details.count()}")
 if scores:
     print(f"  Score range: {min(scores):.1f} — {max(scores):.1f}")
-    print(f"  Average score: {sum(scores)/len(scores):.2f}")
+    print(f"  Average score: {sum(scores) / len(scores):.2f}")
 
 # Error category breakdown
 categories = {}

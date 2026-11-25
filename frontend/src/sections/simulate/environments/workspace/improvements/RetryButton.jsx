@@ -34,7 +34,7 @@ export default function RetryButton({ fix }) {
             ),
           onError: (e) =>
             enqueueSnackbar(
-              fixErrorOf(e).message || "Could not retry the improvement",
+              fixErrorOf(e).message || "Could not retry the epoch",
               { variant: "error" },
             ),
         })

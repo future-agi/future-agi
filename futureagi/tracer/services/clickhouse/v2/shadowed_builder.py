@@ -34,6 +34,7 @@ Every `ctx.run()` call is INDEPENDENT — the routing decision is fresh
 (supports operator flipping mid-soak). The wrapper holds builder instances
 across calls so initialization cost is paid once per view request.
 """
+
 from __future__ import annotations
 
 import time
@@ -96,14 +97,23 @@ class ShadowedQueryBuilder:
         self._v1: Optional[Any] = None
         self._v2: Optional[Any] = None
 
-        if self._mode in (RoutingMode.V1_ONLY, RoutingMode.SHADOW, RoutingMode.V2_PRIMARY):
+        if self._mode in (
+            RoutingMode.V1_ONLY,
+            RoutingMode.SHADOW,
+            RoutingMode.V2_PRIMARY,
+        ):
             self._v1 = get_v1_class(query_type)(**builder_kwargs)
-        if self._mode in (RoutingMode.V2_ONLY, RoutingMode.SHADOW, RoutingMode.V2_PRIMARY):
+        if self._mode in (
+            RoutingMode.V2_ONLY,
+            RoutingMode.SHADOW,
+            RoutingMode.V2_PRIMARY,
+        ):
             v2_cls = get_v2_class(query_type)
             if v2_cls is None:
                 logger.warning(
                     "ch25_no_v2_class_falling_back_to_v1",
-                    query_type=query_type, mode=self._mode.value,
+                    query_type=query_type,
+                    mode=self._mode.value,
                 )
                 # Re-resolve as if V1_ONLY for the rest of the request
                 self._mode = RoutingMode.V1_ONLY
@@ -116,7 +126,9 @@ class ShadowedQueryBuilder:
     def run(self, method_name: str, *args, **kwargs):
         """Build (sql, params) via `<builder>.<method_name>(*args)`, execute, return."""
         if self._mode == RoutingMode.DISABLED:
-            logger.warning("ch25_disabled", query_type=self.query_type, method=method_name)
+            logger.warning(
+                "ch25_disabled", query_type=self.query_type, method=method_name
+            )
             return None
 
         if self._mode == RoutingMode.V1_ONLY:
@@ -160,19 +172,24 @@ class ShadowedQueryBuilder:
             n2 = self._normalize(_rows_for_diff(v2_result))
             if n1 != n2:
                 sr.diff_count = 1
-                sr.diff_examples = [{
-                    "v1_rows": _safe_len(v1_result),
-                    "v2_rows": _safe_len(v2_result),
-                }]
+                sr.diff_examples = [
+                    {
+                        "v1_rows": _safe_len(v1_result),
+                        "v2_rows": _safe_len(v2_result),
+                    }
+                ]
 
         log_payload = {
-            "query_type": self.query_type, "mode": self._mode.value,
+            "query_type": self.query_type,
+            "mode": self._mode.value,
             "method": method_name,
-            "v1_ms": sr.v1_elapsed_ms, "v2_ms": sr.v2_elapsed_ms,
+            "v1_ms": sr.v1_elapsed_ms,
+            "v2_ms": sr.v2_elapsed_ms,
             "rows_v1": _safe_len(v1_result) if v1_ok else None,
             "rows_v2": _safe_len(v2_result) if v2_ok else None,
             "diff_count": sr.diff_count,
-            "err_v1": sr.error_v1, "err_v2": sr.error_v2,
+            "err_v1": sr.error_v1,
+            "err_v2": sr.error_v2,
         }
         if sr.diff_count or sr.error_v1 or sr.error_v2:
             logger.warning("ch25_shadow_diff", **log_payload)
@@ -183,9 +200,12 @@ class ShadowedQueryBuilder:
         if self._mode == RoutingMode.V2_PRIMARY:
             if v2_ok:
                 return v2_result
-            logger.error("ch25_v2_primary_fallback_to_v1",
-                         query_type=self.query_type, method=method_name,
-                         err=sr.error_v2)
+            logger.error(
+                "ch25_v2_primary_fallback_to_v1",
+                query_type=self.query_type,
+                method=method_name,
+                err=sr.error_v2,
+            )
             if v1_ok:
                 return v1_result
             raise RuntimeError(

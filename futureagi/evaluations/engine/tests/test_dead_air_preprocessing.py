@@ -10,8 +10,11 @@ inspection.
 
 from __future__ import annotations
 
+import base64
 import io
 import math
+import shutil
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -50,8 +53,8 @@ def _synth_wav_bytes(duration_sec=2.0, sr=8000, silence_segments=None):
     n = int(duration_sec * sr)
     t = np.linspace(0, duration_sec, n, endpoint=False)
     y = 0.5 * np.sin(2 * math.pi * 440 * t).astype("float32")
-    for (s, e) in silence_segments or []:
-        y[int(s * sr):int(e * sr)] = 0.0
+    for s, e in silence_segments or []:
+        y[int(s * sr) : int(e * sr)] = 0.0
     buf = io.BytesIO()
     sf.write(buf, y, sr, format="WAV")
     return buf.getvalue()
@@ -88,6 +91,142 @@ def test_silent_audio_is_mostly_dead_air():
     assert "_dead_air_error" not in out
     assert out["_dead_air_percentage"] > 50.0
     assert out["_dead_air_max_gap_ms"] > 1000.0
+
+
+def _recording(name):
+    # Pre-encoded 440 Hz, 8 kHz mono clips. Audio-enabled slim workers can
+    # decode these formats but don't ship an AAC encoder or an M4A muxer.
+    pytest.importorskip("librosa")
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("ffmpeg and ffprobe required")
+    return (Path(__file__).parent / "fixtures" / "dead_air" / name).read_bytes()
+
+
+def test_m4a_audio_is_decoded():
+    """The loader supplies the original bucket object's bytes."""
+    body = _recording("silent-tail.m4a")
+    with patch(
+        "tfc.utils.storage.audio_bytes_from_url_or_base64",
+        return_value=body,
+    ):
+        out = preprocess_inputs(
+            "dead_air_detection",
+            {"input_audio": "https://example.com/silent.m4a"},
+        )
+    assert "_dead_air_error" not in out
+    assert out["_dead_air_percentage"] > 50.0
+    assert out["_dead_air_max_gap_ms"] > 1000.0
+
+
+@pytest.mark.parametrize("as_base64", [False, True], ids=["uploaded-bytes", "base64"])
+def test_short_m4a_matches_original_waveform(as_base64):
+    # 1600 samples do not end on an AAC frame boundary (1024 samples).
+    duration = 0.2
+    wav = _synth_wav_bytes(duration_sec=duration)
+    m4a = _recording("tone.m4a")
+    value = base64.b64encode(m4a).decode("ascii") if as_base64 else {"bytes": m4a}
+    reference = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": wav}})
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": value})
+    assert "_dead_air_error" not in actual
+    assert actual["_dead_air_duration_sec"] == pytest.approx(
+        reference["_dead_air_duration_sec"], abs=1 / 8000
+    )
+    assert actual["_dead_air_percentage"] == reference["_dead_air_percentage"]
+    assert actual["_dead_air_max_gap_ms"] == reference["_dead_air_max_gap_ms"]
+
+
+def test_decodable_wav_does_not_require_ffmpeg():
+    wav = _synth_wav_bytes(duration_sec=0.2)
+    with patch("tfc.utils.media_tools.shutil.which", return_value=None) as which:
+        actual = preprocess_inputs(
+            "dead_air_detection", {"input_audio": {"bytes": wav}}
+        )
+    assert "_dead_air_error" not in actual
+    # Only media tool lookups count. The patch is process-wide, and the first
+    # librosa.load in a process scans audioread backends, which asks ctypes
+    # for a C compiler (``which("gcc")``, ``which("cc")``).
+    tool_lookups = [
+        call.args[0]
+        for call in which.call_args_list
+        if call.args and call.args[0] in {"ffmpeg", "ffprobe"}
+    ]
+    assert tool_lookups == []
+
+
+def test_raw_aac_decodes_all_frames():
+    # Same tone as the M4A, but ADTS has three full AAC frames and no edit list.
+    audio = _recording("tone.aac")
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
+    assert actual["_dead_air_duration_sec"] == pytest.approx(3 * 1024 / 8000)
+
+
+def test_incomplete_m4a_is_not_scored():
+    # The intact front index still declares 2 s; dropping the final 12 AAC
+    # packets leaves 512 ms of decodable PCM, losing almost all the silence.
+    audio = _recording("silent-tail.m4a")[:-48]
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
+    assert "_dead_air_percentage" not in actual
+    assert "_dead_air_error" in actual
+
+
+TONE_M4A = (Path(__file__).parent / "fixtures" / "dead_air" / "tone.m4a").read_bytes()
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [("ffmpeg", "ffprobe"), ("ffmpeg",), ("ffprobe",)],
+    ids=["neither-tool", "no-ffmpeg", "no-ffprobe"],
+)
+@pytest.mark.parametrize(
+    "audio", [TONE_M4A, b"not audio at all"], ids=["tone-m4a", "invalid-bytes"]
+)
+def test_missing_tools_keep_original_decode_error(
+    audio, missing, tmp_path, monkeypatch
+):
+    # FFMPEG_FLAVOR=none has neither tool; a partial image can lack one.
+    pytest.importorskip("librosa")
+    for tool in {"ffmpeg", "ffprobe"} - set(missing):
+        path = shutil.which(tool)
+        if not path:
+            pytest.skip(f"{tool} required for this control")
+        (tmp_path / tool).symlink_to(path)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
+    error = actual["_dead_air_error"]
+    assert "Format not recognised" in error
+    hint = error.split("Format not recognised", 1)[1]
+    if len(missing) == 2:
+        assert "ffmpeg and ffprobe are not installed" in hint
+    else:
+        assert f"{missing[0]} is not installed" in hint
+        other = ({"ffmpeg", "ffprobe"} - set(missing)).pop()
+        assert other not in hint
+    assert "_dead_air_percentage" not in actual
+
+
+def test_oversize_pcm_is_not_scored(monkeypatch):
+    audio = _recording("silent-tail.m4a")
+    # The compressed recording fits, but the 32 kB PCM recording does not.
+    monkeypatch.setattr("tfc.utils.storage.MAX_AUDIO_FILE_SIZE", len(audio) + 1024)
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
+    assert (
+        actual["_dead_air_error"]
+        == "Could not decode audio: Decoded audio recording is too large"
+    )
+    assert "_dead_air_percentage" not in actual
+
+
+def test_undecodable_bytes_return_error():
+    with patch(
+        "tfc.utils.storage.audio_bytes_from_url_or_base64",
+        return_value=b"not audio at all",
+    ):
+        out = preprocess_inputs(
+            "dead_air_detection",
+            {"input_audio": "https://example.com/broken.m4a"},
+        )
+    assert out["_dead_air_error"].startswith("Could not decode audio")
+    assert "_dead_air_percentage" not in out
 
 
 def test_loader_called_with_no_silence_padding():

@@ -59,9 +59,11 @@ def test_vertex_provider_paste_builds_trusted_endpoint_and_contract():
     )
     assert prepared["api_format"] == "gemini"
     assert "api_key" not in prepared
-    assert GatewayOrgConfig.model_validate(
-        {"providers": {"vertex": prepared}}
-    ).providers["vertex"].service_account_json
+    assert (
+        GatewayOrgConfig.model_validate({"providers": {"vertex": prepared}})
+        .providers["vertex"]
+        .service_account_json
+    )
 
     with pytest.raises(ValueError, match="service-account"):
         _prepare_vertex_provider_config(
@@ -69,7 +71,8 @@ def test_vertex_provider_paste_builds_trusted_endpoint_and_contract():
                 "gcp_project": "demo-project",
                 "gcp_location": "us-central1",
                 "service_account_json": raw.replace(
-                    "https://oauth2.googleapis.com/token", "https://attacker.example/token"
+                    "https://oauth2.googleapis.com/token",
+                    "https://attacker.example/token",
                 ),
             }
         )
@@ -127,9 +130,12 @@ def test_gateway_provider_contract_preserves_empty_api_path_prefix():
         {"providers": {"perplexity": {"api_path_prefix": ""}}}
     )
 
-    assert contract.model_dump(by_alias=True, exclude_none=True)["providers"][
-        "perplexity"
-    ]["api_path_prefix"] == ""
+    assert (
+        contract.model_dump(by_alias=True, exclude_none=True)["providers"][
+            "perplexity"
+        ]["api_path_prefix"]
+        == ""
+    )
 
 
 def test_gateway_org_config_accepts_duplicate_saved_aliases():

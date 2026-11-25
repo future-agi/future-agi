@@ -1,4 +1,3 @@
-
 from pydantic import Field, RootModel
 
 from ee.agenthub.workflow_agent.prompts import EVENT_GENERATOR_PROMPT
@@ -15,16 +14,17 @@ class DynamicEventFeatures(RootModel):
 
 class EventGeneratorAgent:
     def __init__(self):
-        self.llm = LLM(
-            temperature=0.5,
-            max_tokens=8196
-        )
+        self.llm = LLM(temperature=0.5, max_tokens=8196)
         self.prompt = EVENT_GENERATOR_PROMPT
 
     def extract_features(self, conversations: list[str]) -> dict[str, str]:
         formatted_conversations = "##\n\n##".join(conversations)
-        response = self.llm._get_completion_response(self.prompt.format(conversations=formatted_conversations))
-        features = parse_llm_str_response(response.content[0].text, DynamicEventFeatures)
+        response = self.llm._get_completion_response(
+            self.prompt.format(conversations=formatted_conversations)
+        )
+        features = parse_llm_str_response(
+            response.content[0].text, DynamicEventFeatures
+        )
 
         return features
 
@@ -32,11 +32,7 @@ class EventGeneratorAgent:
         features = self.extract_features(conversations)
         events = []
         for feature, description in features.items():
-            event = {
-                "key": feature,
-                "event_type": feature,
-                "description": description
-            }
+            event = {"key": feature, "event_type": feature, "description": description}
             events.append(event)
 
         return events
@@ -50,7 +46,7 @@ def main():
         "User: My laptop keeps freezing and I can't open any applications.",
         "Agent: I see. Let's try a few troubleshooting steps. First, have you tried restarting your computer?",
         "User: Yes, I've already tried that but it didn't help.",
-        "Agent: Okay, let's try a few more things. Can you tell me when this problem started occurring?"
+        "Agent: Okay, let's try a few more things. Can you tell me when this problem started occurring?",
     ]
 
     generator = EventGeneratorAgent()

@@ -4,7 +4,8 @@ import json
 import re
 import time
 
-from jinja2 import Environment, StrictUndefined, TemplateError, UndefinedError
+from jinja2 import StrictUndefined, TemplateError, UndefinedError
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.llm_payloads import compute_choices_failure
@@ -106,7 +107,9 @@ class TypedDecisionEvaluator(LLM):
             multi_choice=config.get("multi_choice", False),
             config=config,
         )
-        self.env = Environment(undefined=StrictUndefined)
+        # Same template environment as the custom prompt evaluator: plain
+        # variables, filters and loops; underscore attributes are not resolved.
+        self.env = SandboxedEnvironment(undefined=StrictUndefined)
         self.last_jev = None
         super().__init__(model_name=model, provider=self.connection, api_key=None)
 

@@ -531,13 +531,28 @@ export function fixtureLaunchOptions(sourceRunId) {
       { id: "settings", label: "Settings", allowed: true, reason: null },
       { id: "code", label: "Code", allowed: true, reason: null },
     ],
-    defaults: { surfaces: ["prompt"], budget_credits: 1500, max_minutes: 150 },
+    // A GitHub agent is not traced: the run's spans show no model it called.
+    defaults: {
+      surfaces: ["prompt"],
+      budget_credits: 1500,
+      max_minutes: 150,
+      allowed_models: [],
+      agent_cost_metered: false,
+      agent_calls_unmeasured: false,
+      reply_latency_margin_pct: 25,
+      cost_margin_pct: 25,
+    },
     limits: {
       budget_credits_max: 50000,
       max_minutes_max: 1440,
+      scenarios_min: 3,
+      cases_min: 12,
+      variations_per_case: 3,
+      verified_cases_min: 6,
       scenarios_max: 200,
     },
     blocked: null,
+    variations_blocked: null,
   };
 }
 
@@ -576,7 +591,10 @@ export function fixtureLaunch(envId, body) {
 
 // One check run's calls as the run-results calls endpoint returns them: raw
 // rows, paged.
-export function fixtureRunCalls(testExecutionId, { page = 1, page_size = 200 } = {}) {
+export function fixtureRunCalls(
+  testExecutionId,
+  { page = 1, page_size = 200 } = {},
+) {
   const rows = fixtureRunTasks(testExecutionId).map((t) => ({
     id: t.id,
     source_scenario_key: t.sourceScenarioKey,
@@ -606,6 +624,9 @@ export function fixtureRetry(fixId) {
     created_at: new Date().toISOString(),
     started_at: null,
   };
-  store = [created, ...store.map((f) => (f.id === fixId ? { ...f, retryable: false } : f))];
+  store = [
+    created,
+    ...store.map((f) => (f.id === fixId ? { ...f, retryable: false } : f)),
+  ];
   return clone(created);
 }

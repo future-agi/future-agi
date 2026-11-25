@@ -1,0 +1,17 @@
+{
+  "number": 4335,
+  "state": "open",
+  "mergeable": true,
+  "merge_commit_sha": "a51220d62e36d41ca2b0fdc0251b2305e58c00e2",
+  "head": {
+    "sha": "58671faf8c7b9c9998913cb07d5f9fd30692e02b",
+    "ref": "chore/TH-10556-metadata-events",
+    "repo": {
+      "full_name": "future-agi/future-agi"
+    }
+  },
+  "base": {
+    "ref": "dev",
+    "sha": "c9ea7be755ceed6e1fdc2ba900e8cdfa897dafd8"
+  }
+}

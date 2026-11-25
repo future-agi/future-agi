@@ -236,6 +236,7 @@ class ReleaseCredentialIsolationTests(unittest.TestCase):
                     self.assertNotIn(TOKEN_ENV, kwargs['env'])
                     return real_run([sys.executable, '-I', '-c', code], **kwargs)
                 with patch.object(acceptance, 'get_json', return_value={'tag_name': 'v1.55.0'}), \
+                     patch.object(driver, 'images_published', return_value=True), \
                      patch.object(driver, 'published', return_value=({'version': 'v1.55.0'}, Path(temp))), \
                      patch.object(driver, 'build_pr', return_value={'version': 'v1.55.1'}), \
                      patch.object(acceptance.subprocess, 'run', side_effect=execute) as run:

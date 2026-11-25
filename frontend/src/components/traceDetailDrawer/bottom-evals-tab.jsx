@@ -3,6 +3,7 @@ import React, { useMemo, useState, useRef } from "react";
 import { Paper, Box, Skeleton } from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import EvalsCustomCellRenderer from "./CustomRenderer/EvalsCustomCellRenderer";
 import EvalCustomHeaderCellRenderer from "./CustomRenderer/EvalCustomHeaderCellRenderer";
@@ -128,8 +129,6 @@ const BottomEvalsTab = ({
       setSelectedViewDetail,
     },
   };
-
-  // if (isLoading) return <LinearProgress />;
 
   return (
     <Paper

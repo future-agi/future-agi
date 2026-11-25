@@ -487,6 +487,23 @@ describe("useRunCalls", () => {
     unmount();
   });
 
+  it("with keepPrevious, keeps the last answer's facets while the next filter loads, still as loading", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: { ...payload(), facets: { actor: [{ value: "friend", count: 2 }] } },
+    });
+    const { result, rerender } = renderHook(
+      ({ filters }) => useRunCalls("ex-keep", { filters, keepPrevious: true }),
+      { wrapper: makeWrapper(), initialProps: { filters: {} } },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    axios.get.mockImplementation(() => new Promise(() => {}));
+    rerender({ filters: { status: ["failed"] } });
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.facets.actor).toEqual([
+      { value: "friend", count: 2 },
+    ]);
+  });
+
   it("carries the server's status counts for the status chips", async () => {
     axios.get.mockResolvedValue({
       data: { ...payload(), status_counts: { passed: 2, failed: 1 } },
@@ -688,5 +705,15 @@ describe("sub-goal verdicts", () => {
       results,
     );
     expect(mapCallRow({}).subGoalResults).toEqual([]);
+  });
+});
+
+describe("mapCallRow outcome reason", () => {
+  it("carries why a scenario was skipped or is inconclusive, and nothing otherwise", () => {
+    expect(
+      mapCallRow({ id: "a", outcome_reason: "actors are switched off" })
+        .outcomeReason,
+    ).toBe("actors are switched off");
+    expect(mapCallRow({ id: "b" }).outcomeReason).toBeNull();
   });
 });

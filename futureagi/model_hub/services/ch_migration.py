@@ -1,4 +1,5 @@
 """Shared parity helpers for the legacy-to-replicated ClickHouse migration commands."""
+
 from __future__ import annotations
 
 import re
@@ -142,6 +143,7 @@ def shared_columns(
     table: str,
 ) -> tuple[list[str], list[str]]:
     """Return ``(shared_in_target_order, source_only)`` for a name-aligned copy."""
+
     def cols(db: str) -> list[str]:
         return [
             r[0]
@@ -151,6 +153,7 @@ def shared_columns(
                 {"d": db, "t": table},
             )
         ]
+
     src = cols(source_db)
     tgt = cols(target_db)
     src_set, tgt_set = set(src), set(tgt)

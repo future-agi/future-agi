@@ -26,6 +26,7 @@ def _allow_usage_metering():
         mock_check_usage.return_value = MagicMock(allowed=True)
         yield mock_check_usage
 
+
 # =============================================================================
 # SECTION 1: Run Prompt E2E Flow Tests
 # =============================================================================
@@ -554,9 +555,7 @@ class TestRecoveryMechanismsE2E:
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
         # No stuck prompts
-        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = (
-            []
-        )
+        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = []
 
         # But there are stale tracker entries
         mock_tracker.cleanup_stale.return_value = 5
@@ -575,9 +574,7 @@ class TestRecoveryMechanismsE2E:
         """Test recovery gracefully handles when no prompts are stuck."""
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
-        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = (
-            []
-        )
+        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = []
         mock_tracker.cleanup_stale.return_value = 0
 
         # Should not raise

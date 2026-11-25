@@ -1,0 +1,12 @@
+{
+  "base": "ae0bf483a052580a2e57da454d51b5a43b90fbc2",
+  "sha256": "ec54112412bcdfd52d26b7be50d2e795e843bfb48fc0531b00c36bf4d0f345c9",
+  "workflow_id": "eval-task-bb262c8d-12d2-4d23-a055-50645b9c75b3",
+  "run_id": "01a2031c-8bc8-76a0-8342-8b633699c77c",
+  "sanitized_derivative": {
+    "raw_sha256": "974d6a6cd45bb3093e567737efe7850a6e7364c5a5423979ce92caa42d6a999d",
+    "replacements": {
+      "/events/0/workflowExecutionStartedEventAttributes/identity": "0@replay-fixture"
+    }
+  }
+}

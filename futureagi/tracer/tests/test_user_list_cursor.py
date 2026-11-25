@@ -633,7 +633,17 @@ def test_attribute_filter_preserves_storage_type_provenance(
     assert not manager._row_matches_filters(row)
 
 
-def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed():
+@pytest.mark.parametrize(
+    ("filter_value", "value_types", "expected"),
+    [
+        ("call-a", None, ("call-a",)),
+        (['{"enabled":true}'], ["string"], None),
+    ],
+    ids=["typed-text", "json-looking-picked-string"],
+)
+def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed(
+    filter_value, value_types, expected
+):
     """A plain-text attribute filter never reads the whole-window candidate page.
 
     The seeded 65-row witness batch is the shape that dies on the largest
@@ -645,16 +655,19 @@ def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed():
     here; the walk never spends its statement budget one day at a time on an
     empty tail whose cost proof fits the target.
     """
+    config = {
+        "filter_type": "text",
+        "filter_op": "in" if isinstance(filter_value, list) else "equals",
+        "filter_value": filter_value,
+        "col_type": "SPAN_ATTRIBUTE",
+    }
+    if value_types is not None:
+        config["attribute_value_types"] = value_types
     manager = _manager(
         filters=[
             {
                 "column_id": "call_id",
-                "filter_config": {
-                    "filter_type": "text",
-                    "filter_op": "equals",
-                    "filter_value": "call-a",
-                    "col_type": "SPAN_ATTRIBUTE",
-                },
+                "filter_config": config,
             }
         ]
     )
@@ -707,7 +720,9 @@ def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed():
         analytics_cls.return_value.execute_ch_query.side_effect = empty_server
         result = manager.list_cursor_payload(page_size=25)
 
-    assert manager.attribute_exact_text_filters == {"call_id": ("call-a",)}
+    assert manager.attribute_exact_text_filters == (
+        {"call_id": expected} if expected else {}
+    )
     assert captured_limits == []
     assert result.payload["table"] == []
     assert result.payload["query_provenance"] == "matching_activity_walk"
@@ -756,6 +771,48 @@ def test_mixed_storage_attribute_filter_never_uses_string_candidate_pruning():
                     "filter_op": "in",
                     "filter_value": ["call-a", "42"],
                     "attribute_value_types": ["string", "number"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ]
+    )
+
+    assert manager.attribute_exact_text_filters == {}
+
+
+@pytest.mark.parametrize("selected", ["true", '{"enabled":true}', "[1,2]"])
+def test_string_picker_provenance_never_narrows_canonical_text_as_raw(selected):
+    manager = _manager(
+        filters=[
+            {
+                "column_id": "picked",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": [selected],
+                    "attribute_value_types": ["string"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ]
+    )
+
+    assert manager.attribute_exact_text_filters == {}
+
+
+@pytest.mark.parametrize(
+    ("selected", "selected_type"), [(True, "boolean"), (1, "number")]
+)
+def test_non_string_picker_domains_do_not_use_text_accelerator(selected, selected_type):
+    manager = _manager(
+        filters=[
+            {
+                "column_id": "picked",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": [selected],
+                    "attribute_value_types": [selected_type],
                     "col_type": "SPAN_ATTRIBUTE",
                 },
             }

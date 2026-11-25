@@ -165,27 +165,18 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
     epoch = _engine_entry_epoch.get()
     if epoch is not None:
         fence["updated_at"] = epoch
-    EvalLogger.objects.filter(**fence).update(**fields)
-    return EvalLogger.objects.filter(id=entry_id).first()
+    if not EvalLogger.objects.filter(**fence).update(**fields):
+        # A deleted/reclaimed entry did not accept this result. Do not hand a
+        # newer claim to callers that may start follow-up work such as localization.
+        return None
+    # Primary: the entry was materialized and claimed moments ago, and the
+    # caller hands this row to the error localizer.
+    return EvalLogger.objects.using("default").filter(**fence).first()
 
 
-def materialize_pending(
-    task: EvalTask,
-    resolved_row_ids: Iterable[str] | None = None,
-    *,
-    ceiling: datetime | None = None,
-    trace_filter_witnesses: Iterable[TraceFilterWitness] = (),
-) -> int:
-    """Create one pending entry per (desired row, eval). Returns rows submitted.
-
-    ``ceiling`` (the reconcile pass's frozen now) upper-bounds the continuous
-    arrival window so a slow pass can't leave rows above the next cursor.
-    """
-    evals = list(task.evals.all())
-    if not evals:
-        return 0
-    hashes = {cfg.id: resolved_config_hash(cfg) for cfg in evals}
-    target_type = _TARGET_TYPE[task.row_type]
+def serialize_trace_witnesses(
+    trace_filter_witnesses: Iterable[TraceFilterWitness],
+) -> dict[str, list[dict[str, Any]]]:
     witnesses_by_trace: dict[str, list[dict[str, Any]]] = {}
     for witness in trace_filter_witnesses:
         witnesses_by_trace.setdefault(str(witness.trace_id), []).append(
@@ -199,11 +190,43 @@ def materialize_pending(
                 "start_time": witness.start_time.isoformat(),
             }
         )
+    return {
+        key: sorted(value, key=lambda item: item["filter_ordinal"])
+        for key, value in witnesses_by_trace.items()
+    }
+
+
+def materialize_pending(
+    task: EvalTask,
+    resolved_row_ids: Iterable[str] | None = None,
+    *,
+    ceiling: datetime | None = None,
+    trace_filter_witnesses: Iterable[TraceFilterWitness] = (),
+    sampling_metadata: dict[str, dict] | None = None,
+) -> int:
+    """Create one pending entry per (desired row, eval). Returns rows submitted.
+
+    ``ceiling`` (the reconcile pass's frozen now) upper-bounds the continuous
+    arrival window so a slow pass can't leave rows above the next cursor.
+    """
+    evals = list(task.evals.all())
+    if not evals:
+        return 0
+    hashes = {cfg.id: resolved_config_hash(cfg) for cfg in evals}
+    target_type = _TARGET_TYPE[task.row_type]
+    witnesses_by_trace = serialize_trace_witnesses(trace_filter_witnesses)
     submitted = 0
     reader = get_reader()
     try:
         batches = (
-            _iter_materialize_batches(resolved_row_ids)
+            _iter_materialize_batches(
+                resolved_row_ids,
+                batch_size=(
+                    max(1, _MATERIALIZE_BATCH // len(evals))
+                    if sampling_metadata is not None
+                    else _MATERIALIZE_BATCH
+                ),
+            )
             if resolved_row_ids is not None
             else iter_desired_rows(task, batch_size=_MATERIALIZE_BATCH, ceiling=ceiling)
         )
@@ -229,6 +252,11 @@ def materialize_pending(
                                 )
                             }
                         }
+                    if sampling_metadata and str(identity) in sampling_metadata:
+                        metadata = entry_fields.setdefault("output_metadata", {})
+                        metadata.setdefault("_task_selection", {})["sampling"] = (
+                            sampling_metadata[str(identity)]
+                        )
                     rows.append(
                         EvalLogger(
                             target_type=target_type,
@@ -270,17 +298,23 @@ def _refresh_waiting_trace_witnesses(
     """
 
     updates: list[EvalLogger] = []
-    entries = EvalLogger.objects.filter(
-        eval_task_id=str(task.id),
-        target_type=EvalTargetType.TRACE,
-        trace_id__in=list(trace_ids),
-    ).only(
-        "id",
-        "trace_id",
-        "status",
-        "config_hash",
-        "custom_eval_config_id",
-        "output_metadata",
+    # Primary: an earlier pass may have just rewritten these witnesses, and a
+    # stale replica copy that already equals the new metadata skips the update.
+    entries = (
+        EvalLogger.objects.using("default")
+        .filter(
+            eval_task_id=str(task.id),
+            target_type=EvalTargetType.TRACE,
+            trace_id__in=list(trace_ids),
+        )
+        .only(
+            "id",
+            "trace_id",
+            "status",
+            "config_hash",
+            "custom_eval_config_id",
+            "output_metadata",
+        )
     )
     for entry in entries:
         expected_hash = config_hashes.get(entry.custom_eval_config_id)
@@ -317,13 +351,15 @@ def _refresh_waiting_trace_witnesses(
         EvalLogger.objects.bulk_update(updates, ["output_metadata"])
 
 
-def _iter_materialize_batches(row_ids: Iterable[str]) -> Iterator[list[str]]:
+def _iter_materialize_batches(
+    row_ids: Iterable[str], *, batch_size: int = _MATERIALIZE_BATCH
+) -> Iterator[list[str]]:
     """Batch a caller-provided, already-buffered desired row set."""
 
     batch: list[str] = []
     for row_id in row_ids:
         batch.append(str(row_id))
-        if len(batch) >= _MATERIALIZE_BATCH:
+        if len(batch) >= batch_size:
             yield batch
             batch = []
     if batch:
@@ -342,6 +378,36 @@ def soft_delete_eval_results(results: QuerySet[EvalLogger]) -> int:
         list(results.select_for_update(of=("self",)).values_list("id", flat=True))
         retire_eval_memberships(results)
         return results.update(deleted=True, deleted_at=timezone.now())
+
+
+def retire_pending_replacement(results: QuerySet[EvalLogger]) -> int:
+    """Phase one of a two-phase delete: retire eval results that may come back.
+
+    Recalculate retires a result while its replacement is computed. Its Error
+    Feed memberships stay, because a recompute that fails puts it back whole,
+    still counted in its issue. Every call must be followed by
+    ``finish_retirement`` (the retirement is final) or ``restore_retired``
+    (it is undone). Returns how many results were retired.
+    """
+    return results.update(deleted=True, deleted_at=timezone.now())
+
+
+def finish_retirement(results: QuerySet[EvalLogger]) -> None:
+    """Phase two: the retirement of ``results`` is final.
+
+    Retires the Error Feed memberships of those still retired, so an issue
+    never keeps a trace whose eval no longer exists. A result put back
+    meanwhile keeps its memberships. Idempotent."""
+    retire_eval_memberships(results.filter(deleted=True))
+
+
+def restore_retired(results: QuerySet[EvalLogger]) -> int:
+    """Phase two, undone: put retired results back. Returns how many.
+
+    Their memberships were never retired (``retire_pending_replacement``).
+    Raises ``IntegrityError`` when a newer entry holds a result's live slot;
+    run it in a savepoint and ``finish_retirement`` on that failure."""
+    return results.filter(deleted=True).update(deleted=False, deleted_at=None)
 
 
 def soft_delete_live(task: EvalTask) -> int:

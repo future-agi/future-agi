@@ -25,7 +25,10 @@ from tracer.tests.test_insights_lost_runs import workflow as workflow
 
 @pytest.mark.django_db
 def test_insights_gets_neither_describe_nor_settle_runs(
-    auth_client, observe_project, stuck_run, workflow,
+    auth_client,
+    observe_project,
+    stuck_run,
+    workflow,
 ):
     before = InsightRun.objects.get(id=stuck_run.id).updated_at
     for path, params in (
@@ -44,7 +47,11 @@ def test_insights_gets_neither_describe_nor_settle_runs(
 @pytest.mark.django_db
 @pytest.mark.parametrize("answer", [WF_ABSENT, WF_CLOSED])
 def test_sweep_fails_lost_runs_once_and_run_again_can_start(
-    auth_client, observe_project, stuck_run, workflow, answer,
+    auth_client,
+    observe_project,
+    stuck_run,
+    workflow,
+    answer,
 ):
     workflow["answer"] = answer
     _sweep_lost_runs()
@@ -55,10 +62,15 @@ def test_sweep_fails_lost_runs_once_and_run_again_can_start(
     stuck_run.refresh_from_db()
     assert stuck_run.finished_at == finished
     assert workflow["asked"] == [f"insight-run-{stuck_run.id}"]
-    response = auth_client.post(RUNS, {
-        "project_id": str(observe_project.id),
-        "config_id": str(stuck_run.config_id), "population": population(5),
-    }, format="json")
+    response = auth_client.post(
+        RUNS,
+        {
+            "project_id": str(observe_project.id),
+            "config_id": str(stuck_run.config_id),
+            "population": population(5),
+        },
+        format="json",
+    )
     assert response.status_code == 200, response.json()
     assert response.json()["result"]["run_id"] != str(stuck_run.id)
 
@@ -66,7 +78,9 @@ def test_sweep_fails_lost_runs_once_and_run_again_can_start(
 @pytest.mark.django_db
 @pytest.mark.parametrize("answer", [WF_PROGRESSING, RuntimeError("unreachable")])
 def test_sweep_does_not_confuse_running_or_unreachable_workflows_with_lost_ones(
-    stuck_run, workflow, answer,
+    stuck_run,
+    workflow,
+    answer,
 ):
     workflow["answer"] = answer
     _sweep_lost_runs()
@@ -81,7 +95,8 @@ def test_sweep_ignores_recent_and_deleted_runs(stuck_run, workflow):
     _sweep_lost_runs()
     assert workflow["asked"] == []
     InsightRun.objects.filter(id=stuck_run.id).update(
-        deleted=True, updated_at=timezone.now() - timedelta(minutes=10),
+        deleted=True,
+        updated_at=timezone.now() - timedelta(minutes=10),
     )
     _sweep_lost_runs()
     assert workflow["asked"] == []
@@ -89,7 +104,8 @@ def test_sweep_ignores_recent_and_deleted_runs(stuck_run, workflow):
 
 @pytest.mark.django_db
 def test_sweep_does_not_fail_a_run_that_progressed_during_describe(
-    stuck_run, monkeypatch,
+    stuck_run,
+    monkeypatch,
 ):
     def progressed(workflow_id):
         InsightRun.objects.filter(id=stuck_run.id).update(updated_at=timezone.now())

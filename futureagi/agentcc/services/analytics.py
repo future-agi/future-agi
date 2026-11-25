@@ -205,9 +205,7 @@ def _fold_small_usage_groups(rows, group_by):
 
     ranked = sorted(totals, key=totals.get, reverse=True)
     kept = set(
-        [name for name in ranked if not _folds_into_other(name)][
-            :MAX_USAGE_TAG_GROUPS
-        ]
+        [name for name in ranked if not _folds_into_other(name)][:MAX_USAGE_TAG_GROUPS]
     )
     folded, other = [], {}
     for row in rows:

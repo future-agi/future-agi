@@ -20,7 +20,7 @@ const BreakdownTooltip = ({ data, totalMs }) => {
 
   return (
     <Box sx={{ p: 0.5, minWidth: 180 }}>
-      <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
+      <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
         Latency pipeline
       </Typography>
       {stages.map((s) => (
@@ -92,7 +92,7 @@ const VoiceLatencyCell = (params) => {
     return (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, color: "text.disabled", px: 2 }}
+        sx={{ fontSize: 12, color: "text.disabled", px: 2 }}
       >
         -
       </Typography>
@@ -112,7 +112,7 @@ const VoiceLatencyCell = (params) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontVariantNumeric: "tabular-nums",
           whiteSpace: "nowrap",
         }}

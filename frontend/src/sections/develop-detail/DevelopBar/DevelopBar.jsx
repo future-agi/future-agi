@@ -189,7 +189,7 @@ const DevelopBar = ({
                 marginRight: theme.spacing(1.5),
                 fontFamily: "IBM Plex Sans",
                 fontWeight: 500,
-                fontSize: "13px",
+                fontSize: "12px",
                 lineHeight: "22px",
                 paddingRight: theme.spacing(3),
                 borderRight: "2px solid var(--border-default)",

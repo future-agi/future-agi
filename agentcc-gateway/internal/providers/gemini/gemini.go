@@ -101,7 +101,17 @@ func (p *Provider) ID() string { return p.id }
 // PriceTableName is "vertex_ai" on Vertex AI and "gemini" on the Gemini API,
 // the names the price table keys each one's models under.
 func (p *Provider) PriceTableName() string {
-	if p.vertexAI {
+	return priceTableName(p.vertexAI)
+}
+
+// PriceTableNameFor is the PriceTableName a provider built on baseURL states,
+// without building one.
+func PriceTableNameFor(baseURL string) string {
+	return priceTableName(isVertexAI(baseURL))
+}
+
+func priceTableName(vertexAI bool) string {
+	if vertexAI {
 		return "vertex_ai"
 	}
 	return "gemini"

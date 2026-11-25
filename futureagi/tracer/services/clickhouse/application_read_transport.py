@@ -39,6 +39,18 @@ def create_application_read_http_client(**kwargs):
     return instrument_clickhouse_client(client)
 
 
+def create_metrics_bounded_read_transport(**kwargs):
+    """Explicit, exclusive metrics lane; never changes native application defaults.
+
+    This adapter is usable only through reader_lifetime.bounded_read, which owns
+    the caller-supplied budgets, crash-stable protection and terminal cleanup.
+    It is not enabled by application_read_context or by any rollout flag.
+    """
+    from tracer.services.derived_metrics.reader_transport import MetricsReadTransport
+
+    return MetricsReadTransport(**kwargs)
+
+
 @contextmanager
 def application_native_read_transport(client):
     """Temporarily remove a pooled native connection's response timeout.

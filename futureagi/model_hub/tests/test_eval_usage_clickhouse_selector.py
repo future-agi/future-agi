@@ -231,6 +231,7 @@ def test_eval_usage_queries_are_project_scoped_bounded_and_page_only(monkeypatch
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=now - timedelta(days=30),
         end_date=now,
@@ -272,18 +273,29 @@ def test_eval_usage_queries_are_project_scoped_bounded_and_page_only(monkeypatch
     assert all(
         "trace_dict" not in query
         and "FROM traces" in query
-        and "INNER JOIN (" in query
-        and "AS bounded_trace_candidates" in query
+        and "INNER JOIN (" not in query
+        # One scan of the readable projects only.
         and "PREWHERE trace_project_scan.project_id IN %(project_ids)s" in query
+        and "outside_project_ids" not in query
+        and "trace_scan_project_ids" not in query
+        # The candidates prune the (project_id, id) key, not a join.
+        and "AND trace_project_scan.id IN (" in query
         and "SELECT DISTINCT toUUIDOrZero(eval_trace_id) AS trace_id" in query
-        and "GROUP BY trace_project_scan.id" in query
+        and "GROUP BY trace_project_scan.id, trace_project_scan.project_id" in query
         and "LEFT JOIN (" in query
-        and "allowed_trace_projects.trace_id" in query
+        and "readable_trace_projects.trace_id" in query
         and "toUUIDOrZero(current_usage.eval_trace_id)" in query
-        and "allowed_trace_projects.project_id IN %(project_ids)s" in query
+        # A log that recorded its project is listed by that project only;
+        # an older log by the rule Usage had before sources were recorded
+        # (the trace held by exactly one configured readable project).
+        and "AS eval_source_project_id" in query
+        and "has(\n                    readable_trace_projects.live_project_ids,"
+        in query
+        and "countIf(project_id IN %(configured_project_ids)s) = 1" in query
+        and "readable_trace_projects.configured_live = 1" in query
         and query.count("FROM usage_apicalllog") == 2
         and query.index("LIMIT 1 BY id")
-        < query.index("allowed_trace_projects.project_id IN")
+        < query.index("readable_trace_projects.live_project_ids")
         for query in period_queries
     )
     chart_query = next(
@@ -310,6 +322,7 @@ def test_eval_usage_heavy_12m_uses_three_full_window_statements(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end,
@@ -359,6 +372,7 @@ def test_eval_usage_page_n_uses_bounded_seek_without_offset(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end - timedelta(microseconds=1),
@@ -390,6 +404,7 @@ def test_eval_usage_deep_page_seeks_to_small_time_leaf(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end - timedelta(microseconds=1),
@@ -416,7 +431,7 @@ def test_eval_usage_deep_page_seeks_to_small_time_leaf(monkeypatch):
     )
     assert all(
         "FROM traces" in query
-        and "AS bounded_trace_candidates" in query
+        and "AND trace_project_scan.id IN (" in query
         and query.count("FROM usage_apicalllog") == 2
         for query, *_ in seek_calls + page_calls
     )
@@ -434,6 +449,7 @@ def test_eval_usage_same_microsecond_deep_page_seeks_by_id(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=None,
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=start,
@@ -466,6 +482,7 @@ def test_eval_usage_page_fills_exactly_across_seek_leaf_boundary(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=None,
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end - timedelta(microseconds=1),
@@ -525,6 +542,7 @@ def test_eval_usage_maps_one_exact_chart_aggregate(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=None,
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end - timedelta(microseconds=1),
@@ -569,6 +587,7 @@ def test_eval_usage_full_window_budget_failure_is_not_split_or_published(monkeyp
             organization_id=str(uuid.uuid4()),
             workspace_id=None,
             project_ids=[str(uuid.uuid4())],
+            configured_project_ids=(),
             template_id=str(uuid.uuid4()),
             start_date=start,
             end_date=end - timedelta(microseconds=1),
@@ -587,6 +606,8 @@ def test_eval_usage_full_window_budget_failure_is_not_split_or_published(monkeyp
 def test_latest_trace_project_relation_requires_finite_candidates():
     with pytest.raises(ValueError, match="bounded trace-ID candidate"):
         trace_project_scope.latest_live_trace_projects_sql(candidate_trace_ids_sql="")
+    with pytest.raises(ValueError, match="bounded trace-ID candidate"):
+        trace_project_scope.live_trace_project_sets_sql(candidate_trace_ids_sql="")
 
 
 @pytest.mark.unit
@@ -599,6 +620,7 @@ def test_eval_usage_exact_total_can_be_zero(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=now - timedelta(days=1),
         end_date=now,
@@ -624,6 +646,7 @@ def test_eval_usage_normalizes_non_finite_empty_averages(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=now - timedelta(days=1),
         end_date=now,
@@ -655,6 +678,7 @@ def test_eval_usage_checks_admission_after_client_acquisition(monkeypatch):
             organization_id=str(uuid.uuid4()),
             workspace_id=str(uuid.uuid4()),
             project_ids=[str(uuid.uuid4())],
+            configured_project_ids=(),
             template_id=str(uuid.uuid4()),
             start_date=now - timedelta(days=1),
             end_date=now,
@@ -694,6 +718,7 @@ def test_eval_usage_clickhouse_failures_are_typed(monkeypatch, failure, expected
             organization_id=str(uuid.uuid4()),
             workspace_id=str(uuid.uuid4()),
             project_ids=[str(uuid.uuid4())],
+            configured_project_ids=(),
             template_id=str(uuid.uuid4()),
             start_date=now - timedelta(days=1),
             end_date=now,
@@ -720,6 +745,7 @@ def test_eval_usage_programming_defect_re_raises_original_type(monkeypatch):
             organization_id=str(uuid.uuid4()),
             workspace_id=str(uuid.uuid4()),
             project_ids=[str(uuid.uuid4())],
+            configured_project_ids=(),
             template_id=str(uuid.uuid4()),
             start_date=now - timedelta(days=1),
             end_date=now,
@@ -739,6 +765,7 @@ def test_eval_usage_empty_project_set_fails_closed_for_trace_rows(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=None,
         project_ids=[],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=now - timedelta(days=1),
         end_date=now,
@@ -916,6 +943,9 @@ def test_eval_usage_real_ch25_latest_tombstone_and_project_scope(
             organization_id=str(organization_id),
             workspace_id=str(workspace_id),
             project_ids=[str(project_id)],
+            # These rows recorded no project (older logs): dev's rule decides,
+            # over the readable projects that run the eval.
+            configured_project_ids=[str(project_id)],
             template_id=template_id,
             start_date=now - timedelta(days=1),
             end_date=now,
@@ -1040,6 +1070,7 @@ def test_eval_usage_real_ch25_counts_only_successful_runs(ch_client, monkeypatch
                 organization_id=str(organization_id),
                 workspace_id=str(workspace_id),
                 project_ids=[],
+                configured_project_ids=(),
                 template_id=template_id,
                 start_date=now - timedelta(days=1),
                 end_date=now,

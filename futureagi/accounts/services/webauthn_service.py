@@ -47,7 +47,6 @@ def get_registration_options(user):
     exclude_credentials = []
     for cred in existing_creds:
         try:
-
             exclude_credentials.append(
                 PublicKeyCredentialDescriptor(
                     id=base64url_to_bytes(cred.credential_id),
@@ -123,7 +122,6 @@ def get_authentication_options(user=None):
         existing_creds = WebAuthnCredential.objects.filter(user=user)
         for cred in existing_creds:
             try:
-
                 allow_credentials.append(
                     PublicKeyCredentialDescriptor(
                         id=base64url_to_bytes(cred.credential_id),

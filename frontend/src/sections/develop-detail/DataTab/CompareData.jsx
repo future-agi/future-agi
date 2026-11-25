@@ -1,6 +1,7 @@
 import EmptyContent from "src/components/empty-content";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, {
   useCallback,
   useEffect,
@@ -106,6 +107,12 @@ const CompareData = ({
   const refreshGrid = useCallback(() => {
     gridApiRef.current?.api?.refreshServerSide();
   }, [gridApiRef]);
+
+  const getRowId = useCallback(
+    ({ data, rowPinned }) =>
+      rowPinned ? `compare-summary-${rowPinned}` : data.row_id,
+    [],
+  );
 
   // Update the interval effect to only run when there are pending items
   React.useEffect(() => {
@@ -492,7 +499,6 @@ const CompareData = ({
           });
         }
       },
-      getRowId: (data) => data.rowId,
     }),
     [
       selectedDatasetsValues,
@@ -609,6 +615,7 @@ const CompareData = ({
             serverSideInitialRowCount={5}
             paginationPageSizeSelector={false}
             rowModelType="serverSide"
+            getRowId={getRowId}
             serverSideDatasource={dataSource}
             pagination={false}
             cacheBlockSize={10}

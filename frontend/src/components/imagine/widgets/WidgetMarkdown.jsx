@@ -35,7 +35,7 @@ export default function WidgetMarkdown({ config }) {
     // Headers
     .replace(
       /^### (.+)$/gm,
-      '<h4 style="margin:8px 0 4px;font-size:13px;font-weight:600;">$1</h4>',
+      '<h4 style="margin:8px 0 4px;font-size:12px;font-weight:600;">$1</h4>',
     )
     .replace(
       /^## (.+)$/gm,
@@ -51,7 +51,7 @@ export default function WidgetMarkdown({ config }) {
     // Unordered lists
     .replace(
       /^- (.+)$/gm,
-      '<li style="margin-left:16px;font-size:13px;">$1</li>',
+      '<li style="margin-left:16px;font-size:12px;">$1</li>',
     )
     // Line breaks
     .replace(/\n\n/g, "<br/><br/>")
@@ -64,7 +64,7 @@ export default function WidgetMarkdown({ config }) {
         overflow: "auto",
         px: 1.5,
         py: 1,
-        fontSize: 13,
+        fontSize: 12,
         lineHeight: 1.6,
         color: "text.primary",
         "& pre": { bgcolor: "action.hover" },

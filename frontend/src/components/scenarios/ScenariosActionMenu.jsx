@@ -96,7 +96,7 @@ const ScenarioActionMenu = ({ scenario, onEdit, onDelete }) => {
           <ListItemText
             primary="Edit"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />
@@ -114,7 +114,7 @@ const ScenarioActionMenu = ({ scenario, onEdit, onDelete }) => {
           <ListItemText
             primary="Delete"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />

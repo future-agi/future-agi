@@ -65,7 +65,7 @@ export default function RuntimePreflight({ status = "idle", canRun = false, bloc
           </Typography>
           {credentials && (
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {credentials.scanned_files ?? 0} source files scanned
+              {`${credentials.scanned_files ?? 0} code file${credentials.scanned_files === 1 ? "" : "s"} scanned`}
               {credentials.detected_connectors?.length ? ` · Detected: ${credentials.detected_connectors.join(", ")}` : ""}
             </Typography>
           )}

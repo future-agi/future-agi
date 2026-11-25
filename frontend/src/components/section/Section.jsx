@@ -78,7 +78,7 @@ export default function Section({
             {description && (
               <Typography
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   lineHeight: "20px",
                   color: "text.tertiary",
                 }}

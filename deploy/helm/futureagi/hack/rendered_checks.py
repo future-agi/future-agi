@@ -743,13 +743,15 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
         if component(doc) != "agentcc-gateway":
             continue
         container = pod_spec(doc)["containers"][0]
-        port = next(
+        http_ports = [
             p["containerPort"] for p in container["ports"] if p["name"] == "http"
-        )
-        if env_values(container).get("AGENTCC_PORT") != str(port):
+        ]
+        env_port = env_values(container).get("AGENTCC_PORT")
+        if http_ports and env_port != str(http_ports[0]):
             failed.append(
-                f"{name}: gateway containerPort {port} differs from AGENTCC_PORT"
+                f"{name}: gateway containerPort {http_ports[0]} differs from AGENTCC_PORT"
             )
+        port = int(env_port or 0)
         for config_map in (d for d in docs if d["kind"] == "ConfigMap"):
             if component(config_map) == "agentcc-gateway":
                 config = yaml.safe_load(config_map["data"]["config.yaml"])
@@ -1527,6 +1529,171 @@ def check_dockerhub_mirror(docs: list[dict]) -> list[str]:
     return failed
 
 
+def check_tls_key_mode(name: str, docs: list[dict]) -> list[str]:
+    """The gateway's and frontend's TLS private key Secret item: mode 0440
+    (root-owned, read through the pod's fsGroup) exactly when the rendered pod
+    has an fsGroup; otherwise no mode, so the Secret default 0644 keeps it
+    readable and the image warns about the mode."""
+    failed = []
+    for doc in docs:
+        if doc["kind"] != "Deployment" or component(doc) not in (
+            "agentcc-gateway",
+            "frontend",
+        ):
+            continue
+        pod = pod_spec(doc)
+        tls = next((v for v in pod.get("volumes", []) if v["name"] == "tls"), None)
+        if tls is None:
+            continue
+        modes = {
+            item["path"]: item.get("mode")
+            for item in tls.get("secret", {}).get("items", [])
+        }
+        fs_group = (pod.get("securityContext") or {}).get("fsGroup")
+        expected = 0o440 if fs_group else None
+        if modes.get("tls.key") != expected:
+            want = f"0440 (fsGroup {fs_group})" if fs_group else "unset (no fsGroup)"
+            failed.append(
+                f"{name}: {component(doc)} private key mode must be {want},"
+                f" not {modes.get('tls.key')!r}"
+            )
+        if modes.get("tls.crt") is not None:
+            failed.append(
+                f"{name}: {component(doc)} certificate keeps the Secret default mode"
+            )
+    return failed
+
+
+def check_native_tls(name: str, docs: list[dict]) -> list[str]:
+    """Check both migration stages without reading any certificate material."""
+    if name not in ("tls", "tls-https-only"):
+        return []
+    failed = []
+    https_only = name == "tls-https-only"
+    services = {component(d): d for d in docs if d["kind"] == "Service"}
+    deployments = {component(d): d for d in docs if d["kind"] == "Deployment"}
+    configs = {component(d): d for d in docs if d["kind"] == "ConfigMap"}
+    for comp, secret, container_port, service_port, prefix in (
+        ("agentcc-gateway", "gateway-tls", 8443, 8443, "AGENTCC"),
+        ("frontend", "frontend-tls", 8443, 443, "FRONTEND"),
+    ):
+        service = services[comp]
+        deployment = deployments[comp]
+        pod = pod_spec(deployment)
+        container = pod["containers"][0]
+        env = env_values(container)
+        actual_ports = {p["name"]: p["containerPort"] for p in container["ports"]}
+        service_ports = {
+            p["name"]: (p["port"], p["targetPort"]) for p in service["spec"]["ports"]
+        }
+        if actual_ports.get("https") != container_port or service_ports.get(
+            "https"
+        ) != (service_port, "https"):
+            failed.append(f"{name}: {comp} HTTPS container and Service ports")
+        if ("http" in actual_ports) == https_only or (
+            "http" in service_ports
+        ) == https_only:
+            failed.append(
+                f"{name}: {comp} HTTP listener must {'not ' if https_only else ''}exist"
+            )
+        if (
+            env.get(f"{prefix}_HTTP_ENABLED") != str(not https_only).lower()
+            or env.get(f"{prefix}_TLS_ENABLED") != "true"
+        ):
+            failed.append(f"{name}: {comp} listener env must be pinned")
+        for key, value in (
+            (f"{prefix}_TLS_PORT", str(container_port)),
+            (f"{prefix}_TLS_CERT_FILE", "/var/run/secrets/futureagi/tls/tls.crt"),
+            (f"{prefix}_TLS_KEY_FILE", "/var/run/secrets/futureagi/tls/tls.key"),
+            (f"{prefix}_TLS_RELOAD_INTERVAL", "30s" if prefix == "AGENTCC" else "30"),
+        ):
+            if env.get(key) != value:
+                failed.append(f"{name}: {comp} {key} must be {value}")
+        if prefix == "AGENTCC" and env.get("AGENTCC_TLS_MIN_VERSION") != "1.2":
+            failed.append(f"{name}: gateway minimum TLS version")
+        mounts = {m["name"]: m for m in container["volumeMounts"]}
+        volumes = {v["name"]: v for v in pod["volumes"]}
+        if mounts.get("tls", {}).get(
+            "mountPath"
+        ) != "/var/run/secrets/futureagi/tls" or not mounts.get("tls", {}).get(
+            "readOnly"
+        ):
+            failed.append(
+                f"{name}: {comp} TLS mount must be read-only outside ConfigMap"
+            )
+        if volumes.get("tls", {}).get("secret", {}).get("secretName") != secret:
+            failed.append(f"{name}: {comp} TLS Secret name")
+        if {
+            item["path"]
+            for item in volumes.get("tls", {}).get("secret", {}).get("items", [])
+        } != {"tls.crt", "tls.key"}:
+            failed.append(f"{name}: {comp} Secret must mount both files")
+        # The chart's default pod security context has an fsGroup, so the key
+        # mounts 0440 (check_tls_key_mode has the rule for every render).
+        if not (pod.get("securityContext") or {}).get("fsGroup"):
+            failed.append(f"{name}: {comp} pod must have an fsGroup by default")
+        annotations = deployment["spec"]["template"]["metadata"].get("annotations", {})
+        if any(
+            "tls" in key.lower() and "checksum" in key.lower() for key in annotations
+        ):
+            failed.append(
+                f"{name}: {comp} TLS Secret must not cause a checksum rollout"
+            )
+        for probe in ("readinessProbe", "livenessProbe"):
+            http_get = container[probe]["httpGet"]
+            if http_get["port"] != ("https" if https_only else "http") or http_get.get(
+                "scheme", "HTTP"
+            ) != ("HTTPS" if https_only else "HTTP"):
+                failed.append(f"{name}: {comp} {probe} must follow active listener")
+        if prefix == "FRONTEND":
+            nginx = configs["frontend"]["data"]["nginx.conf"]
+            if (
+                f"listen {container_port} ssl;" not in nginx
+                or ("listen 8080;" in nginx) == https_only
+                or nginx.count("server {") != 1
+            ):
+                failed.append(
+                    f"{name}: nginx must listen on enabled ports in one server block"
+                )
+            if (
+                "ssl_certificate /var/run/secrets/futureagi/tls/tls.crt;" not in nginx
+                or "ssl_protocols TLSv1.2 TLSv1.3;" not in nginx
+            ):
+                failed.append(f"{name}: nginx TLS directives")
+    expected_internal = (
+        "https://futureagi-agentcc-gateway:8443"
+        if https_only
+        else "http://futureagi-agentcc-gateway:8080"
+    )
+    for doc in app_workloads(docs):
+        if not is_python(doc):
+            continue
+        for container in containers(doc):
+            env = env_values(container)
+            for key in ("AGENTCC_INTERNAL_URL", "AGENTCC_GATEWAY_INTERNAL_URL"):
+                if env.get(key) != expected_internal:
+                    failed.append(
+                        f"{name}: {component(doc)} {key} must follow active listener"
+                    )
+            if env.get("AGENTCC_GATEWAY_PUBLIC_URL") != "https://gateway.example.com":
+                failed.append(f"{name}: {component(doc)} needs the public gateway URL")
+            if https_only and env.get("SSL_CERT_FILE") != CA_PATH:
+                failed.append(f"{name}: {component(doc)} must trust gateway CA")
+            # The HTTPS dashboard's origin, plus the HTTP one only while that
+            # listener is on (config.extraCsrfOrigins in ci/tls.yaml).
+            origins = ["https://app.example.com"] + (
+                [] if https_only else ["http://app.example.com"]
+            )
+            if component(doc) == "backend" and (
+                env.get("CORS_ALLOWED_ORIGINS", "").split(",") != origins
+                or set(origins) - set(env.get("EXTRA_CSRF_ORIGINS", "").split(","))
+            ):
+                failed.append(
+                    f"{name}: backend CORS and CSRF origins must be {origins}"
+                )
+    return failed
+
+
 def main() -> int:
     out = Path(sys.argv[1])
     compose = Path(sys.argv[3]) if sys.argv[2:3] == ["--compose"] else None
@@ -1537,6 +1704,8 @@ def main() -> int:
     failed = []
     for name, docs in renders.items():
         failed += check_render(name, docs) + check_health_check_policies(name, docs)
+        failed += check_native_tls(name, docs)
+        failed += check_tls_key_mode(name, docs)
         failed += check_bootstrap_order(name, docs)
         failed += check_alb_health_checks(name, docs)
         # ci/all-components.yaml turns serviceAccount.automountServiceAccountToken on.
@@ -1588,7 +1757,23 @@ def main() -> int:
     ):
         if render in renders:
             failed += check(renders[render])
-    for render in ("openshift", "openshift-auto"):
+    if "tls-openshift" in renders:
+        # check_tls_key_mode's no-fsGroup branch: both TLS pods, no fsGroup.
+        tls_pods = [
+            pod_spec(d)
+            for d in renders["tls-openshift"]
+            if d["kind"] == "Deployment"
+            and component(d) in ("agentcc-gateway", "frontend")
+            and any(v["name"] == "tls" for v in pod_spec(d).get("volumes", []))
+        ]
+        if len(tls_pods) != 2 or any(
+            (pod.get("securityContext") or {}).get("fsGroup") for pod in tls_pods
+        ):
+            failed.append(
+                "tls-openshift: the gateway and frontend TLS pods must render"
+                " without an fsGroup"
+            )
+    for render in ("openshift", "openshift-auto", "tls-openshift"):
         if render in renders:
             failed += check_openshift(render, renders[render])
     if "bundled" in renders and "overrides" in renders:

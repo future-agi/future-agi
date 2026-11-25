@@ -6,5 +6,6 @@ from ..types import EvaluationResult
 
 logger = logging.getLogger(__name__)
 
+
 class Evaluator:
     pass

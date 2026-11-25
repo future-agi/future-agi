@@ -211,7 +211,9 @@ def _answer(
         status=(
             EvalEntryStatus.PENDING
             if pending
-            else EvalEntryStatus.ERRORED if error else EvalEntryStatus.COMPLETED
+            else EvalEntryStatus.ERRORED
+            if error
+            else EvalEntryStatus.COMPLETED
         ),
         output_metadata={"jev": {"confidence": confidence}},
         eval_explanation=f"because {label}",
@@ -709,8 +711,7 @@ def test_rows_select_a_time_pattern_over_401_matching_days(
     resolve_desired_rows(task)
     _read_everything(task)
     groups = [
-        f"hour3:{(start + timedelta(days=d)).date().isoformat()}|06"
-        for d in range(401)
+        f"hour3:{(start + timedelta(days=d)).date().isoformat()}|06" for d in range(401)
     ]
     base = {
         "project_id": str(observe_project.id),
@@ -977,7 +978,13 @@ def test_an_exported_excerpt_that_starts_like_a_formula_is_quoted(
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "method, endpoint",
-    [("get", SUMMARY), ("get", ROWS), ("get", EXPORT), ("post", ROWS), ("post", EXPORT)],
+    [
+        ("get", SUMMARY),
+        ("get", ROWS),
+        ("get", EXPORT),
+        ("post", ROWS),
+        ("post", EXPORT),
+    ],
 )
 def test_read_of_another_organizations_run_is_not_found(
     auth_client, answered_run, method, endpoint

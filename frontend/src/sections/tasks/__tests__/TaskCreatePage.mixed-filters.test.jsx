@@ -4,14 +4,21 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "src/utils/test-utils";
 import axios from "src/utils/axios";
+import { enqueueSnackbar } from "src/components/snackbar";
 import TaskCreatePage from "../TaskCreatePage";
+import TaskSamplingSection from "../components/task_sampling_section";
+import TaskSchedulingSection from "../components/TaskSchedulingSection";
+import { defaultSamplingPolicy } from "../components/samplingPolicyForm";
 
 const harness = vi.hoisted(() => ({
   navigate: vi.fn(),
   saveDraft: vi.fn(),
   clearDraft: vi.fn(),
   initialValues: null,
+  selection: false,
 }));
+
+const TASK_ID = "11111111-1111-4111-8111-111111111111";
 
 const mixedTaskFilters = [
   {
@@ -105,7 +112,15 @@ vi.mock("src/components/resizablePanels/ResizablePanels", () => ({
 }));
 
 vi.mock("../components/TaskHeader", () => ({ default: () => null }));
-vi.mock("../components/TaskConfigPanel", () => ({ default: () => null }));
+vi.mock("../components/TaskConfigPanel", () => ({
+  default: ({ control, getValues }) =>
+    harness.selection ? (
+      <>
+        <TaskSchedulingSection control={control} />
+        <TaskSamplingSection control={control} getValues={getValues} />
+      </>
+    ) : null,
+}));
 vi.mock("../components/TaskLivePreview", async () => {
   const ReactModule = await import("react");
   return { default: ReactModule.forwardRef(() => null) };
@@ -116,6 +131,7 @@ vi.mock("src/components/snackbar", () => ({ enqueueSnackbar: vi.fn() }));
 describe("Task Create mixed catalog filter submission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    harness.selection = false;
     harness.initialValues = {
       name: "Mixed catalog task",
       project: "project-1",
@@ -128,84 +144,249 @@ describe("Task Create mixed catalog filter submission", () => {
       endDate: "2026-08-25T00:00:00.000Z",
       runType: "historical",
     };
-    axios.post.mockResolvedValue({ data: { result: { id: "task-1" } } });
+    axios.post.mockResolvedValue({
+      data: { status: true, result: { id: TASK_ID } },
+    });
   });
 
-  it("submits system, eval, annotation, and valueless attribute filters unchanged", async () => {
-    const user = userEvent.setup();
-    const queryClient = new QueryClient({
-      defaultOptions: { mutations: { retry: false } },
-    });
+  const renderCreate = () =>
     render(
-      <QueryClientProvider client={queryClient}>
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+        }
+      >
         <TaskCreatePage />
       </QueryClientProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Create Task" }));
-
-    await waitFor(() => {
-      expect(axios.post).toHaveBeenCalledWith(
-        "/tracer/eval-task/",
-        expect.objectContaining({
-          name: "Mixed catalog task",
-          project: "project-1",
-          evals: ["eval-config-1"],
-          run_type: "historical",
-          row_type: "traces",
-          spans_limit: 100,
-          sampling_rate: 50,
-          filters: {
-            project_id: "project-1",
-            date_preset: "custom",
-            date_range: [
-              "2026-08-01T00:00:00.000Z",
-              "2026-08-25T00:00:00.000Z",
-            ],
-            filters: [
-              {
-                column_id: "status",
-                filter_config: {
-                  filter_type: "text",
-                  filter_op: "equals",
-                  filter_value: "OK",
-                  col_type: "SYSTEM_METRIC",
-                },
-              },
-              {
-                column_id: "quality_eval",
-                property_id: "eval:quality-eval",
-                filter_config: {
-                  filter_type: "number",
-                  filter_op: "greater_than",
-                  filter_value: 0.8,
-                  col_type: "EVAL_METRIC",
-                },
-              },
-              {
-                column_id: "quality_label",
-                property_id: "annotation:quality-label",
-                filter_config: {
-                  filter_type: "categorical",
-                  filter_op: "in",
-                  filter_value: ["approved"],
-                  col_type: "ANNOTATION",
-                },
-              },
-              {
-                column_id: "customer.tier",
-                property_id: "custom_attribute:customer.tier",
-                filter_config: {
-                  filter_type: "text",
-                  filter_op: "is_not_null",
-                  filter_value: null,
-                  col_type: "SPAN_ATTRIBUTE",
-                },
-              },
-            ],
-          },
-        }),
-      );
-    });
+  it("acknowledges saving, clears the draft only with success/id, and navigates to that task", async () => {
+    renderCreate();
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Create task" }),
+    );
+    await waitFor(() =>
+      expect(harness.navigate).toHaveBeenCalledWith(`/dashboard/tasks/${TASK_ID}`),
+    );
+    expect(harness.clearDraft).toHaveBeenCalledTimes(1);
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Task saved. Check its status on the task page.",
+      { variant: "success" },
+    );
+    expect(axios.post).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    {},
+    { data: { status: true, result: {} } },
+    { data: { status: true, result: { id: "" } } },
+    { data: { status: true, result: { id: "   " } } },
+    { data: { status: true, result: { id: 123 } } },
+    { data: { status: true, result: { id: {} } } },
+    { data: { status: true, result: { id: "not-a-task-id" } } },
+    { data: { status: false, result: { id: TASK_ID } } },
+    { data: { result: { id: TASK_ID } } },
+  ])("retains the draft on an unreadable acknowledgement %#", async (response) => {
+    axios.post.mockResolvedValue(response);
+    renderCreate();
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Create task" }),
+    );
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Creation unconfirmed. Check Tasks before creating another.",
+        { variant: "warning" },
+      ),
+    );
+    expect(harness.clearDraft).not.toHaveBeenCalled();
+    expect(harness.navigate).not.toHaveBeenCalled();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    new Error("Network response lost"),
+    new Error("API response did not match its contract"),
+    { statusCode: 502, result: "private provider payload" },
+  ])("retains the draft and discourages blind repeat creation after response uncertainty %#", async (error) => {
+    axios.post.mockRejectedValue(error);
+    renderCreate();
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Create task" }),
+    );
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Creation unconfirmed. Check Tasks before creating another.",
+        { variant: "error" },
+      ),
+    );
+    expect(harness.clearDraft).not.toHaveBeenCalled();
+    expect(harness.navigate).not.toHaveBeenCalled();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps useful explicit validation feedback without clearing the draft", async () => {
+    axios.post.mockRejectedValue({
+      statusCode: 400,
+      result: "Eval configs not found for project",
+    });
+    renderCreate();
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Create task" }),
+    );
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Eval configs not found for project",
+        { variant: "error" },
+      ),
+    );
+    expect(harness.clearDraft).not.toHaveBeenCalled();
+    expect(harness.navigate).not.toHaveBeenCalled();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a valid continuous task after live → row percentage → Historical data → retained live restore", async () => {
+    harness.selection = true;
+    const live = {
+      ...defaultSamplingPolicy(),
+      mode: "live",
+      sampling_unit: "trace",
+      coordination: "project",
+      panel: "retained-live",
+      default: { rate: 37.25 },
+      window: { start: "2026-10-20T00:00:00.000Z", end: null },
+    };
+    harness.initialValues = {
+      ...harness.initialValues,
+      runType: "continuous",
+      samplingPolicy: live,
+    };
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+        }
+      >
+        <TaskCreatePage />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    const closed = () =>
+      waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+    await user.click(
+      screen.getByRole("radio", { name: "A percentage of matching traces" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Use row percentage" }),
+    );
+    await closed();
+    await user.click(screen.getByRole("radio", { name: "Historical data" }));
+    await user.click(
+      screen.getByRole("radio", { name: "Pick whole groups of traces" }),
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent("New incoming data");
+    await user.click(
+      screen.getByRole("button", { name: "Restore group picking" }),
+    );
+    await closed();
+    await user.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+    const payload = axios.post.mock.calls[0][1];
+    expect(payload.sampling_policy).toEqual(live);
+    expect(payload.run_type).toBe("continuous");
+    expect(
+      payload.sampling_policy.mode === "live" &&
+        payload.run_type !== "continuous",
+    ).toBe(false);
+    expect(payload.filters.filters).toHaveLength(4);
+    expect(payload.filters.date_range).toBeUndefined();
+  });
+
+  it.each([
+    [50, 100],
+    [10, 100000],
+    [100, 275],
+  ])(
+    "submits %i%% with legacy limit %i and every mixed filter unchanged",
+    async (rate, limit) => {
+      harness.initialValues.samplingRate = rate;
+      harness.initialValues.spansLimit = limit;
+      const user = userEvent.setup();
+      const queryClient = new QueryClient({
+        defaultOptions: { mutations: { retry: false } },
+      });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <TaskCreatePage />
+        </QueryClientProvider>,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Create task" }));
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          "/tracer/eval-task/",
+          expect.objectContaining({
+            name: "Mixed catalog task",
+            project: "project-1",
+            evals: ["eval-config-1"],
+            run_type: "historical",
+            row_type: "traces",
+            spans_limit: limit,
+            sampling_rate: rate,
+            filters: {
+              project_id: "project-1",
+              date_preset: "custom",
+              date_range: [
+                "2026-08-01T00:00:00.000Z",
+                "2026-08-25T00:00:00.000Z",
+              ],
+              filters: [
+                {
+                  column_id: "status",
+                  filter_config: {
+                    filter_type: "text",
+                    filter_op: "equals",
+                    filter_value: "OK",
+                    col_type: "SYSTEM_METRIC",
+                  },
+                },
+                {
+                  column_id: "quality_eval",
+                  property_id: "eval:quality-eval",
+                  filter_config: {
+                    filter_type: "number",
+                    filter_op: "greater_than",
+                    filter_value: 0.8,
+                    col_type: "EVAL_METRIC",
+                  },
+                },
+                {
+                  column_id: "quality_label",
+                  property_id: "annotation:quality-label",
+                  filter_config: {
+                    filter_type: "categorical",
+                    filter_op: "in",
+                    filter_value: ["approved"],
+                    col_type: "ANNOTATION",
+                  },
+                },
+                {
+                  column_id: "customer.tier",
+                  property_id: "custom_attribute:customer.tier",
+                  filter_config: {
+                    filter_type: "text",
+                    filter_op: "is_not_null",
+                    filter_value: null,
+                    col_type: "SPAN_ATTRIBUTE",
+                  },
+                },
+              ],
+            },
+          }),
+        );
+      });
+    },
+  );
 });

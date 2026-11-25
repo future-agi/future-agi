@@ -169,9 +169,9 @@ export function VizCard({ title, caption, action, children, label }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         px: 2,
-        pt: 1.75,
+        pt: 2,
         pb: 1.5,
         bgcolor: "background.paper",
       }}
@@ -184,7 +184,7 @@ export function VizCard({ title, caption, action, children, label }) {
         sx={{ mb: 1.5 }}
       >
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle2" component="h2" sx={{ fontSize: 15 }}>
+          <Typography variant="m3" component="h2" fontWeight={500}>
             {title}
           </Typography>
           {caption && (
@@ -236,18 +236,23 @@ export function useAnswerColor() {
     );
 }
 
-/** The strong end of the same nominal hue, adapted for the chart surface. */
+/**
+ * The strong end of the same nominal hue, adapted for the chart surface: deep
+ * enough in light mode that text on it reads at 4.5:1 or more.
+ */
 export const deepColor = (hue, mode = "light") =>
-  mode === "dark" ? lighten(hue, 0.3) : darken(hue, 0.3);
+  mode === "dark" ? lighten(hue, 0.3) : darken(hue, 0.4);
 
 /**
  * An answer's hue in five steps for a share from 0% to the top of a scale:
- * three tints, the hue itself, then its strong end.
+ * three tints, the hue itself, then its strong end. Every step carries text
+ * at 4.5:1 or more with one of the two theme inks; a tint near the midpoint
+ * between them (0.65 on the dark page) would top out near 4.2:1.
  */
 export const answerRamp = (hue, mode = "light") => [
   alpha(hue, mode === "dark" ? 0.16 : 0.12),
   alpha(hue, 0.35),
-  alpha(hue, 0.65),
+  alpha(hue, mode === "dark" ? 0.55 : 0.65),
   hue,
   deepColor(hue, mode),
 ];

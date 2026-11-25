@@ -166,3 +166,41 @@ describe("Code playground model suppression", () => {
     expect(axios.post.mock.calls[0][1].model).toBe("turing_large");
   });
 });
+
+describe("Test Evaluation refused by the rate limit", () => {
+  const limit =
+    "Evaluation rate limit reached. Wait for the usage window to reset before retrying.";
+
+  it("shows the server's 429 message instead of asking for a retry", async () => {
+    // The app's axios interceptor rejects with the flattened response body.
+    axios.post.mockRejectedValueOnce({
+      status: false,
+      type: "rate_limit",
+      code: "rate_limited",
+      detail: limit,
+      message: limit,
+      error: limit,
+      result: limit,
+      statusCode: 429,
+    });
+    const ref = React.createRef();
+    const onTestResult = vi.fn();
+    render(
+      <TestPlayground
+        ref={ref}
+        templateId="eval"
+        evalType="llm"
+        model="turing_large"
+        onTestResult={onTestResult}
+      />,
+    );
+    await act(async () => {
+      ref.current.runTest();
+    });
+    expect(await screen.findByText(limit)).toBeInTheDocument();
+    expect(onTestResult).toHaveBeenCalledWith(false, limit);
+    expect(
+      screen.queryByText("Failed to run evaluation. Please retry."),
+    ).not.toBeInTheDocument();
+  });
+});

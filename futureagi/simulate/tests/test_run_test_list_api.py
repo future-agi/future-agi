@@ -390,9 +390,9 @@ class TestRunTestRuntimeContracts:
         )
         full_response = auth_client.get("/simulate/run-tests/?page=1&limit=50")
 
-        assert (
-            summary_response.status_code == status.HTTP_200_OK
-        ), summary_response.content
+        assert summary_response.status_code == status.HTTP_200_OK, (
+            summary_response.content
+        )
         assert full_response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
     def test_create_accepts_declared_agent_version_field(
@@ -694,9 +694,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert (
-            create_response.status_code == status.HTTP_201_CREATED
-        ), create_response.content
+        assert create_response.status_code == status.HTTP_201_CREATED, (
+            create_response.content
+        )
         eval_config_id = create_response.json()["created_eval_configs"][0]["id"]
         eval_config = SimulateEvalConfig.objects.get(id=eval_config_id)
         assert eval_config.run_test_id == run_test_with_v10_scenario.id
@@ -709,9 +709,9 @@ class TestRunTestRuntimeContracts:
             f"{eval_config_id}/get-structure/"
         )
 
-        assert (
-            structure_response.status_code == status.HTTP_200_OK
-        ), structure_response.content
+        assert structure_response.status_code == status.HTTP_200_OK, (
+            structure_response.content
+        )
         structure = structure_response.json()["result"]["eval"]
         assert structure["id"] == eval_config_id
         assert structure["template_id"] == str(word_count_eval_template.id)
@@ -746,9 +746,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert (
-            update_response.status_code == status.HTTP_200_OK
-        ), update_response.content
+        assert update_response.status_code == status.HTTP_200_OK, (
+            update_response.content
+        )
         eval_config.refresh_from_db()
         assert eval_config.name == "word_count_updated"
         assert eval_config.mapping == {"text": "agent_output"}
@@ -1806,13 +1806,14 @@ class TestRunTestExecutionsView:
             expires_at=timezone.now() + timedelta(hours=1),
         )
 
-        def receipt(key, receipt_status, *, deleted, through_execution):
+        def receipt(key, receipt_status, *, deleted, through_execution, outcome=None):
             call_execution = CallExecution.all_objects.create(
                 test_execution=test_execution,
                 scenario=scenario_with_prompt_version,
                 status=CallExecution.CallStatus.COMPLETED,
                 simulation_call_type=CallExecution.SimulationCallType.TEXT,
                 deleted=deleted,
+                call_metadata=({"harness_outcome_status": outcome} if outcome else {}),
             )
             registration = HostedHarnessScenario.objects.create(
                 job=job,
@@ -1844,9 +1845,18 @@ class TestRunTestExecutionsView:
         receipt("kept-passed", "passed", deleted=False, through_execution=True)
         receipt("kept-failed", "failed", deleted=False, through_execution=False)
         receipt("kept-skipped", "skipped", deleted=False, through_execution=True)
+        receipt("kept-errored", "errored", deleted=False, through_execution=True)
         receipt("gone-passed", "passed", deleted=True, through_execution=True)
         receipt("gone-errored", "errored", deleted=True, through_execution=False)
         receipt("gone-skipped", "skipped", deleted=True, through_execution=True)
+        # Every sub-goal not applicable: the receipt says passed, the call has no score.
+        receipt(
+            "kept-no-score",
+            "passed",
+            deleted=False,
+            through_execution=True,
+            outcome="no_score",
+        )
 
         response = auth_client.get(
             f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
@@ -1858,11 +1868,147 @@ class TestRunTestExecutionsView:
             for item in response.json()["results"]
             if item["id"] == str(test_execution.id)
         )
-        assert row["calls"] == 3
-        assert row["total_calls"] == 3
-        assert row["outcome_passed"] == 1
-        assert row["outcome_failed"] == 1
+        assert row["calls"] == 5
+        assert row["total_calls"] == 5
+        # Receipts by status, as dev counted them: the no-score call's passed receipt is a pass, and
+        # outcome_failed is failed plus errored.
+        assert row["outcome_passed"] == 2
+        assert row["outcome_failed"] == 2
+        assert row["outcome_errored"] == 1
         assert row["outcome_skipped"] == 1
+        assert row["outcome_no_score"] == 1
+        # The rate scores the one real pass over the four calls that ran to a verdict.
+        assert (row["outcome_status"], row["pass_rate"], row["scored"]) == (
+            "failed",
+            25,
+            4,
+        )
+
+    def test_get_run_test_executions_judges_a_run_without_receipts_by_its_calls(
+        self, auth_client, run_test_with_v10_scenario, scenario_with_prompt_version
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=4,
+        )
+        for call_status in (
+            CallExecution.CallStatus.COMPLETED,
+            CallExecution.CallStatus.COMPLETED,
+            CallExecution.CallStatus.COMPLETED,
+            CallExecution.CallStatus.FAILED,
+        ):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario_with_prompt_version,
+                status=call_status,
+                simulation_call_type=CallExecution.SimulationCallType.TEXT,
+            )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        row = next(
+            item
+            for item in response.json()["results"]
+            if item["id"] == str(test_execution.id)
+        )
+        assert row["outcome_passed"] is None
+        assert (row["outcome_status"], row["pass_rate"], row["scored"]) == (
+            "failed",
+            75,
+            4,
+        )
+
+    def test_get_run_test_executions_never_counts_another_organisations_receipts(
+        self, auth_client, run_test_with_v10_scenario, scenario_with_prompt_version
+    ):
+        # A hosted job of another organisation that names this run must neither make it a hosted run nor count.
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario_with_prompt_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+        from accounts.models import Organization
+
+        stranger = Organization.objects.create(name="Stranger receipts org")
+        job = HostedHarnessJob.no_workspace_objects.create(
+            organization=stranger,
+            test_execution=test_execution,
+            run_id=uuid4(),
+            idempotency_key=uuid4().hex,
+            request_digest=uuid4().hex,
+            schema_version="1.6",
+            seed=1,
+            artifact_level="standard",
+            max_artifact_bytes=1024,
+            deadline_at=timezone.now() + timedelta(hours=1),
+            scenario_count=1,
+            payload={"metadata": {}, "runtime": {"max_duration_seconds": 600}},
+        )
+        attempt = HostedHarnessAttempt.objects.create(
+            job=job,
+            attempt_number=1,
+            token_hash="t" * 64,
+            fence_hash="f" * 64,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        HostedHarnessReceipt.objects.create(
+            job=job,
+            attempt=attempt,
+            scenario=HostedHarnessScenario.objects.create(job=job, scenario_key="x"),
+            attempt_number=1,
+            digest="sha256:" + "0" * 64,
+            status="failed",
+            body={},
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        row = next(
+            item
+            for item in response.json()["results"]
+            if item["id"] == str(test_execution.id)
+        )
+        assert (row["outcome_failed"], row["outcome_status"], row["pass_rate"]) == (
+            None,
+            "passed",
+            100,
+        )
+
+    def test_get_run_test_executions_a_running_run_is_running(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.RUNNING,
+            total_scenarios=1,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        row = next(
+            item
+            for item in response.json()["results"]
+            if item["id"] == str(test_execution.id)
+        )
+        assert (row["outcome_status"], row["pass_rate"], row["scored"]) == (
+            "running",
+            None,
+            0,
+        )
 
     def test_get_run_test_executions_times_a_prompt_run_without_deleted_calls(
         self, auth_client, organization, workspace, scenario_with_prompt_version
@@ -2172,8 +2318,7 @@ class TestDeleteEvalConfigView:
         )
 
         response = auth_client.delete(
-            f"/simulate/run-tests/{hidden_run_test.id}"
-            f"/eval-configs/{hidden_config.id}/"
+            f"/simulate/run-tests/{hidden_run_test.id}/eval-configs/{hidden_config.id}/"
         )
 
         hidden_config.refresh_from_db()

@@ -21,6 +21,8 @@ class AgentFixRun(BaseModel):
         OUT_OF_BUDGET = "out_of_budget", "Stopped at budget"
         STOPPED = "stopped", "Stopped"
         FAILED = "failed", "Failed"
+        # Even with variations of its failing cases, too few failed to prove a fix.
+        TOO_FEW_CASES = "too_few_cases", "Too few failing cases"
 
     ACTIVE_STATES = (State.QUEUED, State.RUNNING, State.STOPPING)
 
@@ -47,6 +49,15 @@ class AgentFixRun(BaseModel):
     )
     base_agent_version = models.ForeignKey(
         "simulate.AgentVersion", on_delete=models.PROTECT, related_name="+"
+    )
+    # The suite version the fix runs on when it wrote variations of its failing cases;
+    # null runs the source run's.
+    suite_version = models.ForeignKey(
+        "simulate.HarnessSuiteVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
     )
     # The failed fix this one starts again: check runs that one finished are reused.
     retried_from = models.ForeignKey(
@@ -151,5 +162,85 @@ class AgentFixCandidate(BaseModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["fix_run", "attempt"], name="uniq_agent_fix_candidate_attempt"
+            ),
+        ]
+
+
+class AgentFixIssueJob(BaseModel):
+    """One Run Epoch from an Error Feed issue. A sample of the issue's traces is imported
+    as evidence for one environment, and the builder drafts them into scenarios. A person
+    reviews the drafts, and the kept ones join the environment's suite. A run of the
+    current version on them is the baseline, and the epoch starts from that run.
+
+    The issue is the import's (``EvidenceImport.source_issue``). The job's phase is
+    derived from what it holds (selectors.agent_fix_issue.issue_job_phase), never stored."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        "accounts.Workspace",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    environment = models.ForeignKey(
+        "simulate.HostedHarnessJob", on_delete=models.CASCADE, related_name="+"
+    )
+    evidence_import = models.OneToOneField(
+        "simulate.EvidenceImport", on_delete=models.CASCADE, related_name="issue_job"
+    )
+    # The traces picked, each with why (pydantic_schemas.agent_fix_issue.SamplePick).
+    sample = models.JSONField(default=list)
+    # What the person asked for at Run Epoch (pydantic_schemas.agent_fix_issue.IssueLaunch).
+    launch = models.JSONField(null=True, blank=True)
+    # The current version's run on the kept scenarios; the epoch starts from it.
+    baseline_run = models.OneToOneField(
+        "simulate.HostedHarnessJob",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="issue_job_baseline",
+    )
+    # The epoch launched from the baseline. A retry of it is a new epoch that names this
+    # one as retried_from.
+    fix_run = models.OneToOneField(
+        AgentFixRun,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="issue_job",
+    )
+    # Why the job ended before an epoch started: {code, message}.
+    ending = models.JSONField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        db_table = "simulate_agent_fix_issue_job"
+        constraints = [
+            # One baseline at a time per environment: its epoch takes the environment's
+            # one active epoch once the baseline finishes.
+            models.UniqueConstraint(
+                fields=["environment"],
+                condition=models.Q(
+                    baseline_run__isnull=False,
+                    fix_run__isnull=True,
+                    ending__isnull=True,
+                    deleted=False,
+                ),
+                name="uniq_measuring_issue_job_per_environment",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["environment", "-created_at"], name="idx_issue_job_env_created"
             ),
         ]

@@ -106,9 +106,7 @@ class TestConversationGraphGeneratorModeSelection:
                 "agent_type", AgentTypeChoices.VOICE
             )
         else:
-            agent_type = getattr(
-                mock_agent_def, "agent_type", AgentTypeChoices.VOICE
-            )
+            agent_type = getattr(mock_agent_def, "agent_type", AgentTypeChoices.VOICE)
 
         mode = "voice" if agent_type == AgentTypeChoices.VOICE else "chat"
         assert mode == "voice"
@@ -125,9 +123,7 @@ class TestConversationGraphGeneratorModeSelection:
                 "agent_type", AgentTypeChoices.VOICE
             )
         else:
-            agent_type = getattr(
-                mock_agent_def, "agent_type", AgentTypeChoices.VOICE
-            )
+            agent_type = getattr(mock_agent_def, "agent_type", AgentTypeChoices.VOICE)
 
         mode = "voice" if agent_type == AgentTypeChoices.VOICE else "chat"
         assert mode == "chat"
@@ -144,9 +140,7 @@ class TestConversationGraphGeneratorModeSelection:
                 "agent_type", AgentTypeChoices.VOICE
             )
         else:
-            agent_type = getattr(
-                mock_agent_def, "agent_type", AgentTypeChoices.VOICE
-            )
+            agent_type = getattr(mock_agent_def, "agent_type", AgentTypeChoices.VOICE)
 
         mode = "voice" if agent_type == AgentTypeChoices.VOICE else "chat"
         assert mode == "chat"
@@ -163,9 +157,7 @@ class TestConversationGraphGeneratorModeSelection:
                 "agent_type", AgentTypeChoices.VOICE
             )
         else:
-            agent_type = getattr(
-                mock_agent_def, "agent_type", AgentTypeChoices.VOICE
-            )
+            agent_type = getattr(mock_agent_def, "agent_type", AgentTypeChoices.VOICE)
 
         mode = "voice" if agent_type == AgentTypeChoices.VOICE else "chat"
         # Empty dict is falsy, so it falls back to agent_definition.agent_type (TEXT -> chat)
@@ -183,9 +175,7 @@ class TestConversationGraphGeneratorModeSelection:
                 "agent_type", AgentTypeChoices.VOICE
             )
         else:
-            agent_type = getattr(
-                mock_agent_def, "agent_type", AgentTypeChoices.VOICE
-            )
+            agent_type = getattr(mock_agent_def, "agent_type", AgentTypeChoices.VOICE)
 
         mode = "voice" if agent_type == AgentTypeChoices.VOICE else "chat"
         # Non-empty dict uses .get() which defaults to VOICE

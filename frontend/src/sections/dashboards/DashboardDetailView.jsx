@@ -34,6 +34,7 @@ import Section from "src/components/section";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
+import { metricDashboardDescription } from "../derived-metrics/metric_dashboard_description";
 import {
   useDashboardDetail,
   useUpdateDashboard,
@@ -493,6 +494,7 @@ function DraggableWidgetCard({
   isReadOnly,
   refreshRequestId,
   onQuerySettled,
+  onRestoreSavedWindow,
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: widget.id,
@@ -654,7 +656,7 @@ function DraggableWidgetCard({
               />
             ) : (
               <WidgetChart
-                key={`${widget.id}:${datePreset || "default"}${
+                key={`${widget.id}${
                   globalDateRange
                     ? `:${globalDateRange.start}:${globalDateRange.end}`
                     : ""
@@ -664,6 +666,7 @@ function DraggableWidgetCard({
                 globalDateRange={globalDateRange}
                 refreshRequestId={refreshRequestId}
                 onQuerySettled={onQuerySettled}
+                onRestoreSavedWindow={onRestoreSavedWindow}
               />
             )}
           </Box>
@@ -686,6 +689,7 @@ DraggableWidgetCard.propTypes = {
   isReadOnly: PropTypes.bool,
   refreshRequestId: PropTypes.number,
   onQuerySettled: PropTypes.func,
+  onRestoreSavedWindow: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -770,9 +774,34 @@ export default function DashboardDetailView() {
   const [customDateRange, setCustomDateRange] = useState(null); // [start, end]
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const customDateAnchorRef = useRef(null);
+  const [appliedDatePreset, setAppliedDatePreset] = useState(datePreset);
+  const presetTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(presetTimerRef.current), []);
+
+  const selectDatePreset = (preset) => {
+    setDatePreset(preset);
+    clearTimeout(presetTimerRef.current);
+    presetTimerRef.current = setTimeout(
+      () => setAppliedDatePreset(preset),
+      500,
+    );
+  };
+
+  const restoreSavedWindow = () => {
+    clearTimeout(presetTimerRef.current);
+    setDatePreset(null);
+    setAppliedDatePreset(null);
+  };
+
+  const applyCustomDatePreset = () => {
+    clearTimeout(presetTimerRef.current);
+    setDatePreset("custom");
+    setAppliedDatePreset("custom");
+  };
+
   const globalDateRange = useMemo(
-    () => resolveGlobalDateRange(datePreset, customDateRange),
-    [datePreset, customDateRange],
+    () => resolveGlobalDateRange(appliedDatePreset, customDateRange),
+    [appliedDatePreset, customDateRange],
   );
 
   // Widget context menu
@@ -1268,12 +1297,12 @@ export default function DashboardDetailView() {
           <Link
             underline="hover"
             color="text.secondary"
-            sx={{ cursor: "pointer", fontSize: "13px" }}
+            sx={{ cursor: "pointer", fontSize: "12px" }}
             onClick={() => navigate(paths.dashboard.dashboards.root)}
           >
             Dashboards
           </Link>
-          <Typography color="text.primary" fontSize="13px">
+          <Typography color="text.primary" fontSize="12px">
             {dashboard.name}
           </Typography>
         </Breadcrumbs>
@@ -1389,7 +1418,7 @@ export default function DashboardDetailView() {
                 variant={datePreset === preset.value ? "filled" : "outlined"}
                 color={datePreset === preset.value ? "primary" : "default"}
                 onClick={() =>
-                  setDatePreset(
+                  selectDatePreset(
                     datePreset === preset.value ? null : preset.value,
                   )
                 }
@@ -1401,7 +1430,7 @@ export default function DashboardDetailView() {
               size="small"
               variant={!datePreset ? "filled" : "outlined"}
               color={!datePreset ? "primary" : "default"}
-              onClick={() => setDatePreset(null)}
+              onClick={() => selectDatePreset(null)}
               sx={DATE_CHIP_SX}
             />
           </Stack>
@@ -1416,7 +1445,7 @@ export default function DashboardDetailView() {
                 setCustomDateRange([new Date(filter[0]), new Date(filter[1])]);
               }
             }}
-            setDateOption={() => setDatePreset("custom")}
+            setDateOption={applyCustomDatePreset}
           />
         </>
       )}
@@ -1441,7 +1470,7 @@ export default function DashboardDetailView() {
           }}
         />
         <InlineEdit
-          value={dashboard.description}
+          value={metricDashboardDescription(dashboard.description)}
           onSave={handleDescSave}
           placeholder="+ Add description..."
           multiline
@@ -1451,7 +1480,7 @@ export default function DashboardDetailView() {
             sx: {
               color: dashboard.description ? "text.secondary" : "text.disabled",
               mt: 0.5,
-              fontSize: "13px",
+              fontSize: "12px",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
             },
@@ -1595,6 +1624,7 @@ export default function DashboardDetailView() {
                               isReadOnly={isReadOnly}
                               refreshRequestId={refreshRequestId}
                               onQuerySettled={handleWidgetQuerySettled}
+                              onRestoreSavedWindow={restoreSavedWindow}
                             />
 
                             {/* Resize handle between adjacent widgets */}

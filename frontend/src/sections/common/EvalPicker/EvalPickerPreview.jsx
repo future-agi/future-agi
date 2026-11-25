@@ -106,7 +106,7 @@ const EvalPickerPreview = ({ evalData, onBack, onAddEval }) => {
         </InfoRow>
 
         <InfoRow label="Output Type">
-          <Typography variant="body2" sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" sx={{ fontSize: "12px" }}>
             {OUTPUT_TYPE_LABELS[outputType] || outputType || "—"}
           </Typography>
         </InfoRow>
@@ -129,7 +129,7 @@ const EvalPickerPreview = ({ evalData, onBack, onAddEval }) => {
             <Typography
               variant="body2"
               color="text.secondary"
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               {description}
             </Typography>

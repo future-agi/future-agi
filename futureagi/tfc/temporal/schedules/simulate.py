@@ -59,6 +59,13 @@ SIMULATE_SCHEDULES: list[ScheduleConfig] = [
         description="Restart hosted environment chat runtimes that died with messages waiting",
     ),
     ScheduleConfig(
+        schedule_id="sweep-stale-evidence-drafts",
+        activity_name="sweep_stale_evidence_drafts",
+        interval_seconds=600,
+        queue="default",
+        description="Settle and delete evidence drafting chats that never finished",
+    ),
+    ScheduleConfig(
         schedule_id="sweep-lost-agent-fixes",
         activity_name="sweep_lost_agent_fixes",
         interval_seconds=300,

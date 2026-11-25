@@ -406,9 +406,9 @@ func TestDialectHandlersCaptureCallerExtrasBeforeThePipeline(t *testing.T) {
 				"reach no span, and this path builds no canonical request to recover them from", file)
 			continue
 		}
-		process := strings.Index(text, "h.engine.Process(")
+		process := pipelineCallIndex(text)
 		if process < 0 {
-			t.Errorf("%s never calls h.engine.Process", file)
+			t.Errorf("%s never calls the pipeline or its inspection wrapper", file)
 			continue
 		}
 		if capture > process {

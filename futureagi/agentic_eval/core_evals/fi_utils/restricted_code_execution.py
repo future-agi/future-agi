@@ -64,17 +64,27 @@ SAFE_MODULES = {
 # ---------------------------------------------------------------------------
 # Safe builtins: Dangerous operations are explicitly excluded
 # ---------------------------------------------------------------------------
-_BLOCKED_BUILTINS = frozenset({
-    "exec", "eval", "compile",        # Code execution
-    "open",                             # File I/O
-    "__import__",                       # Raw imports (replaced with safe version)
-    "globals", "locals",                # Namespace inspection
-    "getattr", "setattr", "delattr",    # Attribute manipulation
-    "breakpoint", "input",              # Interactive
-    "exit", "quit",                     # Process control
-    "memoryview",                       # Low-level memory
-    "vars", "dir",                      # Introspection
-})
+_BLOCKED_BUILTINS = frozenset(
+    {
+        "exec",
+        "eval",
+        "compile",  # Code execution
+        "open",  # File I/O
+        "__import__",  # Raw imports (replaced with safe version)
+        "globals",
+        "locals",  # Namespace inspection
+        "getattr",
+        "setattr",
+        "delattr",  # Attribute manipulation
+        "breakpoint",
+        "input",  # Interactive
+        "exit",
+        "quit",  # Process control
+        "memoryview",  # Low-level memory
+        "vars",
+        "dir",  # Introspection
+    }
+)
 
 
 def _build_safe_builtins():
@@ -162,7 +172,7 @@ _INPLACE_OPS = {
     "/=": lambda x, y: x / y,
     "//=": lambda x, y: x // y,
     "%=": lambda x, y: x % y,
-    "**=": lambda x, y: x ** y,
+    "**=": lambda x, y: x**y,
     "&=": lambda x, y: x & y,
     "|=": lambda x, y: x | y,
     "^=": lambda x, y: x ^ y,
@@ -198,9 +208,7 @@ def _raise_in_thread(thread_id, exception_type):
         pass  # Thread already finished
     elif res > 1:
         # Reset if more than one thread was affected
-        ctypes.pythonapi.PyThreadState_SetAsyncExc(
-            ctypes.c_ulong(thread_id), None
-        )
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread_id), None)
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +332,9 @@ def execute_restricted_python(
         try:
             result_holder[0] = _run_sandboxed(code, input_data)
         except _ExecutionTimeout:
-            error_holder[0] = f"Code execution timed out after {timeout_seconds} seconds"
+            error_holder[0] = (
+                f"Code execution timed out after {timeout_seconds} seconds"
+            )
         except MemoryError:
             error_holder[0] = "Code execution exceeded memory limit"
         except ImportError as e:

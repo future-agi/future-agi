@@ -109,8 +109,18 @@ export const getTooltipMessage = (key) => {
   return TOOLTIP_MAP[key] || "";
 };
 
+// The KPI API keeps a colliding evaluation as "<name>__<binding id>", plus
+// trailing "_" when that key is also taken.
+const EVAL_ALIAS_RE =
+  /^(.+)__[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{7}([0-9a-f]{5})_*$/i;
+
 export const getLabel = (key) => {
-  const label = LABEL_MAP[key] || snakeCaseToTitleCase(key);
+  const alias = typeof key === "string" ? key.match(EVAL_ALIAS_RE) : null;
+  // Name the evaluation, not the binding ID; the ID's last characters tell
+  // two evaluations with the same name apart.
+  const label = alias
+    ? `${snakeCaseToTitleCase(alias[1]).trim()} (...${alias[2].toLowerCase()})`
+    : LABEL_MAP[key] || snakeCaseToTitleCase(key);
   return label.replace(/\bai\b/gi, "AI");
 };
 

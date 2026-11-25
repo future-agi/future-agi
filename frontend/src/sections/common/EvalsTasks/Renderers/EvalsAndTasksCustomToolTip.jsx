@@ -40,7 +40,7 @@ const EvalsAndTasksCustomTooltip = ({ value, colDef }) => {
         border: "1px solid lightgray",
         borderRadius: "12px",
         boxShadow: (theme) => theme.customShadows?.dropdown,
-        fontSize: "13px",
+        fontSize: "12px",
         paddingBottom: "4px",
         paddingX: 1,
         color: "text.primary",

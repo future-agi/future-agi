@@ -139,7 +139,9 @@ def test_dynamic_column_mutations_reject_other_workspace_before_creating_columns
         patch(
             "model_hub.views.dynamic_columns.conditional_column_async.delay"
         ) as conditional_task,
-        patch("model_hub.views.dynamic_columns.classify_column_async.delay") as classify_task,
+        patch(
+            "model_hub.views.dynamic_columns.classify_column_async.delay"
+        ) as classify_task,
         patch("model_hub.views.dynamic_columns.extract_async.delay") as extract_task,
         patch(
             "model_hub.views.dynamic_columns.add_vector_db_column_async.delay"

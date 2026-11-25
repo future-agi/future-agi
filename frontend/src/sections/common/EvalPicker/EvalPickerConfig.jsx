@@ -333,7 +333,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
             value={evalName}
             onChange={(e) => setEvalName(e.target.value)}
             placeholder="Enter evaluation name"
-            sx={{ "& .MuiInputBase-root": { fontSize: "13px" } }}
+            sx={{ "& .MuiInputBase-root": { fontSize: "12px" } }}
           />
         </Box>
 

@@ -1,6 +1,7 @@
 import SelectionBar from "src/components/selection-bar";
 import { Box, Button, Typography, IconButton, Skeleton } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
@@ -933,7 +934,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
   }, [columnData]);
 
   const noRowsTemplate =
-    '<div style="padding: 10px;font-size:13px;font-family:"inherit""><span>No logs data found try running evaluations.</span></div>';
+    '<div style="padding: 10px;font-size:12px;font-family:"inherit""><span>No logs data found try running evaluations.</span></div>';
 
   return (
     <Box

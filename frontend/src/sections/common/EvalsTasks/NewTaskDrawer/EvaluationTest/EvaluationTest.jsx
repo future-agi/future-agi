@@ -40,7 +40,7 @@ const EvaluationTest = () => {
             color="text.disabled"
             width={20}
           />
-          <Typography fontSize="13px" color="text.secondary">
+          <Typography fontSize="12px" color="text.secondary">
             Run a sample evals to see how it works
           </Typography>
         </Box>
@@ -84,7 +84,7 @@ const EvaluationTest = () => {
             outline: "none",
             backgroundColor: theme.palette.background.default,
             verticalAlign: "top",
-            fontSize: "13px",
+            fontSize: "12px",
           }}
         />
       </Box>
@@ -126,7 +126,7 @@ const EvaluationTest = () => {
             outline: "none",
             backgroundColor: theme.palette.background.default,
             verticalAlign: "top",
-            fontSize: "13px",
+            fontSize: "12px",
             color: theme.palette.text.primary,
           }}
         />

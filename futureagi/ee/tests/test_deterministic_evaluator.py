@@ -940,9 +940,9 @@ class TestMultiImageInputs:
 
             result = detect_input_type(image_urls)
 
-        assert (
-            result.get("type") == "images"
-        ), f"List of images should return 'images', got {result}"
+        assert result.get("type") == "images", (
+            f"List of images should return 'images', got {result}"
+        )
 
     def test_detect_input_type_json_array_string(self):
         """JSON array string of image URLs should be detected as 'images' type."""
@@ -964,9 +964,9 @@ class TestMultiImageInputs:
 
             result = detect_input_type(json_array)
 
-        assert (
-            result.get("type") == "images"
-        ), f"JSON array of images should return 'images', got {result}"
+        assert result.get("type") == "images", (
+            f"JSON array of images should return 'images', got {result}"
+        )
 
     def test_detect_input_type_empty_list(self):
         """Empty list should return 'text' type."""
@@ -1152,9 +1152,9 @@ class TestProductionAudioURLBug:
             result if isinstance(result, str) else result.get("type", "unknown")
         )
 
-        assert (
-            detected_type == "audio"
-        ), f"MP3 URL misclassified as {detected_type}, should be 'audio'"
+        assert detected_type == "audio", (
+            f"MP3 URL misclassified as {detected_type}, should be 'audio'"
+        )
 
     def test_audio_block_uses_audio_tags(self):
         """Audio URLs should be wrapped as audio content, not plain image tags."""

@@ -3,18 +3,21 @@
 A fix's workflow ends it in every ordinary case: at its ending, at its deadline, when its
 engine keeps dying, or when the user stops it. This sweep catches the rest, a workflow
 that never started or one that died without closing its fix, so no fix stays active and
-holds its environment's one fix slot.
+holds its environment's one fix slot. It also finishes a closed fix's cleanup: the
+dataset rows its variations run added, which the close drops but fails open on.
 """
 
 from datetime import datetime, timedelta
 
 import structlog
 from django.conf import settings
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
-from simulate.models import AgentFixRun
+from simulate.models import AgentFixRun, HostedHarnessScenario
+from simulate.models.harness_versioning import VersionOrigin
 from simulate.selectors.agent_fix import fix_deadline, queue_deadline
-from simulate.services.agent_fix_runs import close_fix_run
+from simulate.services.agent_fix_runs import close_fix_run, drop_variation_rows
 from simulate.services.agent_fix_sandbox import release
 from simulate.temporal.client import agent_fix_workflow_running
 
@@ -23,18 +26,20 @@ logger = structlog.get_logger(__name__)
 # A new fix's workflow starts once its row commits; give that time to happen.
 START_GRACE = timedelta(minutes=5)
 _BATCH_LIMIT = 100
+# How long a closed fix's variation rows are retried; its close drops them as a rule.
+CLEANUP_WINDOW = timedelta(days=7)
 
 _NOT_SCHEDULED = {
     "code": "fix_dispatch_failed",
-    "message": "the fix could not be scheduled; try again",
+    "message": "the epoch could not be scheduled; try again",
 }
 _LOST = {
     "code": "fix_workflow_lost",
-    "message": "the platform stopped tracking this fix; start it again",
+    "message": "the platform stopped tracking this epoch; start it again",
 }
 _LATE = {
     "code": "fix_deadline",
-    "message": "the fix ran out of the time it was given",
+    "message": "the epoch ran out of the time it was given",
 }
 
 Closing = tuple[AgentFixRun.State, dict[str, str] | None]
@@ -67,7 +72,52 @@ def sweep_lost_fix_runs() -> dict[str, int]:
             release(str(fix_run.id))
         except Exception:
             logger.exception("agent_fix_sweep_failed", fix_run=str(fix_run.id))
+    try:
+        counts["variation_rows_left"] = sweep_variation_rows(now)
+    except Exception:
+        logger.exception("agent_fix_variation_rows_sweep_failed")
     return counts
+
+
+def sweep_variation_rows(now: datetime) -> int:
+    """Drop the dataset rows a closed fix's variations run left bound, for each recent fix
+    that is the newest on its private suite (a retry runs the same variations and owns
+    them). The number of fixes whose rows are still bound.
+
+    Only fixes with rows still bound are batched, oldest first: a fix already clean takes
+    no place, so newer clean fixes never keep an older one's rows from being dropped."""
+    newer = AgentFixRun.no_workspace_objects.filter(
+        suite_version_id=OuterRef("suite_version_id"),
+        created_at__gt=OuterRef("created_at"),
+    )
+    candidates = list(
+        AgentFixRun.no_workspace_objects.exclude(state__in=AgentFixRun.ACTIVE_STATES)
+        .filter(
+            suite_version__origin=VersionOrigin.FIX,
+            finished_at__gte=now - CLEANUP_WINDOW,
+        )
+        .exclude(Exists(newer))
+        .values_list("id", "environment_id", "suite_version__documents__variations")
+    )
+    bound = set(
+        HostedHarnessScenario._base_manager.filter(
+            job_id__in={environment for _id, environment, _keys in candidates},
+            scenario_key__in={key for *_ids, keys in candidates for key in keys or {}},
+            scenario__isnull=False,
+        ).values_list("job_id", "scenario_key")
+    )
+    pending = [
+        fix_run_id
+        for fix_run_id, environment, keys in candidates
+        if any((environment, key) in bound for key in keys or {})
+    ]
+    fix_runs = (
+        AgentFixRun.no_workspace_objects.filter(id__in=pending)
+        .select_related("suite_version", "environment")
+        .order_by("finished_at")[:_BATCH_LIMIT]
+    )
+    left = sum(1 for fix_run in fix_runs if not drop_variation_rows(fix_run))
+    return left + max(0, len(pending) - _BATCH_LIMIT)
 
 
 def _ending(fix_run: AgentFixRun, now: datetime) -> Closing | None:

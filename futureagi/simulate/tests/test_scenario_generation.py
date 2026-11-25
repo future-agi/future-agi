@@ -854,7 +854,9 @@ class TestGenerateScenarioRowsPrefetch:
             [Row(dataset=dataset, order=i) for i in range(num_rows)]
         )
         return list(
-            Row.objects.filter(dataset=dataset).order_by("order").values_list("id", flat=True)
+            Row.objects.filter(dataset=dataset)
+            .order_by("order")
+            .values_list("id", flat=True)
         )
 
     @staticmethod
@@ -887,10 +889,11 @@ class TestGenerateScenarioRowsPrefetch:
         )
         cases = self._build_cases(3, columns)
 
-        with patch(
-            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
-        ) as mock_agent_cls, patch(
-            "simulate.tasks.scenario_tasks.close_old_connections"
+        with (
+            patch(
+                "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+            ) as mock_agent_cls,
+            patch("simulate.tasks.scenario_tasks.close_old_connections"),
         ):
             agent = mock_agent_cls.return_value
             agent.graph_generator.get_branches.return_value = []
@@ -923,10 +926,11 @@ class TestGenerateScenarioRowsPrefetch:
             scenario_dataset, agent_definition, organization, workspace
         )
 
-        with patch(
-            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
-        ) as mock_agent_cls, patch(
-            "simulate.tasks.scenario_tasks.close_old_connections"
+        with (
+            patch(
+                "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+            ) as mock_agent_cls,
+            patch("simulate.tasks.scenario_tasks.close_old_connections"),
         ):
             agent = mock_agent_cls.return_value
             agent.graph_generator.get_branches.return_value = []
@@ -981,10 +985,11 @@ class TestGenerateScenarioRowsPrefetch:
             }
         ]
 
-        with patch(
-            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
-        ) as mock_agent_cls, patch(
-            "simulate.tasks.scenario_tasks.close_old_connections"
+        with (
+            patch(
+                "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+            ) as mock_agent_cls,
+            patch("simulate.tasks.scenario_tasks.close_old_connections"),
         ):
             agent = mock_agent_cls.return_value
             agent.graph_generator.get_branches.return_value = []
@@ -1022,10 +1027,11 @@ class TestGenerateScenarioRowsPrefetch:
         )
         cases = self._build_cases(num_rows, columns)
 
-        with patch(
-            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
-        ) as mock_agent_cls, patch(
-            "simulate.tasks.scenario_tasks.close_old_connections"
+        with (
+            patch(
+                "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+            ) as mock_agent_cls,
+            patch("simulate.tasks.scenario_tasks.close_old_connections"),
         ):
             agent = mock_agent_cls.return_value
             agent.graph_generator.get_branches.return_value = []

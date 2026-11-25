@@ -2311,6 +2311,10 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
     from tfc.temporal.sql_workbench import SQLExecutionWorkflow, SQLRetentionWorkflow
     from tracer.services import exact_aggregation_cache as cache_module
     from tracer.sql_workbench.tasks import execute_sql, purge_expired_sql_results
+    from tracer.tasks.derived_metric import (
+        capture_derived_metric_snapshot,
+        compute_derived_metric,
+    )
     from tracer.tasks.exact_aggregation import (
         EXACT_AGGREGATION_TASK_QUEUE,
         refresh_exact_aggregation_snapshot,
@@ -2337,18 +2341,30 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
     )
     assert "tracer.tasks" in TEMPORAL_ACTIVITY_MODULES
     assert set(get_workflows_for_queue(EXACT_AGGREGATION_TASK_QUEUE)) == {
-        TaskRunnerWorkflow, SQLExecutionWorkflow, SQLRetentionWorkflow,
+        TaskRunnerWorkflow,
+        SQLExecutionWorkflow,
+        SQLRetentionWorkflow,
     }
     # SQL workflows use this control queue but never its single scan slot.
-    admitted_tasks = (refresh_exact_aggregation_snapshot,)
+    # Derived metrics and saved-snapshot capture are native ClickHouse scans,
+    # so they run on the admitted exact-aggregation worker behind that slot.
+    admitted_tasks = (
+        refresh_exact_aggregation_snapshot,
+        compute_derived_metric,
+        capture_derived_metric_snapshot,
+    )
     registered_activities = get_activities_for_queue(EXACT_AGGREGATION_TASK_QUEUE)
     admitted_activities = {_ACTIVITY_WRAPPERS[task.name] for task in admitted_tasks}
     assert {_ACTIVITY_REGISTRY[task.name]["queue"] for task in admitted_tasks} == {
         EXACT_AGGREGATION_TASK_QUEUE
     }
     assert set(registered_activities) == admitted_activities
-    assert _ACTIVITY_WRAPPERS[execute_sql.name] in get_activities_for_queue("sql_workbench")
-    assert _ACTIVITY_WRAPPERS[purge_expired_sql_results.name] in get_activities_for_queue("tasks_s")
+    assert _ACTIVITY_WRAPPERS[execute_sql.name] in get_activities_for_queue(
+        "sql_workbench"
+    )
+    assert _ACTIVITY_WRAPPERS[
+        purge_expired_sql_results.name
+    ] in get_activities_for_queue("tasks_s")
     # Keep the activity registered on the former generic queue during rollout
     # so already-scheduled workflows can finish on an old queue worker. New
     # dispatches are asserted above to target only the admitted queue.

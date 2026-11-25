@@ -54,6 +54,7 @@ BLUE = "\033[34m"
 
 # ── Chat history logger ─────────────────────────────────────────────────────
 
+
 class ChatLog:
     """Records full chat history of all LLM interactions for JSON export."""
 
@@ -80,30 +81,38 @@ class ChatLog:
         entry = {"role": role, "content": _truncate_for_log(content), **kwargs}
         self._current_stage["messages"].append(entry)
 
-    def add_tool_call(self, turn: int, tool_name: str, args: dict, result: dict, duration_s: float = 0):
+    def add_tool_call(
+        self, turn: int, tool_name: str, args: dict, result: dict, duration_s: float = 0
+    ):
         if self._current_stage is None:
             return
-        self._current_stage["tool_calls"].append({
-            "turn": turn,
-            "tool": tool_name,
-            "args": _truncate_for_log(args, max_len=2000),
-            "result": _truncate_for_log(result, max_len=2000),
-            "duration_s": round(duration_s, 2),
-        })
+        self._current_stage["tool_calls"].append(
+            {
+                "turn": turn,
+                "tool": tool_name,
+                "args": _truncate_for_log(args, max_len=2000),
+                "result": _truncate_for_log(result, max_len=2000),
+                "duration_s": round(duration_s, 2),
+            }
+        )
 
     def add_reasoning(self, turn: int, text: str):
         if self._current_stage is None:
             return
-        self._current_stage["tool_calls"].append({
-            "turn": turn,
-            "type": "reasoning",
-            "text": text[:3000],
-        })
+        self._current_stage["tool_calls"].append(
+            {
+                "turn": turn,
+                "type": "reasoning",
+                "text": text[:3000],
+            }
+        )
 
     def end_stage(self, token_usage: dict = None, output: dict = None):
         if self._current_stage is None:
             return
-        self._current_stage["duration_s"] = round(time.time() - self._current_stage["started_at"], 2)
+        self._current_stage["duration_s"] = round(
+            time.time() - self._current_stage["started_at"], 2
+        )
         self._current_stage["started_at"] = None  # Remove raw timestamp
         if token_usage:
             self._current_stage["token_usage"] = token_usage
@@ -132,7 +141,9 @@ class ChatLog:
                         "impact": e.get("impact"),
                         "confidence": e.get("confidence"),
                         "description": e.get("description", "")[:300],
-                        "evidence_snippets": [s[:200] for s in e.get("evidence_snippets", [])[:2]],
+                        "evidence_snippets": [
+                            s[:200] for s in e.get("evidence_snippets", [])[:2]
+                        ],
                     }
                     for e in result.get("errors", [])
                 ],
@@ -181,7 +192,9 @@ def indent(text, prefix="  ", max_width=120):
     out = []
     for line in lines:
         if len(line) > max_width:
-            wrapped = textwrap.wrap(line, width=max_width, subsequent_indent=prefix + "  ")
+            wrapped = textwrap.wrap(
+                line, width=max_width, subsequent_indent=prefix + "  "
+            )
             out.extend(wrapped)
         else:
             out.append(line)
@@ -190,13 +203,23 @@ def indent(text, prefix="  ", max_width=120):
 
 # ── Monkey-patch Judge to be verbose ────────────────────────────────────────
 
+
 def patch_judge_verbose():
     """Patch JudgeAgent.run() to print each turn, tool call, and reasoning."""
     from ee.agenthub.traceerroragent.judge import JudgeAgent
 
     _original_run = JudgeAgent.run
 
-    def verbose_run(self, trace_outline, chauffeur_report, memory_context, trace_id, total_spans, user_query, chauffeur_failed=False):
+    def verbose_run(
+        self,
+        trace_outline,
+        chauffeur_report,
+        memory_context,
+        trace_id,
+        total_spans,
+        user_query,
+        chauffeur_failed=False,
+    ):
         global _chat_log
         from ee.agenthub.traceerroragent.prompts_v2 import (
             build_judge_user_prompt,
@@ -233,11 +256,23 @@ def patch_judge_verbose():
         messages = [
             {
                 "role": "system",
-                "content": [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
             },
             {
                 "role": "user",
-                "content": [{"type": "text", "text": user_prompt, "cache_control": {"type": "ephemeral"}}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": user_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
             },
         ]
 
@@ -248,6 +283,7 @@ def patch_judge_verbose():
 
             try:
                 from ee.agenthub.traceerroragent.judge import JUDGE_TOOLS
+
                 response = self.llm._get_completion_with_tools(
                     messages=messages,
                     tools=JUDGE_TOOLS,
@@ -256,7 +292,9 @@ def patch_judge_verbose():
                 choice = response.choices[0]
                 turn_time = time.time() - turn_start
 
-                print(f"\n  {CYAN}{BOLD}╔══ Turn {turn + 1} ({turn_time:.1f}s) ══╗{RESET}")
+                print(
+                    f"\n  {CYAN}{BOLD}╔══ Turn {turn + 1} ({turn_time:.1f}s) ══╗{RESET}"
+                )
                 print(f"  {DIM}finish_reason: {choice.finish_reason}{RESET}")
 
                 # Print model's text reasoning (thinking)
@@ -299,7 +337,9 @@ def patch_judge_verbose():
                             conf = tool_args.get("confidence", "?")
                             print(f"  {RED}🔧 {tool_name}({RESET}")
                             print(f"    {BOLD}category{RESET}: {cat}")
-                            print(f"    {BOLD}impact{RESET}: {impact}, confidence: {conf}")
+                            print(
+                                f"    {BOLD}impact{RESET}: {impact}, confidence: {conf}"
+                            )
                             desc = tool_args.get("description", "")
                             if desc:
                                 print(f"    {BOLD}description{RESET}: {desc[:200]}")
@@ -308,14 +348,25 @@ def patch_judge_verbose():
                                 print(f"    {BOLD}evidence{RESET}: {evidence[0][:150]}")
                         elif tool_name == "submit_scores":
                             print(f"  {GREEN}🔧 {tool_name}({RESET}")
-                            for dim in ["factual_grounding", "privacy_and_safety", "instruction_adherence", "optimal_plan_execution"]:
+                            for dim in [
+                                "factual_grounding",
+                                "privacy_and_safety",
+                                "instruction_adherence",
+                                "optimal_plan_execution",
+                            ]:
                                 val = tool_args.get(dim, {})
                                 if isinstance(val, dict):
-                                    print(f"    {dim}: {val.get('score', '?')} — {val.get('reason', '')[:80]}")
+                                    print(
+                                        f"    {dim}: {val.get('score', '?')} — {val.get('reason', '')[:80]}"
+                                    )
                         elif tool_name == "submit_summary":
                             print(f"  {GREEN}🔧 {tool_name}({RESET}")
-                            print(f"    overall_score: {tool_args.get('overall_score', '?')}")
-                            print(f"    priority: {tool_args.get('recommended_priority', '?')}")
+                            print(
+                                f"    overall_score: {tool_args.get('overall_score', '?')}"
+                            )
+                            print(
+                                f"    priority: {tool_args.get('recommended_priority', '?')}"
+                            )
                             ins = tool_args.get("insights", "")
                             if ins:
                                 print(f"    insights: {ins[:200]}")
@@ -331,7 +382,11 @@ def patch_judge_verbose():
 
                         # Print tool result (compact)
                         result_str = json.dumps(result, default=str)
-                        if tool_name in ("submit_finding", "submit_scores", "submit_summary"):
+                        if tool_name in (
+                            "submit_finding",
+                            "submit_scores",
+                            "submit_summary",
+                        ):
                             print(f"    {DIM}→ {result_str}{RESET}")
                         elif len(result_str) > 300:
                             print(f"    {DIM}→ {result_str[:300]}...{RESET}")
@@ -348,11 +403,13 @@ def patch_judge_verbose():
                                 duration_s=tc_elapsed,
                             )
 
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": json.dumps(result, default=str),
-                        })
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": json.dumps(result, default=str),
+                            }
+                        )
 
                     self._compact_old_tool_results(messages)
 
@@ -399,7 +456,9 @@ def patch_chauffeur_verbose():
     def verbose_run(self):
         global _chat_log
         subheader("Chauffeur (Haiku) — Reading Full Trace", CYAN)
-        print(f"  {DIM}Trace execution summary: {len(self.trace_execution_summary)} chars{RESET}")
+        print(
+            f"  {DIM}Trace execution summary: {len(self.trace_execution_summary)} chars{RESET}"
+        )
 
         if _chat_log:
             _chat_log.start_stage("chauffeur", model="Claude Haiku 4.5 (Bedrock)")
@@ -489,9 +548,11 @@ def patch_voice_verbose():
                 print(f"      {DIM}{hint[:150]}{RESET}")
 
         tokens = dict(self.llm.token_usage)
-        print(f"\n  {DIM}Tokens: {tokens.get('total_tokens', 0)} "
-              f"(prompt={tokens.get('prompt_tokens', 0)}, "
-              f"completion={tokens.get('completion_tokens', 0)}){RESET}")
+        print(
+            f"\n  {DIM}Tokens: {tokens.get('total_tokens', 0)} "
+            f"(prompt={tokens.get('prompt_tokens', 0)}, "
+            f"completion={tokens.get('completion_tokens', 0)}){RESET}"
+        )
 
         if _chat_log:
             _chat_log.add_message("assistant", json.dumps(result, default=str))
@@ -504,16 +565,22 @@ def patch_voice_verbose():
     # Patch Evaluator
     _original_evaluator_run = VoiceCategoryEvaluator.run
 
-    def verbose_evaluator_run(self, category_name, voice_data, call_summary, category_hint, error_offset=0):
+    def verbose_evaluator_run(
+        self, category_name, voice_data, call_summary, category_hint, error_offset=0
+    ):
         global _chat_log
         print(f"\n  {BLUE}▸ Evaluating: {category_name}{RESET}")
         print(f"    {DIM}Hint: {category_hint[:120]}{RESET}")
 
         if _chat_log:
-            _chat_log.start_stage(f"voice_evaluator:{category_name}", model="Gemini 3 Flash (Vertex AI)")
+            _chat_log.start_stage(
+                f"voice_evaluator:{category_name}", model="Gemini 3 Flash (Vertex AI)"
+            )
 
         start = time.time()
-        errors = _original_evaluator_run(self, category_name, voice_data, call_summary, category_hint, error_offset)
+        errors = _original_evaluator_run(
+            self, category_name, voice_data, call_summary, category_hint, error_offset
+        )
         elapsed = time.time() - start
 
         print(f"    {GREEN}{len(errors)} error(s) found ({elapsed:.1f}s){RESET}")
@@ -582,7 +649,12 @@ def run_text_v2(trace_id, save_to_db=False):
 
     scores = result.get("scores", {})
     print(f"\n  {BOLD}Scores:{RESET}")
-    for dim in ["factual_grounding", "privacy_and_safety", "instruction_adherence", "optimal_plan_execution"]:
+    for dim in [
+        "factual_grounding",
+        "privacy_and_safety",
+        "instruction_adherence",
+        "optimal_plan_execution",
+    ]:
         s = scores.get(dim, {})
         if isinstance(s, dict):
             print(f"    {dim}: {s.get('score', '?')} — {s.get('reason', '')[:100]}")
@@ -605,7 +677,9 @@ def run_text_v2(trace_id, save_to_db=False):
                 prompt = usage.get("prompt_tokens", 0)
                 completion = usage.get("completion_tokens", 0)
                 cached = usage.get("cache_read_input_tokens", 0)
-                print(f"    {stage}: {total} tokens (prompt={prompt}, completion={completion}, cached={cached})")
+                print(
+                    f"    {stage}: {total} tokens (prompt={prompt}, completion={completion}, cached={cached})"
+                )
 
     # Save JSON
     output_path = f"/tmp/agent_compass_v2_{trace_id[:8]}.json"
@@ -669,7 +743,12 @@ def run_voice(trace_id, save_to_db=False):
 
     scores = result.get("scores", {})
     print(f"\n  {BOLD}Scores:{RESET}")
-    for dim in ["factual_grounding", "privacy_and_safety", "instruction_adherence", "optimal_plan_execution"]:
+    for dim in [
+        "factual_grounding",
+        "privacy_and_safety",
+        "instruction_adherence",
+        "optimal_plan_execution",
+    ]:
         s = scores.get(dim, {})
         if isinstance(s, dict):
             print(f"    {dim}: {s.get('score', '?')} — {s.get('reason', '')[:100]}")
@@ -692,7 +771,9 @@ def run_voice(trace_id, save_to_db=False):
                 prompt = usage.get("prompt_tokens", 0)
                 completion = usage.get("completion_tokens", 0)
                 cached = usage.get("cache_read_input_tokens", 0)
-                print(f"    {stage}: {total} tokens (prompt={prompt}, completion={completion}, cached={cached})")
+                print(
+                    f"    {stage}: {total} tokens (prompt={prompt}, completion={completion}, cached={cached})"
+                )
                 grand_total += total
         print(f"    {BOLD}TOTAL: {grand_total} tokens{RESET}")
 

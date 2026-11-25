@@ -63,7 +63,10 @@ def _instant_sizing(task) -> dict:
     if limit <= 0:
         return {}
     try:
-        configs = list(task.evals.values_list("config", flat=True))
+        # Primary: the workflow starts right after the request that set the
+        # task's evals; a replica that has not applied them sizes the run as
+        # a regular task.
+        configs = list(task.evals.using("default").values_list("config", flat=True))
     except Exception:
         # Falls back to the regular sizing; say so, a run sized wrong is slow.
         logger.warning(

@@ -17,6 +17,8 @@ import { useRemoveAppliedEvaluation } from "src/api/simulate-environments/enviro
 import { harnessEnvironmentQuery } from "src/api/simulate-environments/environment";
 import { useToolCallEval } from "src/api/simulate-environments/toolCallEval";
 import { BUILD_STATUS } from "../../myEnvironments.constants";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import EvalRow from "./EvalRow";
@@ -57,11 +59,13 @@ export default function EvalsStep({
   scenarioCount,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const { canEdit } = useSimulationAccess();
   // The id of the eval open for editing, or null.
   const [editingId, setEditingId] = useState(null);
   // The workspace routes away from this tab when there are no scenarios; this
   // is the backstop if it is ever rendered directly without them.
-  const needsScenarios = (scenarioCount ?? (envState?.scenarios?.length || 0)) === 0;
+  const needsScenarios =
+    (scenarioCount ?? (envState?.scenarios?.length || 0)) === 0;
 
   const store = useAppliedEvals(envState, patch);
   // Env-level "enable tool call evaluation". A backed env persists it through
@@ -119,12 +123,14 @@ export default function EvalsStep({
   const removeEval = useRemoveAppliedEvaluation();
   const building = env.buildStatus === BUILD_STATUS.BUILDING;
   const removeDisabled =
-    locked || (backed && (building || removeEval.isPending));
-  const lockedOrBuildingTooltip = locked
-    ? LOCK_TOOLTIP
-    : backed && building
-      ? "Available once the environment finishes building."
-      : "";
+    !canEdit || locked || (backed && (building || removeEval.isPending));
+  const lockedOrBuildingTooltip = !canEdit
+    ? WORKSPACE_COPY.viewer.evals
+    : locked
+      ? LOCK_TOOLTIP
+      : backed && building
+        ? "Available once the environment finishes building."
+        : "";
   const onRemove = (id) => {
     if (!backed) {
       store.remove(id);
@@ -226,17 +232,20 @@ export default function EvalsStep({
         <Tooltip
           arrow
           title={
-            locked
-              ? LOCK_TOOLTIP
-              : !envState?.agent
-                ? EVALS_COPY.toolCall.needsAgent
-                : ""
+            !canEdit
+              ? WORKSPACE_COPY.viewer.evals
+              : locked
+                ? LOCK_TOOLTIP
+                : !envState?.agent
+                  ? EVALS_COPY.toolCall.needsAgent
+                  : ""
           }
         >
           <span>
             <Switch
               checked={toolCallOn && !!envState?.agent}
               disabled={
+                !canEdit ||
                 locked ||
                 !envState?.agent ||
                 (backed && (detailUnknown || toolCall.isPending))
@@ -291,11 +300,13 @@ export default function EvalsStep({
             <Tooltip
               arrow
               title={
-                locked
-                  ? LOCK_TOOLTIP
-                  : needsScenarios
-                    ? EVALS_COPY.needsScenariosHint
-                    : ""
+                !canEdit
+                  ? WORKSPACE_COPY.viewer.evals
+                  : locked
+                    ? LOCK_TOOLTIP
+                    : needsScenarios
+                      ? EVALS_COPY.needsScenariosHint
+                      : ""
               }
             >
               <span>
@@ -303,7 +314,7 @@ export default function EvalsStep({
                   variant="contained"
                   color="primary"
                   size="small"
-                  disabled={needsScenarios || locked}
+                  disabled={!canEdit || needsScenarios || locked}
                   onClick={() => setPickerOpen(true)}
                   startIcon={
                     <Iconify icon="solar:add-circle-linear" width={15} />
@@ -360,14 +371,22 @@ export default function EvalsStep({
               // "add evaluations" branch is gated behind a fork.
               <Tooltip
                 arrow
-                title={locked && !needsScenarios ? LOCK_TOOLTIP : ""}
+                title={
+                  needsScenarios
+                    ? ""
+                    : !canEdit
+                      ? WORKSPACE_COPY.viewer.evals
+                      : locked
+                        ? LOCK_TOOLTIP
+                        : ""
+                }
               >
                 <Box component="span" sx={{ display: "inline-flex" }}>
                   <Button
                     variant="contained"
                     color="primary"
                     size="small"
-                    disabled={locked && !needsScenarios}
+                    disabled={(locked || !canEdit) && !needsScenarios}
                     onClick={() =>
                       needsScenarios ? onGo?.("scenarios") : setPickerOpen(true)
                     }
@@ -432,6 +451,7 @@ export default function EvalsStep({
                     <IconButton
                       size="small"
                       disabled={
+                        !canEdit ||
                         !editable ||
                         locked ||
                         building ||

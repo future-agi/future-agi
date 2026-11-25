@@ -90,6 +90,15 @@ def _parameter_schema(parameter: dict[str, Any]) -> dict[str, Any]:
             )
             if key in parameter
         }
+    if (
+        parameter.get("in") == "query"
+        and schema.get("type") == "array"
+        and isinstance(schema.get("items"), dict)
+    ):
+        default = schema.pop("default", None)
+        schema = {"anyOf": [copy.deepcopy(schema["items"]), schema, {"type": "null"}]}
+        if default is not None:
+            schema["default"] = default
     if parameter.get("description") and "description" not in schema:
         schema["description"] = parameter["description"]
     return schema
@@ -393,28 +402,42 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
                 f"Path parameter mismatch for {name}: expected "
                 f"{sorted(path_fields)}, mapped {sorted(mapped_path_fields)}"
             )
-        generated_tools.append(
-            {
-                "name": name,
-                "description": description,
-                "group": entry["group"],
-                "inputSchema": input_schema,
-                "annotations": annotations,
-                "request": {
-                    "method": method.upper(),
-                    "path": path,
-                    "parameters": request_mapping,
-                },
-                "response": _response_policy(entry, operation, contract),
-                "source": {"operationId": operation.get("operationId")},
-            }
-        )
+        tool = {
+            "name": name,
+            "description": description,
+            "group": entry["group"],
+            "inputSchema": input_schema,
+            "annotations": annotations,
+            "request": {
+                "method": method.upper(),
+                "path": path,
+                "parameters": request_mapping,
+            },
+            "response": _response_policy(entry, operation, contract),
+            "source": {"operationId": operation.get("operationId")},
+        }
+        # The EE feature the tool's REST view checks; listing hides the tool
+        # from an organization without it.
+        if "entitlement" in entry:
+            if not isinstance(entry["entitlement"], str) or not entry["entitlement"]:
+                raise ToolGenerationError(f"Invalid entitlement for {name}")
+            tool["entitlement"] = entry["entitlement"]
+        generated_tools.append(tool)
 
-    contract_bytes = contract_path.read_bytes()
+    # A fingerprint of the tool NAMES, not of the whole contract. The manifest
+    # used to carry a hash of all of swagger.json, so any two pull requests
+    # that touched the API conflicted on that one line. This line changes only
+    # when the set of tools changes. Two pull requests that both add or remove
+    # a tool still conflict here, on purpose: each also set the catalog's
+    # expected_tool_count to the same number, and that edit would otherwise
+    # merge cleanly to a wrong count. `scripts/generate-mcp-tools.py --check`
+    # regenerates the manifest and compares it, which is what keeps the
+    # committed file in step with the contract.
+    tool_names = "\n".join(sorted(tool["name"] for tool in generated_tools))
     return {
         "schema_version": 1,
         "source_contract": str(contract_path.name),
-        "source_contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
+        "tool_names_sha256": hashlib.sha256(tool_names.encode()).hexdigest(),
         "tool_count": len(generated_tools),
         "tools": generated_tools,
     }

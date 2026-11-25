@@ -30,7 +30,7 @@ export default function WidgetDonutChart({ config }) {
               ? {
                   show: true,
                   label: config.centerLabel,
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: 600,
                 }
               : { show: false },

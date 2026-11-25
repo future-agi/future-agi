@@ -12,6 +12,7 @@ from accounts.demo_seeding import (
 )
 from accounts.models.demo_seed import DemoSeedRequest, DemoTracePublication
 from accounts.utils import first_signup
+from tfc.tests.lagging_replica import lagging_replica  # noqa: F401  (fixture)
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
@@ -154,6 +155,32 @@ def test_clickhouse_failure_keeps_publication_pending(signup):
 
 
 @pytest.mark.django_db(transaction=True)
+def test_publication_reads_the_seeded_trace_from_the_primary(signup, request):
+    """With replica routing on, the trace and its spans were seeded moments
+    before the publication runs: a lagging replica has none of them, and a
+    publication that read them there would publish a trace with no spans
+    (or fail) and mark itself done."""
+    replica = request.getfixturevalue("lagging_replica")
+    user = signup()
+    replica.freeze()
+    with patch("accounts.user_onboard.upload_demo_dataset"):
+        seed_pending_demo_data(user.organization_id)
+    trace_id = (
+        DemoTracePublication.objects.filter(completed_at__isnull=True)
+        .values_list("trace_id", flat=True)
+        .first()
+    )
+    assert not Trace.objects.filter(pk=trace_id).exists()
+
+    with patch("accounts.user_onboard._write_demo_trace_to_clickhouse") as write:
+        publish_pending_demo_trace(trace_id)
+
+    assert write.call_args.args[0].id == trace_id
+    assert len(write.call_args.args[1]) == 35
+    assert DemoTracePublication.objects.get(pk=trace_id).completed_at is not None
+
+
+@pytest.mark.django_db(transaction=True)
 def test_rollback_removes_account_intent_and_dispatch(signup):
     with patch("accounts.utils.process_post_registration") as dispatch:
         with pytest.raises(RuntimeError):
@@ -281,11 +308,8 @@ def test_legacy_reseed_works_before_publication_table_exists(signup):
             "accounts_demotracepublication"
             not in connection.introspection.table_names()
         )
-        # 0020 explicitly uses this historical-compatible seeding path.
-        assert (
-            create_demo_traces_and_spans(str(user.organization_id), publish=False)
-            is None
-        )
+        # The shipped accounts.0020 call shape, before the publication table exists.
+        assert create_demo_traces_and_spans(str(user.organization_id)) is None
         trace_ids = identities(user)
         assert len(trace_ids) == 2
         executor = MigrationExecutor(connection)
@@ -304,10 +328,54 @@ def test_legacy_reseed_works_before_publication_table_exists(signup):
             )
         assert DemoTracePublication.objects.count() == 2
     finally:
-        # Back to the latest accounts migration, not to 0030: a later one must not
-        # stay unapplied for the rest of the test session.
+        # Back to every app's latest migration, not to 0030 or accounts alone:
+        # rolling accounts back also unapplies other apps' migrations that depend
+        # on it, and none may stay unapplied for the rest of the test session.
         executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes("accounts"))
+        executor.migrate(executor.loader.graph.leaf_nodes())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_shipped_0020_reseeds_a_broken_demo_org_before_the_outbox_exists(signup):
+    from importlib import import_module
+
+    from django.db import connection
+    from django.db.migrations.executor import MigrationExecutor
+
+    from model_hub.models.develop_dataset import Dataset, Row
+
+    user = signup(seed_demo_data=False)
+    broken = Dataset.objects.create(
+        name="Demo-dataset", source="demo", organization_id=user.organization_id
+    )
+
+    def fake_upload(org_id, user_id):
+        dataset = Dataset.objects.create(
+            name="Demo-dataset", source="demo", organization_id=org_id
+        )
+        Row.objects.create(dataset=dataset, order=1, metadata={})
+
+    old = ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key")
+    executor = MigrationExecutor(connection)
+    try:
+        executor.migrate([old])
+        assert (
+            "accounts_demotracepublication"
+            not in connection.introspection.table_names()
+        )
+        operation = import_module("accounts.migrations.0020_reseed_broken_demo_data")
+        with (
+            patch("accounts.user_onboard.upload_demo_dataset", fake_upload),
+            connection.schema_editor() as editor,
+        ):
+            operation.reseed_broken_demo_data(
+                executor.loader.project_state([old]).apps, editor
+            )
+        assert len(identities(user)) == 2
+        assert not Dataset.objects.filter(pk=broken.pk, deleted=False).exists()
+    finally:
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
 
 
 @pytest.mark.django_db(transaction=True)

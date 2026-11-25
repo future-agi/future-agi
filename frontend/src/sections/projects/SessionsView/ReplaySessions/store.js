@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 import { useShallow } from "zustand/react/shallow";
 import { REPLAY_MODULES } from "./configurations";
 

@@ -50,6 +50,20 @@ vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
   };
 });
 
+// The launch form has its own tests; here it only shows which run and environment it opens on.
+// It stays mounted and toggles `open` (so the drawer slides); closed, it shows nothing.
+vi.mock("../LaunchFixDialog", () => ({
+  // eslint-disable-next-line react/prop-types
+  default: ({ open, envId, sourceRunId }) =>
+    open && (
+      <div
+        data-testid="launch-fix-dialog"
+        data-env={envId}
+        data-source={sourceRunId}
+      />
+    ),
+}));
+
 const axios = (await import("src/utils/axios")).default;
 const { listResult } = await import("../fixRunView");
 const { default: FixRunPage } = await import("../FixRunPage");
@@ -90,8 +104,9 @@ const shipPosts = () =>
     /make-default|pull-request/.test(url),
   );
 
+// The ship button and its confirm say the same: Open pull request or Make default.
 async function confirmShip(user, button) {
-  await user.click(await screen.findByRole("button", { name: "Ship" }));
+  await user.click(await screen.findByRole("button", { name: button }));
   const dialog = await screen.findByRole("dialog");
   return {
     dialog,
@@ -113,6 +128,24 @@ describe("FixVerdict", () => {
     expect(screen.queryByText("Held back")).toBeNull();
     expect(screen.queryByText("Overfit gap")).toBeNull();
     expect(screen.queryByText("Limited validation")).toBeNull();
+    expect(listResult(fixOf("fix-ready-no-held")).note).toMatch(
+      /^Proven on the targets only · /,
+    );
+  });
+
+  it("does not say proven on the targets only when cases were held back but have no rate", () => {
+    renderUi(
+      <FixVerdict
+        fix={fixOf("fix-ready-no-held", {
+          request: {
+            ...fixOf("fix-ready-no-held").request,
+            held_back_scenario_keys: ["a", "b", "c", "d"],
+          },
+        })}
+      />,
+    );
+    expect(screen.queryByText("Proven on the targets only")).toBeNull();
+    expect(screen.queryByText("Limited validation")).toBeNull();
   });
 
   it("lists must-pass breaks, noting what was within noise", () => {
@@ -123,6 +156,121 @@ describe("FixVerdict", () => {
     expect(
       breaks.getByText(/within normal noise, not counted/),
     ).toBeInTheDocument();
+  });
+
+  it("marks a check the fix could not measure as Unknown, with its own icon", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.tiers = [
+      ...winner.verdict.tiers,
+      {
+        name: "model-lock",
+        status: "skipped",
+        detail: "static check only: no added line names a model",
+      },
+    ];
+    renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
+
+    expect(
+      screen.getByText("Checks · 5 of 5 passed · 1 unknown"),
+    ).toBeInTheDocument();
+    const row = screen.getByText("Model unchanged").parentElement;
+    expect(within(row).getByText("Unknown")).toBeInTheDocument();
+    expect(row.getAttribute("data-check")).toBe("unmeasured");
+    expect(screen.getAllByText("Unknown")).toHaveLength(1);
+    expect(screen.queryByText("model-lock")).toBeNull();
+  });
+
+  const withCeilingParts = () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.tiers = [
+      ...winner.verdict.tiers.filter((t) => t.name !== "ceilings"),
+      {
+        name: "ceilings",
+        status: "skipped",
+        detail: "reply latency within; agent cost not verified",
+        parts: [
+          {
+            name: "reply latency",
+            status: "passed",
+            detail: "median 1.1 s, baseline 1 s: within",
+          },
+          {
+            name: "agent cost",
+            status: "skipped",
+            detail: "the agent's model calls are not traced",
+          },
+        ],
+        latency: { baseline: 1, candidate: 1.1, allowed: 1.25, limit: null },
+        cost: { baseline: null, candidate: null, allowed: null, limit: null },
+      },
+    ];
+    return fix;
+  };
+
+  it("shows each ceiling's own status in the verdict's full list of checks", async () => {
+    renderUi(<FixVerdict fix={withCeilingParts()} />);
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Show all" }));
+
+    const latency = screen.getByText("Reply time").parentElement;
+    const cost = screen.getByText("Agent's cost").parentElement;
+    expect(within(latency).queryByText("Reply time unknown")).toBeNull();
+    expect(
+      within(latency).getByText(
+        "Within the limit: 1.10 s against 1.00 s on the current version, allowed up to 1.25 s.",
+      ),
+    ).toBeInTheDocument();
+    // An untraced agent's cost is unknown, said plainly, never "not verified".
+    expect(within(cost).getByText("Cost unknown")).toBeInTheDocument();
+    expect(
+      within(cost).getByText(
+        "This agent's model calls weren't measured. Epoch measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows each ceiling's own status in the decision drawer", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.tiers = [
+      ...winner.verdict.tiers.filter((t) => t.name !== "ceilings"),
+      {
+        name: "ceilings",
+        status: "skipped",
+        detail: "reply latency within; agent cost not verified",
+        parts: [
+          {
+            name: "reply latency",
+            status: "passed",
+            detail: "median 1.1 s, baseline 1 s: within",
+          },
+          {
+            name: "agent cost",
+            status: "skipped",
+            detail: "the agent's model calls are not traced",
+          },
+        ],
+        latency: { baseline: 1, candidate: 1.1, allowed: 1.25, limit: null },
+        cost: { baseline: null, candidate: null, allowed: null, limit: null },
+      },
+    ];
+    renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
+
+    const latency = screen.getByText("Reply time").parentElement;
+    const cost = screen.getByText("Agent's cost").parentElement;
+    expect(within(latency).queryByText("Reply time unknown")).toBeNull();
+    expect(
+      within(latency).getByText(
+        "Within the limit: 1.10 s against 1.00 s on the current version, allowed up to 1.25 s.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(cost).getByText("Cost unknown")).toBeInTheDocument();
+    // Only the tier reads Unknown; its unmeasured cost says Cost unknown and why.
+    expect(screen.getAllByText("Unknown")).toHaveLength(1);
   });
 
   it("renders a verdict without tiers, here and in the decision drawer", () => {
@@ -136,8 +284,8 @@ describe("FixVerdict", () => {
     expect(screen.getByText("How it was decided")).toBeInTheDocument();
   });
 
-  it("labels limited validation, with the held-back tally only when cases were held back", async () => {
-    const { unmount } = renderUi(
+  it("labels limited validation, with the held-back tally", async () => {
+    renderUi(
       <FixVerdict
         fix={fixOf("fix-ready-archive", { limited_validation: true })}
       />,
@@ -148,14 +296,6 @@ describe("FixVerdict", () => {
         "Too few to tell · Fixed 1 of 2 failing scenarios it never saw — it takes 4 or more to tell.",
       ),
     ).toBeInTheDocument();
-    unmount();
-    renderUi(
-      <FixVerdict
-        fix={fixOf("fix-ready-no-held", { limited_validation: true })}
-      />,
-    );
-    expect(screen.getByText("Limited validation")).toBeInTheDocument();
-    expect(screen.queryByText(/Too few to tell/)).toBeNull();
     expect(screen.queryByText("Proven on the targets only")).toBeNull();
     expect(
       listResult(fixOf("fix-ready-archive", { limited_validation: true })).note,
@@ -198,6 +338,230 @@ describe("FixVerdict", () => {
   });
 });
 
+describe("FixFinishedView, no safe improvement", () => {
+  it("says what stopped the trials in one sentence, the numbers behind a toggle", async () => {
+    renderUi(
+      <FixFinishedView
+        fix={fixOf("fix-no-improvement")}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "No safe improvement: neither candidate improved the target scenarios.",
+      ),
+    ).toBeInTheDocument();
+    // The engine's summary is not the headline any more.
+    expect(
+      screen.queryByText(
+        "No safe improvement: every candidate broke a must-pass scenario.",
+      ),
+    ).toBeNull();
+
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole("button", { name: "Show each candidate's result" }),
+      );
+    const numbers = within(screen.getByTestId("no-safe-numbers"));
+    // Each trial's result in plain words from its own numbers; the engine's text is never shown.
+    expect(
+      numbers.getByText(
+        "Candidate 1 · Target scenarios: 0% → 0%, not a clear gain.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      numbers.queryByText(/Engine's note|target scenarios passed/),
+    ).toBeNull();
+  });
+});
+
+describe("FixFinishedView, what to try next", () => {
+  const view = (fix, onTab = vi.fn()) =>
+    renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={onTab}
+        renderTab={() => null}
+      />,
+    );
+
+  it("offers the next steps on a fix with no safe improvement", async () => {
+    const user = userEvent.setup();
+    const onTab = vi.fn();
+    view(fixOf("fix-no-improvement"), onTab);
+    const next = within(screen.getByTestId("what-to-try-next"));
+    expect(
+      next.getByText(
+        "Keep the current version. This epoch changed nothing: your agent changes only when you ship a candidate.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(next.getByRole("button", { name: "See the candidates" }));
+    expect(onTab).toHaveBeenCalledWith("trials");
+    await user.click(next.getByRole("button", { name: "How it was decided" }));
+    expect(await screen.findByTestId("fix-decision")).toBeInTheDocument();
+  });
+
+  it("starts a new fix from the same run, through the launch form", async () => {
+    view(fixOf("fix-no-improvement"));
+    expect(screen.queryByTestId("launch-fix-dialog")).toBeNull();
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Run a new epoch" }));
+    const dialog = screen.getByTestId("launch-fix-dialog");
+    expect(dialog).toHaveAttribute("data-env", "env-1");
+    expect(dialog).toHaveAttribute("data-source", "te-source-run-1");
+  });
+
+  it("offers no new fix when the run it started from was deleted", () => {
+    view(fixOf("fix-no-improvement", { source_run_id: null }));
+    expect(screen.getByTestId("what-to-try-next")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Run a new epoch" }),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["a verified fix", "fix-ready-archive", {}],
+    [
+      "a limited validation fix",
+      "fix-ready-archive",
+      { limited_validation: true },
+    ],
+    ["a failed fix", "fix-failed", {}],
+  ])("says nothing about what to try next on %s", (_, id, extra) => {
+    view(fixOf(id, extra));
+    expect(screen.queryByTestId("what-to-try-next")).toBeNull();
+  });
+});
+
+describe("FixFinishedView, protected cases it could not be held to", () => {
+  it("names them in plain words, and says nothing for a report without them", () => {
+    const fix = fixOf("fix-no-improvement");
+    fix.report = {
+      ...fix.report,
+      flaky_protected: [
+        {
+          key: "s3",
+          name: "Escalate a large order",
+          sub_goal: "a",
+          passed: 2,
+          runs: 3,
+        },
+      ],
+    };
+    const { unmount } = renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    expect(screen.getByTestId("flaky-protected")).toHaveTextContent(
+      "1 protected case is flaky on the current version, so this epoch wasn't held to it: “Escalate a large order”.",
+    );
+    unmount();
+
+    renderUi(
+      <FixFinishedView
+        fix={fixOf("fix-no-improvement")}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    expect(screen.queryByTestId("flaky-protected")).toBeNull();
+  });
+});
+
+describe("FixDecisionDrawer without a kept trial", () => {
+  const checkNames = (trial) =>
+    trial
+      .getAllByText(
+        /^(Change is valid|Target scenarios|Held-back scenarios|Must-pass scenarios)$/,
+      )
+      .map((el) => el.textContent);
+
+  it("shows each rejected trial with the check that rejected it first", () => {
+    renderUi(
+      <FixDecisionDrawer
+        fix={fixOf("fix-no-improvement")}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Rejected candidates")).toBeInTheDocument();
+    for (const attempt of [1, 2]) {
+      const trial = within(screen.getByTestId(`rejected-${attempt}`));
+      expect(trial.getByText(`Candidate ${attempt}`)).toBeInTheDocument();
+      expect(checkNames(trial)).toEqual([
+        "Target scenarios",
+        "Change is valid",
+        "Must-pass scenarios",
+      ]);
+      // The rejecting check in plain words, from the trial's own numbers.
+      expect(trial.getByText("0% → 0%, not a clear gain.")).toBeInTheDocument();
+    }
+  });
+
+  it("says why a check after the rejecting one was not run, never passed or unmeasured", () => {
+    renderUi(
+      <FixDecisionDrawer
+        fix={fixOf("fix-no-improvement")}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    const trial = within(screen.getByTestId("rejected-1"));
+    const row = trial.getByText("Must-pass scenarios").parentElement;
+    expect(
+      within(row).getByText(
+        "not run — an earlier check failed: Target scenarios",
+      ),
+    ).toBeInTheDocument();
+    expect(row.getAttribute("data-check")).toBe("not-run");
+    expect(trial.queryByText("Unknown")).toBeNull();
+    expect(within(row).queryByText(/passed|held/)).toBeNull();
+  });
+
+  it("leaves a fix with a kept trial as it was", () => {
+    renderUi(
+      <FixDecisionDrawer
+        fix={fixOf("fix-ready-archive")}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Rejected candidates")).toBeNull();
+    expect(screen.queryByTestId("rejected-1")).toBeNull();
+    expect(screen.getByText("Checks · 5 of 5 passed")).toBeInTheDocument();
+  });
+
+  it("still shows a rejected trial whose verdict predates recorded checks", () => {
+    const fix = fixOf("fix-no-improvement");
+    delete fix.candidates[0].verdict.tiers;
+    renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
+
+    const trial = within(screen.getByTestId("rejected-1"));
+    expect(
+      trial.getByText("Rejected. Target scenarios 0% → 0%."),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("rejected-2")).getByText("Target scenarios"),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("FixFinishedView", () => {
   it("leads a failed fix with why it failed and offers no Ship", () => {
     const fix = fixOf("fix-failed", {
@@ -217,11 +581,15 @@ describe("FixFinishedView", () => {
     );
     expect(
       screen.getByText(
-        "The engine stopped: the model provider refused the key.",
+        "This epoch stopped on something only you can change: The engine stopped: the model provider refused the key.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("The fix did not finish.")).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Ship$/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: /^(Open pull request|Make default)$/,
+      }),
+    ).toBeNull();
   });
 
   it("offers Retry on a retryable failed fix and opens the new fix", async () => {
@@ -240,6 +608,47 @@ describe("FixFinishedView", () => {
     expect(navigate.mock.calls[0][0]).toMatch(
       /^\/dashboard\/simulate\/environments\/env-1\/improvements\/fix-new-\d+$/,
     );
+  });
+});
+
+describe("Ship, while the evals grade the winner", () => {
+  const shipButton = () =>
+    screen.findByRole("button", {
+      name: /^(Open pull request|Make default)$/,
+    });
+
+  it("waits until grading finishes, and says why", async () => {
+    updateFixtureFixRun("fix-ready-github", (f) => ({
+      ...f,
+      eval_grading: "pending",
+    }));
+    renderPage("fix-ready-github");
+    expect(await shipButton()).toBeDisabled();
+    expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
+      "Platform evals are still scoring this candidate. You can ship it once they finish.",
+    );
+  });
+
+  it("ships a trial the evals could not finish grading, and says so", async () => {
+    updateFixtureFixRun("fix-ready-archive", (f) => ({
+      ...f,
+      eval_grading: "incomplete",
+    }));
+    renderPage("fix-ready-archive");
+    expect(await shipButton()).toBeEnabled();
+    expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
+      "Platform evals did not finish on this candidate, so their results are missing. You can still ship it.",
+    );
+  });
+
+  it("says nothing once grading is done", async () => {
+    updateFixtureFixRun("fix-ready-github", (f) => ({
+      ...f,
+      eval_grading: "done",
+    }));
+    renderPage("fix-ready-github");
+    expect(await shipButton()).toBeEnabled();
+    expect(screen.queryByTestId("ship-grading-note")).toBeNull();
   });
 });
 
@@ -277,7 +686,7 @@ describe("Ship", () => {
     renderPage("fix-ready-archive");
     ({ dialog, confirm } = await confirmShip(user, "Make default"));
     expect(
-      within(dialog).getByText("Make Trial 3's version the default?"),
+      within(dialog).getByText("Make Candidate 3's version the default?"),
     ).toBeInTheDocument();
     expect(shipPosts()).toHaveLength(0);
     await user.click(confirm);
@@ -286,6 +695,46 @@ describe("Ship", () => {
     );
     expect(shipPosts()[0][0]).toMatch(/make-default\/$/);
   });
+
+  it.each([
+    [
+      "a pull request with nothing held back",
+      "fix-ready-github",
+      "Open pull request",
+      { held_back_scenario_keys: [] },
+      false,
+      "Proven on the targets only: it opens as a draft pull request, marked Proven on the targets only in its title and body.",
+    ],
+    [
+      "a version with nothing held back",
+      "fix-ready-archive",
+      "Make default",
+      { held_back_scenario_keys: [] },
+      false,
+      "Proven on the targets only: nothing was held back to prove this change.",
+    ],
+    [
+      "a pull request with too few held back",
+      "fix-ready-github",
+      "Open pull request",
+      {},
+      true,
+      "Limited validation: it opens as a draft pull request, marked Limited validation in its title and body.",
+    ],
+  ])(
+    "says how strong the result is before it ships %s",
+    async (_, id, button, request, limited, note) => {
+      const user = userEvent.setup();
+      updateFixtureFixRun(id, (f) => ({
+        ...f,
+        request: { ...f.request, ...request },
+        limited_validation: limited,
+      }));
+      renderPage(id);
+      const { dialog } = await confirmShip(user, button);
+      expect(within(dialog).getByText(note)).toBeInTheDocument();
+    },
+  );
 
   it("shows the server's message when the version cannot be activated", async () => {
     hooks.ship = {
@@ -302,7 +751,11 @@ describe("Ship", () => {
     expect(
       await screen.findByText("Could not activate v11"),
     ).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Ship" })).toBeEnabled();
+    // The confirm says Make default too: wait for it to close first.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      await screen.findByRole("button", { name: "Make default" }),
+    ).toBeEnabled();
   });
 
   it("offers the patch when the repository cannot take a pull request", async () => {

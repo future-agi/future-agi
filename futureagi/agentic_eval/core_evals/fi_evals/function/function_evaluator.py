@@ -1,4 +1,3 @@
-
 import time
 
 from agentic_eval.core_evals.fi_metrics.metric_type import MetricType
@@ -106,9 +105,7 @@ class FunctionEvaluator(BaseEvaluator):
                     f"Evaluation failed for '{self._function_name}': {reason}"
                 )
             metrics.append(
-                EvalResultMetric(
-                    id=MetricType.PASSED.value, value=float(result_value)
-                )
+                EvalResultMetric(id=MetricType.PASSED.value, value=float(result_value))
             )
             explanation = eval_response["reason"]
             failure = self.is_failure(eval_response)

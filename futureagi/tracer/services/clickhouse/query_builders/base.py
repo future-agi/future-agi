@@ -192,10 +192,11 @@ class BaseQueryBuilder(ABC):
         column_id = item.get("column_id") or item.get("columnId")
         config = item.get("filter_config") or item.get("filterConfig") or {}
         col_type = str(config.get("col_type") or config.get("colType") or "").upper()
-        return (
-            column_id in {"created_at", "start_time"}
-            and col_type not in {"SPAN_ATTRIBUTE", "EVAL_METRIC", "ANNOTATION"}
-        )
+        return column_id in {"created_at", "start_time"} and col_type not in {
+            "SPAN_ATTRIBUTE",
+            "EVAL_METRIC",
+            "ANNOTATION",
+        }
 
     @staticmethod
     def is_datetime_complement_filter(item: dict[str, Any]) -> bool:

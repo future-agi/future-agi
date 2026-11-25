@@ -68,9 +68,7 @@ class TestGuardrailPolicyCRUD:
 
     def test_retrieve_returns_policy(self, auth_client, user):
         policy = _make_policy(user, name="retrieve-me")
-        response = auth_client.get(
-            f"/agentcc/guardrail-policies/{policy.id}/"
-        )
+        response = auth_client.get(f"/agentcc/guardrail-policies/{policy.id}/")
         assert response.status_code == 200
         assert response.json()["result"]["id"] == str(policy.id)
 
@@ -103,9 +101,7 @@ class TestGuardrailPolicyCRUD:
 
     def test_destroy_soft_deletes_policy(self, auth_client, user):
         policy = _make_policy(user, name="destroy-me")
-        response = auth_client.delete(
-            f"/agentcc/guardrail-policies/{policy.id}/"
-        )
+        response = auth_client.delete(f"/agentcc/guardrail-policies/{policy.id}/")
         assert response.status_code in (200, 204)
         policy.refresh_from_db()
         assert policy.deleted is True
@@ -227,9 +223,7 @@ class TestGuardrailFeedbackCRUD:
         log = _make_request_log(user)
         fb = _make_feedback(user, log)
 
-        response = auth_client.get(
-            f"/agentcc/guardrail-feedback/{fb.id}/"
-        )
+        response = auth_client.get(f"/agentcc/guardrail-feedback/{fb.id}/")
         assert response.status_code == 200
         assert response.json()["result"]["id"] == str(fb.id)
 
@@ -267,9 +261,7 @@ class TestGuardrailFeedbackCRUD:
         log = _make_request_log(user)
         fb = _make_feedback(user, log)
 
-        response = auth_client.delete(
-            f"/agentcc/guardrail-feedback/{fb.id}/"
-        )
+        response = auth_client.delete(f"/agentcc/guardrail-feedback/{fb.id}/")
         assert response.status_code in (200, 204)
         fb.refresh_from_db()
         assert fb.deleted is True

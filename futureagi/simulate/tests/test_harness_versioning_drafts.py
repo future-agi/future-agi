@@ -195,8 +195,9 @@ class TestChatWritesADraft:
         assert _draft(environment, "environment") is None
         assert environment.suite_version_id == s1.id
         assert environment.scenario_count == 2
-        assert environment.payload["metadata"]["authoring_object_key"] == (
-            metadata["authoring_object_key"]
+        assert (
+            environment.payload["metadata"]["authoring_object_key"]
+            == (metadata["authoring_object_key"])
         )
         assert rows == set(
             HostedHarnessScenario.no_workspace_objects.filter(
@@ -740,8 +741,9 @@ class TestSave:
         ] == [*NAMES[:2], EXTRA]
         metadata = environment.payload["metadata"]
         assert metadata["authoring_object_key"] != first_pair
-        assert f"{environment.environment_version_id}:{suite.id}" in (
-            metadata["default_pairs"]
+        assert (
+            f"{environment.environment_version_id}:{suite.id}"
+            in (metadata["default_pairs"])
         )
         assert metadata["authoring_revision"] in suite.documents["authoring_revisions"]
         assert not HarnessSuiteValidation.no_workspace_objects.filter(
@@ -2146,8 +2148,9 @@ class TestEnqueue:
         assert message.payload["_author_id"] == str(user.id)
         assert "_origin" not in message.payload
         assert message.payload["mode"] == "edit"
-        assert message.payload["_environment_revision"] == (
-            environment.payload["metadata"]["authoring_revision"]
+        assert (
+            message.payload["_environment_revision"]
+            == (environment.payload["metadata"]["authoring_revision"])
         )
 
     def test_a_given_revision_is_stamped_without_reading_storage(
@@ -2502,3 +2505,13 @@ class TestChatReads:
         settings.HARNESS_VERSIONING_ENABLED = False
 
         assert "drafts" not in conversation_overview(conversation)
+
+
+def test_a_changed_contract_field_counts_as_an_unsaved_change():
+    """A builder change to a contract field such as the participants counts, so the bar never reads 0 changes."""
+    draft = type("Draft", (), {"diff": {"contract": {"fields": ["workers"]}}})()
+
+    changes = drafts._changes(draft, "environment")
+
+    assert changes["contract_fields"] == 1
+    assert sum(changes.values()) == 1

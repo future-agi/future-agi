@@ -167,9 +167,9 @@ class TestFalconListsClusters:
         assert {"list_error_clusters", "analyze_errors"} & set(
             collector.tool_names_called
         ), f"Expected an error analysis tool, got: {collector.tool_names_called}"
-        assert (
-            len(collector.failed_tools) == 0
-        ), f"Tool failures: {[t['tool_name'] for t in collector.failed_tools]}"
+        assert len(collector.failed_tools) == 0, (
+            f"Tool failures: {[t['tool_name'] for t in collector.failed_tools]}"
+        )
         assert result["content"], "Falcon produced no response"
 
 
@@ -209,9 +209,9 @@ class TestFalconInvestigatesCluster:
             "list_error_clusters",
             "analyze_errors",
         }
-        assert (
-            set(collector.tool_names_called) & cluster_tools
-        ), f"Expected a cluster tool, got: {collector.tool_names_called}"
+        assert set(collector.tool_names_called) & cluster_tools, (
+            f"Expected a cluster tool, got: {collector.tool_names_called}"
+        )
         assert len(collector.failed_tools) == 0
         assert result["content"]
 
@@ -257,9 +257,9 @@ class TestFalconMultiTurnInvestigation:
             "get_error_cluster_detail",
             "analyze_errors",
         }
-        assert (
-            set(collector2.tool_names_called) & cluster_tools
-        ), f"Expected cluster analysis tool, got: {collector2.tool_names_called}"
+        assert set(collector2.tool_names_called) & cluster_tools, (
+            f"Expected cluster analysis tool, got: {collector2.tool_names_called}"
+        )
         assert result2["content"]
 
 
@@ -301,9 +301,9 @@ class TestFalconAnswersQuestion:
             "get_trace_error_analysis",
             "search_traces",
         }
-        assert (
-            set(collector.tool_names_called) & cluster_tools
-        ), f"Expected cluster/trace tool, got: {collector.tool_names_called}"
+        assert set(collector.tool_names_called) & cluster_tools, (
+            f"Expected cluster/trace tool, got: {collector.tool_names_called}"
+        )
         assert len(collector.failed_tools) == 0
         assert result["content"]
 
@@ -340,8 +340,8 @@ class TestFalconUsesContextEntity:
             "get_error_cluster_detail",
             "analyze_errors",
         }
-        assert (
-            set(collector.tool_names_called) & cluster_tools
-        ), f"Expected cluster tool from context, got: {collector.tool_names_called}"
+        assert set(collector.tool_names_called) & cluster_tools, (
+            f"Expected cluster tool from context, got: {collector.tool_names_called}"
+        )
         assert len(collector.failed_tools) == 0
         assert result["content"]
