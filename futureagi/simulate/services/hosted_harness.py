@@ -1220,6 +1220,35 @@ def _evidence_revision(environment: HostedHarnessJob, resolved: ResolvedPins) ->
     )
 
 
+def all_run_keys(
+    environment: HostedHarnessJob,
+    *,
+    picks: VersionPicks | None = None,
+    hidden: Iterable[str] = (),
+) -> list[str]:
+    """Every scenario a run of these picks can select, in suite order.
+
+    The pinned suite version's members, or the environment's registered scenarios
+    without versioning; ``hidden`` ones (a coding agent's held-back cases) are left
+    out. A run given these keys is planned, checked and created exactly as one given
+    them by name.
+    """
+    from simulate.models import HarnessSuiteMember
+
+    resolved = resolve_run_pins(environment, rerun_of=None, picks=picks, fix_run=None)
+    if resolved is not None:
+        keys = HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=resolved.suite_version
+        ).order_by("number", "scenario_key")
+    else:
+        keys = HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment
+        ).order_by("created_at", "id")
+    left_out = set(hidden)
+    ordered = dict.fromkeys(keys.values_list("scenario_key", flat=True))
+    return [key for key in ordered if key not in left_out]
+
+
 def resolve_run_pins(
     environment: HostedHarnessJob,
     *,

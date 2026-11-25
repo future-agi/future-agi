@@ -911,6 +911,12 @@ class HarnessRunCreateSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=255),
         allow_empty=False,
         max_length=1000,
+        required=False,
+        help_text=(
+            "The scenarios to run, at most 1000. Leave it out to run every scenario"
+            " of the chosen suite version, resolved by the server; an empty list is"
+            " refused."
+        ),
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
     # The run's seed: the same seed draws the same personas and variations again. Absent or null keeps the

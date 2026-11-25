@@ -24134,8 +24134,11 @@ export interface HarnessRunPlanApi {
 }
 
 export interface HarnessRunCreateApi {
-  /** @maxItems 1000 */
-  scenario_ids: string[];
+  /**
+   * The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, resolved by the server; an empty list is refused.
+   * @maxItems 1000
+   */
+  scenario_ids?: string[];
   /**
    * @minimum 1
    * @maximum 20
