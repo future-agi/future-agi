@@ -31,6 +31,7 @@ from simulate.models import (
 )
 from simulate.models.hosted_harness import SEED_BITS
 from simulate.services.agent_contracts import (
+    approved_with_changes,
     seeded_from_reading,
     store_build_contract,
 )
@@ -2847,7 +2848,8 @@ def _store_authored_agent(
                 agent_version_id=version.id,
                 agent=sent["agent"],
                 sdk_version=sent["sdk_version"],
-                replace_reading=seeded_from_reading(job),
+                replace_reading=seeded_from_reading(job)
+                and not approved_with_changes(job),
             )
         transaction.on_commit(
             lambda: store_build_contract(job, agent_version_id=agent_version_id)
