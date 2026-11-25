@@ -13,6 +13,7 @@ import {
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import SectionCard from "../../components/SectionCard";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
+import ViewerLock from "../../components/ViewerLock";
 import { RELEASE_COPY, versionLine } from "./overview.constants";
 
 /*
@@ -22,10 +23,13 @@ import { RELEASE_COPY, versionLine } from "./overview.constants";
   Each task keeps the split it got at its first lock.
 */
 
+// Refusals the author fixes by adding scenarios.
+const ADD_SCENARIOS_FOR = ["release_too_few_test", "release_too_few_train"];
+
 const shortDate = (at) =>
   new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
-export default function ReleaseCard({ envId }) {
+export default function ReleaseCard({ envId, onGo }) {
   const { data } = useEnvironmentVersions(envId);
   const { canEdit, canUnlockRelease } = useSimulationAccess();
   const lockRelease = useLockRelease(envId);
@@ -68,10 +72,13 @@ export default function ReleaseCard({ envId }) {
       { onError: failed },
     );
   };
-  const onUnlock = () => {
+  // Any locked release can be unlocked, not only the default pair's: an edit moves
+  // the default on, and delete still waits for every lock to go.
+  const onUnlock = (release) => {
     setConfirm(null);
-    unlockRelease.mutate({ releaseId: current.id }, { onError: failed });
+    unlockRelease.mutate({ releaseId: release.id }, { onError: failed });
   };
+  const needsScenarios = ADD_SCENARIOS_FOR.includes(lock.refusal?.code);
 
   const cell = { typography: "s1", py: 1, px: 1.5 };
   const head = {
@@ -166,35 +173,46 @@ export default function ReleaseCard({ envId }) {
         </Typography>
         {current ? (
           canUnlockRelease && (
-            <Button
-              size="small"
-              variant="outlined"
+            <UnlockButton
               disabled={unlockRelease.isPending}
-              onClick={() => setConfirm("unlock")}
-              startIcon={
-                <Iconify icon="solar:lock-keyhole-unlocked-linear" width={14} />
-              }
-              sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
-            >
-              {RELEASE_COPY.unlock}
-            </Button>
+              onClick={() => setConfirm({ unlock: current })}
+            />
           )
         ) : (
-          <Tooltip arrow title={lock.canLock ? "" : lock.refusal?.message || ""}>
-            <span>
+          <>
+            {needsScenarios && onGo && (
               <Button
                 size="small"
-                variant="contained"
-                color="primary"
-                disabled={!canEdit || !lock.canLock || lockRelease.isPending}
-                onClick={() => setConfirm("lock")}
-                startIcon={<Iconify icon="solar:lock-keyhole-linear" width={14} />}
-                sx={{ flexShrink: 0 }}
+                variant="outlined"
+                onClick={() => onGo("scenarios")}
+                sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
               >
-                {RELEASE_COPY.lock}
+                {RELEASE_COPY.addScenarios}
               </Button>
-            </span>
-          </Tooltip>
+            )}
+            <ViewerLock locked={!canEdit} title={RELEASE_COPY.viewer}>
+              <Tooltip
+                arrow
+                title={canEdit && !lock.canLock ? lock.refusal?.message || "" : ""}
+              >
+                <span>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    disabled={!canEdit || !lock.canLock || lockRelease.isPending}
+                    onClick={() => setConfirm({ lock: true })}
+                    startIcon={
+                      <Iconify icon="solar:lock-keyhole-linear" width={14} />
+                    }
+                    sx={{ flexShrink: 0 }}
+                  >
+                    {RELEASE_COPY.lock}
+                  </Button>
+                </span>
+              </Tooltip>
+            </ViewerLock>
+          </>
         )}
       </Stack>
 
@@ -206,17 +224,30 @@ export default function ReleaseCard({ envId }) {
             {RELEASE_COPY.earlier}
           </Typography>
           {earlier.map((release) => (
-            <Typography
+            <Stack
               key={release.id}
-              sx={{ typography: "s3", color: "text.secondary" }}
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{ minHeight: 28 }}
             >
-              {RELEASE_COPY.earlierLine(release)}
-            </Typography>
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", flex: 1 }}
+              >
+                {RELEASE_COPY.earlierLine(release)}
+              </Typography>
+              {!release.unlockedAt && canUnlockRelease && (
+                <UnlockButton
+                  disabled={unlockRelease.isPending}
+                  onClick={() => setConfirm({ unlock: release })}
+                />
+              )}
+            </Stack>
           ))}
         </Box>
       )}
 
-      {confirm === "lock" && (
+      {confirm?.lock && (
         <ConfirmDialog
           open
           onClose={() => setConfirm(null)}
@@ -235,19 +266,19 @@ export default function ReleaseCard({ envId }) {
           }
         />
       )}
-      {confirm === "unlock" && current && (
+      {confirm?.unlock && (
         <ConfirmDialog
           open
           onClose={() => setConfirm(null)}
           PaperProps={{ sx: { maxWidth: 480 } }}
-          title={RELEASE_COPY.unlockTitle(current.label)}
+          title={RELEASE_COPY.unlockTitle(confirm.unlock.label)}
           content={RELEASE_COPY.unlockBody}
           action={
             <Button
               size="small"
               variant="contained"
               color="primary"
-              onClick={onUnlock}
+              onClick={() => onUnlock(confirm.unlock)}
             >
               {RELEASE_COPY.unlockAction}
             </Button>
@@ -258,6 +289,28 @@ export default function ReleaseCard({ envId }) {
   );
 }
 
+function UnlockButton({ disabled, onClick }) {
+  return (
+    <Button
+      size="small"
+      variant="outlined"
+      disabled={disabled}
+      onClick={onClick}
+      startIcon={<Iconify icon="solar:lock-keyhole-unlocked-linear" width={14} />}
+      sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+    >
+      {RELEASE_COPY.unlock}
+    </Button>
+  );
+}
+
+UnlockButton.propTypes = {
+  disabled: PropTypes.bool,
+  onClick: PropTypes.func.isRequired,
+};
+
 ReleaseCard.propTypes = {
   envId: PropTypes.string.isRequired,
+  // Jumps to a workspace tab, for the refusals the author fixes there.
+  onGo: PropTypes.func,
 };

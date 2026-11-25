@@ -73,17 +73,27 @@ def _category(use_case: Any) -> str:
     return str(use_case or "").strip().casefold()
 
 
-def scorable_tasks(suite_version_id: Any) -> list[Task]:
-    """The suite version's scenarios that have checks to score them. A member's content
-    never changes, so neither does this list."""
+def scorable_tasks_by_suite(suite_version_ids: Iterable[Any]) -> dict[Any, list[Task]]:
+    """Each suite version's scenarios that have checks to score them. A member's content
+    never changes, so neither do these lists. Only the two keys read leave the database."""
     members = HarnessSuiteMember.no_workspace_objects.filter(
-        suite_version_id=suite_version_id
-    ).values_list("scenario_id", "scenario_key", "content")
-    return [
-        Task(scenario_id, key, _category((content or {}).get("use_case")))
-        for scenario_id, key, content in members
-        if sub_goal_names((content or {}).get("sub_goals"))
-    ]
+        suite_version_id__in=list(suite_version_ids)
+    ).values_list(
+        "suite_version_id",
+        "scenario_id",
+        "scenario_key",
+        "content__use_case",
+        "content__sub_goals",
+    )
+    tasks: dict[Any, list[Task]] = defaultdict(list)
+    for suite_version_id, scenario_id, key, use_case, sub_goals in members:
+        if sub_goal_names(sub_goals):
+            tasks[suite_version_id].append(Task(scenario_id, key, _category(use_case)))
+    return tasks
+
+
+def scorable_tasks(suite_version_id: Any) -> list[Task]:
+    return scorable_tasks_by_suite([suite_version_id]).get(suite_version_id, [])
 
 
 def _quotas(sizes: Mapping[str, int], target: int, seed: str) -> dict[str, int]:
@@ -257,8 +267,9 @@ def lock_release(
         now = timezone.now()
         release = HarnessRelease.no_workspace_objects.create(
             environment=locked,
-            environment_version_id=locked.environment_version_id,
-            suite_version_id=locked.suite_version_id,
+            # The pair the caller saw, which the checks above proved is the default.
+            environment_version_id=environment_version_id,
+            suite_version_id=suite_version_id,
             label=_next_label(locked, now),
             locked_at=now,
             locked_by=user if getattr(user, "is_authenticated", False) else None,
@@ -344,8 +355,7 @@ def require_no_locked_release(environment: HostedHarnessJob) -> None:
 # --- reads -------------------------------------------------------------------------
 
 
-def _counts(release: HarnessRelease, assigned: Mapping[Any, str]) -> dict[str, int]:
-    tasks = scorable_tasks(release.suite_version_id)
+def _counts(tasks: list[Task], assigned: Mapping[Any, str]) -> dict[str, int]:
     splits = [assigned.get(task.scenario_id) for task in tasks]
     return {
         "train": splits.count(TaskSplit.TRAIN),
@@ -374,6 +384,7 @@ def release_items(job: HostedHarnessJob) -> list[dict[str, Any]]:
             "scenario_id", "split"
         )
     )
+    tasks = scorable_tasks_by_suite({release.suite_version_id for release in releases})
     return [
         {
             "id": str(release.id),
@@ -386,7 +397,7 @@ def release_items(job: HostedHarnessJob) -> list[dict[str, Any]]:
             "locked_by": _person(release.locked_by),
             "unlocked_at": release.unlocked_at,
             "unlocked_by": _person(release.unlocked_by),
-            **_counts(release, assigned),
+            **_counts(tasks.get(release.suite_version_id, []), assigned),
         }
         for release in releases
     ]

@@ -123,7 +123,7 @@ describe("ReleaseCard", () => {
     ]);
   });
 
-  it("says why it can't lock, in one sentence", () => {
+  it("says why it can't lock, in one sentence, with the fix", async () => {
     state.versions = answer({
       lock: {
         can_lock: false,
@@ -136,7 +136,8 @@ describe("ReleaseCard", () => {
       },
     });
 
-    render(<ReleaseCard envId="env" />);
+    const onGo = vi.fn();
+    render(<ReleaseCard envId="env" onGo={onGo} />);
 
     expect(screen.getByText("Can't lock yet")).toBeInTheDocument();
     expect(
@@ -145,6 +146,27 @@ describe("ReleaseCard", () => {
     expect(
       screen.getByRole("button", { name: "Lock this release" }),
     ).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Add scenarios" }));
+    expect(onGo).toHaveBeenCalledWith("scenarios");
+  });
+
+  it("offers no action when the build, not the suite, is the reason", () => {
+    state.versions = answer({
+      lock: {
+        can_lock: false,
+        refusal: {
+          code: "release_not_ready",
+          message:
+            "This environment is building or its last build failed. Lock it once a build finishes.",
+        },
+      },
+    });
+
+    render(<ReleaseCard envId="env" onGo={vi.fn()} />);
+
+    expect(
+      screen.queryByRole("button", { name: "Add scenarios" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the lock from someone who can't edit", () => {
@@ -201,6 +223,33 @@ describe("ReleaseCard", () => {
     expect(
       screen.queryByRole("button", { name: "Unlock" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("lets an admin unlock an earlier release the default moved past", async () => {
+    state.versions = answer({
+      releases: [
+        { ...RELEASE, suite_version_id: "suite-4", suite_label: "v4" },
+      ],
+    });
+
+    render(<ReleaseCard envId="env" />);
+
+    expect(screen.getByText("Ready")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "2026.11.1 · environment v3 · scenarios v4 · Train 54 · Test 14 · locked",
+      ),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText("Unlock release 2026.11.1?"),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Unlock release" }),
+    );
+
+    expect(calls.unlock).toEqual([{ releaseId: "rel-1" }]);
   });
 
   it("lists earlier releases, unlocked ones included", () => {

@@ -1295,7 +1295,7 @@ class HarnessReleaseSerializer(serializers.Serializer):
     """A locked environment and suite version pair, with its split counts."""
 
     id = serializers.UUIDField()
-    label = serializers.CharField()
+    label = serializers.CharField()  # type: ignore[assignment]
     environment_version_id = serializers.UUIDField()
     environment_label = serializers.CharField(allow_null=True)
     suite_version_id = serializers.UUIDField()

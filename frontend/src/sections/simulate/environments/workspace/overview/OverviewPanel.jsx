@@ -208,7 +208,9 @@ export default function OverviewPanel({
       {/* The release: lock the default versions so scores on them stay
           comparable. Real data only, so only while versioning is on, and not
           while the environment builds (Vel's placement: after the summary). */}
-      {canManageVersions && !buildMode && <ReleaseCard envId={env.id} />}
+      {canManageVersions && !buildMode && (
+        <ReleaseCard envId={env.id} onGo={onGo} />
+      )}
 
       {/* Getting-started checklist for envs that haven't been seeded yet. A
           scratch env arrives carrying a derived world, so the same checklist

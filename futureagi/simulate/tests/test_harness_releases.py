@@ -1,7 +1,9 @@
 """Locking an environment's versions into a release with train and test splits."""
 
 import pytest
+from django.db import connection
 from django.db.models import RestrictedError
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from accounts.models.organization_membership import OrganizationMembership
@@ -131,6 +133,14 @@ def _as_member(user):
     )
     user.organization_role = "Member"
     user.save(update_fields=["organization_role"])
+
+
+def _as_workspace_admin(user):
+    """An organization member who administers the environment's workspace."""
+    _as_member(user)
+    WorkspaceMembership.no_workspace_objects.filter(user=user).update(
+        level=Level.WORKSPACE_ADMIN, role="Workspace Admin"
+    )
 
 
 def _tasks(sizes):
@@ -390,6 +400,40 @@ class TestUnlockAndDelete:
         assert response.json()["error"] == "release_admin_only"
         assert HarnessRelease.no_workspace_objects.get().unlocked_at is None
 
+    def test_a_workspace_admin_may_unlock(self, auth_client, user, workspace, storage):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [release] = _lock(auth_client, environment).json()["releases"]
+        _as_workspace_admin(user)
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/",
+            {"release_id": release["id"]},
+            format="json",
+        )
+
+        assert response.status_code == 200, response.json()
+        assert HarnessRelease.no_workspace_objects.get().unlocked_at is not None
+
+    def test_an_earlier_locked_release_can_be_unlocked(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [release] = _lock(auth_client, environment).json()["releases"]
+        # An edit moved the default on; the old release is still locked.
+        _suite(environment, _scenarios(25))
+        assert auth_client.delete(f"{BASE}/{environment.id}/").status_code == 409
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/",
+            {"release_id": release["id"]},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        assert auth_client.delete(f"{BASE}/{environment.id}/").status_code == 204
+
     def test_a_member_may_lock(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
@@ -443,6 +487,37 @@ class TestUnlockAndDelete:
         assert (second["train"], second["test"]) == (first["train"], first["test"])
         assert _splits(environment) == splits
         assert HarnessTaskSplit.no_workspace_objects.count() == len(splits)
+
+
+class TestReadCost:
+    def test_member_reads_stay_flat_as_releases_grow(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        _lock(auth_client, environment)
+        url = f"{BASE}/{environment.id}/versions/"
+
+        def member_reads():
+            with CaptureQueriesContext(connection) as queries:
+                assert auth_client.get(url).status_code == 200
+            return [
+                query["sql"]
+                for query in queries.captured_queries
+                if "simulate_harness_suite_member" in query["sql"]
+            ]
+
+        one = member_reads()
+        _suite(environment, _scenarios(30))
+        _lock(auth_client, environment)
+        two = member_reads()
+
+        # The default suite's preview, then every release's suite in one read.
+        assert len(one) == len(two) == 2
+        # Only the two keys the split reads, never the whole member content.
+        assert all(
+            '"content" FROM' not in sql and '"content",' not in sql for sql in two
+        )
 
 
 class TestLockedVersionsStay:

@@ -179,7 +179,7 @@ test(
       await expect(card.getByText('Locked', { exact: true })).toBeVisible({ timeout: UI_READY });
       await expect(card.getByText('Ready', { exact: true })).toHaveCount(0);
       await expect(card.getByText(new RegExp(
-        `^Locked \\d{1,2} [A-Z][a-z]{2} · Train ${TRAIN_TASKS} · Test ${TEST_TASKS} tasks · scorer environment ${environmentLabel}\\.$`,
+        `^Locked (?:\\d{1,2} [A-Z][a-z]{2}|[A-Z][a-z]{2} \\d{1,2}) · Train ${TRAIN_TASKS} · Test ${TEST_TASKS} tasks · scorer environment ${environmentLabel}\\.$`,
       ))).toBeVisible();
       await expect(card.getByRole('button', { name: LOCK_BUTTON })).toHaveCount(0);
     });

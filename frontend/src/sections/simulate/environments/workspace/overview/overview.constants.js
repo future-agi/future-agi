@@ -233,6 +233,8 @@ export const RELEASE_COPY = {
   readyLine: (train, test) =>
     `Train ${train} · Test ${test} tasks once locked. Lock to freeze tasks, splits and the scorer.`,
   lock: "Lock this release",
+  addScenarios: "Add scenarios",
+  viewer: "You don't have permission to lock releases.",
   unlock: "Unlock",
   lockTitle: "Lock this release?",
   lockBody:
