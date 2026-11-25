@@ -41,10 +41,10 @@ func TestRedactCredentials(t *testing.T) {
 		{"key in a query", `Post https://host/v1?key=` + liveKey + `: boom`, liveKey, "host/v1"},
 		{"api_key in a query", `GET https://host/v1?api_key=` + liveKey, liveKey, "host/v1"},
 		{"access_token", `GET https://host/v1?access_token=` + liveKey, liveKey, "host/v1"},
-		{"a password in the host", `Post https://user:` + liveKey + `@host/v1: boom`, liveKey, "user"},
+		{"a password in the host", `Post https://user:` + liveKey + `@host/v1: boom`, liveKey, "host/v1"},
 		{"a quoted URL", `Post "https://host/v1?key=` + liveKey + `": boom`, liveKey, "host/v1"},
-		{"a key beside a harmless param", `Post https://host/v1?alt=sse&key=` + liveKey, liveKey, "alt=sse"},
-		{"an AWS signed URL", `Get https://bucket.s3.amazonaws.com/c.json?X-Amz-Algorithm=AWS4&X-Amz-Credential=` + liveKey + `&X-Amz-Signature=` + liveKey + `&X-Amz-Security-Token=` + liveKey + `: boom`, liveKey, "X-Amz-Algorithm=AWS4"},
+		{"a key beside a harmless param", `Post https://host/v1?alt=sse&key=` + liveKey, liveKey, "alt=REDACTED"},
+		{"an AWS signed URL", `Get https://bucket.s3.amazonaws.com/c.json?X-Amz-Algorithm=AWS4&X-Amz-Credential=` + liveKey + `&X-Amz-Signature=` + liveKey + `&X-Amz-Security-Token=` + liveKey + `: boom`, liveKey, "X-Amz-Algorithm=REDACTED"},
 		{"a GCS signed URL", `Get https://storage.googleapis.com/c.json?X-Goog-Credential=` + liveKey + `&X-Goog-Signature=` + liveKey + `: boom`, liveKey, "storage.googleapis.com"},
 		{"a password in an unparseable URL", `parse "http://bob:` + liveKey + `@host:badport/x": invalid port`, liveKey, "invalid port"},
 		{"a password in an unparseable URL with a query", `parse "http://bob:` + liveKey + `@host:badport/x?alt=sse": invalid port`, liveKey, "invalid port"},
@@ -61,6 +61,20 @@ func TestRedactCredentials(t *testing.T) {
 				t.Errorf("%q was lost:\n%s", tc.mustKeep, got)
 			}
 		})
+	}
+}
+
+func TestRedactCredentials_DiagnosticURLs(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"https://sample-user@host/v1", "https://REDACTED@host/v1"},
+		{"https://sample-user:sample-pass@host/v1", "https://REDACTED@host/v1"},
+		{"https://host/v1?auth=first&other=second&auth=third", "https://host/v1?auth=REDACTED&auth=REDACTED&other=REDACTED"},
+		{"https://host/v1#sample-fragment", "https://host/v1"},
+		{"https://host:bad/v1#sample-fragment", "https://host:bad/v1"},
+	} {
+		if got := RedactCredentials(tc.input); got != tc.want {
+			t.Errorf("RedactCredentials(%q) = %q, want %q", tc.input, got, tc.want)
+		}
 	}
 }
 
