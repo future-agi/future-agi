@@ -49,6 +49,7 @@ from tracer.services.clickhouse.query_builders.session_filters import (
 )
 from tracer.services.clickhouse.query_builders.trace_usage import (
     capture_coverage_from_counts,
+    deterministic_sum_sql,
     source_summary_sql,
     usage_aggregate_sql,
     usage_coverage_sql,
@@ -122,7 +123,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     _COST_AGGREGATE = (
         "if(countIf(span_attr_str['fi.cost.kind'] = 'unknown' AND "
         "span_attr_str['fi.usage.contribution'] != 'none') > 0, "
-        "CAST(NULL, 'Nullable(Float64)'), sum(cost))"
+        "CAST(NULL, 'Nullable(Float64)'), " + deterministic_sum_sql("cost") + ")"
     )
 
     def project_where(self, table_alias: str = "") -> str:
@@ -2525,7 +2526,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         session_usage AS (
             SELECT project_id, member_session_id AS session_id,
                 if(countIf(isNull(usage_cost)) > 0,
-                   CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS member_total_cost,
+                   CAST(NULL, 'Nullable(Float64)'), """
+                + deterministic_sum_sql("usage_cost")
+                + """) AS member_total_cost,
                 sum(usage_total_tokens) AS member_total_tokens
             FROM member_trace_usage
             GROUP BY project_id, member_session_id
@@ -3369,7 +3372,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """Session usage from per-trace rows: unknown cost in any trace is NULL."""
         return f"""SELECT project_id, member_session_id AS {session_alias},
                     if(countIf(isNull(usage_cost)) > 0,
-                       CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS session_usage_cost,
+                       CAST(NULL, 'Nullable(Float64)'), {deterministic_sum_sql("usage_cost")}) AS session_usage_cost,
                     sum(usage_total_tokens) AS session_usage_tokens
                 FROM {source}
                 GROUP BY project_id, member_session_id"""
@@ -3557,7 +3560,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 SELECT
                     member_session_id,
                     if(countIf(isNull(usage_cost)) > 0,
-                       CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS member_total_cost,
+                       CAST(NULL, 'Nullable(Float64)'), {deterministic_sum_sql("usage_cost")}) AS member_total_cost,
                     sum(usage_total_tokens) AS member_total_tokens,
                     max(usage_source_summary_present) AS member_source_summary_present,
                     sum(usage_request_count) AS member_request_count,

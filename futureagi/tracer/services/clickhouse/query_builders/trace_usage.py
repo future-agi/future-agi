@@ -159,6 +159,39 @@ def source_summary_sql(*, attrs: str) -> str:
     )
 
 
+def ordered_float_sum_sql(values: str) -> str:
+    """Sum an Array(Float64) the same way whatever order its elements arrived in.
+
+    groupArray order and aggregate-state merges follow parallel scheduling, so a
+    plain Float64 sum can change in its last bits between identical reads.
+    arraySort maps one multiset to one array, and compensated summation over it
+    stays close to the exact sum. A non-finite compensated result (a non-finite
+    term, or overflow) falls back to arraySum over the same sorted array, so inf
+    stays inf and NaN stays NaN. Each intermediate is bound lexically so the
+    analyzer cannot duplicate it.
+    """
+    return (
+        "arrayMap(ordered_cost_values -> arrayMap(compensated_cost -> if("
+        "isFinite(compensated_cost), compensated_cost, "
+        "arraySum(ordered_cost_values)), "
+        "[arrayReduce('sumKahan', ordered_cost_values)])[1], "
+        f"[arraySort({values})])[1]"
+    )
+
+
+def deterministic_sum_sql(expr: str) -> str:
+    """Drop-in for sum(expr) over Float64 or Nullable(Float64).
+
+    Zero non-NULL inputs return sum() itself (NULL for Nullable with no
+    GROUP BY, 0 for Float64), so the empty and all-NULL results and the type
+    are unchanged. groupArray skips NULL exactly as sum() does.
+    """
+    return (
+        f"if(count({expr}) = 0, sum({expr}), "
+        f"{ordered_float_sum_sql(f'groupArray({expr})')})"
+    )
+
+
 def usage_aggregate_sql(
     *,
     prefix: str = "",
