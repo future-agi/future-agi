@@ -641,6 +641,7 @@ def scenario_lifecycle(
     unread: set[str] = set()
     changed = changed_refs(environment_version, contents, unread=unread)
     current_rules = rules_of(environment_version.documents or {})
+    parent_documents = parent_version_documents(environment_version)
     proofs_lost = _proofs_unread(environment, suite_version, environment_version)
     from simulate.services.hosted_harness_conversation import failed_changes
 
@@ -743,6 +744,7 @@ def scenario_lifecycle(
             if one["kind"] == "rule"
             and one["resolved"]
             and matched_rule(one["quote"], current_rules) is None
+            and _reworded_here(one["quote"], environment_version, parent_documents)
         ]
         view["source_changed"] = list(
             dict.fromkeys(
@@ -1237,6 +1239,26 @@ def _records(documents: Mapping[str, Any]) -> Any:
     return (documents.get("contract") or {}).get("amendment_records")
 
 
+def _reworded_here(
+    quote: str,
+    environment_version: HarnessEnvironmentVersion,
+    parent_documents: Mapping[str, Any] | None,
+) -> bool:
+    """Whether the rule a quote names reads differently in this version than in its parent, as Compare reads it
+    (`rule_pair`); with no parent, whether this version no longer holds the quoted words."""
+    documents = environment_version.documents or {}
+    if parent_documents is None:
+        return matched_rule(quote, rules_of(documents)) is None
+    before, after = rule_pair(
+        quote,
+        rules_of(parent_documents),
+        rules_of(documents),
+        documents,
+        parent_documents,
+    )
+    return before != after
+
+
 def rule_pair(
     quote: str,
     old_rules: list[str],
@@ -1345,7 +1367,8 @@ def changed_refs(
                     documents,
                     parent,
                 )
-                if now != before:
+                # Words neither version holds are a change too: a run compare never blames the agent for them.
+                if now is None or now != before:
                     refs.append(ref)
             elif source.get("kind") == "file":
                 path = file_path(ref)

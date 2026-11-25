@@ -907,6 +907,83 @@ def test_a_case_citing_a_reworded_rule_reads_source_changed_and_an_orphaned_one_
     assert views[REFUND_KEYS[3]]["reason"] == "source_unresolved"
 
 
+def test_source_changed_and_compare_agree_on_a_version_that_changed_no_rule(
+    user, workspace, storage
+):
+    """A case quoting a rule's words from before an earlier rewording: on a later version that changed no rule, the
+    rule reads the same in both, so it is not Source changed, and Compare lists nothing. Words no version holds are
+    still a change for `changed_refs`: a run compare must never blame the agent for them."""
+    import hashlib
+    from unittest.mock import patch
+
+    from simulate.services import harness_scenario_actions
+    from simulate.services.harness_scenario_lifecycle import changed_refs
+
+    def rid(rule):
+        return "rule-" + hashlib.sha256(rule.encode()).hexdigest()[:12]
+
+    old, new = "Refund within 14 days.", "Refund within 10 days."
+    environment = _environment(user, workspace, storage, "lc-reworded-earlier")
+    _suite(environment, _ten())
+    parent = _with_rules_and_files(environment.environment_version, [old], {})
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, [new], {})
+    records = [
+        {
+            "kind": "rule",
+            "key": rid(old),
+            "action": "removed",
+            "replaced_by": rid(new),
+            "text": old,
+        },
+        {
+            "kind": "rule",
+            "key": rid(new),
+            "action": "added",
+            "previous": rid(old),
+            "text": new,
+        },
+    ]
+    documents = dict(child.documents)
+    documents["contract"] = {**documents["contract"], "amendment_records": records}
+    HarnessEnvironmentVersion._base_manager.filter(id=child.id).update(
+        documents=documents
+    )
+    child.refresh_from_db()
+    later = _copy(
+        child, HarnessEnvironmentVersion, parent=child, hash=child.hash[:-5] + "later"
+    )
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "rule:0", "quote": "Refund within 14 days"}
+            ],
+            REFUND_KEYS[1]: [
+                {"kind": "rule", "ref": "rule:0", "quote": "words no rule held"}
+            ],
+        },
+    )
+    _proofs(environment, dict.fromkeys(KEYS, PROVED), version=later)
+
+    views = _views(environment, version=later)
+    with patch.object(
+        harness_scenario_actions, "_file_texts", lambda version, paths: {}
+    ):
+        compared = harness_scenario_actions.source_changes(environment, later.id)
+    contents = {
+        key: {"sources": [{"kind": "rule", "ref": "rule:0", "quote": quote}]}
+        for key, quote in (
+            (REFUND_KEYS[0], "Refund within 14 days"),
+            (REFUND_KEYS[1], "words no rule held"),
+        )
+    }
+
+    assert views[REFUND_KEYS[0]]["source_changed"] == []
+    assert [one for one in compared["changes"] if one["kind"] == "rule"] == []
+    assert set(changed_refs(later, contents)) == {REFUND_KEYS[1]}
+
+
 def test_counts_call_only_a_run_proof_proved():
     from simulate.services.harness_scenario_lifecycle import lifecycle_counts
 
