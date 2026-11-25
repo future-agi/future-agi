@@ -243,7 +243,13 @@ def land(
             "takes its scenarios when this turn ends",
             status_code=409,
         )
-    payload = cast(DraftingPayload, command.payload or {})
+    # As stored now: the start is kept on the command after it was queued.
+    stored = (
+        HostedHarnessConversationMessage._base_manager.filter(id=command.id)
+        .values_list("payload", flat=True)
+        .first()
+    )
+    payload = cast(DraftingPayload, stored or command.payload or {})
     with transaction.atomic():
         cases = list(
             EvidenceImportCase.objects.select_for_update().filter(

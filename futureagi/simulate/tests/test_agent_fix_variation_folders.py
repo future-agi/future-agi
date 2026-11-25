@@ -31,7 +31,7 @@ def test_two_folders_carrying_one_variation_s_key_are_two_variations(
     files = archives.read_archive(_builder_save(environment))
     documents = json.loads(files["scenarios.json"])
     for one in documents:
-        if one["folder"] == f"scenarios/{PARENT}-var2":
+        if one.get("folder") == f"scenarios/{PARENT}-var2":
             one["scenario_key"] = one["name"] = f"{PARENT}-var1"
     files["scenarios.json"] = json.dumps(documents).encode()
 
