@@ -1979,7 +1979,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # DRF saves the row before assigning its M2M relations. Both must
                 # roll back together if any part of persistence fails.
                 with transaction.atomic(using="default"):
-                    eval_task = serializer.save()
+                    # The first run carries a generation too, so a replacement
+                    # (Resume, edit, recovery) fences its late writes.
+                    eval_task = serializer.save(workflow_generation=uuid_module.uuid4())
 
         except ValidationError as exc:
             return self._gm.bad_request(exc.detail)
@@ -2920,9 +2922,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             if not eval_task_id:
                 return self._gm.bad_request("Eval task ID is required")
 
-            # Keep the old status/diagnostic visible until Temporal accepts
-            # the replacement. A fast replacement worker waits on this same
-            # row at admission; an RPC failure rolls back all three fields.
+            # Commit the handoff before Temporal can see the start, as the edit
+            # path does: a worker that predates the generation fence reads the
+            # row without waiting, and must find it PENDING, not paused/failed.
             with transaction.atomic():
                 try:
                     eval_task = self._scope_eval_task_queryset(
@@ -2938,12 +2940,29 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     )
 
                 recovered_from = eval_task.status
+                prior = {
+                    "status": eval_task.status,
+                    "failure_reason": eval_task.failure_reason,
+                    "workflow_generation": eval_task.workflow_generation,
+                }
                 undrained = EvalLogger.objects.filter(
                     eval_task_id=str(eval_task.id),
                     status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
                 ).count()
                 eval_task.prepare_workflow_replacement()
+            try:
                 start_eval_task_workflow_sync(eval_task, replace_existing=True)
+            except Exception:
+                # Undo the handoff unless its run already took it (RUNNING) or
+                # a later handoff replaced it. An execution whose acknowledgement
+                # was lost then holds a generation the task no longer has, so
+                # it exits at its first state check without writing.
+                EvalTask.objects.filter(
+                    id=eval_task.id,
+                    workflow_generation=eval_task.workflow_generation,
+                    status=EvalTaskStatus.PENDING,
+                ).update(**prior)
+                raise
             # Counts and the previous status only — never an entry payload or
             # any tenant-identifying value.
             logger.info(

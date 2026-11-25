@@ -172,8 +172,9 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
                 start_recovery_workflow_sync(current)
     except WorkflowAlreadyStartedError:
         # Outside atomic: keep the previous generation and diagnostic. If the
-        # existing execution lost its start ack it will exit at admission; the
-        # next tick can then start a fresh owner. Never terminate it here.
+        # existing execution lost its start ack, its writes are fenced no-ops
+        # and it exits at its first state check; the next tick can then start
+        # a fresh owner. Never terminate it here.
         outcome["deferred"] = True
         return outcome
     except Exception as exc:

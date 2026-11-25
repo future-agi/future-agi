@@ -72,7 +72,7 @@ async def test_new_history_records_patch_and_defers_retryable_budget(
     )
     patch_ids: list[str] = []
 
-    async def fail_reconcile(_task_id: str) -> None:
+    async def fail_reconcile(_task_id: str, **_kwargs) -> None:
         raise failure
 
     def patched(patch_id: str) -> bool:
@@ -100,7 +100,7 @@ async def test_legacy_history_without_patch_preserves_terminal_failure(
         )
     )
 
-    async def fail_reconcile(_task_id: str) -> None:
+    async def fail_reconcile(_task_id: str, **_kwargs) -> None:
         raise failure
 
     monkeypatch.setattr(workflows, "_reconcile", fail_reconcile)
@@ -123,7 +123,7 @@ async def test_eventual_reconcile_success_reaps_before_first_claim(monkeypatch) 
     async def record_async(name: str):
         events.append(name)
 
-    async def reconcile(_task_id: str) -> bool:
+    async def reconcile(_task_id: str, _generation=None) -> bool:
         result = next(reconcile_results)
         events.append(f"reconcile:{result}")
         return result

@@ -75,8 +75,9 @@ class EvalTask(BaseModel):
     # A control failure can precede every EvalLogger entry. Only a public
     # selector reason (never an exception chain or a query) belongs here.
     failure_reason = models.CharField(max_length=255, blank=True, null=True)
-    # Rotated by a replacement request; NULL denotes a pre-fence/initial run.
-    # Unlike a Temporal run_id this survives continue-as-new.
+    # Stamped at create and rotated by each replacement request; NULL denotes a
+    # task saved by a dispatcher that predates the fence. Unlike a Temporal
+    # run_id this survives continue-as-new.
     workflow_generation = models.UUIDField(null=True, editable=False)
     start_time = models.DateTimeField(blank=True, null=True)
     end_time = models.DateTimeField(blank=True, null=True)

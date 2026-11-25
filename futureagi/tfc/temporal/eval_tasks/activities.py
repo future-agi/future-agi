@@ -23,10 +23,10 @@ from tfc.temporal.eval_tasks.db_errors import (
     database_control_errors,
 )
 from tfc.temporal.eval_tasks.types import (
-    CheckedReapInput,
-    CheckedReconcileInput,
     ClaimBatchInput,
     ClaimBatchOutput,
+    FencedReapInput,
+    FencedReconcileInput,
     FinalizeInput,
     FinalizeOutput,
     ReapOutput,
@@ -110,7 +110,53 @@ def _require_instant_eval_license(task) -> None:
         ) from None
 
 
-def _reconcile_sync(task_id: str, *, require_running: bool = False) -> dict:
+def _generation_scope(workflow_generation: str | None) -> dict:
+    """Row filter for a run's task writes.
+
+    A run that carries a generation writes only while it is still the task's
+    owner. A run without one was started by a pre-fence dispatcher, or its
+    generation was dropped by a worker that predates the field; it stays
+    unfenced, exactly as on v1.59, so a mixed-version rollout can never strand
+    it behind a stamp it was never given.
+    """
+    return {"workflow_generation": workflow_generation} if workflow_generation else {}
+
+
+def _replaced(task, workflow_generation: str | None) -> bool:
+    """A generation-carrying run whose task has since been handed to another."""
+    if not workflow_generation:
+        return False
+    current = str(task.workflow_generation) if task.workflow_generation else None
+    return current != workflow_generation
+
+
+def _await_handoff(task_id: str, workflow_generation: str | None) -> None:
+    """Wait out a replacement that stamped this generation but has not committed.
+
+    Recovery starts its run inside the transaction that stamps the row, and a
+    filtered UPDATE (or a plain read) sees the old stamp without waiting for
+    that lock, so a fast worker's first write would be lost. When the committed
+    stamp is not ours, wait on the row lock; afterwards the row is either the
+    accepted handoff or, if the dispatcher rolled back, the old one.
+    """
+    if not workflow_generation:
+        return
+    from tracer.models.eval_task import EvalTask
+
+    rows = EvalTask.all_objects.using("default").filter(id=task_id)
+    current = rows.values_list("workflow_generation", flat=True).first()
+    if (str(current) if current else None) == workflow_generation:
+        return
+    with transaction.atomic(using="default"):
+        list(rows.select_for_update().values_list("id", flat=True))
+
+
+def _reconcile_sync(
+    task_id: str,
+    *,
+    require_running: bool = False,
+    workflow_generation: str | None = None,
+) -> dict:
     """Make the task's live entries match its desired (sampled rows × evals) set.
 
     Creates the missing pending entries, re-queues stale/errored ones, and drops
@@ -132,12 +178,23 @@ def _reconcile_sync(task_id: str, *, require_running: bool = False) -> dict:
                 if require_running:
                     with transaction.atomic():
                         task = locked_running_task(task_id)
+                        if _replaced(task, workflow_generation):
+                            raise InactiveTask(task.status or "")
                     _require_instant_eval_license(task)
                     # The CH stream stays outside the lock. Each write rechecks
                     # the primary row in its own bounded transaction.
                     result = reconcile(task, require_running=True)
                 else:
-                    task = EvalTask.objects.get(id=task_id)
+                    if workflow_generation:
+                        # Primary: a replacement commits its handoff there.
+                        _await_handoff(task_id, workflow_generation)
+                        task = EvalTask.objects.using("default").get(id=task_id)
+                        if _replaced(task, workflow_generation):
+                            # A replaced run must not rewrite the new owner's
+                            # entries; its next state check ends it.
+                            raise InactiveTask(task.status or "")
+                    else:
+                        task = EvalTask.objects.get(id=task_id)
                     _require_instant_eval_license(task)
                     result = reconcile(task)
         except InactiveTask as exc:
@@ -364,6 +421,7 @@ def _reap_sync(
     workflow_confirmed_stopped: bool = False,
     *,
     require_running: bool = False,
+    workflow_generation: str | None = None,
 ) -> dict:
     """Reclaim entries stuck running past ``older_than_seconds`` (e.g. a worker
     crashed mid-eval).
@@ -400,7 +458,8 @@ def _reap_sync(
             older_than_seconds,
             workflow_confirmed_stopped=workflow_confirmed_stopped,
         )
-        with transaction.atomic() if require_running else nullcontext():
+        fenced = require_running or bool(workflow_generation)
+        with transaction.atomic() if fenced else nullcontext():
             if require_running:
                 from tracer.services.eval_tasks.running_task import (
                     InactiveTask,
@@ -416,8 +475,20 @@ def _reap_sync(
                         "older_than_seconds": stale_seconds,
                         "inactive_status": exc.status,
                     }
+            elif workflow_generation:
+                # Under the task lock a replacement handoff is serialized with
+                # this reap: a replaced run never requeues the new owner's
+                # live claims (its own describe said nothing else was running).
+                task = EvalTask.objects.select_for_update().get(id=task_id)
             else:
                 task = EvalTask.objects.get(id=task_id)
+            if _replaced(task, workflow_generation):
+                return {
+                    "requeued": 0,
+                    "failed": 0,
+                    "older_than_seconds": stale_seconds,
+                    "inactive_status": task.status or "",
+                }
             requeued, failed = reap_stale_running(
                 task, older_than_seconds=stale_seconds, max_attempts=max_attempts
             )
@@ -445,17 +516,12 @@ def _get_task_state_sync(task_id: str, workflow_generation: str | None = None) -
 
         tasks = EvalTask.objects.using("default")
         task = tasks.get(id=task_id)
-        if workflow_generation and str(task.workflow_generation) != workflow_generation:
-            # A fast worker can arrive before Resume commits its handoff. Lock
-            # by id (not generation): after waiting, PostgreSQL returns either
-            # the accepted row, or the old row if the dispatcher rolled back.
-            from django.db import transaction
-
+        if _replaced(task, workflow_generation):
+            # Recovery starts inside its stamping transaction: see
+            # ``_await_handoff``. Lock by id (not generation).
             with transaction.atomic():
                 task = tasks.select_for_update().get(id=task_id)
-        generation_matches = (
-            str(task.workflow_generation) if task.workflow_generation else None
-        ) == workflow_generation
+        replaced = _replaced(task, workflow_generation)
         inactive = {
             EvalTaskStatus.PAUSED,
             EvalTaskStatus.DELETED,
@@ -464,7 +530,7 @@ def _get_task_state_sync(task_id: str, workflow_generation: str | None = None) -
         return {
             "task_id": str(task_id),
             "status": task.status or "",
-            "active": generation_matches and task.status not in inactive,
+            "active": not replaced and task.status not in inactive,
             "has_undrained_work": has_undrained_work(task),
         }
     finally:
@@ -587,8 +653,9 @@ def _set_task_status_sync(
         elif status in (EvalTaskStatus.COMPLETED, EvalTaskStatus.FAILED):
             fields["end_time"] = now
 
+        _await_handoff(task_id, workflow_generation)
         qs = EvalTask.objects.filter(
-            id=task_id, workflow_generation=workflow_generation
+            id=task_id, **_generation_scope(workflow_generation)
         )
         if expected_status is not None:
             qs = qs.filter(status=expected_status)
@@ -656,7 +723,7 @@ def _finalize_task_sync(task_id: str, workflow_generation: str | None = None) ->
                 "status": task.status or "",
             }
         changed = EvalTask.objects.filter(
-            id=task_id, workflow_generation=workflow_generation
+            id=task_id, **_generation_scope(workflow_generation)
         ).update(
             status=EvalTaskStatus.COMPLETED,
             end_time=timezone.now(),
@@ -713,7 +780,7 @@ async def _busy_wait(seconds: float) -> None:
 @activity.defn
 @database_control_activity()
 async def reconcile_eval_task_activity(
-    input: CheckedReconcileInput,
+    input: FencedReconcileInput,
 ) -> ReconcileActivityOutput:
     from tracer.selectors.eval_tasks.row_resolver import (
         EvalTaskReadBudgetExceeded,
@@ -735,11 +802,13 @@ async def reconcile_eval_task_activity(
                 + reconcile_lease_duration().total_seconds()
                 + _BUSY_LEASE_MARGIN_SECONDS
             )
-            guard = (
+            guard: dict = (
                 {"require_running": True}
                 if getattr(input, "require_running", False)
                 else {}
             )
+            if getattr(input, "workflow_generation", None):
+                guard["workflow_generation"] = input.workflow_generation
             while True:
                 try:
                     result = await otel_sync_to_async(
@@ -834,10 +903,12 @@ async def requeue_lost_eval_entry_activity(input: RunEntryInput) -> RunEntryOutp
 
 @activity.defn
 @database_control_activity()
-async def reap_stale_running_activity(input: CheckedReapInput) -> ReapOutput:
-    guard = (
+async def reap_stale_running_activity(input: FencedReapInput) -> ReapOutput:
+    guard: dict = (
         {"require_running": True} if getattr(input, "require_running", False) else {}
     )
+    if getattr(input, "workflow_generation", None):
+        guard["workflow_generation"] = input.workflow_generation
     async with Heartbeater():
         result = await otel_sync_to_async(_reap_sync, thread_sensitive=False)(
             input.task_id,

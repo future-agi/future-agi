@@ -1,5 +1,6 @@
 """A failed reconcile has no entry to log; the task itself owns the reason."""
 
+import dataclasses
 from unittest.mock import AsyncMock
 
 import pytest
@@ -51,7 +52,10 @@ def test_failed_selection_reason_in_empty_logs(
 
     async def execute(name, arg, **options):
         if name == "set_eval_task_status_activity":
-            return await env.run(activities.set_eval_task_status_activity, arg)
+            # A workflow receives the decoded dict, never the output dataclass
+            # (dev's first start reads the ack with ``.get``).
+            ack = await env.run(activities.set_eval_task_status_activity, arg)
+            return dataclasses.asdict(ack)
         assert name == "reconcile_eval_task_activity"
         try:
             return await env.run(activities.reconcile_eval_task_activity, arg)

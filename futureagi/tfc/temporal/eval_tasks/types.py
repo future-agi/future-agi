@@ -89,6 +89,13 @@ class CheckedReconcileInput(ReconcileActivityInput):
 
 
 @dataclass
+class FencedReconcileInput(CheckedReconcileInput):
+    # Sent only by a run that carries a generation, so a legacy run's payload
+    # stays byte-identical to dev. Workers that predate it drop the field.
+    workflow_generation: str | None = None
+
+
+@dataclass
 class ReconcileActivityOutput:
     task_id: str
     created: int
@@ -139,6 +146,12 @@ class ReapInput:
 @dataclass
 class CheckedReapInput(ReapInput):
     require_running: bool = False
+
+
+@dataclass
+class FencedReapInput(CheckedReapInput):
+    # As ``FencedReconcileInput``: only a generation-carrying run sends it.
+    workflow_generation: str | None = None
 
 
 @dataclass
@@ -231,6 +244,7 @@ __all__ = [
     "EvalTaskWorkflowOutput",
     "ContinuousDrainState",
     "CheckedReconcileInput",
+    "FencedReconcileInput",
     "ReconcileActivityInput",
     "ReconcileActivityOutput",
     "ClaimBatchInput",
@@ -238,6 +252,7 @@ __all__ = [
     "RunEntryInput",
     "RunEntryOutput",
     "CheckedReapInput",
+    "FencedReapInput",
     "ReapInput",
     "ReapOutput",
     "TaskStateInput",

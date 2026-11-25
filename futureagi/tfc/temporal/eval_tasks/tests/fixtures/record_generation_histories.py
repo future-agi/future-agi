@@ -13,6 +13,9 @@ and writes one JSON history per run of the continue-as-new chain. No database
 is touched. The workflow input is sent as a plain dict, which is exactly what
 a newer starter's dataclass serialises to, so ``base`` can be handed a
 ``workflow_generation`` its own input type does not declare.
+
+``record_histories`` is also what the e2e reverse-replay test calls against
+its in-memory server, so the suite never depends on re-recorded files.
 """
 
 import argparse
@@ -20,6 +23,7 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from temporalio import activity
@@ -185,8 +189,11 @@ class _Stubs:
         ]
 
 
-async def _record(label: str, out_dir: Path) -> None:
-    from tfc.temporal.eval_tasks.search_attributes import ALL_KEYS
+async def record_histories(client, label: str) -> dict[str, str]:
+    """Run every scenario on this checkout's workflow code and return
+    ``{"<label>-<scenario>-run<hop>.json": history JSON}``, one per run of
+    each continue-as-new chain. Workflow ids and the task queue are unique per
+    call, so a shared test server can host it."""
     from tfc.temporal.eval_tasks.workflows import (
         ContinuousEvalTaskWorkflow,
         HistoricalEvalTaskWorkflow,
@@ -194,49 +201,57 @@ async def _record(label: str, out_dir: Path) -> None:
 
     scenarios = _scenarios(label)
     stubs = _Stubs(scenarios)
+    queue = f"{TASK_QUEUE}-{uuid.uuid4().hex[:8]}"
+    histories: dict[str, str] = {}
+    async with Worker(
+        client,
+        task_queue=queue,
+        workflows=[HistoricalEvalTaskWorkflow, ContinuousEvalTaskWorkflow],
+        activities=stubs.activities(),
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        for name, (wf_type, wf_input, _) in scenarios.items():
+            task_id = f"task-{name}"
+            handle = await client.start_workflow(
+                wf_type,
+                {"task_id": task_id, "task_queue": queue, **wf_input},
+                id=f"{label}-{name}-{uuid.uuid4().hex[:8]}",
+                task_queue=queue,
+            )
+            try:
+                await asyncio.wait_for(handle.result(), timeout=120)
+            except WorkflowFailureError:
+                pass
+            run_id, hop = handle.first_execution_run_id, 0
+            while run_id:
+                history = await client.get_workflow_handle(
+                    handle.id, run_id=run_id
+                ).fetch_history()
+                histories[f"{label}-{name}-run{hop}.json"] = (
+                    json.dumps(json.loads(history.to_json()), indent=2) + "\n"
+                )
+                run_id = next(
+                    (
+                        e.workflow_execution_continued_as_new_event_attributes.new_execution_run_id
+                        for e in history.events
+                        if e.HasField(
+                            "workflow_execution_continued_as_new_event_attributes"
+                        )
+                    ),
+                    None,
+                )
+                hop += 1
+    return histories
+
+
+async def _record(label: str, out_dir: Path) -> None:
+    from tfc.temporal.eval_tasks.search_attributes import ALL_KEYS
+
     env = await WorkflowEnvironment.start_local(search_attributes=ALL_KEYS)
     try:
-        client = env.client
-        async with Worker(
-            client,
-            task_queue=TASK_QUEUE,
-            workflows=[HistoricalEvalTaskWorkflow, ContinuousEvalTaskWorkflow],
-            activities=stubs.activities(),
-            workflow_runner=UnsandboxedWorkflowRunner(),
-        ):
-            for name, (wf_type, wf_input, _) in scenarios.items():
-                task_id = f"task-{name}"
-                handle = await client.start_workflow(
-                    wf_type,
-                    {"task_id": task_id, "task_queue": TASK_QUEUE, **wf_input},
-                    id=f"{label}-{name}",
-                    task_queue=TASK_QUEUE,
-                )
-                try:
-                    await asyncio.wait_for(handle.result(), timeout=120)
-                except WorkflowFailureError:
-                    pass
-                run_id, hop = handle.first_execution_run_id, 0
-                while run_id:
-                    history = await client.get_workflow_handle(
-                        handle.id, run_id=run_id
-                    ).fetch_history()
-                    path = out_dir / f"{label}-{name}-run{hop}.json"
-                    path.write_text(
-                        json.dumps(json.loads(history.to_json()), indent=2) + "\n"
-                    )
-                    print(path.name)
-                    run_id = next(
-                        (
-                            e.workflow_execution_continued_as_new_event_attributes.new_execution_run_id
-                            for e in history.events
-                            if e.HasField(
-                                "workflow_execution_continued_as_new_event_attributes"
-                            )
-                        ),
-                        None,
-                    )
-                    hop += 1
+        for name, text in (await record_histories(env.client, label)).items():
+            (out_dir / name).write_text(text)
+            print(name)
     finally:
         await env.shutdown()
 

@@ -192,52 +192,63 @@ def test_rejected_resume_preserves_zero_entry_diagnostic(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("accepted", [True, False])
-def test_early_worker_waits_for_resume_commit(
+def test_resume_commits_its_handoff_before_any_worker_can_start(
     auth_client, historical_task, monkeypatch, accepted
 ):
+    """A v1.59 worker reads the row without waiting on its lock, and drops the
+    generation, so Resume must commit PENDING before Temporal sees the start.
+    A failed start then undoes the handoff, generation included."""
     from concurrent.futures import ThreadPoolExecutor
-    from threading import Event
 
     from django.db import connections
 
     from tfc.temporal.eval_tasks.activities import _get_task_state_sync
 
-    waiting = Event()
     task_id = str(historical_task.pk)
 
     def worker(generation):
-        # Observe the actual admission read from a second PostgreSQL session.
-        def on_query(execute, sql, params, many, context):
-            if "FOR UPDATE" in sql:
-                waiting.set()
-            return execute(sql, params, many, context)
-
+        # A second PostgreSQL session, as a worker's would be.
         try:
-            with connection.execute_wrapper(on_query):
-                return _get_task_state_sync(task_id, generation)
+            return [_get_task_state_sync(task_id, g) for g in (None, generation)]
         finally:
             connections.close_all()
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    seen = {}
 
-        def start(task, **kwargs):
-            nonlocal admission
-            admission = pool.submit(worker, str(task.workflow_generation))
-            assert waiting.wait(5), "worker did not wait for the uncommitted generation"
-            if not accepted:
-                raise RuntimeError("start acknowledgement lost")
+    def start(task, **kwargs):
+        seen["in_atomic_block"] = connection.in_atomic_block
+        # Never join a worker stuck on an uncommitted handoff's lock: time out,
+        # and let the view's rollback release it.
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            states = pool.submit(worker, str(task.workflow_generation))
+            seen["states"] = states.result(timeout=10)
+        finally:
+            pool.shutdown(wait=False)
+        if not accepted:
+            raise RuntimeError("start acknowledgement lost")
 
-        admission = None
-        monkeypatch.setattr(
-            "tracer.views.eval_task.start_eval_task_workflow_sync", start
+    monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", start)
+    response = auth_client.post(
+        f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task_id}", {}
+    )
+    assert response.status_code == (200 if accepted else 400)
+    assert seen["in_atomic_block"] is False
+    # Both a worker that dropped the generation and one that kept it see the
+    # committed handoff.
+    assert [(s["status"], s["active"]) for s in seen["states"]] == [
+        ("pending", True),
+        ("pending", True),
+    ]
+    historical_task.refresh_from_db()
+    if accepted:
+        assert historical_task.status == EvalTaskStatus.PENDING
+        assert historical_task.workflow_generation is not None
+    else:
+        assert (historical_task.status, historical_task.workflow_generation) == (
+            EvalTaskStatus.FAILED,
+            None,
         )
-        response = auth_client.post(
-            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task_id}", {}
-        )
-        assert response.status_code == (200 if accepted else 400)
-        state = admission.result(timeout=5)
-        assert state["active"] is accepted
-        assert state["status"] == ("pending" if accepted else "failed")
 
 
 @pytest.mark.django_db(transaction=True)
@@ -272,22 +283,23 @@ def test_superseded_workflow_cannot_publish_its_status(
     env = ActivityEnvironment()
     run = async_to_sync(env.run)
     task_id = str(historical_task.pk)
-    old = SetStatusInput(task_id, "failed", failure_reason="from the old run")
-    for _ in range(2):
+    old = None
+    for _ in range(3):
         assert auth_client.post(url, {}).status_code == 200
-        assert not run(activities.set_eval_task_status_activity, old).changed
-        if run_type == RunType.HISTORICAL:
-            assert not run(
-                activities.finalize_eval_task_activity,
-                FinalizeInput(task_id, old.workflow_generation),
-            ).finalized
+        if old is not None:
+            # The previous run's delayed delivery is ignored after a resume.
+            assert not run(activities.set_eval_task_status_activity, old).changed
+            if run_type == RunType.HISTORICAL:
+                assert not run(
+                    activities.finalize_eval_task_activity,
+                    FinalizeInput(task_id, old.workflow_generation),
+                ).finalized
         historical_task.refresh_from_db()
         assert (
             historical_task.status == "pending"
             and historical_task.failure_reason is None
         )
-        # The newly dispatched run can publish; its delayed delivery must be
-        # ignored after a subsequent resume, just like a pre-upgrade payload.
+        # The newly dispatched run can publish.
         old = SetStatusInput(
             task_id,
             "failed",

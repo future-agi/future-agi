@@ -48,6 +48,8 @@ from tfc.temporal.eval_tasks.types import (
     ContinuousDrainState,
     EvalTaskWorkflowInput,
     EvalTaskWorkflowOutput,
+    FencedReapInput,
+    FencedReconcileInput,
     FinalizeInput,
     ReapInput,
     ReconcileActivityInput,
@@ -210,15 +212,11 @@ _CONTINUOUS_DATABASE_ADOPTION_PATCH = "continuous-eval-live-database-backoff-v1"
 # the same reason as ``_MAX_IDLE_FINALIZE_WAITS``.
 _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH = "historical-eval-claim-outcome-unknown-v1"
 _MAX_CLAIM_OUTCOME_UNKNOWN_WAITS = 12
-# A historical run started with a ``workflow_generation`` first checks that
-# its generation is still the task's, before its first label/status command.
-# Workers predating that check ignore the unknown input field (Temporal's
-# dataclass converter drops it) and record ``get_workflow_labels_activity``
-# first, so a newer worker replaying such a history must not issue the check.
-# The marker is only consulted when the input carries a generation, so runs
-# without one, and every history recorded before this field existed, replay
-# unchanged.
-_HISTORICAL_GENERATION_FENCE_PATCH = "historical-eval-generation-fence-v1"
+# ``workflow_generation`` (the task's replacement fence) never changes which
+# commands a run issues: it only travels in activity inputs, and the activities
+# enforce it. A v1.59 worker replaying a newer history, or running a newer
+# start, therefore sees exactly the commands it would issue itself (it drops
+# the unknown field), so no patch marker is involved in either direction.
 # Explicit bound even when no batch can finish and the server has not suggested
 # CAN yet. All deferred paths, including pause cleanup, pass this checkpoint.
 _MAX_CONTINUOUS_POLLS = 100
@@ -345,12 +343,20 @@ async def _fail_task(
     )
 
 
-async def _reconcile(task_id: str, *, first_closed: bool = False) -> dict:
-    args = (
-        CheckedReconcileInput(task_id=task_id, require_running=True)
-        if first_closed
-        else ReconcileActivityInput(task_id=task_id)
-    )
+async def _reconcile(
+    task_id: str, *, first_closed: bool = False, generation: str | None = None
+) -> dict:
+    args: ReconcileActivityInput
+    if generation:
+        args = FencedReconcileInput(
+            task_id=task_id,
+            require_running=first_closed,
+            workflow_generation=generation,
+        )
+    elif first_closed:
+        args = CheckedReconcileInput(task_id=task_id, require_running=True)
+    else:
+        args = ReconcileActivityInput(task_id=task_id)
     reconciled: dict = await workflow.execute_activity(
         "reconcile_eval_task_activity",
         args,
@@ -378,7 +384,7 @@ def _is_retryable_reconcile_budget_error(exc: Exception) -> bool:
     )
 
 
-async def _reconcile_continuous(task_id: str) -> bool:
+async def _reconcile_continuous(task_id: str, generation: str | None = None) -> bool:
     """Reconcile once, deferring only exhausted transient CH read failures.
 
     The activity already used the bounded five-attempt reconcile policy.  A
@@ -391,7 +397,7 @@ async def _reconcile_continuous(task_id: str) -> bool:
     """
 
     try:
-        await _reconcile(task_id)
+        await _reconcile(task_id, generation=generation)
     except Exception as exc:
         if not _is_retryable_reconcile_budget_error(exc):
             raise
@@ -410,6 +416,7 @@ async def _reap(
     *,
     workflow_confirmed_stopped: bool = False,
     first_closed: bool = False,
+    generation: str | None = None,
 ) -> dict:
     """Reclaim entries a previous execution abandoned in ``running``.
 
@@ -420,17 +427,24 @@ async def _reap(
     no-ops inside ninety minutes of a crash. See
     ``tracer.services.eval_tasks.reaper.effective_stale_seconds``.
     """
-    args = (
-        CheckedReapInput(
+    args: ReapInput
+    if generation:
+        args = FencedReapInput(
+            task_id=task_id,
+            workflow_confirmed_stopped=workflow_confirmed_stopped,
+            require_running=first_closed,
+            workflow_generation=generation,
+        )
+    elif first_closed:
+        args = CheckedReapInput(
             task_id=task_id,
             workflow_confirmed_stopped=workflow_confirmed_stopped,
             require_running=True,
         )
-        if first_closed
-        else ReapInput(
+    else:
+        args = ReapInput(
             task_id=task_id, workflow_confirmed_stopped=workflow_confirmed_stopped
         )
-    )
     reaped: dict = await workflow.execute_activity(
         "reap_stale_running_activity",
         args,
@@ -651,16 +665,9 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
         return EvalTaskWorkflowOutput(input.task_id, WF_STATUS_PAUSED, input.processed)
 
     async def _run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
-        if (
-            input.workflow_generation
-            and workflow.patched(_HISTORICAL_GENERATION_FENCE_PATCH)
-            and not (await _task_state(input.task_id, input.workflow_generation))[
-                "active"
-            ]
-        ):
-            return EvalTaskWorkflowOutput(
-                input.task_id, WF_STATUS_PAUSED, input.processed
-            )
+        # A replaced (stale-generation) run issues the same commands as any
+        # other: its status write, reconcile and reap are no-ops in the
+        # activities, and its first state check reports it inactive.
         self._lost.update(input.lost_entry_ids or ())
         self._phase = PHASE_MATERIALIZING
         await _apply_labels(input.task_id)
@@ -685,7 +692,11 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                     self._phase = PHASE_SLEEPING
                     await workflow.sleep(remaining)
                     self._phase = PHASE_MATERIALIZING
-            result = await _reconcile(input.task_id, first_closed=first_closed)
+            result = await _reconcile(
+                input.task_id,
+                first_closed=first_closed,
+                generation=input.workflow_generation,
+            )
             if first_closed and result.get("inactive_status") is not None:
                 return self._stopped(input, result["inactive_status"])
             # Reclaim entries left RUNNING by a crashed prior execution. Only
@@ -696,6 +707,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 input.task_id,
                 workflow_confirmed_stopped=input.workflow_confirmed_stopped,
                 first_closed=first_closed,
+                generation=input.workflow_generation,
             )
             if first_closed and reaped.get("inactive_status") is not None:
                 return self._stopped(input, reaped["inactive_status"])
@@ -726,6 +738,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 reaped = await _reap(
                     input.task_id,
                     workflow_confirmed_stopped=input.workflow_confirmed_stopped,
+                    generation=input.workflow_generation,
                 )
                 if reaped.get("requeued") or reaped.get("failed"):
                     idle_waits = 0
@@ -889,7 +902,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 else:
                     if not reconciled:
                         self._phase = PHASE_MATERIALIZING
-                        reconciled = await _reconcile_continuous(state.task_id)
+                        reconciled = await _reconcile_continuous(
+                            state.task_id, state.workflow_generation
+                        )
                     if not reconciled:
                         wait = True
                     else:
@@ -897,6 +912,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                             await _reap(
                                 state.task_id,
                                 workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+                                generation=state.workflow_generation,
                             )
                             reaped = True
                         batch = await _claim(state.task_id, state.batch_size)
@@ -949,12 +965,15 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
         # Idempotent: only the first run (pending row) actually transitions;
         # continue-as-new hops find it already running and no-op.
         await _mark_running(state.task_id, state.workflow_generation)
-        reconciled = await _reconcile_continuous(state.task_id)
+        reconciled = await _reconcile_continuous(
+            state.task_id, state.workflow_generation
+        )
         reaped = False
         if reconciled:
             await _reap(
                 state.task_id,
                 workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+                generation=state.workflow_generation,
             )
             reaped = True
 
@@ -982,7 +1001,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                     _set_status(tstate["status"])
                     self._phase = PHASE_DONE
                     return
-                reconciled = await _reconcile_continuous(state.task_id)
+                reconciled = await _reconcile_continuous(
+                    state.task_id, state.workflow_generation
+                )
                 continue
 
             if not reaped:
@@ -992,6 +1013,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 await _reap(
                     state.task_id,
                     workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+                    generation=state.workflow_generation,
                 )
                 reaped = True
 
@@ -1018,7 +1040,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 self._phase = PHASE_SLEEPING
                 await self._sleep_or_recheck(state.poll_interval_seconds)
                 self._phase = PHASE_MATERIALIZING
-                reconciled = await _reconcile_continuous(state.task_id)
+                reconciled = await _reconcile_continuous(
+                    state.task_id, state.workflow_generation
+                )
                 # Nothing was claimable, yet work is undrained: it is RUNNING
                 # under claims no pending activity of this run is waiting on
                 # (the drain has returned every activity it launched). Reap

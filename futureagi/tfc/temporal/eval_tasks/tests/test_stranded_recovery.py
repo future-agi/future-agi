@@ -312,7 +312,10 @@ class TestRecoveryHandoff:
         _patch_noop_reconcile(monkeypatch)
         _patch_completing_run_entry(monkeypatch)
         task_id = str(eval_task.id)
-        old = str(uuid.uuid4()) if status == EvalTaskStatus.RUNNING else None
+        # The closed run carried a generation, as a first run does since create
+        # stamps one. One without (a pre-fence run) is unfenced, as on v1.59:
+        # see test_generation_fence.py.
+        old = str(uuid.uuid4())
         await _set_task(task_id, status=status, workflow_generation=old)
         await sync_to_async(make_pending_entries)(eval_task, 1)
 

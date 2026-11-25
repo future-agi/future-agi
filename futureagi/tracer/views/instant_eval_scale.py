@@ -24,6 +24,7 @@ import hashlib
 import json
 import math
 import time
+import uuid
 
 import structlog
 from django.conf import settings
@@ -1125,6 +1126,8 @@ class InstantEvalStartView(InstantEvalLicenseRequired, APIView):
                 row_type=rows_service.ROW_TYPE[unit],
                 status=EvalTaskStatus.PENDING,
                 last_run=timezone.now(),
+                # A restart or recovery then fences the first run's late writes.
+                workflow_generation=uuid.uuid4(),
             )
             task.evals.set(ordered)
             run = InstantEvalRun.objects.create(

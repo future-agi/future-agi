@@ -403,6 +403,41 @@ def test_uncertain_ack_after_simulated_worker_preserves_results_and_all_markers(
     ) == [custom_eval_config.pk]
 
 
+def test_create_stamps_the_first_run_so_a_replacement_fences_it(
+    auth_client,
+    project,
+    custom_eval_config,
+    starter,
+):
+    """TH-7963: without a create stamp the first run is unfenced for life, so
+    its late failure marks the run that recovery or Resume started Failed."""
+    from tfc.temporal.eval_tasks.activities import _set_task_status_sync
+    from tfc.temporal.eval_tasks.client import _select
+
+    response = auth_client.post(
+        _CREATE, payload(project, custom_eval_config), format="json"
+    )
+    task_id = assert_saved(response, starter)
+    first = task_snapshot(task_id)["workflow_generation"]
+    assert first is not None
+    started = starter.call_args.args[0]
+    assert started.workflow_generation == first
+    _, workflow_input = _select(started, "tasks_s")
+    assert workflow_input.workflow_generation == str(first)
+
+    EvalTask.objects.using("default").get(pk=task_id).prepare_workflow_replacement()
+    late = _set_task_status_sync(
+        task_id,
+        EvalTaskStatus.FAILED,
+        failure_reason="late failure from the first run",
+        workflow_generation=str(first),
+    )
+    assert not late["changed"]
+    saved = task_snapshot(task_id)
+    assert (saved["status"], saved["failure_reason"]) == (EvalTaskStatus.PENDING, None)
+    assert saved["workflow_generation"] not in (None, first)
+
+
 def test_outer_rollback_discards_task_relations_and_deferred_dispatch(
     auth_client,
     project,

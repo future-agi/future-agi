@@ -322,6 +322,24 @@ def test_a_sample_reads_the_same_rows_every_time_and_extends_with_the_next(
 
 
 @pytest.mark.django_db
+def test_a_start_stamps_the_first_run_with_a_generation(
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
+):
+    # A restart or recovery rotates the stamp, which fences this run's late
+    # writes: the first run must carry one too (TH-7963).
+    sent = []
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
+        lambda task, **kw: sent.append((task.workflow_generation, kw)) or "wf",
+    )
+    response = _start(auth_client, observe_project, [yes_no], sample_size=10)
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    task = EvalTask.objects.get(id=response.json()["result"]["task_id"])
+    assert task.workflow_generation is not None
+    assert sent == [(task.workflow_generation, {"replace_existing": False})]
+
+
+@pytest.mark.django_db
 @override_settings(INSTANT_EVAL_CONFIRM_ROWS=20, INSTANT_EVAL_MAX_ROWS=30)
 def test_big_runs_need_a_confirm_and_runs_over_the_cap_are_refused(
     auth_client, observe_project, yes_no, fake_view, started
