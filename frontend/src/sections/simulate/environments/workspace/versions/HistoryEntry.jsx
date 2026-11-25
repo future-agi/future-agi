@@ -227,7 +227,6 @@ export default function HistoryEntry({
           // A Viewer sees the action, locked, with the reason on hover.
           <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.versions}>
             <MenuItem
-              sx={{ typography: "s2" }}
               disabled={!canEdit}
               onClick={() => {
                 setMenu(null);
@@ -241,7 +240,6 @@ export default function HistoryEntry({
           </ViewerLock>
         )}
         <MenuItem
-          sx={{ typography: "s2" }}
           onClick={() => {
             setMenu(null);
             onToggle();
