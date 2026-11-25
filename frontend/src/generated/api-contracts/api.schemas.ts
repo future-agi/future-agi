@@ -22928,8 +22928,18 @@ export interface DesignReviewApi {
   actors: DesignActorApi[];
   unsupported: DesignUnsupportedApi[];
   edits: DesignEditApi[];
+  /** @minLength 1 */
+  revision: string;
   created_at: string;
   approved_at: string;
+}
+
+export interface DesignApproveRequestApi {
+  /**
+   * @minLength 64
+   * @maxLength 64
+   */
+  revision: string;
 }
 
 export type DesignEditRequestApiOp =

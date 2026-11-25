@@ -82,6 +82,15 @@ def _reviewed(user, workspace, version):
     return job
 
 
+def _approve(job, user):
+    return approve(
+        job,
+        user=user,
+        base_url=BASE_URL,
+        revision=design_document(job)["revision"],
+    )
+
+
 def _build_finishes(job, version, contract):
     job.refresh_from_db()
     job.payload["metadata"]["seeded_contract"] = True
@@ -97,7 +106,7 @@ class TestTwoEnvironmentsOnOneVersion:
         second = _reviewed(user, workspace, version)
         read_key = version_contract_key(version.id)
         with patch(START):
-            approve(first, user=user, base_url=BASE_URL)
+            _approve(first, user)
         built = {**copy.deepcopy(READ), "tools": READ["tools"][:2]}
 
         _build_finishes(first, version, built)
@@ -106,7 +115,7 @@ class TestTwoEnvironmentsOnOneVersion:
         assert read_key not in storage.objects
         assert design_document(second)["agent_changed"] is False
         with patch(START):
-            approve(second, user=user, base_url=BASE_URL)
+            _approve(second, user)
         second.refresh_from_db()
         first.refresh_from_db()
         assert stored_review(second)["status"] == APPROVED
@@ -127,7 +136,7 @@ class TestTwoEnvironmentsOnOneVersion:
 
         assert design_document(waiting)["agent_changed"] is True
         with patch(START) as start, pytest.raises(HostedHarnessError) as refused:
-            approve(waiting, user=user, base_url=BASE_URL)
+            _approve(waiting, user)
 
         assert (refused.value.code, refused.value.status_code) == (
             "design_agent_changed",

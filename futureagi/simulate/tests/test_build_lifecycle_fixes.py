@@ -24,6 +24,7 @@ from simulate.services.harness_design_review import (
     fail_design_reading,
     fail_stale_reading,
     open_review_after_reading,
+    review_revision,
     stored_review,
 )
 from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
@@ -220,7 +221,12 @@ class TestApproveRollback:
             patch("simulate.services.agent_contracts.remove_contract") as removed,
             pytest.raises(HostedHarnessError),
         ):
-            approve(edited, user=user, base_url=BASE_URL)
+            approve(
+                edited,
+                user=user,
+                base_url=BASE_URL,
+                revision=review_revision(stored_review(edited)),
+            )
 
         removed.assert_not_called()
         waiting.refresh_from_db()

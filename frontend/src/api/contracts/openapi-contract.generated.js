@@ -29704,6 +29704,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessActorList",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29723,6 +29726,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessActorList",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29741,6 +29747,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessActorValidation",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29775,6 +29784,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessActorList",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29819,6 +29831,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessActorList",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29841,6 +29856,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessActorList",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29962,7 +29980,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/EmptyRequest",
+          $ref: "#/definitions/DesignApproveRequest",
         },
         queryParameters: {},
         responses: {
@@ -65914,6 +65932,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DesignApproveRequest: {
+      required: ["revision"],
+      type: "object",
+      properties: {
+        revision: {
+          title: "Revision",
+          type: "string",
+          maxLength: 64,
+          minLength: 64,
+        },
+      },
+    },
     DesignEditRequest: {
       required: ["op", "kind", "id"],
       type: "object",
@@ -65985,6 +66015,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "actors",
         "unsupported",
         "edits",
+        "revision",
         "created_at",
         "approved_at",
       ],
@@ -66059,6 +66090,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/DesignEdit",
           },
+        },
+        revision: {
+          title: "Revision",
+          type: "string",
+          minLength: 1,
         },
         created_at: {
           title: "Created at",

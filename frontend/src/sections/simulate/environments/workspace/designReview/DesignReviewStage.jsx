@@ -243,7 +243,8 @@ export default function DesignReviewStage({ envId }) {
   };
 
   const removeTool = (tool) => remove("tool", tool, tool.name);
-  const onApprove = () => approve.mutate(undefined, { onError: showError });
+  const onApprove = () =>
+    approve.mutate(review.revision, { onError: showError });
   const onContinue = () => setContinuedAt(Date.now());
 
   const blocker = !waiting

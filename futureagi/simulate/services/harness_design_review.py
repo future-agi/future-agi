@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import uuid
@@ -588,6 +589,20 @@ def agent_changed(review: dict[str, Any]) -> bool:
     return current is not None and reading_digest(current) != review["source_reading"]
 
 
+def review_revision(review: dict[str, Any]) -> str:
+    body = json.dumps(
+        {
+            "status": review.get("status") or AWAITING_APPROVAL,
+            "proposal": review.get("proposal") or {},
+            "edits": _with_ids(review.get("edits") or []),
+            "contract": _reviewed_key(review),
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
 def _legacy_edit_id(edit: dict[str, Any]) -> str:
     return uuid.uuid5(
         uuid.NAMESPACE_OID, json.dumps(edit, sort_keys=True, default=str)
@@ -629,6 +644,7 @@ def design_document(job: HostedHarnessJob) -> dict[str, Any]:
             for one in view.get("unsupported") or []
         ],
         "edits": _with_ids(edits),
+        "revision": review_revision(review),
         "created_at": review.get("created_at"),
         "approved_at": review.get("approved_at"),
     }
@@ -871,6 +887,15 @@ def _agent_changed_refusal() -> HostedHarnessError:
     )
 
 
+def _require_revision(review: dict[str, Any], revision: str) -> None:
+    if review_revision(review) != revision:
+        raise HostedHarnessError(
+            "design_review_changed",
+            "This design changed since you opened it; look it over again and approve",
+            status_code=409,
+        )
+
+
 def _store_approved_contract(job: HostedHarnessJob, review: dict[str, Any]) -> str:
     from simulate.services.agent_contracts import (
         SEED_MAX_BYTES,
@@ -907,17 +932,21 @@ def _store_approved_contract(job: HostedHarnessJob, review: dict[str, Any]) -> s
     return key
 
 
-def approve(job: HostedHarnessJob, *, user: User, base_url: str) -> HostedHarnessJob:
+def approve(
+    job: HostedHarnessJob, *, user: User, base_url: str, revision: str
+) -> HostedHarnessJob:
     """Start the build from the design as changed. A changed design is stored on the
     environment first, and an unchanged one builds from the contract it was read
     from, so the build seeds from exactly what was approved. Refused
-    with 409 when the design is closed, the job is not waiting, or the agent changed,
-    and with 503 when the build could not be started."""
+    with 409 when the design is closed, the job is not waiting, the agent changed, or
+    the design is no longer the ``revision`` the person approved, and with 503 when the
+    build could not be started."""
     from simulate.services.agent_contracts import remove_contract
     from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
     first = review_for(job)
     _require_open(first)
+    _require_revision(first, revision)
     edits = first.get("edits") or []
     contract_key = _store_approved_contract(job, first) if edits else ""
     try:
@@ -930,12 +959,7 @@ def approve(job: HostedHarnessJob, *, user: User, base_url: str) -> HostedHarnes
                     "This environment is not waiting for approval",
                     status_code=409,
                 )
-            if (review.get("edits") or []) != edits:
-                raise HostedHarnessError(
-                    "design_review_changed",
-                    "The design changed while it was being approved; approve again",
-                    status_code=409,
-                )
+            _require_revision(review, revision)
             if agent_changed(review):
                 raise _agent_changed_refusal()
             _write(

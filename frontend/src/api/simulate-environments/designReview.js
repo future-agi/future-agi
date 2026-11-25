@@ -69,7 +69,12 @@ export function useApproveDesign(envId) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: async () => (await axios.post(approvePath(envId), {})).data,
+    mutationFn: async (revision) =>
+      (await axios.post(approvePath(envId), { revision })).data,
+    onError: (error) => {
+      if (error?.statusCode === 409)
+        queryClient.invalidateQueries({ queryKey: designReviewKey(envId) });
+    },
     onSuccess: (review) => {
       queryClient.setQueryData(designReviewKey(envId), review);
       queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });

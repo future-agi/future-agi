@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { fireEvent, render, screen } from "src/utils/test-utils";
 import DesignReviewStage from "../DesignReviewStage";
 import { REVIEW_STATUS } from "../designReview.constants";
 
@@ -13,6 +13,7 @@ const review = {
   actors: [],
   unsupported: [],
   brief: {},
+  revision: "a".repeat(64),
 };
 
 const mutation = { mutate: vi.fn(), isPending: false };
@@ -44,6 +45,17 @@ describe("DesignReviewStage with no tools or records", () => {
     expect(
       screen.getByRole("button", { name: "Approve and build" }),
     ).toBeEnabled();
+  });
+
+  it("approves the revision it shows", () => {
+    current = review;
+    mutation.mutate.mockClear();
+    render(<DesignReviewStage envId="e1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Approve and build" }));
+    expect(mutation.mutate).toHaveBeenCalledWith(
+      review.revision,
+      expect.any(Object),
+    );
   });
 
   it("blocks approval when the design has nothing in it", () => {

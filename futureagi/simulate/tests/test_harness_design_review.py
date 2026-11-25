@@ -95,6 +95,14 @@ def _get(client, workspace, path):
     return client.get(path, HTTP_X_WORKSPACE_ID=str(workspace.id))
 
 
+def _approve(client, workspace, job, revision=None):
+    if revision is None:
+        revision = _get(client, workspace, URL.format(job.id)).json()["revision"]
+    return _post(
+        client, workspace, URL.format(job.id) + "approve/", {"revision": revision}
+    )
+
+
 def _undo(client, workspace, job, edit_id):
     return client.delete(
         URL.format(job.id) + f"edits/{edit_id}/",
@@ -398,8 +406,8 @@ class TestReviewApi:
         with patch(
             "simulate.temporal.client.start_hosted_harness_gateway_workflow"
         ) as start:
-            response = _post(client, workspace, URL.format(waiting.id) + "approve/")
-            again = _post(client, workspace, URL.format(waiting.id) + "approve/")
+            response = _approve(client, workspace, waiting)
+            again = _approve(client, workspace, waiting)
 
         assert response.status_code == 200, response.content
         assert response.json()["status"] == "approved"
@@ -422,7 +430,7 @@ class TestReviewApi:
             {"op": "remove", "kind": "tool", "id": "notify"},
         )
         with patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"):
-            response = _post(client, workspace, URL.format(waiting.id) + "approve/")
+            response = _approve(client, workspace, waiting)
 
         assert response.status_code == 200, response.content
         waiting.refresh_from_db()
@@ -434,6 +442,32 @@ class TestReviewApi:
             "find_hotels",
         ]
 
+    def test_approving_a_design_that_changed_since_it_was_read_is_refused(
+        self, client, workspace, waiting, stored_contracts
+    ):
+        shown = _get(client, workspace, URL.format(waiting.id)).json()["revision"]
+        _remove_notify(client, workspace, waiting)
+
+        with patch(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+        ) as start:
+            stale = _approve(client, workspace, waiting, shown)
+            fresh = _approve(client, workspace, waiting)
+
+        assert stale.status_code == 409
+        assert stale.json()["error"] == "design_review_changed"
+        assert fresh.status_code == 200, fresh.content
+        start.assert_called_once()
+
+    def test_approving_without_the_revision_on_screen_is_refused(
+        self, client, workspace, waiting
+    ):
+        response = _post(client, workspace, URL.format(waiting.id) + "approve/")
+
+        assert response.status_code == 400
+        waiting.refresh_from_db()
+        assert waiting.state == HostedHarnessJob.State.RECEIVED
+
     def test_a_build_that_cannot_start_stays_waiting(
         self, client, workspace, waiting, stored_contracts
     ):
@@ -441,7 +475,7 @@ class TestReviewApi:
             "simulate.temporal.client.start_hosted_harness_gateway_workflow",
             side_effect=RuntimeError("temporal down"),
         ):
-            response = _post(client, workspace, URL.format(waiting.id) + "approve/")
+            response = _approve(client, workspace, waiting)
 
         assert response.status_code == 503
         waiting.refresh_from_db()

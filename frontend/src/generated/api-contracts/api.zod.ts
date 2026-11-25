@@ -47844,6 +47844,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewResponse = zod.object({
       at: zod.string().min(1),
     }),
   ),
+  revision: zod.string().min(1),
   created_at: zod.string().datetime({ offset: true }),
   approved_at: zod.string().datetime({ offset: true }),
 });
@@ -47865,8 +47866,16 @@ export const SimulateApiHarnessEnvironmentsDesignReviewApproveParams =
     id: zod.string(),
   });
 
+export const simulateApiHarnessEnvironmentsDesignReviewApproveBodyRevisionMin = 64;
+export const simulateApiHarnessEnvironmentsDesignReviewApproveBodyRevisionMax = 64;
+
 export const SimulateApiHarnessEnvironmentsDesignReviewApproveBody = zod.object(
-  {},
+  {
+    revision: zod
+      .string()
+      .min(simulateApiHarnessEnvironmentsDesignReviewApproveBodyRevisionMin)
+      .max(simulateApiHarnessEnvironmentsDesignReviewApproveBodyRevisionMax),
+  },
 );
 
 export const simulateApiHarnessEnvironmentsDesignReviewApproveResponseScenarioCountMin = 0;
@@ -47973,6 +47982,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewApproveResponse =
         at: zod.string().min(1),
       }),
     ),
+    revision: zod.string().min(1),
     created_at: zod.string().datetime({ offset: true }),
     approved_at: zod.string().datetime({ offset: true }),
   });
@@ -48102,6 +48112,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewDiscardResponse =
         at: zod.string().min(1),
       }),
     ),
+    revision: zod.string().min(1),
     created_at: zod.string().datetime({ offset: true }),
     approved_at: zod.string().datetime({ offset: true }),
   });
@@ -48244,6 +48255,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewEditResponse =
         at: zod.string().min(1),
       }),
     ),
+    revision: zod.string().min(1),
     created_at: zod.string().datetime({ offset: true }),
     approved_at: zod.string().datetime({ offset: true }),
   });
@@ -48369,6 +48381,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewUndoResponse =
         at: zod.string().min(1),
       }),
     ),
+    revision: zod.string().min(1),
     created_at: zod.string().datetime({ offset: true }),
     approved_at: zod.string().datetime({ offset: true }),
   });

@@ -16,6 +16,10 @@ class DesignEditRequestSerializer(serializers.Serializer):
         return attrs
 
 
+class DesignApproveRequestSerializer(serializers.Serializer):
+    revision = serializers.CharField(min_length=64, max_length=64)
+
+
 class DesignImpactQuerySerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=("table", "tool"))
     id = serializers.CharField(max_length=255)
@@ -118,6 +122,7 @@ class DesignReviewSerializer(serializers.Serializer):
     actors = DesignActorSerializer(many=True)
     unsupported = DesignUnsupportedSerializer(many=True)
     edits = DesignEditSerializer(many=True)
+    revision = serializers.CharField()
     created_at = serializers.DateTimeField(allow_null=True)
     approved_at = serializers.DateTimeField(allow_null=True)
 

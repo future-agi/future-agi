@@ -60,6 +60,7 @@ from simulate.serializers.harness_actors import (
     editor_problems,
 )
 from simulate.serializers.harness_design_review import (
+    DesignApproveRequestSerializer,
     DesignEditRequestSerializer,
     DesignImpactQuerySerializer,
     DesignImpactSerializer,
@@ -1010,8 +1011,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
 
     @viewer_denied("approve the environment's design")
     @validated_request(
-        request_serializer=EmptyRequestSerializer,
+        request_serializer=DesignApproveRequestSerializer,
         responses={200: DesignReviewSerializer},
+        reject_unknown_fields=True,
         operation_id="simulate_api_harness-environments_design_review_approve",
     )
     @action(detail=True, methods=["post"], url_path="design-review/approve")
@@ -1025,7 +1027,12 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
         ).rstrip("/")
-        job = approve(job, user=request.user, base_url=base_url)
+        job = approve(
+            job,
+            user=request.user,
+            base_url=base_url,
+            revision=request.validated_data["revision"],
+        )
         return Response(design_document(job))
 
     @viewer_denied("start the build again")

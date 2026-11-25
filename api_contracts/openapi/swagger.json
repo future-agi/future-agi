@@ -53646,6 +53646,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -53689,6 +53695,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -53732,6 +53744,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -53798,6 +53816,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -53874,6 +53898,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -53906,6 +53936,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -54163,7 +54199,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/EmptyRequest"
+                            "$ref": "#/definitions/DesignApproveRequest"
                         }
                     }
                 ],
@@ -155055,6 +155091,7 @@
                 "actors",
                 "unsupported",
                 "edits",
+                "revision",
                 "created_at",
                 "approved_at"
             ],
@@ -155134,6 +155171,11 @@
                         "$ref": "#/definitions/DesignEdit"
                     }
                 },
+                "revision": {
+                    "title": "Revision",
+                    "type": "string",
+                    "minLength": 1
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -155145,6 +155187,20 @@
                     "type": "string",
                     "format": "date-time",
                     "x-nullable": true
+                }
+            }
+        },
+        "DesignApproveRequest": {
+            "required": [
+                "revision"
+            ],
+            "type": "object",
+            "properties": {
+                "revision": {
+                    "title": "Revision",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 64
                 }
             }
         },
