@@ -609,16 +609,17 @@ const EvalsTabView = ({
     />
   );
 
+  const counted = useMemo(() => list.filter((e) => !e.removed), [list]);
   const totalPass = useMemo(
-    () => list.filter((e) => evalVerdict(e) === true).length,
-    [list],
+    () => counted.filter((e) => evalVerdict(e) === true).length,
+    [counted],
   );
   const totalFail = useMemo(
-    () => list.filter((e) => evalVerdict(e) === false).length,
-    [list],
+    () => counted.filter((e) => evalVerdict(e) === false).length,
+    [counted],
   );
   const passRate =
-    list.length > 0 ? Math.round((totalPass / list.length) * 100) : 0;
+    counted.length > 0 ? Math.round((totalPass / counted.length) * 100) : 0;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -669,7 +670,7 @@ const EvalsTabView = ({
               }}
             >
               <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
-                {totalPass}/{list.length} passed
+                {totalPass}/{counted.length} passed
               </Typography>
               {totalFail > 0 && (
                 <Typography

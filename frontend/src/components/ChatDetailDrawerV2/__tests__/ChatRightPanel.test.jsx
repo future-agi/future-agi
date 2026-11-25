@@ -47,6 +47,22 @@ describe("ChatRightPanel choice evals", () => {
   });
 });
 
+describe("ChatRightPanel removed evals", () => {
+  it("marks a removed eval and leaves it out of the pass count", async () => {
+    renderPanel({
+      ...base,
+      eval_metrics: {
+        "ev-tone": { id: "ev-tone", name: "tone_check", value: "Passed", type: "Pass/Fail" },
+        "ev-old": { id: "ev-old", name: "old_check", value: "Failed", type: "Pass/Fail", removed: true },
+      },
+    });
+    await userEvent.click(screen.getByRole("tab", { name: /Evals/ }));
+    expect(screen.getByTestId("removed-eval-marker")).toBeInTheDocument();
+    expect(screen.getByText(/1\/1 passed/)).toBeInTheDocument();
+    expect(screen.queryByText(/1 failed/)).toBeNull();
+  });
+});
+
 describe("ChatRightPanel Scenario tab", () => {
   it("shows for a call with a persona but no scenario columns", () => {
     renderPanel({ ...base, persona_details: { name: "Siddharth Nair", voice: null, age: null, traits: [] } });

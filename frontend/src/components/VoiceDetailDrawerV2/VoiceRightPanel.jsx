@@ -312,6 +312,7 @@ const VoiceRightPanel = ({
         explanation: e?.reason || e?.explanation || e?.skipped_reason,
         error: e?.error === true,
         skipped: e?.skipped === true || e?.status === "skipped",
+        removed: e?.removed === true,
         // Lifecycle status (pending/running/skipped) so EvalsTabView renders a
         // loading / queued / skipped state for not-yet-completed voice evals.
         status: e?.status,
