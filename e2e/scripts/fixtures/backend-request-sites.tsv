@@ -101,6 +101,10 @@ flows/observe/saved-view-duplicate-name.spec.ts	factory req=request	1	collector
 flows/observe/saved-view-preset-dates.spec.ts	factory req=request	7	collector
 flows/observe/span-filter-parity.spec.ts	factory req=request	1	collector
 flows/observe/sql-workbench.spec.ts	factory req=request	1	collector
+flows/observe/trace-attachments.spec.ts	attached page.context().request	1	browser context; attachments HTTPS origin
+flows/observe/trace-attachments.spec.ts	factory anonymous=request	1	raw; attachments HTTPS origin
+flows/observe/trace-attachments.spec.ts	send anonymous.get path	1	raw; attachments HTTPS origin
+flows/observe/trace-attachments.spec.ts	send anonymous.post F01.resolve(voiceProject	1	raw; attachments HTTPS origin
 flows/observe/trace-ingestion.spec.ts	factory req=request	1	collector
 flows/observe/user-code-literal.spec.ts	factory req=request	1	collector
 flows/sdk-ingestion/eval-structure-scope.spec.ts	binding browser,request,scopeActors:scopes,scopeProbe:probe	1	backendRequestContext
@@ -141,6 +145,8 @@ harness/otlp-shapes.spec.ts	binding request,actor,probe	2	backendRequestContext
 harness/otlp-tree.spec.ts	binding request,actor,probe	1	backendRequestContext
 harness/otlp.spec.ts	factory req=request	1	collector
 harness/provisioning.spec.ts	factory req=request	1	ApiClient
+lib/attachment-media-delivery.ts	factory upstream=pwRequest	1	raw; attachments HTTPS origin
+lib/attachment-media-delivery.ts	send upstream.fetch request.url(	1	raw; attachments HTTPS origin
 lib/backend-request.ts	attached route.fetch(	1	firstHopOptions
 lib/backend-request.ts	binding request,baseURL	1	backendRequestContext
 lib/backend-request.ts	factory -=request	1	backendRequestContext

@@ -76,7 +76,7 @@ function headerMap(headers: { name: string; value: string }[]): Record<string, s
 }
 
 /** Holds only real responses. No synthetic session, grant, token, or cookie.
- * IMPORTANT: never use route.fetch(), page.request or context.request here:
+ * IMPORTANT: never use the route's own fetch or the page's or context's request here:
  * those share the browser cookie jar and can install Set-Cookie before fulfill.
  * A fresh isolated APIRequestContext forwards the original request's exact
  * headers/body once, with no redirects or retries. Only fulfill delivers it.

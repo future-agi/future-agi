@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { crc32, deflateSync } from 'node:zlib';
 import { request, type APIRequestContext, type Locator, type Response } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { newBackendRequest } from '../../lib/backend-request';
 import type { TestActor } from '../../lib/provisioning';
 import { sendOtlpExport, type OtlpKeyValue, type OtlpSpan } from '../../lib/otlp';
 import { POLL } from '../../lib/state-probe';
@@ -314,7 +315,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
   // + 6*60s UI_READY + 3*40s direct API + 60s for three 7 s playbacks + 75s headroom = 960s.
   // No suite change/retries.
   expect(DIAGNOSTICS).toContain(DIAGNOSTIC);
-  const api = await request.newContext({ baseURL: E2E.apiUrl });
+  const api = await newBackendRequest({ baseURL: E2E.apiUrl });
   const anonymous = await request.newContext({ baseURL: E2E.attachmentsAppUrl, ignoreHTTPSErrors: true });
   // Every media fetch the page makes; the last step asserts they all used the gateway.
   const media: string[] = [];

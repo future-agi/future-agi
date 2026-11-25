@@ -3125,7 +3125,7 @@
 
 **Goal:** A developer opens SDK-shaped LiveKit and Pipecat recordings in trace and Voice players, follows a call's tool use beside its speech, sees an image where the model saw it, and deletes the LiveKit session to revoke its media without affecting Pipecat
 
-**Spec:** `flows/observe/trace-attachments.spec.ts:284`
+**Spec:** `flows/observe/trace-attachments.spec.ts:285`
 
 **Tags:** —
 
