@@ -196,6 +196,35 @@ def _environment_build_runtime(
     ).first()
 
 
+def _build_runtime(
+    organization_id: Any, workspace_id: Any, payload: dict[str, Any]
+) -> Any:
+    """The agent version a creation builds, as create finds it; None for any other creation."""
+    try:
+        return _connected_build_runtime(
+            organization_id, workspace_id, payload
+        ) or _environment_build_runtime(organization_id, workspace_id, payload)
+    except (ValueError, ValidationError):
+        return None
+
+
+def _refuse_unpaired_browser_build(runtime: Any, payload: dict[str, Any]) -> None:
+    """Refuse building an agent that needs a browser into an environment with no sites.
+
+    The version's stored reading says what it needs; a version not read yet is left to the build.
+    """
+    from simulate.services.browser_sites import (
+        browser_sites_at_pin,
+        refuse_unpaired_browser_agent,
+    )
+
+    if runtime is None:
+        return
+    refuse_unpaired_browser_agent(
+        runtime.agent_version_id, browser_sites_at_pin(payload)
+    )
+
+
 def get_harness_provider():
     """Return the configured public harness backend."""
     name = str(getattr(settings, "HARNESS_PROVIDER", "hosted") or "hosted").lower()
@@ -1629,6 +1658,7 @@ class HostedHarnessProvider:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
+            _refuse_unpaired_browser_build(connected_runtime, payload)
             # A replay answers with its job, whatever GitHub says now.
             replayed = find_replayed_job(
                 organization,
@@ -1792,6 +1822,16 @@ class HostedHarnessProvider:
                 payload,
             )
             _validate_known_hosted_egress(payload, base_url)
+            organization = request_organization(request)
+            if organization is not None:
+                _refuse_unpaired_browser_build(
+                    _build_runtime(
+                        organization.id,
+                        getattr(request_workspace(request), "id", None),
+                        payload,
+                    ),
+                    payload,
+                )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         from simulate.services.hosted_harness import clamp_parallelism

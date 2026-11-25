@@ -21,6 +21,7 @@ from simulate.services.agent_versions import set_production
 from simulate.services.harness_agent_versions import POLICY_KEY
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_agent_creation import (
+    PREFLIGHT_URL,
     _body,
     _job,
     _post,
@@ -327,3 +328,105 @@ def test_a_creation_straight_from_a_repository_keeps_the_public_only_check(
         _post(client, workspace, _body())
 
     public_only.assert_called()
+
+
+def _reads_as_browser(version):
+    return patch(
+        "simulate.services.agent_contracts.stored_version_contract",
+        side_effect=lambda version_id: (
+            {"modality": "chat", "environment_needs": ["browser"]}
+            if str(version_id) == str(version.id)
+            else None
+        ),
+    )
+
+
+def test_a_browser_agent_is_not_built_into_an_environment_without_sites(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    with _reads_as_browser(production):
+        response = _post(client, workspace, _creation(agent))
+
+    assert response.status_code == 422, response.content
+    assert response.json()["error"] == "browser_environment_required"
+    assert not HostedHarnessJob.no_workspace_objects.filter(
+        organization=agent.organization
+    ).exists()
+
+
+def test_a_browser_agent_is_built_into_an_environment_that_names_sites(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    body = _creation(agent)
+    body["browser"] = {"allowed_sites": ["shop.example.com"]}
+
+    with _reads_as_browser(production):
+        job = _job(_post(client, workspace, body))
+
+    assert job.agent_version_id == production.id
+    assert job.payload["browser"] == {"allowed_sites": ["shop.example.com"]}
+
+
+def _preflight_report(client, workspace, body):
+    return client.post(
+        PREFLIGHT_URL, body, format="json", HTTP_X_WORKSPACE_ID=str(workspace.id)
+    )
+
+
+def test_preflight_refuses_a_browser_agent_with_no_sites(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    with _reads_as_browser(production):
+        response = _preflight_report(client, workspace, _creation(agent))
+
+    assert response.status_code == 422, response.content
+    assert response.json()["error"] == "browser_environment_required"
+
+
+def test_preflight_passes_a_browser_agent_with_sites(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    body = _creation(agent)
+    body["browser"] = {"allowed_sites": ["shop.example.com"]}
+
+    with _reads_as_browser(production):
+        response = _preflight_report(client, workspace, body)
+
+    assert response.status_code == 200, response.content
+
+
+def test_a_chat_agent_with_sites_is_not_refused(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    # The other way round: the run reports that no browser was started.
+    body = _creation(agent)
+    body["browser"] = {"allowed_sites": ["shop.example.com"]}
+
+    with patch(
+        "simulate.services.agent_contracts.stored_version_contract",
+        return_value={"modality": "chat"},
+    ):
+        assert _preflight_report(client, workspace, body).status_code == 200
+        job = _job(_post(client, workspace, body))
+
+    assert job.agent_version_id == production.id
