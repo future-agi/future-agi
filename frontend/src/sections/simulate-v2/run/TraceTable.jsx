@@ -54,6 +54,7 @@ import {
   deriveUseCaseLabel,
   ruleOf,
   groupOutcomeParts,
+  groupOutcomeText,
 } from "./traceTableHelpers";
 import { turnsOf } from "../_mock/runStream";
 import { clickable, focusRing } from "../components/clickable";
@@ -1527,14 +1528,10 @@ function GroupHeaderRow({
   const notScored =
     group.count > 0 && group.outcomes.unmeasured === group.count;
   const passText = notScored
-    ? ` · ${groupOutcomeParts(group)
-        .map((p) => p.text)
-        .join(" · ")}`
+    ? ` · ${groupOutcomeText(groupOutcomeParts(group))}`
     : group.measured > 0
       ? group.repeated
-        ? ` · ${groupOutcomeParts(group)
-            .map((p) => p.text)
-            .join(" · ")}`
+        ? ` · ${groupOutcomeText(groupOutcomeParts(group))}`
         : ` · ${group.pct}% passed ${group.passed}/${group.measured}`
       : "";
   const passMark = (group.measured > 0 || notScored) && (
@@ -1554,13 +1551,15 @@ function GroupHeaderRow({
         <>
           {/* Counts in coloured words, no dots: on this page a dot is
               always one trial. They add up to the group's scenarios. */}
-          {groupOutcomeParts(group).map((p, i) => (
+          {groupOutcomeParts(group).map((p, i, arr) => (
             <React.Fragment key={p.key}>
               {i === 0 ? (
                 <Box
                   component="span"
                   sx={{ display: "inline-block", width: 10 }}
                 />
+              ) : arr[i - 1].lead ? (
+                " "
               ) : (
                 " · "
               )}
@@ -1568,7 +1567,7 @@ function GroupHeaderRow({
                 component="span"
                 sx={{
                   color: String(p.dot).replace(/\.solid$/, ".fg"),
-                  fontWeight: 600,
+                  fontWeight: 400,
                 }}
               >
                 {p.n !== "" ? `${p.n} ${p.word}` : p.word}
@@ -1808,9 +1807,9 @@ function GroupHeaderRow({
                 fontWeight: 500,
                 color: "text.primary",
                 minWidth: 0,
-                /* The name keeps its room; the counts give way first. */
-                flex: "0 0 auto",
-                maxWidth: "68%",
+                /* The counts always show in full; the name gives way
+                   (whole name on hover). */
+                flex: "0 1 auto",
               }}
             >
               {group.label}
@@ -1855,9 +1854,8 @@ function GroupHeaderRow({
                       fontWeight: 500,
                       color: "text.primary",
                       minWidth: 0,
-                      /* The name keeps its room; the counts give way first. */
-                      flex: "0 0 auto",
-                      maxWidth: "68%",
+                      /* The counts show in full; the name gives way (whole name on hover). */
+                      flex: "0 1 auto",
                     }}
                   >
                     {group.label}

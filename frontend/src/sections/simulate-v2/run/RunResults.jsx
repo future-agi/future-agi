@@ -2596,7 +2596,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             }}
           >
             {SHOW_INSIGHTS && <Tab value="insights" label="Insights" />}
-            <Tab value="tasks" label={`Scenarios (${stats.total})`} />
+            <Tab value="tasks" label={`Results (${stats.total})`} />
             <Tab value="analytics" label="Analytics" />
             <Tab value="cost" label="Cost" />
             <Tab value="evaluate" label="Evaluate" />

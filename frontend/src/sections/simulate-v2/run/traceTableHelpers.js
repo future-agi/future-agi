@@ -279,16 +279,12 @@ export function variantLabel(id) {
 export const groupOutcomeParts = (group) => {
   const rows = group?.rows || [];
   /* One scenario that wasn't scored: say so — never a blank. */
-  if (rows.length === 1 && ["unmeasured", "error"].includes(rows[0].status))
+  if (rows.length === 1 && ["unmeasured", "error"].includes(rows[0].status)) {
+    const word = group.trialsWhenOne ? "Not scored" : "1 scenario not scored";
     return [
-      {
-        key: "not scored",
-        n: "",
-        word: "Not scored",
-        dot: "text.disabled",
-        text: "Not scored",
-      },
+      { key: "not scored", n: "", word, dot: "text.disabled", text: word },
     ];
+  }
   if (
     group.trialsWhenOne &&
     rows.length === 1 &&
@@ -314,7 +310,7 @@ export const groupOutcomeParts = (group) => {
     ];
   }
   const o = group?.outcomes || {};
-  return [
+  const parts = [
     ["passed", o.passed || 0, "status.success.solid"],
     ["flaky", o.mixed || 0, "status.warning.solid"],
     ["failed", o.failing || 0, "status.danger.solid"],
@@ -329,4 +325,33 @@ export const groupOutcomeParts = (group) => {
       dot,
       text: `${n} ${word}`,
     }));
+  /* The unit is always said, so a count never reads as trials:
+     "3 scenarios failed", or "3 scenarios: 1 passed · 2 failed". */
+  const total = parts.reduce((a, p) => a + p.n, 0);
+  const noun = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
+  if (parts.length === 1) {
+    const [p] = parts;
+    return [{ ...p, n: noun(p.n), text: `${noun(p.n)} ${p.word}` }];
+  }
+  return parts.length
+    ? [
+        {
+          key: "total",
+          n: "",
+          word: `${noun(total)}:`,
+          dot: "text.secondary",
+          text: `${noun(total)}:`,
+          lead: true,
+        },
+        ...parts,
+      ]
+    : parts;
 };
+
+/* The parts as one line: "3 scenarios: 1 passed · 2 failed". */
+export const groupOutcomeText = (parts) =>
+  parts
+    .map((p, i) =>
+      i === 0 ? p.text : `${parts[i - 1].lead ? " " : " · "}${p.text}`,
+    )
+    .join("");

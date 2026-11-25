@@ -7,14 +7,18 @@ describe("groupOutcomeParts", () => {
       rows: [{ samples: ["passed", "failed"] }, { samples: ["failed"] }],
       outcomes: { passed: 0, mixed: 2, failing: 1 },
     });
-    expect(parts.map((p) => p.text)).toEqual(["2 flaky", "1 failed"]);
+    expect(parts.map((p) => p.text)).toEqual([
+      "3 scenarios:",
+      "2 flaky",
+      "1 failed",
+    ]);
   });
   it("by goal, a one-scenario group still counts scenarios", () => {
     const parts = groupOutcomeParts({
       rows: [{ status: "flaky", samples: ["passed", "failed", "failed"] }],
       outcomes: { mixed: 1 },
     });
-    expect(parts.map((p) => p.text)).toEqual(["1 flaky"]);
+    expect(parts.map((p) => p.text)).toEqual(["1 scenario flaky"]);
   });
   it("by actor, a one-scenario group reads as that scenario's trials", () => {
     const parts = groupOutcomeParts({
@@ -31,7 +35,7 @@ describe("groupOutcomeParts", () => {
       rows: [{ status: "unmeasured", samples: ["unmeasured", "unmeasured"] }],
       outcomes: { unmeasured: 1 },
     });
-    expect(parts.map((p) => p.text)).toEqual(["Not scored"]);
+    expect(parts.map((p) => p.text)).toEqual(["1 scenario not scored"]);
     expect(parts[0].dot).toBe("text.disabled");
   });
   it("counts not-scored scenarios in a multi-scenario group", () => {
@@ -39,6 +43,6 @@ describe("groupOutcomeParts", () => {
       rows: [{ status: "unmeasured" }, { status: "error" }],
       outcomes: { unmeasured: 2 },
     });
-    expect(parts.map((p) => p.text)).toEqual(["2 not scored"]);
+    expect(parts.map((p) => p.text)).toEqual(["2 scenarios not scored"]);
   });
 });
