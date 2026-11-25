@@ -10,6 +10,30 @@ from django.db.models import OuterRef, Subquery
 
 BATCH = 100
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:accounts_workspace",
+        "postgres:tracer_error_cluster_traces",
+        "postgres:tracer_feed_escalation_policy",
+        "postgres:tracer_trace_investigation_finding",
+        "postgres:tracer_trace_investigation_job",
+        "postgres:tracer_trace_investigation_report",
+    ],
+    "mitigation": (
+        "Non-atomic RunPython in keyset batches of 100: creates one default policy row per live "
+        "workspace, and copies Omega root end times (finding -> report -> job) into "
+        "tracer_error_cluster_traces rows whose occurrence time is null. Each batch commits on its "
+        "own and row-locks at most 100 membership rows, with no table lock. It changes no issue "
+        "status or ownership; open legacy issues join automation at runtime. Reruns are no-ops for "
+        "rows already filled. Reverse is a no-op; recovery restores the sealed source snapshot."
+    ),
+    "reviewer": "NVJKKartik",
+    "review": "https://github.com/future-agi/future-agi/pull/3560#discussion_r4695688788",
+    "large_volume_rehearsal": True,
+}
+
 
 def backfill_feed_issue_statuses(apps, schema_editor):
     alias = schema_editor.connection.alias
