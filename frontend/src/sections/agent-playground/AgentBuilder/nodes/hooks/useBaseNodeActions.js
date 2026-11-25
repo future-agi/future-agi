@@ -51,12 +51,21 @@ export default function useBaseNodeActions({
     async (nodeType, nodeTemplateId, initialConfig) => {
       if (preview || isWorkflowRunning) return;
       const currentNode = getNode(id);
-      const position = currentNode
-        ? {
-            x: currentNode.position.x + NODE_X_OFFSET,
-            y: currentNode.position.y,
-          }
-        : undefined;
+      if (!currentNode) {
+        // Only reachable from a *deferred* Agent insert (TH-4549 setup dialog):
+        // this node was deleted while the dialog was open. Never attach a new
+        // node to a source that no longer exists (PRD R-13).
+        enqueueSnackbar(
+          "The node this Agent node was going to attach to no longer exists. Choose a new target.",
+          { variant: "warning" },
+        );
+        setPopperOpen(false);
+        return;
+      }
+      const position = {
+        x: currentNode.position.x + NODE_X_OFFSET,
+        y: currentNode.position.y,
+      };
 
       const added = await addNode({
         type: nodeType,

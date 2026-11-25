@@ -235,7 +235,9 @@ export default function StepSyncSettings({
           size="small"
           variant="outlined"
           onClick={onBack}
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
           sx={backButtonSx}
         >
           Back
@@ -246,7 +248,6 @@ export default function StepSyncSettings({
           size="small"
           loading={isPending}
           onClick={handleCreate}
-          sx={{ fontWeight: 500 }}
         >
           Connect Integration
         </LoadingButton>

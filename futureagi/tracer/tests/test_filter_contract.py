@@ -1,4 +1,11 @@
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 from rest_framework import serializers
 
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
@@ -11,8 +18,10 @@ from tracer.utils.constants import (
 from tracer.utils.filter_operators import (
     FILTER_COLUMN_TYPES,
     FILTER_TYPE_ALLOWED_OPS,
-    normalize_filter_type,
+    SESSION_NUMERIC_MEMBERSHIP_COLUMNS,
+    filter_op_is_allowed,
     load_filter_contract,
+    normalize_filter_type,
 )
 from tracer.utils.helper import validate_filters_helper
 
@@ -62,10 +71,110 @@ def _sample_value(filter_type, filter_op):
 
 
 class TestFilterContract:
+    def test_installed_package_loads_metric_contract_without_repo_source(
+        self, tmp_path
+    ):
+        """A fresh import must exercise the shipped fallback, not api_contracts/."""
+        tracer_root = Path(__file__).resolve().parents[1]
+        site_packages = tmp_path / "site-packages"
+        package = site_packages / "tracer"
+        (package / "utils").mkdir(parents=True)
+        (package / "contracts").mkdir()
+        (package / "__init__.py").touch()
+        (package / "utils" / "__init__.py").touch()
+        for name in ("filter_operators.py", "attribute_suggestion_contract.py"):
+            shutil.copyfile(tracer_root / "utils" / name, package / "utils" / name)
+        shutil.copyfile(
+            tracer_root / "contracts" / "filter_contract.json",
+            package / "contracts" / "filter_contract.json",
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import json, sys; sys.path.insert(0, sys.argv[1]); "
+                "from tracer.utils import filter_operators as filters; "
+                "assert filters.__file__.startswith(sys.argv[1]); "
+                "assert 'METRIC_FIELD' in filters.FILTER_COLUMN_TYPES; "
+                "assert filters.normalize_col_type('metric') == 'METRIC_FIELD'; "
+                "print(json.dumps(filters.load_filter_contract()))",
+                str(site_packages),
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == load_filter_contract()
+
+    def test_metric_family_is_additive_and_uses_canonical_operator_names(self):
+        from tracer.utils.filter_operators import normalize_col_type
+
+        assert "METRIC_FIELD" in FILTER_COLUMN_TYPES
+        assert normalize_col_type("metric") == "METRIC_FIELD"
+        assert "gt" not in FILTER_TYPE_ALLOWED_OPS["number"]
+        assert "greater_than" in FILTER_TYPE_ALLOWED_OPS["number"]
+
     def test_contract_exports_canonical_span_attribute_ops(self):
         assert "not_between" in SPAN_ATTR_ALLOWED_OPS["number"]
         assert "not_in_between" not in SPAN_ATTR_ALLOWED_OPS["number"]
         assert FILTER_TYPE_ALLOWED_OPS["number"] == SPAN_ATTR_ALLOWED_OPS["number"]
+
+    @pytest.mark.parametrize("filter_op", ["in", "not_in"])
+    @pytest.mark.parametrize("column_id", sorted(SESSION_NUMERIC_MEMBERSHIP_COLUMNS))
+    def test_numeric_membership_requires_explicit_session_scope(
+        self,
+        filter_op,
+        column_id,
+    ):
+        assert filter_op not in FILTER_TYPE_ALLOWED_OPS["number"]
+        assert not filter_op_is_allowed(
+            "number",
+            filter_op,
+            column_id=column_id,
+            column_type="SYSTEM_METRIC",
+        )
+        assert filter_op_is_allowed(
+            "number",
+            filter_op,
+            column_id=column_id,
+            column_type="SYSTEM_METRIC",
+            allow_session_numeric_membership=True,
+        )
+
+    @pytest.mark.parametrize("filter_op", ["in", "not_in"])
+    @pytest.mark.parametrize(
+        "column_type",
+        ["SPAN_ATTRIBUTE", "EVAL_METRIC", "NORMAL", None],
+    )
+    def test_session_numeric_membership_opt_in_requires_system_metric(
+        self,
+        filter_op,
+        column_type,
+    ):
+        assert not filter_op_is_allowed(
+            "number",
+            filter_op,
+            column_id="duration",
+            column_type=column_type,
+            allow_session_numeric_membership=True,
+        )
+
+    @pytest.mark.parametrize("filter_op", ["in", "not_in"])
+    def test_session_numeric_membership_opt_in_rejects_other_columns(
+        self,
+        filter_op,
+    ):
+        assert not filter_op_is_allowed(
+            "number",
+            filter_op,
+            column_id="latency_ms",
+            column_type="SYSTEM_METRIC",
+            allow_session_numeric_membership=True,
+        )
 
     def test_contract_does_not_publish_operator_aliases(self):
         assert "aliases" not in load_filter_contract()["operators"]
@@ -127,17 +236,21 @@ class TestFilterContract:
             query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN
         )
 
-        where, params = builder.translate(
-            [_span_filter(filter_type, filter_op, value)]
-        )
+        where, params = builder.translate([_span_filter(filter_type, filter_op, value)])
 
         assert where
         assert "span_attr_" in where
-        assert "contract_attr" in where
+        # The attribute key is bound, not inlined: assert it on the parameter
+        # and on the query the database actually receives.
+        assert params["attr_key_1"] == "contract_attr"
+        assert "contract_attr" in finalize_query(where, params)
         if filter_op in NO_VALUE_OPS:
-            assert params == {}
+            # A valueless op binds the key and nothing else.
+            assert params == {"attr_key_1": "contract_attr"}
         else:
-            assert params
+            # The key param is always present now, so `assert params` would be
+            # vacuous; a value must be bound on top of it.
+            assert len(params) > 1
 
     @pytest.mark.parametrize(
         "column_id,filter_type,filter_op",
@@ -200,6 +313,4 @@ class TestFilterContract:
         )
 
         with pytest.raises(ValueError):
-            builder.translate(
-                [_span_filter("number", "not_in_between", ["1", "2"])]
-            )
+            builder.translate([_span_filter("number", "not_in_between", ["1", "2"])])

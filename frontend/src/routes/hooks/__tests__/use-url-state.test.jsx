@@ -1,7 +1,7 @@
 import React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { BrowserRouter } from "react-router-dom";
+import { BrowserRouter, useSearchParams } from "react-router-dom";
 import { useUrlState } from "../use-url-state";
 
 const wrapper = ({ children }) => <BrowserRouter>{children}</BrowserRouter>;
@@ -71,5 +71,27 @@ describe("useUrlState", () => {
     expect(renderPhaseRouterWarning).toBe(false);
 
     consoleError.mockRestore();
+  });
+
+  it("follows an external URL change after re-writing the value the URL already holds", async () => {
+    window.history.pushState({}, "", "/test?showCompare=true");
+    const { result } = renderHook(
+      () => {
+        const [value, setValue] = useUrlState("showCompare", false);
+        const [, setSearchParams] = useSearchParams();
+        return { value, setValue, setSearchParams };
+      },
+      { wrapper },
+    );
+    expect(result.current.value).toBe(true);
+
+    // A saved view re-applies the value the reloaded URL already carries.
+    act(() => result.current.setValue(true));
+    // Leaving the view navigates to a URL without the key.
+    act(() =>
+      result.current.setSearchParams(new URLSearchParams("tab=traces")),
+    );
+
+    await waitFor(() => expect(result.current.value).toBe(false));
   });
 });

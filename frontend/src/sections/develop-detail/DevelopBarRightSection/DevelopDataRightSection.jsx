@@ -68,7 +68,9 @@ const DevelopDataRightSection = ({ hideScenarioFeatures = false }) => {
   const { processingComplete } = useDatasetOriginStore();
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
+  const isSyntheticDataset = Boolean(
+    tableData?.data?.result?.synthetic_dataset,
+  );
   const processingData = Boolean(tableData?.data?.result?.isProcessingData);
   const buttonStyles = {
     color: "text.primary",
@@ -232,7 +234,7 @@ const DevelopDataRightSection = ({ hideScenarioFeatures = false }) => {
                         <Link
                           href={button.link}
                           underline="always"
-                          color="blue.500"
+                          color="status.info.fg"
                           target="_blank"
                           rel="noopener noreferrer"
                           fontWeight="fontWeightMedium"

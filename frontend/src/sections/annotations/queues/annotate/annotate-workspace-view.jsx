@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, {
   useState,
   useCallback,
@@ -38,6 +39,7 @@ import {
   useItemDiscussion,
 } from "src/api/annotation-queues/annotation-queues";
 import AnnotateHeader from "./annotate-header";
+import AnnotateItemError from "./annotate-item-error";
 import AnnotateFooter from "./annotate-footer";
 import ContentPanel from "./content-panel";
 import LabelPanel from "./label-panel";
@@ -59,7 +61,13 @@ import {
   resolveSelectedAnnotatorScope,
 } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
-import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
+import {
+  QUEUE_ROLES,
+  hasQueueRole,
+  isQueueAnnotatorRole,
+  shortId,
+} from "../constants";
+import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 
 const MAX_HISTORY = 50;
 
@@ -127,12 +135,6 @@ function isOpenBlockingReviewFeedback(comment) {
     isBlockingReviewFeedback(comment) &&
     (!comment?.thread_status || isOpenReviewStatus(comment.thread_status))
   );
-}
-
-function shortId(value) {
-  if (!value) return "";
-  const text = String(value);
-  return text.length > 8 ? text.slice(0, 8) : text;
 }
 
 function itemContextLabel(item, itemId) {
@@ -270,7 +272,7 @@ export default function AnnotateWorkspaceView() {
   const currentUserId = String(
     user?.id ||
       (typeof window !== "undefined"
-        ? window.sessionStorage.getItem("currentUserId")
+        ? window.sessionStorage.getItem(SS_KEY_USER_ID)
         : "") ||
       "",
   );
@@ -459,6 +461,8 @@ export default function AnnotateWorkspaceView() {
       !isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
     reserve: !isReviewWorkspaceMode && queueDetail?.annotations_required === 1,
     enabled: detailEnabled,
+    // Persistent workspace error states own these failures, not a transient toast.
+    meta: { errorHandled: true },
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
@@ -499,7 +503,9 @@ export default function AnnotateWorkspaceView() {
     currentScopeKey: detailNavigationScopeKey,
   });
   const { data: liveDiscussion } = useItemDiscussion(queueId, currentItemId, {
-    enabled: detailEnabled,
+    // Wait for this item's detail before polling a discussion we may not access.
+    enabled:
+      detailEnabled && detail?.item?.id === currentItemId && !detailError,
     refetchInterval: commentsOpen ? 3000 : 10000,
     refetchIntervalInBackground: false,
   });
@@ -1421,9 +1427,7 @@ export default function AnnotateWorkspaceView() {
     isWaitingForAnnotatorSelection ||
     isInitialDetailLoading
   ) {
-    return (
-      <LoadingScreen sx={{ height: "80vh" }} />
-    );
+    return <LoadingScreen sx={{ height: "80vh" }} />;
   }
 
   // Reservation conflict
@@ -1448,7 +1452,7 @@ export default function AnnotateWorkspaceView() {
           gap: 2,
         }}
       >
-        <Iconify icon="mingcute:lock-fill" width={64} color="warning.main" />
+        <Iconify icon="solar:lock-linear" width={64} color="warning.main" />
         <Typography variant="h5">Item Reserved</Typography>
         <Alert severity="warning" sx={{ maxWidth: 480 }}>
           {msg}
@@ -1458,6 +1462,25 @@ export default function AnnotateWorkspaceView() {
         </Button>
         <Button onClick={handleBack}>Back to Queue</Button>
       </Box>
+    );
+  }
+
+  const detailErrorStatus =
+    detailError?.statusCode ?? detailError?.response?.status;
+  const hasTransientRefetchError =
+    !!detailError &&
+    detail?.item?.id === currentItemId &&
+    (detailErrorStatus == null ||
+      detailErrorStatus === 429 ||
+      detailErrorStatus >= 500);
+
+  if (detailError && !hasTransientRefetchError) {
+    return (
+      <AnnotateItemError
+        statusCode={detailErrorStatus}
+        onBack={handleBack}
+        onRetry={refetchAnnotateDetail}
+      />
     );
   }
 
@@ -1493,7 +1516,7 @@ export default function AnnotateWorkspaceView() {
           gap: 2,
         }}
       >
-        <Iconify icon="mingcute:lock-fill" width={64} color="warning.main" />
+        <Iconify icon="solar:lock-linear" width={64} color="warning.main" />
         <Typography variant="h5">Queue Not Active</Typography>
         <Typography color="text.secondary">
           This queue is currently <strong>{queueStatus}</strong>. Annotations
@@ -1521,44 +1544,36 @@ export default function AnnotateWorkspaceView() {
       : progress?.total ?? 0;
 
     return (
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "80vh",
-          gap: 2,
-        }}
-      >
-        <Iconify
-          icon="eva:checkmark-circle-2-fill"
-          width={64}
-          color="success.main"
-        />
-        <Typography variant="h5">All Done!</Typography>
-        <Typography color="text.secondary">
-          {isReviewWorkspaceMode
-            ? "No items are waiting for review."
-            : completedCount > 0 &&
-              `${completedCount} of ${totalCount} items completed.`}
-          {!isReviewWorkspaceMode &&
-            completedCount === 0 &&
-            "No more pending items in this queue."}
-        </Typography>
-
-        {skippedCount > 0 && (
-          <Alert severity="info" sx={{ maxWidth: 480 }}>
-            You have {skippedCount} skipped{" "}
-            {skippedCount === 1 ? "item" : "items"}. You can review them from
-            the queue items list.
-          </Alert>
-        )}
-
-        <Button variant="outlined" onClick={handleBack} sx={{ mt: 1 }}>
-          Back to Queue
-        </Button>
-      </Box>
+      <EmptyState
+        icon="solar:check-circle-linear"
+        title="All done"
+        description={
+          <>
+            {isReviewWorkspaceMode
+              ? "No items are waiting for review."
+              : completedCount > 0 &&
+                `${completedCount} of ${totalCount} items completed.`}
+            {!isReviewWorkspaceMode &&
+              completedCount === 0 &&
+              "No more pending items in this queue."}
+            {skippedCount > 0 &&
+              ` You have ${skippedCount} skipped ${
+                skippedCount === 1 ? "item" : "items"
+              }. You can review them from the queue items list.`}
+          </>
+        }
+        action={
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={handleBack}
+          >
+            Back to queue
+          </Button>
+        }
+        sx={{ minHeight: "80vh" }}
+      />
     );
   }
 
@@ -1577,6 +1592,23 @@ export default function AnnotateWorkspaceView() {
         minHeight: 0,
       }}
     >
+      {hasTransientRefetchError && (
+        <Alert
+          severity="warning"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              disabled={detailFetching}
+              onClick={() => refetchAnnotateDetail()}
+            >
+              Try Again
+            </Button>
+          }
+        >
+          Could not refresh this item. Your unsaved changes are still here.
+        </Alert>
+      )}
       <AnnotateHeader
         queueName={detail?.queue?.name}
         progress={detail?.progress}
@@ -1630,7 +1662,7 @@ export default function AnnotateWorkspaceView() {
               <Box sx={{ p: 1.5, pb: 0 }}>
                 <Typography
                   variant="caption"
-                  fontWeight={700}
+                  fontWeight={600}
                   color="text.secondary"
                   sx={{ display: "block", mb: 0.75 }}
                 >
@@ -1719,7 +1751,7 @@ export default function AnnotateWorkspaceView() {
                   sx={{ flex: 1, minHeight: 0, p: 3, textAlign: "center" }}
                 >
                   <Iconify
-                    icon="mingcute:lock-fill"
+                    icon="solar:lock-linear"
                     width={48}
                     color="text.disabled"
                   />

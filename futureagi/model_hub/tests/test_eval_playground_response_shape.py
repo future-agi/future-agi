@@ -1,5 +1,6 @@
 """Playground response shape stays canonical whether or not the metering helper is loaded (TH-6719)."""
 
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +10,6 @@ from model_hub.models.evals_metric import EvalTemplate
 from model_hub.views.utils import evals as evals_module
 from model_hub.views.utils.evals import run_eval_func
 from tfc.constants.api_calls import APICallStatusChoices
-
 
 _CANONICAL_KEYS = {
     "output",
@@ -174,6 +174,74 @@ def test_response_shape_is_canonical_when_metering_is_available(
     assert output["output_type"] == "Pass/Fail"
     assert output["log_id"] == "log-abc"
     assert "ground_truth_examples" not in output
+
+
+def _metered(monkeypatch):
+    """The metered path, with the events it emits kept."""
+    log_row = SimpleNamespace(
+        log_id="log-abc",
+        config="{}",
+        status=APICallStatusChoices.PROCESSING.value,
+        input_token_count=0,
+        save=lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        evals_module,
+        "log_and_deduct_cost_for_api_request",
+        lambda **_kwargs: log_row,
+    )
+    monkeypatch.setattr(
+        "ee.usage.services.metering.check_usage",
+        lambda *_args, **_kwargs: SimpleNamespace(allowed=True),
+    )
+    emitted = []
+    monkeypatch.setattr("ee.usage.services.emitter.emit", emitted.append)
+    return emitted
+
+
+@pytest.mark.django_db
+def test_a_caller_learns_what_the_eval_billed(
+    monkeypatch, pass_fail_template, organization
+):
+    _patch_runner(monkeypatch, format_output_return="Passed")
+    emitted = _metered(monkeypatch)
+    billed = []
+
+    run_eval_func(
+        {"config": {}, "params": {}},
+        {"input": "hello"},
+        pass_fail_template,
+        organization,
+        source="fix_check_run",
+        on_billed=billed.append,
+    )
+
+    [event] = emitted
+    assert billed == [event.amount]
+
+
+@pytest.mark.django_db
+def test_a_caller_learns_what_jev_billed_and_nothing_is_billed_twice(
+    monkeypatch, pass_fail_template, organization
+):
+    _patch_runner(monkeypatch, format_output_return="Passed")
+    emitted = _metered(monkeypatch)
+    monkeypatch.setattr(
+        evals_module, "_emit_jev_usage_billed", lambda *_a, **_k: Decimal("3")
+    )
+    billed = []
+
+    run_eval_func(
+        {"config": {}, "params": {}},
+        {"input": "hello"},
+        pass_fail_template,
+        organization,
+        source="fix_check_run",
+        on_billed=billed.append,
+    )
+
+    assert billed == [Decimal("3")]
+    assert emitted == []
 
 
 @pytest.mark.parametrize(

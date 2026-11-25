@@ -5,6 +5,7 @@ import {
   reorderColumns,
   restampColumns,
   applySavedColumns,
+  mergePersistedCustomColumns,
   isColumnVisibilityDirty,
   isColumnOrderDirty,
 } from "../savedViewColumns";
@@ -245,6 +246,36 @@ describe("applySavedColumns", () => {
     expect(next["primary-trace"].find((c) => c.id === "a").isVisible).toBe(
       false,
     );
+  });
+});
+
+describe("mergePersistedCustomColumns", () => {
+  it("hydrates persisted custom columns after base columns already loaded", () => {
+    const next = mergePersistedCustomColumns(
+      [
+        { id: "status", groupBy: "System" },
+        { id: "stale", groupBy: "Custom Columns" },
+      ],
+      [
+        { id: "final_status", groupBy: "Custom Columns" },
+        { id: "final_status", groupBy: "Custom Columns" },
+      ],
+    );
+
+    expect(next.map((col) => col.id)).toEqual(["status", "final_status"]);
+  });
+
+  it("is idempotent when the persisted custom ids are already present", () => {
+    const slot = [
+      { id: "status", groupBy: "System" },
+      { id: "final_status", groupBy: "Custom Columns" },
+    ];
+
+    expect(
+      mergePersistedCustomColumns(slot, [
+        { id: "final_status", groupBy: "Custom Columns" },
+      ]),
+    ).toBe(slot);
   });
 });
 

@@ -1,24 +1,16 @@
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, Card, Grid, Typography, Skeleton } from "@mui/material";
+import { Box, Typography, Skeleton } from "@mui/material";
+import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsLatency } from "./hooks/useAnalyticsLatency";
+import { computeGranularity } from "../utils/analyticsHelpers";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function computeGranularity(start, end) {
-  if (!start || !end) return "1h";
-  const diffMs = new Date(end).getTime() - new Date(start).getTime();
-  const diffHours = diffMs / (1000 * 60 * 60);
-  if (diffHours <= 6) return "5m";
-  if (diffHours <= 24) return "15m";
-  if (diffHours <= 168) return "1h";
-  if (diffHours <= 720) return "6h";
-  return "1d";
-}
 
 function formatLatency(value) {
   if (value == null) return "--";
@@ -38,40 +30,6 @@ const SUMMARY_STATS = [
   { key: "p99_ms", label: "P99" },
   { key: "avg_ms", label: "Average" },
 ];
-
-StatCard.propTypes = {
-  label: PropTypes.string.isRequired,
-  value: PropTypes.number,
-  isLoading: PropTypes.bool,
-  color: PropTypes.string,
-};
-
-function StatCard({ label, value, isLoading, color }) {
-  if (isLoading) {
-    return (
-      <Card sx={{ p: 3, textAlign: "center" }}>
-        <Skeleton variant="text" width="50%" height={18} sx={{ mx: "auto" }} />
-        <Skeleton
-          variant="text"
-          width="60%"
-          height={32}
-          sx={{ mx: "auto", mt: 1 }}
-        />
-      </Card>
-    );
-  }
-
-  return (
-    <Card sx={{ p: 3, textAlign: "center" }}>
-      <Typography variant="body2" color="text.secondary" fontWeight={500}>
-        {label}
-      </Typography>
-      <Typography variant="h4" fontWeight={700} sx={{ mt: 0.5, color }}>
-        {formatLatency(value)}
-      </Typography>
-    </Card>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Chart builder
@@ -99,12 +57,12 @@ function buildLatencyChartOptions(theme) {
     xaxis: {
       type: "datetime",
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
       },
     },
     yaxis: {
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         formatter: (val) => formatLatency(val),
       },
       title: {
@@ -192,31 +150,23 @@ const LatencyAnalytics = ({ start, end, gatewayId }) => {
   const chartSeries = useMemo(() => buildSeries(timeseries), [timeseries]);
   const chartOptions = useMemo(() => buildLatencyChartOptions(theme), [theme]);
 
-  const statColors = [
-    theme.palette.success.main,
-    theme.palette.warning.main,
-    theme.palette.error.main,
-    theme.palette.info.main,
-  ];
-
   return (
     <Box>
-      {/* Summary stat cards */}
-      <Grid container spacing={2} mb={3}>
-        {SUMMARY_STATS.map((stat, index) => (
-          <Grid item xs={6} sm={3} key={stat.key}>
-            <StatCard
-              label={stat.label}
-              value={summary?.[stat.key]}
-              isLoading={isLoading}
-              color={statColors[index]}
-            />
-          </Grid>
-        ))}
-      </Grid>
+      <MetricStrip
+        sx={{ mb: 3 }}
+        items={SUMMARY_STATS.map((stat) => ({
+          key: stat.key,
+          label: stat.label,
+          value: isLoading ? (
+            <Skeleton variant="text" width={64} />
+          ) : (
+            formatLatency(summary?.[stat.key])
+          ),
+        }))}
+      />
 
       {/* Latency percentiles over time */}
-      <Card sx={{ p: 3 }}>
+      <Section variant="panel" sx={{ p: 3 }}>
         <Typography variant="subtitle1" fontWeight={600} mb={2}>
           Latency Percentiles Over Time
         </Typography>
@@ -245,7 +195,7 @@ const LatencyAnalytics = ({ start, end, gatewayId }) => {
             </Typography>
           </Box>
         )}
-      </Card>
+      </Section>
     </Box>
   );
 };

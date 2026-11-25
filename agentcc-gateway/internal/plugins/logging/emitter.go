@@ -10,13 +10,24 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/config"
 )
 
+// emitterDrainTimeout bounds how long Close waits for the workers to write out
+// the buffered trace records.
+const emitterDrainTimeout = 5 * time.Second
+
 // TraceEmitter manages the buffered channel and worker goroutines for async trace emission.
 type TraceEmitter struct {
 	ch      chan TraceRecord
 	wg      sync.WaitGroup
 	cfg     config.RequestLoggingConfig
 	dropped atomic.Int64
-	closed  atomic.Bool
+
+	// Emit holds mu to read and Close to write, so a request that finishes
+	// after Close (shutdown does not wait for every one) is dropped rather
+	// than sent on the closed channel.
+	mu     sync.RWMutex
+	closed bool // under mu
+
+	warnedClosed atomic.Bool // an Emit after Close has logged the drop
 }
 
 // NewTraceEmitter creates a TraceEmitter and starts worker goroutines.
@@ -43,13 +54,32 @@ func NewTraceEmitter(cfg config.RequestLoggingConfig) *TraceEmitter {
 	return e
 }
 
-// Emit sends a trace record to the buffer. Non-blocking: drops the record if the buffer is full.
+// Emit sends a trace record to the buffer. Non-blocking: drops the record if the buffer is full
+// or the emitter is closed.
 func (e *TraceEmitter) Emit(record TraceRecord) {
-	select {
-	case e.ch <- record:
-	default:
-		e.dropped.Add(1)
+	e.mu.RLock()
+	closed, sent := e.closed, false
+	if !closed {
+		select {
+		case e.ch <- record:
+			sent = true
+		default:
+		}
+	}
+	e.mu.RUnlock()
+	if sent {
+		return
+	}
+	// Outside mu, so a slow log write does not hold up Close.
+	e.dropped.Add(1)
+	switch {
+	case !closed:
 		slog.Warn("request.trace.dropped",
+			"request_id", record.RequestID,
+		)
+	case e.warnedClosed.CompareAndSwap(false, true):
+		// Close has logged the drops so far; log the late ones once.
+		slog.Warn("trace emitter: dropping records emitted after close",
 			"request_id", record.RequestID,
 		)
 	}
@@ -57,10 +87,14 @@ func (e *TraceEmitter) Emit(record TraceRecord) {
 
 // Close closes the channel and waits for workers to drain with a timeout.
 func (e *TraceEmitter) Close() {
-	if !e.closed.CompareAndSwap(false, true) {
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
 		return
 	}
+	e.closed = true
 	close(e.ch)
+	e.mu.Unlock()
 
 	done := make(chan struct{})
 	go func() {
@@ -71,7 +105,7 @@ func (e *TraceEmitter) Close() {
 	select {
 	case <-done:
 		// All records drained.
-	case <-time.After(5 * time.Second):
+	case <-time.After(emitterDrainTimeout):
 		slog.Warn("trace emitter drain timeout", "remaining", len(e.ch))
 	}
 

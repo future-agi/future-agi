@@ -249,9 +249,21 @@ function schemaToZod(schema, options = {}) {
       compiled = options.coercePrimitives
         ? z.coerce.number().int()
         : z.number().int();
+      if (typeof schema.minimum === "number") {
+        compiled = compiled.min(schema.minimum);
+      }
+      if (typeof schema.maximum === "number") {
+        compiled = compiled.max(schema.maximum);
+      }
       break;
     case "number":
       compiled = options.coercePrimitives ? z.coerce.number() : z.number();
+      if (typeof schema.minimum === "number") {
+        compiled = compiled.min(schema.minimum);
+      }
+      if (typeof schema.maximum === "number") {
+        compiled = compiled.max(schema.maximum);
+      }
       break;
     case "boolean":
       compiled = options.coercePrimitives
@@ -542,6 +554,14 @@ export function validateContractedResponse(response) {
     response?.config?.method,
   );
   if (!endpoint) return { ok: true, skipped: true };
+
+  // An empty 204 has no body to check, whatever success schema the endpoint declares.
+  if (
+    Number(response?.status) === 204 &&
+    (response.data == null || response.data === "")
+  ) {
+    return { ok: true, skipped: true, endpoint };
+  }
 
   const schema = responseSchemaFor(endpoint, response?.status);
   if (!schema) return { ok: true, skipped: true, endpoint };

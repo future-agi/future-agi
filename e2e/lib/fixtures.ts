@@ -1,4 +1,5 @@
-import { test as base, expect, request as pwRequest } from '@playwright/test';
+import { request as pwRequest } from '@playwright/test';
+import { test as base, expect } from './backend-request';
 import { E2E } from './env';
 import { provisionActor, TestActor } from './provisioning';
 import { authInitScript } from './auth';
@@ -27,7 +28,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   probe: async ({ actor }, use) => {
     const probe = new StateProbe({ api: actor.api, chUrl: E2E.chUrl,
-      chDatabase: E2E.chDatabase, pgUrl: E2E.pgUrl });
+      chDatabase: E2E.chDatabase, chPassword: E2E.chPassword, pgUrl: E2E.pgUrl,
+      catalogChUrl: E2E.catalogChUrl, catalogChDatabase: E2E.catalogChDatabase });
     await use(probe);
     await probe.dispose();
   },

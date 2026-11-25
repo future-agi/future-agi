@@ -11,6 +11,8 @@ from typing import List
 
 import structlog
 
+from agentic_eval.core.embeddings.serving_client import serving_available
+
 # Activity-aware stub: used inside Temporal trace-scanner activities.
 from tfc.ee_stub import _ee_activity_stub as _ee_stub
 
@@ -145,6 +147,7 @@ def _emit_scanner_billing(
             return
 
         from tracer.models.project import Project
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -166,9 +169,9 @@ def _emit_scanner_billing(
         except ImportError:
             token_usage_properties = lambda token_usage: {}
 
-        project = Project.objects.select_related("organization").filter(
-            id=project_id
-        ).first()
+        project = (
+            Project.objects.select_related("organization").filter(id=project_id).first()
+        )
         if not project or not project.organization:
             return
 
@@ -203,6 +206,16 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
     issues = get_unclustered_issues(project_id)
     if not issues:
         logger.info("no_unclustered_issues", project_id=project_id)
+        return ClusteringSummary()
+
+    # Checked before distillation so no LLM call is spent on issues that
+    # cannot be embedded; they stay unclustered for a later pass.
+    if not serving_available():
+        logger.info(
+            "cluster_issues_skipped_serving_unavailable",
+            project_id=project_id,
+            unclustered=len(issues),
+        )
         return ClusteringSummary()
 
     # Distill each brief to a canonical failure phrase before embedding — briefs
@@ -310,9 +323,7 @@ def embed_trace_inputs(trace_ids: List[str], project_id: str) -> int:
     usable = [(inp, text) for inp, text in pairs if text and text.strip()]
     skipped = len(pairs) - len(usable)
     if not usable:
-        logger.info(
-            "no_embeddable_root_inputs", project_id=project_id, skipped=skipped
-        )
+        logger.info("no_embeddable_root_inputs", project_id=project_id, skipped=skipped)
         return 0
 
     embeddable = [inp for inp, _ in usable]

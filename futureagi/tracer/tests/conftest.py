@@ -6,6 +6,8 @@ Provides fixtures specific to tracer models and test data.
 import json
 import uuid
 from datetime import timedelta
+from fnmatch import fnmatchcase
+from pathlib import Path
 
 import pytest
 from django.utils import timezone
@@ -30,6 +32,45 @@ from tracer.tests._ch_seed import (
     seed_ch_trace_sessions,
     truncate_ch_spans,
 )
+
+# The Metrics suite: the one list Backend CI's "metrics shard" legs select
+# (-m metrics) and its "pytest shard" legs exclude (-m "not metrics").
+# Its "metrics" paths filter names these modules too.
+METRICS_SUITE_MODULES = ("test_derived_metric_*.py", "test_metric_*.py")
+# Matches the patterns but predates Metrics: monitor/list filter builders.
+NOT_METRICS_SUITE_MODULES = ("test_metric_filters_comprehensive.py",)
+_TRACER_TESTS = Path(__file__).resolve().parent
+
+
+def is_metrics_suite_module(path: Path) -> bool:
+    return (
+        path.parent == _TRACER_TESTS
+        and any(fnmatchcase(path.name, pattern) for pattern in METRICS_SUITE_MODULES)
+        and path.name not in NOT_METRICS_SUITE_MODULES
+    )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """Mark the Metrics suite before -m deselects and pytest-split shards."""
+
+    modules = {}
+    for item in items:
+        path = Path(item.path)
+        if path not in modules:
+            modules[path] = is_metrics_suite_module(path.resolve())
+        if modules[path]:
+            item.add_marker(pytest.mark.metrics)
+
+
+@pytest.fixture(autouse=True)
+def _metric_schema_installed(monkeypatch):
+    """Scenario fixtures create only the ClickHouse tables they read, so the
+    deployment readiness probe would refuse them. test_metric_schema_install
+    resets this to exercise the probe itself."""
+    from tracer.services.derived_metrics import schema_install
+
+    monkeypatch.setattr(schema_install._cache, "installed", True)
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +106,31 @@ def _stub_eval_task_workflow(monkeypatch):
         _fake_signal,
         raising=False,
     )
+
+
+@pytest.fixture
+def enabled_metrics(settings):
+    """Opt enabled-feature scenarios in without changing the test-wide default."""
+    settings.METRICS_ENABLED = 1
+
+
+@pytest.fixture
+def retained_metrics_source_policy(workspace, monkeypatch):
+    """Give read/run contract fixtures a real, authoritative retained policy."""
+    from ee.usage.models.usage import PlanEntitlement
+    from tfc.capabilities import retention as policy_adapter
+    from tfc.licensing.types import DeploymentFlavor
+
+    monkeypatch.setattr(
+        policy_adapter, "get_deployment_flavor", lambda: DeploymentFlavor.CLOUD
+    )
+    policy, _ = PlanEntitlement.objects.update_or_create(
+        organization=workspace.organization,
+        plan="free",
+        feature="retention_traces_days",
+        defaults={"value_int": 900},
+    )
+    return policy
 
 
 @pytest.fixture
@@ -384,7 +450,8 @@ def stub_run_eval(monkeypatch):
 
     Returns a callable ``set_result(value=..., reason=..., failure=...)`` so
     tests can flip pass/fail or simulate engine-side failures without
-    re-patching. Default outcome is a passing eval.
+    re-patching. Default outcome is a passing eval. The callable also carries
+    ``.requests``: every ``EvalRequest`` the engine was handed, in order.
 
     Patched at the package re-export (``evaluations.engine.run_eval``) AND at
     the underlying definition (``evaluations.engine.runner.run_eval``) because
@@ -393,6 +460,7 @@ def stub_run_eval(monkeypatch):
     from evaluations.engine.runner import EvalResult
 
     state = {"value": True, "reason": "stubbed pass", "failure": None}
+    requests = []
 
     def _make_result():
         return EvalResult(
@@ -413,6 +481,7 @@ def stub_run_eval(monkeypatch):
         )
 
     def _stub(_request):
+        requests.append(_request)
         return _make_result()
 
     monkeypatch.setattr("evaluations.engine.run_eval", _stub, raising=False)
@@ -423,6 +492,7 @@ def stub_run_eval(monkeypatch):
         state["reason"] = reason
         state["failure"] = failure
 
+    set_result.requests = requests
     return set_result
 
 

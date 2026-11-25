@@ -103,8 +103,9 @@ def test_eval_value_query_windows_span_time() -> None:
     )
     subq = sql.split("INNER JOIN (", 1)[1]
     assert EXACT_HALF_OPEN in subq
-    guards = sql.split("ON observation_span_id = sp.id", 1)[1]
-    assert SKEW_GUARD in guards
+    guards = sql.split("ON eval_scan.observation_span_id = sp.id", 1)[1]
+    assert "eval_scan.created_at >=" in guards
+    assert "%(start_time)s - INTERVAL 1 DAY" in guards
     # No bucket expression in a scalar query.
     assert "toUInt32(" not in sql
 
@@ -115,6 +116,8 @@ def test_eval_time_series_buckets_span_start_time() -> None:
     sql, _ = _builder(eval_output_type="SCORE").build_time_series_query(
         MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600
     )
-    assert "toUInt32(sp.start_time)" in sql
+    assert "sp.start_time AS span_start_time" in sql
+    assert "toUInt32(span_start_time)" in sql
     assert "toUInt32(created_at)" not in sql
-    assert "INNER JOIN" in sql and "ON observation_span_id = sp.id" in sql
+    assert "INNER JOIN" in sql
+    assert "ON eval_scan.observation_span_id = sp.id" in sql

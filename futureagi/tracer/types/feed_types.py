@@ -67,6 +67,9 @@ class FeedListRow:
     trace_id: str | None = None
     external_issue_url: str | None = None
     external_issue_id: str | None = None
+    severity_assessment_status: str = "unassessed"
+    severity_source: str = "default"
+    severity_reason: str = ""
 
 
 @dataclass
@@ -138,6 +141,10 @@ class FeedDetailCore:
 
     row: FeedListRow
     description: str | None = None
+    # Stored by grouping beside the mechanism (``description``); None for
+    # issues without grouping state (eval, older scan).
+    fix_hypothesis: str | None = None
+    falsifier: str | None = None
     success_trace: TracePreview | None = None
     representative_trace: TracePreview | None = None
     rca: RcaSummary | None = None
@@ -288,10 +295,11 @@ class TracesAggregates:
     total_traces: int = 0
     failing_traces: int = 0
     passing_traces: int = 0
-    avg_score: float = 0.0
+    # None = nothing measured; the UI shows "no data", not a fake zero.
+    avg_score: float | None = None
     p50_latency: int = 0
     p95_latency: int = 0
-    avg_turns: float = 0.0
+    avg_turns: float | None = None
 
 
 @dataclass

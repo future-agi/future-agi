@@ -3,9 +3,17 @@ set -euo pipefail
 
 # Verify the three published backend image boundaries without source mounts.
 # The image references may be tags for local checks or immutable digests in CI.
+# For minimal builds this checks the reported version and explicit codec configure
+# lists of both tools, plus required registrations in ffmpeg. It is not a binary
+# identity check. Unrelated configure options and implicit registrations may vary;
+# the only additional explicit IDs accepted are native (non-AudioToolbox) PCM decoders.
 #
 # Usage: ./scripts/verify-image-contents.sh [version] [oss|ee|cloud|all]
-# Overrides: OSS_IMAGE, EE_IMAGE, CLOUD_IMAGE, CLOUD_DEPLOYMENT_SECRET
+# Overrides: OSS_IMAGE, EE_IMAGE, CLOUD_IMAGE, CLOUD_DEPLOYMENT_SECRET,
+#   For local builds, digests, or a build-arg override, pass OSS_VARIANT
+#   (standard|slim), EXPECTED_FFMPEG_FLAVOR (debian|minimal), and the build's
+#   VERSION as argument 1. Set BUILD_SOURCE_REVISION to the full source SHA if not
+#   building HEAD. Release lookup needs PyYAML; a missing tag is read from origin in isolation.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"
@@ -14,6 +22,14 @@ case "$FLAVOR" in
   *) echo "Usage: $0 [version] [oss|ee|cloud|all]" >&2; exit 2 ;;
 esac
 OSS_IMAGE="${OSS_IMAGE:-futureagi/future-agi:${VERSION}}"
+if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
+  contract=$(python3 -I "$(dirname "$0")/oss-media-contract.py" "$VERSION" "$OSS_IMAGE" \
+    "${OSS_VARIANT:-}" "${EXPECTED_FFMPEG_FLAVOR:-}") || exit 2
+  read -r OSS_VARIANT EXPECTED_FFMPEG_FLAVOR media_version encoders decoders scope <<< "$contract"
+  if [[ -z "${1:-}" || "$VERSION" == latest ]]; then
+    echo 'Supply the expected build version as argument 1, not latest.' >&2; exit 2
+  fi
+fi
 EE_IMAGE="${EE_IMAGE:-futureagi/future-agi-ee:${VERSION}}"
 CLOUD_IMAGE="${CLOUD_IMAGE:-futureagi/future-agi-cloud:${VERSION}}"
 CLOUD_DEPLOYMENT_SECRET="${CLOUD_DEPLOYMENT_SECRET:-}"
@@ -48,7 +64,7 @@ check_absent() {
 image_test() {
   local image="$1"
   shift
-  docker run --rm --entrypoint /bin/sh "$image" -c "$*"
+  docker run --rm --entrypoint /bin/sh "$image" -c '"$@"' sh "$@"
 }
 
 image_python() {
@@ -58,6 +74,20 @@ image_python() {
     --entrypoint python \
     -e DJANGO_SETTINGS_MODULE=tfc.settings.settings \
     "$image" "$@"
+}
+
+image_available() {
+  local image="$1"
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    docker manifest inspect "$image" >/dev/null 2>&1
+}
+
+version_label_matches() {
+  # Prefix distinguishes absent from empty; the final sentinel preserves any
+  # trailing newlines in the label through shell command substitution.
+  local label
+  label=$(docker image inspect --format '{{range $k, $v := .Config.Labels}}{{if eq $k "org.opencontainers.image.version"}}version={{$v}}{{end}}{{end}}|' "$1") || return 1
+  [[ "$label" == '|' || "$label" == "version=$2|" ]]
 }
 
 check_routes() {
@@ -93,30 +123,125 @@ for path in paths:
 
 echo "=== Image availability ==="
 if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
-  check "OSS image is available" docker image inspect "$OSS_IMAGE"
+  check "OSS image is available" image_available "$OSS_IMAGE"
 fi
 if [[ "$FLAVOR" == ee || "$FLAVOR" == all ]]; then
-  check "Self-hosted EE image is available" docker image inspect "$EE_IMAGE"
+  check "Self-hosted EE image is available" image_available "$EE_IMAGE"
 fi
 if [[ "$FLAVOR" == cloud || "$FLAVOR" == all ]]; then
-  check "Cloud image is available" docker image inspect "$CLOUD_IMAGE"
+  check "Cloud image is available" image_available "$CLOUD_IMAGE"
 fi
 echo ""
 
 if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
-echo "=== OSS Image: ${OSS_IMAGE} ==="
-check "No ee path or symlink" image_test "$OSS_IMAGE" \
-  "test ! -e /app/backend/ee && test ! -L /app/backend/ee"
-check_absent "No cloud control-plane package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud/control_plane
-check "Django boots without EE" image_python "$OSS_IMAGE" -c "import django; django.setup()"
+echo "=== OSS Image: ${OSS_IMAGE} (${OSS_VARIANT} variant) ==="
+echo "OSS verification scope: $scope"
+check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" image_test "$OSS_IMAGE" sh -ec '
+  marker=/usr/local/lib/futureagi/ffmpeg-flavor
+  # Historical releases have no marker. Always check both active binaries.
+  if test -e "$marker"; then test "$(cat "$marker")" = "$1"; fi
+  # Package checksums detect replacement, not coordinated tampering with the
+  # dpkg database. For source builds we have a source hash, not independently
+  # published per-architecture binary hashes: verify the runtime contract.
+  if test "$1" = debian; then
+    for tool in ffmpeg ffprobe; do test "$(command -v "$tool")" = "/usr/bin/$tool"; done
+    sums=$(dpkg-query --control-show ffmpeg md5sums)
+    for tool in ffmpeg ffprobe; do
+      line=$(printf "%s\n" "$sums" | grep -Ex "[0-9a-f]{32}  usr/bin/$tool")
+      (cd / && printf "%s\n" "$line" | md5sum -c -)
+    done
+    exit 0
+  fi
+  test -s /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1
+  # Configure component IDs (libaom_av1) and registered codec names
+  # (libaom-av1) differ. Check exact tokens, never descriptions/substrings.
+  for tool in ffmpeg ffprobe; do
+    test "$(command -v "$tool")" = "/usr/local/bin/$tool"
+    info=$("$tool" -version)
+    case "$info " in "$tool version $2 "*) ;; *) exit 1 ;; esac
+    options=$(printf "%s\n" "$info" | sed -n "s/^[[:blank:]]*configuration: //p")
+    case " $options " in *" --disable-everything "*) ;; *) exit 1 ;; esac
+    for kind in encoder decoder; do
+      case "$kind" in encoder) wanted=$3 ;; decoder) wanted=$4 ;; esac
+      count=$(printf "%s\n" "$options" | tr " " "\n" | grep -c "^--enable-$kind=")
+      test "$count" = 1
+      got=$(printf "%s\n" "$options" | tr " " "\n" | sed -n "s/^--enable-$kind=//p")
+      # FFmpeg prints comma-list arguments wrapped in literal single quotes.
+      # Remove one matched pair as data; never evaluate configuration output.
+      quote=$(printf "\047")
+      case "$got" in "$quote"*"$quote") got=${got#"$quote"}; got=${got%"$quote"} ;; esac
+      # Compare as sets: ordering is irrelevant. Reject repeated option lines
+      # and malformed lists instead of merging conflicting declarations.
+      case "$got" in ""|*[!a-z0-9_,]*|,*|*,|*,,*) exit 1 ;; esac
+      for id in $(printf "%s" "$got" | tr , " "); do
+        case ",$wanted," in *",$id,"*) continue ;; esac
+        case "$kind:$id" in decoder:pcm_*_at) exit 1 ;; decoder:pcm_?*) ;; *) exit 1 ;; esac
+      done
+      for id in $(printf "%s" "$wanted" | tr , " "); do
+        case ",$got," in *",$id,"*) ;; *) exit 1 ;; esac
+      done
+    done
+  done
+  # WavPack decoding also requires its container demuxer in both tools.
+  case ",$4," in
+    *,wavpack,*)
+      for tool in ffmpeg ffprobe; do
+        formats=$("$tool" -hide_banner -demuxers)
+        printf "%s\n" "$formats" | awk "\$1 ~ /^D/ {print \$2}" | grep -Fx wv >/dev/null
+      done
+      ;;
+  esac
+  for kind in encoder decoder; do
+    case "$kind" in encoder) wanted=$3 ;; decoder) wanted=$4 ;; esac
+    listing=$(ffmpeg -hide_banner "-${kind}s")
+    names=$(printf "%s\n" "$listing" | awk "\$1 ~ /^[AVS][A-Z.]+$/ {print \$2}")
+    for id in $(printf "%s" "$wanted" | tr , " "); do
+      case "$id" in libaom_av1) id=libaom-av1 ;; esac
+      printf "%s\n" "$names" | grep -Fx "$id" >/dev/null
+    done
+  done' sh "$EXPECTED_FFMPEG_FLAVOR" "$media_version" "$encoders" "$decoders"
+check "ffmpeg can encode mp3 and png" image_test "$OSS_IMAGE" sh -c "ffmpeg -hide_banner -encoders | grep -q libmp3lame && ffmpeg -hide_banner -encoders | grep -qw png"
+check "ffprobe starts" image_test "$OSS_IMAGE" ffprobe -hide_banner -version
+if [[ "$scope" == FULL ]]; then
+check "Has shared EE package tree" image_test "$OSS_IMAGE" test -d /app/backend/ee
+check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud
+check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
+  "import nltk; [nltk.data.find(p) for p in ('corpora/stopwords/', 'tokenizers/punkt_tab/english/', 'taggers/averaged_perceptron_tagger_eng/', 'corpora/wordnet/')]; assert nltk.word_tokenize('Future AGI') == ['Future', 'AGI']; assert nltk.pos_tag(['Future'])[0][1]"
+check "Runtime version matches requested build ($VERSION)" image_test "$OSS_IMAGE" sh -c 'test "$SERVICE_VERSION" = "$1"' sh "$VERSION"
+check "Version label matches requested build when present" version_label_matches "$OSS_IMAGE" "$VERSION"
+if [[ "$OSS_VARIANT" == standard ]]; then
+  # A drop-in for what builds on it: the EE and cloud images run
+  # `uv pip install` in it, and the simulation runner's hosted-harness jobs
+  # need the sandbox SDKs and git.
+  check "Has uv (EE and cloud images install on top)" image_test "$OSS_IMAGE" sh -c "command -v uv"
+  check "Has git (hosted-harness GitHub sources)" image_test "$OSS_IMAGE" sh -c "git --version"
+  check "Has the optional groups of the base dependencies" image_python "$OSS_IMAGE" -c \
+    "import daytona, e2b, httpx_ws, stripe, flower, vertexai, langchain_community, channels_rabbitmq, claude_agent_sdk, presidio_analyzer, presidio_anonymizer, en_core_web_sm"
+  check "Has every NLTK package" image_python "$OSS_IMAGE" -c \
+    "import nltk; [nltk.data.find(p) for p in ('corpora/omw-1.4/', 'tokenizers/punkt/', 'taggers/averaged_perceptron_tagger/')]"
+  check "Keeps every googleapiclient discovery document" image_python "$OSS_IMAGE" -c \
+    "from googleapiclient.discovery_cache import get_static_doc; assert get_static_doc('drive', 'v3')"
+else
+  check_absent "No uv in the runtime image" image_test "$OSS_IMAGE" sh -c "command -v uv"
+  check_absent "No git in the runtime image" image_test "$OSS_IMAGE" sh -c "command -v git"
+fi
+check "Django boots without cloud-private code" image_python "$OSS_IMAGE" -c "import django; django.setup()"
+check "Django boots as uid 1000 and can write where the app writes" docker run --rm \
+  --user 1000:1000 \
+  --entrypoint python \
+  -e DJANGO_SETTINGS_MODULE=tfc.settings.settings \
+  "$OSS_IMAGE" -c "import django, tempfile; django.setup(); [tempfile.NamedTemporaryFile(dir=d).close() for d in ('/app/backend/logs', '/app/backend/media', '/app/backend/static', '/app/backend/tfc/logs', '/app/backend/tfc/saml_logs', '/app/backend/tfc/metadata', '/app/backend/tfc/compare')]"
 check "No cloud routes" check_routes "$OSS_IMAGE" absent \
   /v1/internal/licenses /v1/self-hosted/activations /v1/enterprise/heartbeats
-check "OSS remains the OSS image flavor with cloud env set" docker run --rm \
+check "CE base remains self-hosted with an invalid cloud secret" docker run --rm \
   --entrypoint python \
   -e DJANGO_SETTINGS_MODULE=tfc.settings.settings \
   -e CLOUD_DEPLOYMENT=DEV \
   -e CLOUD_DEPLOYMENT_SECRET="$CLOUD_DEPLOYMENT_SECRET" \
-  "$OSS_IMAGE" -c "import django; django.setup(); from tfc.capabilities import service; assert service.get_deployment_flavor().value == 'oss_image'"
+  "$OSS_IMAGE" -c "import django; django.setup(); from tfc.capabilities import service; assert service.get_deployment_flavor().value == 'self_hosted_ee_image'"
+else
+  echo "Historical media checks only; full image boundary not evaluated."
+fi
 echo ""
 fi
 

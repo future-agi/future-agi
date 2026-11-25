@@ -1,13 +1,7 @@
 import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { LoadingScreen } from "src/components/loading-screen";
-import {
-  Box,
-  Paper,
-  useTheme,
-  Alert,
-  Button,
-} from "@mui/material";
+import { Box, Paper, useTheme, Alert, Button } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import { ErrorBoundary } from "react-error-boundary";
 import { logger } from "src/utils/logger";
@@ -33,6 +27,7 @@ import {
 } from "./SessionsView/ReplaySessions/store";
 import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
+import { withLiveGridApi } from "src/utils/gridApi";
 
 // Loading component for tab content
 const TabContentLoader = () => (
@@ -83,7 +78,9 @@ const TabErrorBoundary = ({ children, resetKey }) => {
       resetKeys={[resetKey]}
       onError={(error) => logger.error("Observe tab render failed", error)}
     >
-      <React.Suspense fallback={<TabContentLoader />}>{children}</React.Suspense>
+      <React.Suspense fallback={<TabContentLoader />}>
+        {children}
+      </React.Suspense>
     </ErrorBoundary>
   );
 };
@@ -98,6 +95,8 @@ const TAB_TO_ROUTE = {
   traces: { route: "llm-tracing", params: { selectedTab: "trace" } },
   sessions: { route: "sessions", params: {} },
   users: { route: "users", params: {} },
+  query: { route: "query", params: {} },
+  insights: { route: "insights", params: {} },
 };
 
 const ObservePage = React.memo(() => {
@@ -145,10 +144,14 @@ const ObservePage = React.memo(() => {
     // would be replaced by `tab=sessions` (or `tab=users`), wiping the
     // active-view-id needed by Save view.
     if (tab && tab.startsWith("view-")) return;
-    if (currentRouteSegment === "sessions") {
+    if (currentRouteSegment === "query") {
+      setActiveTab("query");
+    } else if (currentRouteSegment === "sessions") {
       setActiveTab("sessions");
     } else if (currentRouteSegment === "users") {
       setActiveTab("users");
+    } else if (currentRouteSegment === "insights") {
+      setActiveTab("insights");
     } else if (currentRouteSegment === "llm-tracing") {
       const selectedTab = params.get("selectedTab");
       if (selectedTab === "spans") {
@@ -351,7 +354,7 @@ const ObservePage = React.memo(() => {
       resetSessionsGridStore();
       resetTraceGridStore();
       resetTabStore();
-      headerConfig?.gridApi?.deselectAll();
+      withLiveGridApi(headerConfig?.gridApi, (api) => api.deselectAll?.());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [observeId]);
@@ -391,6 +394,8 @@ const ObservePage = React.memo(() => {
           activeTab={activeTab}
           onTabChange={handleTabChange}
           projectSource={projectDetail?.source}
+          // The Ask page (Instant eval) has no list config to save as a view.
+          canSaveView={currentRouteSegment !== "ask"}
         />
       </Paper>
 

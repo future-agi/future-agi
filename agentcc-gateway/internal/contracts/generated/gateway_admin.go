@@ -6,6 +6,7 @@ type ProviderConfig struct {
 	APIKey             *string  `json:"api_key,omitempty"`
 	BaseURL            *string  `json:"base_url,omitempty"`
 	APIFormat          *string  `json:"api_format,omitempty"`
+	APIPathPrefix      *string  `json:"api_path_prefix,omitempty"`
 	Models             []string `json:"models,omitempty"`
 	Timeout            *int     `json:"timeout,omitempty"`
 	Weight             *float64 `json:"weight,omitempty"`
@@ -16,12 +17,14 @@ type ProviderConfig struct {
 	AWSSecretAccessKey *string  `json:"aws_secret_access_key,omitempty"`
 	AWSRegion          *string  `json:"aws_region,omitempty"`
 	AWSSessionToken    *string  `json:"aws_session_token,omitempty"`
+	ServiceAccountJson *string  `json:"service_account_json,omitempty"`
 }
 
 type GuardrailCheck struct {
 	Enabled             *bool                  `json:"enabled,omitempty"`
 	Action              *string                `json:"action,omitempty"`
 	ConfidenceThreshold *float64               `json:"confidence_threshold,omitempty"`
+	ConfigurationError  *string                `json:"configuration_error,omitempty"`
 	Config              map[string]interface{} `json:"config,omitempty"`
 }
 
@@ -30,6 +33,16 @@ type GuardrailConfig struct {
 	FailOpen     *bool                      `json:"fail_open,omitempty"`
 	TimeoutMs    *int                       `json:"timeout_ms,omitempty"`
 	Checks       map[string]*GuardrailCheck `json:"checks,omitempty"`
+	KeyPolicies  []*KeyGuardrailPolicy      `json:"key_policies,omitempty"`
+}
+
+type KeyGuardrailPolicy struct {
+	ID       string                     `json:"id"`
+	Name     *string                    `json:"name,omitempty"`
+	Mode     *string                    `json:"mode,omitempty"`
+	Priority *int                       `json:"priority,omitempty"`
+	KeyIds   []string                   `json:"key_ids"`
+	Checks   map[string]*GuardrailCheck `json:"checks,omitempty"`
 }
 
 type ConditionalRoute struct {
@@ -507,6 +520,27 @@ type KeyResponse struct {
 type KeyListResponse struct {
 	Object *string        `json:"object,omitempty"`
 	Data   []*KeyResponse `json:"data,omitempty"`
+}
+
+type SyncedKey struct {
+	ID        string            `json:"id"`
+	Name      *string           `json:"name,omitempty"`
+	Owner     *string           `json:"owner,omitempty"`
+	KeyHash   string            `json:"key_hash"`
+	KeyPrefix *string           `json:"key_prefix,omitempty"`
+	Models    []string          `json:"models,omitempty"`
+	Providers []string          `json:"providers,omitempty"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	ExpiresAt *string           `json:"expires_at,omitempty"`
+}
+
+type ImportKeysRequest struct {
+	Keys []*SyncedKey `json:"keys"`
+}
+
+type ImportKeysResponse struct {
+	Received int `json:"received"`
+	Loaded   int `json:"loaded"`
 }
 
 type StatusResponse struct {

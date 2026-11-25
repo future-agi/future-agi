@@ -1,0 +1,954 @@
+"""Store ALK measurements and emit them on the existing billing rails."""
+
+from __future__ import annotations
+
+import json
+import logging
+from decimal import Decimal
+from uuid import UUID, uuid5
+
+from django.conf import settings
+from django.core.serializers.json import DjangoJSONEncoder
+from django.db import transaction
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessBuilderTurnUsage,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+)
+from simulate.services.harness_environment import _VOICE_CONNECTORS
+from simulate.services.hosted_harness import (
+    PLATFORM_FAILURE_DOMAINS,
+    HostedHarnessError,
+)
+from tfc.ee_gating import is_oss
+
+_ACTIONS = frozenset({"agent_fix", "harness_authoring", "text_call", "voice_call"})
+_REPORT_KEY = "usage_reports"
+_AUTHORING_REPORT_KEY = "authoring_usage_reports"
+
+logger = logging.getLogger(__name__)
+
+
+def check_harness_usage(attempt: HostedHarnessAttempt, action: str) -> dict:
+    decision = check_harness_action(str(attempt.job.organization_id), action)
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=attempt.job_id
+        )
+        metadata = dict(job.payload.get("metadata") or {})
+        if not decision["allowed"]:
+            metadata["usage_limit"] = decision
+        elif "usage_limit" in metadata:
+            metadata.pop("usage_limit")
+        else:
+            return decision
+        job.payload = {**job.payload, "metadata": metadata}
+        job.save(update_fields=["payload", "updated_at"])
+    return decision
+
+
+def check_harness_action(organization_id: str, action: str) -> dict:
+    if action not in _ACTIONS:
+        raise HostedHarnessError(
+            "usage_action_invalid", "Unsupported hosted harness usage action."
+        )
+    if is_oss():
+        return {"allowed": True}
+    from ee.usage.services.metering import check_usage
+
+    return check_usage(organization_id, action).model_dump(mode="json")
+
+
+def _require_harness_action(organization_id: str, action: str) -> None:
+    decision = check_harness_action(organization_id, action)
+    if decision["allowed"]:
+        return
+    from ee.usage.exceptions import UsageLimitExceeded
+    from ee.usage.schemas.events import CheckResult
+
+    raise UsageLimitExceeded(CheckResult.model_validate(decision))
+
+
+def usage_limit_error(exc: Exception) -> HostedHarnessError | None:
+    """A usage refusal as a hosted harness error, for a caller that reads only that shape:
+    the fix engine tells the organization's plan limit apart from the fix's own budget.
+    """
+    if is_oss():
+        return None
+    from ee.usage.exceptions import UsageLimitExceeded
+
+    if not isinstance(exc, UsageLimitExceeded):
+        return None
+    return HostedHarnessError(
+        "usage_limit",
+        exc.check_result.reason or "the organization's usage limit is reached",
+        status_code=402,
+    )
+
+
+def require_harness_authoring(organization_id: str) -> None:
+    _require_harness_action(organization_id, "harness_authoring")
+
+
+def require_agent_fix_usage(organization_id: str) -> None:
+    _require_harness_action(organization_id, "agent_fix")
+
+
+def require_harness_call_usage(job: HostedHarnessJob) -> None:
+    from simulate.services.hosted_harness import _resolve_scenario_modality
+
+    action = (
+        "voice_call" if _resolve_scenario_modality(job, {}) == "voice" else "text_call"
+    )
+    _require_harness_action(str(job.organization_id), action)
+
+
+def require_harness_run_usage(organization_id: str, payload: dict) -> None:
+    """Check authoring and any call rail that the submitted connector identifies."""
+
+    require_harness_authoring(organization_id)
+    agent = payload.get("agent") or {}
+    config = agent.get("config") or {}
+    metadata = payload.get("metadata") or {}
+    modality = str(metadata.get("modality") or config.get("modality") or "").lower()
+    connector = str(agent.get("connector") or "").lower()
+    if modality == "text" or connector == "retell_chat":
+        actions = ("text_call",)
+    elif modality == "voice" or connector in _VOICE_CONNECTORS:
+        actions = ("voice_call",)
+    else:
+        # ``auto`` can resolve to either lane only after the authored contract is available.
+        # The guest still performs the dimension-specific check immediately before dialing.
+        actions = ()
+    for action in actions:
+        _require_harness_action(organization_id, action)
+
+
+def require_harness_source_call_usage(
+    organization_id: str, payload: dict, detected_connectors
+) -> None:
+    """Check the voice rail for an ``auto`` source whose scan found a voice provider."""
+
+    agent = payload.get("agent") or {}
+    config = agent.get("config") or {}
+    metadata = payload.get("metadata") or {}
+    modality = str(metadata.get("modality") or config.get("modality") or "").lower()
+    connector = str(agent.get("connector") or "").lower()
+    if connector != "auto" or modality in {"text", "voice"}:
+        return
+    if _VOICE_CONNECTORS & set(detected_connectors):
+        _require_harness_action(organization_id, "voice_call")
+
+
+def record_harness_usage(
+    attempt: HostedHarnessAttempt, report: dict, *, emit: bool = True
+) -> dict:
+    normalized = json.loads(json.dumps(report, cls=DjangoJSONEncoder))
+    records = normalized["records"]
+    by_id = {item["id"]: item for item in records}
+    if len(by_id) != len(records):
+        raise HostedHarnessError(
+            "usage_duplicate_id", "A report must name each action only once."
+        )
+
+    with transaction.atomic():
+        current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=attempt.id
+        )
+        old = current.usage_report
+        if old is None:
+            legacy_job = HostedHarnessJob.no_workspace_objects.only("payload").get(
+                id=current.job_id
+            )
+            old = (
+                (legacy_job.payload.get("metadata") or {}).get(_REPORT_KEY) or {}
+            ).get(str(current.id))
+        previous = {item["id"]: item for item in (old or {}).get("records", [])}
+        if old is not None:
+            if any(
+                key in by_id and by_id[key] != item for key, item in previous.items()
+            ):
+                raise HostedHarnessError(
+                    "usage_record_conflict",
+                    "A finalized usage record cannot change.",
+                    status_code=409,
+                )
+            if not previous.keys() <= by_id.keys():
+                if not by_id.keys() <= previous.keys():
+                    raise HostedHarnessError(
+                        "usage_report_conflict",
+                        "A report must extend the previous ALK snapshot.",
+                        status_code=409,
+                    )
+                normalized = old
+        new_record_ids = frozenset(by_id) - frozenset(previous)
+        current.usage_report = normalized
+        current.save(update_fields=["usage_report", "updated_at"])
+        if emit:
+            transaction.on_commit(
+                lambda: emit_harness_usage(
+                    current,
+                    normalized,
+                    record_ids=new_record_ids,
+                )
+            )
+    return {"accepted": True}
+
+
+def is_billable_receipt(status: str, call: object, failure_domain: str | None) -> bool:
+    """Whether a result receipt's call is charged: it was not skipped, it ran, and the
+    platform's own infrastructure, connectivity or sync failure did not end it."""
+    return (
+        status != "skipped"
+        and bool(call)
+        and failure_domain not in PLATFORM_FAILURE_DOMAINS
+    )
+
+
+def _billable_records(
+    attempt: HostedHarnessAttempt,
+    report: dict,
+    *,
+    record_ids: frozenset[str] | None = None,
+):
+    cached = getattr(attempt, "_prefetched_objects_cache", {}).get("result_receipts")
+    receipts = {
+        (
+            receipt.execution.execution_key
+            if receipt.execution_id
+            else receipt.scenario.scenario_key
+        ): receipt
+        for receipt in (
+            cached
+            if cached is not None
+            else attempt.result_receipts.select_related("scenario", "execution").all()
+        )
+    }
+    history = attempt.receipt_history or {}
+    for item in report["records"]:
+        if record_ids is not None and item["id"] not in record_ids:
+            continue
+        if not item["amount"]:
+            continue
+        receipt = receipts.get(item["scenario_key"])
+        if receipt is not None:
+            receipt_status = receipt.status
+            receipt_body = receipt.body
+        else:
+            historical = history.get(item["scenario_key"])
+            if historical is None:
+                continue
+            receipt_status = historical["status"]
+            receipt_body = historical["body"]
+        if not is_billable_receipt(
+            receipt_status,
+            receipt_body.get("call"),
+            (receipt_body.get("failure") or {}).get("domain"),
+        ):
+            continue
+        if item.get("failure_domain") in PLATFORM_FAILURE_DOMAINS:
+            continue
+        # Hosted simulator usage is always platform-funded.  Keep the guest field in properties
+        # for audit, but never let an untrusted value suppress a billable simulator call.
+        yield item
+
+
+def _bounded_usage_timestamp(attempt: HostedHarnessAttempt, occurred_at: str):
+    timestamp = parse_datetime(occurred_at)
+    if timestamp is None:
+        timestamp = attempt.created_at
+    if timezone.is_naive(timestamp):
+        timestamp = timezone.make_aware(timestamp)
+    lower = attempt.created_at
+    upper = attempt.cleanup_verified_at or attempt.expires_at or timezone.now()
+    if timezone.is_naive(lower):
+        lower = timezone.make_aware(lower)
+    if timezone.is_naive(upper):
+        upper = timezone.make_aware(upper)
+    return min(max(timestamp, lower), max(lower, upper))
+
+
+def emit_harness_usage(
+    attempt: HostedHarnessAttempt,
+    report: dict,
+    *,
+    record_ids: frozenset[str] | None = None,
+) -> None:
+    if is_oss():
+        return
+    from ee.usage.schemas.events import UsageEvent
+    from ee.usage.services.emitter import emit
+
+    job = attempt.job
+    for item in _billable_records(attempt, report, record_ids=record_ids):
+        event_id = uuid5(UUID(str(attempt.id)), str(item["id"]))
+        emit(
+            UsageEvent(
+                event_id=str(event_id),
+                org_id=str(job.organization_id),
+                event_type=item["action"],
+                amount=item["amount"],
+                timestamp=_bounded_usage_timestamp(attempt, item["occurred_at"]),
+                properties={
+                    "source": "rl_environment",
+                    "source_id": str(job.id),
+                    "harness_job_id": str(job.id),
+                    "attempt_id": str(attempt.id),
+                    "scenario_key": item["scenario_key"],
+                    "workspace_id": str(job.workspace_id or ""),
+                    "test_execution_id": str(job.test_execution_id or ""),
+                    "funding": item["funding"],
+                    "outcome": item.get("outcome", "completed"),
+                    "failure_domain": item.get("failure_domain"),
+                },
+            )
+        )
+
+
+def _authoring_stage_record(item: dict) -> dict | None:
+    from agentic_eval.core_evals.fi_utils.token_count_helper import (
+        calculate_total_cost,
+    )
+    from agentic_eval.core_evals.run_prompt.model_pricing import get_model_pricing
+    from ee.usage.services.config import BillingConfig
+
+    counts = {}
+    for field in ("tokens_in", "tokens_out", "tokens_cached"):
+        value = item.get(field, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise HostedHarnessError(
+                "authoring_usage_invalid",
+                f"Authoring {field} must be a non-negative integer.",
+            )
+        counts[field] = value
+    if counts["tokens_cached"] > counts["tokens_in"]:
+        raise HostedHarnessError(
+            "authoring_usage_invalid",
+            "Cached authoring tokens cannot exceed input tokens.",
+        )
+    if not counts["tokens_in"] and not counts["tokens_out"]:
+        return None
+
+    stage = str(item.get("stage") or "").strip()
+    models = sorted(
+        {
+            str(model).strip()
+            for model in (item.get("models") or [])
+            if str(model).strip()
+        }
+    )
+    if not stage or len(stage) > 128 or len(models) != 1:
+        raise HostedHarnessError(
+            "authoring_usage_invalid",
+            "Each authoring stage must name exactly one priced model.",
+        )
+
+    model = models[0]
+    pricing = get_model_pricing(model)
+    if (
+        not isinstance(pricing, dict)
+        or not {
+            "input_per_1M_tokens",
+            "output_per_1M_tokens",
+        }
+        <= pricing.keys()
+    ):
+        raise HostedHarnessError(
+            "authoring_model_unpriced",
+            f"Authoring model {model!r} has no token pricing in the platform catalog.",
+        )
+    cost = calculate_total_cost(
+        model,
+        {
+            "prompt_tokens": counts["tokens_in"],
+            "completion_tokens": counts["tokens_out"],
+            "cached_input_tokens": counts["tokens_cached"],
+        },
+    )
+    if cost["pricing_source"] != "available_models":
+        raise HostedHarnessError(
+            "authoring_model_unpriced",
+            f"Authoring model {model!r} is absent from the platform pricing catalog.",
+        )
+    return {
+        "stage": stage,
+        "model": model,
+        **counts,
+        "cost_usd": cost["total_cost"],
+        "credits": BillingConfig.get().calculate_ai_credits(cost["total_cost"]),
+        "pricing_source": cost["pricing_source"],
+    }
+
+
+def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -> None:
+    """Price sealed authoring stages on the platform and persist replay evidence."""
+    if is_oss():
+        return
+    records = [
+        record
+        for item in spend.get("stages") or []
+        if (record := _authoring_stage_record(item)) is not None
+    ]
+    if not records:
+        if float(spend.get("total_usd") or 0.0) > 0:
+            # Spent but not priceable (no stage reported tokens): billing nothing must not be quiet.
+            logger.error(
+                "authoring spend has no billable stage attempt=%s total_usd=%s",
+                attempt.id,
+                spend.get("total_usd"),
+            )
+        return
+    stages = [item["stage"] for item in records]
+    if len(stages) != len(set(stages)):
+        raise HostedHarnessError(
+            "authoring_usage_invalid",
+            "Authoring usage stages must have unique names.",
+        )
+    report = {
+        "schema_version": "futureagi.harness-authoring-usage.v1",
+        "records": records,
+    }
+    with transaction.atomic():
+        current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=attempt.id
+        )
+        old = current.authoring_usage_report
+        if old is None:
+            legacy_job = HostedHarnessJob.all_objects.only("payload").get(
+                id=current.job_id
+            )
+            old = (
+                (legacy_job.payload.get("metadata") or {}).get(_AUTHORING_REPORT_KEY)
+                or {}
+            ).get(str(current.id))
+        if old is not None and old != report:
+            raise HostedHarnessError(
+                "authoring_usage_conflict",
+                "Finalized authoring usage cannot change.",
+                status_code=409,
+            )
+        current.authoring_usage_report = report
+        current.save(update_fields=["authoring_usage_report", "updated_at"])
+        transaction.on_commit(lambda: emit_harness_authoring_usage(current, report))
+
+
+def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) -> None:
+    _emit_authoring_records(
+        attempt.job,
+        report,
+        key=UUID(str(attempt.id)),
+        timestamp=attempt.created_at,
+        identity={"attempt_id": str(attempt.id)},
+    )
+
+
+def _emit_authoring_records(
+    job: HostedHarnessJob,
+    report: dict,
+    *,
+    key: UUID,
+    timestamp,
+    identity: dict[str, str],
+) -> None:
+    """One authoring usage event per priced record. Each event id derives from ``key`` and
+    the record's stage, so sending a report again is dropped by the consumer as counted."""
+    if is_oss():
+        return
+    from ee.usage.schemas.event_types import BillingEventType
+    from ee.usage.schemas.events import UsageEvent
+    from ee.usage.services.emitter import emit
+
+    for item in report["records"]:
+        if not item["credits"]:
+            continue
+        event_id = uuid5(key, f"authoring:{item['stage']}")
+        emit(
+            UsageEvent(
+                event_id=str(event_id),
+                org_id=str(job.organization_id),
+                event_type=BillingEventType.HARNESS_AUTHORING,
+                amount=item["credits"],
+                timestamp=timestamp,
+                properties={
+                    "source": "rl_environment",
+                    "source_id": str(job.id),
+                    "harness_job_id": str(job.id),
+                    **identity,
+                    "workspace_id": str(job.workspace_id or ""),
+                    "test_execution_id": str(job.test_execution_id or ""),
+                    "phase": "authoring",
+                    "authoring_stage": item["stage"],
+                    "model": item["model"],
+                    "input_tokens": item["tokens_in"],
+                    "output_tokens": item["tokens_out"],
+                    "cached_input_tokens": item["tokens_cached"],
+                    "raw_cost_usd": item["cost_usd"],
+                    "pricing_source": item["pricing_source"],
+                },
+            )
+        )
+
+
+_READING_PURPOSES = frozenset({"agent", "scan"})
+
+
+def _reading_records(spend: dict) -> list[dict]:
+    records = [
+        record
+        for item in spend.get("stages") or []
+        if isinstance(item, dict) and (record := _authoring_stage_record(item))
+    ]
+    stages = [record["stage"] for record in records]
+    if len(set(stages)) != len(stages):
+        raise HostedHarnessError(
+            "reading_usage_invalid", "Each reading stage must be reported once."
+        )
+    return records
+
+
+def _log_uncharged_reading(
+    *, subject_id, run_id, purpose, spend: dict, check_id=None
+) -> None:
+    """One line per reading while charging is off: what it would have been charged."""
+    try:
+        stages = [
+            {
+                "stage": record["stage"],
+                "model": record["model"],
+                "tokens_in": record["tokens_in"],
+                "tokens_cached": record["tokens_cached"],
+                "tokens_out": record["tokens_out"],
+                "cost_usd": record["cost_usd"],
+                "credits": record["credits"],
+            }
+            for record in _reading_records(spend)
+        ]
+        unpriced = ""
+    except HostedHarnessError as exc:
+        stages, unpriced = [], exc.code
+    logger.info(
+        "agent_reading_not_charged subject_id=%s purpose=%s run_id=%s check_id=%s "
+        "unpriced=%s stages=%s",
+        subject_id,
+        purpose,
+        run_id,
+        check_id or "",
+        unpriced,
+        json.dumps(stages, cls=DjangoJSONEncoder),
+    )
+
+
+def _reading_event_id(subject_id, purpose: str, check_id, stage: str) -> str:
+    """One charge per stage of one check of a subject: the same on every retry of a
+    step inside the check, new when a new check starts. An agent's reading always
+    has one: the background reading that stores a document passes its own workflow
+    run, and a reading called outside a check takes a new id. Only a scan, which has
+    none, names its subject alone."""
+    name = (
+        f"reading:{purpose}:check:{check_id}:{stage}"
+        if check_id
+        else f"reading:{purpose}:{stage}"
+    )
+    return str(uuid5(UUID(str(subject_id)), name))
+
+
+def record_agent_reading_usage(
+    *,
+    organization_id,
+    workspace_id,
+    subject_id,
+    run_id,
+    purpose: str,
+    spend: dict,
+    check_id: str | None = None,
+) -> dict | None:
+    """Price the model stages of one reading of an agent (``purpose`` "agent", the
+    subject its agent version) or one scan for agents ("scan", the subject its scan),
+    and bill them like a build's authoring. Returns the priced report, or None when
+    nothing was billed.
+
+    Nothing is billed while HARNESS_AGENT_READING_CHARGE_ENABLED is off; one log
+    line says what would have been. Each stage's charge is keyed by the subject, the
+    purpose, the check (``check_id``, fixed when the check starts) and the stage,
+    never the run: a retried step, which reads again under a new run id inside the
+    same check, adds none, and a new check of the same version is its own charge.
+    Without a check (a scan), every attempt at the subject's reading is one charge."""
+    if purpose not in _READING_PURPOSES:
+        raise ValueError(f"unknown reading purpose {purpose!r}")
+    if is_oss() or not isinstance(spend, dict):
+        return None
+    if not settings.HARNESS_AGENT_READING_CHARGE_ENABLED:
+        _log_uncharged_reading(
+            subject_id=subject_id,
+            run_id=run_id,
+            purpose=purpose,
+            spend=spend,
+            check_id=check_id,
+        )
+        return None
+    records = _reading_records(spend)
+    if not records:
+        return None
+    report = {
+        "schema_version": "futureagi.harness-authoring-usage.v1",
+        "records": records,
+    }
+    from ee.usage.schemas.event_types import BillingEventType
+    from ee.usage.schemas.events import UsageEvent
+    from ee.usage.services.emitter import emit
+
+    for item in records:
+        if not item["credits"]:
+            continue
+        emit(
+            UsageEvent(
+                event_id=_reading_event_id(
+                    subject_id, purpose, check_id, item["stage"]
+                ),
+                org_id=str(organization_id),
+                event_type=BillingEventType.HARNESS_AUTHORING,
+                amount=item["credits"],
+                timestamp=timezone.now(),
+                properties={
+                    "source": "agent_reading",
+                    "source_id": str(subject_id),
+                    "reading_run_id": str(run_id),
+                    "reading_check_id": str(check_id or ""),
+                    "reading_purpose": purpose,
+                    "workspace_id": str(workspace_id or ""),
+                    "phase": "reading",
+                    "authoring_stage": item["stage"],
+                    "model": item["model"],
+                    "input_tokens": item["tokens_in"],
+                    "output_tokens": item["tokens_out"],
+                    "cached_input_tokens": item["tokens_cached"],
+                    "raw_cost_usd": item["cost_usd"],
+                    "pricing_source": item["pricing_source"],
+                    "complete": spend.get("complete"),
+                },
+            )
+        )
+    return report
+
+
+def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
+    current = HostedHarnessAttempt.no_workspace_objects.get(id=attempt.id)
+    job = HostedHarnessJob.all_objects.only("payload").get(id=current.job_id)
+    metadata = job.payload.get("metadata") or {}
+    report = current.usage_report
+    if report is None:
+        report = (metadata.get(_REPORT_KEY) or {}).get(str(current.id))
+    if report is not None:
+        emit_harness_usage(current, report)
+    if not metadata.get("simulation_only"):
+        authoring = current.authoring_usage_report
+        if authoring is None:
+            authoring = (metadata.get(_AUTHORING_REPORT_KEY) or {}).get(str(current.id))
+        if authoring is not None:
+            emit_harness_authoring_usage(current, authoring)
+        elif current.cleanup_verified_at is not None:
+            spend = ((metadata.get("harness_spend") or {}).get("attempts") or {}).get(
+                str(current.attempt_number)
+            )
+            if spend is not None:
+                try:
+                    record_harness_authoring_usage(current, spend)
+                except HostedHarnessError:
+                    logger.exception(
+                        "Authoring usage could not be finalized for attempt %s",
+                        current.id,
+                    )
+    price_fix_check_run(current.job_id)
+
+
+# The stage name a builder turn run outside any attempt is priced and billed under.
+BUILDER_TURN_STAGE = "builder-turn"
+
+
+def bill_builder_turn(conversation_id: str, payload: dict) -> None:
+    """Bill a builder chat turn run outside any attempt, priced as a build stage is.
+
+    Such a turn runs in a chat sandbox of its own, so no attempt's ledger covers it. Every
+    ending with usage bills it: success, interrupted and failed alike. One row per command
+    message: a replayed ending finds the row and re-sends only that turn's event, which the
+    consumer drops as counted. A rebuild's turn is metered on its nudge, and an ending with
+    no usage records nothing.
+    """
+    # The fields a rebuild's turn is metered with, so both keep the same ones.
+    from simulate.services.harness_versioning.rebuild import (
+        _USAGE_FIELDS,
+        nudge_for_command,
+    )
+
+    try:
+        usage = payload.get("usage")
+        command_id = payload.get("command_message_id")
+        if not isinstance(usage, dict) or not command_id:
+            return
+        command = (
+            HostedHarnessConversationMessage.no_workspace_objects.select_related(
+                "conversation__job"
+            )
+            .filter(id=command_id, conversation_id=UUID(conversation_id))
+            .first()
+        )
+        if command is None or nudge_for_command(command) is not None:
+            return
+        entry = {field: usage[field] for field in _USAGE_FIELDS if field in usage}
+        if not entry:
+            return
+        job = command.conversation.job
+        with transaction.atomic():
+            turn, created = (
+                HostedHarnessBuilderTurnUsage.no_workspace_objects.get_or_create(
+                    command_message=command,
+                    defaults={
+                        "job": job,
+                        "organization_id": job.organization_id,
+                        "workspace_id": job.workspace_id,
+                        "outcome": str(payload.get("outcome") or "")[:16],
+                        "usage": entry,
+                    },
+                )
+            )
+            if created:
+                turn.report = _builder_turn_report(turn)
+                if turn.report is not None:
+                    turn.save(update_fields=["report", "updated_at"])
+            report = turn.report
+            if report is not None:
+                transaction.on_commit(lambda: emit_builder_turn_usage(turn, report))
+    except Exception:  # noqa: BLE001 - billing must never fail the guest's event delivery
+        logger.exception(
+            "builder turn usage could not be billed conversation=%s", conversation_id
+        )
+
+
+def _builder_turn_report(turn: HostedHarnessBuilderTurnUsage) -> dict | None:
+    """The turn priced as one build stage, or None when it bills nothing."""
+    if is_oss():
+        return None
+    usage = turn.usage
+    if not isinstance(usage.get("models") or [], list):
+        logger.error(
+            "builder turn usage has malformed models command=%s",
+            turn.command_message_id,
+        )
+        return None
+    try:
+        record = _authoring_stage_record(
+            {
+                "stage": BUILDER_TURN_STAGE,
+                "tokens_in": usage.get("tokens_in", 0),
+                "tokens_out": usage.get("tokens_out", 0),
+                "tokens_cached": usage.get("tokens_cached", 0),
+                "models": usage.get("models") or [],
+            }
+        )
+    except HostedHarnessError as exc:
+        # As a build stage that cannot be priced: the usage is kept, nothing is billed.
+        logger.error(
+            "builder turn could not be priced command=%s: %s",
+            turn.command_message_id,
+            exc,
+        )
+        return None
+    if record is None:
+        if float(usage.get("usd") or 0.0) > 0:
+            logger.error(
+                "builder turn spent but reported no tokens command=%s usd=%s",
+                turn.command_message_id,
+                usage.get("usd"),
+            )
+        return None
+    return {
+        "schema_version": "futureagi.harness-authoring-usage.v1",
+        "records": [record],
+    }
+
+
+def emit_builder_turn_usage(turn: HostedHarnessBuilderTurnUsage, report: dict) -> None:
+    _emit_authoring_records(
+        turn.job,
+        report,
+        key=UUID(str(turn.command_message_id)),
+        timestamp=turn.created_at,
+        identity={
+            "command_message_id": str(turn.command_message_id),
+            "turn_outcome": turn.outcome,
+        },
+    )
+
+
+def billed_ai_usd(usd: Decimal) -> Decimal:
+    """What a model call bills the organization, in US dollars: its cost at the AI markup."""
+    if is_oss():
+        return usd
+    from ee.usage.services.config import BillingConfig
+
+    return usd * BillingConfig.get().get_ai_cost_markup()
+
+
+def _paid_unit_usd(config, dimension: str) -> Decimal:
+    """The first price a dimension charges past its free tiers."""
+    return next(
+        (
+            tier.price_per_unit
+            for tier in config.get_pricing_tiers(dimension)
+            if tier.price_per_unit > 0
+        ),
+        Decimal(0),
+    )
+
+
+def price_fix_check_run(job_id) -> None:
+    """Set what a fix's check run billed, once its usage is sealed: its conversations and
+    calls at their price per unit, plus any AI credits. A fix holds a worst case for a check
+    run until this replaces it."""
+    if is_oss():
+        return
+    job = HostedHarnessJob.all_objects.filter(id=job_id, fix_run__isnull=False).first()
+    if job is None:
+        return
+    from ee.usage.services.config import BillingConfig
+
+    config = BillingConfig.get()
+    used = harness_consumption(job) or {}
+    usd = sum(
+        (
+            Decimal(str(used.get(dimension) or 0)) * _paid_unit_usd(config, dimension)
+            for dimension in ("text_sim_tokens", "voice_sim_minutes")
+        ),
+        Decimal(str(used.get("ai_credits") or 0)) * Decimal("0.01"),
+    )
+    HostedHarnessJob.all_objects.filter(id=job.id).update(
+        fix_cost_usd=usd.quantize(Decimal("0.0001"))
+    )
+
+
+def harness_consumption(job: HostedHarnessJob) -> dict | None:
+    metadata = job.payload.get("metadata") or {}
+    legacy_reports = metadata.get(_REPORT_KEY) or {}
+    legacy_authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
+    legacy_runtimes = metadata.get("sandbox_runtime") or {}
+    authoring_spend = (
+        {}
+        if metadata.get("simulation_only")
+        else (metadata.get("harness_spend") or {}).get("attempts") or {}
+    )
+    attempts = {
+        str(attempt.id): attempt
+        for attempt in job.attempts.prefetch_related("result_receipts__scenario")
+    }
+    reports = {
+        attempt_id: (
+            attempt.usage_report
+            if attempt.usage_report is not None
+            else legacy_reports.get(attempt_id)
+        )
+        for attempt_id, attempt in attempts.items()
+        if attempt.usage_report is not None or attempt_id in legacy_reports
+    }
+    authoring_reports = {
+        attempt_id: (
+            attempt.authoring_usage_report
+            if attempt.authoring_usage_report is not None
+            else legacy_authoring_reports.get(attempt_id)
+        )
+        for attempt_id, attempt in attempts.items()
+        if not metadata.get("simulation_only")
+        and (
+            attempt.authoring_usage_report is not None
+            or attempt_id in legacy_authoring_reports
+        )
+    }
+    runtimes = {
+        attempt_id: (
+            attempt.sandbox_runtime
+            if attempt.sandbox_runtime
+            else legacy_runtimes.get(attempt_id)
+        )
+        for attempt_id, attempt in attempts.items()
+        if attempt.sandbox_runtime or attempt_id in legacy_runtimes
+    }
+    # Builder turns after a build, each billed on its own outside any attempt: a selected
+    # run's chat turn is billed too, so it is counted too.
+    turn_reports = list(
+        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
+            job_id=job.id, report__isnull=False
+        ).values_list("report", flat=True)
+    )
+    if (
+        not reports
+        and not authoring_reports
+        and not runtimes
+        and not authoring_spend
+        and not turn_reports
+    ):
+        return None
+
+    consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
+    for attempt_id, report in reports.items():
+        attempt = attempts[attempt_id]
+        for item in _billable_records(attempt, report):
+            dimension = (
+                "text_sim_tokens"
+                if item["action"] == "text_call"
+                else "voice_sim_minutes"
+            )
+            consumption[dimension] += item["amount"]
+    consumption["ai_credits"] = sum(
+        record["credits"]
+        for report in [*authoring_reports.values(), *turn_reports]
+        for record in report["records"]
+    )
+    authoring_estimate_unavailable = False
+    if authoring_spend and not is_oss():
+        try:
+            for attempt_id, attempt in attempts.items():
+                if attempt_id in authoring_reports:
+                    continue
+                spend = authoring_spend.get(str(attempt.attempt_number)) or {}
+                for stage in spend.get("stages") or []:
+                    record = _authoring_stage_record(stage)
+                    if record is not None:
+                        consumption["ai_credits"] += record["credits"]
+        except HostedHarnessError:
+            logger.warning(
+                "Authoring credit estimate unavailable for job %s",
+                job.id,
+                exc_info=True,
+            )
+            authoring_estimate_unavailable = True
+    if authoring_estimate_unavailable:
+        consumption["ai_credits"] = None
+    consumption["sandbox_seconds"] = sum(
+        observation["seconds"] for observation in runtimes.values()
+    )
+    return consumption
+
+
+def record_sandbox_runtime(
+    attempt: HostedHarnessAttempt, *, started: bool = False, final: bool = False
+) -> None:
+    """Observe provision-to-confirmed-teardown duration without billing it."""
+    with transaction.atomic():
+        current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=attempt.id
+        )
+        observation = dict(current.sandbox_runtime or {})
+        if observation.get("ended_at") or (not observation and not started):
+            return
+        now = timezone.now()
+        observation.setdefault("started_at", now.isoformat())
+        began = parse_datetime(observation["started_at"])
+        observation["seconds"] = max(0.0, (now - began).total_seconds())
+        observation["observed_at"] = now.isoformat()
+        if final:
+            observation["ended_at"] = now.isoformat()
+        current.sandbox_runtime = observation
+        current.save(update_fields=["sandbox_runtime", "updated_at"])

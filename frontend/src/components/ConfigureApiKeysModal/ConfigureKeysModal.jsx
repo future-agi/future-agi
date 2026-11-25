@@ -20,7 +20,7 @@ export default function ConfigureKeysModal({ open, onClose, selectedModel }) {
       onClose={onClose}
       PaperProps={{
         sx: {
-          width: "734px",
+          width: "720px",
           minHeight: "400px",
           borderRadius: theme.spacing(1),
           padding: theme.spacing(2),
@@ -47,18 +47,13 @@ export default function ConfigureKeysModal({ open, onClose, selectedModel }) {
           >
             Configure API keys
           </Typography>
-          <Typography
-            color={"text.secondary"}
-            variant="s1"
-            fontWeight={"fontWeightBold"}
-          >
+          <Typography color={"text.secondary"} variant="s1" fontWeight={600}>
             Configure your LLM API keys to run evals and prompts.
           </Typography>
         </Stack>
         <IconButton
           onClick={onClose}
           sx={{
-            padding: theme.spacing(0.5),
             margin: 0,
           }}
         >

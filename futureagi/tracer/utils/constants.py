@@ -5,12 +5,14 @@ from tracer.utils.filter_operators import (
     SPAN_ATTR_ALLOWED_OPS as CONTRACT_SPAN_ATTR_ALLOWED_OPS,
 )
 
+# The minimums read FI_TRACES_URL, which a self-hosted snippet sets: older SDKs
+# send spans to FI_BASE_URL, the API, where they are dropped.
 INSTALLATION_GUIDE = {
     "Python": """
-pip install fi-instrumentation-otel
+pip install -U "fi-instrumentation-otel>=1.5.0"
 """,
     "TypeScript": """
-npm install @traceai/openai
+npm install "@traceai/fi-core@^1.4.0" @traceai/openai
 """,
 }
 
@@ -30,9 +32,9 @@ trace_provider = register(
 import { register, ProjectType } from "@traceai/fi-core";
 
 const tracerProvider = register({
-    project_type: ProjectType.EXPERIMENT,
-    project_name: "FUTURE_AGI",
-    project_version_name: "openai-exp",
+    projectType: ProjectType.EXPERIMENT,
+    projectName: "FUTURE_AGI",
+    projectVersionName: "openai-exp",
 });
 """,
 }
@@ -46,15 +48,14 @@ from fi_instrumentation.fi_types import ProjectType
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
     project_name="FUTURE_AGI",            # Your project name
-    session_name="chat-bot"               # Session name
 )
 """,
     "TypeScript": """
 import { register, ProjectType } from "@traceai/fi-core";
 
 const tracerProvider = register({
-    project_type: ProjectType.OBSERVE,
-    project_name: "openai_project",
+    projectType: ProjectType.OBSERVE,
+    projectName: "openai_project",
 });
 """,
 }
@@ -70,6 +71,25 @@ os.environ["FI_SECRET_KEY"] = "{}"
 process.env.FI_API_KEY = "{}";
 process.env.FI_SECRET_KEY = "{}";
 """,
+}
+
+# Appended to ORG_KEYS off Future AGI Cloud (tracer.views.project): both SDKs
+# default to Cloud, so a self-hosted snippet points them at the install's own
+# API (FI_BASE_URL) and trace collector (FI_TRACES_URL). An SDK too old to read
+# FI_TRACES_URL sends spans to FI_BASE_URL, hence the comment.
+ORG_SELF_HOSTED_URLS = {
+    "Python": (
+        'os.environ["FI_BASE_URL"] = "{api_url}"\n'
+        'os.environ["FI_TRACES_URL"] = "{traces_url}"\n'
+        "# FI_TRACES_URL needs fi-instrumentation-otel 1.5.0+; with an older SDK,\n"
+        "# set FI_BASE_URL to the collector URL instead.\n"
+    ),
+    "TypeScript": (
+        'process.env.FI_BASE_URL = "{api_url}";\n'
+        'process.env.FI_TRACES_URL = "{traces_url}";\n'
+        "// FI_TRACES_URL needs @traceai/fi-core 1.4.0+; with an older SDK,\n"
+        "// set FI_BASE_URL to the collector URL instead.\n"
+    ),
 }
 
 INSTRUMENTORS = {
@@ -154,7 +174,7 @@ MCPInstrumentor().instrument(tracer_provider=trace_provider)
             "github": "https://github.com/future-agi/traceAI/tree/main/python/frameworks/bedrock",
             "code": """from traceai_bedrock import BedrockInstrumentor
 
-BedrockInstrumentor().instrument(tracer_provider=trace_provider))
+BedrockInstrumentor().instrument(tracer_provider=trace_provider)
 """,
         },
     },
@@ -374,7 +394,7 @@ OpenAIInstrumentor().instrument(tracer_provider=trace_provider)
             "github": "https://github.com/future-agi/traceAI/tree/main/python/frameworks/portkey",
             "code": """from traceai_portkey import PortkeyInstrumentor
 
-PortkeyInstrumentor().instrument(tracer_provider=tracer_provider)
+PortkeyInstrumentor().instrument(tracer_provider=trace_provider)
 """,
         },
     },

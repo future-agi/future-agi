@@ -6,19 +6,19 @@ import { CallSentimentOptions } from "./common";
 const sentimentStyles = {
   [CallSentimentOptions.POSITIVE]: {
     style: {
-      color: "green.600",
+      color: "status.success.fg",
     },
     text: "Positive",
   },
   [CallSentimentOptions.NEGATIVE]: {
     style: {
-      color: "red.600",
+      color: "status.danger.fg",
     },
     text: "Negative",
   },
   [CallSentimentOptions.NEUTRAL]: {
     style: {
-      color: "orange.500",
+      color: "status.warning.fg",
     },
     text: "Neutral",
   },

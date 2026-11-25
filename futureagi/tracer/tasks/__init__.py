@@ -15,6 +15,15 @@ from tracer.tasks.dataset import (
     process_spans_chunk_task,
 )
 
+# Derived metric jobs
+from tracer.tasks.derived_metric import (
+    capture_derived_metric_snapshot,
+    cleanup_derived_metric_snapshots,
+    compute_derived_metric,
+    dispatch_derived_metrics,
+    refresh_derived_metric_project,
+)
+
 # Error Analysis Tasks
 from tracer.tasks.error_analysis import (
     analyze_single_trace,
@@ -26,6 +35,9 @@ from tracer.tasks.error_analysis import (
 from tracer.tasks.eval_clustering import (
     cluster_eval_results_task,
 )
+
+# Exact aggregation refreshes
+from tracer.tasks.exact_aggregation import refresh_exact_aggregation_snapshot
 
 # External Eval Tasks
 from tracer.tasks.external_eval import (
@@ -44,4 +56,10 @@ __all__ = [
     # Dataset
     "process_spans_chunk_task",
     "CHUNK_SIZE",
+    "refresh_exact_aggregation_snapshot",
+    "capture_derived_metric_snapshot",
+    "cleanup_derived_metric_snapshots",
+    "compute_derived_metric",
+    "dispatch_derived_metrics",
+    "refresh_derived_metric_project",
 ]

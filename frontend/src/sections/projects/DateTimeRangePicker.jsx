@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import { Box, Button } from "@mui/material";
 import React, { useEffect, useRef, useState } from "react";
 import { formatDate } from "src/utils/report-utils";
@@ -13,9 +14,11 @@ const DateTimeRangePicker = ({
   setDateOption,
   dateFilter: initialDateFilter,
   isEdit,
+  includeOneHour = false,
 }) => {
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const dateDisplayRef = useRef(null);
+  const lastPropagatedDateFilterRef = useRef(null);
   const [startDate, setStartDate] = useState(null);
   const [endDate, setEndDate] = useState(null);
   const [dateFilter, setDateFilter] = useState(() => {
@@ -37,7 +40,15 @@ const DateTimeRangePicker = ({
     setStartDate(null);
     setEndDate(null);
     const range = presetToRange(newOption);
-    if (range) setDateFilter([formatDate(range[0]), formatDate(range[1])]);
+    if (range) {
+      const filter = [formatDate(range[0]), formatDate(range[1])];
+      setDateFilter(filter);
+      // Keep the parent option and range atomic. Waiting for the effect below
+      // briefly pairs the new option with the previous range and can trigger
+      // duplicate API reads against an incorrect window.
+      lastPropagatedDateFilterRef.current = filter;
+      setParentDateFilter?.(filter);
+    }
     setDateOption(newOption);
   };
   const getButtonStyles = (selected, isFirst = false, isLast = false) => ({
@@ -69,17 +80,24 @@ const DateTimeRangePicker = ({
 
   useEffect(() => {
     if (zoomRange && zoomRange.length === 2 && zoomRange[0] && zoomRange[1]) {
-      setDateFilter([zoomRange[0], zoomRange[1]]);
+      const filter = [zoomRange[0], zoomRange[1]];
+      setDateFilter(filter);
+      lastPropagatedDateFilterRef.current = filter;
+      setParentDateFilter?.(filter);
       setDateOption("Custom");
     }
   }, [zoomRange]);
 
   useEffect(() => {
-    if (setParentDateFilter) {
+    if (
+      setParentDateFilter &&
+      lastPropagatedDateFilterRef.current !== dateFilter
+    ) {
+      lastPropagatedDateFilterRef.current = dateFilter;
       setParentDateFilter(dateFilter);
     }
     setStartDate(format(new Date(dateFilter[0]), "dd/MM/yyyy"));
-    setEndDate(format(new Date(dateFilter[1]), "dd/MM/yyyy"));
+    setEndDate(format(getDateRangeDisplayEnd(dateFilter), "dd/MM/yyyy"));
   }, [dateOption, dateFilter]);
 
   return (
@@ -135,7 +153,7 @@ const DateTimeRangePicker = ({
           disableRipple
         >
           {dateOption === "Custom" && startDate && endDate ? (
-            <Iconify icon="uil:calender" height={16} width={16} />
+            <Iconify icon="solar:calendar-linear" height={16} width={16} />
           ) : null}
           {startDate && endDate && dateOption === "Custom"
             ? `${startDate} - ${endDate}`
@@ -143,9 +161,16 @@ const DateTimeRangePicker = ({
         </Button>
 
         {/* Time period buttons */}
-        {TIME_PERIOD_OPTIONS.map((option, index) => {
+        {(includeOneHour
+          ? [
+              TIME_PERIOD_OPTIONS[0],
+              { title: "1 hr" },
+              ...TIME_PERIOD_OPTIONS.slice(1),
+            ]
+          : TIME_PERIOD_OPTIONS
+        ).map((option, index, options) => {
           const selected = dateOption === option.title;
-          const isLast = index === TIME_PERIOD_OPTIONS.length - 1;
+          const isLast = index === options.length - 1;
 
           return (
             <Button
@@ -165,7 +190,11 @@ const DateTimeRangePicker = ({
           onClose={() => setIsDatePickerOpen(false)}
           anchorEl={dateDisplayRef?.current}
           value={dateFilter}
-          setDateFilter={setDateFilter}
+          setDateFilter={(filter) => {
+            setDateFilter(filter);
+            lastPropagatedDateFilterRef.current = filter;
+            setParentDateFilter?.(filter);
+          }}
           setDateOption={setDateOption}
         />
       </Box>
@@ -180,6 +209,7 @@ DateTimeRangePicker.propTypes = {
   setDateOption: PropTypes.func,
   dateFilter: PropTypes.array,
   isEdit: PropTypes.bool,
+  includeOneHour: PropTypes.bool,
 };
 
 DateTimeRangePicker.defaultProps = {

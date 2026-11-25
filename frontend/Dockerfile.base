@@ -1,0 +1,13 @@
+# Dependency-only base image: bakes in `yarn install` so the app Dockerfile's
+# build and dev stages only need to COPY source and build/run. Rebuild and
+# republish this (see .github/workflows/base-image-publish.yml) whenever
+# package.json/yarn.lock change.
+FROM node:22.18
+
+WORKDIR /app
+
+COPY package.json yarn.lock ./
+# Cache clean shares the RUN layer with the install: yarn's global cache is
+# ~3.5GB of tarballs that node_modules no longer needs, and a separate RUN
+# would commit it to a layer before deleting it.
+RUN yarn install --network-timeout 600000 && yarn cache clean

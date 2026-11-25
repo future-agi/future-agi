@@ -46,7 +46,7 @@ const RuleStringInput = ({ control, config, configKey, allColumns }) => {
           onClick={() => append({ id: getRandomId(), value: "" })}
           size="small"
         >
-          <Iconify icon="mdi:plus" />
+          <Iconify icon="solar:add-linear" />
         </IconButton>
       </Box>
       {fields.map((field, index) => (
@@ -72,7 +72,7 @@ const RuleStringInput = ({ control, config, configKey, allColumns }) => {
               MenuProps={{ sx: { maxHeight: "300px" } }}
             />
             <IconButton size="small" onClick={() => remove(index)}>
-              <Iconify icon="mdi:minus" />
+              <Iconify icon="solar:minus-linear" />
             </IconButton>
           </Box>
         </Box>
@@ -127,7 +127,7 @@ export const RuleStringInputVariable = ({ control, config, configKey }) => {
           onClick={() => append({ id: getRandomId(), value: "" })}
           size="small"
         >
-          <Iconify icon="mdi:plus" />
+          <Iconify icon="solar:add-linear" />
         </IconButton>
       </Box>
       {fields.map((field, index) => (
@@ -142,7 +142,7 @@ export const RuleStringInputVariable = ({ control, config, configKey }) => {
           <Typography variant="body2">variable_{index + 1}</Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <IconButton size="small" onClick={() => remove(index)}>
-              <Iconify icon="mdi:minus" />
+              <Iconify icon="solar:minus-linear" />
             </IconButton>
           </Box>
         </Box>

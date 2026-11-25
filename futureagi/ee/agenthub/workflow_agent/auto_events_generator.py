@@ -22,6 +22,7 @@ from model_hub.utils.clickhouse import (
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+
 class AutoEventGenerator:
     def __init__(
         self,
@@ -136,7 +137,12 @@ class AutoEventGenerator:
                     table_name=self.key_table_name,
                     eval_id="",  # Add required eval_id parameter
                     vector=explanation_embed,
-                    metadata={"key": key, "explanation": explanation, "type": "key", "datatype": item_val["datatype"]},
+                    metadata={
+                        "key": key,
+                        "explanation": explanation,
+                        "type": "key",
+                        "datatype": item_val["datatype"],
+                    },
                     unique_keys=["key"],
                 )
                 num_upserted += 1
@@ -157,6 +163,7 @@ class AutoEventGenerator:
         # Convert the list of dictionaries to a DataFrame
         sampled_df = pd.DataFrame(sampled_data)
         return sampled_df
+
     def _merge_key_value_pairs(self, events: list[dict]) -> list[dict]:
         merged_events: dict[str, dict] = {}
         for event in events:
@@ -167,13 +174,18 @@ class AutoEventGenerator:
             datatype = event.get("datatype")
             if key in merged_events:
                 if description != merged_events[key]["explanation"]:
-                    merged_events[key]["description"] = f"{merged_events[key]}\n{description}"
+                    merged_events[key]["description"] = (
+                        f"{merged_events[key]}\n{description}"
+                    )
             else:
                 merged_events[key] = event
         return list(merged_events.values())
 
     def _format_output_for_insight_meta(self, merged_events: dict) -> dict:
-        return {k: {"explanation": v["explanation"], "datatype": v["datatype"]} for k, v in merged_events.items()}
+        return {
+            k: {"explanation": v["explanation"], "datatype": v["datatype"]}
+            for k, v in merged_events.items()
+        }
 
     def generate_events(self, k: int = 2) -> dict[str, dict]:
         df = self.fetch_data()
@@ -203,10 +215,8 @@ class AutoEventGenerator:
             )
             events.append(event)
 
-
         merged_events = self._merge_key_value_pairs(events)
         self._upsert_events_to_vector_db(merged_events)
-
 
         # update the status to processed
         if "metadata" in df.columns:
