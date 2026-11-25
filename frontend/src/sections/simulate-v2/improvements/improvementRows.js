@@ -21,6 +21,7 @@ import { runIdentityOf } from "../_mock/runIdentity";
 import { snapshotOfImprovement } from "../_mock/envSnapshot";
 import { shippedStateOf } from "../errorFeed/issueFix";
 import { improvementPath } from "./improvementNav";
+import { versionNameOf } from "../_mock/codeRefs";
 import { needsRecheck } from "./behindProduction";
 import { epochSpendOf } from "./improvementRunsData";
 
@@ -321,7 +322,15 @@ const improvementRowsRaw = ({
            for review" beside a released change. */
           status: phase
             ? { key: "running", label: phase.label, phase: phase.key }
-            : (lifecycle && {
+            : (record.closedAs &&
+                !lifecycle && {
+                  key: "closed",
+                  label:
+                    record.closedAs === "dismissed"
+                      ? "Dismissed"
+                      : "Superseded",
+                }) ||
+              (lifecycle && {
                 ...SHIPPED_STATUS[lifecycle.kind],
                 detail: lifecycle.detail,
               }) ||
@@ -351,6 +360,22 @@ const improvementRowsRaw = ({
           /* Who wrote the change — a coding agent's improvement says so. */
           improver: coder?.improver || null,
           output: lifecycle,
+          /* The agent version it improved — a commit for a code agent. */
+          version: record.baseAgentVersion
+            ? versionNameOf(agent, record.baseAgentVersion).short
+            : null,
+          /* "PR #143" when it shipped as a pull request. */
+          prLabel: lifecycle
+            ? (`${lifecycle.label} ${lifecycle.detail || ""}`.match(
+                /PR #\d+/,
+              ) || [null])[0]
+            : null,
+          /* Fell behind production and can still ship — "Stale: agent at v10". */
+          stale:
+            behindNow && !record.closedAs
+              ? `Stale: agent at ${behindNow.prodLabel}`
+              : null,
+          closedAs: record.closedAs || null,
           identity: improvementIdentityOf(record, env, es),
           href: improvementPath(env.id, record.id),
           changeKind,

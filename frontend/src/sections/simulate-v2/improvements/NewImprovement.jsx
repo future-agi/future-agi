@@ -126,6 +126,8 @@ export default function NewImprovement({
     depth,
     pick,
     candidates,
+    scope,
+    notify,
   }) => {
     const es = state.byEnv[env.id];
     /* Measuring today is a real run of the environment, recorded first. */
@@ -167,6 +169,7 @@ export default function NewImprovement({
       baseAgentVersion: from.agentVersion || null,
       trigger: {
         kind: "goal",
+        ...(scope && { scope }),
         goal: goal
           ? {
               id: goal.id,
@@ -187,6 +190,7 @@ export default function NewImprovement({
         ...(model && { model }),
         ...(writerModel && { writerModel }),
         ...(depth && { fixDepth: depth, suggestChosen: true }),
+        notify: notify !== false,
       },
     });
     commit({

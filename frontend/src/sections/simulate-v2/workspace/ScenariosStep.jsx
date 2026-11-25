@@ -12,7 +12,9 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useSnackbar } from "notistack";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { paths } from "src/routes/paths";
+import { agentIdOf, envAgentKey } from "../_mock/agentRegistry";
 import {
   Box,
   Stack,
@@ -414,6 +416,7 @@ export default function ScenariosStep({
   /* The review of scenarios improvements wrote (opened from Needs review). */
   const [improvOpen, setImprovOpen] = useState(false);
   const [traceReview, setTraceReview] = useState(null);
+  const navigate = useNavigate();
   /* Row-level facet filter — same shape the rest of the product uses
      (Runs list, Improvements list). Four dimensions, each a multi-select. */
   const [filters, setFilters] = useState({});
@@ -943,7 +946,14 @@ export default function ScenariosStep({
       // eslint-disable-next-line react-hooks/exhaustive-deps
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [personaChoices, subActorChoices, keywordChoices, subgoalChoices, orgTags, orgGroups],
+    [
+      personaChoices,
+      subActorChoices,
+      keywordChoices,
+      subgoalChoices,
+      orgTags,
+      orgGroups,
+    ],
   );
 
   /* A search or a filter other than the suite picker narrows the list — what
@@ -2564,7 +2574,10 @@ export default function ScenariosStep({
                   versionOf={(b) =>
                     b.rows.length && b.rows.every((r) => r.proposed)
                       ? null
-                      : scenarioVersionOfRows(b.rows, b.meta.source !== "derived")
+                      : scenarioVersionOfRows(
+                          b.rows,
+                          b.meta.source !== "derived",
+                        )
                   }
                   view={view}
                   tableProps={{
@@ -3045,6 +3058,22 @@ export default function ScenariosStep({
         patch={patch}
         importId={traceReview === "all" ? null : traceReview}
         onApprove={(rows) => approveImport(rows)}
+        onApproveAndEpoch={
+          ro || !env?.id
+            ? null
+            : (rows) => {
+                approveImport(rows);
+                setTraceReview(null);
+                /* The Epoch measures first, so the new scenarios run as its
+                   first step — no separate run before it. */
+                const agentId = envState?.agent
+                  ? agentIdOf(envAgentKey(envState.agent, env.id))
+                  : null;
+                navigate(
+                  `${paths.dashboard.simulate.environmentDetail(env.id)}/improvements?new=1${agentId ? `&agent=${agentId}` : ""}`,
+                );
+              }
+        }
         onEditWithBuilder={
           ro
             ? null

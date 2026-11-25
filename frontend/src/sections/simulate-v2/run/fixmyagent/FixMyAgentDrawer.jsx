@@ -235,6 +235,8 @@ export default function FixMyAgentDrawer({
     depth,
     pick,
     candidates,
+    scope,
+    notify,
   }) => {
     /* An outside change re-read at Start is measured first, on that version
        — recorded as a run, and part of what the improvement spends. */
@@ -277,6 +279,8 @@ export default function FixMyAgentDrawer({
       trigger: {
         kind: "run",
         ...(direct && { source: "run-direct" }),
+        /* What the Improve row aimed at: { kind, label, count, toppedUp? }. */
+        ...(scope && { scope }),
         goal: goal
           ? {
               id: goal.id,
@@ -295,6 +299,8 @@ export default function FixMyAgentDrawer({
         ...(model && { model }),
         ...(writerModel && { writerModel }),
         includedIds: included.map((p) => p.id),
+        /* "Notify me when it's done", chosen in the setup. */
+        notify: !!notify,
         /* Suggest only, chosen in the setup. */
         ...(depth && { fixDepth: depth, suggestChosen: true }),
         /* The diagnosis this attempt was made against, kept with it — six
@@ -696,7 +702,7 @@ export default function FixMyAgentDrawer({
             envVersion: sourceRun?.envVersion || undefined,
           }}
           tasks={tasks}
-          included={included}
+          included={direct ? null : included}
           onStart={startFromSetup}
         />
       )}

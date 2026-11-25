@@ -14,6 +14,7 @@ import { SegmentedTabs } from "src/components/tabs/tabs";
 import ScenarioTable from "../workspace/scenarios/ScenarioTable";
 import GroupByMenu from "../workspace/scenarios/GroupByMenu";
 import CallCompare from "../run/CallCompare";
+import { mustPassLineOf } from "./epochCandidates";
 import {
   EPOCH_SETS,
   RESULT_GROUPINGS,
@@ -93,6 +94,7 @@ export default function EpochScenarioResults({
       </Tooltip>
     ) : null;
   const counts = useMemo(() => setCountsOf(entries), [entries]);
+  const mustPassLine = mustPassLineOf(result);
   /* The environment's scenarios, and the epoch's own (an issue's). */
   const scenarios = useMemo(
     () => [...(envState?.scenarios || []), ...(record?.issueScenarios || [])],
@@ -250,7 +252,14 @@ export default function EpochScenarioResults({
               key={s.id}
               value={s.id}
               label={
-                <Tooltip arrow title={s.tip}>
+                <Tooltip
+                  arrow
+                  title={
+                    s.id === "mustpass" && mustPassLine
+                      ? `${mustPassLine}. ${s.tip}`
+                      : s.tip
+                  }
+                >
                   <span>{`${s.label} ${counts[s.id]}`}</span>
                 </Tooltip>
               }
@@ -262,6 +271,17 @@ export default function EpochScenarioResults({
           onChange={setGroupBy}
           options={RESULT_GROUPINGS}
         />
+        {mustPassLine?.includes("·") && counts.mustpass > 0 && (
+          <Typography
+            noWrap
+            sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+          >
+            {mustPassLine.replace(
+              /^Must-pass \d+/,
+              `Must-pass ${counts.mustpass}`,
+            )}
+          </Typography>
+        )}
         {addButton && (
           <>
             <Box flex={1} />

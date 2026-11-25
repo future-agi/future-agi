@@ -12,6 +12,7 @@ import {
   Select,
   Stack,
   TextField,
+  Tooltip,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
@@ -170,6 +171,8 @@ export default function TraceReviewDrawer({
   importId = null,
   onApprove,
   approveLabel = null,
+  onApproveAndEpoch = null,
+  totalTraces = null,
   onEditWithBuilder = null,
   onUpdateEnvironment = null,
   onViewInSuite = null,
@@ -273,7 +276,13 @@ export default function TraceReviewDrawer({
   const observeHref = current ? observeHrefOf(current) : null;
   /* Everything that was waiting is in the suite now. */
   const allDone = added > 0 && kept.length === 0;
-  const summary = importSummaryOf(drafts, uncovered);
+  /* "15 traces from …" → "15 of 33 traces from …" where the source has a total. */
+  const summary = (() => {
+    const s = importSummaryOf(drafts, uncovered);
+    return totalTraces && /^\d+ traces?/.test(s)
+      ? s.replace(/^(\d+) (traces?)/, `$1 of ${totalTraces} $2`)
+      : s;
+  })();
 
   return (
     <SideDrawer open onClose={leave} width={960}>
@@ -1231,23 +1240,72 @@ export default function TraceReviewDrawer({
               )}
             </>
           ) : (
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              disabled={!chosen.length}
-              onClick={() => {
-                onApprove(chosen);
-                setAdded((n) => n + chosen.length);
-                setSkipped(new Set());
-              }}
-            >
-              {approveLabel
-                ? approveLabel(chosen.length)
-                : chosen.length
-                  ? `Add ${chosen.length} to the suite`
-                  : "Add to the suite"}
-            </Button>
+            <>
+              {/* Scenarios: add them and go straight on to an Epoch, which
+                  reproduces first — no separate run in between. */}
+              {onApproveAndEpoch ? (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  disabled={!chosen.length}
+                  onClick={() => {
+                    onApprove(chosen);
+                    setAdded((n) => n + chosen.length);
+                    setSkipped(new Set());
+                  }}
+                  sx={{ borderColor: "divider" }}
+                >
+                  {chosen.length
+                    ? `Add ${chosen.length} to the suite`
+                    : "Add to the suite"}
+                </Button>
+              ) : (
+                <Tooltip arrow title="Keep every draft as written and go on.">
+                  <span>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="inherit"
+                      disabled={!kept.length}
+                      onClick={() => {
+                        onApprove(kept);
+                        setAdded((n) => n + kept.length);
+                        setSkipped(new Set());
+                      }}
+                      sx={{ borderColor: "divider" }}
+                    >
+                      Use defaults
+                    </Button>
+                  </span>
+                </Tooltip>
+              )}
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                disabled={!chosen.length}
+                onClick={() => {
+                  if (onApproveAndEpoch) {
+                    onApproveAndEpoch(chosen);
+                    return;
+                  }
+                  onApprove(chosen);
+                  setAdded((n) => n + chosen.length);
+                  setSkipped(new Set());
+                }}
+              >
+                {onApproveAndEpoch
+                  ? chosen.length
+                    ? `Add ${chosen.length} and run Epoch`
+                    : "Add and run Epoch"
+                  : approveLabel
+                    ? approveLabel(chosen.length)
+                    : chosen.length
+                      ? `Add ${chosen.length} to the suite`
+                      : "Add to the suite"}
+              </Button>
+            </>
           )}
         </Stack>
       </Stack>
@@ -1267,6 +1325,10 @@ TraceReviewDrawer.propTypes = {
   /* (n) => the primary button's label, where adding means something else
      (Error Feed → Fix: the drafts the fix runs on). */
   approveLabel: PropTypes.func,
+  /* (rows) — add them, then start an Epoch (Scenarios' import review). */
+  onApproveAndEpoch: PropTypes.func,
+  /* The source's own trace total (Error Feed issue), for "15 of 33". */
+  totalTraces: PropTypes.number,
   /* (row) — focus the environment's builder chat on this draft. */
   onEditWithBuilder: PropTypes.func,
   /* (nudge) — hand the builder what the environment needs to cover. */

@@ -820,8 +820,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
   const [fixSetup, setFixSetup] = useState(false);
   /* Opened from the header's Run Epoch rather than an Insights finding. */
   const [fixDirect, setFixDirect] = useState(false);
-  /* Run Epoch's caret: hand the failures to your own coding agent instead. */
-  const [epochAnchor, setEpochAnchor] = useState(null);
+  /* Copy for coding agent: hand the failures to your own coding agent
+     instead; the drawer shows what is copied. */
+  const [briefOpen, setBriefOpen] = useState(false);
   /* An agent built in a voice platform's dashboard can't be changed by an
      Epoch — the button stays, disabled with the reason. */
   const { agents: connectedAgents } = useConnectedAgents();
@@ -831,6 +832,23 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     optimisable(debugTasks).map((t) => t.scenarioId || t.id),
   ).size;
   const callerFlaky = failingScenarioIds.length - epochFailingCount;
+  const briefText = () =>
+    codingAgentBrief({
+      agent: envState?.agent
+        ? {
+            name: envState.agent.name,
+            key: envAgentKey(envState.agent, env?.id),
+          }
+        : null,
+      env,
+      issue: {
+        title: `Failing scenarios in ${identity?.ordinal ? `Run ${identity.ordinal}` : "this run"}`,
+      },
+      runId,
+      failingScenarios: debugTasks
+        .filter((t) => t.status === "failed" || t.status === "flaky")
+        .map((t) => scenarioTitle(t.title) || t.id),
+    });
   const epochBlocked = (() => {
     const key = envAgentKey(envState?.agent, env?.id);
     const vf = voiceFixOf(connectedAgents.find((a) => a.key === key) || null);
@@ -2237,7 +2255,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           !trialMeta &&
           !fixFirst &&
           failingScenarioIds.length > 0 && (
-            <Stack direction="row" sx={{ flexShrink: 0 }}>
+            <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
               <Tooltip
                 arrow
                 title={
@@ -2255,82 +2273,130 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                       openImprove(null);
                     }}
                     startIcon={<Iconify icon="solar:play-linear" width={16} />}
-                    sx={{
-                      color: "text.primary",
-                      borderColor: "divider",
-                      borderTopRightRadius: 0,
-                      borderBottomRightRadius: 0,
-                    }}
+                    sx={{ color: "text.primary", borderColor: "divider" }}
                   >
                     Run Epoch
                   </Button>
                 </span>
               </Tooltip>
-              <Button
-                variant="outlined"
-                size="small"
-                aria-label="Other ways to fix these failures"
-                disabled={!!epochBlocked}
-                onClick={(e) => setEpochAnchor(e.currentTarget)}
-                sx={{
-                  minWidth: 0,
-                  color: "text.tertiary",
-                  borderColor: "divider",
-                  borderLeft: "none",
-                  borderTopLeftRadius: 0,
-                  borderBottomLeftRadius: 0,
-                }}
+              <Tooltip
+                arrow
+                title={
+                  epochBlocked ||
+                  "Your coding agent fixes it; each attempt is checked here."
+                }
               >
-                <Iconify icon="solar:alt-arrow-down-linear" width={12} />
-              </Button>
+                <span>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    disabled={!!epochBlocked}
+                    onClick={() => setBriefOpen(true)}
+                    startIcon={
+                      <Iconify icon="solar:programming-linear" width={16} />
+                    }
+                    sx={{ color: "text.primary", borderColor: "divider" }}
+                  >
+                    Copy for coding agent
+                  </Button>
+                </span>
+              </Tooltip>
             </Stack>
           )}
-        <Popover
-          open={!!epochAnchor}
-          anchorEl={epochAnchor}
-          onClose={() => setEpochAnchor(null)}
-          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-          transformOrigin={{ vertical: "top", horizontal: "right" }}
-          slotProps={{
-            paper: { sx: { mt: 0.75, width: 280, borderRadius: "8px" } },
-          }}
+        <SideDrawer
+          open={briefOpen}
+          onClose={() => setBriefOpen(false)}
+          width={520}
         >
-          <MenuItem
-            onClick={() => {
-              setEpochAnchor(null);
-              const text = codingAgentBrief({
-                agent: envState?.agent
-                  ? {
-                      name: envState.agent.name,
-                      key: envAgentKey(envState.agent, env?.id),
-                    }
-                  : null,
-                env,
-                issue: {
-                  title: `Failing scenarios in ${identity?.ordinal ? `Run ${identity.ordinal}` : "this run"}`,
-                },
-                runId,
-                failingScenarios: debugTasks
-                  .filter((t) => t.status === "failed" || t.status === "flaky")
-                  .map((t) => scenarioTitle(t.title) || t.id),
-              });
-              navigator.clipboard?.writeText(text);
-              enqueueSnackbar("Copied for your coding agent", {
-                variant: "success",
-              });
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: "28px !important" }}>
-              <Iconify icon="solar:programming-linear" width={16} />
-            </ListItemIcon>
-            <ListItemText
-              primary="Copy for coding agent"
-              secondary="It fixes; we check each attempt."
-              primaryTypographyProps={{ typography: "s2", fontWeight: 500 }}
-              secondaryTypographyProps={{ typography: "s3" }}
-            />
-          </MenuItem>
-        </Popover>
+          <Stack sx={{ height: "100%", minHeight: 0 }}>
+            <Stack
+              direction="row"
+              alignItems="flex-start"
+              spacing={1}
+              sx={{
+                px: 2.5,
+                pt: 2,
+                pb: 1.5,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+                  Copy for coding agent
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  Paste this into your coding agent.
+                </Typography>
+              </Box>
+              <IconButton
+                size="small"
+                aria-label="Close"
+                onClick={() => setBriefOpen(false)}
+              >
+                <Iconify icon="solar:close-linear" width={18} />
+              </IconButton>
+            </Stack>
+            <Box
+              sx={{ px: 2.5, py: 2, flex: 1, minHeight: 0, display: "flex" }}
+            >
+              <Box
+                component="pre"
+                sx={{
+                  m: 0,
+                  p: 1.5,
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: "auto",
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  lineHeight: "18px",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 1,
+                  bgcolor: "background.neutral",
+                }}
+              >
+                {briefOpen ? briefText() : ""}
+              </Box>
+            </Box>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{
+                px: 2.5,
+                py: 2,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", flex: 1 }}
+              >
+                Your coding agent&apos;s attempts are checked here and charged
+                to this workspace&apos;s credits.
+              </Typography>
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                startIcon={<Iconify icon="solar:copy-linear" width={14} />}
+                onClick={() => {
+                  navigator.clipboard?.writeText(briefText());
+                  enqueueSnackbar("Copied for your coding agent", {
+                    variant: "success",
+                  });
+                  setBriefOpen(false);
+                }}
+              >
+                Copy
+              </Button>
+            </Stack>
+          </Stack>
+        </SideDrawer>
         {/*
           The primary action after a failed run is not to run it again —
           the same agent against the same graders returns the same

@@ -10,9 +10,11 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
   Link,
   Stack,
+  Switch,
   Tab,
   Tabs,
   Tooltip,
@@ -908,6 +910,30 @@ export default function ImprovementRunsView({
           {/* Stop while it runs — what finished stays; nothing is chosen. */}
           {running && patch && (
             <>
+              <FormControlLabel
+                sx={{ m: 0, flexShrink: 0, gap: 0.75 }}
+                control={
+                  <Switch
+                    size="small"
+                    checked={record.notify !== false}
+                    onChange={(e) =>
+                      patch({
+                        optimizations: (envState?.optimizations || []).map(
+                          (o) =>
+                            o.id === record.id
+                              ? { ...o, notify: e.target.checked }
+                              : o,
+                        ),
+                      })
+                    }
+                  />
+                }
+                label={
+                  <Typography sx={{ typography: "s2" }}>
+                    Notify me when it&apos;s done
+                  </Typography>
+                }
+              />
               <Button
                 size="small"
                 variant="outlined"
@@ -1148,6 +1174,7 @@ export default function ImprovementRunsView({
       {running ? (
         <ImprovementStages
           record={record}
+          env={env}
           envState={envState}
           progress={progress}
           model={agentModel}

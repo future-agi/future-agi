@@ -43,6 +43,7 @@ import {
   scenarioGroupsOf,
 } from "./issueFix";
 import TraceReviewDrawer from "../workspace/scenarios/TraceReviewDrawer";
+import { FIX_IN_FLIGHT } from "./issueFixModel";
 import { fixImportIdOf, issueImportOf } from "../_mock/errorFeedSource";
 import SideDrawer from "../components/SideDrawer";
 
@@ -250,6 +251,23 @@ export default function FixStartDialog({
   const traceTotal =
     issue?.trace_count ||
     plan.allDrafts.reduce((n, d) => n + (d.traceCount || 0), 0);
+  /* Traces behind the drafts being used, of the issue's total. */
+  const pickedTraces = (() => {
+    const src = reviewRows.length ? reviewRows : drafts;
+    const ids = new Set(
+      src.flatMap(
+        (d) => d.errorFeedIssue?.traceIds || d.traceImport?.ids || [],
+      ),
+    );
+    if (ids.size) return ids.size;
+    return src.reduce((n, d) => n + (d.traceCount || 0), 0);
+  })();
+  const tracesOf = pickedTraces
+    ? `${Math.min(pickedTraces, traceTotal || pickedTraces)}${traceTotal ? ` of ${traceTotal}` : ""}`
+    : `${traceTotal}`;
+  /* An Epoch for this issue is already in flight on this agent. */
+  const running =
+    plan.status && FIX_IN_FLIGHT.has(plan.status.key) ? plan.status : null;
   const groups = scenarioGroupsOf(drafts);
   const grouped = drafts.length > 6 && groups.length < drafts.length;
   const listed = grouped
@@ -295,15 +313,17 @@ export default function FixStartDialog({
   );
   const held = voiceFix
     ? `Built in ${voiceFix.where}, so an Epoch can't change it. Change it there, then run again.`
-    : !main
-      ? `${agent?.name || "This agent"} has no environment yet — build one first.`
-      : plan.building
-        ? `${main.name} is still building — the epoch can start once it's done.`
-        : issueNeeds.length
-          ? `${main.name} can't answer ${issueNeeds.join(", ")} yet — teach it first.`
-          : !drafts.length
-            ? "No scenarios could be written from this issue's traces."
-            : null;
+    : running
+      ? "An Epoch is already running here."
+      : !main
+        ? "No environment yet."
+        : plan.building
+          ? `${main.name} is still building — the epoch can start once it's done.`
+          : issueNeeds.length
+            ? `${main.name} can't answer ${issueNeeds.join(", ")} yet — teach it first.`
+            : drafts.length < 3 && !reviewed
+              ? "Needs at least 3 failing cases to start."
+              : null;
 
   /* Nothing to decide: an environment that fits the issue's channel, every
      tool answered, consent already given, nothing holding it. The summary
@@ -314,6 +334,8 @@ export default function FixStartDialog({
     !held &&
     !plan.consentNeeded &&
     !toolGap.length &&
+    /* Stopped at its budget last time: the budget is a choice to make here. */
+    lastStatus?.key !== "over-budget" &&
     envFitsIssue(main, issue);
 
   const start = () => {
@@ -363,10 +385,10 @@ export default function FixStartDialog({
   const reviewLabel =
     reviewRows.length > 0 ? "Continue review" : "Review the drafts";
   const scenariosLine = reviewed
-    ? `${runDrafts.length} reviewed ${runDrafts.length === 1 ? "scenario" : "scenarios"} from ${traceTotal} failing traces · reproduced first, some held back to prove the change`
+    ? `${runDrafts.length} reviewed ${runDrafts.length === 1 ? "scenario" : "scenarios"} from ${tracesOf} failing traces · reproduced first, some held back to prove the change`
     : reviewRows.length > 0
       ? `${reviewStats.kept} of ${reviewRows.length} ${reviewRows.length === 1 ? "draft" : "drafts"} kept so far · review each before any change is tried`
-      : `${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"} from ${traceTotal} failing traces${plan.capped ? `, the ${drafts.length} most common of ${plan.allDrafts.length}` : ""} · review each before any change is tried`;
+      : `${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"} from ${tracesOf} failing traces${plan.capped ? `, the ${drafts.length} most common of ${plan.allDrafts.length}` : ""} · review each before any change is tried`;
   /* The budget, said the same way the Fix page and the setup sheet say it. */
   const budgetLine = epochBudgetLine({
     candidates: estimate?.runs,
@@ -417,10 +439,14 @@ export default function FixStartDialog({
               component="button"
               type="button"
               underline="hover"
-              onClick={startReview}
+              onClick={() =>
+                navigate(
+                  `${paths.dashboard.simulate.environmentDetail(main.id)}/scenarios`,
+                )
+              }
               sx={{ typography: "s2", verticalAlign: "baseline" }}
             >
-              Open review
+              View in Scenarios
             </Link>
           </>
         )}
@@ -501,6 +527,7 @@ export default function FixStartDialog({
   /* The full plan: one link, never a second button beside the main one. */
   const primaryOpensPlan =
     !!held &&
+    !running &&
     !(!main && agent) &&
     !(main && !plan.building && issueNeeds.length);
 
@@ -522,6 +549,7 @@ export default function FixStartDialog({
         envState={mainState}
         patch={patchMain}
         importId={reviewId}
+        totalTraces={traceTotal || null}
         onApprove={(rows) => {
           const ids = new Set(rows.map((r) => r.id));
           patchMain({
@@ -705,7 +733,7 @@ export default function FixStartDialog({
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
                   >
-                    {`An epoch tests its changes in an environment. Build one from ${agent.name} first.`}
+                    Epochs test changes in an environment.
                   </Typography>
                 )}
                 {main && !envFitsIssue(main, issue) && (
@@ -777,7 +805,8 @@ export default function FixStartDialog({
                   </Typography>
                 </Row>
               )}
-              {main && estimate && (
+              {/* No budget to pick for an Epoch that can't run here. */}
+              {main && estimate && !voiceFix && (
                 <Row k="Budget">
                   <Box sx={{ maxWidth: 240 }}>
                     <ConstraintPicker
@@ -906,6 +935,11 @@ export default function FixStartDialog({
                   );
                   return;
                 }
+                if (running) {
+                  onClose();
+                  navigate(...issueFixNav(running, issueId));
+                  return;
+                }
                 /* No environment: build one, the same way the agent page does. */
                 if (!main && agent) {
                   setBuildOpen(true);
@@ -922,11 +956,13 @@ export default function FixStartDialog({
             >
               {voiceFix
                 ? "Open the agent"
-                : !main && agent
-                  ? "Build environment"
-                  : main && !plan.building && issueNeeds.length
-                    ? teachLabel
-                    : "Open the full plan"}
+                : running
+                  ? "Open it"
+                  : !main && agent
+                    ? "Build environment"
+                    : main && !plan.building && issueNeeds.length
+                      ? teachLabel
+                      : "Open the full plan"}
             </Button>
           ) : needsReview ? (
             <Button

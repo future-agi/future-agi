@@ -31,7 +31,7 @@ export default function CandidateChangeDrawer({
         {
           k: "Held back",
           v: c.held
-            ? `${c.held.from}% → ${c.held.to}%${c.held.projected ? " projected" : ""}`
+            ? `${c.heldCounts || `${c.held.from}% → ${c.held.to}%`}${c.held.projected ? " projected" : ""}`
             : "Not run",
         },
         {

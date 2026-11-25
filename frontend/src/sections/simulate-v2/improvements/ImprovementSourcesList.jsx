@@ -14,6 +14,7 @@ import {
   InputAdornment,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { neutralCheckboxSx } from "../components/primitives";
@@ -27,6 +28,7 @@ import { improvementRowsOf, sourceRunOf } from "./improvementRows";
 import { formatCreatedAt, modalityOfSurface } from "./improvementSources";
 import StatusPill from "./ImprovementStatusPill";
 import { ROW_HEIGHT as DS_ROW_HEIGHT } from "src/theme/sizes";
+import EpochMoreMenu from "./EpochMoreMenu";
 import ClosableDialog from "../components/ClosableDialog";
 import { agentIdOf, envAgentKey } from "../_mock/agentRegistry";
 
@@ -284,6 +286,20 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
     return agentIdOf(envAgentKey(es.agent, inEnv.envId));
   }, [inEnv, state.byEnv]);
 
+  /* Marks an epoch superseded or dismissed on its record; null reopens it. */
+  const setClosedAs = (r, value) => {
+    const es = state.byEnv?.[r.envId] || {};
+    dispatch({
+      type: "patchEnvState",
+      envId: r.envId,
+      patch: {
+        optimizations: (es.optimizations || []).map((o) =>
+          o.id === r.recordId ? { ...o, closedAs: value } : o,
+        ),
+      },
+    });
+  };
+
   const columns = [
     {
       id: "select",
@@ -383,11 +399,79 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
     {
       id: "status",
       header: "Status",
-      size: 240,
+      size: 190,
       enableSorting: false,
       cell: ({ row: { original: r } }) => (
-        <StatusPill ending={r.status} headline={r.headline} />
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ minWidth: 0 }}
+        >
+          {/* The PR has its own column: the status keeps only other places. */}
+          <StatusPill
+            ending={
+              r.prLabel && r.status?.detail === r.prLabel
+                ? { ...r.status, detail: null }
+                : r.status
+            }
+            headline={r.headline}
+          />
+          {r.stale && (
+            <Tooltip
+              arrow
+              title="The agent moved on after this was measured. It is re-checked on the new version before it can ship."
+            >
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s3",
+                  color: "status.warning.fg",
+                  flexShrink: 0,
+                }}
+              >
+                {r.stale}
+              </Typography>
+            </Tooltip>
+          )}
+        </Stack>
       ),
+    },
+    {
+      id: "version",
+      header: "Version",
+      size: 120,
+      enableSorting: false,
+      cell: ({ row: { original: r } }) =>
+        r.version ? (
+          <Typography
+            noWrap
+            title={r.version}
+            sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}
+          >
+            {r.version}
+          </Typography>
+        ) : (
+          <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+            —
+          </Typography>
+        ),
+    },
+    {
+      id: "pr",
+      header: "Pull request",
+      size: 90,
+      enableSorting: false,
+      cell: ({ row: { original: r } }) =>
+        r.prLabel ? (
+          <Typography noWrap sx={{ typography: "s2" }}>
+            {r.prLabel.replace("PR ", "")}
+          </Typography>
+        ) : (
+          <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+            —
+          </Typography>
+        ),
     },
     {
       id: "result",
@@ -427,7 +511,7 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
     {
       id: "cost",
       header: "Cost",
-      size: 120,
+      size: 110,
       enableSorting: false,
       cell: ({ row: { original: r } }) =>
         r.credits != null ? (
@@ -444,13 +528,53 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
     {
       id: "createdAt",
       header: "Created",
-      size: 150,
+      size: 140,
       enableSorting: false,
       cell: ({ row: { original: r } }) => (
         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
           {formatCreatedAt(r.createdAt)}
         </Typography>
       ),
+    },
+    {
+      id: "actions",
+      header: "",
+      size: 48,
+      enableSorting: false,
+      cell: ({ row: { original: r } }) => {
+        /* Only an epoch that hasn't started shipping can be closed out by hand. */
+        const open = r.status?.key !== "running" && !r.output;
+        const items = open
+          ? r.closedAs
+            ? [
+                {
+                  label: "Reopen",
+                  hint: "Back to its own status.",
+                  icon: "solar:restart-linear",
+                  onClick: () => setClosedAs(r, null),
+                },
+              ]
+            : [
+                {
+                  label: "Mark superseded",
+                  hint: "A newer epoch or edit replaced it.",
+                  icon: "solar:copy-linear",
+                  onClick: () => setClosedAs(r, "superseded"),
+                },
+                {
+                  label: "Dismiss",
+                  hint: "Not going to ship it.",
+                  icon: "solar:close-circle-linear",
+                  onClick: () => setClosedAs(r, "dismissed"),
+                },
+              ]
+          : [];
+        return items.length ? (
+          <Box onClick={(e) => e.stopPropagation()}>
+            <EpochMoreMenu items={items} />
+          </Box>
+        ) : null;
+      },
     },
   ];
 

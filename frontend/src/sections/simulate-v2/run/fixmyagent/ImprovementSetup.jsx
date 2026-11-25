@@ -49,6 +49,7 @@ import {
 } from "../../_mock/optimizationRuns";
 import { fixDepthOf } from "../../_mock/rsiModel";
 import { goalWords, improvementRunName } from "../../_mock/optimizer";
+import { optimisable } from "../../_mock/optimize";
 import {
   baseRunOf,
   budgetsWithin,
@@ -83,6 +84,8 @@ import { rereadFor, textSearchDefault } from "../../_mock/improvementPolicy";
 import { recordOutsideChange } from "../../_mock/nudgeEffects";
 import { creditsLabel } from "../../_mock/metering";
 import { creditsForUsd } from "../../_mock/metering";
+import { deriveUseCaseLabel } from "../traceTableHelpers";
+import { FROM_PRODUCTION, keywordsOf } from "../../_mock/scenarioKeywords";
 import { casesForSkillOf, loadedVOf, skillSetOf } from "../../_mock/skills";
 import ClosableDialog from "../../components/ClosableDialog";
 
@@ -91,6 +94,101 @@ const goalText = (g) =>
   g.id === "pass-rate"
     ? "Raise the pass rate"
     : `Raise ${g.group === "outcome" ? `${g.label.charAt(0).toLowerCase()}${g.label.slice(1)}` : g.label}`;
+/* The Improve row: which of the run's failing cases an epoch aims at. */
+const MIN_TARGETS = 12;
+const MIN_FAILING = 3;
+const MANY_FAILING = 200;
+const wordsOf = (s) =>
+  String(s || "")
+    .toLowerCase()
+    .match(/[a-z]{4,}/g) || [];
+
+/* Round-robin across goals: one from each in turn, until `n` are taken. */
+const spreadOf = (tasks, n) => {
+  const groups = new Map();
+  tasks.forEach((t) => {
+    const k = deriveUseCaseLabel(t);
+    groups.set(k, [...(groups.get(k) || []), t.id]);
+  });
+  const lists = [...groups.values()];
+  const out = [];
+  for (let i = 0; out.length < n && lists.some((l) => i < l.length); i += 1)
+    lists.forEach((l) => {
+      if (out.length < n && i < l.length) out.push(l[i]);
+    });
+  return out;
+};
+
+/* The options of the Improve select, each with the failing case ids it means. */
+const scopeMenuOf = (failing, es, includedList) => {
+  const ids = (list) => list.map((t) => t.id);
+  const count = (map, k, t) => map.set(k, [...(map.get(k) || []), t]);
+  const goalMap = new Map();
+  const evalMap = new Map();
+  failing.forEach((t) => {
+    count(goalMap, deriveUseCaseLabel(t), t);
+    (t.evalResults || []).forEach((r) => {
+      if (r.passed === false) count(evalMap, r.id, t);
+    });
+  });
+  const pickedIds = new Set(
+    (includedList || []).flatMap((p) => p.addresses || []),
+  );
+  const imported = failing.filter((t) => {
+    const sc = (es?.scenarios || []).find(
+      (r) => (r.groupId || r.id) === t.groupId || r.id === t.groupId,
+    );
+    return !!sc && keywordsOf(sc, es).includes(FROM_PRODUCTION);
+  });
+  const picked = failing.filter((t) => pickedIds.has(t.id));
+  const opts = [
+    {
+      key: "all",
+      kind: "all",
+      label: "All failing cases in this run",
+      ids: ids(failing),
+    },
+    ...((includedList || []).length
+      ? [
+          {
+            key: "picked",
+            kind: "picked",
+            label: "Picked in Debug failures",
+            ids: ids(picked),
+            noun: "failing",
+          },
+        ]
+      : []),
+    ...(imported.length
+      ? [
+          {
+            key: "imported",
+            kind: "imported",
+            label: "Just imported",
+            ids: ids(imported),
+          },
+        ]
+      : []),
+    ...[...goalMap].map(([label, list]) => ({
+      key: `goal:${label}`,
+      kind: "goal",
+      label,
+      ids: ids(list),
+      group: "Goals",
+      noun: "failing",
+    })),
+    ...[...evalMap].map(([id, list]) => ({
+      key: `eval:${id}`,
+      kind: "eval",
+      label: getEval(id)?.name || id,
+      ids: ids(list),
+      group: "Evaluations",
+      noun: "failing",
+    })),
+  ];
+  return opts;
+};
+
 const fieldLabel = { typography: "s2", fontWeight: 600, mb: 0.875 };
 const NUM = { fontVariantNumeric: "tabular-nums" };
 const selectSx = {
@@ -122,6 +220,7 @@ export default function ImprovementSetup({
   onBack = null,
   agentField = null,
   onBuildEnv = null,
+  included = null,
 }) {
   const { state, commit } = useSimStore();
   const { agents } = useConnectedAgents();
@@ -187,6 +286,10 @@ export default function ImprovementSetup({
   const [reviewing, setReviewing] = useState(false);
   /* The cases chosen in place: { fix, protect } ids, or null for the suggestion. */
   const [pick, setPick] = useState(null);
+  /* What the epoch improves (the Improve row) and the words of "Describe it…". */
+  const [scopeKey, setScopeKey] = useState(included?.length ? "picked" : "all");
+  const [describe, setDescribe] = useState("");
+  const [notify, setNotify] = useState(true);
   const [showCases, setShowCases] = useState(false);
   /* The agent's other environments can add their must-pass sets (RSI PRD:
      "Targets come from one environment; the others add their must-pass
@@ -214,6 +317,9 @@ export default function ImprovementSetup({
     setReviewFirst(false);
     setReviewing(false);
     setPick(null);
+    setScopeKey(included?.length ? "picked" : "all");
+    setDescribe("");
+    setNotify(true);
     setShowCases(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   /* Another agent picked in the same drawer: its own name, goals,
@@ -227,6 +333,7 @@ export default function ImprovementSetup({
     setBudget(null);
     setEdits({});
     setPick(null);
+    setScopeKey(included?.length ? "picked" : "all");
     setRulesOpen(false);
   }, [preset?.agentKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -370,6 +477,54 @@ export default function ImprovementSetup({
   /* An environment with no scenarios has nothing to search — not "every scenario meets it". */
   const searchTasks =
     (tasks?.length ? tasks : null) || (base?.tasks?.length ? base.tasks : null);
+  /* Failing = failed or flaky today. The choice sets the targets: what it
+     means, topped up to 12 with a spread of the run's other failures. */
+  const failing = useMemo(
+    /* The same failing set as the run header: caller-only flaky left out. */
+    () => optimisable(searchTasks || []),
+    [searchTasks],
+  );
+  const scopeMenu = useMemo(
+    () => scopeMenuOf(failing, es, included),
+    [failing, es, included],
+  );
+  const describeWords = wordsOf(describe);
+  const describeIds = describeWords.length
+    ? failing
+        .filter((t) => {
+          const hay = `${t.title || ""} ${deriveUseCaseLabel(t)}`.toLowerCase();
+          return describeWords.some((w) => hay.includes(w));
+        })
+        .map((t) => t.id)
+    : [];
+  const chosen =
+    scopeKey === "describe"
+      ? {
+          key: "describe",
+          kind: "describe",
+          label: describe.trim() || "Described",
+          ids: describeIds,
+        }
+      : scopeMenu.find((o) => o.key === scopeKey) || scopeMenu[0] || null;
+  const matchedIds = chosen?.ids || [];
+  const toppedIds =
+    chosen && chosen.kind !== "all" && matchedIds.length < MIN_TARGETS
+      ? spreadOf(
+          failing.filter((t) => !matchedIds.includes(t.id)),
+          MIN_TARGETS - matchedIds.length,
+        )
+      : [];
+  const scopeIds = [...matchedIds, ...toppedIds];
+  /* Their own pick in Choose wins; "all failing" is the search's own default. */
+  const scopeIdsKey = scopeIds.join("|");
+  const pickArg = useMemo(
+    () =>
+      pick ||
+      (chosen && chosen.kind !== "all" && scopeIds.length
+        ? { fix: scopeIds, keepHeld: true }
+        : null),
+    [pick, chosen?.kind, scopeIdsKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const envIds = useMemo(
     () => (main ? [main.id, ...alsoIn] : []),
     [main, alsoIn],
@@ -392,9 +547,10 @@ export default function ImprovementSetup({
             optimizerId,
             state,
             regressionEnvIds: envIds,
-            pick,
+            pick: pickArg,
           })
         : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       main,
       es,
@@ -407,8 +563,8 @@ export default function ImprovementSetup({
       optimizerId,
       state,
       envIds,
-      pick,
-    ], // eslint-disable-line react-hooks/exhaustive-deps
+      pickArg,
+    ],
   );
   const nothing = !!preview?.goal && preview.goalTargets === 0;
   const status = agent ? agentStatusOf(agent) : null;
@@ -523,6 +679,35 @@ export default function ImprovementSetup({
   const trials = estimate.runs || 0;
   /* Whether held-back can tell a real gain from noise. */
   const heldBack = heldBackOf(held);
+  const failingN = failing.length;
+  /* Said only where the run's own cases are known (not a goal measured first). */
+  const showScope = !!searchTasks && !today && failingN > 0;
+  const tooFewFailing = !!searchTasks && !today && failingN < MIN_FAILING;
+  /* Topped up = targets beyond the cases the choice matched. */
+  const topped = pick
+    ? 0
+    : Math.min(toppedIds.length, Math.max(0, train - matchedIds.length));
+  const leftOut = failingN > MANY_FAILING ? Math.max(0, failingN - train) : 0;
+  /* The environment's whole must-pass set, and how many re-run with each candidate. */
+  const mustPassTotal =
+    (main && es ? envMustPassOf(main, es).gated.length : 0) +
+    others
+      .filter((e) => alsoIn.includes(e.id))
+      .reduce((n, e) => n + mustPassIn(e), 0);
+  const mustPassText =
+    mustPassTotal > mustPassAll
+      ? `Must-pass ${mustPassTotal} · ${mustPassAll} re-run with each candidate`
+      : `Must-pass ${mustPassAll}`;
+  const scopeArg = pick?.fix
+    ? { kind: "chosen", label: "Chosen cases", count: pick.fix.length }
+    : showScope && chosen
+      ? {
+          kind: chosen.kind,
+          label: chosen.label,
+          count: chosen.kind === "all" ? failingN : scopeIds.length,
+          ...(topped && { toppedUp: topped }),
+        }
+      : undefined;
   /* What may change: the agent's rules, named as its Constraints tab names them. */
   const mayChange = mayChangeLineOf(limits, agent);
   /* Where it runs and what it starts from, in one value. */
@@ -581,6 +766,7 @@ export default function ImprovementSetup({
     main &&
     searchTasks &&
     !blocked &&
+    !tooFewFailing &&
     !nothing &&
     name.trim()
   );
@@ -626,7 +812,9 @@ export default function ImprovementSetup({
       reread,
       textSearch: inText,
       lineage: acrossLineage ? lineageVersions : undefined,
-      ...(pick && { pick }),
+      ...(pickArg && { pick: pickArg }),
+      ...(scopeArg && { scope: scopeArg }),
+      notify,
       base: from,
       today: first,
       ...(suggestOnly && { depth: "suggestion" }),
@@ -870,6 +1058,101 @@ export default function ImprovementSetup({
           <Box>
             {/* improve.md: user intent first — a goal-started epoch leads
                 with its goal, chosen right here. */}
+            {showScope && chosen && (
+              <ConfirmRow k="Improve">
+                <Select
+                  size="small"
+                  fullWidth
+                  value={chosen.key === "describe" ? "describe" : chosen.key}
+                  sx={selectSx}
+                  renderValue={() =>
+                    chosen.key === "describe"
+                      ? "Describe it…"
+                      : `${chosen.label} · ${chosen.ids.length}${chosen.noun ? ` ${chosen.noun}` : ""}`
+                  }
+                  onChange={(e) => {
+                    setScopeKey(e.target.value);
+                    setPick(null);
+                  }}
+                  MenuProps={{ PaperProps: { sx: { maxHeight: 420 } } }}
+                >
+                  {[
+                    ["", scopeMenu.filter((o) => !o.group)],
+                    ["Goals", scopeMenu.filter((o) => o.group === "Goals")],
+                    [
+                      "Evaluations",
+                      scopeMenu.filter((o) => o.group === "Evaluations"),
+                    ],
+                  ].flatMap(([title, list]) => [
+                    ...(title && list.length
+                      ? [
+                          <ListSubheader
+                            key={title}
+                            sx={{
+                              typography: "s3",
+                              fontWeight: 600,
+                              color: "text.tertiary",
+                              lineHeight: "28px",
+                            }}
+                          >
+                            {title}
+                          </ListSubheader>,
+                        ]
+                      : []),
+                    ...list.map((o) => (
+                      <MenuItem
+                        key={o.key}
+                        value={o.key}
+                        sx={{ typography: "s2", gap: 2 }}
+                      >
+                        <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                          {o.label}
+                        </Box>
+                        <Box
+                          component="span"
+                          sx={{
+                            typography: "s3",
+                            color: "text.tertiary",
+                            ...NUM,
+                          }}
+                        >
+                          {`${o.ids.length}${o.noun ? ` ${o.noun}` : ""}`}
+                        </Box>
+                      </MenuItem>
+                    )),
+                  ])}
+                  <MenuItem value="describe" sx={{ typography: "s2" }}>
+                    Describe it…
+                  </MenuItem>
+                </Select>
+                {chosen.key === "describe" && (
+                  <>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      autoFocus
+                      value={describe}
+                      onChange={(e) => setDescribe(e.target.value)}
+                      placeholder="e.g. stop refunds without an ID check"
+                      sx={{
+                        mt: 0.75,
+                        "& .MuiInputBase-input": { typography: "s2" },
+                      }}
+                    />
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        mt: 0.5,
+                        ...NUM,
+                      }}
+                    >
+                      {`The Epoch works out which cases this means · ${describeIds.length} match so far`}
+                    </Typography>
+                  </>
+                )}
+              </ConfirmRow>
+            )}
             {preset?.fromGoal && (
               <ConfirmRow k="Goal">
                 {goalSelect}
@@ -889,7 +1172,7 @@ export default function ImprovementSetup({
             </ConfirmRow>
             <ConfirmRow k="Scenarios">
               <Typography sx={{ typography: "s2", ...NUM }}>
-                {`Target ${train} · Must-pass ${mustPassAll} · Held back ${held}`}
+                {`Target ${train}${showScope ? ` of ${failingN} failing` : ""}${topped ? ` · ${topped} topped up from other goals` : ""}${leftOut ? ` · ${leftOut} left out, spread across goals` : ""} · ${mustPassText} · Held back ${held}`}
                 {preview?.pickable && (
                   <>
                     {" · "}
@@ -906,6 +1189,31 @@ export default function ImprovementSetup({
                   </>
                 )}
               </Typography>
+              {tooFewFailing ? (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    mt: 0.5,
+                    ...NUM,
+                  }}
+                >
+                  Needs at least {MIN_FAILING} failing to start
+                </Typography>
+              ) : (
+                showScope && (
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      mt: 0.5,
+                      ...NUM,
+                    }}
+                  >
+                    {`${failingN} failing · needs ${MIN_TARGETS} · writes 3 variations of each · best result: ${heldBack.tooFew ? "Limited validation" : "Verified"}`}
+                  </Typography>
+                )
+              )}
               {lockedTest && (
                 <Typography
                   sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
@@ -1087,6 +1395,30 @@ export default function ImprovementSetup({
               >
                 {budgetLine}
               </Typography>
+              {overBudget && trials > 1 && (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.primary",
+                    mt: 0.5,
+                    ...NUM,
+                  }}
+                >
+                  {`This budget may stop after ${Math.max(1, Math.min(trials - 1, Math.floor(spend / (estimate.likely / trials))))} of ${trials} candidates.`}
+                </Typography>
+              )}
+              {estimate.minutes > 0 && (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    mt: 0.5,
+                    ...NUM,
+                  }}
+                >
+                  {`About ${estimate.minutes} min`}
+                </Typography>
+              )}
             </ConfirmRow>
           </Box>
         )}
@@ -1263,7 +1595,7 @@ export default function ImprovementSetup({
       </Stack>
 
       {/* Why Start is off, said above the footer — never a silently disabled button. */}
-      {blocked && (
+      {(blocked || tooFewFailing) && (
         <Stack
           direction="row"
           spacing={0.75}
@@ -1282,7 +1614,7 @@ export default function ImprovementSetup({
             sx={{ color: "status.danger.fg", flexShrink: 0, mt: "2px" }}
           />
           <Typography sx={{ typography: "s3", color: "text.primary" }}>
-            {blocked}
+            {blocked || `Needs at least ${MIN_FAILING} failing cases to start.`}
           </Typography>
         </Stack>
       )}
@@ -1299,13 +1631,39 @@ export default function ImprovementSetup({
         }}
       >
         {/* Said once, here — and only once there's an agent to run. */}
-        <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          {main && !searchTasks
-            ? `${main.name} has no scenarios to run yet.`
-            : main
-              ? "A winner comes back as a new version. You decide whether to make it the default."
-              : null}
-        </Typography>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          {main && searchTasks && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              {...clickable(() => setNotify((v) => !v), {
+                role: "checkbox",
+                checked: notify,
+              })}
+              sx={{ ...focusRing, cursor: "pointer", width: "fit-content" }}
+            >
+              <Checkbox
+                size="small"
+                checked={notify}
+                tabIndex={-1}
+                disableRipple
+                inputProps={{ "aria-hidden": true }}
+                sx={{ p: 0 }}
+              />
+              <Typography sx={{ typography: "s2" }}>
+                Notify me when it&apos;s done
+              </Typography>
+            </Stack>
+          )}
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            {main && !searchTasks
+              ? `${main.name} has no scenarios to run yet.`
+              : main
+                ? "Find it in Epochs. A winner comes back as a new version."
+                : null}
+          </Typography>
+        </Box>
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>
@@ -1369,7 +1727,7 @@ export default function ImprovementSetup({
 
 /* Held-back below the minimum still starts — proven on the targets only. */
 function HeldBackLine({ heldBack }) {
-  if (!heldBack.belowRecommended) return null;
+  if (!heldBack.tooFew) return null;
   return (
     <Stack
       direction="row"
@@ -1377,22 +1735,13 @@ function HeldBackLine({ heldBack }) {
       alignItems="flex-start"
       sx={{ mt: 0.5 }}
     >
-      {heldBack.tooFew && (
-        <Iconify
-          icon="solar:danger-triangle-linear"
-          width={14}
-          sx={{ color: "status.warning.fg", flexShrink: 0, mt: "2px" }}
-        />
-      )}
-      <Typography
-        sx={{
-          typography: "s3",
-          color: heldBack.tooFew ? "text.primary" : "text.tertiary",
-        }}
-      >
-        {heldBack.tooFew
-          ? `Too few held-back scenarios: the result can only be Limited validation, never Verified, and any pull request opens as a draft. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
-          : `${heldBack.n} held back — ${heldBack.recommended} recommended for a surer read.`}
+      <Iconify
+        icon="solar:danger-triangle-linear"
+        width={14}
+        sx={{ color: "status.warning.fg", flexShrink: 0, mt: "2px" }}
+      />
+      <Typography sx={{ typography: "s3", color: "text.primary" }}>
+        {`Only ${heldBack.n} held back, under ${heldBack.minimum}: the result is Limited validation and any pull request opens as a draft.`}
       </Typography>
     </Stack>
   );

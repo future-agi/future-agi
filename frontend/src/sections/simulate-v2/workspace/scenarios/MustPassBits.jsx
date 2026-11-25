@@ -31,7 +31,7 @@ export function ProtectionLine({ tally, trailing = null, actions = null }) {
         sx={{ color: "text.tertiary", flexShrink: 0 }}
       />
       {/* One short line; why each is protected is on hover. */}
-      <Tooltip arrow title={parts.join(" · ")}>
+      <Tooltip arrow title={`Protected ${held} · ${parts.join(" · ")}`}>
         <Typography
           noWrap
           sx={{
@@ -41,7 +41,7 @@ export function ProtectionLine({ tally, trailing = null, actions = null }) {
             cursor: "default",
             ...num,
           }}
-        >{`Protected ${held} of ${tally.total}`}</Typography>
+        >{`Must-pass ${tally.marked || 0} · of ${tally.total} scenarios`}</Typography>
       </Tooltip>
       {tally.open > 0 && (
         <Tooltip

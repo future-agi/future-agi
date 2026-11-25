@@ -30,8 +30,9 @@ export const mustPassOf = (tasks = [], { marked = (t) => !!t.critical } = {}) =>
 export const markedNotCountedLine = (list = []) => {
   if (!list.length) return null;
   const flaky = list.every((t) => t.flaky) ? "flaky" : list.every((t) => t.failing) ? "failing" : "flaky or failing";
-  if (list.length === 1) return `${list[0].title || list[0].id} is marked must-pass but ${flaky} today, so it isn't counted.`;
-  const names = list.slice(0, 2).map((t) => t.title || t.id).join(", ");
+  const nameOf = (t) => `“${String(t.title || t.id).replace(/\.$/, "")}”`;
+  if (list.length === 1) return `${nameOf(list[0])} is marked must-pass but ${flaky} today, so it isn't counted.`;
+  const names = list.slice(0, 2).map(nameOf).join(", ");
   const more = list.length > 2 ? ` and ${list.length - 2} more` : "";
   return `${names}${more} are marked must-pass but ${flaky} today, so they aren't counted.`;
 };

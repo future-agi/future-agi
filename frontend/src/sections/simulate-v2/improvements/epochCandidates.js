@@ -12,6 +12,53 @@ import { brokeOutsideMustPassOf } from "./epochResultRows";
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/* How many scenarios the epoch held back, read from the result. */
+export const heldCountOf = (result) =>
+  result?.split?.thin
+    ? 0
+    : result?.heldMeasured ??
+      (result?.heldTasks || []).filter((t) => t.status !== "unmeasured")
+        .length ??
+      0;
+
+/* Held back as counts beside the %: "1 → 4 of 6 (17% → 67%)". */
+export const heldCountsOf = (from, to, n) => {
+  if (from == null || to == null) return "";
+  const pct = `${from}% → ${to}%`;
+  if (!n) return pct;
+  const at = (p) => Math.round((p / 100) * n);
+  return `${at(from)} → ${at(to)} of ${n} (${pct})`;
+};
+
+/** The proof level, in words: Verified needs at least 4 held-back scenarios. */
+export const MIN_HELD_VERIFIED = 4;
+export const proofLevelOf = (outcome, result) => {
+  if (!result) return null;
+  const n = heldCountOf(result);
+  const held = outcome?.heldScore ?? result.heldScore;
+  if (n < MIN_HELD_VERIFIED || held == null)
+    return {
+      verified: false,
+      text: `Limited validation · ${n ? `only ${n} held back` : "too few held back"}`,
+    };
+  if (outcome?.chosen?.projected)
+    return { verified: false, text: "Not verified yet · held-back projected" };
+  return {
+    verified: true,
+    text: `Verified · ${n} held back`,
+  };
+};
+
+/** "Must-pass 12 · 5 re-run with each candidate" — one wording everywhere. */
+export const mustPassLineOf = (result) => {
+  const total = result?.mustPass?.total ?? result?.mustPassMeasured ?? null;
+  if (total == null) return null;
+  const n = result?.mustPassMeasured ?? total;
+  return total > n
+    ? `Must-pass ${total} · ${n} re-run with each candidate`
+    : `Must-pass ${n}`;
+};
+
 /*
   The groups, in the order the Candidates tab lists them: the winner, the
   ones that passed every step they ran, then each step that stopped one —
@@ -162,6 +209,10 @@ export const candidateRowsOf = (
       /* Points against the agent before the change, on the same scenarios. */
       delta: r.base != null ? Math.round(t.score - r.base) : null,
       held,
+      /* "1 → 4 of 6 (17% → 67%)" — the held-back figure as counts. */
+      heldCounts: held
+        ? heldCountsOf(held.from, held.to, heldCountOf(r))
+        : null,
       finalist: !!finalist,
       stage,
       result,
@@ -274,7 +325,7 @@ export const winnerFiguresOf = (outcome, result, kept) => {
     const held = outcome?.heldScore ?? result.heldScore;
     if (held != null && result.heldBase != null)
       out.push({
-        text: `held-back ${result.heldBase}% → ${held}%${outcome?.chosen?.projected ? " (likely)" : ""}`,
+        text: `held-back ${heldCountsOf(result.heldBase, held, heldCountOf(result))}${outcome?.chosen?.projected ? " (likely)" : ""}`,
       });
   }
   const blockers = (outcome?.checks || []).find((c) => c.id === "blockers");
@@ -319,16 +370,23 @@ export const evidenceRowsOf = (outcome, result, kept, proofLine) => {
     confirm && !projected
       ? [
           "Held back · at the pick",
-          `${result.heldBase}% → ${confirm.selectionScore}%`,
+          heldCountsOf(
+            result.heldBase,
+            confirm.selectionScore,
+            heldCountOf(result),
+          ),
         ]
       : null,
     [
       confirm && !projected ? "Held back · re-run" : "Held back",
       thin
         ? "Too few held back"
-        : `${result.heldBase}% → ${heldNow}%${projected ? " · projected" : ""}${result.noise ? ` · noise ±${result.noise}` : ""}`,
+        : `${heldCountsOf(result.heldBase, heldNow, heldCountOf(result))}${projected ? " · projected" : ""}${result.noise ? ` · noise ±${result.noise}` : ""}`,
     ],
     ["Target", `${result.base}% → ${kept.score}%`],
+    mustPassLineOf(result)
+      ? ["Must-pass", mustPassLineOf(result).replace(/^Must-pass /, "")]
+      : null,
     [
       "Overfit gap",
       thin || outcome?.gap == null

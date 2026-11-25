@@ -212,7 +212,7 @@ export default function EpochCandidatesTable({ groups, onSeeChange }) {
                       }}
                     >
                       {c.held
-                        ? `${c.held.from}% → ${c.held.to}%${c.held.projected ? " projected" : ""}`
+                        ? `${c.heldCounts || `${c.held.from}% → ${c.held.to}%`}${c.held.projected ? " projected" : ""}`
                         : "Not run"}
                     </Typography>
                   </Box>

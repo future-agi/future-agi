@@ -1318,7 +1318,12 @@ export const runSearch = ({
   const casePick = cfg.pick || null;
   const fixing = casePick?.fix ? new Set(casePick.fix) : null;
   const train = fixing ? train0.filter((t) => fixing.has(t.id)) : train0;
-  const held = fixing ? split.held.filter((t) => fixing.has(t.id)) : split.held;
+  /* A scope pick from Setup (keepHeld) narrows the targets only: the
+     held-back check stays the whole held-back split. */
+  const held =
+    fixing && !casePick.keepHeld
+      ? split.held.filter((t) => fixing.has(t.id))
+      : split.held;
   const fixPool = new Set([...train0, ...split.held].map((t) => t.id));
   const inSets = new Set([...train, ...held].map((t) => t.id));
   /* From the whole suite when the search kept a slice of it (voice). */

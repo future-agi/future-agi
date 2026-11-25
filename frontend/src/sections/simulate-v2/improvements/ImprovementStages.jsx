@@ -12,12 +12,14 @@ import {
   startMsOf,
   stopImprovement,
   IMPROVEMENT_PHASES,
+  searchMinutes,
   OPT_STATUS,
   DEFAULT_LIMITS,
 } from "../_mock/optimizationRuns";
 import { creditsForUsd, creditsLabel } from "../_mock/metering";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { mayChangeListOf } from "./constraintEdits";
+import { envMustPassOf } from "../_mock/improvementStart";
 import { sourceRunOf } from "./improvementRows";
 
 /*
@@ -38,6 +40,24 @@ const agoLabel = (ms) => {
   if (m < 1) return "under a minute ago";
   if (m < 60) return `${m} min ago`;
   return `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""} ago`;
+};
+
+/* Minutes left, from the planned length and how far the stages have got. */
+const STAGE_START = { reproduce: 0, search: 0.15, verify: 0.8 };
+const timeLeftMin = (record, r, progress, envState) => {
+  if (!progress || !r?.trials) return null;
+  const surface = record.surface || envState?.surface;
+  const total = searchMinutes(r, surface, {
+    firstConversations: (record.scenarioIds || []).length * 3,
+  });
+  if (!Number.isFinite(total) || total <= 0) return null;
+  const base = STAGE_START[progress.stage] ?? 0;
+  const span =
+    progress.stage === "search"
+      ? 0.65 * (progress.runsTotal ? progress.runsDone / progress.runsTotal : 0)
+      : 0;
+  const left = Math.round(total * (1 - Math.min(0.95, base + span)));
+  return Math.max(1, left);
 };
 
 /* A text with its first mention of each link token made a text link. */
@@ -111,6 +131,7 @@ StateIcon.propTypes = { state: PropTypes.string };
 
 export default function ImprovementStages({
   record,
+  env = null,
   envState,
   progress,
   model = null,
@@ -194,6 +215,8 @@ export default function ImprovementStages({
         ? IMPROVEMENT_PHASES.queued
         : label;
 
+  /* { kind, label, count } — set by the trigger, when it names one. */
+  const scope = record.trigger?.scope || null;
   const rows = [
     {
       key: "reproduce",
@@ -272,6 +295,8 @@ export default function ImprovementStages({
           : count.stopped
             ? `${plural(count.done, "candidate")} of up to ${count.max} · ${count.stopped}${best != null ? ` · best ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`
             : `${count.done} of ${count.upTo ? "up to " : ""}${plural(count.max, "candidate")}${best != null ? ` · best so far ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`,
+      /* What it aims at, so people can stop early if it's wrong. */
+      always: scope?.label ? `Targeting: ${scope.label}` : null,
       /* Voice runs in real time, so the search keeps a slice — said, not hidden. */
       sub: r.voiceCap
         ? `Voice calls run in real time, so it searches on ${r.voiceCap.scenarios} of ${r.voiceCap.of} scenarios. Must-pass still covers all.`
@@ -320,6 +345,10 @@ export default function ImprovementStages({
   const mustPassTotal =
     (r.mustPass?.total ?? record.frozen?.mustPass ?? 0) +
     (r.otherEnvs || []).reduce((n, e) => n + (e.mustPass || 0), 0);
+  /* The environment's whole must-pass set — more than re-run when some
+     must-pass scenarios are targets or held back. */
+  const envMustPassTotal =
+    env && envState ? envMustPassOf(env, envState).gated.length : 0;
   /* What may change reads as the agent's rules name it; the budget is said
      on the running stage's progress line. */
   const heldTo = limitRows(record.limits || DEFAULT_LIMITS, model, {
@@ -340,7 +369,16 @@ export default function ImprovementStages({
               envState?.agent || null,
             ),
           }
-        : c,
+        : c.id === "mustPass" && envMustPassTotal > mustPassTotal
+          ? {
+              ...c,
+              /* One number with its breakdown, as Setup says it. */
+              value: c.value.replace(
+                /^\d+ scenarios?\./,
+                `${envMustPassTotal} · ${mustPassTotal} re-run with each candidate.`,
+              ),
+            }
+          : c,
     );
 
   /* How long the running stage has been going and what it has spent:
@@ -355,9 +393,11 @@ export default function ImprovementStages({
         record.surface || envState?.surface,
       ),
     ).toLocaleString();
+    const left = timeLeftMin(record, r, progress, envState);
+    const timeLine = left != null ? ` · About ${left} min left` : "";
     return record.budget
-      ? `${started} · ${spent} of ${creditsLabel(record.budget)} spent`
-      : `${started} · ${spent} credits spent`;
+      ? `${started} · ${spent} of ${creditsLabel(record.budget)} spent${timeLine}`
+      : `${started} · ${spent} credits spent${timeLine}`;
   })();
 
   /* Each link once: the issue where a line first names it, the run likewise. */
@@ -447,6 +487,13 @@ export default function ImprovementStages({
                   </>
                 )}
               </Typography>
+              {row.always && state !== "todo" && (
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+                >
+                  {row.always}
+                </Typography>
+              )}
               {/* The detail is the running stage's alone. */}
               {row.sub && state === "now" && (
                 <Typography
@@ -538,6 +585,7 @@ export default function ImprovementStages({
 }
 
 ImprovementStages.propTypes = {
+  env: PropTypes.object,
   record: PropTypes.object.isRequired,
   envState: PropTypes.object,
   /* From improvementProgressOf: stage, runsDone, runsTotal, done. */

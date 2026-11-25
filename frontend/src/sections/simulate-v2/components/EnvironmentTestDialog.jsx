@@ -17,7 +17,7 @@ import { SimStoreProvider, useConnectedAgents } from "../store";
 import { observeEnvsOf } from "../_mock/runningNow";
 import { observeImportHref, selectionNoun } from "../_mock/observeSelection";
 import { projectLinkOf } from "../_mock/projectLinks";
-import { agentIdOf } from "../_mock/agentRegistry";
+import { agentIdOf, envAgentKey } from "../_mock/agentRegistry";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { currentAgentVersion } from "../_mock/versions";
 import { TextLink } from "../agents/connect/connectBits";
@@ -98,6 +98,17 @@ function EnvironmentTestInner({
     const es = state?.byEnv?.[envId];
     const v = currentAgentVersion(es)?.label;
     return v ? envVersionNameOf(es, v, envId).main : null;
+  };
+  /* An environment testing another agent than the one these traces' project
+     is linked to — said on its row, when both are known. */
+  const testsOther = (envId) => {
+    const a = state?.byEnv?.[envId]?.agent;
+    return (
+      link.status === "linked" &&
+      !!link.agentKey &&
+      !!a &&
+      envAgentKey(a, envId) !== link.agentKey
+    );
   };
   const q = query.trim().toLowerCase();
   const shown = q
@@ -238,6 +249,22 @@ function EnvironmentTestInner({
                       >
                         {`Tests ${agent}${envAgentVersion(t.envId) ? ` ${envAgentVersion(t.envId)}` : ""}`}
                       </Typography>
+                    )}
+                    {testsOther(t.envId) && (
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.5}
+                        sx={{ color: "status.warning.fg" }}
+                      >
+                        <Iconify
+                          icon="solar:danger-triangle-linear"
+                          width={12}
+                        />
+                        <Typography noWrap sx={{ typography: "s3" }}>
+                          Tests another agent than these traces
+                        </Typography>
+                      </Stack>
                     )}
                   </Box>
                   <Iconify

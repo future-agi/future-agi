@@ -6,6 +6,8 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 import {
   causesOf,
   checksCountOf,
+  mustPassLineOf,
+  proofLevelOf,
   winnerFiguresOf,
   winnerSentenceOf,
 } from "./epochCandidates";
@@ -305,6 +307,8 @@ export default function EpochVerdict({
   */
   const figures = winnerFiguresOf(outcome, result, winner);
   const causes = causesOf(result);
+  const proof = proofLevelOf(outcome, result);
+  const mustPassLine = mustPassLineOf(result);
   /* 25 Nov: one header line — the winner, what it did, its checks, the
      others — then two rows. Was six lines and a footer. */
   const dot = (
@@ -332,8 +336,27 @@ export default function EpochVerdict({
             {winnerNote}
           </Typography>
         )}
+        {proof && (
+          <Typography
+            noWrap
+            sx={{
+              typography: "s2",
+              ...num,
+              flexShrink: 0,
+              fontWeight: 500,
+              color: proof.verified ? "text.primary" : "text.secondary",
+            }}
+          >
+            {proof.text}
+          </Typography>
+        )}
+        {proof && figures.length > 0 && dot}
         {figures.length > 0 && (
-          <Tooltip arrow placement="bottom-start" title={sentence}>
+          <Tooltip
+            arrow
+            placement="bottom-start"
+            title={[sentence, mustPassLine].filter(Boolean).join(" ")}
+          >
             <Typography
               noWrap
               sx={{

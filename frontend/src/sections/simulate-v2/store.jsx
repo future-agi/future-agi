@@ -15,6 +15,7 @@ import {
   useReducer,
   useEffect,
   useCallback,
+  useRef,
 } from "react";
 import { seededState } from "./_mock/seedState";
 import { SEEDED_PROJECTS } from "./_mock/projectLinks";
@@ -1008,6 +1009,10 @@ SimStoreProvider.propTypes = { children: PropTypes.node };
 
 function SimStoreRoot({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  /* How many commits this provider has saved, and how many this render's
+     state already holds — see the persist effect below. */
+  const commits = useRef(0);
+  const committedInRender = commits.current;
 
   // Hydrate once on mount. The `hydrated: true` marker the reducer stamps is
   // what gates persistence below — set on committed state, so it can't race.
@@ -1059,10 +1064,22 @@ function SimStoreRoot({ children }) {
   */
   useEffect(() => {
     if (!state.hydrated || state.storedUnreadable) return;
+    /*
+      A commit made since this state rendered has already saved itself, and
+      this snapshot doesn't hold it. Writing it would put the older copy back
+      over the newer one: a child effect that commits (Error Feed's review →
+      "Use N and run Epoch" starts the Epoch from an effect) runs just before
+      this effect, in the same pass, and its page navigates away before the
+      next render — so the Epoch it saved was lost. The render that holds
+      the commit saves it instead.
+    */
+    if (commits.current !== committedInRender) return;
     /* storeStorage falls back quietly — the prototype still works in-memory */
     writeStored(STORAGE_KEY, JSON.stringify(state));
     publishRunning(runningCountOf(state));
     publishObserveEnvs(observeEnvsOf(state));
+    // committedInRender is read from this render on purpose, not a trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
   /*
@@ -1073,6 +1090,7 @@ function SimStoreRoot({ children }) {
     its persist effect runs. Applies the same reducer to what's stored.
   */
   const commit = useCallback((action) => {
+    commits.current += 1;
     dispatch(action);
     /* in-memory only if this fails — the dispatch above still applies here */
     updateStored(STORAGE_KEY, (saved) => reducer(saved, action));

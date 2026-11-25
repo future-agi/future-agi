@@ -103,8 +103,14 @@ export default function RaiseLimitBar({
 
   /* What Continue keeps and what it starts over — before it acts. */
   const resumeNote = before
-    ? "Continue runs the whole search. Reproduce already ran, so it isn't repeated."
-    : `Continue keeps the ${s.trials} finished candidate${s.trials === 1 ? "" : "s"} and runs the other ${Math.max(0, (s.of || 0) - s.trials)}.`;
+    ? "Continue runs the whole search; Reproduce isn't repeated."
+    : `Keeps the ${s.trials} finished candidate${s.trials === 1 ? "" : "s"} and runs the other ${Math.max(0, (s.of || 0) - s.trials)}.`;
+  /* What the raise adds, before the click. */
+  const addsNote = byTime
+    ? `Adds ${Math.max(0, pickMinutes - nowMinutes)} more min.`
+    : `Adds up to ${creditsLabel(
+        Math.max(0, (pickDollars || 0) - (record.budget || 0)),
+      ).replace(" credits", "")} more credits.`;
   const controls = steps.length > 0 && (
     <Box>
       <Stack
@@ -133,11 +139,11 @@ export default function RaiseLimitBar({
           startIcon={<Iconify icon="solar:play-bold" width={14} />}
           sx={{ height: 32, flexShrink: 0 }}
         >
-          Continue
+          Raise the budget and continue
         </Button>
       </Stack>
       <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
-        {resumeNote}
+        {`${addsNote} ${resumeNote}`}
       </Typography>
     </Box>
   );
