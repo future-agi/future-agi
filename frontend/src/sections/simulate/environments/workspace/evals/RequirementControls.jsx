@@ -50,6 +50,7 @@ export function PassThreshold({ name, value, disabled = false, onChange }) {
         inputProps={{
           inputMode: "numeric",
           "aria-label": EVALS_COPY.thresholdLabel(name),
+          onFocus: (event) => event.target.select(),
         }}
         InputProps={{
           startAdornment: (
@@ -60,7 +61,7 @@ export function PassThreshold({ name, value, disabled = false, onChange }) {
           endAdornment: <InputAdornment position="end">%</InputAdornment>,
         }}
         sx={{
-          width: 104,
+          width: 128,
           flexShrink: 0,
           "& .MuiInputBase-input": { typography: "s3", py: 0.25 },
           "& .MuiInputAdornment-root p": { typography: "s3" },

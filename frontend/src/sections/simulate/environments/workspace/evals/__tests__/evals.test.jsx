@@ -948,6 +948,7 @@ describe("EvalsStep - suggested evals on a backend-backed env", () => {
       name: EVALS_COPY.thresholdLabel("no_misselling"),
     });
     expect(input).toHaveValue("70");
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 2]);
     fireEvent.change(input, { target: { value: "85" } });
     fireEvent.blur(input);
     expect(
