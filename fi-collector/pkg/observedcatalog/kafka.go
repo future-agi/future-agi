@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kerr"
@@ -129,7 +130,19 @@ type Consumer struct {
 	source RecordSource
 	sink   Sink
 	cfg    KafkaConfig
+	// joined is set once the current source completes a group assignment.
+	joined *atomic.Bool
+	// Fault tests replace these; zero values select the production client
+	// and the two-hour retry window.
+	newSource    func(cfg KafkaConfig, onJoined func()) (RecordSource, error)
+	retryCeiling time.Duration
 }
+
+const defaultRetryCeiling = 2 * time.Hour
+
+// errRecoveryPoll means a poll after a rejoin reached the end of the retry
+// window without returning a record or a dependency error.
+var errRecoveryPoll = errors.New("observedcatalog: Kafka group rejoin did not complete")
 
 func NewConsumer(cfg KafkaConfig, sink Sink) (*Consumer, error) {
 	cfg, err := cfg.normalized()
@@ -139,28 +152,60 @@ func NewConsumer(cfg KafkaConfig, sink Sink) (*Consumer, error) {
 	if sink == nil {
 		return nil, errors.New("observedcatalog: sink required")
 	}
-	client, err := newRecordSource(cfg)
+	c := &Consumer{sink: sink, cfg: cfg}
+	if err := c.openSource(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// openSource creates a group member whose completed assignment is tracked
+// separately from any earlier member.
+func (c *Consumer) openSource() error {
+	factory := c.newSource
+	if factory == nil {
+		factory = newRecordSource
+	}
+	joined := new(atomic.Bool)
+	source, err := factory(c.cfg, func() { joined.Store(true) })
+	if err != nil {
+		return err
+	}
+	c.source, c.joined = source, joined
+	return nil
+}
+
+func newRecordSource(cfg KafkaConfig, onJoined func()) (RecordSource, error) {
+	// One record performs at most two 30-second sink requests and a
+	// 30-second commit. Leave another 30 seconds for rebalance headroom.
+	// Assignment callbacks also run for an empty assignment.
+	client, err := kgo.NewClient(kgo.SeedBrokers(cfg.Brokers...), kgo.ClientID(cfg.ClientID), kgo.ConsumeTopics(cfg.Topic), kgo.ConsumerGroup(cfg.Group), kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.ConsumeStartOffset(kgo.NewOffset().AtStart()), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.FetchMaxBytes(4*MaxRecordBytes), kgo.FetchMaxPartitionBytes(MaxRecordBytes+1024), kgo.MaxConcurrentFetches(1), kgo.BrokerMaxReadBytes(8*MaxRecordBytes), kgo.RebalanceTimeout(2*time.Minute),
+		kgo.OnPartitionsAssigned(func(context.Context, *kgo.Client, map[string][]int32) { onJoined() }))
 	if err != nil {
 		return nil, err
 	}
-	return &Consumer{source: client, sink: sink, cfg: cfg}, nil
+	return client, nil
 }
 
-func newRecordSource(cfg KafkaConfig) (*kgo.Client, error) {
-	// One record performs at most two 30-second sink requests and a
-	// 30-second commit. Leave another 30 seconds for rebalance headroom.
-	return kgo.NewClient(kgo.SeedBrokers(cfg.Brokers...), kgo.ClientID(cfg.ClientID), kgo.ConsumeTopics(cfg.Topic), kgo.ConsumerGroup(cfg.Group), kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.ConsumeStartOffset(kgo.NewOffset().AtStart()), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.FetchMaxBytes(4*MaxRecordBytes), kgo.FetchMaxPartitionBytes(MaxRecordBytes+1024), kgo.MaxConcurrentFetches(1), kgo.BrokerMaxReadBytes(8*MaxRecordBytes), kgo.RebalanceTimeout(2*time.Minute))
-}
+func (c *Consumer) processOnce(ctx context.Context) error { return c.processWithin(ctx, ctx) }
 
-// processOnce never commits past a failed record. On failure its source may
-// have advanced its fetch cursor and must not be polled again.
-func (c *Consumer) processOnce(ctx context.Context) error {
-	fetches := c.source.PollRecords(ctx, 1)
+// processWithin never commits past a failed record. On failure its source may
+// have advanced its fetch cursor and must not be polled again. pollCtx bounds
+// only the wait for a record; a fetched record is written and committed under
+// ctx and the per-request timeouts, so the poll deadline never interrupts it.
+// errRecoveryPoll is returned only when pollCtx ended with nothing fetched.
+func (c *Consumer) processWithin(ctx, pollCtx context.Context) error {
+	fetches := c.source.PollRecords(pollCtx, 1)
 	defer c.source.AllowRebalance()
+	records := fetches.Records()
+	if len(records) == 0 && ctx.Err() == nil && pollCtx.Err() != nil {
+		if err := fetches.Err(); err == nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return errRecoveryPoll
+		}
+	}
 	if err := fetches.Err(); err != nil {
 		return kafkaFailure(err)
 	}
-	records := fetches.Records()
 	if len(records) == 0 {
 		return ctx.Err()
 	}
@@ -216,14 +261,24 @@ func kafkaFailure(err error) error {
 }
 
 func (c *Consumer) Run(ctx context.Context) error {
-	const ceiling = 2 * time.Hour
+	ceiling := c.retryCeiling
+	if ceiling <= 0 {
+		ceiling = defaultRetryCeiling
+	}
 	var since time.Time
 	delay := time.Second
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		err := c.processOnce(ctx)
+		// While recovering, the retry window also bounds the wait for the
+		// replacement member to rejoin and fetch.
+		pollCtx, stopPoll := ctx, context.CancelFunc(func() {})
+		if !since.IsZero() {
+			pollCtx, stopPoll = context.WithDeadline(ctx, since.Add(ceiling))
+		}
+		err := c.processWithin(ctx, pollCtx)
+		stopPoll()
 		if err == nil {
 			since = time.Time{}
 			delay = time.Second
@@ -231,6 +286,16 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if errors.Is(err, errRecoveryPoll) {
+			// An assigned member with nothing to redeliver has recovered and
+			// is idle. Without an assignment the group never accepted it.
+			if c.joined != nil && c.joined.Load() {
+				since = time.Time{}
+				delay = time.Second
+				continue
+			}
+			return fmt.Errorf("observedcatalog: retry window expired: %w", err)
 		}
 		var transient transientFailure
 		if !errors.As(err, &transient) {
@@ -254,11 +319,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 		case <-time.After(wait):
 		}
 		delay = min(2*delay, time.Minute)
-		client, err := newRecordSource(c.cfg)
-		if err != nil {
+		if err := c.openSource(); err != nil {
 			return err
 		}
-		c.source = client
 	}
 }
 func (c *Consumer) Close() {

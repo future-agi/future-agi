@@ -3,6 +3,8 @@ package observedcatalog
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,6 +97,22 @@ func clickHouseFailure(response *http.Response, err error) error {
 	return err
 }
 
+// transportFailure classifies a failed request before replacing it with a
+// log-safe error. Endpoint identity and scheme failures are configuration
+// errors; refusal, reset, interruption and timeout are retried.
+func transportFailure(err error, message string) error {
+	var verification *tls.CertificateVerificationError
+	var authority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	var record tls.RecordHeaderError
+	if errors.As(err, &verification) || errors.As(err, &authority) || errors.As(err, &hostname) ||
+		errors.As(err, &invalid) || errors.As(err, &record) || errors.Is(err, http.ErrSchemeMismatch) {
+		return errors.New(message + " (TLS verification or scheme mismatch)")
+	}
+	return transientFailure{errors.New(message)}
+}
+
 func (s *ClickHouseSink) insert(ctx context.Context, table string, rows any) error {
 	// Metadata and INSERT share the existing per-table deadline.
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
@@ -151,7 +169,7 @@ func (s *ClickHouseSink) insert(ctx context.Context, table string, rows any) err
 	}
 	response, err := s.client.Do(req)
 	if err != nil {
-		return transientFailure{errors.New("observedcatalog: ClickHouse request failed")}
+		return transportFailure(err, "observedcatalog: ClickHouse request failed")
 	}
 	defer response.Body.Close()
 	result, err := io.ReadAll(io.LimitReader(response.Body, 4097))
@@ -229,7 +247,7 @@ func (s *ClickHouseSink) catalogMetadata(ctx context.Context, table, query strin
 	}
 	response, err := s.client.Do(req)
 	if err != nil {
-		return transientFailure{errors.New("observedcatalog: ClickHouse topology request failed")}
+		return transportFailure(err, "observedcatalog: ClickHouse topology request failed")
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 4097))
