@@ -485,6 +485,12 @@ class HarnessAgentSerializer(serializers.Serializer):
         return attrs
 
     def _validate_hosted_agent(self, attrs):
+        if not self.context.get("composition"):
+            raise serializers.ValidationError(
+                {
+                    "connector": "our hosted agent runs only on an environment it is composed with"
+                }
+            )
         config = attrs.get("config") or {}
         if attrs.get("mode") or attrs.get("secret_refs") or attrs.get("call_direction"):
             raise serializers.ValidationError(

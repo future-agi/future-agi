@@ -304,18 +304,21 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
 
     def _scoped_jobs(self, request):
         # An adaptation is followed as a job; its composition is the environment. One in review
-        # is listed until it's done, awaiting approval of its design first.
+        # is listed until it's done, awaiting approval of its design first. By id: a negated
+        # JSON lookup is NULL, not true, on a job without metadata.
+        organization = request_organization(request)
+        adaptations = HostedHarnessJob.no_workspace_objects.filter(
+            organization=organization, payload__metadata__has_key="adaptation"
+        )
+        in_review = adaptations.filter(
+            payload__metadata__adaptation__mode="review"
+        ).exclude(state=HostedHarnessJob.State.COMPLETED)
         return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
-                organization=request_organization(request),
+                ~Q(id__in=adaptations.values("id")) | Q(id__in=in_review.values("id")),
+                organization=organization,
                 environment__isnull=True,
                 deleted=False,
-            ).exclude(
-                Q(payload__metadata__has_key="adaptation")
-                & ~(
-                    Q(payload__metadata__adaptation__mode="review")
-                    & ~Q(state=HostedHarnessJob.State.COMPLETED)
-                )
             ),
             request,
         )
