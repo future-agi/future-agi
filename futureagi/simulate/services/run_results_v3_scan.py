@@ -58,6 +58,7 @@ from simulate.services.run_results_v3_scoring import (
 )
 from simulate.services.scoring_status import SCORING_ROW_FIELDS, scoring_values
 from simulate.types import WORKER_SUBJECT_PREFIX
+from simulate.utils.processing_outcomes import REASON_INPUT_MISSING
 
 # The orderings the scan reproduces, as ``apply_run_call_query`` writes them.
 ORDERINGS = {
@@ -200,6 +201,20 @@ def _measured(evals: Any, eval_id: str) -> Truth:
 def _errored(evals: Any, eval_id: str) -> Truth:
     """``_eval_errored_q``."""
     return _and(_has_key(evals, eval_id), _status(evals, eval_id) in _STATUS_ERRORED)
+
+
+def _input_missing(evals: Any, eval_id: str) -> Truth:
+    """``_eval_input_missing_q``."""
+    reason = _text(_get(evals, eval_id, "reason_code"))
+    return _and(
+        _has_key(evals, eval_id),
+        None if reason is None else reason == REASON_INPUT_MISSING,
+    )
+
+
+def _not_scored(evals: Any, eval_id: str) -> Truth:
+    """The ``errored_eval`` an outcome reads: an error, or an input that was empty."""
+    return _or(_errored(evals, eval_id), _input_missing(evals, eval_id))
 
 
 _NUMERIC_TEXT = re.compile(NUMERIC_TEXT_PATTERN)
@@ -489,7 +504,7 @@ def _outcome(
     return "inconclusive"
 
 
-_ENTRY_KEYS = ("status", "output", "output_type", "source")
+_ENTRY_KEYS = ("status", "output", "output_type", "source", "reason_code")
 # Entry text a memo may hold before it starts over; it only saves re-judging.
 _MEMO_TEXT_LIMIT = 16 * 1024 * 1024
 
@@ -552,7 +567,7 @@ class _Judge:
         if (judged := self._verdicts.get(key)) is None:
             evals = self._single(eval_id, text)
             judged = self._verdicts.remember(
-                key, text, (self.verdicts[eval_id](evals), _errored(evals, eval_id))
+                key, text, (self.verdicts[eval_id](evals), _not_scored(evals, eval_id))
             )
         return judged
 
@@ -622,7 +637,7 @@ class _Judge:
         return (
             scores,
             _or(*(verdict[2] for verdict in judged.values()), False),
-            _or(*(_errored(evals, eval_id) for eval_id in self.verdicts), False),
+            _or(*(_not_scored(evals, eval_id) for eval_id in self.verdicts), False),
             _or(*(verdict[1] for verdict in judged.values()), False),
         )
 
@@ -653,7 +668,8 @@ SELECT ce.id, ce.status, ce.duration_seconds,
       || COALESCE((e.value -> 'status')::text, 'null') || ','
       || COALESCE((e.value -> 'output')::text, 'null') || ','
       || COALESCE((e.value -> 'output_type')::text, 'null') || ','
-      || COALESCE((e.value -> 'source')::text, 'null') || ']',
+      || COALESCE((e.value -> 'source')::text, 'null') || ','
+      || COALESCE((e.value -> 'reason_code')::text, 'null') || ']',
       chr(30))
     FROM jsonb_each(ce.eval_outputs) e
     -- A worker's own check is shown beside the task's verdict, never part of the call's outcome.

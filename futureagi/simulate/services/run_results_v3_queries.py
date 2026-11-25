@@ -771,7 +771,8 @@ def run_calls_queryset(
         )
         failed_eval |= failed_q
         passed_eval |= passed_q
-        errored_eval |= _eval_errored_q(eval_id)
+        # An eval whose input was empty never ran: the call is not scored without it.
+        errored_eval |= _eval_errored_q(eval_id) | _eval_input_missing_q(eval_id)
 
     configured_ids = list(live_evals)
     failed_eval |= Q(_NativeHarnessVerdict(configured_ids, "failed"))
