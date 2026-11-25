@@ -47747,8 +47747,6 @@ export const simulateApiHarnessEnvironmentsDesignReviewResponseScenarioCountMin 
 
 export const simulateApiHarnessEnvironmentsDesignReviewResponseUseCasesItemPlannedScenariosMin = 0;
 
-export const simulateApiHarnessEnvironmentsDesignReviewResponseEditsItemIndexMin = 0;
-
 export const SimulateApiHarnessEnvironmentsDesignReviewResponse = zod.object({
   environment_id: zod.string().uuid(),
   status: zod.enum(["awaiting_approval", "approved", "discarded"]),
@@ -47837,11 +47835,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewResponse = zod.object({
   ),
   edits: zod.array(
     zod.object({
-      index: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsDesignReviewResponseEditsItemIndexMin,
-        ),
+      edit_id: zod.string().min(1),
       op: zod.enum(["remove", "edit"]),
       kind: zod.enum(["table", "tool", "rule", "use_case"]),
       id: zod.string().min(1),
@@ -47878,8 +47872,6 @@ export const SimulateApiHarnessEnvironmentsDesignReviewApproveBody = zod.object(
 export const simulateApiHarnessEnvironmentsDesignReviewApproveResponseScenarioCountMin = 0;
 
 export const simulateApiHarnessEnvironmentsDesignReviewApproveResponseUseCasesItemPlannedScenariosMin = 0;
-
-export const simulateApiHarnessEnvironmentsDesignReviewApproveResponseEditsItemIndexMin = 0;
 
 export const SimulateApiHarnessEnvironmentsDesignReviewApproveResponse =
   zod.object({
@@ -47972,11 +47964,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewApproveResponse =
     ),
     edits: zod.array(
       zod.object({
-        index: zod
-          .number()
-          .min(
-            simulateApiHarnessEnvironmentsDesignReviewApproveResponseEditsItemIndexMin,
-          ),
+        edit_id: zod.string().min(1),
         op: zod.enum(["remove", "edit"]),
         kind: zod.enum(["table", "tool", "rule", "use_case"]),
         id: zod.string().min(1),
@@ -48013,8 +48001,6 @@ export const SimulateApiHarnessEnvironmentsDesignReviewDiscardBody = zod.object(
 export const simulateApiHarnessEnvironmentsDesignReviewDiscardResponseScenarioCountMin = 0;
 
 export const simulateApiHarnessEnvironmentsDesignReviewDiscardResponseUseCasesItemPlannedScenariosMin = 0;
-
-export const simulateApiHarnessEnvironmentsDesignReviewDiscardResponseEditsItemIndexMin = 0;
 
 export const SimulateApiHarnessEnvironmentsDesignReviewDiscardResponse =
   zod.object({
@@ -48107,11 +48093,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewDiscardResponse =
     ),
     edits: zod.array(
       zod.object({
-        index: zod
-          .number()
-          .min(
-            simulateApiHarnessEnvironmentsDesignReviewDiscardResponseEditsItemIndexMin,
-          ),
+        edit_id: zod.string().min(1),
         op: zod.enum(["remove", "edit"]),
         kind: zod.enum(["table", "tool", "rule", "use_case"]),
         id: zod.string().min(1),
@@ -48161,8 +48143,6 @@ export const SimulateApiHarnessEnvironmentsDesignReviewEditBody = zod.object({
 export const simulateApiHarnessEnvironmentsDesignReviewEditResponseScenarioCountMin = 0;
 
 export const simulateApiHarnessEnvironmentsDesignReviewEditResponseUseCasesItemPlannedScenariosMin = 0;
-
-export const simulateApiHarnessEnvironmentsDesignReviewEditResponseEditsItemIndexMin = 0;
 
 export const SimulateApiHarnessEnvironmentsDesignReviewEditResponse =
   zod.object({
@@ -48255,11 +48235,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewEditResponse =
     ),
     edits: zod.array(
       zod.object({
-        index: zod
-          .number()
-          .min(
-            simulateApiHarnessEnvironmentsDesignReviewEditResponseEditsItemIndexMin,
-          ),
+        edit_id: zod.string().min(1),
         op: zod.enum(["remove", "edit"]),
         kind: zod.enum(["table", "tool", "rule", "use_case"]),
         id: zod.string().min(1),
@@ -48286,14 +48262,12 @@ one and returns 202; progress is read from the job.
  */
 export const SimulateApiHarnessEnvironmentsDesignReviewUndoParams = zod.object({
   id: zod.string(),
-  index: zod.string(),
+  edit_id: zod.string(),
 });
 
 export const simulateApiHarnessEnvironmentsDesignReviewUndoResponseScenarioCountMin = 0;
 
 export const simulateApiHarnessEnvironmentsDesignReviewUndoResponseUseCasesItemPlannedScenariosMin = 0;
-
-export const simulateApiHarnessEnvironmentsDesignReviewUndoResponseEditsItemIndexMin = 0;
 
 export const SimulateApiHarnessEnvironmentsDesignReviewUndoResponse =
   zod.object({
@@ -48386,11 +48360,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewUndoResponse =
     ),
     edits: zod.array(
       zod.object({
-        index: zod
-          .number()
-          .min(
-            simulateApiHarnessEnvironmentsDesignReviewUndoResponseEditsItemIndexMin,
-          ),
+        edit_id: zod.string().min(1),
         op: zod.enum(["remove", "edit"]),
         kind: zod.enum(["table", "tool", "rule", "use_case"]),
         id: zod.string().min(1),

@@ -194,7 +194,7 @@ export default function DesignReviewStage({ envId }) {
           setUndo({
             label,
             note,
-            index: next.edits[next.edits.length - 1].index,
+            editId: next.edits[next.edits.length - 1].edit_id,
           }),
         onError: showError,
       },
@@ -224,9 +224,14 @@ export default function DesignReviewStage({ envId }) {
   };
 
   const onUndo = () => {
-    const { index } = undo;
+    const { editId } = undo;
     setUndo(null);
-    undoEdit.mutate(index, { onError: showError });
+    undoEdit.mutate(editId, {
+      onError: (error) => {
+        showError(error);
+        if (error?.statusCode === 409) refetch();
+      },
+    });
   };
 
   const saveRule = (rule, text) => {
@@ -646,10 +651,13 @@ export default function DesignReviewStage({ envId }) {
                 <ReviewLine
                   key={useCase.id}
                   onRemove={
-                    editable && useCases.length > 1
+                    editable
                       ? () =>
                           remove("use_case", useCase, REVIEW_COPY.theUseCase)
                       : undefined
+                  }
+                  removeBlocked={
+                    useCases.length > 1 ? null : REVIEW_COPY.keepOneUseCase
                   }
                   disabled={busy}
                 >

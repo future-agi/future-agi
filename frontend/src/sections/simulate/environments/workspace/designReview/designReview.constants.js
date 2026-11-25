@@ -112,6 +112,7 @@ export const REVIEW_COPY = {
   ruleLabel: "Rule",
   theRule: "The rule",
   theUseCase: "The use case",
+  keepOneUseCase: "A design needs at least one use case",
   removedFromPlan: (label) => `${label} removed from the plan.`,
   agentStillCalls:
     "Your agent still calls it, so the world won't answer and those calls fail. Keep it unless you're testing that.",

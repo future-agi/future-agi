@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "src/utils/test-utils";
+import { render, screen, waitFor, within } from "src/utils/test-utils";
 import DesignReviewStage from "../DesignReviewStage";
 import { REVIEW_COPY, REVIEW_STATUS } from "../designReview.constants";
 
@@ -21,6 +21,7 @@ vi.mock("../../../hooks/useSimulationAccess", () => ({
 }));
 
 const axios = (await import("src/utils/axios")).default;
+const { enqueueSnackbar } = await import("notistack");
 
 const base = {
   status: REVIEW_STATUS.AWAITING,
@@ -66,7 +67,10 @@ beforeEach(() => {
         tools: review.tools.map((tool) =>
           tool.id === edit.id ? { ...tool, removed: true } : tool,
         ),
-        edits: [...review.edits, { index: review.edits.length, ...edit }],
+        edits: [
+          ...review.edits,
+          { edit_id: `e${review.edits.length}`, ...edit },
+        ],
       };
     } else {
       review = {
@@ -78,8 +82,8 @@ beforeEach(() => {
         ),
         edits: [
           ...review.edits.filter((one) => one.id !== edit.id),
-          { index: review.edits.length, ...edit },
-        ].map((one, index) => ({ ...one, index })),
+          { edit_id: `e${review.edits.length}`, ...edit },
+        ],
       };
     }
     return { data: review };
@@ -116,6 +120,59 @@ describe("DesignReviewStage edits", () => {
 
     expect(screen.queryByRole("button", { name: REVIEW_COPY.undo })).toBeNull();
     expect(axios.delete).not.toHaveBeenCalled();
+  });
+
+  it("undoes by the change's id and explains a change another tab already took back", async () => {
+    const gone = "This change was already undone or replaced";
+    axios.delete.mockRejectedValue({
+      statusCode: 409,
+      error: "design_edit_gone",
+      message: gone,
+    });
+    const reviewReads = () =>
+      axios.get.mock.calls.filter(([url]) => !String(url).includes("impact"))
+        .length;
+    const user = userEvent.setup();
+    renderStage();
+    await screen.findByText("Greet the caller.");
+
+    await user.click(
+      screen.getByRole("button", {
+        name: REVIEW_COPY.removeNamed("lookup_order"),
+      }),
+    );
+    const editId = review.edits[review.edits.length - 1].edit_id;
+    const readsBefore = reviewReads();
+    await user.click(
+      await screen.findByRole("button", { name: REVIEW_COPY.undo }),
+    );
+
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(gone, { variant: "error" }),
+    );
+    expect(axios.delete).toHaveBeenCalledTimes(1);
+    expect(String(axios.delete.mock.calls[0][0])).toContain(
+      `/design-review/edits/${editId}/`,
+    );
+    await waitFor(() => expect(reviewReads()).toBeGreaterThan(readsBefore));
+  });
+
+  it("disables the last use case's Remove and says why", async () => {
+    const user = userEvent.setup();
+    renderStage();
+    const row = (await screen.findByText("Check an order.")).closest(
+      ".MuiStack-root",
+    );
+    const removeUseCase = within(row).getByRole("button", {
+      name: REVIEW_COPY.remove,
+    });
+
+    expect(removeUseCase).toBeDisabled();
+    await user.hover(removeUseCase.parentElement);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      REVIEW_COPY.keepOneUseCase,
+    );
+    expect(axios.post).not.toHaveBeenCalled();
   });
 
   it("holds Approve while a rule is being changed", async () => {

@@ -30022,7 +30022,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    "/simulate/api/harness-environments/{id}/design-review/edits/{index}/": {
+    "/simulate/api/harness-environments/{id}/design-review/edits/{edit_id}/": {
       delete: {
         operationId: "simulate_api_harness-environments_design_review_undo",
         runtimeRequestValidation: false,
@@ -109098,13 +109098,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     DesignEdit: {
-      required: ["index", "op", "kind", "id", "by", "at"],
+      required: ["edit_id", "op", "kind", "id", "by", "at"],
       type: "object",
       properties: {
-        index: {
-          title: "Index",
-          type: "integer",
-          minimum: 0,
+        edit_id: {
+          title: "Edit id",
+          type: "string",
+          minLength: 1,
         },
         op: {
           title: "Op",

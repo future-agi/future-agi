@@ -939,9 +939,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "post",
       ],
       "/simulate/api/harness-environments/{id}/design-review/edits/": ["post"],
-      "/simulate/api/harness-environments/{id}/design-review/edits/{index}/": [
-        "delete",
-      ],
+      "/simulate/api/harness-environments/{id}/design-review/edits/{edit_id}/":
+        ["delete"],
       "/simulate/api/harness-environments/{id}/design-review/impact/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
@@ -2427,7 +2426,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-environments/{id}/design-review/approve/": ["post"],
   "/simulate/api/harness-environments/{id}/design-review/discard/": ["post"],
   "/simulate/api/harness-environments/{id}/design-review/edits/": ["post"],
-  "/simulate/api/harness-environments/{id}/design-review/edits/{index}/": [
+  "/simulate/api/harness-environments/{id}/design-review/edits/{edit_id}/": [
     "delete",
   ],
   "/simulate/api/harness-environments/{id}/design-review/impact/": ["get"],

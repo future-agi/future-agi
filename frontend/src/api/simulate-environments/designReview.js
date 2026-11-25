@@ -12,10 +12,10 @@ const editsPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/design-review/edits/", {
     id: envId,
   });
-const editPath = (envId, index) =>
+const editPath = (envId, editId) =>
   apiPath(
-    "/simulate/api/harness-environments/{id}/design-review/edits/{index}/",
-    { id: envId, index },
+    "/simulate/api/harness-environments/{id}/design-review/edits/{edit_id}/",
+    { id: envId, edit_id: editId },
   );
 const impactPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/design-review/impact/", {
@@ -62,7 +62,7 @@ export const useAddDesignEdit = (envId) =>
 export const useUndoDesignEdit = (envId) =>
   useReviewMutation(
     envId,
-    async (index) => (await axios.delete(editPath(envId, index))).data,
+    async (editId) => (await axios.delete(editPath(envId, editId))).data,
   );
 
 export function useApproveDesign(envId) {

@@ -4,15 +4,15 @@ import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { REVIEW_COPY } from "./designReview.constants";
 
-function LineAction({ icon, label, onClick, disabled = false }) {
+function LineAction({ icon, label, onClick, disabled = false, hint = null }) {
   return (
-    <Tooltip arrow title={label}>
+    <Tooltip arrow title={hint || label}>
       <span>
         <IconButton
           size="small"
           aria-label={label}
           onClick={onClick}
-          disabled={disabled}
+          disabled={disabled || Boolean(hint)}
           sx={{
             p: 0.375,
             color: "text.tertiary",
@@ -31,6 +31,7 @@ LineAction.propTypes = {
   label: PropTypes.string.isRequired,
   onClick: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
+  hint: PropTypes.string,
 };
 
 export default function ReviewLine({
@@ -40,6 +41,7 @@ export default function ReviewLine({
   onEdit,
   onRemove,
   removeLabel = REVIEW_COPY.remove,
+  removeBlocked = null,
   disabled = false,
 }) {
   return (
@@ -95,6 +97,7 @@ export default function ReviewLine({
               label={removeLabel}
               onClick={onRemove}
               disabled={disabled}
+              hint={removeBlocked}
             />
           )}
         </Stack>
@@ -110,5 +113,6 @@ ReviewLine.propTypes = {
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
   removeLabel: PropTypes.string,
+  removeBlocked: PropTypes.string,
   disabled: PropTypes.bool,
 };

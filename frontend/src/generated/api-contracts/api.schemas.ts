@@ -22900,8 +22900,8 @@ export const DesignEditApiKind = {
 } as const;
 
 export interface DesignEditApi {
-  /** @minimum 0 */
-  index: number;
+  /** @minLength 1 */
+  edit_id: string;
   op: DesignEditApiOp;
   kind: DesignEditApiKind;
   /** @minLength 1 */

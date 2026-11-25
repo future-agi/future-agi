@@ -63226,9 +63226,9 @@ export type simulateApiHarnessEnvironmentsDesignReviewUndoResponse =
 
 export const getSimulateApiHarnessEnvironmentsDesignReviewUndoUrl = (
   id: string,
-  index: string,
+  editId: string,
 ) => {
-  return `/simulate/api/harness-environments/${id}/design-review/edits/${index}/`;
+  return `/simulate/api/harness-environments/${id}/design-review/edits/${editId}/`;
 };
 
 /**
@@ -63245,11 +63245,11 @@ one and returns 202; progress is read from the job.
  */
 export const simulateApiHarnessEnvironmentsDesignReviewUndo = async (
   id: string,
-  index: string,
+  editId: string,
   options?: RequestInit,
 ): Promise<simulateApiHarnessEnvironmentsDesignReviewUndoResponse> => {
   return apiMutator<simulateApiHarnessEnvironmentsDesignReviewUndoResponse>(
-    getSimulateApiHarnessEnvironmentsDesignReviewUndoUrl(id, index),
+    getSimulateApiHarnessEnvironmentsDesignReviewUndoUrl(id, editId),
     {
       ...options,
       method: "DELETE",
