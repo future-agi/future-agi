@@ -27,6 +27,7 @@ from simulate.services.harness_run_evals import (
     EVAL_QUEUED_KEY,
     parse_stamp,
 )
+from simulate.services.run_results_v3_scoring import HARNESS_ERROR
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 
 logger = structlog.get_logger(__name__)
@@ -73,6 +74,7 @@ REASON_EVAL_TIMED_OUT_NOT_STARTED = (
 REASON_EVAL_EXPIRED = "Scoring did not finish."
 REASON_EVAL_RUN_CANCELLED = "Not scored: the run was cancelled."
 REASON_EVAL_NO_RESULT = "The evaluator returned no result."
+REASON_EVAL_CALL_ERRORED = "Not run: the call errored."
 REASON_CSAT_TIMED_OUT_RUNNING = "CSAT timed out: no result within 10 minutes."
 REASON_CSAT_TIMED_OUT_NOT_STARTED = (
     "CSAT timed out: scoring did not start within 30 minutes."
@@ -81,10 +83,16 @@ REASON_CSAT_EXPIRED = "CSAT did not finish."
 REASON_CSAT_NO_EVIDENCE = "Nothing to score: the call has no transcript or recording."
 REASON_CSAT_NOT_CONNECTED = "Nothing to score: the call did not connect."
 REASON_CSAT_RUN_CANCELLED = "Not scored: the run was cancelled."
+REASON_CSAT_CALL_ERRORED = "Not scored: the call errored."
 REASON_CSAT_FAILED = "CSAT could not be scored."
 REASON_CSAT_SKIPPED = "CSAT was not scored."
 CSAT_SKIPPED_REASONS = frozenset(
-    {REASON_CSAT_NO_EVIDENCE, REASON_CSAT_NOT_CONNECTED, REASON_CSAT_RUN_CANCELLED}
+    {
+        REASON_CSAT_NO_EVIDENCE,
+        REASON_CSAT_NOT_CONNECTED,
+        REASON_CSAT_RUN_CANCELLED,
+        REASON_CSAT_CALL_ERRORED,
+    }
 )
 CSAT_TIMED_OUT_REASONS = frozenset(
     {
@@ -113,6 +121,12 @@ SUMMARY_REBUILD_DELAY_SECONDS = 300
 # one more job instead of counting on a job that may already have read the
 # calls.
 SUMMARY_REBUILD_MARKER_SECONDS = SUMMARY_REBUILD_DELAY_SECONDS - 30
+
+
+def call_errored(call: CallExecution) -> bool:
+    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+    outcome = str(metadata.get("harness_outcome_status") or "").strip().lower()
+    return outcome in HARNESS_ERROR
 
 
 def summary_rebuild_marker_key(test_execution_id: Any) -> str:
