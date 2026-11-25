@@ -1,9 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import {
   render as baseRender,
   fireEvent,
   screen,
+  userEvent,
   waitFor,
 } from "src/utils/test-utils";
 
@@ -102,6 +105,10 @@ beforeEach(() => {
   navigate.mockReset();
   approveHarnessAdaptation.mockReset();
   cancelHarnessJob.mockReset();
+  vi.mocked(useSimulationAccess).mockReturnValue({
+    canEdit: true,
+    canRun: true,
+  });
   useHarnessAdaptationDesign.mockReset();
   useHarnessAdaptationDesign.mockReturnValue({ data: DESIGN, isError: false });
 });
@@ -190,9 +197,52 @@ describe("Review the design", () => {
     render();
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(cancelHarnessJob).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop adaptation" }));
 
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     expect(cancelHarnessJob.mock.calls[0][0]).toBe("adapt-job");
+  });
+
+  it("keeps an adaptation whose cancel isn't confirmed", async () => {
+    render();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
+
+    await waitFor(() =>
+      expect(screen.queryByText("Stop this adaptation?")).toBeNull(),
+    );
+    expect(cancelHarnessJob).not.toHaveBeenCalled();
+  });
+
+  it("locks Approve and Cancel for someone who can't edit, and says why", async () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
+    });
+    useHarnessAdaptationDesign.mockReturnValue({
+      data: { ...DESIGN, state: "awaiting_approval" },
+      isError: false,
+    });
+    render();
+
+    for (const [control, reason] of [
+      [approve(), WORKSPACE_COPY.viewer.approve],
+      [
+        screen.getByRole("button", { name: "Cancel" }),
+        WORKSPACE_COPY.viewer.cancel,
+      ],
+    ]) {
+      expect(control).toBeDisabled();
+      const lock = control.closest("span[tabindex]");
+      await userEvent.hover(lock);
+      await waitFor(() =>
+        expect(screen.getByRole("tooltip")).toHaveTextContent(reason),
+      );
+      await userEvent.unhover(lock);
+      await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+    }
   });
 
   it("says when the design can't be loaded", () => {
@@ -218,6 +268,8 @@ describe("Review the design", () => {
     render({ job: { status: { stage: "running" } } });
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(cancelHarnessJob).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop adaptation" }));
 
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     expect(cancelHarnessJob.mock.calls[0][0]).toBe("adapt-job");

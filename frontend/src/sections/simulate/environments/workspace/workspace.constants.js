@@ -121,6 +121,7 @@ export const WORKSPACE_COPY = {
     delete: "You don't have permission to delete environments.",
     create: "You don't have permission to create environments.",
     cancel: "You don't have permission to cancel builds.",
+    approve: "You don't have permission to approve designs.",
     chat: "You don't have permission to send messages to the builder.",
     secrets: "You don't have permission to change secrets.",
     agentVersion: "You don't have permission to create agent versions.",
