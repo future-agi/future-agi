@@ -27,6 +27,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.DefaultRequestTimeout != 60*time.Second {
 		t.Errorf("default timeout = %v, want 60s", cfg.Server.DefaultRequestTimeout)
 	}
+	if cfg.Server.ReadHeaderTimeout != 5*time.Second {
+		t.Errorf("default read_header_timeout = %v, want 5s", cfg.Server.ReadHeaderTimeout)
+	}
+	if cfg.Server.MaxHeaderBytes != 1<<20 {
+		t.Errorf("default max_header_bytes = %d, want %d", cfg.Server.MaxHeaderBytes, 1<<20)
+	}
 	if cfg.Logging.Level != "info" {
 		t.Errorf("default log level = %q, want %q", cfg.Logging.Level, "info")
 	}
@@ -226,6 +232,54 @@ func TestValidate(t *testing.T) {
 			name: "valid provider",
 			modify: func(c *Config) {
 				c.Providers["test"] = ProviderConfig{BaseURL: "http://localhost", APIFormat: "openai"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "cors wildcard with credentials rejected",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"*"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "cors explicit origins with credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"https://app.example.com"}
+			},
+			wantErr: false,
+		},
+		{
+			// The middleware treats an empty origin list as "*".
+			name: "cors empty origins with credentials rejected",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = nil
+			},
+			wantErr: true,
+		},
+		{
+			// Only a lone "*" is a wildcard in the middleware; in a list it is a
+			// literal entry that no browser Origin matches, so credentials are
+			// only ever sent to the listed origins.
+			name: "cors star inside an explicit list with credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"https://app.example.com", "*"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "cors wildcard without credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowedOrigins = []string{"*"}
 			},
 			wantErr: false,
 		},
@@ -742,6 +796,49 @@ func TestWarnUnreadKeys_ComposedReferenceAndLiteral(t *testing.T) {
 			}
 			if !strings.Contains(out, "token") {
 				t.Errorf("the key is missing, so the operator cannot find the typo:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestCircuitBreakerAuthoringAndReloadDefaults(t *testing.T) {
+	fresh := DefaultConfig().Routing.CircuitBreaker
+	if fresh.Enabled || fresh.HalfOpenMaxProbes != 1 || !fresh.GateDirectCalls {
+		t.Fatalf("new config must show one probe and direct admission with breakers off: %+v", fresh)
+	}
+	example, err := Load("../../config.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cb := example.Routing.CircuitBreaker; cb.Enabled || cb.HalfOpenMaxProbes != 1 || !cb.GateDirectCalls {
+		t.Fatalf("copying the example must persist new-config settings with breakers off: %+v", cb)
+	}
+	path := filepath.Join(t.TempDir(), "gateway.yaml")
+	for _, test := range []struct {
+		name    string
+		content string
+		cap     int
+		direct  bool
+	}{
+		{"legacy", "enabled: true", 0, false},
+		{"explicit-cap-only", "enabled: true, half_open_max_probes: 3", 3, false},
+		{"explicit-direct-only", "enabled: true, gate_direct_calls: true", 0, true},
+		{"edited", "enabled: true, half_open_max_probes: 1, gate_direct_calls: true", 1, true},
+		{"explicit-unlimited", "enabled: true, half_open_max_probes: 0, gate_direct_calls: false", 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte("routing:\n  circuit_breaker: {"+test.content+"}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, phase := range []string{"start", "reload"} {
+				cfg, err := Load(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cb := cfg.Routing.CircuitBreaker
+				if !cb.Enabled || cb.HalfOpenMaxProbes != test.cap || cb.GateDirectCalls != test.direct {
+					t.Fatalf("%s changed stored policy: %+v", phase, cb)
+				}
 			}
 		})
 	}

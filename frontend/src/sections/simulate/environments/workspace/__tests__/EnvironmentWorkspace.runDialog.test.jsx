@@ -4,6 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { WORKSPACE_COPY } from "../workspace.constants";
 
 let keySeq = 0;
 vi.mock("src/api/harness/harness", () => ({
@@ -15,6 +16,11 @@ vi.mock("src/api/harness/harness", () => ({
 vi.mock("notistack", async (importOriginal) => ({
   ...(await importOriginal()),
   enqueueSnackbar: vi.fn(),
+}));
+
+const access = { current: { canEdit: true, canRun: true } };
+vi.mock("../../hooks/useSimulationAccess", () => ({
+  default: () => access.current,
 }));
 
 vi.mock("src/utils/axios", async (importOriginal) => {
@@ -41,6 +47,7 @@ function RunDetailStub({ onStartRun }) {
       onClick={() =>
         onStartRun?.(["k1"], 3, {
           initialPicks: { environment: "e1", suite: "s2" },
+          seed: "7902065059689103066",
         })
       }
     >
@@ -61,6 +68,7 @@ function RunDialogStub({
   scenarioIds,
   trials,
   initialPicks,
+  initialSeed,
   onSubmit,
   onClose,
   error,
@@ -68,13 +76,18 @@ function RunDialogStub({
 }) {
   return (
     <div data-testid="run-dialog">
-      {JSON.stringify({ scenarioIds, trials, initialPicks })}
+      {JSON.stringify({ scenarioIds, trials, initialPicks, initialSeed })}
       <span>{`error:${error?.error ?? "-"}`}</span>
       <span>{`submitting:${submitting}`}</span>
       <button
         type="button"
         onClick={() =>
-          onSubmit(dialogPicks.current, scenarioIds, dialogResolved.current)
+          onSubmit(
+            dialogPicks.current,
+            scenarioIds,
+            dialogResolved.current,
+            initialSeed ?? null,
+          )
         }
       >
         submit picks
@@ -89,6 +102,7 @@ RunDialogStub.propTypes = {
   scenarioIds: PropTypes.array,
   trials: PropTypes.number,
   initialPicks: PropTypes.object,
+  initialSeed: PropTypes.string,
   onSubmit: PropTypes.func,
   onClose: PropTypes.func,
   error: PropTypes.object,
@@ -177,6 +191,7 @@ describe("EnvironmentWorkspace run start", () => {
     Element.prototype.scrollIntoView = vi.fn();
     resetEnvironmentsStore();
     keySeq = 0;
+    access.current = { canEdit: true, canRun: true };
     dialogPicks.current = { environment: "e1" };
     dialogResolved.current = { agent: "a1", environment: "e1", suite: "s1" };
     enqueueSnackbar.mockReset();
@@ -239,6 +254,23 @@ describe("EnvironmentWorkspace run start", () => {
     await waitFor(() =>
       expect(screen.getByTestId("location")).toHaveTextContent(
         "/dashboard/simulate/environments/job-done/runs/rt1/ex2",
+      ),
+    );
+  });
+
+  it("keeps a Viewer's header Run disabled and says why", async () => {
+    access.current = { canEdit: false, canRun: false };
+    getHarnessJob.mockResolvedValue(JOB);
+    renderWorkspace();
+
+    const button = await screen.findByRole("button", { name: /Run simulation/ });
+    await expect(
+      waitFor(() => expect(button).toBeEnabled(), { timeout: 1000 }),
+    ).rejects.toThrow();
+    await userEvent.hover(button.closest("span") ?? button);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip")).toHaveTextContent(
+        WORKSPACE_COPY.viewer.run,
       ),
     );
   });
@@ -325,12 +357,28 @@ describe("EnvironmentWorkspace run start", () => {
         scenarioIds: ["k1"],
         trials: 3,
         initialPicks: { environment: "e1", suite: "s2" },
+        initialSeed: "7902065059689103066",
       }),
     );
 
     await user.click(screen.getByRole("button", { name: "close dialog" }));
     expect(screen.queryByTestId("run-dialog")).toBeNull();
     expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it("re-runs with the run's seed while versioning is off", async () => {
+    getHarnessJob.mockResolvedValue(JOB);
+    const user = userEvent.setup();
+    renderWorkspace("/dashboard/simulate/environments/job-done/runs/rt1/ex1");
+
+    await user.click(await screen.findByRole("button", { name: "run again" }));
+    await waitFor(() =>
+      expect(axios.post).toHaveBeenCalledWith(
+        RUN_URL,
+        { scenario_ids: ["k1"], trials: 3, seed: "7902065059689103066" },
+        { headers: { "Idempotency-Key": "key-1" } },
+      ),
+    );
   });
 
   it("keeps a refusal in the dialog and asks with a fresh key after it", async () => {

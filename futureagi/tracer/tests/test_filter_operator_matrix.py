@@ -11,6 +11,42 @@ from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
 from tracer.utils.filters import ColType, FilterEngine
 
 
+@pytest.mark.parametrize(
+    "apply",
+    [
+        lambda rows: FilterEngine([]).apply_filters(rows),
+        FilterEngine.get_filter_conditions_for_system_metrics,
+        FilterEngine.get_filter_conditions_for_non_system_metrics,
+        FilterEngine.get_filter_conditions_for_voice_system_metrics,
+        FilterEngine.get_sql_filter_conditions_for_cte_system_metrics,
+        FilterEngine.get_sql_filter_conditions_for_cte_eval_metrics,
+        lambda rows: FilterEngine.get_sql_filter_conditions_for_system_metrics(
+            rows, "SELECT 1"
+        ),
+        lambda rows: FilterEngine.get_sql_filter_conditions_for_eval_metrics(
+            rows, "SELECT 1"
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "column_id", ["metric_field:2eb3795d-9234-4a0c-a5ca-2bcf56cf2291", "latency"]
+)
+def test_python_filter_engine_explicitly_rejects_metric_fields(apply, column_id):
+    rows = [
+        {
+            "column_id": column_id,
+            "filter_config": {
+                "col_type": "METRIC_FIELD",
+                "filter_type": "number",
+                "filter_op": "equals",
+                "filter_value": 0,
+            },
+        }
+    ]
+    with pytest.raises(ValueError, match="Python FilterEngine does not support"):
+        apply(rows)
+
+
 def test_packaged_filter_contract_matches_repo_contract():
     repo_contract = next(
         (

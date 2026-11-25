@@ -107,9 +107,7 @@ class TestAgentccSessionStats:
 
         by_name = auth_client.get("/agentcc/sessions/?search=Searchable")
         assert by_name.status_code == status.HTTP_200_OK
-        assert any(
-            item["id"] == str(session.id) for item in by_name.json()["results"]
-        )
+        assert any(item["id"] == str(session.id) for item in by_name.json()["results"])
 
         by_id = auth_client.get("/agentcc/sessions/?search=search-workspace")
         assert by_id.status_code == status.HTTP_200_OK

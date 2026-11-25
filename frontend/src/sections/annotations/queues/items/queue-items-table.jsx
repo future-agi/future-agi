@@ -28,6 +28,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import Iconify from "src/components/iconify";
 import { getInitials } from "../annotation-queue-table";
 import { isQueueAnnotatorRole } from "../constants";
@@ -638,7 +639,7 @@ export default function QueueItemsTable({
       lockVisible: true,
       filter: false,
       sortable: false,
-      resizable: false,
+      resizable: true,
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
     }),

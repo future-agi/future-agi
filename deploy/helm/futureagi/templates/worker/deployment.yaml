@@ -44,6 +44,21 @@ Deployments (worker.allQueues.excludeDedicatedQueues). */ -}}
         "CH25_TRACE_DUAL_WRITE" "false"
         "CH_DUAL_WRITE" "false")) -}}
 {{- end -}}
+{{- /* Interactive SQL never shares the hour-long exact-refresh activity slot. */ -}}
+{{- $workers = append $workers (dict
+      "suffix" "worker-sql-workbench"
+      "replicas" 1
+      "resources" $w.exactAggregation.resources
+      "values" dict
+      "args" (list "--task-queue" "sql_workbench")
+      "env" (dict
+        "TEMPORAL_ALL_QUEUES" "false"
+        "TEMPORAL_TASK_QUEUE" "sql_workbench"
+        "TEMPORAL_MAX_CONCURRENT_ACTIVITIES" "2"
+        "TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS" "2"
+        "CH25_DROP_LEGACY_CDC_CHAIN" "false"
+        "CH25_TRACE_DUAL_WRITE" "false"
+        "CH_DUAL_WRITE" "false")) -}}
 {{- range $q := $w.queues -}}
 {{- $env := dict
       "TEMPORAL_ALL_QUEUES" "false"

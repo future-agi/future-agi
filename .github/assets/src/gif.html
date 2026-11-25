@@ -1,0 +1,61 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+html,body{width:1200px;height:750px;overflow:hidden}
+#root{width:1200px;height:750px;position:relative;overflow:hidden;border:0;border-radius:0;background:var(--bg)}
+.win{position:absolute;inset:22px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#0d0d0d}
+.bar{height:34px;display:flex;align-items:center;gap:7px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--surface)}
+.bar i{width:10px;height:10px;border-radius:50%;background:var(--line)}
+.bar span{margin-left:12px;font-size:12.5px;color:var(--fg3)}
+.vp{position:absolute;left:0;right:0;top:34px;bottom:0;overflow:hidden}
+.layer{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform,opacity}
+.layer img{display:block}
+#cur{position:absolute;width:22px;height:22px;z-index:5;pointer-events:none}
+#ring{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid #fff;opacity:0;z-index:4}
+#cap{position:absolute;left:50%;bottom:40px;transform:translateX(-50%);background:rgba(20,21,24,.92);color:#eceef1;border:1px solid #3a3d43;border-radius:8px;padding:9px 16px;font-size:15px;z-index:6;white-space:nowrap;opacity:0}
+</style></head>
+<body><div id="root" class="root"><div class="win"><div class="bar"><i></i><i></i><i></i><span id="url"></span></div>
+<div class="vp" id="vp"></div></div>
+<svg id="cur" viewBox="0 0 24 24"><path d="M4 2l15 9-6.5 1.6L9.6 19z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg>
+<div id="ring"></div><div id="cap"></div></div>
+<script>
+/* Scene format (window.SCENE):
+   {url, images:{name:src}, imgW, imgH,           // source screenshots, all same pixel size
+    keys:[{t, img, view:[x,y,w,h]}],               // camera keyframes in image px; img switches crossfade over 0.45s
+    cursor:[{t, x, y, click?}], captions:[{t0,t1,text}] } */
+const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+let S, vpW, vpH, layers={};
+async function load(scene){
+  S=scene; document.body.className='dark'; document.getElementById('url').textContent=S.url||'';
+  const vp=document.getElementById('vp'); vpW=vp.clientWidth; vpH=vp.clientHeight;
+  for(const [k,src] of Object.entries(S.images)){const d=document.createElement('div'); d.className='layer'; d.innerHTML=`<img src="${src}" width="${S.imgW}" height="${S.imgH}">`; vp.appendChild(d); layers[k]=d;}
+  await Promise.all([...vp.querySelectorAll('img')].map(i=>i.decode()));
+}
+function camAt(t){
+  const K=S.keys; if(t<=K[0].t) return K[0].view; if(t>=K[K.length-1].t) return K[K.length-1].view;
+  for(let i=0;i<K.length-1;i++){const a=K[i],b=K[i+1]; if(t>=a.t&&t<=b.t){const u=ease((t-a.t)/(b.t-a.t)); return a.view.map((v,j)=>v+(b.view[j]-v)*u);}}
+}
+function imgOpacity(t){ // crossfade when the image changes between keys
+  const K=S.keys, o={}; Object.keys(layers).forEach(k=>o[k]=0);
+  let cur=K[0].img; o[cur]=1;
+  for(let i=1;i<K.length;i++){ if(K[i].img!==K[i-1].img){ const ts=K[i].switchAt??K[i-1].t; const u=Math.min(1,Math.max(0,(t-ts)/0.45));
+      if(t>=ts){ o[K[i-1].img]=1-u; o[K[i].img]=u; cur=K[i].img; } } }
+  // keep only the latest pair
+  return o;
+}
+window.render=(t)=>{
+  const [x,y,w,h]=camAt(t); const s=Math.min(vpW/w, vpH/h); const ox=(vpW-w*s)/2 - x*s, oy=(vpH-h*s)/2 - y*s;
+  const op=imgOpacity(t);
+  for(const [k,d] of Object.entries(layers)){ d.style.transform=`translate(${ox}px,${oy}px) scale(${s})`; d.style.opacity=op[k]||0; }
+  // cursor (image coords -> screen)
+  const C=S.cursor||[]; const cur=document.getElementById('cur'), ring=document.getElementById('ring');
+  if(C.length){ let p=C[0]; for(let i=0;i<C.length-1;i++){ if(t>=C[i].t&&t<=C[i+1].t){const u=ease((t-C[i].t)/(C[i+1].t-C[i].t)); p={x:C[i].x+(C[i+1].x-C[i].x)*u,y:C[i].y+(C[i+1].y-C[i].y)*u};} else if(t>C[i+1].t) p=C[i+1]; }
+    const vis=t>=C[0].t && t<=(S.cursorEnd??1e9); const sx=22+ox+p.x*s, sy=22+34+oy+p.y*s;
+    cur.style.display=vis?'':'none'; cur.style.left=sx+'px'; cur.style.top=sy+'px';
+    const ck=C.find(c=>c.click && t>=c.t && t<c.t+0.5); ring.style.left=sx+'px'; ring.style.top=sy+'px';
+    if(ck){const u=(t-ck.t)/0.5; ring.style.opacity=1-u; ring.style.transform=`scale(${0.4+u*0.9})`;} else ring.style.opacity=0;
+  } else cur.style.display='none';
+  const cap=document.getElementById('cap'); const c=(S.captions||[]).find(c=>t>=c.t0&&t<=c.t1);
+  if(c){cap.textContent=c.text; const f=Math.min(1,(t-c.t0)/0.3,(c.t1-t)/0.3); cap.style.opacity=f;} else cap.style.opacity=0;
+};
+window.load=load;
+</script></body></html>

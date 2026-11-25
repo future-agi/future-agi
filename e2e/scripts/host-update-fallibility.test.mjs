@@ -536,7 +536,9 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.deepEqual(inputs.stack.options, ['distributed', 'standalone']);
   assert.equal(inputs.host_update_fallibility.type, 'boolean');
   assert.equal(inputs.host_update_fallibility.default, false);
-  assert.deepEqual(workflow.on.pull_request.branches, ['dev', 'main']);
+  // PRs into any base branch, stacked feature-branch PRs included.
+  assert.ok('pull_request' in workflow.on);
+  assert.equal(workflow.on.pull_request?.branches, undefined);
   assert.deepEqual(workflow.on.push.branches, ['dev', 'main']);
   assert.deepEqual(workflow.on.schedule, [{ cron: '37 2 * * *' }]);
   const validation = workflow.jobs.changes.steps[0];
@@ -564,7 +566,7 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   const ordinaryReport = steps.find(step => step.name === 'Upload report');
   assert.equal(ordinaryReport.with.path, 'e2e/playwright-report');
   assert.equal(ordinaryReport.with['retention-days'], 7);
-  assert.equal(workflow.jobs.e2e['timeout-minutes'], 120);
+  assert.equal(workflow.jobs.e2e['timeout-minutes'], 155);
   const allow = new Function('github', 'inputs', 'matrix', `return ${proof.if};`);
   const invalid = new Function('github', 'inputs', `return ${validation.if};`);
   for (const event_name of ['pull_request', 'push', 'schedule', 'merge_group', 'workflow_dispatch']) {
@@ -578,15 +580,33 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.equal(rejected.status, 1);
   assert.match(rejected.stdout, /no builds were started/);
   assert.deepEqual(workflow.permissions, { contents: 'read' });
-  assert.deepEqual(workflow.jobs.changes.permissions, { contents: 'read', 'pull-requests': 'read' });
-  assert.deepEqual(workflow.jobs.e2e.permissions, { contents: 'read', packages: 'write' });
-  assert.equal(Object.values(workflow.jobs).filter(job => job.permissions).length, 2);
+  assert.deepEqual(workflow.jobs.changes.permissions, { contents: 'read', actions: 'read', issues: 'read' });
+  assert.deepEqual(workflow.jobs.e2e.permissions, { contents: 'read', packages: 'read' });
+  assert.deepEqual(workflow.jobs.report.permissions, { contents: 'read', actions: 'read' });
+  assert.equal(Object.values(workflow.jobs).filter(job => job.permissions).length, 3);
   const builds = steps.filter(step => step.uses === 'docker/build-push-action@v5');
-  assert.equal(builds.length, 4);
+  assert.equal(builds.length, 5);
   for (const step of builds) {
     assert.equal(step.with.push, undefined);
     assert.equal(step.with.load, true);
-    assert.match(step.with['cache-to'], /^\$\{\{ github.event_name == 'push' && format\('type=registry,ref=\{0\}:(backend|fi-collector|frontend|gateway),mode=max', env.CACHE_REPO\) \|\| '' \}\}$/);
+    assert.equal(step.with['cache-to'], undefined);
+  }
+  for (const job of Object.values(workflow.jobs)) {
+    for (const step of job.steps.filter(step => step.uses?.startsWith('actions/checkout@'))) {
+      assert.equal(step.with['persist-credentials'], false);
+    }
+  }
+  assert.match(workflow.concurrency.group, /github\.event_name == 'push' && github\.sha \|\| github\.ref/);
+  const cache = parseYaml(await readFile(new URL('../../.github/workflows/e2e-cache.yml', import.meta.url), 'utf8'));
+  assert.deepEqual(cache.on, { push: { branches: ['dev', 'main'] } });
+  const publisher = cache.jobs.publish;
+  assert.deepEqual(publisher.permissions, { contents: 'read', packages: 'write' });
+  assert.equal(publisher.steps.find(step => step.uses?.startsWith('actions/checkout@')).with.ref, '${{ github.sha }}');
+  const exported = publisher.steps.find(step => step.uses === 'docker/build-push-action@v5');
+  assert.equal(exported.with.outputs, 'type=cacheonly');
+  assert.equal(exported.with['cache-to'], 'type=registry,ref=${{ env.CACHE_REPO }}:${{ matrix.tag }},mode=max');
+  for (const entry of publisher.strategy.matrix.include) {
+    assert.ok(builds.some(step => step.with.context === entry.context && step.with.file === entry.file));
   }
   assert.equal(steps.find(step => step.name === 'Save Playwright browser cache').if,
     "github.event_name == 'push' && steps.pw-cache.outputs.cache-hit != 'true'");

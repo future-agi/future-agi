@@ -328,7 +328,7 @@ export default function ScoresListSection({
                   <TableCell sx={{ py: 1 }}>
                     <Typography
                       sx={{
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: 500,
                         color: "text.primary",
                       }}
@@ -346,7 +346,7 @@ export default function ScoresListSection({
                       <Typography
                         component="span"
                         sx={{
-                          fontSize: 13,
+                          fontSize: 12,
                           color: "text.primary",
                           fontVariantNumeric: "tabular-nums",
                         }}
@@ -456,7 +456,7 @@ export default function ScoresListSection({
                     <TableCell sx={{ py: 1.5, maxWidth: 480 }}>
                       <Typography
                         sx={{
-                          fontSize: 13,
+                          fontSize: 12,
                           color: "text.primary",
                           whiteSpace: "pre-wrap",
                         }}
