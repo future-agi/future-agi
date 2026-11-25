@@ -25,6 +25,8 @@ from django.db.models import Q
 
 from simulate.models.test_execution import CallExecution, TestExecution
 from simulate.services.call_evidence import (
+    CallDeleted,
+    CallNotInWorkspace,
     Kind,
     State,
     in_workspace,
@@ -121,6 +123,11 @@ def freeze_selection(
         "note": note,
     }
     if kind == SelectionKind.RUNS:
+        _refuse_too_many(
+            CallExecution._base_manager.filter(
+                test_execution_id__in=[run.id for run in runs], deleted=False
+            ).count()
+        )
         calls = _calls_of(runs, Q())
     elif kind == SelectionKind.CALLS:
         description["call_ids"] = [str(one) for one in call_ids]
@@ -143,13 +150,7 @@ def freeze_selection(
             "Try again in a moment.",
             unfinished=len(unfinished),
         )
-    if len(calls) > MAX_CALLS:
-        raise SelectionRefused(
-            "too_many_calls",
-            f"An ask can take at most {MAX_CALLS} calls; "
-            f"this selection has {len(calls)}.",
-            count=len(calls),
-        )
+    _refuse_too_many(len(calls))
     return FrozenSelection(
         kind=kind,
         call_ids=tuple(str(call.id) for call in calls),
@@ -159,6 +160,15 @@ def freeze_selection(
         workspace_id=None if workspace_id is None else str(workspace_id),
         asked_by_id=None if asked_by_id is None else str(asked_by_id),
     )
+
+
+def _refuse_too_many(count: int) -> None:
+    if count > MAX_CALLS:
+        raise SelectionRefused(
+            "too_many_calls",
+            f"An ask can take at most {MAX_CALLS} calls; this selection has {count}.",
+            count=count,
+        )
 
 
 def _runs(run_ids: Sequence[Any], organization_id: Any, workspace_id: Any) -> list:
@@ -245,6 +255,7 @@ def _filtered_calls(runs: list, filters: dict[str, Any]) -> list[CallExecution]:
     for run in runs:
         matched = apply_run_call_query(run_calls_queryset(run), query.validated_data)
         ids.extend(matched.values_list("id", flat=True))
+    _refuse_too_many(len(ids))
     found = {call.id: call for call in _calls_of(runs, Q(id__in=ids))}
     return [found[one] for one in ids if one in found]
 
@@ -281,13 +292,23 @@ def check_before_launch(
             "questions",
             f"An ask takes 1 to {MAX_QUESTIONS} questions, each reading at least one kind.",
         )
+    if (str(organization.id), None if workspace_id is None else str(workspace_id)) != (
+        selection.organization_id,
+        selection.workspace_id,
+    ):
+        # Checked only where it was made, with the same answer as a selection
+        # that does not exist.
+        raise LaunchRefused("not_found", NOT_FOUND)
     kinds = list(
         dict.fromkeys(kind for question in questions for kind in question.kinds)
     )
     calls = {
         str(call.id): call
         for call in CallExecution._base_manager.filter(
-            id__in=list(selection.call_ids), deleted=False
+            id__in=list(selection.call_ids),
+            deleted=False,
+            test_execution__deleted=False,
+            test_execution__run_test__deleted=False,
         ).select_related("test_execution__run_test")
     }
     if gone := len(selection.call_ids) - len(calls):
@@ -298,19 +319,28 @@ def check_before_launch(
             gone=gone,
         )
     shared: dict[Any, Any] = {}
-    states = [
-        {
-            kind: (evidence.state, evidence.cause)
-            for kind, evidence in read_call_evidence(
-                calls[call_id],
-                kinds,
-                organization_id=organization.id,
-                workspace_id=workspace_id,
-                shared=shared,
-            ).items()
-        }
-        for call_id in selection.call_ids
-    ]
+    try:
+        states = [
+            {
+                kind: (evidence.state, evidence.cause)
+                for kind, evidence in read_call_evidence(
+                    calls[call_id],
+                    kinds,
+                    organization_id=organization.id,
+                    workspace_id=workspace_id,
+                    shared=shared,
+                ).items()
+            }
+            for call_id in selection.call_ids
+        ]
+    except CallNotInWorkspace:
+        # A run moved to another workspace since the ask was made.
+        raise LaunchRefused("not_found", NOT_FOUND) from None
+    except CallDeleted:
+        raise LaunchRefused(
+            "calls_gone",
+            "A selected call has been deleted since the ask was made.",
+        ) from None
     counted = [_count(question, states) for question in questions]
     answers = sum(one["ready"] for one in counted)
     return {
@@ -376,6 +406,10 @@ def launch_gate(
 ) -> None:
     """Instant Eval's own checks before a launch: refuses with the reason, else None.
     Nothing is spent or kept here; a key that is read is dropped at once."""
+    if answers < 1:
+        raise LaunchRefused(
+            "nothing_ready", "No selected call has the evidence these questions read."
+        )
     _check_capability(organization)
     for model in dict.fromkeys(question.decision_model for question in questions):
         _check_key(model, organization, workspace_id)
@@ -411,11 +445,14 @@ def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
     )
 
     try:
-        from ee.decisions.errors import DecisionGatewayError
+        from ee.decisions.errors import DecisionGatewayError, describe
     except ImportError:  # a build without ee has no decision models to key
 
         class DecisionGatewayError(Exception):
             code = provider = None
+
+        def describe(error):
+            return None
 
     if not is_jev_model(model) and get_decision_model(model) is None:
         raise LaunchRefused(
@@ -436,13 +473,19 @@ def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
         raise LaunchRefused(
             "JEV_KEY_MISSING", str(missing), settings_path=AI_PROVIDERS_SETTINGS_PATH
         ) from None
-    except DecisionGatewayError as missing:
-        if missing.code != "DECISION_KEY_MISSING":
-            raise
+    except DecisionGatewayError as failed:
+        if failed.code == "DECISION_KEY_MISSING":
+            raise LaunchRefused(
+                failed.code,
+                missing_provider_key_message(failed.provider),
+                settings_path=AI_PROVIDERS_SETTINGS_PATH,
+            ) from None
+        # The gateway's own body-free wording for its code; nothing upstream.
+        described = describe(failed) or {}
         raise LaunchRefused(
-            missing.code,
-            missing_provider_key_message(missing.provider),
-            settings_path=AI_PROVIDERS_SETTINGS_PATH,
+            failed.code or "decision_check_unavailable",
+            described.get("message")
+            or "The decision model's key can't be checked right now. Please retry in a moment.",
         ) from None
     finally:
         set_workspace_context(workspace=scope)

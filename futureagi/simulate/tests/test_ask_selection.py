@@ -960,3 +960,135 @@ def test_a_launch_that_passes_every_check_is_allowed(
         assert _gate(organization, workspace, answers=10) is None
 
     billing.assert_called_once_with(organization, 5.0)
+
+
+# --- refusals, never raw errors (review of the check and the gate) ----------------
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("deleted", ["run", "run_test"])
+def test_calls_whose_run_was_deleted_since_freezing_count_as_gone(
+    organization, workspace, run, scenario, deleted
+):
+    _calls(run, scenario, 2)
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+    if deleted == "run":
+        TestExecution.objects.filter(id=run.id).update(deleted=True)
+    else:
+        RunTest.objects.filter(id=run.run_test_id).update(deleted=True)
+
+    with pytest.raises(LaunchRefused) as refused:
+        check_before_launch(
+            frozen, [TOOLS], organization=organization, workspace_id=workspace.id
+        )
+
+    assert refused.value.code == "calls_gone"
+    assert refused.value.message == (
+        "2 of the 2 selected calls have been deleted since the ask was made."
+    )
+
+
+@pytest.mark.django_db
+def test_a_selection_checked_from_another_workspace_is_refused_as_not_found(
+    organization, workspace, user, run, scenario
+):
+    _calls(run, scenario, 1)
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+    elsewhere = Workspace.objects.create(
+        name=f"ws-{uuid.uuid4().hex[:6]}", organization=organization, created_by=user
+    )
+
+    with pytest.raises(LaunchRefused) as refused:
+        check_before_launch(
+            frozen, [TOOLS], organization=organization, workspace_id=elsewhere.id
+        )
+
+    assert (refused.value.code, refused.value.message) == ("not_found", NOT_FOUND)
+
+
+@pytest.mark.django_db
+def test_a_decision_gateway_error_that_is_not_a_missing_key_refuses_the_launch(
+    organization, workspace, entitled, billing
+):
+    from ee.decisions.errors import DecisionGatewayError
+    from ee.jev.client import JevGatewayError
+    from evaluations.decision_models import DECISION_MODELS
+
+    model = next(name for name in DECISION_MODELS if "jev" not in name)
+    with (
+        patch(
+            "evaluations.engine.instance._get_decision_api_key",
+            side_effect=DecisionGatewayError(
+                "openrouter", JevGatewayError("JEV_TIMEOUT")
+            ),
+        ),
+        pytest.raises(LaunchRefused) as refused,
+    ):
+        _gate(organization, workspace, models=(model,))
+
+    assert refused.value.code == "DECISION_TIMEOUT"
+    assert refused.value.message.endswith("didn't respond in time. Try again.")
+    billing.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_a_launch_with_no_ready_answer_is_refused_before_anything_is_asked(
+    organization, workspace, entitled, billing
+):
+    with (
+        patch("evaluations.engine.instance._get_typesafe_api_key") as key,
+        pytest.raises(LaunchRefused) as refused,
+    ):
+        _gate(organization, workspace, answers=0)
+
+    assert refused.value.code == "nothing_ready"
+    assert refused.value.message == (
+        "No selected call has the evidence these questions read."
+    )
+    key.assert_not_called()
+    billing.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("kind", [SelectionKind.RUNS, SelectionKind.FILTER])
+def test_too_many_calls_are_refused_before_they_are_loaded(
+    organization, workspace, run, scenario, kind
+):
+    calls = _calls(run, scenario, 3)
+    picked = (
+        {"filters": {"call_execution_id": [str(call.id) for call in calls]}}
+        if kind == SelectionKind.FILTER
+        else {}
+    )
+
+    with (
+        patch.object(selection, "MAX_CALLS", 2),
+        patch.object(selection, "_calls_of", wraps=selection._calls_of) as loaded,
+        pytest.raises(SelectionRefused) as refused,
+    ):
+        _freeze(organization, workspace, kind, [run], **picked)
+
+    assert refused.value.code == "too_many_calls"
+    assert refused.value.message == (
+        "An ask can take at most 2 calls; this selection has 3."
+    )
+    loaded.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_a_run_moved_to_another_workspace_since_freezing_is_refused_as_not_found(
+    organization, workspace, user, run, scenario
+):
+    _calls(run, scenario, 1)
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+    elsewhere = Workspace.objects.create(
+        name=f"ws-{uuid.uuid4().hex[:6]}", organization=organization, created_by=user
+    )
+    RunTest.objects.filter(id=run.run_test_id).update(workspace=elsewhere)
+
+    with pytest.raises(LaunchRefused) as refused:
+        check_before_launch(
+            frozen, [TOOLS], organization=organization, workspace_id=workspace.id
+        )
+
+    assert (refused.value.code, refused.value.message) == ("not_found", NOT_FOUND)
