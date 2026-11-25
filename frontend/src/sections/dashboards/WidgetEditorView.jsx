@@ -83,6 +83,7 @@ import {
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
 import { seriesColors } from "src/theme/data-colors";
+import { buildChartSeriesColorMap, buildSeriesColorMap, getSeriesColor } from "./chartColors";
 import {
   coerceFilterValue,
   FILTER_STRING_MAX_UTF8_BYTES,
@@ -1383,36 +1384,6 @@ const METRIC_TYPE_ICONS = {
   custom_attribute: "solar:tuning-2-linear",
   custom_column: "solar:columns-3-linear",
 };
-
-const hashSeriesName = (name) => {
-  const s = String(name || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-};
-// `palette` is the theme's data palette (seriesColors(theme)).
-const buildSeriesColorMap = (names, palette) => {
-  const map = {};
-  const used = new Set();
-  (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % palette.length;
-    let picked = start;
-    for (let i = 0; i < palette.length; i += 1) {
-      const candidate = (start + i) % palette.length;
-      if (!used.has(candidate)) {
-        picked = candidate;
-        break;
-      }
-    }
-    used.add(picked);
-    map[name] = palette[picked];
-  });
-  return map;
-};
-const getSeriesColor = (name, map, palette) =>
-  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
 
 const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -3828,12 +3799,8 @@ export default function WidgetEditorView() {
   // previewSeries so hidden series keep their color when re-checked.
   const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () =>
-      buildSeriesColorMap(
-        previewSeries.map((s) => s.name),
-        palette,
-      ),
-    [previewSeries, palette],
+    () => buildChartSeriesColorMap(previewSeries, palette, theme.palette.mode, chartType),
+    [previewSeries, palette, theme.palette.mode, chartType],
   );
   const chartColors = useMemo(
     () =>

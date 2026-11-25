@@ -1,3 +1,5 @@
+import { palette } from "src/theme/palette";
+import { buildChartSeriesColorMap } from "../chartColors";
 import React from "react";
 import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "src/utils/test-utils";
@@ -1932,3 +1934,100 @@ describe("WidgetChart — derived-metric interval on a metric card", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("WidgetChart — breakdown and metric color encoding", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.query.isPending = false;
+    h.query.isError = false;
+    h.query.data = {
+      data: {
+        result: {
+          metrics: [
+            {
+              id: "latency",
+              name: "Latency",
+              aggregation: "avg",
+              series: [
+                {
+                  name: "alpha",
+                  data: [{ timestamp: "2026-07-09T00:00:00Z", value: 10 }],
+                },
+                {
+                  name: "beta",
+                  data: [{ timestamp: "2026-07-09T00:00:00Z", value: 20 }],
+                },
+              ],
+            },
+            {
+              id: "tokens",
+              name: "Tokens",
+              aggregation: "sum",
+              series: [
+                {
+                  name: "alpha",
+                  data: [{ timestamp: "2026-07-09T00:00:00Z", value: 30 }],
+                },
+                {
+                  name: "beta",
+                  data: [{ timestamp: "2026-07-09T00:00:00Z", value: 40 }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+  });
+
+  it("passes the same breakdown-aware colors to the chart and legend", () => {
+    render(
+      <WidgetChart
+        widget={{
+          id: "w-breakdown",
+          query_config: {
+            metrics: [
+              { id: "latency", name: "Latency", aggregation: "avg" },
+              { id: "tokens", name: "Tokens", aggregation: "sum" },
+            ],
+            breakdowns: [{ name: "project" }],
+          },
+          chart_config: { chart_type: "line" },
+        }}
+        globalDateRange={null}
+      />,
+    );
+
+    const chart = screen.getByTestId("apex-line");
+    const legend = screen.getByTestId("chart-legend");
+    const chartColors = JSON.parse(chart.getAttribute("data-colors"));
+    const legendColors = JSON.parse(legend.getAttribute("data-colors"));
+    const series = [
+      {
+        name: "Latency / alpha (avg)",
+        breakdownName: "alpha",
+        metricIndex: 0,
+      },
+      {
+        name: "Latency / beta (avg)",
+        breakdownName: "beta",
+        metricIndex: 0,
+      },
+      {
+        name: "Tokens / alpha (sum)",
+        breakdownName: "alpha",
+        metricIndex: 1,
+      },
+      {
+        name: "Tokens / beta (sum)",
+        breakdownName: "beta",
+        metricIndex: 1,
+      },
+    ];
+    const expectedMap = buildChartSeriesColorMap(series, palette("light").data, "light", "line");
+
+    expect(chartColors).toEqual(series.map((item) => expectedMap[item.name]));
+    expect(legendColors).toEqual(chartColors);
+  });
+});
+
