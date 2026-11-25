@@ -184,7 +184,13 @@ def suite_documents(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
         if len(parts) == 3 and parts[2] == "scenario.json":
             document = _json(suite, path)
             if isinstance(document, dict):
-                found.append({"scenario_key": parts[1], **document, "folder": parts[1]})
+                found.append(
+                    {
+                        "scenario_key": parts[1],
+                        **document,
+                        "folder": f"scenarios/{parts[1]}",
+                    }
+                )
     return found
 
 

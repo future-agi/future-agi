@@ -458,8 +458,8 @@ def test_a_suite_read_from_its_folders_keeps_each_folder_apart_from_its_key():
     )
 
     assert [(one["folder"], one["scenario_key"], one["name"]) for one in read] == [
-        ("refund_a", "refund", "refund"),
-        ("refund_b", "refund", "refund"),
+        ("scenarios/refund_a", "refund", "refund"),
+        ("scenarios/refund_b", "refund", "refund"),
     ]
 
 

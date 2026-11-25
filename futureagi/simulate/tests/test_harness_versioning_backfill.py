@@ -2202,8 +2202,8 @@ def test_two_folders_sharing_a_key_keep_their_own_folders_and_rows():
     )
 
     assert [(one["folder"], one["instruction"]) for one in scenarios] == [
-        ("refund_a", "first"),
-        ("refund_b", "second"),
+        ("scenarios/refund_a", "first"),
+        ("scenarios/refund_b", "second"),
     ]
     assert [(row.id, position) for row, _, position in match.pairs] == [(1, 1), (2, 2)]
     assert match.scenarios_without_row == 0
@@ -2222,7 +2222,26 @@ def test_an_index_entry_naming_its_folder_by_path_takes_that_folder():
 
     [scenario] = _archive_scenarios(suite)
 
-    assert (scenario["folder"], scenario["instruction"]) == ("refund_b", "own")
+    assert (scenario["folder"], scenario["instruction"]) == (
+        "scenarios/refund_b",
+        "own",
+    )
+
+
+def test_an_index_entry_keeps_its_own_spelling_of_the_folder_it_names():
+    """Member content compared against the index later must match it exactly."""
+    from simulate.services.harness_versioning.versions import _member_content
+
+    entry = {"scenario_key": "refund", "folder": "scenarios/refund"}
+    suite = {
+        "scenarios.json": json.dumps([entry]).encode(),
+        "scenarios/refund/scenario.json": json.dumps({"instruction": "x"}).encode(),
+    }
+
+    [scenario] = _archive_scenarios(suite)
+
+    assert scenario["folder"] == "scenarios/refund"
+    assert _member_content(scenario)["folder"] == "scenarios/refund"
 
 
 class TestReReviewFindings:

@@ -273,9 +273,9 @@ def _archive_scenarios(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
             "",
         )
         document = {**entry, **documents.get(folder, {})}
-        if folder:
-            # The folder it was read from, never the one its document names.
-            document["folder"] = folder
+        if folder and PurePosixPath(str(document.get("folder") or "")).name != folder:
+            # The folder it was read from, never another one its document names.
+            document["folder"] = f"scenarios/{folder}"
         document["scenario_key"] = str(document.get("scenario_key") or folder or "")
         scenarios.append(document)
     return scenarios
