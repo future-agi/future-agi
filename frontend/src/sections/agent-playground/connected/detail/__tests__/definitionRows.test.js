@@ -427,6 +427,26 @@ describe("storedAgentRows", () => {
     expect(rows.Model.value).toBe("Set by OPENAI_MODEL in agent.py:19");
   });
 
+  it("says the same for a TypeScript agent, a voice agent and a compose setting", () => {
+    const at = (setting, path, line) =>
+      modelRows({
+        model: named("gpt-4o"),
+        extension: { model_source: { setting, path, line } },
+      });
+    expect(at("OPENAI_MODEL", "agent.ts", 2).Model.value).toBe(
+      "Set by OPENAI_MODEL in agent.ts:2 (default gpt-4o)",
+    );
+    // The stored agent these rows are built on is a voice agent read from its code.
+    const voice = at("LLM_MODEL", "bot.py", 7);
+    expect(voice.Type.value).toBe("Voice");
+    expect(voice.Model.value).toBe(
+      "Set by LLM_MODEL in bot.py:7 (default gpt-4o)",
+    );
+    expect(at("OPENAI_MODEL", "docker-compose.yml", 12).Model.value).toBe(
+      "Set by OPENAI_MODEL in docker-compose.yml:12 (default gpt-4o)",
+    );
+  });
+
   it("leaves out where the setting is read when the reading has no path, and the line when it has none", () => {
     const at = (path, line) =>
       modelRows({
