@@ -632,7 +632,7 @@ def grade_row(row_id: str) -> str:
     except _CreditsRefused:
         _stop(row, claimed, "credits")
         return "done"
-    except Exception as failed:
+    except Exception as failed:  # noqa: BLE001 - logged; the row must close
         # Anything else after the claim still closes the row, so no claim is
         # left holding one of the organisation's places.
         logger.warning("simulate_ask_step_failed", error_type=type(failed).__name__)
@@ -733,7 +733,7 @@ def _grade(row) -> dict[str, Any]:
         }
         for kind, item in read.items()
     }
-    for kind, item in read.items():
+    for item in read.values():
         if item.state == State.NOT_CAPTURED:
             return {
                 "state": RESULT.UNMEASURED,
@@ -763,11 +763,11 @@ def _grade(row) -> dict[str, Any]:
             model=question["model"],
             workspace=row.ask.workspace,
             source=EVAL_SOURCE,
-            input_data_types={key: "text" for key in values},
+            input_data_types=dict.fromkeys(values, "text"),
         )
     except EvaluationDenied:
         raise
-    except Exception as failed:
+    except Exception as failed:  # noqa: BLE001 - every failure is a grading_error
         if _refused_for_credits(failed):
             raise _CreditsRefused() from None
         return {**_failure(failed), "evidence": evidence}
