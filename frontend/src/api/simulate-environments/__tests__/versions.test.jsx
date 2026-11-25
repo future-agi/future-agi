@@ -84,6 +84,7 @@ const RESPONSE = {
     {
       id: "e2",
       label: "v2",
+      name: "Refunds 14 days",
       status: "active",
       is_default: true,
       created_by: { id: "u1", name: "Asha" },
@@ -127,6 +128,7 @@ describe("versionFromApi / toVersions", () => {
     expect(versionFromApi(RESPONSE.environment[0])).toEqual({
       id: "e2",
       label: "v2",
+      name: "Refunds 14 days",
       status: "active",
       isDefault: true,
       createdAt: null,

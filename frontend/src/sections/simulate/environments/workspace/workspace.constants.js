@@ -471,7 +471,6 @@ export const RUN_DIALOG_COPY = {
   },
   default: "default",
   none: "None yet",
-  unlabelled: "Unnumbered version",
   loading: "Loading versions…",
   loadError: "Couldn't load the versions. The run uses the current defaults.",
   disabled: "Versioning is switched off, so the run uses the current versions.",
@@ -523,9 +522,15 @@ export const RUN_DIALOG_COPY = {
   heldReason: (text, n) => `${text} · ${n}`,
   heldUnlisted: (n) => `and ${n} more`,
   showMore: (n) => `Show ${n} more`,
-  // Held-back codes the report can send without words of its own.
+  // Held-back rows in our words: what the report words per scenario, or not at all.
   heldCodes: {
     pair_failed: "These versions failed their check together",
+    not_validated: "Not validated on these versions",
+    not_active: "Validated, not saved yet",
+    proof_failed: "Its proof failed",
+    tool_not_on_agent: "Needs a tool this agent version doesn't have",
+    scenario_archived: "Archived",
+    unreadable: "Its seed records couldn't be read",
   },
   showWhich: "Show which",
   hideWhich: "Hide",
@@ -692,8 +697,9 @@ const SAVE_TARGET = { environment: "environment", suite: "scenarios" };
 const scenarioWord = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
 export const REVIEW_COPY = {
   title: "Review changes",
-  subtitle: (n, rejected, piece, label) =>
-    `${n} unsaved edit${n === 1 ? "" : "s"}${rejected ? ` · ${rejected} rejected` : ""} since ${label ? `${SAVE_TARGET[piece]} ${label}` : "the saved version"}. Accept or reject each one, then save. Runs use ${label || "the saved version"} until they're saved.`,
+  // `named` is the version's number and name; its number alone is enough the second time.
+  subtitle: (n, rejected, piece, named, label) =>
+    `${n} unsaved edit${n === 1 ? "" : "s"}${rejected ? ` · ${rejected} rejected` : ""} since ${named ? `${SAVE_TARGET[piece]} ${named}` : "the saved version"}. Accept or reject each one, then save. Runs use ${label || "the saved version"} until they're saved.`,
   emptyTitle: "Nothing waiting",
   emptyBody: "Every edit is saved.",
   loadError: "Couldn't load the changes",

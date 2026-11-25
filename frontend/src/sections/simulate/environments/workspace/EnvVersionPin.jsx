@@ -187,13 +187,18 @@ export default function EnvVersionPin({ env }) {
                   }}
                 >
                   {v.label || VERSIONS_COPY.unlabelled}
+                  {v.name && (
+                    <Box component="span" sx={{ fontFamily: "fontFamily" }}>
+                      {` · ${v.name}`}
+                    </Box>
+                  )}
                 </Typography>
                 {v.isDefault && <VersionBadge label={pin.default} />}
                 {VERSIONS_COPY.status[v.status] && (
                   <VersionBadge label={VERSIONS_COPY.status[v.status]} />
                 )}
               </Stack>
-              {v.summary && (
+              {v.summary && v.summary !== v.name && (
                 <Typography
                   sx={{ typography: "s3", color: "text.secondary", mt: 0.375 }}
                 >

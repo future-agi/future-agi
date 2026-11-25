@@ -23,6 +23,7 @@ import {
   useEnvironmentVersions,
 } from "src/api/simulate-environments/versions";
 import { focusBuilderChat } from "../../buildEnvironment/console/builderChatFocusBus";
+import { named } from "../agents/agentVersionStatus";
 import { refusalText } from "../evals/refusalText";
 import SideDrawer from "../../components/SideDrawer";
 import { DRAFTS_COPY, REVIEW_COPY as COPY } from "../workspace.constants";
@@ -96,7 +97,9 @@ export default function ReviewChangesDrawer({
   const line = saveLine(changes);
   const counts = reviewCounts(changes);
   const piece = pieceOf(changes);
-  const savedLabel = versions?.defaults?.[piece]?.label || "";
+  const saved = versions?.defaults?.[piece];
+  const savedLabel = saved?.label || "";
+  const savedName = savedLabel && named(saved);
   // Where the server doesn't ask for Validate (checks can't run here), the reviewed changes save as they are.
   const direct = !flow.needsValidate;
   const ready = direct || Boolean(flow.canSaveValidated);
@@ -319,7 +322,13 @@ export default function ReviewChangesDrawer({
           </Typography>
           {changes.length > 0 && (
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {COPY.subtitle(kept.length, counts.rejected, piece, savedLabel)}
+              {COPY.subtitle(
+                kept.length,
+                counts.rejected,
+                piece,
+                savedName,
+                savedLabel,
+              )}
             </Typography>
           )}
         </Box>
@@ -434,7 +443,7 @@ export default function ReviewChangesDrawer({
         open={discarding}
         onClose={() => setDiscarding(false)}
         title={COPY.discardTitle(changes.length)}
-        content={COPY.discardBody(piece, savedLabel)}
+        content={COPY.discardBody(piece, savedName)}
         action={
           <Button
             size="small"

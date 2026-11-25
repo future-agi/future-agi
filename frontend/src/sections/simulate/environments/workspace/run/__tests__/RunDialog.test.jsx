@@ -1007,6 +1007,19 @@ describe("RunDialog", () => {
     );
   });
 
+  it("names a version by its number and its name in the pickers", () => {
+    state.versions = {
+      ...VERSIONS,
+      environment: [
+        item({ id: "e2", label: "v2", name: "Refunds 14 days", is_default: true }),
+      ],
+    };
+    renderDialog();
+    expect(
+      screen.getByText("v2 · Refunds 14 days (default)"),
+    ).toBeInTheDocument();
+  });
+
   describe("RunDialog run plan", () => {
     const selection = (overrides = {}) => ({
       requested: 2,
@@ -1017,6 +1030,7 @@ describe("RunDialog", () => {
         names: { k2: "Refund twice" },
         by: { not_validated: 1 },
         by_key: { k2: "not_validated" },
+        reason_by_key: { k2: "Not proved on these versions yet" },
         truncated: false,
       },
       // A case's own lifecycle row has words in `reasons` but no `held_by` entry: that lists report rows only.
@@ -1067,6 +1081,28 @@ describe("RunDialog", () => {
       expect(held.getByText("refund reaches production")).toBeInTheDocument();
     });
 
+    it("never shows a lifecycle row's joined reasons for a scenario without its own", () => {
+      state.selection = selection({
+        held_back: {
+          count: 3,
+          keys: ["k1"],
+          names: {},
+          by: { scenario_archived: 1, not_validated: 2 },
+          by_key: { k1: "scenario_archived" },
+        },
+        reasons: {
+          scenario_archived: "Archived on 24 Nov; Archived on 20 Nov",
+          not_validated: "Not validated yet; In a draft",
+        },
+      });
+      renderDialog();
+      const held = within(screen.getByTestId("run-held-back"));
+      expect(held.getByText("Archived")).toBeInTheDocument();
+      expect(
+        held.getByText("Not validated on these versions · 2"),
+      ).toBeInTheDocument();
+    });
+
     it("words a held-back code the report sends no text for", () => {
       state.selection = selection({
         held_back: {
@@ -1096,13 +1132,13 @@ describe("RunDialog", () => {
           by_key: Object.fromEntries(keys.map((key) => [key, "not_validated"])),
           truncated: true,
         },
-        reasons: { not_validated: "Not proved yet", proof_failed: "Failed" },
+        reasons: {},
       });
       renderDialog();
       const held = within(screen.getByTestId("run-held-back"));
       expect(held.getAllByRole("listitem")).toHaveLength(5);
       // A reason no listed scenario carries is still counted.
-      expect(held.getByText("Failed · 2")).toBeInTheDocument();
+      expect(held.getByText("Its proof failed · 2")).toBeInTheDocument();
       expect(held.getByText("and 2 more")).toBeInTheDocument();
       await user.click(held.getByRole("button", { name: "Show 1 more" }));
       expect(held.getAllByRole("listitem")).toHaveLength(6);

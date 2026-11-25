@@ -26,6 +26,7 @@ import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
 import RunSeedLine from "./RunSeedLine";
+import { named } from "../agents/agentVersionStatus";
 import HeldBackBox from "./HeldBackBox";
 import ChangedSinceProvedBox from "./ChangedSinceProvedBox";
 import ReadyToRunSection from "./readiness/ReadyToRunSection";
@@ -42,7 +43,6 @@ const offered = (piece, version) =>
   version.isDefault ||
   (piece === "agent" ? version.pickable : version.status === "active");
 
-const named = (version) => version?.label || COPY.unlabelled;
 const optionLabel = (version) =>
   version.isDefault ? `${named(version)} (${COPY.default})` : named(version);
 

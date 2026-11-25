@@ -417,6 +417,7 @@ export const retryServerFailures = (failureCount, error) => {
 export const versionFromApi = (item = {}) => ({
   id: item.id,
   label: item.label || null,
+  name: item.name || null,
   status: item.status || "active",
   isDefault: Boolean(item.is_default),
   createdAt: item.created_at || null,
