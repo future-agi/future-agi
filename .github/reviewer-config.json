@@ -17,7 +17,7 @@
       ]
     },
     "heimdall": {
-      "display_name": "heimdall",
+      "display_name": "Heimdall",
       "ownership": "Observe + Tracing SDK + Dashboard",
       "lead": "atharva-bhange",
       "members": ["atharva-bhange", "JayaSurya-27", "commitPirate", "sarthakFuture"],
@@ -48,7 +48,7 @@
       ]
     },
     "n11n": {
-      "display_name": "n11n",
+      "display_name": "N11n",
       "ownership": "Agent + Prompt playground",
       "lead": "JayaSurya-27",
       "members": ["JayaSurya-27", "commitPirate", "Tanmaycode1"],
@@ -64,7 +64,7 @@
       ]
     },
     "quest": {
-      "display_name": "quest",
+      "display_name": "Quest",
       "ownership": "Experiments",
       "lead": "atharva-bhange",
       "members": ["atharva-bhange", "cdileep23", "Tanmaycode1"],
