@@ -1327,6 +1327,13 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A model the provider serves only on another route is refused before an
+	// async job is accepted for it.
+	if refusal := unsupportedChatRoute(provider, &req); refusal != nil {
+		models.WriteErrorFromError(w, h.refuseChatRoute(ctx, rc, refusal))
+		return
+	}
+
 	// Check for async inference request.
 	if h.AsyncMiddleware(w, r, rc) {
 		return

@@ -2,9 +2,9 @@ package cache
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"hash/fnv"
 	"strconv"
 	"strings"
 	"time"
@@ -109,14 +109,15 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	// Build cache key only for requests eligible for both lookup and store.
 	rc.Metadata[keyPoliciesMetadata] = fp
 	namespace := namespaceWithKeyPolicies(cacheNamespace(rc), fp)
-	key := BuildCacheKey(namespace, rc.Request)
+	scope := orgScope(rc)
+	key := BuildCacheKey(scope, namespace, rc.Request)
 	rc.Metadata["cache_key"] = key
 	rc.Metadata[cacheInitializedMetadata] = "true"
 	semantic := p.semanticStore != nil && fp == ""
 	if semantic {
 		// Fixed now so ProcessResponse stores under it even on force-refresh or
 		// after later plugins rewrite rc.Request.
-		rc.Metadata["cache_semantic_partition"] = semanticPartition(namespace, rc.Request)
+		rc.Metadata["cache_semantic_partition"] = semanticPartition(scope, namespace, rc.Request)
 	}
 
 	// Edge cache: check conditional request (If-None-Match → 304).
@@ -164,7 +165,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			if result := p.semanticStore.Search(vec, rc.Metadata["cache_semantic_partition"]); result != nil {
+			if result := p.semanticStore.Search(scope, vec, rc.Metadata["cache_semantic_partition"]); result != nil {
 				resp := restoreCarriage(rc, result.Response)
 				rc.Response = resp
 				rc.Flags.CacheHit = true
@@ -246,9 +247,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			// remediation, fallback model rewrites) may have changed rc.Request.
 			partition := rc.Metadata["cache_semantic_partition"]
 			if partition == "" {
-				partition = semanticPartition(cacheNamespace(rc), rc.Request)
+				partition = semanticPartition(orgScope(rc), cacheNamespace(rc), rc.Request)
 			}
-			p.semanticStore.Set(key, vec, partition, stored, ttl)
+			p.semanticStore.Set(orgScope(rc), key, vec, partition, stored, ttl)
 		}
 	}
 
@@ -258,6 +259,15 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// orgScope returns the cache partition for the request's org. The org is the
+// authenticated key's metadata org_id, which the auth plugin (priority 20, so
+// before this one) and Handlers.peekKeyOrgID copy into key_org_id. Callers
+// cannot write key_* metadata (isBlockedMetadataKey), so this is never caller
+// input. A key without an org lands in cache.NoOrgScope.
+func orgScope(rc *models.RequestContext) string {
+	return cache.OrgScope(rc.Metadata[tenant.MetadataKeyOrgID])
 }
 
 // resolveTTL returns the TTL for the cache entry.
@@ -389,7 +399,7 @@ func namespaceWithKeyPolicies(ns, fp string) string {
 // content parts (images, extra text), where the text sits among them, the
 // speaker name, tools or response_format that differ never share an entry,
 // however similar the question.
-func semanticPartition(namespace string, req *models.ChatCompletionRequest) string {
+func semanticPartition(scope, namespace string, req *models.ChatCompletionRequest) string {
 	ctx := *req
 	ctx.Messages = append([]models.Message(nil), req.Messages...)
 	for i := len(ctx.Messages) - 1; i >= 0; i-- {
@@ -398,7 +408,7 @@ func semanticPartition(namespace string, req *models.ChatCompletionRequest) stri
 			break
 		}
 	}
-	return req.Model + "|ctx=" + BuildCacheKey(namespace, &ctx)
+	return req.Model + "|ctx=" + BuildCacheKey(scope, namespace, &ctx)
 }
 
 // withoutComparedText replaces in a user message's content the text that
@@ -437,9 +447,20 @@ func withoutComparedText(content json.RawMessage) json.RawMessage {
 }
 
 // BuildCacheKey generates a deterministic cache key from the request.
-// Uses FNV-1a 128-bit for speed (no crypto needed, just collision resistance).
-func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
-	h := fnv.New128a()
+//
+// scope is the tenant partition from cache.OrgScope and is hashed first. Its
+// tokens are fixed-format and contain no separator, so no namespace, model or
+// message content can make one org's key equal another's.
+//
+// The hash is SHA-256 truncated to 128 bits, rendered as 32 hex digits (the
+// shape vector stores such as Qdrant accept as a point id). It used to be
+// FNV-1a, which is fast but not collision-resistant against a caller who
+// chooses the input; with the key as the tenant boundary that matters.
+func BuildCacheKey(scope, namespace string, req *models.ChatCompletionRequest) string {
+	h := sha256.New()
+	h.Write([]byte("v2|"))
+	h.Write([]byte(scope))
+	h.Write([]byte("|"))
 	h.Write([]byte(namespace))
 	h.Write([]byte("|"))
 	h.Write([]byte(req.Model))
@@ -485,5 +506,5 @@ func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
 		h.Write([]byte(strconv.Itoa(*req.Seed)))
 	}
 
-	return hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }
