@@ -447,6 +447,29 @@ class TestRetry:
 
 
 class TestImportHistory:
+    def test_discard_promotes_only_the_current_version_of_a_repeated_source(
+        self, client, environment, dataset, columns
+    ):
+        same = {columns["chat"]: CHAT, columns["expected"]: EXPECTED}
+        other = {**same, columns["expected"]: "Refuse."}
+        a, d, b = [
+            _row(dataset, i, values) for i, values in enumerate((same, other, same))
+        ]
+        first = _create_rows(client, environment, dataset, [a, d], columns).json()
+        old = _create_rows(client, environment, dataset, [b], columns).json()
+        Cell.objects.filter(row=b, column=columns["expected"]).update(value="Refuse.")
+        fresh = _create_rows(client, environment, dataset, [b], columns).json()
+        original_a, original_d = _stored(first)
+        assert _stored(old)[0].duplicate_of_id == original_a.id
+        assert _stored(fresh)[0].duplicate_of_id == original_d.id
+
+        discard_evidence_import(EvidenceImport.no_workspace_objects.get(pk=first["id"]))
+
+        [earlier] = _stored(old)
+        [current] = _stored(fresh)
+        assert (current.status, current.duplicate_of_id) == ("pending", None)
+        assert (earlier.status, earlier.duplicate_of_id) == ("duplicate", current.id)
+
     def test_discard_reuses_current_original(
         self, client, environment, dataset, columns
     ):

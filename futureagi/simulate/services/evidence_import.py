@@ -540,9 +540,42 @@ def discard_open_cases(evidence_import: EvidenceImport) -> None:
         )
 
 
+def _promotion_candidates(duplicates):
+    """Choose one version per source before replacing any departing originals."""
+    groups = defaultdict(list)
+    for case in duplicates:
+        key = _source_key(case.evidence_import, case.source_id)
+        groups[key or case.id].append(case)
+
+    # Only competing fingerprints need a source read. Read each with the mapping
+    # of its own import; a newer import need not match a row that was reverted.
+    by_import = defaultdict(list)
+    for group in groups.values():
+        if len({case.digest for case in group}) > 1:
+            for case in group:
+                by_import[case.evidence_import_id].append(case)
+    matching = set()
+    for cases in by_import.values():
+        owner = cases[0].evidence_import
+        if owner.source_kind == EvidenceImport.SourceKind.DATASET:
+            current = current_evidence(owner, cases)
+        else:
+            try:
+                with transaction.atomic():
+                    current = current_evidence(owner, cases)
+            except Exception:  # noqa: BLE001 - historical Observe reads are best effort
+                continue
+        for case in cases:
+            source = current.get(case.source_id)
+            if source is not None and evidence_digest(source) == case.digest:
+                matching.add(case.id)
+    for group in groups.values():
+        preferred = next((case for case in group if case.id in matching), group[0])
+        yield preferred, group
+
+
 def _promote_duplicates(evidence_import: EvidenceImport, leaving) -> None:
-    """Relink repeats to a current original when one exists. Otherwise the
-    earliest remaining repeat takes over for the departing original."""
+    """Relink repeats to a surviving original or promote one remaining version."""
     duplicates = (
         EvidenceImportCase.objects.select_for_update(of=("self",))
         .filter(duplicate_of__in=leaving)
@@ -560,20 +593,31 @@ def _promote_duplicates(evidence_import: EvidenceImport, leaving) -> None:
         )
         for owner, cases in by_import.items()
     }
-    successor: dict = {}
+    by_departing = {}
+    by_digest = {}
     now = timezone.now()
-    for case in duplicates:
-        current = held[case.evidence_import_id].of(case.evidence_import, case)
-        first = (
-            current[0] if current else successor.setdefault(case.duplicate_of_id, case)
+    for preferred, group in _promotion_candidates(duplicates):
+        current = held[preferred.evidence_import_id].of(
+            preferred.evidence_import, preferred
         )
-        if first is case:
-            case.status = EvidenceImportCase.Status.PENDING
-            case.duplicate_of_id = None
-        else:
-            case.duplicate_of_id = first.id
-        case.updated_at = now
-        case.save(update_fields=["status", "duplicate_of", "updated_at"])
+        first = (
+            current[0]
+            if current
+            else by_digest.get(preferred.content_digest)
+            or by_departing.get(preferred.duplicate_of_id)
+            or preferred
+        )
+        by_departing.setdefault(preferred.duplicate_of_id, first)
+        if preferred.content_digest:
+            by_digest.setdefault(preferred.content_digest, first)
+        for case in group:
+            if first is case:
+                case.status = EvidenceImportCase.Status.PENDING
+                case.duplicate_of_id = None
+            else:
+                case.duplicate_of_id = first.id
+            case.updated_at = now
+            case.save(update_fields=["status", "duplicate_of", "updated_at"])
 
 
 def add_to_suite(
