@@ -1,7 +1,7 @@
 """Tests for integration Temporal activities."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -582,7 +582,7 @@ class TestCheckIntegrationErrorAlerts:
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id
         ).update(
-            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
             last_error_notified_at=None,
         )
 
@@ -603,7 +603,7 @@ class TestCheckIntegrationErrorAlerts:
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id
         ).update(
-            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
             last_error_notified_at=None,
         )
         mock_send.side_effect = RuntimeError("SMTP down")

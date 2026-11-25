@@ -1,6 +1,6 @@
 import time
 import traceback as tb_module
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import structlog
 from django.db import DatabaseError
@@ -954,7 +954,7 @@ def check_integration_error_alerts():
         # limit keeps working through the list it read while the next pass
         # lists the connections it has not reached yet; only the pass whose
         # update stamps the connection sends its email.
-        notified_at = datetime.now(timezone.utc)
+        notified_at = datetime.now(UTC)
         claimed = False
         try:
             claimed = bool(
