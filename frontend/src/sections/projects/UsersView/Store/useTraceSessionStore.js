@@ -1,5 +1,5 @@
 // stores/useTraceSessionStore.js
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 import { initialSessionVisibility } from "../common";
 import { useShallow } from "zustand/shallow";
 

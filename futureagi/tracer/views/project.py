@@ -95,8 +95,8 @@ from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
     OBSERVE_CODEBLOCK,
-    ORG_BASE_URL,
     ORG_KEYS,
+    ORG_SELF_HOSTED_URLS,
     PROTOTYPE_CODEBLOCK,
 )
 from tracer.utils.graphs_optimized import (
@@ -115,16 +115,22 @@ logger = structlog.get_logger(__name__)
 
 def sdk_key_snippets():
     """The keys block of the in-app SDK snippet, per language, with placeholder
-    keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's
-    collector: the SDKs default to Cloud, and without it the spans (prompts and
-    completions included) would leave for api.futureagi.com."""
+    keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's API
+    (FI_API_PUBLIC_URL) and FI_TRACES_URL to its trace collector
+    (FI_COLLECTOR_PUBLIC_URL): the SDKs default to Cloud, and without them the
+    spans (prompts and completions included) would leave for
+    api.futureagi.com."""
     snippets = {
         lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
         for lang, code in ORG_KEYS.items()
     }
     if not is_cloud_env(settings.CLOUD_DEPLOYMENT):
-        for lang, line in ORG_BASE_URL.items():
-            snippets[lang] += line.format(settings.FI_COLLECTOR_PUBLIC_URL)
+        urls = {
+            "api_url": settings.FI_API_PUBLIC_URL.rstrip("/"),
+            "traces_url": settings.FI_COLLECTOR_PUBLIC_URL.rstrip("/"),
+        }
+        for lang, lines in ORG_SELF_HOSTED_URLS.items():
+            snippets[lang] += lines.format(**urls)
     return snippets
 
 
@@ -168,6 +174,57 @@ _PROJECT_USER_GRAPH_READ_SETTINGS = {
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }
+
+
+# ProjectView.list's trace_count uses the same rollup and default window as the
+# Observe trace list's count (TraceListQueryBuilderV2.build_count_query): distinct
+# traces in the last 30 days. Traces ingested through the collector live only in
+# ClickHouse, so a PostgreSQL count misses them; that count is kept only as a
+# fallback when the rollup cannot be read.
+_PROJECT_TRACE_COUNT_WINDOW_DAYS = 30
+
+
+def _project_trace_counts(project_ids):
+    """Return {project_id: distinct traces in the last 30 days}, or None."""
+    if not project_ids:
+        return {}
+    try:
+        service = V2AnalyticsQueryService()
+        if not service.supports_per_query_read_settings:
+            raise RuntimeError("trace counts require enforced per-query limits")
+        now = timezone.now()
+        result = service.execute_ch_query(
+            """
+            SELECT
+                toString(project_id) AS project_id_text,
+                uniqExactMerge(uniq_traces_state) AS trace_count
+            FROM trace_count_rollup
+            PREWHERE project_id IN %(pids)s
+              AND hour >= toStartOfHour(toDateTime(%(start)s, 'UTC'))
+              AND hour < toStartOfHour(toDateTime(%(end)s, 'UTC')) + INTERVAL 1 HOUR
+            GROUP BY project_id
+            """,
+            {
+                "pids": list(project_ids),
+                "start": (
+                    now - timedelta(days=_PROJECT_TRACE_COUNT_WINDOW_DAYS)
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+                "end": now.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            timeout_ms=ReadDeadline.start(_PROJECT_ACTIVITY_TIMEOUT_MS).remaining_ms(),
+            settings=_PROJECT_ACTIVITY_READ_SETTINGS,
+        )
+        counts = dict.fromkeys(project_ids, 0)
+        for row in result.data:
+            pid = row["project_id_text"]
+            if pid in counts:
+                counts[pid] = int(row["trace_count"])
+        return counts
+    except Exception:
+        # Best effort at the ClickHouse boundary: the caller keeps the
+        # PostgreSQL count when the rollup cannot be read.
+        logger.warning("project_trace_counts_unavailable", exc_info=True)
+        return None
 
 
 def _bounded_project_user_action(*, log_event: str, unavailable_message: str):
@@ -331,9 +388,18 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             # Serialize data
             serializer = self.get_serializer(paginated_queryset, many=True)
 
-            # Add trace_count and run_count to serialized data
+            # trace_count: distinct traces in the last 30 days, as the Observe
+            # trace list counts them; the PostgreSQL count only if ClickHouse
+            # cannot be read.
+            ch_counts = _project_trace_counts(
+                [str(project.id) for project in paginated_queryset]
+            )
             for data, project in zip(serializer.data, paginated_queryset, strict=False):
-                data["trace_count"] = project.trace_count
+                data["trace_count"] = (
+                    ch_counts[str(project.id)]
+                    if ch_counts is not None
+                    else project.trace_count
+                )
                 data["run_count"] = project.run_count or 0
 
             return self._gm.success_response(
@@ -471,6 +537,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
 
     @action(detail=False, methods=["post"])
+    @validated_request(request_serializer=ProjectNameUpdateSerializer)
     def update_project_name(self, request, *args, **kwargs):
         try:
             serializer = ProjectNameUpdateSerializer(data=request.data)
@@ -490,7 +557,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
                 # Update project name
                 project.name = new_name
-                project.save(update_fields=["name"])
+                update_fields = ["name"]
+                if "sampling_contact_attribute" in validated_data:
+                    project.sampling_contact_attribute = validated_data[
+                        "sampling_contact_attribute"
+                    ]
+                    update_fields.append("sampling_contact_attribute")
+                project.save(update_fields=update_fields)
 
                 response_message = "Project name updated successfully"
                 response_data = {

@@ -1,5 +1,9 @@
 import { useSearchParams } from "react-router-dom";
-import { ENTRY_TAB, DEFAULT_ENTRY_TAB } from "../environmentOptions";
+import {
+  BUILD_DRAWER_TAB,
+  ENTRY_TAB,
+  DEFAULT_ENTRY_TAB,
+} from "../environmentOptions";
 
 export default function useEnvironmentsTab() {
   const [params, setParams] = useSearchParams();
@@ -12,5 +16,5 @@ export default function useEnvironmentsTab() {
     setParams(q, { replace: true });
   };
 
-  return { tab, setTab };
+  return { tab, setTab, opensBuild: raw === BUILD_DRAWER_TAB };
 }

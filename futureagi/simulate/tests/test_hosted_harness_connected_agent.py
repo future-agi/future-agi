@@ -294,7 +294,7 @@ def test_observability_switch_is_pinned_to_the_jobs_non_default_workspace(
 
 
 @pytest.mark.django_db
-def test_environment_create_request_with_no_prompt_keeps_the_empty_description(
+def test_environment_create_request_with_no_prompt_takes_the_documents_prompt(
     organization, workspace
 ):
     job, capability = _job(
@@ -308,8 +308,11 @@ def test_environment_create_request_with_no_prompt_keeps_the_empty_description(
 
     assert response.status_code == 200, response.content
     version = AgentVersion.objects.get(agent_definition=_definition(job))
-    assert version.description == ""
-    assert version.configuration_snapshot["description"] == ""
+    assert version.description == "You are the booking assistant for Harbor Hotels."
+    assert (
+        version.configuration_snapshot["description"]
+        == "You are the booking assistant for Harbor Hotels."
+    )
     assert version.configuration_snapshot["observability_enabled"] is True
 
 
@@ -850,9 +853,7 @@ def test_a_livekit_code_agent_with_an_assistant_id_but_blank_livekit_fields_gets
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(
-    "provider", ["livekit", "vapi"], ids=["livekit", "vapi"]
-)
+@pytest.mark.parametrize("provider", ["livekit", "vapi"], ids=["livekit", "vapi"])
 def test_a_code_agent_saved_with_a_changed_max_concurrency_keeps_it(
     organization, workspace, auth_client, provider
 ):

@@ -29,6 +29,7 @@ def _check_resource_limit(organization, workspace, api_call_type, config=None):
     """Check resource limits. Returns True if allowed, False if limit reached."""
     try:
         from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
         try:
             from ee.usage.utils import log_and_deduct_cost_for_resource_request
         except ImportError:
@@ -319,9 +320,7 @@ def delete_column(*, dataset_id, column_id, organization=None):
                     f"Failed to cleanup derived variables for column {column.name}: {cleanup_error}"
                 )
         if column.source == SourceChoices.EVALUATION.value:
-            eval_metric = UserEvalMetric.objects.filter(
-                id=column.source_id
-            ).first()
+            eval_metric = UserEvalMetric.objects.filter(id=column.source_id).first()
             if eval_metric and eval_metric.status in (
                 StatusType.RUNNING.value,
                 StatusType.NOT_STARTED.value,
@@ -426,9 +425,9 @@ def delete_column(*, dataset_id, column_id, organization=None):
             str(dataset.organization_id), col_id_str
         )
         if metrics:
-            UserEvalMetric.objects.filter(
-                id__in=[m.id for m in metrics]
-            ).update(column_deleted=True)
+            UserEvalMetric.objects.filter(id__in=[m.id for m in metrics]).update(
+                column_deleted=True
+            )
     except Exception:
         logger.warning(
             "failed_to_mark_dependent_metrics",

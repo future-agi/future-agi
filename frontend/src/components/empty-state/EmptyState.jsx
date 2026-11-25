@@ -55,14 +55,14 @@ function Steps({ steps }) {
           </Box>
           <Box sx={{ minWidth: 0 }}>
             <Typography
-              sx={{ fontSize: 13, lineHeight: "20px", fontWeight: 500 }}
+              sx={{ fontSize: 12, lineHeight: "20px", fontWeight: 500 }}
             >
               {step.title}
             </Typography>
             {step.description && (
               <Typography
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   lineHeight: "20px",
                   color: "text.tertiary",
                 }}
@@ -109,7 +109,7 @@ function Quickstart({ quickstart }) {
         sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: "divider" }}
       >
         <Typography
-          sx={{ fontSize: 13, lineHeight: "20px", fontWeight: 500, mr: "auto" }}
+          sx={{ fontSize: 12, lineHeight: "20px", fontWeight: 500, mr: "auto" }}
         >
           {title}
         </Typography>
@@ -240,7 +240,7 @@ export default function EmptyState({
           <Typography
             component="h2"
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               lineHeight: "20px",
               fontWeight: 600,
               color: "text.primary",
@@ -278,7 +278,7 @@ export default function EmptyState({
                 onClick={onDocsClick}
                 underline="hover"
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   lineHeight: "20px",
                   color: "text.secondary",
                   display: "inline-flex",
