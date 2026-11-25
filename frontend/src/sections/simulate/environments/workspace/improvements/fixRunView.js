@@ -482,6 +482,14 @@ const NO_SAFE_WHY = {
   "model-lock": { did: "called a model outside the approved list" },
 };
 
+export function rejectionReason(candidate) {
+  if (candidate.outcome !== "rejected") return null;
+  const failed = candidate.verdict?.tiers?.find((tier) => tier.status === "failed");
+  if (!failed) return "No failed check was recorded.";
+  const why = Object.hasOwn(NO_SAFE_WHY, failed.name) && NO_SAFE_WHY[failed.name];
+  return why ? `This candidate ${why.did || why.one}.` : "A required check failed.";
+}
+
 const whyClause = (name, count, request) => {
   const why = NO_SAFE_WHY[name] || {
     did: `failed the ${checkLabel(name, request).toLowerCase()} check`,
