@@ -6,12 +6,21 @@ import { E2E } from '../lib/env';
 
 // The code-evaluation path is asynchronous here, unlike the browser playground.
 // Wire bodies follow flows/evals/eval-task.spec.ts and CustomEvalConfigSerializer.
-test('Temporal code evaluations reach the isolated executor with fallback disabled', async ({ actor, probe }, testInfo) => {
+test('Temporal link evaluations complete offline in the isolated executor with fallback disabled', async ({ actor, probe }, testInfo) => {
   test.setTimeout(240_000); // SPAN_VISIBLE + EVAL_RESULT + ASYNC_JOB + API setup.
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const path = `/ok/e2e-worker-link-${suffix}`;
+  const canaries = [['browser', E2E.linkCanaryUrl], ['worker', E2E.linkWorkerCanaryUrl]] as const;
   try {
+    for (const [name, url] of canaries) {
+      const journal = await req.get(`${url}/requests`);
+      expect(journal.status()).toBe(200);
+      const requests = await journal.json();
+      await testInfo.attach(`${name}-canary-before`, { contentType: 'application/json',
+        body: JSON.stringify(requests) });
+      expect(requests).toEqual([]);
+    }
     const templates = await probe.pg<{ id: string; name: string }>(
       "SELECT id, name FROM model_hub_evaltemplate WHERE name = ANY($1) AND owner = 'system' AND deleted = false ORDER BY name",
       [['contains_valid_link', 'no_invalid_links']]);
@@ -48,14 +57,17 @@ test('Temporal code evaluations reach the isolated executor with fallback disabl
        WHERE eval_task_id = $1 AND observation_span_id = $2 ORDER BY eval_explanation`, [taskId, seeded.spanIds[1]]),
     POLL.ASYNC_JOB).toEqual([
       { status: 'completed', output_bool: true, eval_explanation: 'All 1 link(s) are valid' },
-      { status: 'completed', output_bool: true, eval_explanation: 'Link found and valid (status 200)' },
+      { status: 'completed', output_bool: true, eval_explanation: 'Link found with valid format' },
     ]);
-    const journal = await req.get(`${E2E.linkWorkerCanaryUrl}/requests?prefix=${encodeURIComponent(path)}`);
-    expect(journal.status()).toBe(200);
-    expect(await journal.json()).toEqual([
-      { method: 'HEAD', host: 'worker-allowed.example', path },
-      { method: 'HEAD', host: 'worker-allowed.example', path },
-    ]);
+    // Full journals catch requests to unexpected paths or the other listener too.
+    for (const [name, url] of canaries) {
+      const journal = await req.get(`${url}/requests`);
+      expect(journal.status()).toBe(200);
+      const requests = await journal.json();
+      await testInfo.attach(`${name}-canary-after`, { contentType: 'application/json',
+        body: JSON.stringify(requests) });
+      expect(requests).toEqual([]);
+    }
   } finally {
     await req.dispose();
   }

@@ -10,10 +10,16 @@ import ts from "typescript";
 // As in state-probe.test.mjs, import the actual class (including TS parameter
 // properties); only the APIRequestContext and current test info are faked.
 const apiModule = new URL("../lib/api-client.ts", import.meta.url).href;
+const transportModule = new URL("../lib/backend-transport.ts", import.meta.url).href;
 registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (context.parentURL === apiModule && specifier === "./backend-transport")
+      return nextResolve(transportModule, context);
+    return nextResolve(specifier, context);
+  },
   load(url, context, nextLoad) {
     const loaded = nextLoad(url, context);
-    if (url !== apiModule) return loaded;
+    if (url !== apiModule && url !== transportModule) return loaded;
     return {
       ...loaded,
       format: "module",
@@ -185,8 +191,46 @@ async function fixture(t, handler) {
   });
   const context = await request.newContext({ timeout: 10_000 });
   t.after(() => context.dispose());
-  return { client: new ApiClient(context, `http://127.0.0.1:${server.address().port}`), calls };
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  return { client: new ApiClient(context, origin), context, origin, calls };
 }
+
+test("local backend uses fresh sockets without replacing the cookie jar or replaying a send", async (t) => {
+  const { backendRequestContext } = await import(transportModule);
+  const observations = [];
+  const { client, origin } = await fixture(t, (req, res) => {
+    observations.push({ port: req.socket.remotePort, close: req.headers.connection === "close",
+      session: req.headers.cookie === "session=one", auth: !!req.headers.authorization });
+    if (req.url === "/start") res.setHeader("Set-Cookie", "session=one; Path=/");
+    res.end("{}"); // No response Connection override, idle timer or forced socket close.
+  });
+  const auth = client.withAuth({ access: "test", refresh: "unused" }, "org", "workspace");
+  await client.get("/start");
+  await auth.request("post", "/next", { headers: { connection: "keep-alive", CoNnEcTiOn: "keep-alive" } });
+
+  const raw = await request.newContext({ baseURL: origin, extraHTTPHeaders: { CONNECTION: "keep-alive" } });
+  t.after(() => raw.dispose());
+  const second = backendRequestContext(raw, origin, origin);
+  assert.equal(await (await second.get("/other", { headers: { connection: "keep-alive" } })).text(), "{}");
+  await client.get("/return");
+  assert.equal(observations.length, 4);
+  assert.ok(observations.every(o => o.close && Number.isInteger(o.port)));
+  assert.equal(new Set(observations.map(o => o.port)).size, 4);
+  assert.deepEqual(observations.map(o => [o.session, o.auth]), [[false, false], [true, true], [false, false], [true, false]]);
+
+  const other = await fixture(t, (req, res) => res.end(String(req.headers.connection === "keep-alive")));
+  assert.equal(await (await second.get(other.origin, { headers: { connection: "keep-alive" } })).text(), "true");
+});
+
+test("two backend calls can be in flight on the same context", async (t) => {
+  const pending = [];
+  const { client } = await fixture(t, (_req, res) => {
+    pending.push(res);
+    if (pending.length === 2) for (const response of pending) response.end("{}");
+  });
+  await Promise.all([client.post("/one"), client.post("/two")]);
+  assert.equal(pending.length, 2);
+});
 
 for (const method of ["get", "head", "post", "put", "patch", "delete"]) {
   test(`real Playwright ${method}: reset before headers follows the method policy`, async (t) => {
