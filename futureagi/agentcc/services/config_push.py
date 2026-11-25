@@ -4,30 +4,42 @@ Called when org configs are created, activated, or deleted.
 """
 
 import copy
+import functools
+import math
+import uuid
+from typing import Any
 
+import httpx
 import structlog
 from django.conf import settings as django_settings
 from pydantic import ValidationError
+from rest_framework.renderers import JSONRenderer
 
 from agentcc.contracts.gateway_admin import (
     AlertChannelConfig as GatewayAlertChannelConfig,
 )
 from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
+from agentcc.contracts.gateway_admin import (
+    KeyGuardrailPolicy as GatewayKeyGuardrailPolicy,
+)
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
+from agentcc.guardrail_config_validation import (
+    BUILTIN_CONFIG_ALIASES,
+    BUILTIN_CONFIG_NAMES,
+)
 from agentcc.guardrail_settings import normalize_saved_guardrail_settings
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
 from tfc.temporal.drop_in import temporal_activity
+from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
 # Map org-config rule names → gateway registry names
 _RULE_TO_REGISTRY = {
-    "pii-detector": "pii-detection",
-    "injection-detector": "prompt-injection",
-    "secrets-detector": "secret-detection",
+    **BUILTIN_CONFIG_ALIASES,
     # These are the same in both:
     "content-moderation": "content-moderation",
     "keyword-blocklist": "keyword-blocklist",
@@ -128,7 +140,7 @@ def _normalize_eval_ids(cfg):
         cfg.pop("eval_id", None)
 
 
-def _inject_guardrail_credentials(checks, org_id):
+def _inject_guardrail_credentials(checks, org_id, *, policies=None):
     """
     Decrypt and inject real credentials into guardrail checks, replacing
     "__encrypted__" sentinel values with actual secrets from the policy's
@@ -153,9 +165,18 @@ def _inject_guardrail_credentials(checks, org_id):
         return
 
     # Bulk-load policies and decrypt their credential blobs
-    policies = AgentccGuardrailPolicy.no_workspace_objects.filter(
-        id__in=policy_ids, organization_id=org_id, deleted=False
-    ).only("id", "encrypted_check_configs")
+    if policies is None:
+        policies = AgentccGuardrailPolicy.no_workspace_objects.filter(
+            id__in=policy_ids, organization_id=org_id, deleted=False
+        ).only("id", "encrypted_check_configs")
+    else:
+        policies = (
+            policy
+            for policy in policies
+            if str(policy.id) in policy_ids
+            and str(policy.organization_id) == str(org_id)
+            and not policy.deleted
+        )
     decrypted_map = {}  # {policy_id: {check_name: {key: value}}}
     for policy in policies:
         if policy.encrypted_check_configs:
@@ -192,7 +213,7 @@ def _inject_guardrail_credentials(checks, org_id):
                     del cfg[key]
 
 
-def _transform_guardrails(guardrails_data, org_id=None):
+def _transform_guardrails(guardrails_data, org_id=None, *, policies=None):
     """
     Transform Django org-config guardrails (rules array) into gateway tenant
     format (checks object map with registry names).
@@ -215,7 +236,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     # Checks as list (from guardrail_sync — merged policies)
     if isinstance(raw_checks, list) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
-        _inject_guardrail_credentials(raw_checks, org_id)
+        _inject_guardrail_credentials(raw_checks, org_id, policies=policies)
 
         checks = {}
         for rule in raw_checks:
@@ -247,7 +268,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     # Checks as dict (from frontend saves via OrgConfig)
     if isinstance(raw_checks, dict) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
-        _inject_guardrail_credentials(raw_checks, org_id)
+        _inject_guardrail_credentials(raw_checks, org_id, policies=policies)
 
         mapped = {}
         for name, cfg in raw_checks.items():
@@ -275,10 +296,15 @@ def _transform_guardrails(guardrails_data, org_id=None):
     if not isinstance(rules, list):
         if raw_checks == []:
             guardrails_data["checks"] = {}
+        if not raw_checks:
+            # The policy sync used to store {"enabled": false, "checks": []}
+            # when no org-wide policy was left. The gateway contract has no
+            # guardrails.enabled, and with no checks it means nothing.
+            guardrails_data.pop("enabled", None)
         return guardrails_data
 
     # Inject decrypted guardrail credentials before transformation
-    _inject_guardrail_credentials(rules, org_id)
+    _inject_guardrail_credentials(rules, org_id, policies=policies)
 
     checks = {}
     for rule in rules:
@@ -648,11 +674,343 @@ def _transform_budgets(budgets):
     return result
 
 
+def _load_guardrail_policies(org_id):
+    """One policy lookup shared by org credentials and key-scoped checks."""
+    from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+
+    try:
+        org_id = str(uuid.UUID(str(org_id)))
+    except ValueError:
+        return []
+    return list(
+        AgentccGuardrailPolicy.no_workspace_objects.filter(
+            organization_id=org_id, deleted=False
+        )
+    )
+
+
+def _build_key_policies(org_id, policies):
+    """Build live key-scoped policies; disabled checks remain disabled in the payload."""
+    from agentcc.models import AgentccAPIKey
+
+    policies = sorted(
+        (p for p in policies if p.is_active and p.scope == "key" and p.runs_on_gateway),
+        key=lambda p: (p.priority, p.name),
+    )
+    if not policies:
+        return []
+    keys = {
+        str(key.id): key.gateway_key_id
+        for key in AgentccAPIKey.no_workspace_objects.filter(
+            organization_id=org_id, deleted=False, status=AgentccAPIKey.ACTIVE
+        )
+        if key.gateway_key_id
+    }
+    result = []
+    for policy in policies:
+        gateway_ids = []
+        for raw_id in (
+            policy.applied_keys if isinstance(policy.applied_keys, list) else []
+        ):
+            try:
+                key_id = str(uuid.UUID(raw_id))
+            except (ValueError, AttributeError, TypeError):
+                continue
+            gateway_id = keys.get(key_id)
+            if gateway_id and gateway_id not in gateway_ids:
+                gateway_ids.append(gateway_id)
+        if not gateway_ids:
+            continue
+        # Malformed legacy checks must remain selected and unavailable, not
+        # disappear and silently remove protection. Conversion handles bad
+        # checks individually; the fallback protects the outer policy envelope.
+        try:
+            entry = _build_key_policy(org_id, policy, gateway_ids)
+        except (TypeError, ValueError, AttributeError):
+            logger.warning(
+                "guardrail_key_policy_invalid_config",
+                org_id=str(org_id),
+                policy_id=str(policy.id),
+            )
+            entry = _key_policy_entry(
+                policy, gateway_ids, {"__invalid_config__": _failed_key_check()}
+            )
+        result.append(entry)
+    return result
+
+
+def _failed_key_check():
+    # Only used when an envelope has no usable check identity. The fixed code,
+    # not any raw config/error text, crosses the selected-only wire boundary.
+    return {
+        "enabled": True,
+        "action": "block",
+        "confidence_threshold": 0.8,
+        "config": {},
+        "configuration_error": "invalid_config",
+    }
+
+
+def _key_policy_entry(policy, gateway_ids, checks):
+    return {
+        "id": str(policy.id),
+        "name": policy.name,
+        "mode": policy.mode,
+        "priority": policy.priority,
+        "key_ids": gateway_ids,
+        "checks": checks,
+    }
+
+
+def _wire_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _wire_key_config(value: Any) -> bool:
+    """Check JSON shape and Go's interface{} float64 range without coercion.
+
+    Shared, acyclic containers are allowed; only ancestors count as cycles.
+    Depth alone is not invalid: the full outbound serializers decide whether
+    a value can be transported, after iterative copying and credential injection.
+    """
+    pending: list[tuple[Any, bool]] = [(value, False)]
+    ancestors: set[int] = set()
+    while pending:
+        item, leaving = pending.pop()
+        if leaving:
+            ancestors.remove(id(item))
+        elif isinstance(item, (dict, list)):
+            if id(item) in ancestors:
+                return False
+            if isinstance(item, dict) and any(not isinstance(key, str) for key in item):
+                return False
+            ancestors.add(id(item))
+            pending.append((item, True))
+            children = item.values() if isinstance(item, dict) else item
+            pending.extend((child, False) for child in children)
+        elif item is None or isinstance(item, (str, bool)):
+            continue
+        elif not _wire_number(item):
+            return False
+    return True
+
+
+def _copy_key_config(cfg):
+    """Own an already shape-checked JSON object without recursive deepcopy.
+
+    Memoization preserves shared acyclic containers, but never aliases saved
+    data or decrypted credential containers into the outgoing projection.
+    """
+    result: dict[str, Any] = {}
+    memo: dict[int, Any] = {id(cfg): result}
+    pending: list[tuple[Any, Any]] = [(cfg, result)]
+    while pending:
+        source, target = pending.pop()
+        items = source.items() if isinstance(source, dict) else enumerate(source)
+        for key, value in items:
+            if isinstance(value, (dict, list)):
+                if id(value) not in memo:
+                    memo[id(value)] = (
+                        {} if isinstance(value, dict) else [None] * len(value)
+                    )
+                    pending.append((value, memo[id(value)]))
+                target[key] = memo[id(value)]
+            else:
+                target[key] = value
+    return result
+
+
+def _project_key_check(check):
+    """Own JSON config and preserve intent; full-payload transport is checked later."""
+    invalid = False
+    enabled = check.get("enabled", True)
+    if not isinstance(enabled, bool):
+        enabled, invalid = True, True
+    action = check.get("action", "block")
+    if not isinstance(action, str):
+        action, invalid = "block", True
+    threshold = check.get("threshold", check.get("confidence_threshold", 0.8))
+    if not _wire_number(threshold):
+        threshold, invalid = 0.8, True
+    cfg = check.get("config", {})
+    if not isinstance(cfg, dict) or not _wire_key_config(cfg):
+        cfg, invalid = {}, True
+    else:
+        cfg = _copy_key_config(cfg)
+    result = {
+        "enabled": enabled,
+        "action": action,
+        "confidence_threshold": threshold,
+        "config": cfg,
+    }
+    if invalid:
+        result["configuration_error"] = "invalid_config"
+    return result
+
+
+def _colliding_key_check(checks):
+    """No arbitrary winner/config merge: represent the identity as unavailable.
+
+    Only enabled entries contribute intent. Block wins over Warn over Log, while
+    an entirely disabled group remains disabled. Policy mode/fail_open continue
+    to govern the marker at the existing gateway unavailable-check boundary.
+    """
+    enabled = [check for check in checks if check["enabled"]]
+    actions = {check["action"] for check in enabled}
+    marker = _failed_key_check()
+    marker["enabled"] = bool(enabled)
+    marker["action"] = (
+        "block" if "block" in actions else "warn" if "warn" in actions else "log"
+    )
+    return marker
+
+
+def _build_key_policy(org_id, policy, gateway_ids):
+    # Copy each JSON config iteratively, then inject credentials into owned
+    # projections. One cyclic or deep check must not prevent copying siblings.
+    checks = policy.checks if isinstance(policy.checks, list) else [None]
+    named = []
+    unusable = 0
+    for check in checks:
+        if (
+            not isinstance(check, dict)
+            or not isinstance(check.get("name"), str)
+            or not check["name"].strip()
+        ):
+            unusable += 1
+            continue
+        projected = _project_key_check(check)
+        projected["name"] = check["name"]
+        projected["_policy"] = str(policy.id)
+        named.append(projected)
+    _inject_guardrail_credentials(named, org_id, policies=[policy])
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for projected in named:
+        name = projected.pop("name")
+        projected.pop("_policy")
+        registry_name = _RULE_TO_REGISTRY.get(name, name)
+        cfg = projected["config"]
+        # Decrypted credential values also cross the same JSON boundary.
+        if not _wire_key_config(cfg):
+            cfg = projected["config"] = {}
+            projected["configuration_error"] = "invalid_config"
+        else:
+            cfg = projected["config"] = _copy_key_config(cfg)
+        if name in _RULE_PROVIDER_DEFAULTS:
+            cfg.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
+        if registry_name not in BUILTIN_CONFIG_NAMES:
+            try:
+                _normalize_eval_ids(cfg)
+            except (TypeError, ValueError, OverflowError, RecursionError):
+                projected["config"] = {}
+                projected["configuration_error"] = "invalid_config"
+        grouped.setdefault(registry_name, []).append(projected)
+    mapped = {
+        name: entries[0] if len(entries) == 1 else _colliding_key_check(entries)
+        for name, entries in grouped.items()
+    }
+    # An unnameable check cannot overwrite a valid sibling (including a custom
+    # check whose name happens to resemble our placeholder).
+    for index in range(unusable):
+        name = f"__invalid_config_{index}__"
+        while name in mapped:
+            name += "_"
+        mapped[name] = _failed_key_check()
+    _inject_fi_credentials(mapped, org_id)
+    entry = _key_policy_entry(policy, gateway_ids, mapped)
+    try:
+        GatewayKeyGuardrailPolicy.model_validate(entry)
+    except ValidationError:
+        # Pydantic error strings can include raw parameters or credentials.
+        raise ValueError("invalid selected policy envelope") from None
+    return entry
+
+
+@functools.lru_cache(maxsize=1)
+def _preflight_client():
+    """One shared client, used only for build_request: it never sends, so its
+    connection pool is never touched and sharing it across threads is safe.
+    Reusing it avoids loading the SSL context for every serialized payload."""
+    return httpx.Client()
+
+
+def _serialize_org_payload(org_id, payload):
+    """Exercise the actual outbound encoders without sending or retaining bytes.
+
+    GatewayClient validates/dumps again before HTTPX encodes JSON. Startup sync
+    instead renders the org-id map inside GeneralMethods' response envelope.
+    Checking cfg alone misses both the model traversal and those outer levels.
+    model_dump_json is deliberately not used: neither outbound path uses it.
+    """
+    body = GatewayOrgConfig.model_validate(payload).model_dump(
+        by_alias=True, exclude_none=True
+    )
+    client_body = GatewayOrgConfig.model_validate(body).model_dump(
+        by_alias=True, exclude_none=True
+    )
+    # Use the client's request construction, not a shallower Request-only probe.
+    # The request is built and discarded; it is never sent.
+    _preflight_client().build_request(
+        "PUT", "http://gateway.invalid/", json=client_body
+    )
+    bulk = GeneralMethods().success_response({str(org_id): body}).data
+    bulk["unbuilt_org_ids"] = []
+    JSONRenderer().render(bulk)
+    return body
+
+
+def _transport_key_configs(org_id, payload, key_policies):
+    """Isolate only selected configs that fail in their full outbound context.
+
+    The normal path probes each outbound encoder once. On failure, establish that
+    payload works without selected configs, then restore each owned config at
+    its original position. Unrelated org/envelope errors still propagate; they
+    must not turn every valid selected sibling into an unavailable check.
+    """
+    try:
+        return _serialize_org_payload(org_id, payload)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        pass
+    configs = [
+        (check, check["config"])
+        for policy in key_policies
+        for check in policy["checks"].values()
+    ]
+    for check, _ in configs:
+        check["config"] = {}
+    try:
+        _serialize_org_payload(org_id, payload)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        for check, cfg in configs:
+            check["config"] = cfg
+        raise
+    for check, cfg in configs:
+        check["config"] = cfg
+        try:
+            _serialize_org_payload(org_id, payload)
+        except (TypeError, ValueError, OverflowError, RecursionError):
+            check["config"] = {}
+            check["configuration_error"] = "invalid_config"
+    return _serialize_org_payload(org_id, payload)
+
+
 def _build_payload(org_id, config):
     """Build the config payload for the gateway, assembling providers from credentials."""
+    policies = _load_guardrail_policies(org_id)
+    guardrails = _transform_guardrails(
+        config.guardrails, org_id=org_id, policies=policies
+    )
+    key_policies = _build_key_policies(org_id, policies)
+    if key_policies:
+        guardrails = {**(guardrails or {"checks": {}}), "key_policies": key_policies}
     payload = {
         "providers": _assemble_providers(org_id),
-        "guardrails": _transform_guardrails(config.guardrails, org_id=org_id),
+        "guardrails": guardrails,
         "routing": config.routing,
         "cache": normalize_cache_config(config.cache),
         "rate_limiting": config.rate_limiting,
@@ -668,6 +1026,8 @@ def _build_payload(org_id, config):
         "model_database": config.model_database,
         "model_map": config.model_map,
     }
+    if key_policies:
+        return _transport_key_configs(org_id, payload, key_policies)
     return GatewayOrgConfig.model_validate(payload).model_dump(
         by_alias=True,
         exclude_none=True,

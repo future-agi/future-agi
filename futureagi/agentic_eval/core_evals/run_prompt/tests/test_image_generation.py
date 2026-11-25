@@ -210,20 +210,30 @@ class TestLiteLLMImageModelManager:
             "Image generation models should not be filtered out"
         )
 
-    @patch(
-        "agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel.objects.get"
-    )
-    def test_retired_dalle_model_is_unavailable(self, get_custom_model):
-        """A retired image catalog entry needs a supported replacement."""
+    @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
+    def test_get_provider_for_dalle_rejects_deprecated_model(self, mock_custom_model):
+        """DALL-E without a custom override is unavailable in the current catalog."""
         from agentic_eval.core_evals.run_prompt.litellm_models import (
             LiteLLMModelManager,
         )
-        from model_hub.models.custom_models import CustomAIModel
 
-        get_custom_model.side_effect = CustomAIModel.DoesNotExist
+        class _DoesNotExist(Exception):
+            """Stands in for CustomAIModel.DoesNotExist."""
+
+        class _MultipleObjectsReturned(Exception):
+            """Stands in for CustomAIModel.MultipleObjectsReturned."""
+
+        # Exception attributes on a MagicMock cannot be used in an except clause.
+        mock_custom_model.objects.filter.return_value.values.return_value = []
+        mock_custom_model.DoesNotExist = _DoesNotExist
+        mock_custom_model.MultipleObjectsReturned = _MultipleObjectsReturned
+        mock_custom_model.objects.get.side_effect = _DoesNotExist
+
         manager = LiteLLMModelManager(model_name="standard/1024-x-1024/dall-e-3")
 
-        with pytest.raises(ValueError, match="Please choose a supported model"):
+        with pytest.raises(
+            ValueError, match="not available in the current model catalog"
+        ):
             manager.get_provider("standard/1024-x-1024/dall-e-3")
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")

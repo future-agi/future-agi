@@ -10,7 +10,9 @@ import {
   useSaveDrafts,
 } from "src/api/simulate-environments/versions";
 import { refusalText } from "../evals/refusalText";
-import { DRAFTS_COPY as COPY } from "../workspace.constants";
+import { DRAFTS_COPY as COPY, WORKSPACE_COPY } from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { changeCount } from "./changeCount";
 
 const pieceLine = (piece, draft) =>
@@ -54,6 +56,7 @@ export default function DraftBar({
   const { data: drafts } = useDrafts(env?.id, { enabled });
   const save = useSaveDrafts(env?.id);
   const discard = useDiscardDraft(env?.id);
+  const { canEdit } = useSimulationAccess();
   const [confirming, setConfirming] = useState(false);
   const staleId = useId();
   const busyId = useId();
@@ -146,25 +149,29 @@ export default function DraftBar({
         >
           {COPY.viewChanges}
         </Button>
-        <Button
-          size="small"
-          variant="outlined"
-          color="inherit"
-          disabled={holdReasons.length > 0 || pending}
-          aria-describedby={holdReasons.join(" ") || undefined}
-          onClick={() => setConfirming(true)}
-        >
-          {discard.isPending ? COPY.discarding : COPY.discard}
-        </Button>
-        <Button
-          size="small"
-          variant="contained"
-          disabled={saveReasons.length > 0 || pending}
-          aria-describedby={saveReasons.join(" ") || undefined}
-          onClick={onSave}
-        >
-          {save.isPending ? COPY.saving : COPY.save}
-        </Button>
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            disabled={!canEdit || holdReasons.length > 0 || pending}
+            aria-describedby={holdReasons.join(" ") || undefined}
+            onClick={() => setConfirming(true)}
+          >
+            {discard.isPending ? COPY.discarding : COPY.discard}
+          </Button>
+        </ViewerLock>
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
+          <Button
+            size="small"
+            variant="contained"
+            disabled={!canEdit || saveReasons.length > 0 || pending}
+            aria-describedby={saveReasons.join(" ") || undefined}
+            onClick={onSave}
+          >
+            {save.isPending ? COPY.saving : COPY.save}
+          </Button>
+        </ViewerLock>
       </Stack>
       {staleReason && (
         <Typography

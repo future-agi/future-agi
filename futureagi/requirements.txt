@@ -6,7 +6,7 @@ aiofiles==25.1.0
     # via livekit
 aiohappyeyeballs==2.6.1
     # via aiohttp
-aiohttp==3.14.3
+aiohttp==3.14.5
     # via
     #   core-backend
     #   litellm
@@ -21,7 +21,7 @@ anthropic==0.76.0
     # via
     #   core-backend
     #   traceai-anthropic
-anyio==4.12.1
+anyio==4.16.0
     # via
     #   anthropic
     #   google-genai
@@ -64,23 +64,24 @@ beautifulsoup4==4.14.3
     # via core-backend
 billiard==4.2.4
     # via celery
-boto3==1.42.28
+boto3==1.44.3
     # via
     #   core-backend
+    #   litellm
     #   traceai-bedrock
-botocore==1.42.28
+botocore==1.44.3
     # via
     #   boto3
     #   s3transfer
     #   traceai-bedrock
-cbor2==5.8.0
+cbor2==5.9.0
     # via webauthn
 celery==5.6.2
     # via
     #   core-backend
     #   django-celery-beat
     #   django-celery-results
-certifi==2026.1.4
+certifi==2026.10.23
     # via
     #   clickhouse-connect
     #   httpcore
@@ -349,7 +350,7 @@ joblib==1.5.3
     # via
     #   nltk
     #   scikit-learn
-json-repair==0.55.0
+json-repair==0.64.9
     # via core-backend
 jsonpatch==1.33
     # via langchain-core
@@ -366,19 +367,19 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 kombu==5.6.2
     # via celery
-langchain-core==0.3.83
+langchain-core==0.3.86
     # via langchain-text-splitters
 langchain-text-splitters==0.3.11
     # via core-backend
 langfuse==3.1.3
     # via core-backend
-langsmith==0.6.3
+langsmith==0.8.18
     # via langchain-core
 lark==1.3.1
     # via django-socio-grpc
 levenshtein==0.27.3
     # via python-levenshtein
-litellm==1.84.10
+litellm==1.100.4
     # via
     #   core-backend
     #   traceai-litellm
@@ -405,16 +406,16 @@ minio==7.2.20
     # via core-backend
 mixpanel==5.0.0
     # via core-backend
-msgpack==1.1.2
+msgpack==1.2.4
     # via channels-redis
 multidict==6.7.0
     # via
     #   aiohttp
     #   core-backend
     #   yarl
-nexus-rpc==1.3.0
+nexus-rpc==1.5.0
     # via temporalio
-nltk==3.10.3
+nltk==3.10.4
     # via
     #   core-backend
     #   rouge-score
@@ -584,7 +585,7 @@ opentelemetry-util-http==0.60b1
     #   opentelemetry-instrumentation-requests
     #   opentelemetry-instrumentation-urllib3
     #   opentelemetry-instrumentation-wsgi
-orjson==3.11.5 ; platform_python_implementation != 'PyPy'
+orjson==3.13.0 ; platform_python_implementation != 'PyPy'
     # via langsmith
 packaging==24.2
     # via
@@ -606,7 +607,7 @@ pdfminer-six==20260107
     #   pdfplumber
 pdfplumber==0.11.10
     # via core-backend
-pillow==12.3.0
+pillow==13.0.0
     # via
     #   core-backend
     #   pdfplumber
@@ -649,7 +650,7 @@ psycopg-pool==3.3.0
     # via psycopg
 pyarrow==23.0.1
     # via core-backend
-pyasn1==0.6.1
+pyasn1==0.6.5
     # via
     #   pyasn1-modules
     #   rsa
@@ -676,8 +677,10 @@ pydantic==2.13.5
     #   retell-sdk
 pydantic-core==2.46.5
     # via pydantic
-pydantic-settings==2.12.0
-    # via mcp
+pydantic-settings==2.16.3
+    # via
+    #   litellm
+    #   mcp
 pydub==0.25.1
     # via core-backend
 pyjwt==2.15.1
@@ -694,7 +697,7 @@ pyotp==2.9.0
     # via core-backend
 pyparsing==3.3.2
     # via httplib2
-pypdf==6.19.0
+pypdf==6.21.4
     # via core-backend
 pypdfium2==5.14.0
     # via pdfplumber
@@ -711,7 +714,7 @@ python-dateutil==2.9.0.post0
     #   pysaml2
 python-docx==1.2.0
     # via core-backend
-python-dotenv==1.2.1
+python-dotenv==1.2.4
     # via
     #   litellm
     #   pydantic-settings
@@ -785,7 +788,7 @@ rpds-py==0.30.0
     #   referencing
 rsa==4.9.1
     # via google-auth
-s3transfer==0.16.0
+s3transfer==0.19.3
     # via boto3
 scikit-learn==1.8.0
     # via core-backend
@@ -795,7 +798,7 @@ scipy==1.17.0
     #   scikit-learn
 sentry-sdk==2.49.0
     # via core-backend
-setuptools==80.9.0
+setuptools==81.0.0
     # via grpcio-tools
 six==1.17.0
     # via
@@ -810,15 +813,15 @@ sniffio==1.3.1
     #   google-genai
     #   openai
     #   retell-sdk
-soupsieve==2.8.3
+soupsieve==2.10
     # via beautifulsoup4
 sqlglot==28.10.1
     # via core-backend
-sqlparse==0.5.5
+sqlparse==0.6.1
     # via django
 sse-starlette==3.3.3
     # via mcp
-starlette==1.0.0
+starlette==1.10.0
     # via
     #   mcp
     #   sse-starlette
@@ -830,7 +833,7 @@ structlog==25.5.0
     # via
     #   core-backend
     #   django-structlog
-temporalio==1.21.1
+temporalio==1.36.1
     # via core-backend
 tenacity==9.1.2
     # via
@@ -892,6 +895,7 @@ typing-extensions==4.16.0
     #   psycopg-pool
     #   pydantic
     #   pydantic-core
+    #   pydantic-settings
     #   pyopenssl
     #   python-docx
     #   referencing
@@ -922,7 +926,7 @@ uritemplate==4.2.0
     # via
     #   drf-yasg
     #   google-api-python-client
-urllib3==2.7.0
+urllib3==2.8.0
     # via
     #   botocore
     #   clickhouse-connect
@@ -957,7 +961,9 @@ webauthn==2.5.1
 websocket-client==1.9.0
     # via core-backend
 websockets==15.0.1
-    # via google-genai
+    # via
+    #   google-genai
+    #   langsmith
 whitenoise==6.11.0
     # via core-backend
 wrapt==1.17.3
@@ -978,7 +984,9 @@ xmlschema==2.5.1
     # via pysaml2
 xmlsec==1.3.17
     # via core-backend
-yarl==1.22.0
+xxhash==3.6.0
+    # via langsmith
+yarl==1.25.1
     # via aiohttp
 zipp==3.23.0
     # via importlib-metadata

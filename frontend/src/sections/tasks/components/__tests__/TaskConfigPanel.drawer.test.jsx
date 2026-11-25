@@ -1,14 +1,20 @@
 import React from "react";
+import PropTypes from "prop-types";
 import { useForm } from "react-hook-form";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
+  fireEvent,
   render,
+  renderHook,
   screen,
   userEvent,
   waitFor,
   within,
 } from "src/utils/test-utils";
+import { useCompositeChildrenUnionKeys } from "src/sections/evals/hooks/useCompositeChildrenKeys";
+import { getDefaultTaskValues } from "../../schema";
 import TaskConfigPanel from "../TaskConfigPanel";
 import TaskPanels from "../task_panels";
 import { defaultSamplingPolicy } from "../samplingPolicyForm";
@@ -17,6 +23,8 @@ import { productionTheme } from "./samplingContrastTestUtils";
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  patch: vi.fn(),
+  parentDetail: null,
   width: 1280,
   sampling: false,
   project: { data: { source: "sdk" }, isSuccess: true },
@@ -37,7 +45,6 @@ const mocks = vi.hoisted(() => ({
   update: { mutate: vi.fn(), mutateAsync: vi.fn() },
   createVersion: { mutateAsync: vi.fn() },
   composite: { data: null },
-  union: [],
   attributes: {
     data: ["final_status"],
     queryReadState: "complete",
@@ -46,9 +53,15 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("src/utils/axios", () => ({
   readQuery: mocks.get,
-  default: { get: mocks.get, post: mocks.post },
+  default: { get: mocks.get, post: mocks.post, patch: mocks.patch },
   endpoints: {
+    develop: { eval: {
+      getEvalDetail: (id) => `/evals/${id}/`,
+      getCompositeDetail: (id) => `/composites/${id}/`,
+    } },
     project: {
+      createEvalTaskConfig: () => "/configs/",
+      updateEvalTaskConfig: (id) => `/configs/${id}/`,
       samplingPreview: () => "/sample-preview/",
       getProjectById: (id) => `/projects/${id}`,
       listProjects: () => "/projects/",
@@ -64,21 +77,18 @@ vi.mock("src/utils/axios", () => ({
 vi.mock("src/api/project/project-detail", () => ({
   useGetProjectDetails: () => mocks.project,
 }));
-vi.mock("src/sections/evals/hooks/useEvalDetail", () => ({
-  useEvalDetail: () => mocks.detail,
+vi.mock("src/sections/evals/hooks/useEvalDetail", async (original) => ({
+  ...(await original()),
+  useEvalDetail: () => mocks.parentDetail ?? mocks.detail,
   useUpdateEval: () => mocks.update,
-  evalDetailQuery: vi.fn(),
 }));
 vi.mock("src/sections/evals/hooks/useEvalVersions", () => ({
   useEvalVersions: () => mocks.versions,
   useCreateEvalVersion: () => mocks.createVersion,
 }));
-vi.mock("src/sections/evals/hooks/useCompositeEval", () => ({
-  useCompositeDetail: () => mocks.composite,
+vi.mock("src/sections/evals/hooks/useCompositeEval", async (original) => ({
+  ...(await original()),
   useExecuteCompositeEvalAdhoc: () => mocks.update,
-}));
-vi.mock("src/sections/evals/hooks/useCompositeChildrenKeys", () => ({
-  useCompositeChildrenUnionKeys: () => mocks.union,
 }));
 vi.mock(
   "src/sections/evals/components/useExactEvalAttributeFields",
@@ -195,6 +205,7 @@ const row = {
   start_time: "2026-09-01T12:01:02.123456Z",
   observation_type: "SPAN",
   service_name: "test-service",
+  span_attributes: { input: 1, output: 0 },
   _version: "1",
 };
 let draftForm;
@@ -205,18 +216,20 @@ const retainedPolicy = {
   default: { target_n: 2 },
   cell_quotas: { '["default",[]]': 2 },
 };
-function TaskForm() {
+function TaskForm({ savedTask, runType = "continuous" }) {
   const form = useForm({
-    defaultValues: {
-      name: "Drawer task",
-      project: projectId,
-      rowType: "spans",
-      filters: [],
-      evalsDetails: [],
-      samplingPolicy: retainedPolicy,
-      samplingRate: 50,
-      runType: "continuous",
-    },
+    defaultValues: savedTask
+      ? getDefaultTaskValues(savedTask)
+      : {
+          name: "Drawer task",
+          project: projectId,
+          rowType: "spans",
+          filters: [],
+          evalsDetails: [],
+          samplingPolicy: retainedPolicy,
+          samplingRate: 50,
+          runType,
+        },
   });
   draftForm = form;
   return (
@@ -226,7 +239,7 @@ function TaskForm() {
       }
       leftPanel={
         <TaskConfigPanel
-          mode="create"
+          mode={savedTask ? "edit" : "create"}
           projectLocked
           initialProjectName="Project"
           control={form.control}
@@ -237,10 +250,18 @@ function TaskForm() {
     />
   );
 }
+TaskForm.propTypes = {
+  savedTask: PropTypes.object,
+  runType: PropTypes.string,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.width = 1280;
   mocks.sampling = false;
+  mocks.parentDetail = null;
+  mocks.composite.data = null;
+  mocks.composite.wait = null;
   mocks.post.mockResolvedValue({
     data: {
       result: {
@@ -395,4 +416,475 @@ describe("real task drawer style integration", () => {
       client.clear();
     },
   );
+});
+
+describe("historical task composite mappings", () => {
+  const pathPlaceholder = "Search or type a path (e.g. attributes.input.value)";
+  const bindingId = "binding-10440";
+
+  const newClient = () => new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  function mountTask(savedTask, client = newClient()) {
+    return render(
+      <QueryClientProvider client={client}>
+        <TaskForm runType="historical" savedTask={savedTask} />
+      </QueryClientProvider>,
+    );
+  }
+
+  function compositeFixture(children) {
+    mocks.parentDetail = {
+      data: {
+        id: "template-r8",
+        name: "Weighted votes",
+        owner: "user",
+        eval_type: "code",
+        template_type: "composite",
+        config: {},
+      },
+    };
+    mocks.composite.data = {
+      aggregation_function: "weighted_avg",
+      children: children.map(({ id, weight, params }) => ({
+        config: { params },
+        child_id: id,
+        child_name: id,
+        eval_type: "code",
+        required_keys: [],
+        weight,
+      })),
+    };
+    const get = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation(async (url, ...args) => {
+      if (url === "/composites/template-r8/") {
+        await mocks.composite.wait;
+        return { data: { result: structuredClone(mocks.composite.data) } };
+      }
+      const child = children.find(({ id }) => url === `/evals/${id}/`);
+      if (!child) return get(url, ...args);
+      if (child.wait) await child.wait;
+      return {
+        data: {
+          result: {
+            id: child.id,
+            owner: "user",
+            eval_type: "code",
+            required_keys: [],
+            config: { code: child.code, language: child.language || "python" },
+          },
+        },
+      };
+    });
+    mocks.post.mockResolvedValue({ data: { result: { id: bindingId } } });
+    mocks.patch.mockResolvedValue({ data: { result: { id: bindingId } } });
+  }
+
+  // CustomTooltip swaps its subtree as readiness changes. Resolve the live
+  // action by role at each assertion and click, just as the browser does.
+  const saveAction = (scope, name = "Add Evaluation") => () =>
+    scope.getByRole("button", { name, exact: true });
+
+  const mappingSection = (scope) =>
+    within(scope.getByText("Variable Mapping", { exact: true }).parentElement);
+
+  const mappingInput = (scope, label) => {
+    const field = mappingSection(scope).getByText(label, { exact: true });
+    return within(field.parentElement.parentElement).getByRole("combobox");
+  };
+
+  async function selectPath(user, input, path) {
+    await user.click(input);
+    await user.click(await screen.findByRole("option", { name: path, exact: true }));
+    expect(input).toHaveValue(path);
+  }
+
+  async function chooseComposite(user) {
+    await user.click(screen.getByRole("button", { name: "Add Evaluation" }));
+    const choose = await screen.findByRole("button", {
+      name: "Choose evaluation",
+    });
+    const drawer = within(choose.closest(".MuiDrawer-paper"));
+    await user.click(choose);
+    return drawer;
+  }
+
+  it("keeps declared-key precedence and ignores code signatures without the task opt-in", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { staleTime: Infinity } },
+    });
+    const details = [
+      {
+        owner: "user",
+        eval_type: "code",
+        required_keys: [],
+        config: { required_keys: ["hidden"], code: "def evaluate(vote): return vote" },
+      },
+      { required_keys: ["top"], config: { required_keys: ["hidden"] } },
+      { config: { required_keys: ["snake"], requiredKeys: ["hidden"] } },
+      { config: { requiredKeys: ["camel"] } },
+    ];
+    const children = details.map((detail, i) => {
+      const id = `child-${i}`;
+      client.setQueryData(["evals", "detail", id], detail);
+      return { child_id: id };
+    });
+    const { result } = renderHook(() => useCompositeChildrenUnionKeys(children), {
+      wrapper: ({ children: content }) => (
+        <QueryClientProvider client={client}>{content}</QueryClientProvider>
+      ),
+    });
+    expect(result.current).toEqual(["top", "snake", "camel"]);
+  });
+
+  it("saves both weighted child inputs and restores them from task detail on edit", async () => {
+    let releaseChild;
+    const wait = new Promise((resolve) => {
+      releaseChild = resolve;
+    });
+    compositeFixture([
+      {
+        id: "first",
+        weight: 1,
+        code: "def evaluate(first_vote, **kwargs):\n    return float(first_vote)",
+      },
+      {
+        id: "second",
+        weight: 3,
+        code: "def evaluate(second_vote, **kwargs):\n    return float(second_vote)",
+        wait,
+      },
+    ]);
+    const user = userEvent.setup();
+    const firstView = mountTask();
+    const drawer = await chooseComposite(user);
+    await waitFor(() =>
+      expect(mocks.get).toHaveBeenCalledWith("/evals/second/"),
+    );
+    expect(
+      drawer.queryByRole("button", { name: "Add Evaluation" }),
+    ).not.toBeInTheDocument();
+    releaseChild();
+
+    await drawer.findByPlaceholderText("Search columns or values...");
+    const inputs = await drawer.findAllByPlaceholderText(pathPlaceholder);
+    expect(inputs).toHaveLength(2);
+    const add = saveAction(drawer);
+    await waitFor(() => expect(inputs[0]).toBeEnabled());
+    await selectPath(user, inputs[0], "input");
+    expect(add()).toBeDisabled();
+    await selectPath(user, inputs[1], "output");
+    await waitFor(() => expect(add()).toBeEnabled());
+    await user.click(add());
+    const mapping = { first_vote: "input", second_vote: "output" };
+    const expectedBinding = expect.objectContaining({
+      eval_template: "template-r8",
+      mapping,
+      config: expect.objectContaining({ mapping }),
+    });
+    await waitFor(() =>
+      expect(mocks.post).toHaveBeenCalledWith("/configs/", expectedBinding),
+    );
+    const [, created] = mocks.post.mock.calls.find(
+      ([url]) => url === "/configs/",
+    );
+    firstView.unmount();
+
+    // Start a new form and query cache with the task-detail API shape, not
+    // the picker object that was still in memory when the binding was added.
+    mountTask({
+      name: "Historical composite",
+      project_id: projectId,
+      run_type: "historical",
+      row_type: "spans",
+      sampling_rate: 100,
+      filters_applied: {},
+      evals_applied: [
+        {
+          id: bindingId,
+          template_id: created.eval_template,
+          templateType: "composite",
+          name: created.name,
+          // A child present on the old binding was subsequently removed.
+          mapping: { ...created.mapping, removed_vote: "project_id" },
+          config: { ...created.config, mapping: { ...created.mapping, removed_vote: "project_id" } },
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Edit evaluation" }));
+    await screen.findByPlaceholderText("Search columns or values...");
+    const restored = await screen.findAllByPlaceholderText(pathPlaceholder);
+    expect(restored.map((input) => input.value)).toEqual(["input", "output"]);
+    const update = saveAction(screen, "Update Evaluation");
+    await waitFor(() => expect(update()).toBeEnabled());
+    await user.click(update());
+    await waitFor(() =>
+      expect(mocks.patch).toHaveBeenCalledWith(
+        `/configs/${bindingId}/`,
+        expectedBinding,
+      ),
+    );
+    const [, updated] = mocks.patch.mock.calls[0];
+    expect(updated.mapping).toEqual(mapping);
+    expect(updated.config.mapping).toEqual(mapping);
+  });
+
+  it("uses executable entry points, optional overrides and each child's own static params", async () => {
+    compositeFixture([
+      {
+        id: "configured", weight: 1, params: { vote: 1, zero: 0, enabled: false },
+        code: "# def evaluate(wrong):\ndef main(vote, zero, enabled, cutoff=0.5, **kwargs):\n    return vote",
+      },
+      {
+        id: "mapped", weight: 1,
+        code: "# def evaluate(stale):\ndef main(vote, **kwargs):\n    return vote",
+      },
+      {
+        id: "js", weight: 1, language: "javascript",
+        code: "function main({ obsolete }) { return obsolete; }\nfunction evaluate({ vote, threshold = 0.5 }) { return vote >= threshold; }",
+      },
+    ]);
+    const view = mountTask();
+    const user = userEvent.setup();
+    const drawer = await chooseComposite(user);
+    await drawer.findByPlaceholderText("Search columns or values...");
+    const inputs = await drawer.findAllByPlaceholderText(pathPlaceholder);
+    expect(inputs).toHaveLength(3);
+    expect(drawer.getByText("cutoff (optional)")).toBeVisible();
+    expect(drawer.getByText("threshold (optional)")).toBeVisible();
+    const add = saveAction(drawer);
+    expect(add()).toBeDisabled();
+    const vote = mappingInput(drawer, "vote");
+    await waitFor(() => expect(vote).toBeEnabled());
+    await selectPath(user, vote, "input");
+    await waitFor(() => expect(add()).toBeEnabled());
+    await user.click(add());
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith("/configs/", expect.any(Object)));
+    const [, body] = mocks.post.mock.calls.find(([url]) => url === "/configs/");
+    expect(body.mapping).toEqual({ vote: "input" });
+    expect(body.config.mapping).toEqual(body.mapping);
+    view.unmount();
+
+    mountTask({
+      project_id: projectId, run_type: "historical", row_type: "spans",
+      filters_applied: {}, sampling_rate: 100,
+      evals_applied: [{ ...body, id: bindingId, template_id: body.eval_template }],
+    });
+    await user.click(screen.getByRole("button", { name: "Edit evaluation" }));
+    await screen.findByPlaceholderText("Search columns or values...");
+    const threshold = mappingInput(screen, "threshold (optional)");
+    expect(threshold).toHaveValue("");
+    const update = saveAction(screen, "Update Evaluation");
+    await waitFor(() => expect(update()).toBeEnabled());
+    await selectPath(user, threshold, "output");
+    await user.click(update());
+    await waitFor(() => expect(mocks.patch).toHaveBeenCalledWith(`/configs/${bindingId}/`, expect.any(Object)));
+    const [, edited] = mocks.patch.mock.calls[0];
+    expect(edited.mapping).toEqual({ vote: "input", threshold: "output" });
+    expect(edited.config.mapping).toEqual(edited.mapping);
+  });
+
+  it("does not mistake an unrecognized entry point for a verified input-free one", async () => {
+    compositeFixture([{ id: "unknown", weight: 1, code: "# def evaluate(): pass" }]);
+    mountTask();
+    const user = userEvent.setup();
+    const drawer = await chooseComposite(user);
+    expect(await drawer.findByText(/Cannot determine child inputs/)).toBeVisible();
+    expect(drawer.getByRole("button", { name: "Add Evaluation" })).toBeDisabled();
+    expect(mocks.post).not.toHaveBeenCalledWith("/configs/", expect.anything());
+  });
+
+  it("keeps edits during warm schema refresh and retry, then saves only current keys", async () => {
+    const child = { id: "changing", weight: 1, code: "def evaluate(vote, old): return vote" };
+    compositeFixture([child]);
+    const client = newClient();
+    mountTask(undefined, client);
+    const user = userEvent.setup();
+    const drawer = await chooseComposite(user);
+    await drawer.findByPlaceholderText("Search columns or values...");
+    const [vote, old] = await drawer.findAllByPlaceholderText(pathPlaceholder);
+    await waitFor(() => expect(vote).toBeEnabled());
+    await selectPath(user, vote, "output");
+    await selectPath(user, old, "input");
+    const add = saveAction(drawer);
+    await waitFor(() => expect(add()).toBeEnabled());
+
+    let finishParent;
+    mocks.composite.wait = new Promise((resolve) => { finishParent = resolve; });
+    act(() => { void client.invalidateQueries({ queryKey: ["evals", "composite", "template-r8"] }); });
+    await waitFor(() => expect(add()).toBeDisabled());
+    expect(vote).toHaveValue("output");
+    finishParent();
+    await waitFor(() => expect(add()).toBeEnabled());
+
+    let failChild;
+    child.wait = new Promise((_, reject) => { failChild = reject; });
+    act(() => { void client.invalidateQueries({ queryKey: ["evals", "detail", child.id] }); });
+    await waitFor(() => expect(add()).toBeDisabled());
+    await expect(user.click(add())).rejects.toThrow(/pointer-events: none/);
+    expect(mocks.post).not.toHaveBeenCalledWith("/configs/", expect.anything());
+    failChild(new Error("child unavailable"));
+    const retry = await drawer.findByRole("button", { name: "Retry loading inputs" });
+    expect(add()).toBeDisabled();
+    expect(vote).toHaveValue("output");
+    child.wait = null;
+    child.code = "def evaluate(vote, replacement): return vote";
+    await user.click(retry);
+    await mappingSection(drawer).findByText("replacement");
+    expect(mappingSection(drawer).queryByText("old")).not.toBeInTheDocument();
+    expect(vote).toHaveValue("output");
+    expect(add()).toBeDisabled();
+    const [, replacement] = drawer.getAllByPlaceholderText(pathPlaceholder);
+    await selectPath(user, replacement, "input");
+    await waitFor(() => expect(add()).toBeEnabled());
+    await user.click(add());
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith("/configs/", expect.any(Object)));
+    const [, body] = mocks.post.mock.calls.find(([url]) => url === "/configs/");
+    expect(body.mapping).toEqual({ vote: "output", replacement: "input" });
+    expect(body.config.mapping).toEqual(body.mapping);
+  });
+
+  it("uses top-level JS entry points and requires an object with only nested defaults", async () => {
+    compositeFixture([
+      {
+        id: "same-line", weight: 1, language: "javascript",
+        code: "function main() {} function evaluate({vote, settings: {cutoff = 0.5}, extras: {limit} = {}}) { return vote; }",
+      },
+      {
+        id: "scoped", weight: 1, language: "javascript",
+        code: `// function evaluate({ghost}) {}
+          const example = "function evaluate({ghost}) {}";
+          function main({other}) {
+            function evaluate() { return 0; }
+            return other;
+          }`,
+      },
+    ]);
+    mountTask();
+    const user = userEvent.setup();
+    const drawer = await chooseComposite(user);
+    await drawer.findByPlaceholderText("Search columns or values...");
+    const add = saveAction(drawer);
+    expect(drawer.getAllByPlaceholderText(pathPlaceholder)).toHaveLength(4);
+    expect(mappingInput(drawer, "extras (optional)")).toHaveValue("");
+    await selectPath(user, mappingInput(drawer, "vote"), "input");
+    await selectPath(user, mappingInput(drawer, "other"), "output");
+    expect(add()).toBeDisabled();
+    await selectPath(user, mappingInput(drawer, "settings"), "input");
+    await waitFor(() => expect(add()).toBeEnabled());
+    await user.click(add());
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith("/configs/", expect.any(Object)));
+    const [, body] = mocks.post.mock.calls.find(([url]) => url === "/configs/");
+    expect(body.mapping).toEqual({ vote: "input", other: "output", settings: "input" });
+    expect(body.config.mapping).toEqual(body.mapping);
+  });
+
+  const savedTaskWithMapping = (mapping) => ({
+    name: "Saved composite", project_id: projectId, run_type: "historical",
+    row_type: "spans", filters_applied: {}, sampling_rate: 100,
+    evals_applied: [{
+      id: bindingId, template_id: "template-r8", templateType: "composite",
+      name: "Weighted votes", mapping, config: { mapping },
+    }],
+  });
+
+  it("restores unseen saved overrides and actual edits after an initially warm partial schema", async () => {
+    let releaseParent, releaseChild;
+    const child = { id: "warm", weight: 1, code: "def evaluate(vote): return vote" };
+    const optional = {
+      id: "returning", weight: 1, code: "def main(cutoff=0.5): return cutoff",
+      wait: new Promise((resolve) => { releaseChild = resolve; }),
+    };
+    compositeFixture([child, optional]);
+    mocks.composite.wait = new Promise((resolve) => { releaseParent = resolve; });
+    const client = newClient();
+    client.setQueryData(["evals", "composite", "template-r8"], {
+      ...mocks.composite.data, children: [mocks.composite.data.children[0]],
+    });
+    client.setQueryData(["evals", "detail", child.id], {
+      owner: "user", eval_type: "code", config: { code: child.code },
+    });
+    mountTask(savedTaskWithMapping({ vote: "input", cutoff: "retained.path" }), client);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Edit evaluation" }));
+    await screen.findByPlaceholderText("Search columns or values...");
+    const update = saveAction(screen, "Update Evaluation");
+    expect(update()).toBeDisabled();
+    await selectPath(user, mappingInput(screen, "vote"), "output");
+    releaseParent();
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledWith("/evals/returning/"));
+    expect(mocks.patch).not.toHaveBeenCalled();
+    releaseChild();
+    await screen.findByText("cutoff (optional)");
+    expect(mappingInput(screen, "vote")).toHaveValue("output");
+    expect(mappingInput(screen, "cutoff (optional)")).toHaveValue("retained.path");
+    await waitFor(() => expect(update()).toBeEnabled());
+    await user.click(update());
+    await waitFor(() => expect(mocks.patch).toHaveBeenCalledWith(`/configs/${bindingId}/`, expect.any(Object)));
+    const [, body] = mocks.patch.mock.calls[0];
+    expect(body.mapping).toEqual({ vote: "output", cutoff: "retained.path" });
+    expect(body.config.mapping).toEqual(body.mapping);
+  });
+
+  it.each(["Add", "Update"])("submits an optional path pasted immediately before %s", async (action) => {
+    compositeFixture([{ id: "optional", weight: 1, code: "def evaluate(cutoff=0.5): return cutoff" }]);
+    const editing = action === "Update";
+    mountTask(editing ? savedTaskWithMapping({ cutoff: "old.path" }) : undefined);
+    const user = userEvent.setup();
+    if (editing) await user.click(screen.getByRole("button", { name: "Edit evaluation" }));
+    else await chooseComposite(user);
+    const preview = await screen.findByPlaceholderText("Search columns or values...");
+    const drawer = within(preview.closest(".MuiDrawer-paper"));
+    const save = saveAction(drawer, `${action} Evaluation`);
+    await waitFor(() => expect(save()).toBeEnabled());
+    const field = mappingInput(drawer, "cutoff (optional)");
+    await user.click(field);
+    // Same turn as the native input event from paste: no blur, selection,
+    // timer advance, or wait for the attribute-search debounce before Save.
+    fireEvent.input(field, { inputType: "insertFromPaste", data: "fresh.path", target: { value: "fresh.path" } });
+    fireEvent.click(save());
+    const send = editing ? mocks.patch : mocks.post;
+    const url = editing ? `/configs/${bindingId}/` : "/configs/";
+    await waitFor(() => expect(send).toHaveBeenCalledWith(url, expect.any(Object)));
+    const [, body] = send.mock.calls.find(([endpoint]) => endpoint === url);
+    expect(body.mapping).toEqual({ cutoff: "fresh.path" });
+    expect(body.config.mapping).toEqual(body.mapping);
+  });
+
+  it("executes a task preview with static child inputs and no row paths", async () => {
+    compositeFixture([{ id: "static", weight: 1, params: { vote: 0 }, code: "def evaluate(vote): return vote" }]);
+    mocks.update.mutateAsync.mockResolvedValueOnce({ aggregation_enabled: true, aggregate_score: 0 });
+    const user = userEvent.setup();
+    mountTask();
+    const drawer = await chooseComposite(user);
+    await drawer.findByPlaceholderText("Search columns or values...");
+    expect(drawer.queryByPlaceholderText(pathPlaceholder)).not.toBeInTheDocument();
+    const test = saveAction(drawer, "Test Evaluation");
+    await waitFor(() => expect(test()).toBeEnabled());
+    await user.click(test());
+    await waitFor(() => expect(mocks.update.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({
+      child_template_ids: ["static"], child_configs: { static: { params: { vote: 0 } } }, mapping: {},
+    })));
+    expect(await drawer.findByText("Test completed")).toBeVisible();
+  });
+
+  it("allows a resolved input-free child without inventing a mapping", async () => {
+    compositeFixture([
+      { id: "constant", weight: 1, code: "def evaluate(**kwargs):\n    return 1" },
+    ]);
+    const user = userEvent.setup();
+    mountTask();
+    const drawer = await chooseComposite(user);
+    const add = saveAction(drawer);
+    await waitFor(() => expect(add()).toBeEnabled());
+    expect(drawer.queryByPlaceholderText(pathPlaceholder)).not.toBeInTheDocument();
+    await user.click(add());
+    await waitFor(() =>
+      expect(mocks.post).toHaveBeenCalledWith(
+        "/configs/",
+        expect.objectContaining({ mapping: {} }),
+      ),
+    );
+  });
 });

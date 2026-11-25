@@ -22,6 +22,7 @@ from urllib.parse import quote, urlparse
 import pytest
 from django.test import override_settings
 from django.utils import timezone
+from minio.error import S3Error
 
 from simulate.models import (
     HostedHarnessAttempt,
@@ -74,9 +75,12 @@ from simulate.services.hosted_harness_gateway import (
     _read_harness_spend,
     _resolved_egress_domains,
     _scenarios_cli_command,
+    _seed_contract_for,
+    _source_object_key,
     _validate_resolved_egress_domains,
     _webrtc_egress_cidrs,
     attach_platform_simulator_secret_refs,
+    detect_source_api_keys,
     detect_source_connectors,
     detect_source_credentials,
     guest_failure_cause,
@@ -85,6 +89,8 @@ from simulate.services.hosted_harness_gateway import (
     prepare_dispatch_payload,
     resolve_authored_connector,
     resolve_platform_simulator_secrets,
+    store_source_archive,
+    stored_upload_name,
 )
 from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.hosted_sandbox import (
@@ -93,6 +99,7 @@ from simulate.services.hosted_sandbox import (
     SandboxNotFoundError,
     SandboxProviderError,
 )
+from simulate.tests.hosted_job_payloads import hosted_job_payload as _payload
 from simulate.tests.test_agent_setup_service import source_agent
 from tfc.ee_loader import has_ee
 
@@ -770,52 +777,6 @@ def test_resolved_egress_cap_applies_after_wildcard_minimization(settings):
     _validate_resolved_egress_domains(domains)
 
 
-def _payload():
-    return {
-        "schema_version": "futureagi.harness-job.v1",
-        "source": {
-            "kind": "github",
-            "repository": "future-agi/reference-agent",
-            "ref": "main",
-            "commit_sha": "a" * 40,
-            "visibility": "private",
-            "installation_id": "installation-1",
-        },
-        "agent": {"connector": "vapi", "config": {}, "secret_refs": {}},
-        "scenario_count": 1,
-        "seed": 1,
-        "runtime": {
-            "isolation": "dedicated_vm",
-            "cpu_units": 2,
-            "memory_mb": 4096,
-            "parallelism": 1,
-            "concurrency_weight": 1,
-            "max_duration_seconds": 600,
-            "network_policy": "live",
-        },
-        "security": {
-            "untrusted_source": True,
-            "read_only_source": True,
-            "allow_privileged": False,
-            "allow_host_runtime_control": False,
-            "allowed_egress_domains": ["agent.example.com"],
-        },
-        "retry": {
-            "max_infrastructure_attempts": 2,
-            "initial_backoff_seconds": 1,
-            "max_backoff_seconds": 15,
-            "retryable_domains": ["infrastructure", "connectivity"],
-        },
-        "artifacts": {
-            "level": "full",
-            "retention_days": 30,
-            "allow_bundle_download": True,
-            "max_artifact_bytes": 1024,
-        },
-        "metadata": {},
-    }
-
-
 def test_authoring_archive_resolves_uploaded_source_by_explicit_key(tmp_path, settings):
     root = tmp_path / "authoring"
     scenario = root / "uploaded-agent" / "scenarios" / "one"
@@ -1089,6 +1050,113 @@ def test_source_scan_does_not_require_adc_for_google_sdk_or_api_key_mode():
     assert detect_source_credentials(b"not a tarball") == ([], [], 0)
 
 
+def test_source_scan_lists_the_api_keys_the_code_reads():
+    names = detect_source_api_keys(
+        _source_tarball(
+            {
+                "agent.py": (
+                    '"""Swap to Claude: os.getenv("ANTHROPIC_API_KEY")."""\n'
+                    "import os\n"
+                    "# To use Claude instead, set ANTHROPIC_API_KEY.\n"
+                    "# c = Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])\n"
+                    "client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])  # not os.getenv('XAI_API_KEY')\n"
+                    "register(api_key=os.getenv('FI_API_KEY'))\n"
+                    "port = os.environ['PORT']\n"
+                    "\n"
+                    "def build():\n"
+                    '    """Or os.environ.get(\'MISTRAL_API_KEY\')."""\n'
+                    "    return os.environ.get('TOGETHER_API_KEY')\n"
+                ),
+                "settings.py": (
+                    'from os import environ\ngroq = environ.get("GROQ_API_KEY", "")\n'
+                ),
+                "server.ts": (
+                    "// const claude = process.env.ANTHROPIC_API_KEY;\n"
+                    "/* const mistral = process.env['MISTRAL_API_KEY']; */\n"
+                    'const url = "https://api.example.com/v1";\n'
+                    "const tts = process.env.CARTESIA_API_KEY;\n"
+                    'const stt = process.env["DEEPGRAM_API_KEY"];\n'
+                ),
+                ".env.example": "GEMINI_API_KEY=\nFI_SECRET_KEY=\n",
+                "README.md": "Set MISTRAL_API_KEY to use Mistral.\n",
+                "node_modules/sdk/index.js": "process.env.COHERE_API_KEY",
+            }
+        )
+    )
+
+    assert names == [
+        "CARTESIA_API_KEY",
+        "DEEPGRAM_API_KEY",
+        "FI_API_KEY",
+        "GROQ_API_KEY",
+        "OPENAI_API_KEY",
+        "TOGETHER_API_KEY",
+    ]
+    assert detect_source_api_keys(b"not a tarball") == []
+
+
+def test_source_scan_reads_api_keys_only_within_the_agents_reach():
+    names = detect_source_api_keys(
+        _source_tarball(
+            {
+                "agents/support/agent.py": "os.environ['ANTHROPIC_API_KEY']\n",
+                "agents/billing/agent.py": "os.environ['OPENAI_API_KEY']\n",
+            }
+        ),
+        subfolder="agents/support",
+    )
+
+    assert names == ["ANTHROPIC_API_KEY"]
+
+
+_MONOREPO = {
+    "README.md": "examples\n",
+    "requirements.txt": "httpx==0.27.0\n",
+    "examples/requirements.txt": "httpx==0.27.0\n",
+    "examples/chat/server/bot.py": "import daily\n",
+    "examples/chat/server/tools/search.py": "import httpx\n",
+    "examples/chat/client/app.py": "import livekit\n",
+    "examples/voice/agent.py": (
+        "from livekit import agents\n"
+        "credentials = os.environ['GOOGLE_APPLICATION_CREDENTIALS']\n"
+    ),
+    "examples/voice/requirements.txt": "google-cloud-aiplatform==1.71.1\n",
+}
+
+
+def test_a_subfolder_agent_is_not_asked_for_its_siblings_keys():
+    connectors, required_files, scanned = detect_source_credentials(
+        _source_tarball(_MONOREPO), subfolder="examples/chat/server"
+    )
+
+    assert connectors == []
+    assert required_files == []
+    assert scanned == 4
+
+
+def test_a_subfolder_agent_reads_the_files_directly_above_it():
+    files = {
+        **_MONOREPO,
+        "examples/chat/pyproject.toml": 'dependencies = ["livekit-agents"]\n',
+    }
+
+    connectors, _required, _scanned = detect_source_credentials(
+        _source_tarball(files), subfolder="examples/chat/server/"
+    )
+
+    assert connectors == ["livekit"]
+
+
+def test_without_a_subfolder_the_whole_source_is_read():
+    connectors, required_files, scanned = detect_source_credentials(
+        _source_tarball(_MONOREPO)
+    )
+
+    assert connectors == ["livekit"]
+    assert required_files == ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+    assert scanned == len(_MONOREPO) - 1
+
+
 def test_dispatch_payload_mirrors_only_livekit_url():
     payload = {"agent": {"connector": "livekit", "config": {}}}
 
@@ -1242,7 +1310,7 @@ def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
 
 @pytest.mark.django_db
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
-    organization, monkeypatch
+    organization, monkeypatch, memory_storage
 ):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="source-gateway"
@@ -1255,6 +1323,9 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
         lambda: SimpleNamespace(
             credential=lambda _: nullcontext("installation-secret-token")
         ),
+    )
+    monkeypatch.setattr(
+        "integrations.services.github_app.installation_connected", lambda **_: True
     )
 
     def run(command, **kwargs):
@@ -1292,6 +1363,7 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
         names = set(tar.getnames())
     assert "source/agent.py" in names
     assert all(".git" not in name for name in names)
+    assert list(memory_storage.objects.values()) == [archive]
 
 
 class _Filesystem:
@@ -1881,6 +1953,24 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
     assert job.attempts.count() == 1
 
 
+_ENTRYPOINTS = (
+    "python -m fi.alk.harness.hosted_authoring_entrypoint ",
+    "python -m fi.alk.harness.hosted_entrypoint ",
+)
+
+
+def assert_only_the_entrypoints_are_harness_steps(steps):
+    """In every chain the steps that start an agent-learning-kit entrypoint, and no others, are
+    harness steps, and the run's entrypoint is the last one: without the grant it would run every
+    customer process as one fixed user, without a word."""
+    assert steps[-1].harness
+    assert steps[-1].command.startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    for step in steps:
+        assert step.harness == any(entry in step.command for entry in _ENTRYPOINTS), (
+            step.command
+        )
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("unrestricted", [False, True])
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
@@ -1956,6 +2046,18 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    # Only the two agent-learning-kit entrypoints may run each customer process as its own user:
+    # the bundle author between them holds no such means.
+    request = client.sandbox.process.session_request
+    assert_only_the_entrypoints_are_harness_steps(request.steps)
+    harness = [step.command for step in request.steps if step.harness]
+    assert len(harness) == 2
+    assert harness[0].startswith("if [ ! -f /work/authoring/contract.json ]; then ")
+    assert "python -m fi.alk.harness.hosted_authoring_entrypoint " in harness[0]
+    assert harness[1].startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    assert [step for step in request.steps if "bundle_author_v2" in step.command] == [
+        step for step in request.steps if not step.harness
+    ]
     assert (
         client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
         == "gemini-3.7-flash"
@@ -2832,10 +2934,25 @@ def test_reconcile_waits_when_daytona_deletion_is_already_in_progress(
     assert attempt.terminal_failure["code"] == "sandbox_unreachable"
 
 
+_NO_FILE = object()  # an older guest image writes no cause file
+
+
 @pytest.mark.django_db
-@pytest.mark.parametrize("exit_code", [3, 78])
+@pytest.mark.parametrize(
+    "exit_code,guest_cause,stored",
+    [
+        (3, _NO_FILE, None),
+        (78, _NO_FILE, "unknown"),
+        (78, None, "unknown"),
+        (78, "agent_exited_before_ready", "agent_exited_before_ready"),
+        (78, "chat_target_timeout", "chat_target_timeout"),
+        (78, "dependency_not_ready_in_time", "dependency_not_ready_in_time"),
+        (78, "RuntimeError: a held-back case", "unknown"),
+        (78, ["agent_exited_before_ready"], "unknown"),
+    ],
+)
 def test_reconcile_terminal_and_authoring_exits_never_retry(
-    organization, monkeypatch, exit_code
+    organization, monkeypatch, exit_code, guest_cause, stored
 ):
     from simulate.services.hosted_harness import record_cleanup
 
@@ -2870,18 +2987,472 @@ def test_reconcile_terminal_and_authoring_exits_never_retry(
 
     with acquire:
         attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
-    monkeypatch.setattr(
-        gateway, "inspect", lambda _: {"exit_code": exit_code, "logs": ""}
-    )
+    observation = {"exit_code": exit_code, "logs": ""}
+    if guest_cause is not _NO_FILE:
+        observation["failure_cause"] = guest_cause
+    monkeypatch.setattr(gateway, "inspect", lambda _: observation)
     assert gateway.reconcile_completed(attempt).state != (
         HostedHarnessJob.State.RETRY_WAIT
     )
     assert captured["retry_pending"] is False
 
+    attempt.refresh_from_db()
+    assert (attempt.terminal_failure or {}).get("cause") == stored
     if exit_code == 78:
-        attempt.refresh_from_db()
         assert attempt.terminal_failure["domain"] == "environment"
         assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
+
+
+@pytest.mark.parametrize(
+    "exit_code,result,cause",
+    [
+        (0, '{"cause": "agent_not_ready_in_time"}', "agent_not_ready_in_time"),
+        (0, '{"cause": null}', None),
+        (1, "", None),  # an older guest image wrote no file
+        (0, "not json", None),
+        (0, '["agent_exited_before_ready"]', None),
+    ],
+)
+def test_guest_failure_cause_is_a_bounded_read_that_never_raises(
+    exit_code, result, cause
+):
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(exit_code=exit_code, result=result)
+
+    sandbox = SimpleNamespace(process=SimpleNamespace(exec=run))
+    attempt = SimpleNamespace(id="attempt-1")
+
+    assert HostedHarnessGateway._guest_failure_cause(attempt, sandbox) == cause
+    assert commands == ["head -c 512 /run/futureagi/failure-cause.json 2>/dev/null"]
+
+
+def test_guest_failure_cause_reads_none_when_the_provider_fails():
+    def run(command, **kwargs):
+        raise TimeoutError("toolbox unavailable")
+
+    sandbox = SimpleNamespace(process=SimpleNamespace(exec=run))
+
+    assert (
+        HostedHarnessGateway._guest_failure_cause(
+            SimpleNamespace(id="attempt-1"), sandbox
+        )
+        is None
+    )
+
+
+def _refusal(**overrides):
+    return {
+        "domain": "agent",
+        "stage": "understanding_agent",
+        "code": "agent_type_unsupported",
+        "message": "browser agents are not supported yet",
+        "retryable": False,
+        "details": {"agent_type": "browser"},
+        **overrides,
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("refusal_file", "expected_code", "expected_retry"),
+    [
+        (_refusal(), "agent_type_unsupported", False),
+        (
+            _refusal(code="subfolder_not_found", stage="acquiring_source"),
+            "subfolder_not_found",
+            False,
+        ),
+        (
+            _refusal(code="source_unreachable", retryable=True),
+            "source_unreachable",
+            False,
+        ),
+        (
+            _refusal(
+                domain="infrastructure",
+                stage="acquiring_source",
+                code="source_unreachable",
+                retryable=True,
+            ),
+            "source_unreachable",
+            True,
+        ),
+        (
+            _refusal(domain="artifact", code="artifact_unreadable"),
+            "artifact_unreadable",
+            False,
+        ),
+        (_refusal(retryable="no"), "guest_crashed", True),
+        (_refusal(domain="nowhere"), "guest_crashed", True),
+        ("invalid", "guest_crashed", True),
+        (None, "guest_crashed", True),
+    ],
+)
+def test_reconcile_reads_the_refusal_file_before_the_exit_code(
+    organization, monkeypatch, refusal_file, expected_code, expected_retry
+):
+    from simulate.services.hosted_harness import record_cleanup
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="refusal-gateway")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 1, "logs": "", "refusal_file": refusal_file},
+    )
+
+    gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.FAILED
+    assert attempt.terminal_failure["code"] == expected_code
+    assert captured["retry_pending"] is expected_retry
+    if expected_code != "guest_crashed":
+        assert attempt.terminal_failure["domain"] == refusal_file["domain"]
+        assert attempt.terminal_failure["stage"] == refusal_file["stage"]
+        assert attempt.terminal_failure["message"] == refusal_file["message"]
+        assert attempt.terminal_failure["retryable"] is refusal_file["retryable"]
+        assert attempt.terminal_failure["details"] == refusal_file["details"]
+    else:
+        assert attempt.terminal_failure["domain"] == "infrastructure"
+
+
+@pytest.mark.django_db
+def test_a_failure_the_platform_set_is_not_retried_for_a_retryable_refusal(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import record_cleanup
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-refusal")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    kept = {
+        "domain": "agent",
+        "stage": "running",
+        "code": "credentials_rejected",
+        "message": "The agent's credentials were rejected",
+        "details": {"set_by": "platform"},
+    }
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_failure=kept
+    )
+    attempt.refresh_from_db()
+    refusal = _refusal(
+        domain="infrastructure",
+        stage="acquiring_source",
+        code="source_unreachable",
+        retryable=True,
+    )
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 1, "logs": "", "refusal_file": refusal},
+    )
+
+    gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "credentials_rejected"
+    assert captured["retry_pending"] is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("refusal_file", "marks_cache_failed"),
+    [
+        (_refusal(), False),
+        (_refusal(code="subfolder_not_found", stage="acquiring_source"), False),
+        ("unreadable", False),
+        (None, True),
+    ],
+)
+def test_only_a_runtime_validation_failure_marks_the_bundle_cache_failed(
+    organization, monkeypatch, refusal_file, marks_cache_failed
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="exit78-cache")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    monkeypatch.setattr(gateway, "_delete_and_record", lambda *_, **__: None)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 78, "logs": "", "refusal_file": refusal_file},
+    )
+
+    with patch(
+        "simulate.services.harness_versioning.assembly.mark_failed"
+    ) as mark_failed:
+        gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.FAILED
+    assert mark_failed.called is marks_cache_failed
+    if isinstance(refusal_file, dict):
+        assert attempt.terminal_failure["code"] == refusal_file["code"]
+    else:
+        assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
+
+
+@pytest.mark.django_db
+def test_reconcile_keeps_a_failure_the_platform_set_over_a_crash_exit(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import (
+        _fail_attempt_from_platform,
+        record_cleanup,
+    )
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-gateway")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    _fail_attempt_from_platform(
+        attempt,
+        stage="understanding_agent",
+        code="subfolder_ignored",
+        message="the harness read the repository root",
+    )
+    monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 1, "logs": ""})
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "subfolder_ignored"
+    assert job.failure["code"] == "subfolder_ignored"
+    assert job.state == HostedHarnessJob.State.FAILED
+
+
+@pytest.mark.django_db
+def test_a_failure_the_platform_set_takes_no_guest_cause_at_exit_78(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import (
+        _fail_attempt_from_platform,
+        record_cleanup,
+    )
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-cause")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    monkeypatch.setattr(
+        gateway,
+        "_delete_and_record",
+        lambda attempt, *, retry_pending=False: record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        ),
+    )
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    _fail_attempt_from_platform(
+        attempt,
+        stage="understanding_agent",
+        code="subfolder_ignored",
+        message="the harness read the repository root",
+    )
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {
+            "exit_code": 78,
+            "logs": "",
+            "failure_cause": "agent_exited_before_ready",
+        },
+    )
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # The platform's failure keeps its own words: a guest cause would replace them on every reader.
+    assert attempt.terminal_failure["code"] == "subfolder_ignored"
+    assert "cause" not in attempt.terminal_failure
+    assert "cause" not in job.failure
+
+
+def test_read_failure_file_tells_absent_from_malformed():
+    from simulate.services.hosted_harness_gateway import read_failure_file
+    from simulate.services.hosted_sandbox import (
+        SandboxFileNotFoundError,
+        SandboxProviderError,
+    )
+
+    def _sandbox(body):
+        def download(path, timeout=None):
+            assert path == "/work/authoring/failure.json"
+            if body is None:
+                raise FileNotFoundError(path)
+            if isinstance(body, Exception):
+                raise body
+            return body
+
+        return SimpleNamespace(fs=SimpleNamespace(download_file=download))
+
+    assert read_failure_file(_sandbox(None)) is None
+    assert read_failure_file(_sandbox(SandboxFileNotFoundError("gone"))) is None
+    assert (
+        read_failure_file(_sandbox(SandboxProviderError("timed out"))) == "unreadable"
+    )
+    assert read_failure_file(_sandbox(b"")) is None
+    assert read_failure_file(_sandbox(b"not json")) == "invalid"
+    assert read_failure_file(_sandbox(b"\xff\xfe")) == "invalid"
+    assert read_failure_file(_sandbox(json.dumps(_refusal()).encode())) == _refusal()
+
+
+@pytest.mark.django_db
+def test_inspect_reads_the_refusal_file_only_on_a_failed_exit(
+    organization, monkeypatch
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="inspect-refusal"
+    )
+    attempt = register_attempt(
+        job.id,
+        endpoint_base_url="https://platform.example.com",
+        provider_ref="sandbox-1",
+        snapshot_name="alk-hosted-v1",
+    ).attempt
+    client = _Daytona()
+    process = client.sandbox.process
+    reads = []
+
+    def download(path, timeout=None):
+        reads.append(path)
+        if path == "/work/authoring/failure.json":
+            return json.dumps(_refusal()).encode()
+        return b"command-1"
+
+    client.sandbox.fs.download_file = download
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedHarnessGateway._capture_diagnostics",
+        lambda *args, **kwargs: None,
+    )
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+
+    assert "refusal_file" not in gateway.inspect(attempt)
+    process.command_exit_code = 0
+    process.command_status = "finished"
+    assert "refusal_file" not in gateway.inspect(attempt)
+    assert "/work/authoring/failure.json" not in reads
+
+    process.command_exit_code = 1
+    observation = gateway.inspect(attempt)
+
+    assert observation["exit_code"] == 1
+    assert observation["refusal_file"] == _refusal()
 
 
 @pytest.mark.django_db
@@ -3911,6 +4482,13 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
         == "/work/builder-cost.json"
     )
     assert client.deleted is False
+    # What the builder writes after the lock-down stays the harness's own: the workspace is
+    # closed before chat starts, and chat writes with a private umask.
+    prepare = next(
+        call for call in client.sandbox.process.exec_calls if "/work/authoring" in call
+    )
+    assert "chmod -R go-rwx /work/authoring" in prepare
+    assert client.sandbox.process.session_request.command.startswith("umask 077 && ")
 
 
 @pytest.mark.django_db
@@ -5894,7 +6472,9 @@ class _MemoryStorage:
     def set_bucket_policy(self, _bucket, _policy):
         pass
 
-    def put_object(self, bucket_name, object_name, data, length, content_type=None):
+    def put_object(
+        self, bucket_name, object_name, data, length, content_type=None, metadata=None
+    ):
         self.objects[object_name] = data.read(length)
 
     def get_object(self, _bucket, object_name):
@@ -6006,6 +6586,197 @@ def test_a_stale_adjustment_save_keeps_the_observability_refusal(organization):
         ("adj-1", "applied"),
         ("adj-2", "pending"),
     ]
+
+
+class _Stopped(Exception):
+    pass
+
+
+def _launch_until_dispatch(organization, monkeypatch, key, **metadata):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key=key)
+    if metadata:
+        job.payload = {
+            **job.payload,
+            "metadata": {**(job.payload.get("metadata") or {}), **metadata},
+        }
+        job.save(update_fields=["payload", "updated_at"])
+    asked = []
+
+    def seed(seeded_job):
+        asked.append(seeded_job.id)
+        return b'{"agent":{"name":"support"}}'
+
+    def stop(*_args, **_kwargs):
+        raise _Stopped
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._seed_contract_for", seed
+    )
+    monkeypatch.setattr(
+        "simulate.services.harness_agent_versions.stamp_built_commit", stop
+    )
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+            return_value=(b"archive", ""),
+        ),
+        pytest.raises(_Stopped),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    job.refresh_from_db()
+    return job, asked
+
+
+@pytest.mark.django_db
+def test_a_build_is_handed_its_versions_reading(organization, settings, monkeypatch):
+    settings.ALK_HOSTED_BUILDER_SESSION = True
+
+    job, asked = _launch_until_dispatch(organization, monkeypatch, "seed-build")
+
+    assert asked == [job.id]
+    assert job.payload["metadata"]["seeded_contract"] is True
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "builder_session, metadata",
+    [(True, {"simulation_only": True}), (False, {})],
+)
+def test_only_a_build_with_a_harness_is_handed_a_reading(
+    organization, settings, monkeypatch, builder_session, metadata
+):
+    settings.ALK_HOSTED_BUILDER_SESSION = builder_session
+
+    job, asked = _launch_until_dispatch(
+        organization, monkeypatch, f"seed-skip-{builder_session}", **metadata
+    )
+
+    assert asked == []
+    assert "seeded_contract" not in (job.payload.get("metadata") or {})
+
+
+def _seed_job():
+    return SimpleNamespace(id=uuid.uuid4(), payload={}, agent_version_id=uuid.uuid4())
+
+
+@pytest.mark.parametrize(
+    "contract, seeded",
+    [
+        ({"agent": {"name": "support"}}, True),
+        ({"blob": "x" * (5 * 1_048_576)}, False),
+        ({"greeting": "\u00e9" * (2 * 1_048_576)}, True),
+    ],
+)
+def test_a_seed_over_the_contract_limit_is_not_handed_over(
+    settings, monkeypatch, contract, seeded
+):
+    from simulate.services.agent_contracts import contract_bytes
+
+    settings.HARNESS_SEED_CONTRACT_ENABLED = True
+    monkeypatch.setattr(
+        "simulate.services.agent_contracts.stored_version_contract",
+        lambda _version_id: contract,
+    )
+
+    body = _seed_contract_for(_seed_job())
+
+    assert body == (contract_bytes(contract) if seeded else None)
+
+
+def test_no_seed_is_read_while_seeding_is_off(settings, monkeypatch):
+    settings.HARNESS_SEED_CONTRACT_ENABLED = False
+    monkeypatch.setattr(
+        "simulate.services.agent_contracts.stored_version_contract",
+        lambda _version_id: pytest.fail("the contract must not be read"),
+    )
+
+    assert _seed_contract_for(_seed_job()) is None
+
+
+class _NamedUploads:
+    def __init__(self):
+        self.objects = {}
+        self.metadata = {}
+
+    def bucket_exists(self, _bucket):
+        return False
+
+    def make_bucket(self, _bucket):
+        pass
+
+    def set_bucket_policy(self, _bucket, _policy):
+        pass
+
+    def put_object(
+        self, bucket_name, object_name, data, length, content_type=None, metadata=None
+    ):
+        self.objects[object_name] = data.read(length)
+        self.metadata[object_name] = dict(metadata or {})
+
+    def stat_object(self, _bucket, object_name):
+        if object_name not in self.objects:
+            raise S3Error(None, "NoSuchKey", "missing", object_name, "req", "host")
+        return SimpleNamespace(
+            metadata={
+                f"X-Amz-Meta-{name.title()}": value
+                for name, value in self.metadata[object_name].items()
+            }
+        )
+
+
+@pytest.fixture
+def named_uploads(monkeypatch):
+    from tfc.utils import storage_client
+
+    fake = _NamedUploads()
+    monkeypatch.setattr(storage_client, "_client", fake)
+    return fake
+
+
+@pytest.mark.parametrize("name", ["harbor-agent", "Harbor Hotels/agent é"])
+def test_an_upload_keeps_the_name_of_its_folder(named_uploads, name):
+    organization = SimpleNamespace(id=uuid.uuid4())
+
+    stored = store_source_archive(
+        organization, [io.BytesIO(b"print('agent')")], ["agent.py"], name
+    )
+
+    key = _source_object_key(organization.id, stored["source_id"])
+    assert named_uploads.metadata[key] == {"folder-name": quote(name)}
+    assert named_uploads.metadata[key]["folder-name"].isascii()
+    assert stored_upload_name(organization.id, stored["source_id"]) == name
+
+
+def test_an_unnamed_upload_is_stored_as_the_uploaded_agent(named_uploads):
+    organization = SimpleNamespace(id=uuid.uuid4())
+
+    stored = store_source_archive(
+        organization, [io.BytesIO(b"print('agent')")], ["agent.py"], ""
+    )
+
+    assert stored_upload_name(organization.id, stored["source_id"]) == (
+        "uploaded-agent"
+    )
+
+
+def test_an_upload_without_a_name_or_out_of_reach_has_none(named_uploads):
+    organization_id = uuid.uuid4()
+    older = str(uuid.uuid4())
+    named_uploads.objects[_source_object_key(organization_id, older)] = b"archive"
+    named_uploads.metadata[_source_object_key(organization_id, older)] = {}
+
+    assert stored_upload_name(organization_id, older) is None
+    assert stored_upload_name(organization_id, uuid.uuid4()) is None
 
 
 def _ledger(stage: str, usd: float) -> bytes:

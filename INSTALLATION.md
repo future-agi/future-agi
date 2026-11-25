@@ -448,10 +448,15 @@ kubectl -n futureagi port-forward svc/futureagi-minio 9005:9000 &          # fil
 kubectl -n futureagi exec -it deploy/futureagi-backend -c backend -- python manage.py create_user
 ```
 
-Then open <http://localhost:3000>. SDKs on this machine send traces with
-`FI_BASE_URL=http://localhost:4318`, as in the README's Quickstart. On Docker
-Desktop, k3s or OrbStack, `examples/local.yaml` publishes the same ports on
-localhost without port-forwards.
+Then open <http://localhost:3000>. SDKs on this machine use
+`FI_BASE_URL=http://localhost:8000` (the API) and
+`FI_TRACES_URL=http://localhost:4318` (the trace collector), as in the README's
+Quickstart. `FI_TRACES_URL` needs fi-instrumentation-otel 1.5.0+
+(`pip install -U "fi-instrumentation-otel>=1.5.0"`) or @traceai/fi-core 1.4.0+
+(`npm install "@traceai/fi-core@^1.4.0"`); with an older SDK, set
+`FI_BASE_URL` to the collector URL instead. On Docker Desktop, k3s or OrbStack,
+`examples/local.yaml` publishes the same ports on localhost without
+port-forwards.
 
 Verify the chart before you install it: it is signed keylessly by the
 release workflow and carries a build provenance attestation. The chart
@@ -800,7 +805,8 @@ For a domain name, also set `BASE_URL`, `FRONTEND_URL` and `APP_URL`
 ([Public URLs](https://docs.futureagi.com/docs/self-hosting/configuration/reference#public-urls)). To send traces from SDKs on
 other machines, put the proxy in front of the collector's `127.0.0.1:4318` the
 same way and set `FI_COLLECTOR_PUBLIC_URL` to its URL: the in-app SDK snippet
-and the setup screen then show it as `FI_BASE_URL`.
+and the setup screen then show it as `FI_TRACES_URL`, next to the API's URL
+(`BASE_URL`, else `VITE_HOST_API`) as `FI_BASE_URL`.
 
 ---
 
@@ -863,8 +869,10 @@ Image by image (ports, users, health checks, sizes): [Container images](https://
 | `peerdb-*` (7 containers)                                | Postgres → ClickHouse change data capture.                                                                                                                                                                                                                                                                                                                                                 |
 
 The one-shot jobs (`postgres-schema-bootstrap`, `clickhouse-native-bootstrap`,
-`clickhouse-cdc-bootstrap`, `peerdb-temporal-init`, `peerdb-init` and four for
-the catalog) set up the schema, the mirrors and the catalog, then exit.
+`clickhouse-cdc-bootstrap`, `metrics-schema-bootstrap`, `peerdb-temporal-init`,
+`peerdb-init` and four for the catalog) set up the schema, the mirrors and the
+catalog, then exit. `metrics-schema-bootstrap` changes nothing unless
+`METRICS_ENABLED=1` is set in `.env`.
 
 ---
 

@@ -3,6 +3,11 @@ import json
 from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorObjectSerializer,
+    ApiErrorResponseSerializer,
+)
+from tfc.utils.serializer_fields import JsonValueField
 from tfc.utils.ssrf_guard import SsrfBlocked
 from tfc.utils.webhook_delivery import validate_webhook_url
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -24,6 +29,21 @@ from tracer.serializers.filters import (
 from tracer.utils.monitor import uses_choice_threshold
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
+
+
+class UserAlertMonitorCreateResponseSerializer(serializers.Serializer):
+    """The existing HTTP 200 GeneralMethods string-result envelope, not a model."""
+
+    status = serializers.ChoiceField(choices=[True])
+    result = serializers.CharField()
+
+
+class UserAlertMonitorEntitlementResponseSerializer(ApiErrorResponseSerializer):
+    """FeatureUnavailable as emitted by custom_exception_handler before creation."""
+
+    error = ApiErrorObjectSerializer()  # type: ignore[assignment]  # nested object replaces the base string field
+    upgrade_required = serializers.BooleanField()
+    upgrade_cta = JsonValueField(required=False)
 
 
 class UserAlertMonitorListQuerySerializer(serializers.Serializer):
@@ -88,13 +108,21 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     )
     name = serializers.CharField(required=True)
     metric_name = serializers.SerializerMethodField()
+    # Switching from email to webhook explicitly clears the email channel.
+    notification_emails = serializers.ListField(
+        child=serializers.EmailField(), required=False, allow_empty=True
+    )
 
     class Meta:
         model = UserAlertMonitor
         fields = "__all__"
-        read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
-        # Switching from email to webhook explicitly clears the email channel.
-        extra_kwargs = {"notification_emails": {"allow_empty": True}}
+        read_only_fields = (
+            "last_checked_at",
+            "last_derived_run_id",
+            "logs",
+            "deleted",
+            "deleted_at",
+        )
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
@@ -156,6 +184,52 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
         metric = data.get("metric")
         project = data.get("project")
         threshold_metric_value = data.get("threshold_metric_value")
+        if data.get("alert_when", "point") == "confident" and (
+            metric_type != MonitorMetricTypeChoices.DERIVED_METRIC.value
+            or data.get("threshold_type") != "static"
+            or data.get("threshold_operator") not in ("greater_than", "less_than")
+        ):
+            raise serializers.ValidationError(
+                {
+                    "alert_when": "Confidence gating requires a derived metric with a static above/below threshold."
+                }
+            )
+
+        if metric_type == MonitorMetricTypeChoices.DERIVED_METRIC.value:
+            from uuid import UUID
+
+            from tracer.models.derived_metric import DerivedMetric
+
+            try:
+                metric_id = UUID(str(metric))
+            except (ValueError, TypeError) as exc:
+                raise serializers.ValidationError(
+                    {"metric": "Select a derived metric."}
+                ) from exc
+            workspace = data.get("workspace") or getattr(
+                self.instance, "workspace", None
+            )
+            if not DerivedMetric.objects.filter(
+                pk=metric_id,
+                project=project,
+                workspace=workspace,
+                organization=data.get("organization"),
+                deleted=False,
+            ).exists():
+                raise serializers.ValidationError(
+                    {
+                        "metric": "Derived metric is not available in this project/workspace."
+                    }
+                )
+            if (
+                data.get("threshold_type") != "static"
+                or data.get("filters")
+                or threshold_metric_value
+            ):
+                raise serializers.ValidationError(
+                    "Derived metrics use static thresholds and the filters frozen into their runs."
+                )
+            return False
 
         if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if not metric:

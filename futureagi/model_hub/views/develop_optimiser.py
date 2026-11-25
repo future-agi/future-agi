@@ -2,6 +2,7 @@ import concurrent.futures
 import json
 import re
 import time
+from typing import Any, NoReturn
 
 import pandas as pd
 import structlog
@@ -64,11 +65,11 @@ class DevelopOptimizer:
         self.dataset = self.optimize_dataset.dataset
         self.messages = self.optimize_dataset.messages
         if (
-            self.optimize_dataset.column_id
+            self.optimize_dataset.column is not None
             and self.optimize_dataset.column.dataset_id != self.dataset.id
         ):
             raise ValueError("Optimization column must belong to its dataset.")
-        self.api_call_log_row = None
+        self.api_call_log_row: Any = None
         if not avoid_cost:
             self._calculate_tokens_and_deduct()
         self.column = self.optimize_dataset.column
@@ -85,7 +86,7 @@ class DevelopOptimizer:
             }
         self.old_column = None
         self.new_column = None
-        self.prompt = None
+        self.prompt: str | None = None
 
     def _calculate_tokens_and_deduct(self):
         try:
@@ -236,7 +237,7 @@ class DevelopOptimizer:
     def _get_optimization_dataset(self) -> OptimizationDataset:
         return OptimizationDataset.objects.filter(id=self.optim_obj_id).get()
 
-    def _handle_failure(self, error_message: str):
+    def _handle_failure(self, error_message: str) -> NoReturn:
         self.optimize_dataset.status = StatusType.FAILED.value
         self.optimize_dataset.optimized_k_prompts = [error_message]
         self.optimize_dataset.save()

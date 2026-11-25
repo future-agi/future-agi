@@ -831,10 +831,22 @@ class ClickHouseFilterBuilder:
         eval_filter_metadata: dict[str, EvalFilterMetadata] | None = None,
         resolved_candidate_sessions_table: str | None = None,
         eval_count_mode: bool = False,
+        metric_filter_context: str | None = None,
+        metric_read_scopes: dict | None = None,
+        metric_candidates=None,
+        metric_outer_column: str | None = None,
     ) -> None:
         # Observe lists opt into newest-completed tiles. Session/user/dashboard
         # consumers retain matching across all live attempts by default.
         self.eval_count_mode = eval_count_mode
+        # Native planners opt in only after capturing pins on one committed
+        # manifest and canonical pre-page candidates. No fallback to the head
+        # or page ids. metric_outer_column names the planner's canonical
+        # (remap-resolved) conversation id column; there is no default.
+        self.metric_filter_context = metric_filter_context
+        self.metric_read_scopes = metric_read_scopes or {}
+        self.metric_candidates = metric_candidates
+        self.metric_outer_column = metric_outer_column
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
         self.query_mode = query_mode
@@ -1576,6 +1588,14 @@ class ClickHouseFilterBuilder:
             config = f.get("filter_config") or f.get("filterConfig") or {}
             col_type = config.get("col_type") or config.get("colType") or self.NORMAL
 
+            if (
+                col_type in {"METRIC_FIELD", "metric"}
+                or str(col_id or "").startswith("metric_field:")
+                or str(f.get("property_id") or "").startswith("metric_field:")
+            ):
+                conditions.append(self._build_metric_field_condition(f))
+                continue
+
             if not col_id or not config:
                 continue
 
@@ -1654,6 +1674,70 @@ class ClickHouseFilterBuilder:
 
         where = " AND ".join(conditions) if conditions else ""
         return where, self._params
+
+    # A bare column or alias.column, never an expression.
+    _METRIC_OUTER_COLUMN = re.compile(
+        r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?\Z"
+    )
+
+    def _build_metric_field_condition(self, item: dict) -> str:
+        from tracer.services.derived_metrics.predicates import (
+            MetricFilterError,
+            build_metric_membership,
+        )
+
+        identity = item.get("column_id")
+        scope = self.metric_read_scopes.get(identity)
+        if (
+            scope is None
+            or self.metric_candidates is None
+            or not self.metric_filter_context
+        ):
+            raise MetricFilterError(
+                "Metric filters require a pinned native pre-page list planner.",
+                "metric_filter_planner_unavailable",
+            )
+        column = self.metric_outer_column
+        if not isinstance(column, str) or not self._METRIC_OUTER_COLUMN.fullmatch(
+            column
+        ):
+            raise MetricFilterError(
+                "Metric filters require the planner's canonical id column.",
+                "metric_filter_planner_unavailable",
+            )
+        # Every metric filter in one request reads one committed manifest.
+        # Pins are per definition, so a refresh published between two captures
+        # would otherwise mix heads in a single list. This guards one builder;
+        # a planner with several builders must share one scopes mapping.
+        manifests = {
+            str(other.pin.manifest_id) for other in self.metric_read_scopes.values()
+        }
+        if len(manifests) != 1:
+            raise MetricFilterError(
+                "Metric filters in one request must read one committed manifest.",
+                "metric_filter_pin_mismatch",
+            )
+        # Session/user textual IDs may collide across projects. Organization
+        # planners must compile per-project branches, not reuse a bare ID set.
+        if self.project_ids != [scope.metadata.project_id]:
+            raise MetricFilterError(
+                "Metric filters require a single-project classifier branch.",
+                "metric_filter_planner_unavailable",
+            )
+
+        def bind(value):
+            parameter = self._next_param("metric")
+            self._params[parameter] = value
+            return f"%({parameter})s"
+
+        subquery = build_metric_membership(
+            item,
+            scope=scope,
+            candidates=self.metric_candidates,
+            context=self.metric_filter_context,
+            bind=bind,
+        )
+        return f"toString({column}) IN ({subquery})"
 
     def translate_sort(
         self,
@@ -1893,16 +1977,60 @@ class ClickHouseFilterBuilder:
     def _enduser_dimension_id_subquery(self, inner: str) -> str:
         """Return physical end-user IDs matching one dimension predicate.
 
-        The legacy dimension has no ID-remap bridge.  CH25 overrides this hook
-        so a curated survivor expands to every physical ID that spans may carry
-        during the dual-ID cutover.
+        The dimension stays keyed by the old ID while spans can straddle the
+        old-ID/new-ID cutover, so the matched IDs are expanded through
+        ``end_user_id_remap`` to every ID their group's spans may carry, the
+        same way the list and analytics readers resolve a user. CH25
+        overrides this hook to read its own ``end_users`` dimension.
         """
 
-        return (
-            f"SELECT {self._ENDUSER_DIM_ID_COL} "
+        return self._expand_end_user_ids_through_remap(
+            f"SELECT DISTINCT {self._ENDUSER_DIM_ID_COL} AS end_user_id "
             f"FROM {self._ENDUSER_DIM_TABLE} FINAL "
             f"WHERE {inner} AND {self._ENDUSER_DIM_NOT_DELETED}"
         )
+
+    @staticmethod
+    def _expand_end_user_ids_through_remap(matching_ids: str) -> str:
+        """Expand matched end-user IDs to every old/new ID of their remap group.
+
+        ``matching_ids`` selects one ``end_user_id`` column. Only the remap
+        groups touched by those IDs are read, never a tenant-global window over
+        the remap table. The direct arm keeps users that have no remap row.
+        """
+
+        return f"""
+            WITH
+            matching_end_user_ids AS (
+                {matching_ids}
+            ),
+            matching_end_user_group_ids AS (
+                SELECT DISTINCT remap_match.new_id
+                FROM end_user_id_remap AS remap_match FINAL
+                WHERE remap_match.old_id IN (
+                    SELECT end_user_id FROM matching_end_user_ids
+                )
+                   OR remap_match.new_id IN (
+                    SELECT end_user_id FROM matching_end_user_ids
+                )
+            ),
+            expanded_matching_end_user_ids AS (
+                SELECT arrayJoin(arrayDistinct(arrayConcat(
+                    groupArray(remap.old_id),
+                    [remap.new_id]
+                ))) AS expanded_end_user_id
+                FROM end_user_id_remap AS remap FINAL
+                WHERE remap.new_id IN (
+                    SELECT new_id FROM matching_end_user_group_ids
+                )
+                GROUP BY remap.new_id
+            )
+            SELECT end_user_id AS expanded_end_user_id
+            FROM matching_end_user_ids
+            UNION DISTINCT
+            SELECT expanded_end_user_id
+            FROM expanded_matching_end_user_ids
+        """
 
     def _build_enduser_string_subquery(
         self,

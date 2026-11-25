@@ -179,6 +179,27 @@ describe("ScenarioEditor test conditions", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
+  it("hides the test conditions where the server takes none and the scenario has none", () => {
+    render(
+      <ScenarioEditor
+        open
+        row={ROW}
+        env={ENV}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        scenarioEditing={{
+          ...EDITING,
+          editable_fields: ["tests"],
+          rework_fields: [],
+        }}
+      />,
+    );
+    expect(
+      screen.queryByText("Hidden · test conditions"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("test-conditions")).not.toBeInTheDocument();
+  });
+
   it("names an added fault by its tool, with the route under it", () => {
     openEditor();
     fireEvent.click(

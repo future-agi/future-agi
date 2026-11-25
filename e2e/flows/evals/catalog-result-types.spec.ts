@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import { request, type Request, type Response } from '@playwright/test';
+import { ApiError } from '../../lib/api-client';
 import { test, expect } from '../../lib/mock-model-fixtures';
 import { sendTrace, type SeededTrace } from '../../lib/otlp';
 import { POLL } from '../../lib/state-probe';
@@ -668,7 +670,66 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
       const expectedIds = selection.indexes.map(i => seeds[i].traceId).sort();
       complete(body, soft);
       check(body.result.table.map(r => r.trace_id).sort()).toEqual(expectedIds);
-      const replay = await actor.api.post<ListBody>(LIST, params);
+      const replay = await observeParityReplay(
+        () => actor.api.post<ListBody>(LIST, params),
+        phase => `parity-${f.key}-${selection.label}-${phase}`,
+        attach,
+        () => {
+          const outgoing = response.request(), headers = outgoing.headers();
+          const timing = outgoing.timing(), url = new URL(outgoing.url());
+          // Public TestActor credentials only, compared in memory. ApiClient does
+          // not expose its sent headers or successful response status/request ID;
+          // actor equality is NOT evidence of replay wire-header equality.
+          const scope = (value: string | undefined, expected: string) => ({
+            // Request.headers() is a public but potentially incomplete view.
+            present: value === undefined ? null : Boolean(value),
+            equalsActor: value === undefined ? null : value === expected,
+          });
+          const payloadHash = createHash('sha256').update(canonicalParityJSON(params)).digest('hex');
+          return {
+            payloadSHA256: payloadHash, replayPayloadSHA256: payloadHash,
+            payloadEqualityBasis: 'same_params_object_passed_to_ApiClient_post',
+            method: 'POST', path: LIST,
+            origin: new URL(actor.api.baseURL).origin === new URL(E2E.apiUrl).origin ? 'configured_api' : 'other',
+            browser: {
+              method: outgoing.method(), path: url.pathname === LIST ? LIST : 'unexpected_path',
+              origin: url.origin === new URL(E2E.apiUrl).origin ? 'configured_api' : 'other',
+              requestStartWallMs: timing.startTime >= 0 ? timing.startTime : null,
+              responseEndOffsetMs: timing.responseEnd >= 0 ? timing.responseEnd : null,
+              observedWallMs: Date.now(), observedMonotonicMs: performance.now(),
+              status: response.status(),
+              requestId: null, requestIdObservation: 'not_collected_header_values_omitted',
+              scope: { authorization: scope(headers.authorization, `Bearer ${actor.tokens.access}`),
+                organization: scope(headers['x-organization-id'], actor.organizationId),
+                workspace: scope(headers['x-workspace-id'], actor.workspaceId) },
+              ...parityResult(body, seeds.map(s => s.traceId)),
+            },
+            replayWire: { scopeEquality: 'unknown', status: null, requestId: null,
+              instrumentationNeeded: 'ApiClient public send observation of status, request ID and in-memory scope equality; no private-header access' },
+            // Only fixture-owned identities and the already checked selection.
+            // Unknown values are omitted, never persisted from arbitrary wire data.
+            syntheticRequest: {
+              project_id: params.project_id === projectId ? projectId : null,
+              page_number: Number.isSafeInteger(Number(params.page_number)) ? Number(params.page_number) : null,
+              page_size: Number.isSafeInteger(Number(params.page_size)) ? Number(params.page_size) : null,
+              cursorPresent: Boolean(params.cursor),
+              filters: requestFilters(outgoing).filter(item => item.column_id === f.configId).map(item => ({
+                column_id: f.configId,
+                property_id: item.property_id === `eval_config:${f.configId}` ? item.property_id : null,
+                filter_config: JSON.stringify(item.filter_config) === JSON.stringify(wanted) ? wanted : {
+                  col_type: item.filter_config.col_type === wanted.col_type ? wanted.col_type : null,
+                  filter_type: item.filter_config.filter_type === wanted.filter_type ? wanted.filter_type : null,
+                  filter_op: item.filter_config.filter_op === selection.op ? selection.op : null,
+                  filter_value: JSON.stringify(item.filter_config.filter_value) === JSON.stringify(selection.value) ? selection.value : null,
+                },
+              })),
+              source: params.source === 'traces' ? 'traces' : null,
+            },
+            expectedIds,
+          };
+        },
+        result => parityResult(result, seeds.map(s => s.traceId)),
+      );
       complete(replay, soft);
       check(replay.result.table.map(r => r.trace_id).sort()).toEqual(expectedIds);
       await (soft ? expect.soft : expect).poll(async () => (await traceCells.allTextContents()).map(t => t.trim()).sort(),
@@ -849,3 +910,78 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
     await req.dispose();
   }
 });
+
+// Diagnostic-only helpers. They never interpret a result for an assertion, send
+// a second request, or suppress/replace the error from the existing replay.
+function canonicalParityJSON(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalParityJSON).join(',')}]`;
+  if (value !== null && typeof value === 'object') return `{${Object.entries(value)
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonicalParityJSON(item)}`).join(',')}}`;
+  return JSON.stringify(value) ?? 'null';
+}
+
+function parityResult(body: ListBody, ownedIds: string[]) {
+  const metadata = body.result?.metadata;
+  const ids = Array.isArray(body.result?.table) ? body.result.table.map(row => row.trace_id) : [];
+  const flag = (value: unknown) => typeof value === 'boolean' ? value : null;
+  return {
+    nativeIds: ids.filter(id => ownedIds.includes(id)).sort(),
+    unownedIdCount: ids.filter(id => !ownedIds.includes(id)).length,
+    tablePresent: Array.isArray(body.result?.table),
+    completion: { has_more: flag(metadata?.has_more), next_cursor_present: Boolean(metadata?.next_cursor),
+      query_complete: flag(metadata?.query_complete),
+      query_status: ['complete', 'partial', 'error'].includes(metadata?.query_status) ? metadata.query_status : null,
+      query_error_present: metadata?.query_error_code == null ? false : true,
+      total_rows_is_lower_bound: flag(metadata?.total_rows_is_lower_bound) },
+  };
+}
+
+async function observeParityReplay<T>(send: () => Promise<T>, name: (phase: string) => string,
+  attach: (name: string, value: unknown) => Promise<void>, describe: () => Record<string, unknown>,
+  project: (result: T) => Record<string, unknown>): Promise<T> {
+  let context: Record<string, unknown>;
+  try { context = describe(); } catch { context = { projectionUnavailable: true }; }
+  let attachmentFailed = false;
+  const write = async (phase: string, event: Record<string, unknown>) => {
+    try {
+      let value = { schemaVersion: 1, ...context, ...event, attachmentFailed, truncated: false };
+      if (Buffer.byteLength(JSON.stringify(value), 'utf8') > 64 * 1024) {
+        // Only the nonessential projection is discarded; no test input, result
+        // or assertion is truncated. The terminal category/timing survives.
+        const { result: _result, ...essential } = event;
+        value = { schemaVersion: 1, ...essential, attachmentFailed, truncated: true,
+          projectionOmitted: 'diagnostic_size_limit' } as typeof value;
+      }
+      await attach(name(phase), value);
+    } catch { attachmentFailed = true; } // Diagnostic I/O must never mask send().
+  };
+  await write('before', { state: 'replay_not_started', wallMs: Date.now(), monotonicMs: performance.now() });
+  const startedWallMs = Date.now(), startedMonotonicMs = performance.now();
+  let terminal: Record<string, unknown> = { state: 'replay_call_pending' };
+  try {
+    const result = await send();
+    terminal = { state: 'replay_body_returned', httpStatus: null,
+      httpStatusUnavailable: 'ApiClient returns body only' };
+    try { terminal.result = project(result); } catch { terminal.resultProjectionUnavailable = true; }
+    return result;
+  } catch (error) {
+    // Read messages only to classify in memory; never attach an Error, message,
+    // stack, Playwright call log, response body, credential or credential hash.
+    terminal = { state: 'replay_threw', transportStage: 'unknown_inside_ApiClient',
+      httpStatus: null, errorCategory: 'unclassified' };
+    try {
+      const message = error instanceof Error ? error.message : '';
+      terminal.httpStatus = error instanceof ApiError ? error.status : null;
+      terminal.errorCategory = /socket hang up/i.test(message) ? 'socket_hang_up'
+        : /ECONNRESET/i.test(message) ? 'connection_reset'
+        : /ECONNREFUSED/i.test(message) ? 'connection_refused'
+        : /timeout|timed out/i.test(message) ? 'timeout'
+        : error instanceof ApiError ? 'http_error' : 'unclassified';
+    } catch { /* Even a failing diagnostic property getter cannot replace error. */ }
+    throw error;
+  } finally {
+    const endedMonotonicMs = performance.now();
+    await write('finally', { ...terminal, startedWallMs, startedMonotonicMs,
+      endedWallMs: Date.now(), endedMonotonicMs, elapsedMs: endedMonotonicMs - startedMonotonicMs });
+  }
+}

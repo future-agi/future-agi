@@ -37,6 +37,9 @@ import {
 } from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
+import ViewerLock from "../../../components/ViewerLock";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
@@ -61,6 +64,7 @@ import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
+import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
 
 /**
@@ -102,7 +106,7 @@ export default function RunDetail({
   // The open call, where it was opened from ("table", "analytics" or "link")
   // and, after a prev/next step, the table page it sits on so the table can
   // follow. Mirrored in `?rowId=`.
-  const { openCall, showCall } = useOpenCallParam({
+  const { openCall, showCall, openById } = useOpenCallParam({
     executionId,
     tableQuery,
     tableShown: tab === "tasks",
@@ -124,11 +128,13 @@ export default function RunDetail({
     live: identity?.status === "running",
     onStep: showCall,
   });
+  const openTask = callNav.openRow ?? openCall?.task ?? null;
   // The All Evaluations drawer and the table's eval column menus share one
   // edit form, one confirm and one re-run request, so a re-run sent from
   // either holds both.
   const evalRun = useRunEvalActions({ envId: env?.id, executionId });
   const rerunInRun = useRerunCallsInRun(executionId);
+  const access = useSimulationAccess();
 
   // The past self-improvement (optimization) runs for this execution — REAL,
   // scoped by test_execution_id. The Trials tab only appears once at least one
@@ -346,96 +352,124 @@ export default function RunDetail({
 
         {/* A backed run opens its evals, to grade again or add to; a
             client-only env keeps its store picker. */}
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={() =>
-            backed ? setAllEvalsOpen(true) : setAddingEvals(true)
-          }
-          // A re-grade reads as running, but its evals stay reachable so the
-          // drawer can say why they are locked until grading finishes.
-          disabled={live && executionStatus !== "evaluating"}
-          startIcon={
-            <Iconify
-              icon={
-                backed ? "solar:play-circle-linear" : "solar:add-circle-linear"
-              }
-              width={15}
-            />
-          }
+        <ViewerLock
+          locked={!backed && !access.canEdit}
+          title={WORKSPACE_COPY.viewer.evals}
         >
-          {backed ? "Run evals" : "Add evals"}
-        </Button>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={exportResults}
-          disabled={live || exporting}
-          startIcon={
-            <Iconify icon="solar:download-minimalistic-linear" width={15} />
-          }
-        >
-          {exporting ? "Exporting…" : "Export"}
-        </Button>
-        {resumeState?.resumable && (
           <Button
             variant="outlined"
             size="small"
-            disabled={live || resume.isPending}
-            startIcon={<Iconify icon="solar:play-linear" width={15} />}
-            onClick={() => resume.mutate()}
-          >
-            {resume.isPending ? "Resuming…" : "Resume"}
-          </Button>
-        )}
-        {hasTickableCalls === false && !fixRun && (
-          <Button
-            variant="outlined"
-            size="small"
-            disabled={live || runStarting}
-            startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
             onClick={() =>
-              onStartRun?.(
-                identity?.scenarioIds || undefined,
-                identity?.trials || 1,
-                rerunOptions,
-              )
+              backed ? setAllEvalsOpen(true) : setAddingEvals(true)
+            }
+            // A re-grade reads as running, but its evals stay reachable so the
+            // drawer can say why they are locked until grading finishes.
+            disabled={
+              (!backed && !access.canEdit) ||
+              (live && executionStatus !== "evaluating")
+            }
+            startIcon={
+              <Iconify
+                icon={
+                  backed
+                    ? "solar:play-circle-linear"
+                    : "solar:add-circle-linear"
+                }
+                width={15}
+              />
             }
           >
-            Run again
+            {backed ? "Run evals" : "Add evals"}
           </Button>
-        )}
-        {improvable.length > 0 && (
-          <Tooltip
-            describeChild
-            title={`Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
+        </ViewerLock>
+        <ViewerLock
+          locked={!access.canEdit}
+          title={WORKSPACE_COPY.viewer.export}
+        >
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={exportResults}
+            disabled={!access.canEdit || live || exporting}
+            startIcon={
+              <Iconify icon="solar:download-minimalistic-linear" width={15} />
+            }
           >
+            {exporting ? "Exporting…" : "Export"}
+          </Button>
+        </ViewerLock>
+        {resumeState?.resumable && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
             <Button
               variant="outlined"
               size="small"
-              onClick={() => {
-                setFixTargets(epoch);
-                setFixLaunching(true);
-              }}
-              startIcon={
-                <Iconify icon="solar:magic-stick-3-linear" width={15} />
+              disabled={!access.canRun || live || resume.isPending}
+              startIcon={<Iconify icon="solar:play-linear" width={15} />}
+              onClick={() => resume.mutate()}
+            >
+              {resume.isPending ? "Resuming…" : "Resume"}
+            </Button>
+          </ViewerLock>
+        )}
+        {hasTickableCalls === false && !fixRun && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!access.canRun || live || runStarting}
+              startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
+              onClick={() =>
+                onStartRun?.(
+                  identity?.scenarioIds || undefined,
+                  identity?.trials || 1,
+                  rerunOptions,
+                )
               }
             >
-              Run Epoch
+              Run again
             </Button>
-          </Tooltip>
+          </ViewerLock>
+        )}
+        {improvable.length > 0 && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Tooltip
+              describeChild
+              title={
+                access.canRun
+                  ? `Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`
+                  : ""
+              }
+            >
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={!access.canRun}
+                onClick={() => {
+                  setFixTargets(epoch);
+                  setFixLaunching(true);
+                }}
+                startIcon={
+                  <Iconify icon="solar:magic-stick-3-linear" width={15} />
+                }
+              >
+                Run Epoch
+              </Button>
+            </Tooltip>
+          </ViewerLock>
         )}
         {!fixRun && (
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            onClick={() => setDebugging(true)}
-            disabled={live}
-            startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
-          >
-            Debug failures
-          </Button>
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={() => setDebugging(true)}
+              disabled={!access.canRun || live}
+              startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+            >
+              Debug failures
+            </Button>
+          </ViewerLock>
         )}
       </Stack>
       {creditBanner}
@@ -505,13 +539,15 @@ export default function RunDetail({
               onTickableChange={setHasTickableCalls}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={
-                live
-                  ? "Wait for this run to finish before re-running calls"
-                  : runStarting
-                    ? "Starting the run…"
-                    : rerunInRun.isPending
-                      ? "Starting the re-run…"
-                      : null
+                !access.canRun
+                  ? WORKSPACE_COPY.viewer.run
+                  : live
+                    ? "Wait for this run to finish before re-running calls"
+                    : runStarting
+                      ? "Starting the run…"
+                      : rerunInRun.isPending
+                        ? "Starting the re-run…"
+                        : null
               }
             />
           )}
@@ -604,7 +640,18 @@ export default function RunDetail({
       )}
 
       <CallDrawer
-        task={openCall?.task ?? null}
+        task={openTask}
+        trials={trialsOf(callNav.rows, openTask)}
+        onPickTrial={(id) => {
+          const row = callNav.rows.find((one) => one.id === id);
+          if (row)
+            showCall({
+              task: row,
+              source: openCall?.source ?? "table",
+              page: openCall?.page ?? null,
+            });
+        }}
+        onOpenTrial={openById}
         executionId={backed ? executionId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}

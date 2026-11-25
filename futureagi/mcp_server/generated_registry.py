@@ -30,6 +30,7 @@ class GeneratedTool:
     request: dict[str, Any]
     response: dict[str, Any]
     source: dict[str, Any]
+    entitlement: str | None = None
 
     @cached_property
     def validator(self) -> Draft7Validator:
@@ -80,6 +81,7 @@ class GeneratedTool:
             request=value["request"],
             response=value["response"],
             source=value["source"],
+            entitlement=value.get("entitlement"),
         )
 
     def to_mcp_tool(self) -> Tool:

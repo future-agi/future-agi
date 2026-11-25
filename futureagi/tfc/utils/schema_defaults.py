@@ -25,3 +25,18 @@ class EncodedInputDefaultInspector(FieldInspector):
         ):
             result["default"] = wire_default
         return result
+
+
+class RepeatedQueryArrayInspector(FieldInspector):
+    """Declare an opted-in list query field as repeated keys (`?a=1&a=2`)."""
+
+    def process_result(self, result, method_name, obj, **kwargs):
+        collection_format = getattr(obj, "swagger_collection_format", None)
+        if (
+            isinstance(result, openapi.Parameter)
+            and result.get("in") == openapi.IN_QUERY
+            and result.get("type") == openapi.TYPE_ARRAY
+            and collection_format
+        ):
+            result["collectionFormat"] = collection_format
+        return result

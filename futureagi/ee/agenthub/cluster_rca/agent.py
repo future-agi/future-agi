@@ -455,6 +455,12 @@ class ClusterAnalysisAgent:
         self._counter_lock = threading.Lock()
         self._finding_counter = 0
         self._investigation_complete = False
+        # Whether the synthesis on this run is the deterministic last-resort
+        # text from ``_fallback_synthesis``. That one is the only synthesis the
+        # run did not reason its way to, so it is the only one the persist gate
+        # refuses: a model-authored synthesis is a conclusion even when a
+        # budget or cost ceiling is what pushed it to write it.
+        self._synthesis_is_last_resort = False
         self.on_event: EventCallback = on_event or _noop_event
         # Cooperative-cancel signal (set by the consumer's explicit-Stop
         # handler). None when the caller doesn't wire cancellation.
@@ -1025,6 +1031,8 @@ class ClusterAnalysisAgent:
             terminated_reason=terminated_reason,
             error=last_error,
             cost_usd=self.total_cost_usd,
+            investigation_complete=terminated_reason == "synthesis_submitted",
+            synthesis_is_last_resort=self._synthesis_is_last_resort,
         )
 
     def _force_synthesis(self, messages: list[dict], turn: int) -> None:
@@ -1126,6 +1134,10 @@ class ClusterAnalysisAgent:
             confidence=Confidence.LOW,
             evidence_trace_ids=evidence,
         )
+        # The one synthesis the run did not reason its way to. Set here rather
+        # than inferred from ``terminated_reason`` downstream, so a model-authored
+        # forced conclusion is never mistaken for this text.
+        self._synthesis_is_last_resort = True
         self._investigation_complete = True
         self.on_event("synthesis", asdict(self.synthesis))
 

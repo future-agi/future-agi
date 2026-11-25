@@ -1565,6 +1565,84 @@ def test_result_reuse_answers_without_a_scan_and_only_for_the_same_person(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_user_sql_mistakes_get_specific_safe_messages(scoped_clickhouse, monkeypatch):
+    """End to end on real PostgreSQL and ClickHouse: a plain SQL mistake is
+    reported as that mistake, not as a resource limit, and the stored error
+    carries none of the compiled query's physical names or organization/project values."""
+    import threading
+
+    from django.test import override_settings
+
+    from tracer.sql_workbench import errors, service, tasks
+    from tracer.sql_workbench.examples import EXAMPLES
+
+    client, scope, _ = scoped_clickhouse
+    actors, project = _live_people(scope, 1)
+    principal, password, statements = _service_principal(client, scope)
+    created = False
+    workers = []
+
+    def dispatch(args, **_):
+        worker = threading.Thread(target=tasks.execute_sql, args=args, daemon=True)
+        workers.append(worker)
+        worker.start()
+
+    # The built-in example with its GROUP BY removed, as seen in production.
+    example = next(e for e in EXAMPLES if e.id == "cost-tokens-by-model").sql
+    assert "GROUP BY model\n" in example
+    no_group_by = example.replace("GROUP BY model\n", "")
+    cases = [
+        (no_group_by, "GROUP BY or inside an aggregate function"),
+        (
+            "SELECT not_a_real_column FROM spans",
+            "unknown column or alias",
+        ),
+    ]
+    forbidden = [
+        scope.database,
+        str(scope.organization_id),
+        str(scope.workspace_id),
+        str(scope.project_id),
+        *(str(config) for config in scope.eval_config_ids),
+        "resource limit",
+    ]
+    try:
+        for statement in statements:
+            client.execute(statement)
+            created = True
+        monkeypatch.setenv("SQL_WORKBENCH_CH_USER", principal)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
+        monkeypatch.setattr(tasks.execute_sql, "apply_async", dispatch)
+        with override_settings(
+            CLICKHOUSE_V2=_service_settings(client, scope.database),
+            CH25_EVAL_LOGGER_TABLE=scope.eval_table,
+        ):
+            for sql, expected in cases:
+                job = _until_done(
+                    service.submit(
+                        actors[0],
+                        project_id=project.id,
+                        sql=sql,
+                        start=scope.start,
+                        end=scope.end,
+                    ).id
+                )
+                assert job.state == "failed"
+                assert expected.lower() in job.error.lower(), job.error
+                assert errors.NARROW not in job.error
+                assert errors.GENERIC != job.error
+                for value in forbidden:
+                    assert value not in job.error
+                assert len(job.error) <= 300
+            for worker in workers:
+                worker.join(timeout=15)
+    finally:
+        if created:
+            client.execute(f"DROP USER {principal}")
+
+
+@pytest.mark.django_db(transaction=True)
 def test_capability_matrix_is_regenerated_live(scoped_clickhouse, monkeypatch):
     """Every case of scripts/sql_workbench/capability_check.py through the
     production path on real PostgreSQL and ClickHouse, each status asserted

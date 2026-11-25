@@ -46,7 +46,7 @@ objectStorage:
 urls:
   app: https://futureagi.example.com
   api: https://api.futureagi.example.com
-  # Where SDKs outside the cluster send traces (their FI_BASE_URL), once
+  # Where SDKs outside the cluster send traces (their FI_TRACES_URL), once
   # fi-collector is exposed: examples/ingress.yaml routes it on the API host.
   # otlp: https://otlp.futureagi.example.com
 backend:

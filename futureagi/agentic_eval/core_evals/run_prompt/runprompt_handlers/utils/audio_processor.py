@@ -128,11 +128,12 @@ class AudioProcessor:
         Raises:
             ValueError: If the user script is empty or exceeds the TTS limit
         """
-        text_parts = []
+        text_parts: list[str] = []
         for msg in messages:
             if not isinstance(msg, dict) or msg.get("role") != "user":
                 continue
             content = msg.get("content")
+            parts: list[Any]
             if isinstance(content, str):
                 parts = [content]
             elif isinstance(content, list):

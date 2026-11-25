@@ -1,6 +1,7 @@
 package guardrails
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -33,6 +34,7 @@ func cloneCheckInput(input *CheckInput) (*CheckInput, error) {
 	if err := json.Unmarshal(data, &owned); err != nil {
 		return nil, fmt.Errorf("snapshot guardrail input: %w", err)
 	}
+	owned.InspectionOnly = input.InspectionOnly
 	return &owned, nil
 }
 
@@ -42,15 +44,32 @@ func (p *GuardrailPlugin) runOrgCheck(ctx context.Context, g Guardrail, input *C
 		// No check ran. Apply the same explicit failure policy and record it.
 		return &CheckResult{Err: err, FailureAdmitted: failOpen, Message: "guardrail_unavailable: could not snapshot guardrail input"}
 	}
+	var beforeRequest, beforeResponse []byte
+	if mutatesInput(g) {
+		if owned.Request != nil {
+			beforeRequest, _ = json.Marshal(owned.Request.Messages)
+		}
+		if owned.Response != nil {
+			beforeResponse, _ = json.Marshal(owned.Response.Choices)
+		}
+	}
 	cr := p.runGuardrailSafe(ctx, g, owned, timeout, failOpen)
 	if mutatesInput(g) && cr != nil && cr.Err == nil {
-		// Only content is remediated. Preserve request routing and response usage
-		// accounting, including native-route projections selected by checkInput.
+		// Only wire-backed content is remediated. Projections still report the
+		// attempted rewrite, but subsequent checks must see the original bytes.
 		if input.Request != nil && owned.Request != nil {
-			input.Request.Messages = owned.Request.Messages
+			after, _ := json.Marshal(owned.Request.Messages)
+			cr.InputRewritten = cr.InputRewritten || !bytes.Equal(beforeRequest, after)
+			if !input.InspectionOnly {
+				input.Request.Messages = owned.Request.Messages
+			}
 		}
 		if input.Response != nil && owned.Response != nil {
-			input.Response.Choices = owned.Response.Choices
+			after, _ := json.Marshal(owned.Response.Choices)
+			cr.InputRewritten = cr.InputRewritten || !bytes.Equal(beforeResponse, after)
+			if !input.InspectionOnly {
+				input.Response.Choices = owned.Response.Choices
+			}
 		}
 	}
 	return cr

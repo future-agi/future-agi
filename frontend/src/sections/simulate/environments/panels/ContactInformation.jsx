@@ -16,8 +16,7 @@ const toContactDigits = (value) => value.replace(/\D/g, "").slice(0, MAX_CONTACT
   Voice contact details — how the test call reaches the agent. `mode` is web
   (WebRTC, no telephony provider) or phone (PSTN, needs a country code + number).
   `phoneOnly` (Others) has no in-browser WebRTC target, so it collapses to phone
-  and hides the mode header. `webOnly` (LiveKit) is the reverse: no phone path,
-  so it stays on web and hides the header too. `inboundCalls` mirrors the old call-direction binary
+  and hides the mode header. `inboundCalls` mirrors the old call-direction binary
   (on = agent takes inbound); `agentSpeaksFirst` tells the simulator to wait for
   the agent's greeting before replying.
 
@@ -37,9 +36,10 @@ export default function ContactInformation({
   agentSpeaksFirst,
   onAgentSpeaksFirst,
   phoneOnly = false,
-  webOnly = false,
+  inboundOnly = false,
 }) {
-  const effectiveMode = phoneOnly ? "phone" : webOnly ? "web" : mode;
+  const effectiveMode = phoneOnly ? "phone" : mode;
+  const inboundLocked = phoneOnly || inboundOnly;
   const [contactTouched, setContactTouched] = useState(false);
   const contactError = contactTouched
     ? phoneNumberError(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber)
@@ -57,7 +57,7 @@ export default function ContactInformation({
 
   return (
     <Stack spacing={1}>
-      {!phoneOnly && !webOnly && (
+      {!phoneOnly && (
         <Stack
           direction="row"
           alignItems="center"
@@ -106,11 +106,11 @@ export default function ContactInformation({
           its switch is shown locked on; other providers keep the choice. */}
       {effectiveMode === "phone" && (
         <ToggleRow
-          checked={phoneOnly || inboundCalls}
-          disabled={phoneOnly}
+          checked={inboundLocked || inboundCalls}
+          disabled={inboundLocked}
           onChange={onInboundCalls}
           title="Inbound Calls"
-          body={phoneOnly
+          body={inboundLocked
             ? "The platform calls your agent's number, so these calls are always inbound."
             : "Allows the agent to take inbound calls."}
         />
@@ -137,7 +137,7 @@ ContactInformation.propTypes = {
   agentSpeaksFirst: PropTypes.bool,
   onAgentSpeaksFirst: PropTypes.func,
   phoneOnly: PropTypes.bool,
-  webOnly: PropTypes.bool,
+  inboundOnly: PropTypes.bool,
 };
 
 // Two-value segmented control: the shared SegmentedTabs, unstyled.

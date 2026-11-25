@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -45,19 +46,72 @@ type Router struct {
 	// Track which paths exist (for 405 detection).
 	// Key is the normalized path pattern.
 	knownPaths map[string]bool
+
+	// Registration, not a second path allowlist, is the coverage boundary.
+	// Even Handle callers that omit inspection metadata pass through dispatch.
+	registrations map[string]RouteInspection
+	dispatch      func(http.ResponseWriter, *http.Request, RouteInspection, http.HandlerFunc)
 }
 
 // NewRouter creates a new router.
 func NewRouter() *Router {
 	return &Router{
-		static:     make(map[string]http.HandlerFunc, 64),
-		paramIndex: make(map[paramKey][]paramRoute, 32),
-		knownPaths: make(map[string]bool, 64),
+		static:        make(map[string]http.HandlerFunc, 64),
+		paramIndex:    make(map[paramKey][]paramRoute, 32),
+		knownPaths:    make(map[string]bool, 64),
+		registrations: make(map[string]RouteInspection, 64),
 	}
 }
 
 // Handle registers a route.
 func (rt *Router) Handle(method, pattern string, handler http.HandlerFunc) {
+	rt.handleInspected(method, pattern, handler, RouteInspection{})
+}
+
+// HandleInspected declares stage capability, never a completed inspection. The
+// handler must still produce complete projections and policy decisions.
+func (rt *Router) HandleInspected(method, pattern string, handler http.HandlerFunc, contract models.InspectionContract) {
+	rt.handleInspected(method, pattern, handler, RouteInspection{Contract: contract})
+}
+
+// InspectionInventory returns a stable, registration-derived coverage inventory.
+// A forgotten registration is present with Unknown stages, not silently omitted.
+func (rt *Router) InspectionInventory() []RouteInspection {
+	out := make([]RouteInspection, 0, len(rt.registrations))
+	for _, registration := range rt.registrations {
+		registration.Variants = append([]models.InspectionContract(nil), registration.Variants...)
+		out = append(out, registration)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Pattern != out[j].Pattern {
+			return out[i].Pattern < out[j].Pattern
+		}
+		return out[i].Method < out[j].Method
+	})
+	return out
+}
+
+func (rt *Router) handleInspected(method, pattern string, handler http.HandlerFunc, registration RouteInspection) {
+	method = strings.ToUpper(method)
+	registration.Method, registration.Pattern = method, pattern
+	if registration.Contract.Operation == "" {
+		registration.Contract.Operation = method + " " + pattern
+	}
+	if registration.Auth == "" {
+		registration.Auth = defaultInspectionAuth(pattern)
+	}
+	if registration.Contract.Input == models.InspectionUnknown && registration.Contract.Output == models.InspectionUnknown && registration.Contract.Reason == "" {
+		registration.Contract.Reason = "no complete inspection contract registered"
+	}
+	rt.registrations[method+" "+pattern] = registration
+	original := handler
+	handler = func(w http.ResponseWriter, r *http.Request) {
+		if rt.dispatch == nil {
+			original(w, r)
+			return
+		}
+		rt.dispatch(w, r, registration, original)
+	}
 	rt.knownPaths[pattern] = true
 
 	// Check if the pattern contains any parameters.

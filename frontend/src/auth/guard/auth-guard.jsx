@@ -9,9 +9,12 @@ import { SplashScreen } from "src/components/loading-screen";
 
 import { useAuthContext } from "../hooks";
 import { useOrganization } from "src/contexts/OrganizationContext";
-import { trackSignupConversion } from "src/utils/googleAds";
-import { trackRedditSignup } from "src/utils/redditAds";
-import { trackTwitterSignup } from "src/utils/twitterAds";
+// Ad-platform signup conversions are disabled; Google Analytics runs through
+// Google Tag Manager. To restore them, uncomment these imports and the calls
+// below (see src/utils/googleAds.js).
+// import { trackSignupConversion } from "src/utils/googleAds";
+// import { trackRedditSignup } from "src/utils/redditAds";
+// import { trackTwitterSignup } from "src/utils/twitterAds";
 import { ROLES } from "src/utils/rolePermissionMapping";
 import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 
@@ -87,7 +90,6 @@ function Container({ children }) {
         return;
       }
 
-
       const existingToken = localStorage.getItem("accessToken");
       if (existingToken && !hydrateAttempted.current) {
         hydrateAttempted.current = true;
@@ -121,69 +123,68 @@ function Container({ children }) {
   }, [check]);
 
   // Handle initial-render redirect (get-started vs develop) — runs once
-  // when user data first becomes available. Also fires the Google Ads
-  // signup conversion for new OAuth/SSO users (email signups are fired
-  // from jwt-register-view.jsx at API-success time).
+  // when user data first becomes available. The ad-platform signup
+  // conversions for new OAuth/SSO users are disabled (see the imports above).
   useEffect(() => {
     // Skip redirect logic for standalone pages (e.g. MCP OAuth consent)
     if (window.location.pathname.startsWith("/mcp/")) return;
     if (!user) return;
     const isNewOAuthSignup = localStorage.getItem("isNewOAuthSignup") === "1";
     if (isNewOAuthSignup) {
-      const stampedAt = Number(localStorage.getItem("isNewOAuthSignupAt") || 0);
-      const fresh = Date.now() - stampedAt < 10 * 60 * 1000;
-      const provider = localStorage.getItem("signupProvider") || "oauth";
-      if (fresh && user?.email && user?.id && provider !== "email") {
-        if (typeof window.gtag === "function") {
-          trackSignupConversion({
-            email: user.email,
-            method: provider,
-            userId: String(user.id),
-          });
-        }
-        if (typeof window.rdt === "function") {
-          trackRedditSignup({
-            email: user.email,
-            userId: String(user.id),
-          });
-        }
-        trackTwitterSignup({
-          email: user.email,
-          method: provider,
-          userId: String(user.id),
-        });
-      }
+      // Disabled ad-platform signup conversions:
+      // const stampedAt = Number(localStorage.getItem("isNewOAuthSignupAt") || 0);
+      // const fresh = Date.now() - stampedAt < 10 * 60 * 1000;
+      // const provider = localStorage.getItem("signupProvider") || "oauth";
+      // if (fresh && user?.email && user?.id && provider !== "email") {
+      //   if (typeof window.gtag === "function") {
+      //     trackSignupConversion({
+      //       email: user.email,
+      //       method: provider,
+      //       userId: String(user.id),
+      //     });
+      //   }
+      //   if (typeof window.rdt === "function") {
+      //     trackRedditSignup({
+      //       email: user.email,
+      //       userId: String(user.id),
+      //     });
+      //   }
+      //   trackTwitterSignup({
+      //     email: user.email,
+      //     method: provider,
+      //     userId: String(user.id),
+      //   });
+      // }
       localStorage.removeItem("isNewOAuthSignup");
       localStorage.removeItem("isNewOAuthSignupAt");
     }
 
-    // New user to platform (requires_org_setup) — redirect to org-setup
-    // flow and, for OAuth/SSO paths, fire ad-platform signup conversions.
+    // New user to platform (requires_org_setup) — redirect to org-setup flow.
     if (user?.requires_org_setup) {
-      // Default to "oauth" so SSO / deep-link / unknown paths are still
-      // counted. "email" is excluded because the register view fires it
-      // directly at API-success time.
-      const provider = localStorage.getItem("signupProvider") || "oauth";
-      if (user?.email && user?.id && provider !== "email") {
-        if (typeof window.gtag === "function") {
-          trackSignupConversion({
-            email: user.email,
-            method: provider,
-            userId: String(user.id),
-          });
-        }
-        if (typeof window.rdt === "function") {
-          trackRedditSignup({
-            email: user.email,
-            userId: String(user.id),
-          });
-        }
-        trackTwitterSignup({
-          email: user.email,
-          method: provider,
-          userId: String(user.id),
-        });
-      }
+      // Disabled ad-platform signup conversions for OAuth/SSO paths. The
+      // provider defaults to "oauth" so SSO / deep-link / unknown paths are
+      // counted; "email" is excluded because the register view handles it.
+      // const provider = localStorage.getItem("signupProvider") || "oauth";
+      // if (user?.email && user?.id && provider !== "email") {
+      //   if (typeof window.gtag === "function") {
+      //     trackSignupConversion({
+      //       email: user.email,
+      //       method: provider,
+      //       userId: String(user.id),
+      //     });
+      //   }
+      //   if (typeof window.rdt === "function") {
+      //     trackRedditSignup({
+      //       email: user.email,
+      //       userId: String(user.id),
+      //     });
+      //   }
+      //   trackTwitterSignup({
+      //     email: user.email,
+      //     method: provider,
+      //     userId: String(user.id),
+      //   });
+      // }
 
       if (window.location.pathname !== paths.auth.jwt.org_removed) {
         router.replace(paths.auth.jwt.org_removed);

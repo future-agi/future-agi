@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Chip,
@@ -18,16 +18,30 @@ import { ShareDialog } from "src/components/share-dialog";
 import {
   useCallDetail,
   useCallTraces,
+  useHasWorkers,
 } from "src/api/simulate-environments/runDetail";
 
 import { SCORING_STATUS } from "../runs.constants";
 import { runOutcome } from "./trace/traceTable.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
+import TrialPicker from "./TrialPicker";
 import CallTracesPanel from "./CallTracesPanel";
-import { CALL_TRACES_COPY } from "./callTraces.constants";
+import AttemptSelect from "./AttemptSelect";
+import { ATTEMPT_COPY } from "./attempts.constants";
+import CallWorkersPanel from "./CallWorkersPanel";
+import {
+  CALL_TRACES_COPY,
+  CALL_WORKERS_COPY,
+  ownsArrowKeys,
+} from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
-import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
-import { Meta, Cell, Attr } from "./chatDrawerCells";
+import {
+  TRIAL_CHANGES_COPY,
+  TRIAL_UNDER_WAY,
+  hasSharedRecords,
+} from "./trialChanges.constants";
+import { Meta, Cell, Attr, OutcomeReason } from "./chatDrawerCells";
+import { openingTab } from "./participants/stepLink";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
 const secs = (ms) => (ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`);
@@ -72,17 +86,6 @@ NavArrow.propTypes = {
   disabled: PropTypes.bool,
 };
 
-// A scroll pane keeps ↑/↓ for itself while focused, so the arrows scroll it
-// instead of stepping to another conversation — the voice transcript does the
-// same. Focusable so a click inside hands it the keyboard; default not
-// prevented, so the browser still scrolls.
-const ownsArrowKeys = {
-  tabIndex: 0,
-  onKeyDown: (e) => {
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") e.stopPropagation();
-  },
-};
-
 export default function ChatCallDrawer({
   task,
   executionId = null,
@@ -93,6 +96,10 @@ export default function ChatCallDrawer({
   hasNext = false,
   traceOpen = false,
   onTracePanelMountedChange,
+  trials = null,
+  onPickTrial,
+  onOpenTrial,
+  wide = false,
 }) {
   const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => {
@@ -113,11 +120,52 @@ export default function ChatCallDrawer({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
-  const [artifact, setArtifact] = useState("transcript");
+  const [chosenArtifact, setChosenArtifact] = useState(openingTab);
+  const [focusTurn, setFocusTurn] = useState(null);
+  const [openStep, setOpenStep] = useState(null);
+  // Forgotten on another call, as in the voice drawer.
+  const [traceCallId, setTraceCallId] = useState(task.id);
+  // An earlier attempt's id, or null for the call itself; forgotten on another call.
+  const [chosenAttempt, setAttempt] = useState(null);
+  if (traceCallId !== task.id) {
+    setTraceCallId(task.id);
+    setOpenStep(null);
+    setAttempt(null);
+    setFocusTurn(null);
+  }
   const { callDetail, isLoading, error: detailError } = useCallDetail(task.id);
+  // Only an attempt of the call shown: a choice made on the previous call is never read against this one's detail.
+  const chosen =
+    traceCallId === task.id
+      ? callDetail?.earlierAttempts?.find(
+          (one) => one.attempt === chosenAttempt,
+        )
+      : undefined;
+  const attempt = chosen ? chosenAttempt : null;
+  const openTrace = (traceId, spanId) => {
+    setOpenStep({ traceId, spanId });
+    setChosenArtifact("traces");
+  };
+  const hasWorkers = useHasWorkers(task.id, task.status);
+  // Stays on Participants while the next call's record is unread; a call known to have none falls back, unless an
+  // earlier attempt is chosen, whose record is read on its own.
+  const artifact =
+    chosenArtifact === "workers" && hasWorkers === false && !attempt
+      ? "transcript"
+      : chosenArtifact;
+  // An earlier attempt's record is read on its own, whatever the latest attempt kept.
+  const showWorkers = hasWorkers || artifact === "workers" || Boolean(attempt);
   const callTraces = useCallTraces(executionId, task.id);
+  const traceIds = useMemo(
+    () => callTraces.traces.map((trace) => trace.traceId),
+    [callTraces.traces],
+  );
   const showTraces = artifact === "traces";
   const showChanges = artifact === "world_changes";
+  const trialState = chosen
+    ? chosen.trial_state
+    : callDetail?.trial_state ?? null;
+  const actorsOn = callDetail?.actorsEnabled === true;
 
   // The header and chips paint from the already-loaded row immediately, then
   // hydrate from the call detail once it resolves.
@@ -176,6 +224,7 @@ export default function ChatCallDrawer({
           flexShrink: 0,
         }}
       >
+        <TrialPicker trials={trials} currentId={task.id} onPick={onPickTrial} />
         <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
           Conversation ID :{" "}
           <Box component="span" sx={{ color: "text.primary" }}>
@@ -208,6 +257,12 @@ export default function ChatCallDrawer({
             disabled={!hasNext}
           />
         </Stack>
+        <AttemptSelect
+          attemptNumber={callDetail?.attemptNumber}
+          earlierAttempts={callDetail?.earlierAttempts}
+          value={attempt}
+          onChange={setAttempt}
+        />
         <Box flex={1} />
         <Tooltip arrow title="Share call">
           <IconButton
@@ -238,21 +293,19 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack
           sx={{
-            flex: 1.15,
+            // About 62% of a wide multi-agent drawer goes to the artifact.
+            flex: wide ? 1.63 : 1.15,
             minWidth: 0,
             borderRight: { md: "1px solid" },
             borderColor: { md: "divider" },
           }}
         >
           <CustomTabs
-            value={
-              showTraces
-                ? "traces"
-                : showChanges
-                  ? "world_changes"
-                  : "transcript"
-            }
-            onChange={(_, value) => setArtifact(value)}
+            value={artifact}
+            onChange={(_, value) => {
+              setOpenStep(null);
+              setChosenArtifact(value);
+            }}
             sx={{
               boxShadow: "none",
               borderBottom: "1px solid",
@@ -261,14 +314,49 @@ export default function ChatCallDrawer({
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
-            <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            {showWorkers ? (
+              <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
+            ) : null}
+            {(actorsOn || hasSharedRecords(trialState)) && (
+              <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            )}
           </CustomTabs>
 
           <Box
             {...ownsArrowKeys}
             sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
           >
-            {showChanges && isLoading ? (
+            {/* Hidden, not unmounted, on another tab, so its picked step survives a visit to Traces. */}
+            {showWorkers ? (
+              <Box sx={{ display: artifact === "workers" ? "block" : "none" }}>
+                <CallWorkersPanel
+                  key={`${task.id}:${attempt ?? "latest"}`}
+                  callExecutionId={task.id}
+                  testExecutionId={executionId}
+                  scenarioKey={task.sourceScenarioKey ?? null}
+                  onOpenTrial={onOpenTrial}
+                  callStatus={task.status}
+                  onOpenTrace={openTrace}
+                  traceIds={traceIds}
+                  attempt={attempt}
+                  callerName={callDetail?.persona || task.persona}
+                  onShowInTranscript={({ turn }) => {
+                    setFocusTurn({ turn });
+                    setChosenArtifact("transcript");
+                  }}
+                />
+              </Box>
+            ) : null}
+            {attempt && (artifact === "transcript" || artifact === "traces") ? (
+              // The server keeps these for the latest attempt only.
+              <Typography
+                data-testid="attempt-latest-only"
+                sx={{ typography: "s3", color: "text.subtitle", px: 2, pt: 1 }}
+              >
+                {ATTEMPT_COPY.latestOnly}
+              </Typography>
+            ) : null}
+            {artifact === "workers" ? null : showChanges && isLoading ? (
               // Loading, not "not recorded".
               <Stack alignItems="center" sx={{ py: 6 }}>
                 <CircularProgress size={20} />
@@ -282,7 +370,11 @@ export default function ChatCallDrawer({
                 {TRIAL_CHANGES_COPY.loadFailed}
               </Typography>
             ) : showChanges ? (
-              <TrialChangesPanel trialState={callDetail?.trial_state ?? null} />
+              <TrialChangesPanel
+                trialState={trialState}
+                underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
+                sharedOnly={!actorsOn}
+              />
             ) : showTraces ? (
               <Box
                 sx={{
@@ -294,14 +386,19 @@ export default function ChatCallDrawer({
                 }}
               >
                 <CallTracesPanel
+                  key={task.id}
                   traces={callTraces.traces}
                   projectId={callTraces.projectId}
                   testExecutionId={executionId}
                   isError={callTraces.isError}
                   onMountedChange={onTracePanelMountedChange}
+                  openTrace={openStep}
                 />
               </Box>
-            ) : isLoading && turns.length === 0 ? (
+            ) : null}
+            {artifact === "workers" ||
+            showChanges ||
+            showTraces ? null : isLoading && turns.length === 0 ? (
               <Stack alignItems="center" sx={{ py: 6 }}>
                 <CircularProgress size={20} />
               </Stack>
@@ -311,6 +408,8 @@ export default function ChatCallDrawer({
                 customerName={callDetail?.persona}
                 participants={callDetail?.participants || []}
                 hasCustomer={callDetail?.hasCustomer}
+                focusTurn={focusTurn}
+                notice={callDetail?.processingSkipReason}
               />
             )}
           </Box>
@@ -330,6 +429,10 @@ export default function ChatCallDrawer({
               />
             </Stack>
           </Box>
+
+          <OutcomeReason reason={task.outcomeReason} />
+          {/* The scenario's own verdict stands; only the platform's evals and CSAT did not run. */}
+          <OutcomeReason reason={callDetail?.processingSkipReason} />
 
           {failed.length > 0 && (
             <Stack
@@ -480,9 +583,16 @@ export default function ChatCallDrawer({
   );
 }
 ChatCallDrawer.propTypes = {
+  // Trials of this call's scenario, for the picker in the header.
+  trials: PropTypes.arrayOf(PropTypes.object),
+  onPickTrial: PropTypes.func,
+  onOpenTrial: PropTypes.func,
+  // A multi-agent call: more of the drawer goes to the artifact.
+  wide: PropTypes.bool,
   task: PropTypes.shape({
     id: PropTypes.string,
     scenario: PropTypes.string,
+    sourceScenarioKey: PropTypes.string,
     persona: PropTypes.string,
     status: PropTypes.string,
     turns: PropTypes.number,
@@ -490,6 +600,7 @@ ChatCallDrawer.propTypes = {
     durationMs: PropTypes.number,
     provider: PropTypes.string,
     evalResults: PropTypes.array,
+    outcomeReason: PropTypes.string,
   }).isRequired,
   executionId: PropTypes.string,
   onClose: PropTypes.func,

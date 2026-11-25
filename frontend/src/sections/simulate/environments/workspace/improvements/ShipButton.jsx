@@ -14,7 +14,7 @@ import {
 
 import { downloadText } from "./downloadText";
 import ShipConfirmDialog from "./ShipConfirmDialog";
-import { gradingNote, isShipped, winnerOf } from "./fixRunView";
+import { gradingNote, isShipped, shipLabel, winnerOf } from "./fixRunView";
 
 const shipHint = (fix, winner) =>
   fix.agent?.kind === "github"
@@ -109,7 +109,7 @@ export default function ShipButton({ fix }) {
               startIcon={<Iconify icon="solar:upload-linear" width={16} />}
               onClick={() => setConfirming(true)}
             >
-              Ship
+              {shipLabel(fix)}
             </Button>
           </Box>
         </CustomTooltip>

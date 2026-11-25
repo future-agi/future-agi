@@ -48,6 +48,11 @@ type liteLLMEntry struct {
 // instead of kept at zero: a download of the wrong shape must not price models
 // at zero. An explicit 0 is a stated rate (a free price).
 func parseLiteLLM(data []byte, strict bool) (map[string]*ModelInfo, error) {
+	return loadLiteLLM(data, strict, nil)
+}
+
+// loadLiteLLM keeps zero-token declarations separate from the general model table.
+func loadLiteLLM(data []byte, strict bool, zero priceDeclarations) (map[string]*ModelInfo, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal litellm JSON: %w", err)
@@ -81,6 +86,9 @@ func parseLiteLLM(data []byte, strict bool) (map[string]*ModelInfo, error) {
 
 		mode := mapMode(entry.Mode)
 
+		if zero != nil && (mode == ModeChat || mode == ModeEmbedding) {
+			zero[key] = priceDeclaration{raw: rawEntry, free: isZeroPricing(mode, entry) && declaresFree(rawEntry, nil)}
+		}
 		if isZeroPricing(mode, entry) {
 			skipped++
 			continue

@@ -125,7 +125,7 @@ def test_parse_normalize_convert_preserves_scope_session_and_accounting():
     assert parsed[0]["scope"]["version"] == "1.0.98"
     assert parsed[0]["resource"]["attributes"]["project_name"] == "test"
     normalize_span_attributes(parsed)
-    project = SimpleNamespace(id="project")
+    project = SimpleNamespace(id="project", trace_type="observe")
     with patch("tracer.utils.otel.calculate_cost_from_tokens", return_value=0):
         converted = [
             _convert_single_span(span, {("test", "org", "observe"): project}, {}, "org")
@@ -259,7 +259,7 @@ def test_all_rejected_is_not_an_empty_success():
 
 
 def test_whole_genai_messages_fill_content_without_overwriting_explicit_input():
-    project = SimpleNamespace(id="project")
+    project = SimpleNamespace(id="project", trace_type="observe")
     span = {
         "span_id": "01" * 8,
         "trace_id": "02" * 16,

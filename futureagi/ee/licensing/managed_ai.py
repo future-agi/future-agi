@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from typing import Any
 
@@ -113,7 +113,7 @@ def chat_completion(
 
 async def stream_chat_completion(
     payload: dict[str, Any],
-) -> AsyncIterator[dict[str, Any]]:
+) -> AsyncGenerator[dict[str, Any], None]:
     model = payload.get("model")
     if not is_managed_model(model):
         raise ValueError(f"Model {model!r} is not a FutureAGI-managed model")

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import PropTypes from "prop-types";
 import ChatTranscriptPane from "../ChatTranscriptPane";
@@ -17,12 +17,54 @@ const tabLabels = () =>
   screen.getAllByRole("tab").map((tab) => tab.textContent);
 
 describe("ChatTranscriptPane", () => {
+  it("highlights and scrolls to the turn it is asked to show", () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    render(
+      <Pane
+        turns={[
+          ...plainChat,
+          { role: "customer", text: "Second ask" },
+          { role: "agent", text: "Done" },
+        ]}
+        focusTurn={{ turn: 2 }}
+      />,
+    );
+    const row = screen.getByText("Second ask").closest("[data-focused]");
+    expect(row).toHaveAttribute("data-focused", "true");
+    expect(
+      screen.getByText("One ride please").closest("[data-focused]"),
+    ).toHaveAttribute("data-focused", "false");
+    expect(scrolled).toHaveBeenCalled();
+  });
+
+  it("takes a step from before the caller spoke to the top of the transcript", () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    render(
+      <Pane
+        turns={[
+          { role: "agent", text: "Hello, how can I help?" },
+          { role: "customer", text: "One ride please" },
+        ]}
+        focusTurn={{ turn: 0 }}
+      />,
+    );
+    expect(
+      screen.getByText("Hello, how can I help?").closest("[data-focused]"),
+    ).toHaveAttribute("data-focused", "true");
+  });
+
   it("names an actor with their role and how they were heard, and filters to them", async () => {
     render(
       <Pane
         customerName="Maya"
         participants={[
-          { id: "roommate", name: "Rowan", role: "roommate", channel: "audio_mix" },
+          {
+            id: "roommate",
+            name: "Rowan",
+            role: "roommate",
+            channel: "audio_mix",
+          },
         ]}
         turns={[
           ...plainChat,
@@ -93,11 +135,7 @@ describe("ChatTranscriptPane", () => {
   });
 
   it("shows just Someone for an actor an older call kept no name for", () => {
-    render(
-      <Pane
-        turns={[...plainChat, { role: "actor", text: "Hello?" }]}
-      />,
-    );
+    render(<Pane turns={[...plainChat, { role: "actor", text: "Hello?" }]} />);
     expect(screen.getAllByText("Someone")).toHaveLength(1);
     expect(screen.queryByText(/undefined/)).toBeNull();
   });
@@ -170,5 +208,34 @@ describe("ChatTranscriptPane", () => {
       "percent",
     );
     expect(screen.getByText(/args:/)).toBeInTheDocument();
+  });
+
+  it("marks a tool row apart from the customer, under the label the server gives it", () => {
+    render(
+      <Pane
+        turns={[
+          { role: "customer", text: "Where is my order?" },
+          {
+            role: "tool",
+            text: "get_order",
+            toolCalls: [{ name: "get_order" }],
+          },
+          {
+            role: "tool",
+            text: "Billing",
+            toolCalls: [{ name: "Billing", delegated_to: "Billing" }],
+            toolLabel: "Served label",
+          },
+        ]}
+      />,
+    );
+
+    // The row's kind is the server's to say; the pane never reads it from the calls.
+    expect(screen.getByText(/· Served label$/)).toBeInTheDocument();
+    const tool = screen.getByText(/· Tool call$/).parentElement;
+    const customer = screen.getByText(/· Customer$/).parentElement;
+    expect(getComputedStyle(tool).borderLeftColor).not.toBe(
+      getComputedStyle(customer).borderLeftColor,
+    );
   });
 });

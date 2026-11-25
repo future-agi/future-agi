@@ -395,6 +395,19 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
       await testInfo.attach(`${label}-table`, { contentType: 'image/png', body: await page.screenshot() });
       return receipt;
     };
+    // Do not reuse the other owner's idle discovery context for this readback.
+    // The actor, endpoint and no-redirect policy stay the same.
+    const readOtherOrgWidget = async (path: string) => {
+      const other = scopeActors.ownerB;
+      const reader = await request.newContext({ baseURL: E2E.apiUrl, extraHTTPHeaders: scopeActors.headers(other) });
+      try {
+        const response = await reader.get(`${E2E.apiUrl}${path}`, { maxRedirects: 0 });
+        const status = response.status();
+        scopeActors.receipts.push({ method: 'GET', path, status, organizationId: other.organizationId,
+          workspaceId: other.workspaceId, authenticated: true });
+        return { status, body: await response.json() as Widget };
+      } finally { await reader.dispose(); }
+    };
     const saveWidget = async (label: string, expected: Config) => {
       const previousId = savedWidget?.id;
       const path = previousId ? `${DASHBOARDS}${dashboardId}/widgets/${previousId}/` : `${DASHBOARDS}${dashboardId}/widgets/`;
@@ -420,7 +433,8 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         .toEqual([{ id: saved.id, name: widgetName, query_config: input.query_config, chart_config: input.chart_config }]);
       await Promise.all([actor, scopeActors.ownerB, emptyActor].map(async selectedActor => {
         const nestedPath = `${DASHBOARDS}${dashboardId}/widgets/${saved.id}/`;
-        const scoped = await scopeActors.send<Widget>(selectedActor, 'GET', nestedPath);
+        const scoped = selectedActor === scopeActors.ownerB ? await readOtherOrgWidget(nestedPath)
+          : await scopeActors.send<Widget>(selectedActor, 'GET', nestedPath);
         scopeResults.push({ path: nestedPath, organizationId: selectedActor.organizationId, workspaceId: selectedActor.workspaceId, ...scoped });
         expect(scoped.status).toBe(selectedActor === actor ? 200 : 404);
         if (selectedActor === actor) expect(scoped.body).toMatchObject({ id: saved.id, name: widgetName, query_config: input.query_config, chart_config: input.chart_config });

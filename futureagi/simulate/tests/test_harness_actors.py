@@ -2043,6 +2043,39 @@ def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_reco
         )
 
 
+def test_a_worker_s_entry_with_its_refused_attempts_is_served_as_the_world_recorded_it():
+    from types import SimpleNamespace
+
+    from simulate.selectors.call_detail import trial_state
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.views.run_results_v3 import TrialStateSerializer
+
+    worker = {
+        "who": "worker:order_lookup",
+        "name": "order_lookup",
+        "attempted": 2,
+        "committed": 1,
+        "refused": 1,
+        "faulted": 0,
+        "duplicate": 0,
+        "committed_actions": ["get_order"],
+        "refused_actions": [
+            {
+                "action": "update_order_status",
+                "code": "not_permitted",
+                "reason": "orders.update_status is not permitted for order_lookup",
+            }
+        ],
+    }
+    call = SimpleNamespace(
+        id="c1", call_metadata={TRIAL_STATE_KEY: {"state_changes": [worker]}}
+    )
+    [served] = TrialStateSerializer(trial_state(call)).data["state_changes"]
+    assert served["refused_actions"] == worker["refused_actions"]
+    # The worker is named by the API, so no client parses `worker:` itself.
+    assert served["worker_id"] == "order_lookup"
+
+
 def test_the_harness_s_own_tables_are_never_offered_or_given_as_records_an_actor_reads(
     user, workspace, storage, auth_client
 ):
@@ -2634,3 +2667,132 @@ def test_a_scenario_needs_a_production_only_tool_only_when_every_path_calls_one(
     assert needed_production_tools(
         {"solution": solution, "alternatives": [[{"tool": "issue_refund"}]]}, blocked
     ) == ["issue_refund"]
+
+
+def _contract_workers(contract):
+    """The workers the environment detail's contract card serves, for an environment with no actors."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from simulate.services import harness_environment
+    from simulate.services.harness_actor_rules import actor_rules
+
+    with (
+        patch.object(harness_environment, "_catalogue_entries", return_value=[]),
+        patch.object(harness_environment, "_call_actor_list", return_value=[]),
+        patch.object(harness_environment, "_end_conditions", return_value={}),
+        patch.object(harness_environment, "_provenance", return_value={}),
+    ):
+        return harness_environment._contract_section(
+            SimpleNamespace(),
+            contract,
+            None,
+            None,
+            None,
+            call_actors=None,
+            rules=actor_rules({}),
+            cast=[],
+        )["workers"]
+
+
+def test_environment_detail_lists_declared_workers():
+    from simulate.serializers.harness_environment import (
+        HarnessEnvironmentWorkerSerializer,
+    )
+
+    contract = {
+        "workers": [
+            {
+                "id": "order_lookup",
+                "name": "Order-lookup worker",
+                "tools": ["get_order", "list_refunds", "update_order_status"],
+                "allowed_tools": ["get_order", "list_refunds"],
+                "binding": "separate",
+                "address_env": "ORDER_LOOKUP_API_URL",
+            },
+            {"name": "no id, never shown"},
+        ]
+    }
+    (worker,) = _contract_workers(contract)
+    for malformed in (None, "workers", 5, {"id": "x"}):
+        assert _contract_workers({"workers": malformed}) == []
+    assert HarnessEnvironmentWorkerSerializer(worker).data["allowed_tools"] == [
+        "get_order",
+        "list_refunds",
+    ]
+    assert worker["id"] == "order_lookup"
+    # The cards show its name, and its id only when it has none.
+    assert worker["display_name"] == "Order-lookup worker"
+    (unnamed,) = _contract_workers({"workers": [{"id": "refund", "tools": []}]})
+    assert unnamed["display_name"] == "refund"
+
+
+def test_a_worker_with_no_binding_and_an_allow_list_is_served_alike_to_both_cards():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from simulate.models import AgentVersion
+    from simulate.serializers.harness_environment import (
+        HarnessEnvironmentWorkerSerializer,
+    )
+    from simulate.services import harness_environment
+
+    worker = {
+        "id": "refund",
+        "tools": ["issue_refund", "get_order"],
+        "allowed_tools": ["get_order"],
+    }
+    (contract_card,) = _contract_workers({"workers": [worker]})
+    built = SimpleNamespace(documents={"contract": {"workers": [worker]}})
+    with patch.object(
+        harness_environment.HarnessEnvironmentVersion, "no_workspace_objects"
+    ) as versions:
+        versions.filter.return_value.order_by.return_value.only.return_value.first.return_value = built
+        (participants_card,) = harness_environment.version_participants(
+            AgentVersion(organization_id=None)
+        )
+    contract, participants = (
+        HarnessEnvironmentWorkerSerializer(one).data
+        for one in (contract_card, participants_card)
+    )
+    assert contract == participants
+    # Nothing says how it reaches the world, so neither card claims a channel; both list only what it may use.
+    assert (contract["binding"], contract["tools_shown"]) == (
+        "not_declared",
+        ["get_order"],
+    )
+
+
+@pytest.mark.django_db
+def test_an_agent_version_serves_the_workers_its_newest_built_environment_declares(
+    auth_client, user, workspace, storage
+):
+    from simulate.models import AgentVersion, HarnessEnvironmentVersion
+    from simulate.models.harness_versioning import VersionStatus
+
+    environment = _versioned(user, workspace, "participants-card", storage)
+    definition = environment.run_test.agent_definition
+    version = AgentVersion.objects.filter(agent_definition=definition).first()
+    url = f"/simulate/agent-definitions/{definition.id}/versions/{version.id}/"
+    # No environment built for this version yet: no participants, not an error.
+    assert auth_client.get(url).json()["participants"] == []
+
+    built = (
+        HarnessEnvironmentVersion.no_workspace_objects.filter(job=environment)
+        .order_by("-created_at")
+        .first()
+    )
+    worker = {
+        "id": "order_lookup",
+        "name": "Order-lookup worker",
+        "tools": ["get_order", "update_order_status"],
+        "allowed_tools": ["get_order"],
+        "binding": "separate",
+    }
+    built.agent_version = version
+    built.status = VersionStatus.ACTIVE
+    built.documents = {**(built.documents or {}), "contract": {"workers": [worker]}}
+    built.save(update_fields=["agent_version", "status", "documents"])
+
+    (served,) = auth_client.get(url).json()["participants"]
+    assert (served["id"], served["allowed_tools"]) == ("order_lookup", ["get_order"])

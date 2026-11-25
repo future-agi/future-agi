@@ -52,6 +52,7 @@ export default function WorkspacePanels({
   overviewWorld,
   graphData,
   onStartRun,
+  runDialogOpen = false,
   canRun = false,
   runBlockedReason,
 }) {
@@ -121,7 +122,19 @@ export default function WorkspacePanels({
       case "actors":
         return <ActorsTab env={env} locked={locked} />;
       case "scenarios":
-        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} runBlockedReason={runBlockedReason} />;
+        return (
+          <ScenariosStep
+            env={env}
+            envState={envState}
+            patch={patch}
+            locked={locked}
+            onFork={onFork}
+            onStartRun={onStartRun}
+            runDialogOpen={runDialogOpen}
+            canRun={canRun}
+            runBlockedReason={runBlockedReason}
+          />
+        );
       case "evals":
         return (
           <EvalsStep
@@ -247,6 +260,7 @@ WorkspacePanels.propTypes = {
   graphData: PropTypes.object,
   // Starts a run scoped to the scenario selection × trials — (ids, trials).
   onStartRun: PropTypes.func,
+  runDialogOpen: PropTypes.bool,
   // Whether the env is runnable; gates the scenarios selection-bar Run.
   canRun: PropTypes.bool,
   // Why Run is unavailable, for the Scenarios selection bar's disabled Run.

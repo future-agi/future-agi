@@ -35,6 +35,8 @@ services:
         condition: service_healthy
       sql-workbench-bootstrap:
         condition: service_completed_successfully
+      metrics-schema-bootstrap:
+        condition: service_completed_successfully
     restart: "no"
     # Replace the production outbox: the ONLY application mount permitted by
     # managed-mock is this public, read-only status directory (never the worker).
@@ -73,8 +75,20 @@ services:
       # the suite's unsaved changes exist only with versioning on.
       HARNESS_VERSIONING_ENABLED: "true"
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
+      # Actors and test conditions, which the actor flows cover.
+      HARNESS_ACTORS_ENABLED: "true"
+      HARNESS_AGENT_READING_ENABLED: "true"
+      HARNESS_PUBLIC_BASE_URL: http://platform.e2e.invalid
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
+      # Metrics (/dashboard/metrics, /tracer/derived-metrics/) is a deployment
+      # rollout flag, off by default (tracer/services/derived_metrics/feature_flag.py).
+      # Off, MetricsGate routes to /404 and the API 404s. The API and both workers
+      # that run metric activities (tasks_s/tasks_l, exact_aggregation) need it.
+      METRICS_ENABLED: "1"
+      # Ask's cost confirm appears above this many rows (5,000 in production,
+      # tfc/settings/settings.py); OBS-E2E-064 reaches it with four traces.
+      INSTANT_EVAL_CONFIRM_ROWS: "3"
   worker:
     # Async code evals use the same isolated executor as the playground.
     networks: [default, link-public]
@@ -83,6 +97,8 @@ services:
     volumes: !reset []
     environment:
       HARNESS_VERSIONING_ENABLED: "true"
+      HARNESS_ACTORS_ENABLED: "true"
+      HARNESS_AGENT_READING_ENABLED: "true"
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
@@ -90,6 +106,11 @@ services:
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
+      # Metric activities re-check the rollout flag at execution (see backend).
+      METRICS_ENABLED: "1"
+    depends_on:
+      metrics-schema-bootstrap:
+        condition: service_completed_successfully
   # Keep explicit queue workers connected too when a profile selects them.
   # Their base YAML anchor is expanded before this overlay is merged.
   worker-default:
@@ -97,21 +118,31 @@ services:
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      METRICS_ENABLED: "1"
   worker-tasks-s:
     networks: [default, link-public]
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      METRICS_ENABLED: "1"
+    depends_on:
+      metrics-schema-bootstrap:
+        condition: service_completed_successfully
   worker-tasks-l:
     networks: [default, link-public]
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      METRICS_ENABLED: "1"
+    depends_on:
+      metrics-schema-bootstrap:
+        condition: service_completed_successfully
   worker-tasks-xl:
     networks: [default, link-public]
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      METRICS_ENABLED: "1"
   worker-exact-aggregation:
     networks: [default, link-public]
     restart: "no"
@@ -120,10 +151,14 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      # Metric calculation and snapshot activities run on exact_aggregation.
+      METRICS_ENABLED: "1"
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
     depends_on:
       sql-workbench-bootstrap:
+        condition: service_completed_successfully
+      metrics-schema-bootstrap:
         condition: service_completed_successfully
   worker-trace-ingestion:
     networks: [default, link-public]
@@ -140,6 +175,44 @@ services:
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-reading:
+    extends:
+      file: ./docker-compose.distributed.yml
+      service: worker
+    networks: [default, link-public]
+    restart: "no"
+    volumes: !reset []
+    environment:
+      HARNESS_VERSIONING_ENABLED: "true"
+      HARNESS_ACTORS_ENABLED: "true"
+      HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
+      HARNESS_AGENT_READING_ENABLED: "true"
+      MODEL_SERVING_URL: http://mock-llm:8080
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      DJANGO_SETTINGS_MODULE: tfc.settings.e2e
+      INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      TEMPORAL_ALL_QUEUES: "false"
+      TEMPORAL_TASK_QUEUE: simulation_runner
+      TEMPORAL_EXCLUDED_QUEUES: ""
+      HOSTED_SANDBOX_PROVIDER: daytona
+      DAYTONA_API_URL: http://mock-daytona:8080/api
+      DAYTONA_API_KEY: e2e-mock
+      DAYTONA_TARGET: e2e
+      DAYTONA_USE_DEPRECATED_POLLING: "true"
+      ALK_DAYTONA_SNAPSHOT: e2e-mock
+      AGENTCC_BASE_URL: http://agentcc-gateway:8080
+    depends_on:
+      mock-daytona:
+        condition: service_started
+  mock-daytona:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/mock-daytona/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28084:8080"
+    restart: "no"
   worker-sql-workbench:
     networks: [default, link-public]
     restart: "no"
@@ -174,6 +247,17 @@ services:
     depends_on:
       clickhouse-cdc-bootstrap:
         condition: service_completed_successfully
+  # docker-compose.distributed.yml's metrics-schema-bootstrap applies the Metrics
+  # ClickHouse schema (009, 011, 028-038) only while METRICS_ENABLED is on, which
+  # this stack sets per service rather than in .env. Without it every refresh
+  # fails (metric_schema_not_installed) and no Metrics value is ever published.
+  metrics-schema-bootstrap:
+    environment:
+      METRICS_ENABLED: "1"
+      # Passed to the runner through the environment, never argv.
+      CH_PASSWORD: ${CH_PASSWORD:-e2e-clickhouse-password}
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
@@ -253,8 +337,8 @@ services:
         ipv4_address: 172.30.91.10
     restart: "no"
 
-  # A separate journal keeps asynchronous harness traffic out of the browser
-  # flow's full-journal assertion when Playwright runs the files in parallel.
+  # Separate listeners identify browser versus Temporal regressions; both
+  # journals must stay empty because the shipped link evaluators are offline.
   link-worker-canary:
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]
@@ -281,7 +365,13 @@ services:
     ports:
       - "127.0.0.1:28443:28443"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; import ssl; urllib.request.urlopen('https://localhost:28443/health', context=ssl.create_default_context(cafile='/tls/ca.pem'))"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; import ssl; urllib.request.urlopen('https://localhost:28443/health', context=ssl.create_default_context(cafile='/tls/ca.pem'))",
+        ]
       interval: 2s
       timeout: 3s
       retries: 30

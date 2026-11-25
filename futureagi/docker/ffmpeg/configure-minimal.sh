@@ -2,7 +2,7 @@
 # Configure a minimal FFmpeg (ffmpeg + ffprobe) that covers every ffmpeg use in
 # the default backend image, instead of Debian's `ffmpeg` package (189 extra
 # packages, ~406 MB unpacked / ~150 MB gzip: libllvm15 via mesa, flite, x265,
-# SDL, PulseAudio ...). The result links only libc, libm, zlib and libmp3lame
+# SDL, PulseAudio ...). The result links only libc, libm, zlib, libaom and libmp3lame
 # (an LGPL build: no GPL or nonfree components). FFMPEG_FLAVOR=debian in
 # futureagi/Dockerfile.oss brings the Debian package back.
 #
@@ -25,8 +25,7 @@
 #   librosa/audioread fallback (EXTRAS=audio only): ffmpeg -i f -f s16le -
 #
 # FFmpeg >= 7 maps an input of "-" to the fd: protocol, so fd is enabled next
-# to pipe. Anything outside this list (e.g. AV1 video, WavPack, ProRes) fails
-# with FFmpeg's own "Decoder not found" error.
+# to pipe. AV1 uses libaom for software decoding and encoding.
 #
 # FFmpeg's configure does not fail on a component name that does not exist: it
 # drops it (and warns only when none of a comma-separated list matches). Every
@@ -39,21 +38,21 @@ LOG=${CONFIGURE_LOG:-/tmp/ffmpeg-configure.log}
 
 PROTOCOLS="pipe fd file cache"
 DEMUXERS="aac ac3 aiff amr amrnb amrwb asf au avi caf eac3 flac matroska mov mp3
-  mpegps mpegts ogg wav w64 image2 mjpeg"
-MUXERS="mp3 wav ffmetadata image2 null pcm_s16le pcm_f32le"
+  mpegps mpegts ogg wav w64 image2 mjpeg wv ivf"
+MUXERS="mp3 wav ffmetadata image2 wv ivf mov null pcm_s16le pcm_f32le"
 # Every native PCM decoder (pcm_s16le, pcm_mulaw, pcm_f32be, ...) is added
 # below from `./configure --list-decoders`, minus the macOS AudioToolbox
 # wrappers (pcm_*_at), which configure would only disable again.
 DECODERS="aac aac_latm ac3 eac3 alac amrnb amrwb flac mp2 mp2float mp3 mp3float
-  opus vorbis wmav1 wmav2 adpcm_ima_wav adpcm_ms gsm_ms
-  h264 hevc mpeg1video mpeg2video mpeg4 vp8 vp9 mjpeg png wrapped_avframe"
+  speex cinepak opus vorbis wmav1 wmav2 adpcm_ima_wav adpcm_ms gsm_ms
+  h264 hevc mpeg1video mpeg2video mpeg4 vp8 vp9 prores wavpack libaom_av1 mjpeg png wrapped_avframe"
 ENCODERS="libmp3lame pcm_u8 pcm_s16le pcm_s24le pcm_s32le pcm_f32le pcm_mulaw
-  pcm_alaw mjpeg png"
+  pcm_alaw prores prores_aw prores_ks wavpack libaom_av1 mjpeg png"
 PARSERS="aac aac_latm ac3 flac mpegaudio opus vorbis h264 hevc mpegvideo
-  mpeg4video vp8 vp9 mjpeg png"
+  mpeg4video av1 vp8 vp9 mjpeg png"
 BSFS="aac_adtstoasc h264_mp4toannexb hevc_mp4toannexb vp9_superframe_split"
 FILTERS="aresample aformat anull atrim pan amix amerge channelsplit volume scale
-  format null trim fps setpts"
+  format null trim fps setpts rotate transpose crop hflip vflip"
 
 list() { ./configure --list-"$1"s | tr -s '[:blank:]' '\n'; }
 DECODERS="$DECODERS $(list decoder | grep '^pcm_' | grep -v '_at$' | tr '\n' ' ')"
@@ -91,7 +90,7 @@ if ! ./configure \
     --disable-doc --disable-debug --disable-ffplay \
     --disable-shared --enable-static --enable-small \
     --enable-ffmpeg --enable-ffprobe \
-    --enable-libmp3lame --enable-zlib \
+    --enable-libmp3lame --enable-libaom --enable-zlib \
     --enable-swresample --enable-swscale \
     --enable-protocol="$(csv "$PROTOCOLS")" \
     --enable-demuxer="$(csv "$DEMUXERS")" \

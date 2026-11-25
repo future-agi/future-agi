@@ -3,13 +3,13 @@
 import re
 import time
 from collections.abc import Callable, Iterable
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 import psycopg
 from django.db import InterfaceError, OperationalError, connections
 from django.db.backends.base.base import BaseDatabaseWrapper
-from django.db.models import Model
+from django.db.models import ForeignKey, Model
 from psycopg.errors import ConnectionTimeout
 
 from accounts.models.workspace import Workspace
@@ -162,7 +162,7 @@ def _read_metadata(read: Callable[[], _T], *, using: str) -> _T:
 def read_evaluation_column_types(
     column_ids: Iterable[str | UUID], *, dataset_id: str | UUID | None = None
 ) -> dict[str, str]:
-    lookup = {"id__in": list(column_ids)}
+    lookup: dict[str, Any] = {"id__in": list(column_ids)}
     if dataset_id is not None:
         # Only the given dataset's columns; ids from other datasets are ignored.
         lookup["dataset_id"] = dataset_id
@@ -179,10 +179,12 @@ def read_evaluation_column_types(
 
 
 def _read_metadata_relation(instance: Model, name: str) -> Model | None:
-    field = instance._meta.get_field(name)
+    # Callers pass forward foreign keys only; get_field's declared type is wider.
+    field = cast("ForeignKey[Any, Any]", instance._meta.get_field(name))
     if field.is_cached(instance) or field.value_from_object(instance) is None:
         # Preserve descriptor semantics for cached and nullable relations.
-        return getattr(instance, name)
+        cached: Model | None = getattr(instance, name)
+        return cached
 
     # Match Django's forward-FK lookup (base manager + instance routing hint),
     # then pin the routed alias so the query and cleanup use the same wrapper.
@@ -191,7 +193,7 @@ def _read_metadata_relation(instance: Model, name: str) -> Model | None:
     ).filter(field.get_reverse_related_filter(instance))
     using = related.db
     related = related.using(using)
-    value = _read_metadata(related.get, using=using)
+    value: Model = _read_metadata(related.get, using=using)
     field.set_cached_value(instance, value)
     return value
 
@@ -199,5 +201,7 @@ def _read_metadata_relation(instance: Model, name: str) -> Model | None:
 def read_evaluation_workspace(row: Row) -> Workspace | None:
     # These are independently routed reads. The Row's alias is not necessarily
     # the Dataset's or Workspace's, and cached relations need no retry boundary.
-    dataset = _read_metadata_relation(row, "dataset")
-    return _read_metadata_relation(dataset, "workspace")
+    # Row.dataset is a required foreign key, and Dataset.workspace points at
+    # Workspace; the generic relation reader cannot express either.
+    dataset = cast(Model, _read_metadata_relation(row, "dataset"))
+    return cast("Workspace | None", _read_metadata_relation(dataset, "workspace"))

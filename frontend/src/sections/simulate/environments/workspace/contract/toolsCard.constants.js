@@ -1,5 +1,6 @@
 export const TOOLS_CARD_COPY = {
   subtitle: "The tools the agent declares, and where each one runs",
+  draft: "Draft: not used by runs until saved",
   arguments: "Arguments",
   noInputs: "Takes no inputs",
   returns: "Returns",

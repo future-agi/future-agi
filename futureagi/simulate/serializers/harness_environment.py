@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import get_args
+
 from rest_framework import serializers
 
 from model_hub.serializers.contracts import JsonObjectRequestField
@@ -19,15 +21,16 @@ from simulate.constants.scenario_faults import FAULT_MODES
 from simulate.models import HarnessNudge, HostedHarnessJob
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
+    HarnessAgentConfigChangeSerializer,
     HarnessRunPinnedVersionsSerializer,
     HarnessRunWarningSerializer,
-    phone_number_error,
 )
 from simulate.serializers.requests.run_test_evals import (
     EvalConfigUpdateRequestSerializer,
 )
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
+from simulate.types import WorkerBinding, WorkerEnforcement
 from tfc.utils.api_serializers import StrictInputSerializer
 
 
@@ -49,6 +52,16 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
     agent_definition_id = serializers.UUIDField(required=False)
+    search = serializers.CharField(
+        required=False, allow_blank=True, trim_whitespace=True, max_length=255
+    )
+    status = serializers.ChoiceField(
+        required=False,
+        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED),
+    )
+    agent_type = serializers.ChoiceField(
+        required=False, choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT)
+    )
 
 
 class HarnessEnvironmentRenameSerializer(serializers.Serializer):
@@ -62,6 +75,15 @@ class HarnessEnvironmentRenameSerializer(serializers.Serializer):
     name = serializers.CharField(
         max_length=255, allow_blank=False, trim_whitespace=True
     )
+
+
+class AgentVersionRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    version_number = serializers.IntegerField()
+
+
+class EnvironmentVersionRefSerializer(AgentVersionRefSerializer):
+    pass
 
 
 class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
@@ -91,13 +113,15 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     # 0 or 1 today: a job carries at most one test execution, so this counts
     # "has it been run" until run history becomes a table of its own.
     runs_count = serializers.IntegerField()
+    # The agent version this environment tests by default; null before
+    # versioning recorded one.
+    agent_version = AgentVersionRefSerializer(allow_null=True)
+    environment_version = EnvironmentVersionRefSerializer(allow_null=True)
+    # Whether the environment follows its agent's production version or stays
+    # pinned to the one above.
+    agent_policy = serializers.ChoiceField(choices=("follow", "pinned"))
     last_updated = serializers.DateTimeField(allow_null=True)
     created_at = serializers.DateTimeField()
-
-
-class AgentVersionRefSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    version_number = serializers.IntegerField()
 
 
 class RunEnvironmentRefSerializer(serializers.Serializer):
@@ -114,6 +138,10 @@ class HarnessRunSummarySerializer(TrialPassFieldsSerializer):
     status = serializers.CharField()
     environment = RunEnvironmentRefSerializer(allow_null=True)
     agent_version = AgentVersionRefSerializer(allow_null=True)
+    environment_version = EnvironmentVersionRefSerializer(allow_null=True)
+    # True when the run covered only some of the environment's scenarios;
+    # null for a Simulate run, which has no environment to compare with.
+    partial = serializers.BooleanField(allow_null=True)  # type: ignore[assignment]  # the API field is named partial, as BaseSerializer's own
     outcome_passed = serializers.IntegerField(
         allow_null=True, help_text="Passed receipts; null for a run without receipts."
     )
@@ -124,6 +152,9 @@ class HarnessRunSummarySerializer(TrialPassFieldsSerializer):
         allow_null=True, help_text="Errored receipts, also counted in outcome_failed."
     )
     outcome_skipped = serializers.IntegerField(allow_null=True)
+    outcome_cancelled = serializers.IntegerField(
+        allow_null=True, help_text="Calls the user stopped; neither errored nor failed."
+    )
     outcome_no_score = serializers.IntegerField(
         allow_null=True, help_text="Calls that ran with no pass or fail."
     )
@@ -147,8 +178,21 @@ class HarnessRunSummarySerializer(TrialPassFieldsSerializer):
     completed_at = serializers.DateTimeField(allow_null=True)
 
 
+class HarnessEnvironmentAgentRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True)
+
+
 class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
+    agent = HarnessEnvironmentAgentRefSerializer(allow_null=True)
     last_run = HarnessRunSummarySerializer(allow_null=True)
+
+
+class HarnessEnvironmentStatusCountsSerializer(serializers.Serializer):
+    building = serializers.IntegerField()
+    running = serializers.IntegerField()
+    completed = serializers.IntegerField()
+    failed = serializers.IntegerField()
 
 
 class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
@@ -158,6 +202,7 @@ class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
     total_pages = serializers.IntegerField()
     current_page = serializers.IntegerField()
     results = HarnessEnvironmentSerializer(many=True)
+    status_counts = HarnessEnvironmentStatusCountsSerializer()
 
 
 class HarnessEnvironmentRunLinkSerializer(serializers.Serializer):
@@ -488,6 +533,10 @@ class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
     status_label = serializers.CharField(
         help_text="What a test does with it, in words."
     )
+    status_reason = serializers.CharField(
+        allow_null=True,
+        help_text="Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+    )
     reset_between_trials = serializers.BooleanField(
         allow_null=True,
         help_text="Restored to the seeded records before each trial; null when not known.",
@@ -634,6 +683,28 @@ class HarnessEnvironmentEndConditionsSerializer(serializers.Serializer):
     ended_reasons = serializers.ListField(child=serializers.CharField())
 
 
+class HarnessEnvironmentWorkerSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField(required=False, allow_blank=True)
+    display_name = serializers.CharField(
+        help_text="What the cards call it: its name, else its id."
+    )
+    tools = serializers.ListField(child=serializers.CharField())
+    # The tools it may use when narrower than what its code holds; empty means all of `tools`.
+    allowed_tools = serializers.ListField(child=serializers.CharField())
+    # The tools the cards list: its allowed tools when narrower, else every tool its code holds.
+    tools_shown = serializers.ListField(child=serializers.CharField())
+    # `not_declared` when its contract entry does not say how it reaches the world.
+    binding = serializers.ChoiceField(choices=get_args(WorkerBinding))
+    # How the world holds it to its limits, and the words the cards show: with no trial, a separate worker's is not
+    # known and a shared one's is not enforced.
+    enforcement = serializers.ChoiceField(choices=get_args(WorkerEnforcement))
+    enforcement_label = serializers.CharField()
+    address_env = serializers.CharField(required=False, allow_blank=True)
+    # The process that runs it alone, when the app serves it as its own service.
+    process = serializers.CharField(required=False, allow_blank=True)
+
+
 class HarnessEnvironmentContractSerializer(serializers.Serializer):
     """The agent contract as ALK wrote it, passed through, plus how it was built.
 
@@ -672,6 +743,12 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     tool_entrypoints = serializers.ListField(
         child=serializers.JSONField(), required=False, allow_null=True
     )
+    workers = HarnessEnvironmentWorkerSerializer(
+        many=True,
+        required=False,
+        allow_null=True,
+        help_text="The workers the app's source declares; a run shows which of them took part.",
+    )
     data_store = serializers.JSONField(required=False, allow_null=True)
     open_questions = serializers.ListField(
         child=serializers.CharField(), required=False, allow_null=True
@@ -690,6 +767,10 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
         help_text="Tools that reach a system the environment has no copy of: Unsupported for this controlled test.",
     )
     tool_status = HarnessEnvironmentToolStatusSerializer(many=True)
+    from_draft = serializers.BooleanField(
+        required=False,
+        help_text="Whether this is an open draft's contract, which no run uses until the draft is saved.",
+    )
     fault_targets = HarnessEnvironmentFaultTargetSerializer(many=True)
     end_conditions = HarnessEnvironmentEndConditionsSerializer()
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -1145,18 +1226,6 @@ class HarnessAgentCredentialsResponseSerializer(serializers.Serializer):
     agent_version = HarnessVersionSerializer()
 
 
-class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
-    phone_number = serializers.CharField(max_length=512, required=False)
-    agent_name = serializers.CharField(max_length=512, required=False)
-    target_speaks_first = serializers.BooleanField(required=False)
-
-    def validate_phone_number(self, value):
-        error = phone_number_error(value)
-        if error:
-            raise serializers.ValidationError(error)
-        return value.strip()
-
-
 class HarnessAgentPayloadChangeSerializer(StrictInputSerializer):
     config = HarnessAgentConfigChangeSerializer()
 
@@ -1200,6 +1269,26 @@ class HarnessAgentVersionCreateSerializer(serializers.Serializer):
         if "agent_payload" in attrs and not attrs["agent_payload"]["config"]:
             raise serializers.ValidationError({"agent_payload": "Nothing to change."})
         return attrs
+
+
+class HarnessAgentPolicySerializer(serializers.Serializer):
+    """Whether the environment follows its agent's production version or is pinned
+    to one; a pin may name the version to move to."""
+
+    policy = serializers.ChoiceField(choices=("follow", "pinned"))
+    version_id = serializers.UUIDField(required=False)
+
+    def validate(self, attrs):
+        if attrs.get("version_id") is not None and attrs["policy"] != "pinned":
+            raise serializers.ValidationError(
+                {"version_id": ["only a pin names a version"]}
+            )
+        return attrs
+
+
+class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
+    policy = serializers.ChoiceField(choices=("follow", "pinned"), read_only=True)
+    agent_version = HarnessVersionSerializer(read_only=True, allow_null=True)
 
 
 class HarnessVersionsSerializer(serializers.Serializer):
@@ -1455,6 +1544,10 @@ class HarnessSuiteMemberSerializer(serializers.Serializer):
     number = serializers.IntegerField()
     name = serializers.CharField(allow_blank=True)
     use_case = serializers.CharField(allow_blank=True)
+    # The Error Feed issue whose traces Run Epoch drafted this scenario from; null for
+    # any other scenario.
+    issue_cluster_id = serializers.CharField(allow_null=True)
+    issue_project_id = serializers.UUIDField(allow_null=True)
 
 
 class HarnessVerifyCreateSerializer(serializers.Serializer):

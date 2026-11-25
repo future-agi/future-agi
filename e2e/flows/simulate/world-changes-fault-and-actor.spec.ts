@@ -33,9 +33,9 @@ test('SIM-E2E-019: World state shows a faulted call apart from a commit, and an 
     const seed = seedHarnessEnvironment({ ...base, trial: 'fault' });
     await page.goto(trialPage(seed));
     await page.getByRole('tab', { name: 'World state' }).click({ timeout: UI_READY });
-    await expect(page.getByText(/1 faulted/)).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByLabel(/1 faulted/)).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText('No change: it committed nothing')).toBeVisible();
-    await expect(page.getByText('Committed: issue_refund')).toHaveCount(0);
+    await expect(page.getByLabel('Committed: issue_refund')).toHaveCount(0);
     await expect(page.getByText('Started from the seeded records, as every trial does')).toBeVisible();
   });
 
@@ -44,7 +44,7 @@ test('SIM-E2E-019: World state shows a faulted call apart from a commit, and an 
     await page.goto(trialPage(seed));
     await page.getByRole('tab', { name: 'World state' }).click({ timeout: UI_READY });
     await expect(page.getByText(ACTOR).first()).toBeVisible({ timeout: UI_READY });
-    await expect(page.getByText('Committed: approvals.put')).toBeVisible();
+    await expect(page.getByLabel('Committed: approvals.put')).toBeVisible();
     await expect(page.getByText('What the actors chose')).toBeVisible();
   });
 });

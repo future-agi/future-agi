@@ -18,6 +18,12 @@ from model_hub.models.annotation_queues import (  # noqa: E402, F401
 from model_hub.models.choices import QueueItemSourceType, ScoreSource
 from model_hub.models.develop_annotations import AnnotationsLabels
 from tfc.utils.base_model import BaseModel
+from tracer.services.derived_metrics.pg_response_hooks import (
+    PgResponseAllManager,
+    PgResponseBaseManager,
+    PgResponseNoWorkspaceManager,
+    pg_response_save,
+)
 
 
 class Score(BaseModel):
@@ -29,6 +35,12 @@ class Score(BaseModel):
     or programmatically via API — it's the same Score object, visible everywhere.
 
     """
+
+    # Subclasses of BaseModel's managers; the django-stubs plugin declares the
+    # base managers as ClassVars, so these same-name overrides need an ignore.
+    objects = PgResponseBaseManager()  # type: ignore[misc]
+    all_objects = PgResponseAllManager()  # type: ignore[misc]
+    no_workspace_objects = PgResponseNoWorkspaceManager()  # type: ignore[misc]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -276,6 +288,7 @@ class Score(BaseModel):
         )
         return history
 
+    @pg_response_save
     def save(self, *args, **kwargs):
         update_fields = kwargs.get("update_fields")
         should_track_value_change = update_fields is None or "value" in update_fields

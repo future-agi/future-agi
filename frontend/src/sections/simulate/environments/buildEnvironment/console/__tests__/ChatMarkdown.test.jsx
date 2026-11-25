@@ -22,4 +22,19 @@ describe("ChatMarkdown", () => {
     expect(ReactMarkdown).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Second")).toBeInTheDocument();
   });
+
+  it("renders bare formatting tags with basicHtml and keeps any other HTML as text", () => {
+    const text =
+      '<b>bold</b> <img src="x" onerror="alert(1)"> <script>alert(1)</script> <front desk>';
+    const { container } = render(<ChatMarkdown text={text} basicHtml />);
+    expect(container.querySelector("b")).toHaveTextContent("bold");
+    expect(container.querySelector("img, script")).toBeNull();
+    expect(container).toHaveTextContent(
+      '<img src="x" onerror="alert(1)"> <script>alert(1)</script> <front desk>',
+    );
+
+    const { container: plain } = render(<ChatMarkdown text="<b>bold</b>" />);
+    expect(plain.querySelector("b")).toBeNull();
+    expect(plain).toHaveTextContent("<b>bold</b>");
+  });
 });
