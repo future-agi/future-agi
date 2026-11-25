@@ -199,9 +199,9 @@ def test_the_generation_only_chooses_an_activity_payload_class():
             assert not isinstance(node, ast.Await | ast.Return | ast.Raise), node.lineno
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 owner = node.func.value
-                assert not (
-                    isinstance(owner, ast.Name) and owner.id == "workflow"
-                ), node.lineno
+                assert not (isinstance(owner, ast.Name) and owner.id == "workflow"), (
+                    node.lineno
+                )
 
 
 @pytest.mark.parametrize("kind", ["historical", "continuous"])
