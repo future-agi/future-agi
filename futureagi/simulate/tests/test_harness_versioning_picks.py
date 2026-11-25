@@ -1660,3 +1660,124 @@ class TestRunPlanVerdict:
         )
 
         assert response.status_code == 400
+
+
+def _reads_as_browser(*agent_version_ids):
+    """Each named version's stored reading needs a browser; any other reads as chat."""
+    needs = {str(one) for one in agent_version_ids}
+    return patch(
+        "simulate.services.agent_contracts.stored_version_contract",
+        side_effect=lambda version_id: (
+            {"modality": "chat", "environment_needs": ["browser"]}
+            if str(version_id) in needs
+            else {"modality": "chat"}
+        ),
+    )
+
+
+class TestABrowserAgentRunsOnlyWithSites:
+    def test_a_picked_browser_agent_is_refused_where_the_environment_names_no_sites(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, "pk-browser-none", storage)
+        a2 = _second_agent(environment)
+        _ready(
+            environment,
+            a2.id,
+            environment.environment_version,
+            environment.suite_version,
+        )
+
+        with _reads_as_browser(a2.id):
+            refusal = _refusal(environment, VersionPicks(agent_version_id=a2.id))
+
+        assert refusal.code == "browser_environment_required"
+        assert "browser environment" in refusal.message
+
+    def test_the_default_agent_is_held_to_the_same_rule(self, user, workspace, storage):
+        environment = _environment(user, workspace, "pk-browser-default", storage)
+
+        with (
+            _reads_as_browser(environment.agent_version_id),
+            pytest.raises(HostedHarnessError) as caught,
+        ):
+            resolve_run_pins(environment)
+
+        assert caught.value.code == "browser_environment_required"
+
+    def test_a_browser_agent_runs_where_the_environment_names_sites(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, "pk-browser-sites", storage)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={
+                **environment.payload,
+                "browser": {"allowed_sites": ["shop.example.com"]},
+            }
+        )
+        environment.refresh_from_db()
+        a2 = _second_agent(environment)
+        _ready(
+            environment,
+            a2.id,
+            environment.environment_version,
+            environment.suite_version,
+        )
+
+        with _reads_as_browser(a2.id):
+            run = _create(environment, VersionPicks(agent_version_id=a2.id))
+
+        assert run.agent_version_id == a2.id
+
+    def test_a_chat_agent_runs_where_the_environment_names_sites(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, "pk-chat-sites", storage)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={
+                **environment.payload,
+                "browser": {"allowed_sites": ["shop.example.com"]},
+            }
+        )
+        environment.refresh_from_db()
+
+        with _reads_as_browser():
+            assert resolve_run_pins(environment) is not None
+
+    def test_the_pinned_version_s_own_sites_answer(self, user, workspace, storage):
+        from simulate.models.harness_versioning import HarnessEnvironmentVersion
+
+        environment = _environment(user, workspace, "pk-browser-pinned", storage)
+        # Recorded on the version, though the create input names none.
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            id=environment.environment_version_id
+        ).update(browser_allowed_sites=["shop.example.com"])
+        environment.refresh_from_db()
+
+        with _reads_as_browser(environment.agent_version_id):
+            assert resolve_run_pins(environment) is not None
+
+    def test_a_version_that_recorded_no_sites_is_held_to_that(
+        self, user, workspace, storage
+    ):
+        from simulate.models.harness_versioning import HarnessEnvironmentVersion
+
+        environment = _environment(user, workspace, "pk-browser-recorded-none", storage)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={
+                **environment.payload,
+                "browser": {"allowed_sites": ["shop.example.com"]},
+            }
+        )
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            id=environment.environment_version_id
+        ).update(browser_allowed_sites=[])
+        environment.refresh_from_db()
+
+        with (
+            _reads_as_browser(environment.agent_version_id),
+            pytest.raises(HostedHarnessError) as caught,
+        ):
+            resolve_run_pins(environment)
+
+        assert caught.value.code == "browser_environment_required"

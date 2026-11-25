@@ -3458,7 +3458,9 @@ class TestChatSandboxFence:
             ),
             patch.object(gateway_module, "_platform_simulator_material", dict),
             patch.object(
-                gateway_module, "_resolved_egress_domains", lambda *_args: set()
+                gateway_module,
+                "_resolved_egress_domains",
+                lambda *_args, **_kwargs: set(),
             ),
         ):
             started_lease = gateway.ensure_conversation_runtime(

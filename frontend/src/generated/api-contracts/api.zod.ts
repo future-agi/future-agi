@@ -41361,7 +41361,7 @@ export const SimulateApiHarnessEnvironmentsListQueryParams = zod.object({
     .max(simulateApiHarnessEnvironmentsListQuerySearchMax)
     .optional(),
   status: zod.enum(["building", "running", "completed", "failed"]).optional(),
-  agent_type: zod.enum(["voice", "chat"]).optional(),
+  agent_type: zod.enum(["voice", "chat", "browser"]).optional(),
 });
 
 export const simulateApiHarnessEnvironmentsListResponseResultsItemLastRunPassRateMin = 0;
@@ -41380,7 +41380,7 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       description: zod.string().min(1),
       domain: zod.string().min(1),
       source_kind: zod.string().min(1),
-      agent_type: zod.enum(["voice", "chat"]),
+      agent_type: zod.enum(["voice", "chat", "browser"]),
       status: zod.enum(["building", "running", "completed", "failed"]),
       stage: zod.string().min(1),
       scenario_count: zod.number(),
@@ -41513,7 +41513,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     description: zod.string().min(1),
     domain: zod.string().min(1),
     source_kind: zod.string().min(1),
-    agent_type: zod.enum(["voice", "chat"]),
+    agent_type: zod.enum(["voice", "chat", "browser"]),
     status: zod.enum(["building", "running", "completed", "failed"]),
     stage: zod.string().min(1),
     scenario_count: zod.number(),
@@ -42118,7 +42118,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     description: zod.string().min(1),
     domain: zod.string().min(1),
     source_kind: zod.string().min(1),
-    agent_type: zod.enum(["voice", "chat"]),
+    agent_type: zod.enum(["voice", "chat", "browser"]),
     status: zod.enum(["building", "running", "completed", "failed"]),
     stage: zod.string().min(1),
     scenario_count: zod.number(),
@@ -47879,7 +47879,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       description: zod.string().min(1),
       domain: zod.string().min(1),
       source_kind: zod.string().min(1),
-      agent_type: zod.enum(["voice", "chat"]),
+      agent_type: zod.enum(["voice", "chat", "browser"]),
       status: zod.enum(["building", "running", "completed", "failed"]),
       stage: zod.string().min(1),
       scenario_count: zod.number(),
@@ -52261,6 +52261,10 @@ export const simulateApiHarnessJobsCreateBodySecurityDefault = {
   allow_host_runtime_control: false,
   allowed_egress_domains: [],
 };
+export const simulateApiHarnessJobsCreateBodyBrowserAllowedSitesItemMax = 253;
+
+export const simulateApiHarnessJobsCreateBodyBrowserAllowedSitesMax = 100;
+
 export const simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsDefault = 2;
 export const simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsMax = 5;
 
@@ -52462,6 +52466,20 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
         ),
     })
     .default(simulateApiHarnessJobsCreateBodySecurityDefault),
+  browser: zod
+    .object({
+      allowed_sites: zod
+        .array(
+          zod
+            .string()
+            .max(simulateApiHarnessJobsCreateBodyBrowserAllowedSitesItemMax),
+        )
+        .max(simulateApiHarnessJobsCreateBodyBrowserAllowedSitesMax)
+        .describe(
+          "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs: its sign-in, its API, its files. Host names such as example.com, with no scheme, port, path or address. At least one, at most 10.",
+        ),
+    })
+    .optional(),
   retry: zod
     .object({
       max_infrastructure_attempts: zod
@@ -52621,6 +52639,10 @@ export const simulateApiHarnessJobsPreflightBodySecurityDefault = {
   allow_host_runtime_control: false,
   allowed_egress_domains: [],
 };
+export const simulateApiHarnessJobsPreflightBodyBrowserAllowedSitesItemMax = 253;
+
+export const simulateApiHarnessJobsPreflightBodyBrowserAllowedSitesMax = 100;
+
 export const simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsDefault = 2;
 export const simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsMax = 5;
 
@@ -52828,6 +52850,20 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
         ),
     })
     .default(simulateApiHarnessJobsPreflightBodySecurityDefault),
+  browser: zod
+    .object({
+      allowed_sites: zod
+        .array(
+          zod
+            .string()
+            .max(simulateApiHarnessJobsPreflightBodyBrowserAllowedSitesItemMax),
+        )
+        .max(simulateApiHarnessJobsPreflightBodyBrowserAllowedSitesMax)
+        .describe(
+          "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs: its sign-in, its API, its files. Host names such as example.com, with no scheme, port, path or address. At least one, at most 10.",
+        ),
+    })
+    .optional(),
   retry: zod
     .object({
       max_infrastructure_attempts: zod

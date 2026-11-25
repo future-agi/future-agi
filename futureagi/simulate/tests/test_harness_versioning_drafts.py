@@ -2515,3 +2515,31 @@ def test_a_changed_contract_field_counts_as_an_unsaved_change():
 
     assert changes["contract_fields"] == 1
     assert sum(changes.values()) == 1
+
+
+class TestBrowserSites:
+    def test_an_environment_draft_and_its_save_keep_the_sites_at_the_pin(
+        self, user, workspace, storage
+    ):
+        environment = _built(user, workspace, "d-chat-sites")
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            id=environment.environment_version_id
+        ).update(browser_allowed_sites=["shop.example.com"])
+        environment.refresh_from_db()
+
+        _publish(
+            environment,
+            storage,
+            NAMES[:2],
+            sequence=10,
+            contract={"agent": "support", "tools": [{"name": "lookup"}]},
+        )
+
+        draft = _draft(environment, "environment")
+        assert draft.browser_allowed_sites == ["shop.example.com"]
+        _save_drafts(environment, user)
+        assert environment.environment_version_id == draft.id
+        environment.environment_version.refresh_from_db()
+        assert environment.environment_version.browser_allowed_sites == [
+            "shop.example.com"
+        ]

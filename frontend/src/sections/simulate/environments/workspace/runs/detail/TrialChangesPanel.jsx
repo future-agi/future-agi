@@ -152,7 +152,7 @@ function WorldState({ trialState }) {
         <Callout
           tone="warning"
           title={C.noticesHeading}
-          lines={notices.map((one) => one.message)}
+          lines={notices.map((one) => C.noticeWords[one.code] ?? one.message)}
         />
       )}
     </>

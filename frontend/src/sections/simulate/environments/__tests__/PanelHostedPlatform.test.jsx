@@ -70,12 +70,14 @@ describe("PanelHostedPlatform", () => {
     render(<PanelHostedPlatform />);
     expect(screen.getByText("Voice")).toBeInTheDocument();
     expect(screen.getByText("Chat")).toBeInTheDocument();
+    expect(screen.getByText("Browser")).toBeInTheDocument();
     expect(screen.getByText("Computer use")).toBeInTheDocument();
     expect(screen.getByText("Robotics")).toBeInTheDocument();
-    // 3 coming-soon agent types (Code / Computer use / Robotics) + the 2
-    // coming-soon voice platforms (Bland, ElevenLabs — neither a live hosted
-    // connector yet, so a submit would 400).
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(5);
+    // 4 coming-soon agent types (Browser / Computer use / Code / Robotics) +
+    // the 2 coming-soon voice platforms (Bland, ElevenLabs — neither a live
+    // hosted connector yet, so a submit would 400). No hosted platform runs a
+    // browser agent: it is built from its code, with its sites.
+    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(6);
   });
 
   it("keeps Voice selected when a coming-soon type is clicked", () => {

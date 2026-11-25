@@ -21,6 +21,7 @@ export default function UploadForm({ onBusyChange }) {
     entry,
     envText,
     egress,
+    browserSites,
     secretFiles,
     scenarioCount,
     observabilityEnabled,
@@ -173,6 +174,8 @@ export default function UploadForm({ onBusyChange }) {
         onEnvText={set("envText")}
         egress={egress}
         onEgress={set("egress")}
+        browserSites={browserSites}
+        onBrowserSites={set("browserSites")}
         secretFiles={secretFiles}
         onSecretFiles={set("secretFiles")}
       />

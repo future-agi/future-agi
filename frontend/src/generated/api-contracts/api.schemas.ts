@@ -20534,6 +20534,7 @@ export type HarnessEnvironmentApiAgentType =
 export const HarnessEnvironmentApiAgentType = {
   voice: "voice",
   chat: "chat",
+  browser: "browser",
 } as const;
 
 export type HarnessEnvironmentApiStatus =
@@ -20623,6 +20624,7 @@ export type HarnessEnvironmentOverviewApiAgentType =
 export const HarnessEnvironmentOverviewApiAgentType = {
   voice: "voice",
   chat: "chat",
+  browser: "browser",
 } as const;
 
 export type HarnessEnvironmentOverviewApiStatus =
@@ -23800,6 +23802,14 @@ export interface HarnessSecurityApi {
   allowed_egress_domains?: string[];
 }
 
+export interface HarnessBrowserApi {
+  /**
+   * The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs: its sign-in, its API, its files. Host names such as example.com, with no scheme, port, path or address. At least one, at most 10.
+   * @maxItems 100
+   */
+  allowed_sites: string[];
+}
+
 export type HarnessRetryApiRetryableDomainsItem =
   (typeof HarnessRetryApiRetryableDomainsItem)[keyof typeof HarnessRetryApiRetryableDomainsItem];
 
@@ -23863,6 +23873,7 @@ export interface HarnessJobCreateApi {
   seed?: number;
   runtime?: HarnessRuntimeApi;
   security?: HarnessSecurityApi;
+  browser?: HarnessBrowserApi;
   retry?: HarnessRetryApi;
   artifacts: HarnessArtifactApi;
   /**
@@ -23904,6 +23915,7 @@ export interface HarnessPreflightApi {
   seed?: number;
   runtime?: HarnessRuntimeApi;
   security?: HarnessSecurityApi;
+  browser?: HarnessBrowserApi;
   retry?: HarnessRetryApi;
   artifacts: HarnessArtifactApi;
   /**
@@ -47184,6 +47196,7 @@ export type SimulateApiHarnessEnvironmentsListAgentType =
 export const SimulateApiHarnessEnvironmentsListAgentType = {
   voice: "voice",
   chat: "chat",
+  browser: "browser",
 } as const;
 
 export type SimulateApiHarnessEnvironmentsActorViewParams = {

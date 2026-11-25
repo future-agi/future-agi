@@ -34,6 +34,7 @@ from simulate.models.harness_versioning import (
     VersionStatus,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB, HostedHarnessJob
+from simulate.services.browser_sites import browser_sites_at_pin
 from simulate.services.harness_versioning import archives, diffs, hashing
 from simulate.services.harness_versioning.assembly import (
     legacy_runtime,
@@ -877,6 +878,10 @@ def _land_versions(
         hash_kind=hash_kind,
         values={
             **environment_fields,
+            # The sites at the job's pin, in either layout.
+            "browser_allowed_sites": browser_sites_at_pin(
+                locked.payload, base_environment
+            ),
             "origin": VersionOrigin.BACKFILL,
             "parent_id": base_environment.id if base_environment else None,
             "summary": environment_summary,

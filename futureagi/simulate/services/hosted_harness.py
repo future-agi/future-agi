@@ -928,6 +928,17 @@ def resolve_run_pins(
     if loaded is None:
         loaded = _load_ids(environment, ids)
     agent_version, environment_version, suite_version, runtime = loaded
+    from simulate.services.browser_sites import (
+        browser_sites_at_pin,
+        refuse_unpaired_browser_agent,
+    )
+
+    # Only a compatible pair runs: an agent that needs a browser, with an environment version
+    # that names sites.
+    refuse_unpaired_browser_agent(
+        getattr(agent_version, "id", None),
+        browser_sites_at_pin(environment.payload, environment_version),
+    )
     # A rerun of its source's very pins replays the bundle its source ran.
     if source is not rerun_of or ids != _pin_ids(rerun_of) or runtime is None:
         kept = None

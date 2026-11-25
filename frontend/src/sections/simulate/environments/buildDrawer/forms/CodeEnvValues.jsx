@@ -41,6 +41,8 @@ export default function CodeEnvValues({
   onExtra,
   egress,
   onEgress,
+  browserSites,
+  onBrowserSites,
   secretFiles,
   onSecretFiles,
 }) {
@@ -364,6 +366,8 @@ export default function CodeEnvValues({
             onEnvText={() => {}}
             egress={egress}
             onEgress={onEgress}
+            browserSites={browserSites}
+            onBrowserSites={onBrowserSites}
             secretFiles={secretFiles}
             onSecretFiles={onSecretFiles}
           />
@@ -381,6 +385,8 @@ CodeEnvValues.propTypes = {
   onExtra: PropTypes.func.isRequired,
   egress: PropTypes.string,
   onEgress: PropTypes.func,
+  browserSites: PropTypes.string,
+  onBrowserSites: PropTypes.func,
   secretFiles: PropTypes.array,
   onSecretFiles: PropTypes.func,
 };

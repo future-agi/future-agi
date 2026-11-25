@@ -507,6 +507,22 @@ class HarnessSecuritySerializer(serializers.Serializer):
         return attrs
 
 
+class HarnessBrowserSerializer(serializers.Serializer):
+    """The browser an environment gives a browser agent. Its sites are checked, with a coded
+    refusal, where the run's egress is checked."""
+
+    allowed_sites = serializers.ListField(
+        child=serializers.CharField(max_length=253, allow_blank=True),
+        max_length=100,
+        help_text=(
+            "The sites the environment's browser may open, apart from the additional egress"
+            " domains. List every host the site needs: its sign-in, its API, its files. Host"
+            " names such as example.com, with no scheme, port, path or address. At least"
+            " one, at most 10."
+        ),
+    )
+
+
 class HarnessRetrySerializer(serializers.Serializer):
     max_infrastructure_attempts = serializers.IntegerField(
         default=2, min_value=1, max_value=5
@@ -568,6 +584,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     seed = serializers.IntegerField(required=False, allow_null=True)
     runtime = HarnessRuntimeSerializer(default=dict)
     security = HarnessSecuritySerializer(default=dict)
+    browser = HarnessBrowserSerializer(required=False)
     retry = HarnessRetrySerializer(default=dict)
     artifacts = HarnessArtifactSerializer()
     platform_run_id = serializers.CharField(

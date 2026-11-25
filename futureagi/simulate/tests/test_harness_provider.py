@@ -695,6 +695,63 @@ def test_daytona_preflight_rejects_known_egress_overflow(settings):
     assert response.data["error"] == "egress_domain_limit_exceeded"
 
 
+@pytest.mark.parametrize(
+    ("sites", "code"),
+    [
+        ([], "browser_sites_required"),
+        (["https://shop.example.com"], "browser_sites_invalid"),
+        (None, "browser_sites_invalid"),
+    ],
+)
+def test_preflight_refuses_a_wrong_site_list(settings, sites, code):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    payload = _v1_payload()
+    payload["browser"] = {"allowed_sites": sites}
+    request = SimpleNamespace(
+        validated_data=payload,
+        headers={},
+        build_absolute_uri=lambda _path: "https://harness.example.test/",
+    )
+
+    response = HostedHarnessProvider().preflight(request)
+
+    assert response.status_code == 400
+    assert response.data["error"] == code
+
+
+def test_the_sites_count_against_the_sandbox_list_at_preflight(settings):
+    from simulate.services.harness_provider import _validate_known_hosted_egress
+    from simulate.services.hosted_harness_gateway import (
+        _known_simulator_egress_inputs,
+        _resolved_egress_domains,
+    )
+
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    payload = _v1_payload()
+    payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
+    baseline = len(
+        _resolved_egress_domains(
+            payload,
+            {},
+            _known_simulator_egress_inputs(),
+            "harness.example.test",
+            browser_sites=[],
+        )
+    )
+    # A list exactly at the provider's limit of 20 without the browser.
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+        f"base-{index}.example.com" for index in range(20 - baseline)
+    ]
+    _validate_known_hosted_egress(payload, "https://harness.example.test")
+
+    payload["browser"] = {"allowed_sites": ["shop.example.com"]}
+    with pytest.raises(HostedHarnessError) as caught:
+        _validate_known_hosted_egress(payload, "https://harness.example.test")
+    assert caught.value.code == "egress_domain_limit_exceeded"
+
+
 def test_daytona_preflight_requires_only_the_provider_the_source_uses(settings):
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
@@ -1247,6 +1304,99 @@ def test_daytona_create_starts_gateway_workflow(user, workspace):
     usage.assert_called_once()
     assert usage.call_args.args[0] == str(user.organization.id)
     assert usage.call_args.args[1]["agent"]["connector"] == "auto"
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_a_browser_environment_is_created_with_its_sites_apart_from_egress(
+    user, workspace
+):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    class _Job:
+        id = "11111111-1111-1111-1111-111111111111"
+        payload = {
+            "retry": {
+                "max_infrastructure_attempts": 2,
+                "initial_backoff_seconds": 1,
+                "max_backoff_seconds": 15,
+            }
+        }
+
+    payload = _v1_payload()
+    payload["browser"] = {"allowed_sites": ["shop.example.com", "docs.example.org"]}
+    with (
+        patch(
+            "simulate.services.hosted_harness.create_hosted_job",
+            return_value=(_Job(), True),
+        ) as create,
+        patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"),
+        patch(
+            "simulate.services.harness_provider.serialize_job",
+            return_value={"job": {"job_id": _Job.id}},
+        ),
+        patch("simulate.services.harness_provider._validate_required_credential_files"),
+        patch("simulate.services.harness_usage.require_harness_run_usage"),
+    ):
+        response = client.post(
+            "/simulate/api/harness-jobs/",
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="browser-key",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+    assert response.status_code == 202, response.content
+    stored = create.call_args.args[1]
+    assert stored["browser"] == {
+        "allowed_sites": ["shop.example.com", "docs.example.org"]
+    }
+    assert "shop.example.com" not in stored["security"]["allowed_egress_domains"]
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+@pytest.mark.parametrize(
+    ("sites", "code"),
+    [
+        ([], "browser_sites_required"),
+        (
+            ["shop.example.com", "https://docs.example.org/path"],
+            "browser_sites_invalid",
+        ),
+        (["localhost"], "browser_sites_invalid"),
+        (["*.example.com"], "browser_sites_invalid"),
+        (
+            [f"site{index}.example.com" for index in range(11)],
+            "browser_sites_limit_exceeded",
+        ),
+    ],
+)
+def test_a_wrong_site_list_is_refused_at_create(user, workspace, sites, code):
+    client = APIClient()
+    client.force_authenticate(user=user)
+    payload = _v1_payload()
+    payload["browser"] = {"allowed_sites": sites}
+
+    with (
+        patch("simulate.services.hosted_harness.create_hosted_job") as create,
+        patch(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+        ) as start,
+    ):
+        response = client.post(
+            "/simulate/api/harness-jobs/",
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=f"browser-{code}",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] == code
+    create.assert_not_called()
+    start.assert_not_called()
 
 
 @pytest.mark.django_db

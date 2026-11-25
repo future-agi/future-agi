@@ -29553,7 +29553,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["voice", "chat"],
+              enum: ["voice", "chat", "browser"],
             },
           },
         },
@@ -73124,6 +73124,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         security: {
           $ref: "#/definitions/HarnessSecurity",
         },
+        browser: {
+          $ref: "#/definitions/HarnessBrowser",
+        },
         retry: {
           $ref: "#/definitions/HarnessRetry",
         },
@@ -73472,6 +73475,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         security: {
           $ref: "#/definitions/HarnessSecurity",
+        },
+        browser: {
+          $ref: "#/definitions/HarnessBrowser",
         },
         retry: {
           $ref: "#/definitions/HarnessRetry",
@@ -114609,7 +114615,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_type: {
           title: "Agent type",
           type: "string",
-          enum: ["voice", "chat"],
+          enum: ["voice", "chat", "browser"],
         },
         status: {
           title: "Status",
@@ -114975,7 +114981,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_type: {
           title: "Agent type",
           type: "string",
-          enum: ["voice", "chat"],
+          enum: ["voice", "chat", "browser"],
         },
         status: {
           title: "Status",
@@ -115240,6 +115246,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           default: 1073741824,
           minimum: 0,
+        },
+      },
+    },
+    HarnessBrowser: {
+      required: ["allowed_sites"],
+      type: "object",
+      properties: {
+        allowed_sites: {
+          description:
+            "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs: its sign-in, its API, its files. Host names such as example.com, with no scheme, port, path or address. At least one, at most 10.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 253,
+          },
+          maxItems: 100,
         },
       },
     },
