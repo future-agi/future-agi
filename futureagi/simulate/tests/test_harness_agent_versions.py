@@ -983,6 +983,7 @@ class TestPreflight:
             assert acquired.call_count == 2
 
         scan = {
+            "api_keys": [],
             "detected_connectors": ["livekit"],
             "required_files": [],
             "scanned_files": 7,

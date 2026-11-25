@@ -57,6 +57,7 @@ def split_statements(sql: str) -> list[str]:
 # We also append ` ON CLUSTER '<cluster>' ` to:
 #   CREATE TABLE IF NOT EXISTS <name>
 #   CREATE MATERIALIZED VIEW IF NOT EXISTS <name> TO <target>
+#   CREATE [OR REPLACE] DICTIONARY [IF NOT EXISTS] <name>
 #   ALTER TABLE <name>                          (for projection adds in 007)
 
 # Object-name pattern: each segment can be bare, backtick-quoted, or
@@ -74,6 +75,10 @@ _CREATE_MV_RE = re.compile(
 )
 _CREATE_VIEW_RE = re.compile(
     r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?" + _OBJECT_NAME,
+    re.IGNORECASE,
+)
+_CREATE_DICTIONARY_RE = re.compile(
+    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?DICTIONARY\s+(?:IF\s+NOT\s+EXISTS\s+)?" + _OBJECT_NAME,
     re.IGNORECASE,
 )
 _ALTER_TABLE_RE = re.compile(
@@ -109,11 +114,18 @@ _ENGINE_RE = re.compile(
 
 
 def extract_table_name(stmt: str) -> str | None:
-    """Return the table, MV or ordinary view name for an apply-time rewrite.
+    """Return the table, MV, ordinary view or dictionary name for an apply-time rewrite.
+    Dictionaries need cluster-wide DDL even though they have no table engine.
     Returns None for statements outside topology rewriting (INSERTs, DROPs, etc.).
-    Handles bare identifiers, backtick/double-quoted, and <db>.<table> shapes.
+    Handles bare identifiers, backtick/double-quoted, and <db>.<object> shapes.
     """
-    for rx in (_CREATE_TABLE_RE, _CREATE_MV_RE, _CREATE_VIEW_RE, _ALTER_TABLE_RE):
+    for rx in (
+        _CREATE_TABLE_RE,
+        _CREATE_MV_RE,
+        _CREATE_VIEW_RE,
+        _CREATE_DICTIONARY_RE,
+        _ALTER_TABLE_RE,
+    ):
         m = rx.match(stmt)
         if m:
             return _object_name_from_match(m)
@@ -165,6 +177,10 @@ def rewrite_for_replicated(stmt: str, *, table_name: str, cluster: str,
             lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1)
         # CREATE MATERIALIZED VIEW [IF NOT EXISTS] <name>
         stmt = _CREATE_MV_RE.sub(
+            lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1)
+        # Dictionaries are node-local metadata, not replicated with their
+        # source tables. Every replica must receive the definition.
+        stmt = _CREATE_DICTIONARY_RE.sub(
             lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1)
         # ALTER TABLE <name>
         stmt = _ALTER_TABLE_RE.sub(

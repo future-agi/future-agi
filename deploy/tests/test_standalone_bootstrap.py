@@ -65,6 +65,7 @@ FIRST_BOOT = [
     "command seed_system_evals",
     "phase clickhouse",
     "clickhouse native schema",
+    "metrics schema",
     "property catalog",
     "phase schedules",
     "search attributes",
@@ -149,6 +150,8 @@ class FakeStack:
         self.command_errors: dict[str, BaseException] = {}
         self.setup_error: BaseException | None = None
         self.native_exit: object = 0
+        self.metrics_exit: object = 0
+        self.metrics_argv: list[list[str]] = []
         self.validation_rows = [(1,)]
         self.cdc_outcomes: list = [{"mode": "outbox", "ready": True}]
         self.model_hub_config = SimpleNamespace(label="model_hub")
@@ -262,6 +265,11 @@ class FakeStack:
             raise self.native_exit
         return self.native_exit
 
+    def metrics_main(self, argv):
+        self.log.append("metrics schema")
+        self.metrics_argv.append(list(argv))
+        return self.metrics_exit
+
     def cdc_mode(self, env=None):
         """oss_outbox_cdc.cdc_mode(): the backend's default is peerdb."""
         return os.environ.get("FI_CDC_MODE", "peerdb").strip().lower()
@@ -319,6 +327,9 @@ class FakeStack:
         native = package(
             "tracer.services.clickhouse.oss_cdc_install", main=self.native_main
         )
+        metrics = package(
+            "tracer.services.derived_metrics.schema_install", main=self.metrics_main
+        )
         outbox = package(
             OUTBOX,
             cdc_mode=self.cdc_mode,
@@ -363,6 +374,10 @@ class FakeStack:
             "tracer.services.clickhouse.oss_cdc_install": native,
             OUTBOX: outbox,
             "tracer.services.clickhouse.v2": package("tracer.services.clickhouse.v2"),
+            "tracer.services.derived_metrics": package(
+                "tracer.services.derived_metrics", schema_install=metrics
+            ),
+            "tracer.services.derived_metrics.schema_install": metrics,
             "tracer.services.clickhouse.v2.apply_schema_rewriter": package(
                 "tracer.services.clickhouse.v2.apply_schema_rewriter",
                 split_statements=split_statements,
@@ -609,6 +624,19 @@ class MainTest(StackTest):
         # Without the fingerprint the next attempt migrates again.
         self.assertFalse(bootstrap.FINGERPRINT.exists())
         self.assertNotIn("placeholder shutdown", self.stack.log)
+
+    def test_the_metrics_schema_step_applies_and_a_failure_does_not_stop_the_boot(self):
+        bootstrap.main()
+        self.assertEqual(self.stack.metrics_argv, [["--apply", "--advisory"]])
+        bootstrap.READY.unlink()
+        self.stack.log.clear()
+        self.stack.metrics_exit = 2  # drift: the runner refuses a changed file
+
+        bootstrap.main()
+
+        self.assertIn("metrics schema", self.stack.log)
+        self.assertIn("property catalog", self.stack.log)
+        self.assertTrue(bootstrap.READY.exists())
 
     def test_createcachetable_failing_does_not_stop_the_boot(self):
         self.stack.command_errors["createcachetable"] = RuntimeError("exists")
