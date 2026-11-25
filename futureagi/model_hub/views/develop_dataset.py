@@ -686,6 +686,20 @@ def _request_can_access_comparisons(request):
     )
 
 
+def _request_compare_datasets(request, dataset_ids, *, lock=False):
+    """Resolve the entire selection before any compare work or mutation."""
+    if not _request_can_access_comparisons(request):
+        return None
+    ids = set(dataset_ids)
+    queryset = _request_dataset_queryset(request).filter(pk__in=ids)
+    if lock:
+        # The default-workspace scope can include a nullable workspace join.
+        # Lock only dataset rows, in stable order across overlapping requests.
+        queryset = queryset.order_by("pk").select_for_update(of=("self",))
+    datasets = {str(dataset.pk): dataset for dataset in queryset}
+    return datasets if datasets.keys() == ids else None
+
+
 def _resolve_request_compare(request, compare_id):
     """Metadata of a comparison the request may use, or None.
 
@@ -15012,8 +15026,12 @@ class CompareDatasetsStatsView(APIView):
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.insert(0, str(dataset_id))
 
+            datasets = _request_compare_datasets(request, dataset_ids)
+            if datasets is None:
+                return _compare_not_found_response(self._gm)
+
             base_columns = Column.objects.filter(
-                dataset__in=dataset_ids, name=base_column_name, deleted=False
+                dataset__in=datasets.values(), name=base_column_name, deleted=False
             ).values_list("id", flat=True)
 
             if not base_columns or len(base_columns) == 0:
@@ -15120,27 +15138,21 @@ class AddCompareExperimentEvalView(APIView):
             **MODEL_HUB_ERROR_RESPONSES,
         },
     )
+    @transaction.atomic
     def post(self, request, dataset_id, *args, **kwargs):
-        organization = (
-            getattr(request, "organization", None) or request.user.organization
-        )
-
+        organization = _request_organization(request)
         request_data = request.validated_data
+        dataset_ids = [str(dataset_id), *(str(did) for did in request_data["dataset_ids"])]
+        datasets = _request_compare_datasets(request, dataset_ids, lock=True)
+        if datasets is None:
+            return _compare_not_found_response(self._gm)
+
         serializer = UserEvalSerializer(data=request_data)
         run = request_data.get("run", False)
         save_as_template = request_data.get("save_as_template", False)
         if serializer.is_valid():
             validated_data = serializer.validated_data
-            dataset_ids = [str(did) for did in request_data.get("dataset_ids", [])]
-
-            if str(dataset_id) not in dataset_ids:
-                dataset_ids.append(str(dataset_id))
-
             template_id = validated_data.get("template_id")
-            (validated_data.get("config", {}).get("mapping", {}).get("input"))
-            # for dataset_id in dataset_ids:
-            #     for key in validated_data.get("config", {}).get("mapping", {}).keys():
-            #         validated_data["config"]["mapping"][key] = str(Column.objects.filter(dataset_id=dataset_id, name=validated_data.get("config", {}).get("mapping", {}).get(key), deleted=False).id)
 
             if UserEvalMetric.objects.filter(
                 name=validated_data.get("name"),
@@ -15236,7 +15248,7 @@ class AddCompareExperimentEvalView(APIView):
                 dot_index = column_name.find(".")
                 return column_name[:dot_index], column_name[dot_index + 1 :]
 
-            for dataset_id in set(dataset_ids):
+            for dataset_id, dataset in datasets.items():
                 config = copy.deepcopy(original_config)
 
                 for key in config.get("mapping", {}).keys():
@@ -15281,38 +15293,27 @@ class AddCompareExperimentEvalView(APIView):
                 )
 
                 if run:
-                    with transaction.atomic():
-                        # Use no_workspace_objects manager to avoid the outer join issue with select_for_update
-                        dataset = Dataset.no_workspace_objects.select_for_update().get(
-                            id=dataset_id
-                        )
-                        data_type = infer_eval_result_column_data_type(
-                            user_eval_metric.template
-                        )
-
-                        column = Column.objects.create(
-                            name=validated_data.get("name"),
-                            data_type=data_type,
-                            source=SourceChoices.EVALUATION.value,
+                    data_type = infer_eval_result_column_data_type(
+                        user_eval_metric.template
+                    )
+                    column = Column.objects.create(
+                        name=validated_data.get("name"),
+                        data_type=data_type,
+                        source=SourceChoices.EVALUATION.value,
+                        dataset=dataset,
+                        source_id=user_eval_metric.id,
+                    )
+                    dataset.column_order.append(str(column.id))
+                    if validated_data.get("config").get("reason_column"):
+                        reason_column, _ = Column.objects.get_or_create(
+                            name=f"{user_eval_metric.name}-reason",
+                            data_type=DataTypeChoices.TEXT.value,
+                            source=SourceChoices.EVALUATION_REASON.value,
                             dataset=dataset,
-                            source_id=user_eval_metric.id,
+                            source_id=f"{column.id}-sourceid-{user_eval_metric.id}",
                         )
-                        column_order = dataset.column_order
-                        column_order.append(str(column.id))
-                        dataset.column_order = column_order
-                        dataset.save()
-
-                        if validated_data.get("config").get("reason_column"):
-                            reason_column, created = Column.objects.get_or_create(
-                                name=f"{user_eval_metric.name}-reason",
-                                data_type=DataTypeChoices.TEXT.value,
-                                source=SourceChoices.EVALUATION_REASON.value,
-                                dataset=dataset,
-                                source_id=f"{column.id}-sourceid-{user_eval_metric.id}",
-                            )
-                            column_order.append(str(reason_column.id))
-                            dataset.column_order = column_order
-                            dataset.save()
+                        dataset.column_order.append(str(reason_column.id))
+                    dataset.save()
 
             return self._gm.success_response("success")
         return self._gm.bad_request(parse_serialized_errors(serializer))
@@ -15524,6 +15525,31 @@ class GetCompareEvalsListView(APIView):
         return self._gm.success_response({"evals": run_evals})
 
 
+def _compare_preview_rows(dataset_info, datasets):
+    """Validate every supplied (dataset, row) pair; preview the first group only."""
+    requested = set()
+    first_group = []
+    for index, group in enumerate(dataset_info.values()):
+        if not isinstance(group, dict) or not group.keys() <= datasets.keys():
+            return None
+        for dataset_id, row_id in group.items():
+            try:
+                pair = (dataset_id, uuid.UUID(str(row_id)))
+            except ValueError:
+                return None
+            requested.add(pair)
+            if index == 0:
+                first_group.append(pair)
+
+    rows = Row.objects.filter(
+        dataset__in=datasets.values(), pk__in={pk for _, pk in requested}, deleted=False
+    )
+    by_pair = {(str(row.dataset_id), row.pk): row for row in rows}
+    if requested != by_pair.keys():
+        return None
+    return [by_pair[pair] for pair in first_group]
+
+
 class ComparePreviewRunEvalView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -15540,6 +15566,15 @@ class ComparePreviewRunEvalView(APIView):
             template_id = str(request_data.get("template_id"))
             dataset_ids = [str(did) for did in request_data.get("dataset_ids", [])]
             dataset_info = request_data.get("dataset_info", {})
+            datasets = _request_compare_datasets(request, dataset_ids)
+            if datasets is None:
+                return _compare_not_found_response(self._gm)
+            if not (dataset_info and isinstance(dataset_info, dict)):
+                return self._gm.bad_request(get_error_message("NO_DATASET_INFO_PROVIDED"))
+            rows = _compare_preview_rows(dataset_info, datasets)
+            if rows is None:
+                return _compare_not_found_response(self._gm)
+            source = datasets[dataset_ids[0]].source if rows else None
 
             protect = False
             is_only_eval = True
@@ -15571,35 +15606,9 @@ class ComparePreviewRunEvalView(APIView):
             data_config = config.get("config")
             run_prompt_column = eval_template.config.get("run_prompt_column", False)
 
-            # Convert dataset_ids to a set for faster lookups
-            dataset_ids_set = set(dataset_ids)
-
-            # Determine the rows to process
-            if not (dataset_info and isinstance(dataset_info, dict)):
-                return self._gm.bad_request(
-                    get_error_message("NO_DATASET_INFO_PROVIDED")
-                )
-
-            row_ids = []
-            if dataset_info:
-                first_base_value = next(iter(dataset_info.keys()), None)
-                if first_base_value:
-                    for ds_id in dataset_ids_set:
-                        if ds_id in dataset_info[first_base_value]:
-                            row_ids.append(dataset_info[first_base_value][ds_id])
-
-            rows = Row.objects.filter(id__in=row_ids, deleted=False)
-
-            # Fetch source from the first dataset if available
-            source = (
-                Dataset.objects.get(id=dataset_ids[0]).source
-                if dataset_ids and rows
-                else None
-            )
-
             # Fetch all relevant columns in one query
             all_columns = Column.objects.filter(
-                dataset_id__in=dataset_ids, deleted=False
+                dataset__in=datasets.values(), deleted=False
             )
             column_map = {
                 (str(col.dataset_id), col.name): str(col.id) for col in all_columns
@@ -15608,7 +15617,7 @@ class ComparePreviewRunEvalView(APIView):
             # Group rows by dataset
             rows_by_dataset = defaultdict(list)
             for row in rows:
-                rows_by_dataset[str(row.dataset.id)].append(row)
+                rows_by_dataset[str(row.dataset_id)].append(row)
 
             # Process each dataset's rows
             futures = []
