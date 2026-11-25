@@ -226,7 +226,7 @@ def test_voice_list_enrichment_batches_roots_and_omits_denied_counts():
 
 
 def test_explicit_framework_roots_preserve_real_provider_and_parent():
-    project = SimpleNamespace(id=C)
+    project = SimpleNamespace(id=C, trace_type="observe")
     for provider in ("pipecat", "livekit"):
         for kind, parent in (("CONVERSATION", None), ("CHAIN", "fedcba9876543210")):
             span = {
@@ -686,7 +686,10 @@ def _livekit_root(name="job_entrypoint", parent=None, **attributes):
     }
     with patch("tracer.utils.otel.calculate_cost", return_value=0):
         return _convert_single_span(
-            span, {("voice", A, "observe"): SimpleNamespace(id=C)}, {}, A
+            span,
+            {("voice", A, "observe"): SimpleNamespace(id=C, trace_type="observe")},
+            {},
+            A,
         )["observation_span"]["observation_type"]
 
 
@@ -824,7 +827,7 @@ def test_persisted_refs_round_trip_through_conversion_and_attribute_split(bulk, 
     from tracer.services.clickhouse.v2.adapter import split_attributes
     from tracer.utils import otel
 
-    project = SimpleNamespace(id=C)
+    project = SimpleNamespace(id=C, trace_type="observe")
     attrs = {
         SCHEMA: 1,
         REFS: json.dumps([REF if valid else {**REF, "unknown": 1}]),
