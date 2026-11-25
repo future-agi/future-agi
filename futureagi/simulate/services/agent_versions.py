@@ -733,11 +733,15 @@ def change_version(
 
 def version_values(version: AgentVersion) -> dict[str, Any]:
     """The names of a version's values, never a value: each with whether the reading
-    lists it as required and whether the test environment makes it itself, and the
-    required names it has no value for."""
+    lists it as required, whether the test environment makes it itself and whether
+    it is a voice provider's key, and the required names it has no value for."""
     runtime = _runtime(version)
     if runtime is None:
         return {"names": [], "missing_required_names": [], "made_by_environment": []}
+    from simulate.services.harness_versioning.hashing import (
+        PROVIDER_CREDENTIAL_ALIASES,
+    )
+
     required = {str(name) for name in runtime.required_variable_names or []}
     generated = generated_value_names(version.id)
     names = version_credential_names(runtime)
@@ -747,6 +751,7 @@ def version_values(version: AgentVersion) -> dict[str, Any]:
                 "name": name,
                 "required": name in required,
                 "made_by_environment": name in generated,
+                "provider_key": name in PROVIDER_CREDENTIAL_ALIASES,
             }
             for name in names
         ],

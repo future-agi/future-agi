@@ -30,6 +30,9 @@ from simulate.tests.test_harness_connected_versions import (
     _following,
     _pinned,
 )
+from simulate.tests.test_harness_versioning_backfill import (
+    storage as storage,  # noqa: F401 - fixture
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -300,9 +303,60 @@ def test_a_values_only_change_becomes_production_and_moves_followers(
     assert production.status == "archived"
     assert following.agent_version_id == version.id
     assert pinned.agent_version_id == production.id
-    # No rebuild card for the environment that moved.
-    moved_cards = [one for one in nudge.call_args_list if one.args[0] == following.id]
-    assert moved_cards == []
+    # No rebuild card, neither for the environment that moved nor the pinned one.
+    carded = {str(one.args[0]) for one in nudge.call_args_list}
+    assert str(following.id) not in carded
+    assert str(pinned.id) not in carded
+
+
+def test_a_follower_busy_at_the_move_gets_no_card_once_moved(
+    auth_client, agent, production
+):
+    from simulate.services.harness_versioning.rebuild import (
+        retry_deferred_activations,
+    )
+
+    _store_reading(production)
+    following = _following(_completed(_environment(agent, 1), production))
+    HostedHarnessJob.no_workspace_objects.filter(id=following.id).update(
+        state=HostedHarnessJob.State.RUNNING
+    )
+    body = _set(auth_client, agent, secret_values={"DB_URL": "pg://x"})
+    _store_reading(AgentVersion.objects.get(id=body["version"]["id"]))
+    _passed(body["version"]["id"])
+    following.refresh_from_db()
+    assert following.agent_version_id == production.id
+
+    _completed(following, production)
+    with patch(NUDGE) as nudge:
+        outcome = retry_deferred_activations(body["version"]["id"])
+
+    assert outcome == {str(following.id): "activated"}
+    following.refresh_from_db()
+    assert str(following.agent_version_id) == body["version"]["id"]
+    assert nudge.call_args_list == []
+
+
+def test_made_production_by_hand_later_the_cards_come_back(
+    auth_client, agent, production
+):
+    from simulate.services.harness_agent_versions import quiet_production
+
+    _store_reading(production)
+    _following(_completed(_environment(agent, 1), production))
+    body = _set(auth_client, agent, secret_values={"DB_URL": "pg://x"})
+    _store_reading(AgentVersion.objects.get(id=body["version"]["id"]))
+    _passed(body["version"]["id"])
+    assert quiet_production(body["version"]["id"])
+
+    # Production moved back by hand, then forward by hand: a plain move.
+    from simulate.services.harness_agent_versions import promote_to_production
+
+    with patch(NUDGE):
+        promote_to_production(production)
+        promote_to_production(AgentVersion.objects.get(id=body["version"]["id"]))
+
+    assert not quiet_production(body["version"]["id"])
 
 
 def test_the_next_build_after_a_failed_one_takes_the_new_values(
@@ -379,6 +433,76 @@ def test_a_values_change_on_an_old_production_is_only_offered(
     assert AgentVersion.objects.get(id=other["version"]["id"]).status == "active"
 
 
+# --- the gate at each entry point ------------------------------------------------------
+
+
+def test_a_build_with_a_value_the_environment_makes_is_refused_before_any_job(
+    auth_client, agent, production, workspace
+):
+    from simulate.tests.test_harness_provider import _v1_payload
+
+    _runtime(production, credential_names=["AGENT_API_TOKEN", "DB_URL"])
+    payload = _v1_payload()
+    payload["metadata"] = {"agent_definition_id": str(agent.id)}
+    before = HostedHarnessJob.no_workspace_objects.count()
+
+    with (
+        patch(CONTRACT, return_value=LOCAL_AUTH),
+        patch(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+        ) as start,
+        patch("simulate.services.harness_usage.require_harness_run_usage") as usage,
+    ):
+        response = auth_client.post(
+            "/simulate/api/harness-jobs/",
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="values-gate-build",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+    assert response.status_code == 422, response.content
+    assert response.json()["error"] == "value_made_by_environment"
+    assert HostedHarnessJob.no_workspace_objects.count() == before
+    start.assert_not_called()
+    usage.assert_not_called()
+
+
+def test_a_run_with_a_value_the_environment_makes_is_refused_and_reads_once(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness import create_selected_harness_run
+    from simulate.tests.test_harness_amend_archive import NAMES, _key
+    from simulate.tests.test_harness_versioning_api import _versioned
+
+    environment = _versioned(user, workspace, "values-gate-run", storage)
+    # An environment from before versioning: its own references are the names its
+    # runs carry, and one of them is the name the environment makes itself.
+    payload = dict(environment.payload)
+    refs = dict(payload["agent"]["secret_refs"])
+    refs["AGENT_API_TOKEN"] = next(iter(refs.values()))
+    payload["agent"] = {**payload["agent"], "secret_refs": refs}
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        payload=payload
+    )
+    environment.refresh_from_db()
+    before = HostedHarnessJob.no_workspace_objects.count()
+
+    with patch(CONTRACT, return_value=LOCAL_AUTH) as contract:
+        with pytest.raises(HostedHarnessError) as caught:
+            create_selected_harness_run(
+                environment,
+                scenario_keys=[_key(NAMES[0])],
+                trials=1,
+                idempotency_key="values-gate-run",
+            )
+
+    assert caught.value.code == "value_made_by_environment"
+    assert HostedHarnessJob.no_workspace_objects.count() == before
+    # Read once, before the environment was locked; not again under the lock.
+    assert contract.call_count == 1
+
+
 # --- the agent page's list of names ------------------------------------------------
 
 
@@ -401,12 +525,34 @@ def test_the_page_lists_names_never_values(auth_client, agent, production):
     assert "secret-" not in response.content.decode()
     assert response.json() == {
         "names": [
-            {"name": "AGENT_API_TOKEN", "required": False, "made_by_environment": True},
-            {"name": "DB_URL", "required": True, "made_by_environment": False},
+            {
+                "name": "AGENT_API_TOKEN",
+                "required": False,
+                "made_by_environment": True,
+                "provider_key": False,
+            },
+            {
+                "name": "DB_URL",
+                "required": True,
+                "made_by_environment": False,
+                "provider_key": False,
+            },
         ],
         "missing_required_names": ["KEY"],
         "made_by_environment": ["AGENT_API_TOKEN", "agent_api_token"],
     }
+
+
+def test_the_page_marks_a_provider_key(auth_client, agent, production):
+    alias = sorted(hashing.PROVIDER_CREDENTIAL_ALIASES)[0]
+    HarnessAgentVersionRuntime.objects.filter(agent_version=production).update(
+        credential_names=[alias, "DB_URL"]
+    )
+
+    response = auth_client.get(f"{AGENTS}{agent.id}/versions/{production.id}/values/")
+
+    flags = {one["name"]: one["provider_key"] for one in response.json()["names"]}
+    assert flags == {alias: True, "DB_URL": False}
 
 
 def test_another_agents_version_is_not_found(auth_client, agent, production):

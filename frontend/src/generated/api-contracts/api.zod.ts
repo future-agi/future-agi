@@ -35869,6 +35869,7 @@ export const SimulateAgentDefinitionsVersionsValuesListResponse = zod.object({
         name: zod.string().min(1).optional(),
         required: zod.boolean().optional(),
         made_by_environment: zod.boolean().optional(),
+        provider_key: zod.boolean().optional(),
       }),
     )
     .optional(),

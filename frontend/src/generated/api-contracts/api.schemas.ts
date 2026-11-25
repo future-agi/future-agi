@@ -18309,6 +18309,7 @@ export interface AgentValueNameApi {
   readonly name?: string;
   readonly required?: boolean;
   readonly made_by_environment?: boolean;
+  readonly provider_key?: boolean;
 }
 
 export interface AgentVersionValuesResponseApi {

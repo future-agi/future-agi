@@ -392,6 +392,22 @@ def create_selected_harness_run(
             f"selected scenarios × trials must not exceed {max_executions}",
             status_code=400,
         )
+    from simulate.services.harness_agent_versions import (
+        generated_value_names,
+        values_gate,
+    )
+
+    # Read from storage before the environment is locked: the names the test
+    # environment makes for each version this run may resolve to.
+    generated = {
+        str(version_id): generated_value_names(version_id)
+        for version_id in {
+            environment.agent_version_id,
+            getattr(rerun_of, "agent_version_id", None),
+            getattr(picks, "agent_version_id", None),
+        }
+        if version_id
+    }
 
     with transaction.atomic():
         try:
@@ -438,9 +454,15 @@ def create_selected_harness_run(
             )
             if replayed is not None:
                 return replayed, False
-            from simulate.services.harness_agent_versions import values_gate
-
-            values_gate(resolved.runtime)
+            runtime = resolved.runtime
+            values_gate(
+                runtime,
+                generated=(
+                    generated.get(str(runtime.agent_version_id))
+                    if runtime is not None
+                    else None
+                ),
+            )
         pins = _pinned_versions(environment, resolved)
         if pins is None:
             registrations = list(

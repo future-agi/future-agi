@@ -351,6 +351,8 @@ class AgentValueNameSerializer(serializers.Serializer):
     required = serializers.BooleanField(read_only=True)
     # The test environment makes this value itself; a value of the user's is refused.
     made_by_environment = serializers.BooleanField(read_only=True)
+    # A voice provider's key (Vapi, Retell, LiveKit): changed, never removed here.
+    provider_key = serializers.BooleanField(read_only=True)
 
 
 class AgentVersionValuesResponseSerializer(serializers.Serializer):

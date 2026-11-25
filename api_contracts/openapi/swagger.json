@@ -142739,6 +142739,11 @@
                     "title": "Made by environment",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "provider_key": {
+                    "title": "Provider key",
+                    "type": "boolean",
+                    "readOnly": true
                 }
             }
         },

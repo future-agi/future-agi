@@ -66,6 +66,9 @@ _WAIT_LIMIT = timedelta(hours=1)
 # The environments a version was offered to.
 OFFERED_KEY = "offered_to_environments"
 PRODUCTION_REQUESTS_KEY = "requested_by_production"
+# Set on a version that became production by changing only values: the followers
+# it moves, now or once they are free, get no rebuild card.
+QUIET_PRODUCTION_KEY = "values_only_production"
 _OWN_PAYLOAD_KEYS = (
     "legacy_secret_refs",
     "secret_refs",
@@ -168,18 +171,25 @@ def missing_required_names(runtime: HarnessAgentVersionRuntime | None) -> list[s
 
 
 def values_gate(
-    runtime: HarnessAgentVersionRuntime | None, *, extra_names: Iterable[str] = ()
+    runtime: HarnessAgentVersionRuntime | None,
+    *,
+    extra_names: Iterable[str] = (),
+    generated: set[str] | None = None,
 ) -> None:
     """Before a build, rebuild or run spends anything: refuse a version with a value
     under a name the test environment makes itself, or one missing a value the
-    reading lists as required. ``extra_names`` are values the request itself brings.
-    The kit's own refusal stays behind this one."""
+    reading lists as required. ``extra_names`` are values the request itself brings;
+    ``generated``, the names the environment makes when the caller read them before
+    taking a lock (else they are read here). The kit's own refusal stays behind this
+    one."""
     if runtime is None:
         return
     extra = {str(name) for name in extra_names}
     values_made_by_environment(
         {*version_credential_names(runtime), *extra},
-        generated_value_names(runtime.agent_version_id),
+        generated
+        if generated is not None
+        else generated_value_names(runtime.agent_version_id),
     )
     if not own_credential_set(runtime):
         # A legacy row's values are an environment's refs, not its names.
@@ -2207,7 +2217,7 @@ def _activate(
                 explicit=explicit,
                 user=user,
                 production=str(environment_id) in production,
-                quiet=quiet,
+                quiet=quiet and str(environment_id) in production,
             )
         except Exception as exc:  # noqa: BLE001 - never blocks the others
             logger.warning(
@@ -2745,9 +2755,11 @@ def _activate_production(
             )
             return []
         if following:
-            _request_for(version.id, following, production=True)
+            _request_for(version.id, following, production=True, quiet=quiet)
         _record_activation(version.id, {**dict.fromkeys(pinned, "pinned"), **offered})
-    for environment_id in [*pinned, *offered]:
+    # A pinned environment chose to stay: a values-only change offers it nothing. A
+    # follower that could not be moved is still offered the version.
+    for environment_id in [*([] if quiet else pinned), *offered]:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
     return _activate(version, following, by_production=following, quiet=quiet)
 
@@ -2770,6 +2782,7 @@ def _note_request(
     *,
     waiting: bool,
     production: bool = False,
+    quiet: bool = False,
 ) -> None:
     asked_at = timezone.now().isoformat()
     with transaction.atomic():
@@ -2795,15 +2808,38 @@ def _note_request(
                 **(stored.get(PRODUCTION_REQUESTS_KEY) or {}),
                 **dict.fromkeys(environment_ids, asked_at),
             }
+            # Made production again another way (by hand, across code): cards again.
+            if quiet:
+                payload[QUIET_PRODUCTION_KEY] = True
+            else:
+                payload.pop(QUIET_PRODUCTION_KEY, None)
         runtime.agent_payload = payload
         runtime.save(update_fields=["agent_payload", "updated_at"])
 
 
 def _request_for(
-    version_id: Any, environment_ids: list[str], *, production: bool = False
+    version_id: Any,
+    environment_ids: list[str],
+    *,
+    production: bool = False,
+    quiet: bool = False,
 ) -> None:
     """Add environments to the ones waiting for this version, keeping earlier ones."""
-    _note_request(version_id, environment_ids, waiting=True, production=production)
+    _note_request(
+        version_id,
+        environment_ids,
+        waiting=True,
+        production=production,
+        quiet=quiet,
+    )
+
+
+def quiet_production(version_id: Any) -> bool:
+    """Whether the version became production by changing only values."""
+    runtime = _side_row(version_id)
+    return bool(
+        ((runtime.agent_payload or {}) if runtime else {}).get(QUIET_PRODUCTION_KEY)
+    )
 
 
 def stamp_requested_at(version_id: Any, environment_id: Any) -> None:

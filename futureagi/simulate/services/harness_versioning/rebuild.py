@@ -2001,6 +2001,7 @@ def retry_deferred_activations(version_id: Any) -> dict[str, str]:
         _busy,
         _record_activation,
         production_requests,
+        quiet_production,
     )
     from simulate.services.harness_versioning.versions import UNREADY_STATES
 
@@ -2025,7 +2026,10 @@ def retry_deferred_activations(version_id: Any) -> dict[str, str]:
     moved = {
         str(one)
         for one in _activate(
-            version, ready, by_production=production_requests(version_id)
+            version,
+            ready,
+            by_production=production_requests(version_id),
+            quiet=quiet_production(version_id),
         )
     }
     return {one: "activated" if one in moved else "not_moved" for one in ready}

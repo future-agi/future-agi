@@ -102679,6 +102679,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           readOnly: true,
         },
+        provider_key: {
+          title: "Provider key",
+          type: "boolean",
+          readOnly: true,
+        },
       },
     },
     AgentccRequestLogMetadataValues: {
