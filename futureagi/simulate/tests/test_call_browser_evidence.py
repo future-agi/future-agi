@@ -188,6 +188,36 @@ def _call(
 
 
 @pytest.mark.django_db
+def test_a_trial_is_of_a_browser_environment_when_its_job_has_sites_at_its_pin(job):
+    assert be.browser_environment(_call(job, None)) is False
+    job.payload = {**job.payload, "browser": {"allowed_sites": ["shop.example.com"]}}
+    job.save(update_fields=["payload"])
+    assert be.browser_environment(_call(job, None)) is True
+    # Only the job that sent the trial's receipt, in the run's organisation and workspace.
+    assert (
+        be.browser_environment(_call(job, None, organization_id=uuid.uuid4())) is False
+    )
+    assert be.browser_environment(_call(job, None, workspace_id=uuid.uuid4())) is False
+    assert be.browser_environment(_call(job, None, job_id=uuid.uuid4())) is False
+    no_receipt = _call(job, None)
+    no_receipt.call_metadata.pop("hosted_harness_receipt")
+    assert be.browser_environment(no_receipt) is False
+    # Read through the one function for a job's sites, with the job's pinned version.
+    with patch.object(be, "browser_sites_at_pin", return_value=[]) as read:
+        assert be.browser_environment(_call(job, None)) is False
+    (payload, version), _ = read.call_args
+    assert payload == job.payload and version is None
+
+
+@pytest.mark.django_db
+def test_a_browser_environment_whose_stored_list_is_refused_is_still_one(job):
+    # A list the save would refuse still names a browser environment: its entry shows and says what was kept.
+    job.payload = {**job.payload, "browser": {"allowed_sites": ["not a host"]}}
+    job.save(update_fields=["payload"])
+    assert be.browser_environment(_call(job, None)) is True
+
+
+@pytest.mark.django_db
 def test_screenshots_are_the_file_s_rows_in_order_each_with_its_stored_picture(
     job, store
 ):
@@ -541,6 +571,11 @@ def test_the_trial_s_browser_is_read_through_its_call_only_in_its_workspace(
     )
     url = f"/simulate/v3/call-executions/{call.id}/browser/"
     run_tests = RunTest.no_workspace_objects.filter(id=call.test_execution.run_test_id)
+
+    # Call detail says whether the trial's environment has a browser; this one has none.
+    detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+    assert detail.status_code == 200, detail.content
+    assert detail.json()["browser_environment"] is False
 
     allowed = auth_client.get(url)
     assert allowed.status_code == 200, allowed.content
