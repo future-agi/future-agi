@@ -288,7 +288,7 @@ def test_health_client_forwards_retained_read_deadline(monkeypatch):
     from tracer.services.clickhouse.client import ClickHouseClient
     from tracer.services.clickhouse.health_client import HealthCheckClient
 
-    observed = {}
+    observed: dict[str, object] = {}
     connection = SimpleNamespace(sync_request_timeout=5, receive_packet=lambda: None)
     driver = Mock(connection=connection)
 
