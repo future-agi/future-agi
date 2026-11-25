@@ -30,6 +30,7 @@ import MessagesView from "./MessagesView";
 import CallDetailsBar from "./CallDetailsBar";
 import ScenarioView from "./ScenarioView";
 import { isEmptyPersona } from "./persona.utils";
+import { passedByEvalId } from "src/components/traceDetail/evalVerdict";
 
 const TABS = {
   ANALYTICS: "analytics",
@@ -240,6 +241,11 @@ const VoiceRightPanel = ({
   //  - arrays of { name, score, reason, ... }
   // The shared EvalsTabView uses a canonical 0-100 score and eval_name
   // field so the trace drawer's traffic-light bucketing kicks in.
+  const passedById = useMemo(
+    () => (isSimulate ? passedByEvalId(data?.evaluations) : {}),
+    [isSimulate, data],
+  );
+
   const normalizedEvals = useMemo(() => {
     if (!evalRows) return [];
     // A sub-goal check is the scenario's, not an eval; simulate tags it.
@@ -302,6 +308,7 @@ const VoiceRightPanel = ({
         score,
         score_label: scoreLabel,
         score_items: scoreItems,
+        passed: passedById[String(e?.id ?? id)],
         explanation: e?.reason || e?.explanation || e?.skipped_reason,
         error: e?.error === true,
         skipped: e?.skipped === true || e?.status === "skipped",
@@ -336,7 +343,7 @@ const VoiceRightPanel = ({
         },
       };
     });
-  }, [evalRows]);
+  }, [evalRows, passedById]);
 
   const traceId = data?.trace_id || data?.id;
   const annotationSources = useMemo(() => {

@@ -20,6 +20,7 @@ import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFal
 import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingStateComponent";
 import ChatAnalyticsView from "./ChatAnalyticsView";
 import ChatDetailsBar from "./ChatDetailsBar";
+import { passedByEvalId } from "src/components/traceDetail/evalVerdict";
 
 const TABS = {
   ANALYTICS: "analytics",
@@ -135,6 +136,11 @@ const ChatRightPanel = ({
     return data?.eval_outputs || observationSpan?.evals_metrics || null;
   }, [isSimulate, data, observationSpan]);
 
+  const passedById = useMemo(
+    () => (isSimulate ? passedByEvalId(data?.evaluations) : {}),
+    [isSimulate, data],
+  );
+
   const normalizedEvals = useMemo(() => {
     if (!evalRows) return [];
     // A sub-goal check is the scenario's, not an eval; simulate tags it.
@@ -167,6 +173,8 @@ const ChatRightPanel = ({
           scoreLabel =
             rawValue.length > 24 ? `${rawValue.slice(0, 24)}…` : rawValue;
         }
+      } else if (Array.isArray(rawValue) && rawValue.length > 0) {
+        scoreLabel = rawValue.map(String).join(", ");
       }
 
       return {
@@ -174,6 +182,7 @@ const ChatRightPanel = ({
         eval_name: e?.name || e?.metric || String(id),
         score,
         score_label: scoreLabel,
+        passed: passedById[String(e?.id ?? id)],
         explanation: e?.reason || e?.explanation,
         cell_id: e?.cell_id || e?.cellId,
         error_analysis:
@@ -191,7 +200,7 @@ const ChatRightPanel = ({
         },
       };
     });
-  }, [evalRows]);
+  }, [evalRows, passedById]);
 
   const traceId = data?.trace_id || data?.id;
   const annotationSources = useMemo(() => {
