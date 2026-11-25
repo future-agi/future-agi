@@ -152,8 +152,11 @@ export const LIFECYCLE_COPY = {
     loading: "Reading both versions…",
     failed: "Couldn't read the change. Try again.",
     validate: (n) => `Validate ${n} ${n === 1 ? "scenario" : "scenarios"}`,
-    citedBy: (keys) =>
-      `Cited by ${keys.length === 1 ? "1 scenario" : `${keys.length} scenarios`}: ${keys.join(", ")}`,
+    citedBy: (n, keys) =>
+      `Cited by ${n === 1 ? "1 scenario" : `${n} scenarios`}: ${keys.join(", ")}`,
+    showMore: (n) => `Show ${n} more`,
+    hide: "Hide",
+    truncated: "Only the first changes are shown.",
   },
   sourcesLabel: "Sources",
   citation: {

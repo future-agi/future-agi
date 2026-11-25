@@ -1,11 +1,15 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import {
   Box,
+  Button,
+  Collapse,
   DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 
 import { ClosableDialog } from "src/components/custom-dialog";
@@ -64,6 +68,43 @@ Cited.propTypes = {
   quotes: PropTypes.arrayOf(PropTypes.string).isRequired,
 };
 
+const CITED_SHOWN = 3;
+
+// The scenarios that cite a change: the first few, the rest one click away.
+function CitedBy({ keys }) {
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const [showAll, setShowAll] = useState(false);
+  const rest = keys.slice(CITED_SHOWN);
+  return (
+    <Box sx={{ typography: "s3", color: "text.secondary" }}>
+      <Typography sx={{ typography: "s3" }}>
+        {COPY.citedBy(keys.length, keys.slice(0, CITED_SHOWN))}
+      </Typography>
+      <Collapse
+        in={showAll}
+        timeout={reduceMotion ? 0 : undefined}
+        unmountOnExit
+      >
+        <Typography sx={{ typography: "s3", overflowWrap: "anywhere" }}>
+          {rest.join(", ")}
+        </Typography>
+      </Collapse>
+      {rest.length > 0 && (
+        <Button
+          size="small"
+          color="inherit"
+          aria-expanded={showAll}
+          sx={{ mt: 0.5, ml: -0.75 }}
+          onClick={() => setShowAll((open) => !open)}
+        >
+          {showAll ? COPY.hide : COPY.showMore(rest.length)}
+        </Button>
+      )}
+    </Box>
+  );
+}
+CitedBy.propTypes = { keys: PropTypes.arrayOf(PropTypes.string).isRequired };
+
 // The rules and files an environment version changed against its parent, the cited words marked, and the
 // scenarios that cite each one.
 export default function SourceCompareDialog({
@@ -90,8 +131,8 @@ export default function SourceCompareDialog({
       .map((one) => one.quote);
   const changes = data?.changes ?? [];
   const affected = [...new Set(changes.flatMap((one) => one.cited_by))];
-  const canValidate =
-    !locked && affected.length > 0 && affected.length <= VALIDATE_KEYS_MAX;
+  // Past the server's limit, or when not every change is listed, every scenario that needs it is proved instead.
+  const byName = affected.length <= VALIDATE_KEYS_MAX && !data?.truncated;
   return (
     <ClosableDialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
@@ -140,19 +181,24 @@ export default function SourceCompareDialog({
                   </Box>
                 ))}
               </Stack>
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {COPY.citedBy(change.cited_by)}
-              </Typography>
+              <CitedBy keys={change.cited_by} />
             </Stack>
           ))}
+          {data?.truncated && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {COPY.truncated}
+            </Typography>
+          )}
         </Stack>
       </DialogContent>
-      {canValidate && (
+      {!locked && affected.length > 0 && (
         <DialogActions>
           <ValidateScenariosButton
             envId={envId}
-            keys={affected}
-            label={COPY.validate(affected.length)}
+            {...(byName && {
+              keys: affected,
+              label: COPY.validate(affected.length),
+            })}
           />
         </DialogActions>
       )}

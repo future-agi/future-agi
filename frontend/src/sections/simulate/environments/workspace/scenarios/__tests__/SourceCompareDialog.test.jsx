@@ -27,7 +27,7 @@ vi.mock("src/api/simulate-environments/scenarios", async () => ({
   getRunningScenarioValidation: async () => ({
     job_id: null,
     scenario_keys: null,
-    to_prove: 0,
+    to_prove: 3,
   }),
   getScenarioValidation: async () => ({ state: "validating" }),
   getSourceChanges: (...args) => getSourceChanges(...args),
@@ -158,14 +158,75 @@ describe("Source changed", () => {
     );
   });
 
+  it.each([
+    ["more than the server validates by name", 51, false],
+    ["fewer than it changed", 2, true],
+  ])(
+    "validates every scenario that needs it when the changes list %s",
+    async (_, count, truncated) => {
+      getSourceChanges.mockResolvedValueOnce({
+        from_version: 1,
+        to_version: 2,
+        truncated,
+        changes: [
+          {
+            kind: "rule",
+            ref: "rule-1",
+            before: "x",
+            after: "y",
+            cited_by: Array.from({ length: count }, (__, at) => `case-${at}`),
+          },
+        ],
+      });
+      renderWithClient(
+        <LifecycleSection envId="env-1" lifecycle={lifecycle} Row={Row} />,
+      );
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Compare" }));
+      const button = await screen.findByRole("button", {
+        name: "Validate cases not yet proved",
+      });
+      await waitFor(() => expect(button).toBeEnabled());
+      await user.click(button);
+      await waitFor(() =>
+        expect(validateScenarios).toHaveBeenLastCalledWith("env-1", {}),
+      );
+      expect(screen.queryByText("Only the first changes are shown.")).toEqual(
+        truncated ? expect.anything() : null,
+      );
+    },
+  );
+
+  it("names three citing scenarios and keeps the rest one click away", async () => {
+    getSourceChanges.mockResolvedValueOnce({
+      from_version: 1,
+      to_version: 2,
+      changes: [
+        {
+          kind: "rule",
+          ref: "rule-1",
+          before: "x",
+          after: "y",
+          cited_by: ["a", "b", "c", "d", "e"],
+        },
+      ],
+    });
+    renderWithClient(
+      <LifecycleSection envId="env-1" lifecycle={lifecycle} Row={Row} />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Compare" }));
+    expect(
+      await screen.findByText("Cited by 5 scenarios: a, b, c"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("d, e")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show 2 more" }));
+    expect(screen.getByText("d, e")).toBeInTheDocument();
+  });
+
   it("offers no Validate to someone who can't", async () => {
     renderWithClient(
-      <LifecycleSection
-        envId="env-1"
-        lifecycle={lifecycle}
-        Row={Row}
-        locked
-      />,
+      <LifecycleSection envId="env-1" lifecycle={lifecycle} Row={Row} locked />,
     );
     await userEvent
       .setup()
