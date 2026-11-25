@@ -108,6 +108,13 @@ class TraceDetailRead:
 class TraceDetailReadBuilder:
     TABLE = "spans"
     SCORE_TABLE = "model_hub_score"
+    # The authorized config tuple is written into the SQL text once, bound to
+    # this alias, and both config checks name the alias. The driver inlines
+    # parameters client-side, so two copies of 4,096 UUID configs took
+    # 327,680 bytes, past ClickHouse's 262,144-byte max_query_size. The name
+    # must never be a column of an eval table: inside the subquery a column
+    # would win over the outer alias.
+    _EVAL_CONFIG_SET = "detail_eval_config_set"
 
     def __init__(self, *, project_ids: list[str], trace_id: str) -> None:
         normalized = tuple(dict.fromkeys(str(value) for value in project_ids if value))
@@ -326,6 +333,7 @@ class TraceDetailReadBuilder:
         )
         return (
             f"""
+            WITH %(detail_eval_config_ids)s AS {self._EVAL_CONFIG_SET}
             SELECT
                 latest_span_id AS span_id,
                 toString(latest_eval_config_id) AS eval_config_id,
@@ -366,12 +374,12 @@ class TraceDetailReadBuilder:
                 PREWHERE trace_id = %(detail_eval_trace_id)s
                   AND observation_span_id IN %(detail_eval_span_ids)s
                   AND toString(custom_eval_config_id)
-                        IN %(detail_eval_config_ids)s
+                        IN {self._EVAL_CONFIG_SET}
                 GROUP BY id
             ) AS latest_trace_evals
             WHERE latest_is_deleted = 0
               AND toString(latest_eval_config_id)
-                    IN %(detail_eval_config_ids)s
+                    IN {self._EVAL_CONFIG_SET}
             ORDER BY span_id ASC, eval_config_id ASC
             LIMIT {_MAX_EVAL_ROWS + 1}
             """,

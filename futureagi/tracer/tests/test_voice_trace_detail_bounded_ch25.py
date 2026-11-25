@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -35,22 +37,33 @@ def ch_client():
         yield client
 
 
-@pytest.fixture()
-def detail_tables(ch_client, monkeypatch):
+@contextmanager
+def _detail_tables(ch_client, monkeypatch, *, legacy_evals=False):
     suffix = uuid.uuid4().hex[:8]
     spans = f"_test_voice_detail_spans_{suffix}"
-    evals = f"_test_voice_detail_evals_{suffix}_v2"
+    # The builder picks the version and tombstone columns by the ``_v2``
+    # suffix, so the legacy-shaped table must not end with it.
+    evals = (
+        f"_test_voice_detail_evals_{suffix}_legacy"
+        if legacy_evals
+        else f"_test_voice_detail_evals_{suffix}_v2"
+    )
     scores = f"_test_voice_detail_scores_{suffix}"
+    live_predicate = (
+        "_peerdb_is_deleted = 0 AND deleted = 0" if legacy_evals else "is_deleted = 0"
+    )
     monkeypatch.setattr(
         trace_detail_reads_module,
         "eval_logger_source",
-        lambda *args, **kwargs: (evals, "is_deleted = 0"),
+        lambda *args, **kwargs: (evals, live_predicate),
     )
 
     def test_eval_source(alias="", include_cdc_tombstone_guard=False):
         del include_cdc_tombstone_guard
         prefix = f"{alias}." if alias else ""
-        return evals, f"{prefix}is_deleted = 0"
+        return evals, " AND ".join(
+            f"{prefix}{term}" for term in live_predicate.split(" AND ")
+        )
 
     monkeypatch.setattr(
         VoiceCallListQueryBuilderV2,
@@ -117,6 +130,29 @@ def detail_tables(ch_client, monkeypatch):
             output_str Nullable(String),
             output_str_list String DEFAULT '[]',
             eval_explanation Nullable(String),
+            error UInt8 DEFAULT 0,
+            error_message Nullable(String),
+            status LowCardinality(String) DEFAULT 'completed',
+            skipped_reason Nullable(String),
+            target_type LowCardinality(String) DEFAULT 'span',
+            created_at DateTime64(6),
+            deleted UInt8 DEFAULT 0,
+            _peerdb_is_deleted UInt8 DEFAULT 0,
+            _peerdb_version Int64
+        ) ENGINE = MergeTree ORDER BY (id, _peerdb_version)
+        """
+        if legacy_evals
+        else f"""
+        CREATE TABLE {evals} (
+            id UUID,
+            trace_id Nullable(UUID),
+            observation_span_id Nullable(String),
+            custom_eval_config_id UUID,
+            output_bool Nullable(UInt8),
+            output_float Nullable(Float64),
+            output_str Nullable(String),
+            output_str_list String DEFAULT '[]',
+            eval_explanation Nullable(String),
             error UInt8,
             error_message Nullable(String),
             target_type LowCardinality(String) DEFAULT 'span',
@@ -144,11 +180,33 @@ def detail_tables(ch_client, monkeypatch):
     monkeypatch.setattr(TraceDetailReadBuilder, "TABLE", spans)
     monkeypatch.setattr(TraceDetailReadBuilder, "SCORE_TABLE", scores)
     try:
-        yield SimpleNamespace(spans=spans, evals=evals, scores=scores)
+        yield SimpleNamespace(
+            spans=spans, evals=evals, scores=scores, legacy_evals=legacy_evals
+        )
     finally:
         ch_client.execute(f"DROP TABLE {spans}")
         ch_client.execute(f"DROP TABLE {evals}")
         ch_client.execute(f"DROP TABLE {scores}")
+
+
+@pytest.fixture()
+def detail_tables(ch_client, monkeypatch):
+    with _detail_tables(ch_client, monkeypatch) as tables:
+        yield tables
+
+
+@pytest.fixture(params=["v2", "legacy"])
+def shaped_detail_tables(request, ch_client, monkeypatch):
+    """``detail_tables`` with a native v2 or a legacy PeerDB-shaped eval table.
+
+    Both are plain MergeTree, so every physical version stays readable, as on
+    production before a merge.
+    """
+
+    with _detail_tables(
+        ch_client, monkeypatch, legacy_evals=request.param == "legacy"
+    ) as tables:
+        yield tables
 
 
 class _Analytics:
@@ -658,6 +716,192 @@ def test_trace_detail_without_authorized_configs_skips_eval_read(
     assert read.evals == ()
     # identity + content + annotations; the eval query is not issued.
     assert read.query_count == 3
+
+
+def _inline_with_bindings(query):
+    """``query`` with every ``WITH %(param)s AS alias`` binding undone.
+
+    Each ``IN alias`` names its parameter again: the statement as it was
+    written before the lists were bound once.
+    """
+
+    head, select, body = query.partition("SELECT")
+    bindings = re.findall(r"%\((\w+)\)s\s+AS\s+(\w+)", head)
+    assert head.strip().startswith("WITH") and bindings, head
+    for param, alias in bindings:
+        body = re.sub(rf"\bIN\s+{alias}\b", f"IN %({param})s", body)
+        assert alias not in body, alias
+    return select + body
+
+
+def _seed_config_scope_trace(ch_client, tables, *, project, trace, span_ids, evals):
+    started = datetime(2026, 8, 1, 9, 0, 0)
+    ch_client.execute(
+        f"INSERT INTO {tables.spans} {_SPAN_COLUMNS} VALUES",
+        [
+            _span_row(
+                project_id=project,
+                trace_id=trace,
+                span_id=span_id,
+                started_at=started + timedelta(microseconds=index),
+            )
+            for index, span_id in enumerate(span_ids)
+        ],
+    )
+    created = datetime(2026, 8, 1, 9, 30)
+    if tables.legacy_evals:
+        columns = "_peerdb_is_deleted, _peerdb_version"
+        extra = ()
+    else:
+        columns = "error, is_deleted, _version"
+        extra = (0,)
+    ch_client.execute(
+        f"""
+        INSERT INTO {tables.evals}
+            (id, trace_id, observation_span_id, custom_eval_config_id,
+             output_str, eval_explanation, created_at, {columns})
+        VALUES
+        """,
+        [
+            (
+                eval_id,
+                trace,
+                span_id,
+                config_id,
+                payload,
+                payload,
+                created,
+                *extra,
+                deleted,
+                version,
+            )
+            for eval_id, span_id, config_id, payload, deleted, version in evals
+        ],
+    )
+
+
+@pytest.mark.parametrize("config_count", [1, 2])
+def test_trace_detail_eval_config_alias_scopes_small_config_sets(
+    ch_client, shaped_detail_tables, config_count
+):
+    # One config renders as ('x'), which ClickHouse reads as a scalar String.
+    project = "00000000-0000-4000-8000-0000000000c1"
+    trace = "00000000-0000-4000-8000-0000000000c2"
+    configs = [str(uuid.UUID(int=0xC100 + index)) for index in range(config_count)]
+    foreign_config = str(uuid.UUID(int=0xC1FF))
+    served_ids = [str(uuid.uuid4()) for _ in configs]
+    _seed_config_scope_trace(
+        ch_client,
+        shaped_detail_tables,
+        project=project,
+        trace=trace,
+        span_ids=["root"],
+        evals=[
+            *(
+                (eval_id, "root", config_id, f"own-{index}", 0, 1)
+                for index, (eval_id, config_id) in enumerate(
+                    zip(served_ids, configs, strict=True)
+                )
+            ),
+            (str(uuid.uuid4()), "root", foreign_config, "foreign", 0, 1),
+        ],
+    )
+
+    read = read_trace_detail(
+        analytics=_Analytics(ch_client),
+        project_ids=[project],
+        trace_id=trace,
+        eval_config_ids_resolver=lambda selected_project: configs,
+        include_annotations=False,
+        deadline_ms=5000,
+    )
+
+    assert {
+        row["log_id"]: (row["eval_config_id"], row["output_str"]) for row in read.evals
+    } == {
+        eval_id: (config_id, f"own-{index}")
+        for index, (eval_id, config_id) in enumerate(
+            zip(served_ids, configs, strict=True)
+        )
+    }
+    assert read.eval_unavailable is False
+
+
+def test_trace_detail_eval_read_fits_max_query_size_at_the_config_ceiling(
+    ch_client, shaped_detail_tables
+):
+    from clickhouse_driver.errors import ServerException
+
+    from tracer.services.clickhouse.read_budget import is_clickhouse_query_size_error
+
+    tables = shaped_detail_tables
+    project = "00000000-0000-4000-8000-0000000000d1"
+    trace = "00000000-0000-4000-8000-0000000000d2"
+    span_ids = [str(uuid.UUID(int=0xD0000 + index)) for index in range(1000)]
+    configs = [
+        str(uuid.UUID(int=0xE0000 + index))
+        for index in range(trace_detail_reads_module.MAX_TRACE_DETAIL_EVAL_CONFIGS)
+    ]
+    first, deleted, versioned, last = (str(uuid.uuid4()) for _ in range(4))
+    _seed_config_scope_trace(
+        ch_client,
+        tables,
+        project=project,
+        trace=trace,
+        span_ids=span_ids,
+        evals=[
+            (first, span_ids[0], configs[0], "first-config", 0, 1),
+            (last, span_ids[-1], configs[-1], "last-config", 0, 1),
+            (str(uuid.uuid4()), span_ids[0], str(uuid.uuid4()), "foreign", 0, 1),
+            (deleted, span_ids[1], configs[1], "deleted-v1", 0, 1),
+            (deleted, span_ids[1], configs[1], "deleted-v2", 1, 2),
+            (versioned, span_ids[2], configs[2], "versioned-v1", 0, 1),
+            (versioned, span_ids[2], configs[2], "versioned-v2", 0, 2),
+        ],
+    )
+
+    read = read_trace_detail(
+        analytics=_Analytics(ch_client),
+        project_ids=[project],
+        trace_id=trace,
+        eval_config_ids_resolver=lambda selected_project: configs,
+        include_annotations=False,
+        deadline_ms=30_000,
+    )
+
+    assert len(read.spans) == 1000
+    assert read.eval_unavailable is False
+    assert [
+        (row["log_id"], row["span_id"], row["eval_config_id"], row["output_str"])
+        for row in read.evals
+    ] == sorted(
+        [
+            (first, span_ids[0], configs[0], "first-config"),
+            (versioned, span_ids[2], configs[2], "versioned-v2"),
+            (last, span_ids[-1], configs[-1], "last-config"),
+        ],
+        key=lambda row: (row[1], row[2]),
+    )
+
+    # Negative control: the same statement with each bound list written out
+    # at every use, as before the binding, is over this server's limit.
+    limit = int(
+        ch_client.execute(
+            "SELECT value FROM system.settings WHERE name = 'max_query_size'"
+        )[0][0]
+    )
+    query, params = TraceDetailReadBuilder(
+        project_ids=[project], trace_id=trace
+    ).build_eval_query(project_id=project, span_ids=span_ids, eval_config_ids=configs)
+    context = ch_client.connection.context
+    rendered = ch_client.substitute_params(query, params, context)
+    rendered_inlined = ch_client.substitute_params(
+        _inline_with_bindings(query), params, context
+    )
+    assert len(rendered.encode()) < limit < len(rendered_inlined.encode())
+    with pytest.raises(ServerException) as caught:
+        ch_client.execute(rendered_inlined)
+    assert is_clickhouse_query_size_error(caught.value), caught.value
 
 
 def test_voice_simulator_exclusion_is_candidate_scoped_and_page_exact(
