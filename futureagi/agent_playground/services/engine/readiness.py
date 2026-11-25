@@ -13,7 +13,7 @@ Readiness Rules:
 
 Skip Rules:
     A node should be skipped when:
-    - Any upstream node is FAILED or SKIPPED
+    - A connected upstream node failed, was skipped, or finished without valid data
     - AND the affected input port has no default value
 """
 
@@ -89,7 +89,7 @@ def check_node_readiness(
     - Connected ports: upstream must be SUCCESS with valid data, or port has default
     - Unconnected ports: must have valid injected data or a default value
 
-    A node should be skipped if upstream failed/skipped and no default available.
+    Skip a node when a finished upstream cannot supply its input and no default exists.
 
     Args:
         node_id: The node to check
@@ -210,40 +210,28 @@ def check_node_readiness(
             # Check if upstream produced valid data for this port
             has_data, is_valid = _get_port_data(edge.source_port_id, graph_execution_id)
 
-            if has_data and is_valid:
-                continue  # Satisfied with valid upstream data
-            elif has_data and not is_valid:
-                # Upstream produced invalid data
-                if has_default:
-                    continue  # Fall back to default
-                else:
-                    unsatisfied_ports.append(
-                        PortSatisfactionInfo(
-                            port_id=port.id,
-                            port_key=port.routing_key,
-                            is_satisfied=False,
-                            has_data=True,
-                            is_valid=False,
-                            has_default=has_default,
-                            upstream_status=upstream_status,
-                            reason="Upstream data fails schema validation, no default",
-                        )
-                    )
-            elif has_default:
-                continue  # Satisfied with default (no data produced)
-            else:
-                unsatisfied_ports.append(
-                    PortSatisfactionInfo(
-                        port_id=port.id,
-                        port_key=port.routing_key,
-                        is_satisfied=False,
-                        has_data=False,
-                        is_valid=False,
-                        has_default=has_default,
-                        upstream_status=upstream_status,
-                        reason="Upstream succeeded but produced no data, no default",
-                    )
+            if (has_data and is_valid) or has_default:
+                continue
+
+            # The producer has finished; polling again cannot satisfy this input.
+            should_skip = True
+            problem = "produced invalid data" if has_data else "produced no data"
+            skip_reason = (
+                f"Upstream node {source_node_id} {problem}, "
+                f"port '{port.routing_key}' has no default value"
+            )
+            unsatisfied_ports.append(
+                PortSatisfactionInfo(
+                    port_id=port.id,
+                    port_key=port.routing_key,
+                    is_satisfied=False,
+                    has_data=has_data,
+                    is_valid=is_valid,
+                    has_default=has_default,
+                    upstream_status=upstream_status,
+                    reason=skip_reason,
                 )
+            )
 
         elif upstream_status in (
             NodeExecutionStatus.FAILED,

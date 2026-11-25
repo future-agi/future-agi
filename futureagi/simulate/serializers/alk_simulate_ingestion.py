@@ -12,6 +12,9 @@ ALLOWED_INGESTION_STATUSES = (
 
 class ALKSimulateTranscriptSegmentSerializer(serializers.Serializer):
     speaker_role = serializers.ChoiceField(choices=CallTranscript.SpeakerRole.values)
+    speaker_name = serializers.CharField(
+        required=False, allow_blank=True, max_length=255
+    )
     content = serializers.CharField(allow_blank=True)
     start_time_ms = serializers.IntegerField(required=False, default=0, min_value=0)
     end_time_ms = serializers.IntegerField(required=False, default=0, min_value=0)

@@ -40,7 +40,7 @@ test('SIM-E2E-001: Simulate opens on Environments, and an org from after the cut
             'open the Prebuilt template links', 'read the Simulate menu',
             'open the old Agent Definition link', 'open the Scenarios, Run Simulation and Agent Definition links directly'],
     browserChecks: ['/dashboard/simulate lands on Environments',
-                    'harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>',
+                    'harness lands on Environments, harness/new on My Environments with the Build environment drawer open (build= in the address), harness/<id> on environments/<id>',
                     'simulator-agent lands on Environments',
                     'personas lands on the Environments Personas tab',
                     'the Personas tab is selected and shows the persona search',
@@ -66,7 +66,7 @@ test('SIM-E2E-001: Simulate opens on Environments, and an org from after the cut
 
   const redirects: [string, string][] = [
     [`${SIMULATE}/harness`, ENVIRONMENTS],
-    [`${SIMULATE}/harness/new`, `${ENVIRONMENTS}?tab=build`],
+    [`${SIMULATE}/harness/new`, `${ENVIRONMENTS}?tab=my-environments&build=`],
     [`${SIMULATE}/harness/${jobId}`, `${ENVIRONMENTS}/${jobId}`],
     [`${SIMULATE}/simulator-agent`, ENVIRONMENTS],
     [`${SIMULATE}/personas`, `${ENVIRONMENTS}?tab=personas`],
@@ -78,6 +78,14 @@ test('SIM-E2E-001: Simulate opens on Environments, and an org from after the cut
       await expect(page).toHaveURL(exactPath(to), { timeout: UI_READY });
     }, { timeout: UI_READY });
   }
+
+  await test.step('ui: the old Build tab link opens the Build environment drawer', async () => {
+    await page.goto(`${ENVIRONMENTS}?tab=build`);
+    await expect(page).toHaveURL(exactPath(`${ENVIRONMENTS}?tab=my-environments&build=`), { timeout: UI_READY });
+    // BuildEnvironmentDrawer's header line.
+    await expect(page.getByText('Every environment belongs to one agent.', { exact: false }))
+      .toBeVisible({ timeout: UI_READY });
+  }, { timeout: UI_READY });
 
   await test.step('ui: the Personas tab lists personas', async () => {
     await page.goto(`${ENVIRONMENTS}?tab=personas`);

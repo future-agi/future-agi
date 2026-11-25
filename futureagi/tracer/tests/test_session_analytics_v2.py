@@ -463,12 +463,24 @@ def test_inline_navigation_literal_neighbors_reuse_existing_adversarial_fixture(
             cursor_mode=False,
             sort_params=[{"column_id": "total_cost", "direction": "asc"}],
         )
-    service.execute_ch_query.side_effect = lambda sql, params, **_: SimpleNamespace(
-        data=_inline_execute(chdb, sql, params, rows, remaps)
-    )
+    adapter_errors = []
+
+    def execute_inline(sql, params, **_):
+        try:
+            return _inline_execute(chdb, sql, params, rows, remaps, as_driver=True)
+        except Exception as exc:  # noqa: BLE001 - the view converts read errors to absent neighbors
+            adapter_errors.append(exc)
+            raise
+
+    service.execute_ch_query.side_effect = execute_inline
     # The requested new alias 300 must select canonical survivor 200.
     current = 103 if case == "latest_outside" else 300
-    assert call(context, str(UUID(int=current))) == tuple(
+    with mock.patch("tracer.utils.session.logger.exception") as navigation_error:
+        neighbors = call(context, str(UUID(int=current)))
+    assert not adapter_errors, adapter_errors
+    navigation_error.assert_not_called()
+    assert service.execute_ch_query.call_count >= 2  # canonical lookup, then list read
+    assert neighbors == tuple(
         str(UUID(int=value)) if value else None for value in expected
     )
 
@@ -551,8 +563,8 @@ def test_inline_navigation_uses_only_authorized_workspace_projects(
         start.isoformat(),
         end.isoformat(),
     ]
-    service.execute_ch_query.side_effect = lambda sql, params, **_: SimpleNamespace(
-        data=_inline_execute(chdb, sql, params, rows, remaps)
+    service.execute_ch_query.side_effect = lambda sql, params, **_: _inline_execute(
+        chdb, sql, params, rows, remaps, as_driver=True
     )
     assert call(context, str(UUID(int=300))) == (
         str(UUID(int=107)),

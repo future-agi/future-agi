@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 107
+expected_tool_count: 128
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -514,6 +514,113 @@ tools:
     description: Save a simulation test using name, agent_definition_id and scenario_ids, optionally agent_version and evaluations_config. Does not execute it; pass the returned test ID to run_simulation.
     operation: {method: POST, path: "/simulate/run-tests/create/"}
     access: write
+  # epoch: Debug failures, evidence imports and Epoch, the loop from a failing run
+  # to a shipped change. `entitlement` hides a tool from organizations whose plan
+  # lacks the feature its REST view checks.
+  - name: get_debug_failures
+    group: epoch
+    description: Return the Debug failures diagnosis of a finished run (test execution), or its progress while it runs.
+    operation: {method: GET, path: "/simulate/test-executions/{test_execution_id}/debug-analysis/"}
+    access: read
+  - name: run_debug_failures
+    group: epoch
+    description: Start Debug failures on a finished run (test execution), one analysis job per call. It may incur usage charges. A run that has not finished is refused; poll get_debug_failures for the diagnosis.
+    operation: {method: POST, path: "/simulate/test-executions/{test_execution_id}/debug-analysis/"}
+    access: write
+    open_world: true
+  - name: list_evidence_imports
+    group: epoch
+    description: List the evidence imports of an environment that a person can still finish, newest first.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/evidence-imports/"}
+    access: read
+  - name: create_evidence_import
+    group: epoch
+    description: Import evidence for an environment's tests from Observe sessions or calls, dataset rows, or transcripts. Returns what each case holds and lacks. Draft its cases with draft_evidence_import.
+    operation: {method: POST, path: "/simulate/api/harness-environments/{id}/evidence-imports/"}
+    access: write
+  - name: get_evidence_import
+    group: epoch
+    description: Return one evidence import and its cases, read again from their sources, to review the drafted scenarios.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/"}
+    access: read
+  - name: draft_evidence_import
+    group: epoch
+    description: Ask the environment's builder to draft a scenario for each waiting case of an evidence import. The builder calls models, so it may incur usage charges. Poll get_evidence_import to review the drafts.
+    operation: {method: POST, path: "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/"}
+    access: write
+    open_world: true
+  - name: add_evidence_import_cases
+    group: epoch
+    description: Add the reviewed, drafted cases of an evidence import to the environment's suite. Reuse the same idempotency_key to repeat a call safely.
+    operation: {method: POST, path: "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/"}
+    access: write
+    idempotent: true
+  - name: discard_evidence_import
+    group: epoch
+    description: Discard an evidence import that was never added, with a transcript's stored text. Of an import with added cases, only the cases not added are discarded.
+    operation: {method: DELETE, path: "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/"}
+    access: destructive
+  - name: get_epoch_launch_options
+    group: epoch
+    description: Return what an Epoch on a finished run starts with, the launch form's default for each limit, and why a launch would be refused now. Supply source_run_id, the run's test execution ID. Read it before launch_epoch.
+    operation: {method: GET, path: "/simulate/api/agent-fix-runs/launch-options/"}
+    access: read
+    entitlement: fix_my_agent
+  - name: list_epochs
+    group: epoch
+    description: List the Epochs of one environment, newest first, with each Epoch's state and limits. Supply environment_id.
+    operation: {method: GET, path: "/simulate/api/agent-fix-runs/"}
+    access: read
+    entitlement: fix_my_agent
+    pagination:
+      limit: {maximum: 100}
+  - name: get_epoch
+    group: epoch
+    description: Return one Epoch, with its state and step, the limits it holds to, its candidates, and its result once it has ended.
+    operation: {method: GET, path: "/simulate/api/agent-fix-runs/{id}/"}
+    access: read
+    entitlement: fix_my_agent
+  - name: launch_epoch
+    group: epoch
+    description: Start an Epoch on a finished run. It spends credits up to budget_credits and calls models, so it may incur usage charges. Take the scenarios, surfaces, budget and time cap from get_epoch_launch_options; allowed_models, reply_latency_margin_pct, cost_margin_pct and cost_limit_usd are its model lock and limits. Poll get_epoch.
+    operation: {method: POST, path: "/simulate/api/agent-fix-runs/"}
+    access: write
+    idempotent: false
+    open_world: true
+    entitlement: fix_my_agent
+  - name: stop_epoch
+    group: epoch
+    description: Stop a running Epoch. It ends as Stopped, and the environment does not change.
+    operation: {method: POST, path: "/simulate/api/agent-fix-runs/{id}/stop/"}
+    access: write
+    entitlement: fix_my_agent
+  - name: retry_epoch
+    group: epoch
+    description: Start a failed Epoch again as a new Epoch with the same request. Check runs it finished are reused and not paid twice; the rest may incur usage charges. An Epoch can be retried once.
+    operation: {method: POST, path: "/simulate/api/agent-fix-runs/{id}/retry/"}
+    access: write
+    idempotent: false
+    open_world: true
+    entitlement: fix_my_agent
+  - name: get_epoch_candidate_patch
+    group: epoch
+    description: Return an Epoch candidate's change as a git patch on the base agent version, to apply by hand.
+    operation: {method: GET, path: "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/"}
+    access: read
+    entitlement: fix_my_agent
+  - name: make_epoch_candidate_default
+    group: epoch
+    description: Make an Epoch candidate the environment's default agent version, so later runs use it. To ship a candidate that only its must-pass check refused, give override_reason.
+    operation: {method: POST, path: "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/"}
+    access: write
+    entitlement: fix_my_agent
+  - name: open_epoch_candidate_pull_request
+    group: epoch
+    description: Open a pull request with an Epoch candidate's change on a GitHub agent's repository. It is opened once. To ship a candidate that only its must-pass check refused, give override_reason.
+    operation: {method: POST, path: "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/"}
+    access: write
+    open_world: true
+    entitlement: fix_my_agent
   # gateway
   - name: list_gateways
     group: gateway
@@ -647,3 +754,30 @@ tools:
     description: Return the current organization's usage and cost overview.
     operation: {method: GET, path: "/usage/v2/usage-overview/"}
     access: read
+
+  # SQL uses the same bounded, authenticated project execution path as the UI.
+  - name: run_sql
+    group: observability
+    description: Start one read-only project-scoped ClickHouse SELECT or JOIN in a required time window (at most 31 days). Returns a personal job id; poll get_sql_result. No raw tables, settings, writes, external functions, or public result links.
+    operation: {method: POST, path: "/tracer/sql-query/run/"}
+    access: read
+    response: {unwrap: null}
+  - name: get_sql_result
+    group: observability
+    description: Poll a SQL job owned by the caller. Defaults to 100 rows within a bounded byte page; pass result.next_offset as offset until has_more is false. Wide rows are marked previewed; use the authenticated REST download for full cells. Results expire after 24 hours; current project membership is required on every page.
+    operation: {method: GET, path: "/tracer/sql-query/{id}/"}
+    access: read
+    pagination: {limit: {maximum: 100}}
+    response: {unwrap: null}
+  - name: cancel_sql
+    group: observability
+    description: Cancel a SQL job owned by the caller without changing project data.
+    operation: {method: POST, path: "/tracer/sql-query/{id}/cancel/"}
+    access: read
+    response: {unwrap: null}
+  - name: get_sql_catalog
+    group: observability
+    description: List the stable scoped SQL datasets and columns available in a project.
+    operation: {method: GET, path: "/tracer/sql-query/catalog/"}
+    access: read
+    response: {unwrap: null}

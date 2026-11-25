@@ -3,8 +3,10 @@ Tests for SavedView (Tab System & Saved Views) — Phase 1A.
 """
 
 import uuid
+from copy import deepcopy
 
 import pytest
+from rest_framework import serializers
 
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
@@ -571,6 +573,262 @@ class TestSavedViewCreate:
         assert config["display"]["dateFilter"]["dateOption"] == "Last 7 days"
 
 
+def _metric_filter(filter_type="number", filter_op="greater_than", value="2.50"):
+    identity = f"metric_field:{uuid.uuid4()}"
+    return {
+        "column_id": identity,
+        "property_id": identity,
+        "display_name": "Synthetic metric",
+        "source": "sessions",
+        "filter_config": {
+            "col_type": "METRIC_FIELD",
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": value,
+        },
+    }
+
+
+def _legacy_filter_families():
+    filters = [_filter()]
+    for family in ("SPAN_ATTRIBUTE", "EVAL_METRIC", "ANNOTATION", "VOICE_ANNOTATION"):
+        item = _filter(f"synthetic_{family.lower()}", value="selected")
+        item["filter_config"]["col_type"] = family
+        filters.append(item)
+    return filters
+
+
+class TestSavedViewMetricFilters:
+    @pytest.mark.parametrize(
+        "key", ["filters", "compare_filters", "extra_filters", "compare_extra_filters"]
+    )
+    def test_persistence_is_structural_and_does_not_resolve_or_compile(
+        self, key, monkeypatch
+    ):
+        from tracer.serializers.saved_view import validate_saved_view_config
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("Stored filters must not resolve metadata or compile SQL")
+
+        for name in (
+            "resolve_metric_field",
+            "validate_scoped_metric_filter",
+            "build_metric_membership",
+        ):
+            monkeypatch.setattr(
+                f"tracer.services.derived_metrics.predicates.{name}", forbidden
+            )
+        config = {key: [_metric_filter()]}
+        assert validate_saved_view_config(deepcopy(config)) == config
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        "key", ["filters", "compare_filters", "extra_filters", "compare_extra_filters"]
+    )
+    @pytest.mark.parametrize(
+        "filter_type,op,value,updated_value",
+        [
+            ("number", "between", ["1.25", 3], [2, "4.50"]),
+            ("boolean", "equals", "Resolved", "Not resolved"),
+            ("text", "in", ["alpha", "beta"], ["gamma"]),
+        ],
+    )
+    def test_create_read_update_round_trip(
+        self, auth_client, project, key, filter_type, op, value, updated_value
+    ):
+        # No metric definition is needed to store a chip. Reads must authorize it
+        # later; persisting its display label cannot grant metadata authority.
+        config = {
+            key: [_metric_filter(filter_type, op, value), *_legacy_filter_families()],
+            "display": {"density": "compact"},
+        }
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Metric chip round trip",
+                "tab_type": "sessions",
+                "config": deepcopy(config),
+            },
+            format="json",
+        )
+        assert response.status_code == 200, response.json()
+        assert response.json()["result"]["config"] == config
+        view = SavedView.objects.get(id=response.json()["result"]["id"])
+        assert view.config == config
+        response = auth_client.get(_view_url(view), format="json")
+        assert response.status_code == 200
+        assert response.json()["result"]["config"] == config
+
+        updated = deepcopy(config)
+        updated[key][0]["filter_config"]["filter_value"] = updated_value
+        response = auth_client.patch(
+            _view_url(view), {"config": updated}, format="json"
+        )
+        assert response.status_code == 200, response.json()
+        assert response.json()["result"]["config"] == updated
+        view.refresh_from_db()
+        assert view.config == updated
+        response = auth_client.get(_view_url(view), format="json")
+        assert response.status_code == 200
+        assert response.json()["result"]["config"] == updated
+        response = auth_client.get(
+            f"{BASE_URL}/?project_id={project.id}", format="json"
+        )
+        assert response.status_code == 200
+        assert response.json()["result"]["custom_views"][0]["config"] == updated
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        "invalidated",
+        [
+            "context",
+            "project",
+            "organization",
+            "workspace",
+            "revoked",
+            "no_active",
+            "version",
+            "grain",
+            "missing",
+        ],
+    )
+    def test_loaded_chip_is_revalidated_against_active_scope_and_definition(
+        self, auth_client, observe_project, workspace, invalidated
+    ):
+        from tracer.models.derived_metric import DerivedMetric, DerivedMetricVersion
+        from tracer.serializers.filters import FilterListField
+
+        metric = DerivedMetric.objects.create(
+            organization=workspace.organization,
+            workspace=workspace,
+            project=observe_project,
+            name="Synthetic saved field",
+        )
+        active = DerivedMetricVersion.objects.create(
+            metric=metric,
+            version=1,
+            formula="x",
+            inputs=[],
+            selection_unit="session",
+            weighting="none",
+            definition_hash="1" * 64,
+            value_type="number",
+        )
+        draft = DerivedMetricVersion.objects.create(
+            metric=metric,
+            version=2,
+            formula="x",
+            inputs=[],
+            selection_unit="session",
+            weighting="none",
+            definition_hash="2" * 64,
+            value_type="boolean",
+        )
+        DerivedMetric.objects.filter(pk=metric.id).update(active_version=active)
+        item = _metric_filter()
+        item["column_id"] = item["property_id"] = f"metric_field:{metric.id}"
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(observe_project.id),
+                "name": "Scoped metric view",
+                "tab_type": "sessions",
+                "config": {"filters": [item]},
+            },
+            format="json",
+        )
+        assert response.status_code == 200, response.json()
+        view = SavedView.objects.get(id=response.json()["result"]["id"])
+        response = auth_client.get(_view_url(view), format="json")
+        assert response.status_code == 200
+        stored = response.json()["result"]["config"]["filters"]
+        field = FilterListField()
+        field._context = {
+            "project_id": observe_project.id,
+            "organization_id": workspace.organization_id,
+            "workspace_id": workspace.id,
+            "metric_filter_context": "sessions",
+        }
+        # A newer draft must not override the active version used at runtime.
+        assert field.run_validation(deepcopy(stored)) == [item]
+        if invalidated == "context":
+            field._context = {}
+        elif invalidated in {"project", "organization", "workspace"}:
+            field._context[f"{invalidated}_id"] = uuid.uuid4()
+        elif invalidated == "revoked":
+            DerivedMetric.objects.filter(pk=metric.id).update(deleted=True)
+        elif invalidated == "no_active":
+            DerivedMetric.objects.filter(pk=metric.id).update(active_version=None)
+        elif invalidated == "version":
+            DerivedMetric.objects.filter(pk=metric.id).update(active_version=draft)
+        elif invalidated == "grain":
+            field._context["metric_filter_context"] = "spans"
+        else:
+            stored[0]["column_id"] = stored[0]["property_id"] = (
+                f"metric_field:{uuid.uuid4()}"
+            )
+        with pytest.raises(serializers.ValidationError):
+            field.run_validation(deepcopy(stored))
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize("operation", ["create", "update"])
+    @pytest.mark.parametrize(
+        "invalid",
+        [
+            "identity",
+            "property",
+            "family",
+            "type",
+            "operator",
+            "value",
+            "range",
+            "metadata",
+            "sql",
+            "persistence_context",
+        ],
+    )
+    def test_invalid_metric_payload_does_not_change_saved_views(
+        self, auth_client, project, saved_view, operation, invalid
+    ):
+        item = _metric_filter()
+        config = item["filter_config"]
+        if invalid == "identity":
+            item["column_id"] = item["property_id"] = "metric_field:invalid"
+        elif invalid == "property":
+            item["property_id"] = f"metric_field:{uuid.uuid4()}"
+        elif invalid == "family":
+            config["col_type"] = "SPAN_ATTRIBUTE"
+        elif invalid == "type":
+            config["filter_type"] = "map"
+        elif invalid == "operator":
+            config["filter_op"] = "gt"
+        elif invalid == "value":
+            config["filter_value"] = True
+        elif invalid == "range":
+            config.update(filter_op="between", filter_value=[3, 1])
+        elif invalid == "metadata":
+            item["version_id"] = str(uuid.uuid4())
+        elif invalid == "sql":
+            config["sql"] = "SELECT 1"
+        else:
+            item["metric_filter_persistence"] = True
+        original = deepcopy(saved_view.config)
+        payload = {"config": {"filters": [item]}}
+        if operation == "create":
+            payload.update(
+                project_id=str(project.id), name="Invalid metric", tab_type="sessions"
+            )
+            response = auth_client.post(f"{BASE_URL}/", payload, format="json")
+        else:
+            response = auth_client.patch(_view_url(saved_view), payload, format="json")
+        assert response.status_code == 400
+        assert "config" in str(response.json())
+        saved_view.refresh_from_db()
+        assert saved_view.config == original
+        assert SavedView.objects.count() == 1
+
+
 class TestSavedViewRetrieve:
     @pytest.mark.django_db
     def test_retrieve_saved_view(self, auth_client, saved_view):
@@ -814,9 +1072,7 @@ class TestSavedViewDuplicate:
     @pytest.mark.django_db
     def test_duplicate_twice_uniquifies_copy_name(self, auth_client, saved_view):
         """Repeat duplicates auto-uniquify instead of colliding."""
-        first = auth_client.post(
-            _view_url(saved_view, "duplicate/"), {}, format="json"
-        )
+        first = auth_client.post(_view_url(saved_view, "duplicate/"), {}, format="json")
         assert first.status_code == 200
         assert first.json()["result"]["name"] == "Error Traces (Copy)"
 

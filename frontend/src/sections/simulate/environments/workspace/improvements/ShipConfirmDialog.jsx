@@ -6,6 +6,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { fetchCandidatePatch } from "src/api/simulate-environments/fixRuns";
 
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
+import { provenOnTargetsOnly, strengthLabel } from "./fixRunView";
 import { parseDiff } from "./parseDiff";
 
 const num = { fontVariantNumeric: "tabular-nums" };
@@ -14,7 +15,12 @@ function Row({ label, children }) {
   return (
     <Stack direction="row" spacing={1.5} alignItems="flex-start">
       <Typography
-        sx={{ typography: "s2", color: "text.subtitle", width: 64, flexShrink: 0 }}
+        sx={{
+          typography: "s2",
+          color: "text.subtitle",
+          width: 64,
+          flexShrink: 0,
+        }}
       >
         {label}
       </Typography>
@@ -22,7 +28,10 @@ function Row({ label, children }) {
     </Stack>
   );
 }
-Row.propTypes = { label: PropTypes.string.isRequired, children: PropTypes.node };
+Row.propTypes = {
+  label: PropTypes.string.isRequired,
+  children: PropTypes.node,
+};
 
 function ChangeSummary({ fix, winner }) {
   // Same key and staleness as the Changes tab, so a patch is read once. A
@@ -57,7 +66,9 @@ function ChangeSummary({ fix, winner }) {
             <Typography noWrap sx={{ typography: "s2", minWidth: 0 }}>
               {f.file}
             </Typography>
-            <Typography sx={{ typography: "s3", color: "text.secondary", ...num }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", ...num }}
+            >
               {`+${added} −${removed}`}
             </Typography>
           </Stack>
@@ -82,9 +93,12 @@ export default function ShipConfirmDialog({
   onConfirm,
 }) {
   const github = fix.agent?.kind === "github";
-  const limitedNote = github
-    ? "Limited validation: it opens as a draft pull request, marked Limited validation in its title and body."
-    : "Limited validation: too few cases were held back to prove this change.";
+  // Too few held back to verify it, none included: the result says how strong it is.
+  const strength = strengthLabel(fix);
+  const held = provenOnTargetsOnly(fix) ? "nothing was" : "too few cases were";
+  const strengthNote = github
+    ? `${strength}: it opens as a draft pull request, marked ${strength} in its title and body.`
+    : `${strength}: ${held} held back to prove this change.`;
   return (
     <ConfirmDialog
       open={open}
@@ -92,8 +106,8 @@ export default function ShipConfirmDialog({
       closeDisabled={busy}
       title={
         github
-          ? `Open a pull request for Trial ${winner.attempt}?`
-          : `Make Trial ${winner.attempt}'s version the default?`
+          ? `Open a pull request for Candidate ${winner.attempt}?`
+          : `Make Candidate ${winner.attempt}'s version the default?`
       }
       content={
         <Stack spacing={1.25}>
@@ -108,7 +122,9 @@ export default function ShipConfirmDialog({
               )}
               {fix.agent?.ref && (
                 <Row label="Into">
-                  <Typography sx={{ typography: "s2" }}>{fix.agent.ref}</Typography>
+                  <Typography sx={{ typography: "s2" }}>
+                    {fix.agent.ref}
+                  </Typography>
                 </Row>
               )}
             </>
@@ -122,9 +138,9 @@ export default function ShipConfirmDialog({
           <Row label="Change">
             {open && <ChangeSummary fix={fix} winner={winner} />}
           </Row>
-          {fix.limited_validation && (
+          {strength && (
             <Typography sx={{ typography: "s2", color: BUILD_TONES.amber }}>
-              {limitedNote}
+              {strengthNote}
             </Typography>
           )}
         </Stack>

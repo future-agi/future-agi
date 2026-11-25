@@ -26,6 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -38,7 +39,6 @@ from simulate.models import (
     CallExecution,
     CallLogEntry,
     ChatMessageModel,
-    HostedHarnessJob,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
@@ -137,16 +137,22 @@ from simulate.serializers.test_execution import (
     TestExecutionSerializer,
     TestExecutionStatusSerializer,
 )
-
-# Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.agent_definition import resolve_api_key_for_version
-from simulate.services.call_rerun import clear_call_for_rerun
+from simulate.services.call_provider import (
+    call_agent_provider_expression,
+    execution_agent_provider,
+)
+from simulate.services.call_rerun import (
+    call_snapshot,
+    clear_call_for_rerun,
+    closed_attempt_metadata,
+    eval_snapshot,
+)
 from simulate.services.eval_config_edit import (
     EvalConfigEditRefused,
     update_eval_config,
     visible_eval_template_query,
 )
-from simulate.services.harness_environment import receipt_outcome_counts
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
     is_harness_run_test,
@@ -155,6 +161,8 @@ from simulate.services.harness_evals import (
 )
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.harness_workers import attempt_end
+from simulate.services.run_outcome import hosted_receipt_outcomes, outcome_fields
 from simulate.services.run_regrade import (
     RegradeAlreadyRunning,
     RegradeDispatchFailed,
@@ -166,6 +174,9 @@ from simulate.services.run_regrade import (
     regrade_run_evals,
     regrade_still_finishing,
 )
+
+# Import Temporal activities (using @temporal_activity drop-in decorator)
+from simulate.services.run_reliability_v3 import trial_passes
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -629,6 +640,7 @@ class CreateRunTestView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("create a test run")
     @validated_request(
         request_serializer=CreateRunTestSerializer,
         responses={
@@ -974,6 +986,7 @@ class RunTestExecutionView(APIView):
             self._test_executor = TestExecutor()
         return self._test_executor
 
+    @viewer_denied("start a paid run")
     @validated_request(
         request_serializer=ExecuteRunTestSerializer,
         responses={
@@ -1352,6 +1365,7 @@ class TestExecutionCancelView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("cancel a run")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
@@ -1480,7 +1494,9 @@ class TestExecutionCancelView(APIView):
                     HostedHarnessGateway,
                 )
 
-                HostedHarnessGateway().cancel(hosted_job, reason=reason)
+                HostedHarnessGateway(require_provider=False).cancel(
+                    hosted_job, reason=reason
+                )
             return {
                 "success": True,
                 "message": "Cancellation signal sent to hosted simulation",
@@ -1864,6 +1880,44 @@ class CallExecutionAPIView(APIView):
             )
 
 
+def _flat_kpi_evals(
+    values: dict[tuple[str, str, str], object], system_keys: set[str]
+) -> dict[str, object]:
+    """Keep each binding's preferred key unless a system KPI or another eval owns it."""
+
+    def project(key: str) -> str:
+        # Run detail's canonicalKeys hides the underscore-to-camel projection of each key.
+        return re.sub(r"_([a-z0-9])", lambda match: match[1].upper(), key)
+
+    natural = {name for name, _, _ in values}
+    # A name equal to another name's projection (tier1 for tier_1) would be hidden.
+    hidden = {project(key) for key in natural if project(key) != key} & natural
+    if len(natural) == len(values) and natural.isdisjoint(system_keys) and not hidden:
+        return {name: value for (name, _, _), value in values.items()}
+
+    reserved = natural | system_keys
+    reserved_projections = {project(key) for key in reserved}
+    used = system_keys.copy()
+    priority = {"score": 0, "numeric": 1, "distribution": 2}
+    keys = {}
+    for metric in sorted(values, key=lambda m: (priority[m[2]], m[1], m[0])):
+        name, binding_id, _ = metric
+        key = name
+        if key in used or key in hidden:
+            key = f"{name}__{binding_id}"
+            while (
+                key in reserved
+                or key in reserved_projections
+                or project(key) in reserved
+            ):
+                key += "_"
+            reserved.add(key)
+            reserved_projections.add(project(key))
+        keys[metric] = key
+        used.add(key)
+    return {keys[metric]: value for metric, value in values.items()}
+
+
 class RunTestKPIsView(APIView):
     """
     API View to get combined KPI values for a specific run test
@@ -2010,9 +2064,8 @@ class RunTestKPIsView(APIView):
                 eval_rows = cursor.fetchall()
 
             # Assemble eval averages from SQL results
-            eval_averages = {}
-            choice_metric_ids = set()
-            choice_counts = {}  # {metric_name: {choice_value: count}}
+            eval_metrics: dict[tuple[str, str, str], object] = {}
+            choice_counts: dict[tuple[str, str], dict[str, int]] = {}
 
             for (
                 metric_id,
@@ -2022,34 +2075,26 @@ class RunTestKPIsView(APIView):
                 choice_value,
                 choice_count,
             ) in eval_rows:
+                name = metric_name.lower().replace(" ", "_")
                 if output_type in ("Pass/Fail", "score"):
-                    field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
-                    eval_averages[field_name] = float(avg_value) if avg_value else 0
+                    eval_metrics[f"avg_{name}", metric_id, "score"] = (
+                        float(avg_value) if avg_value else 0
+                    )
                 elif output_type == "choices":
-                    if choice_value is not None:
-                        # String/array choice: accumulate counts
-                        choice_metric_ids.add(metric_id)
-                        base_name = metric_name.lower().replace(" ", "_")
-                        if base_name not in choice_counts:
-                            choice_counts[base_name] = {"_metric_id": metric_id}
-                        choice_counts[base_name][choice_value.lower()] = choice_count
-                    elif avg_value is not None:
-                        # Numeric choice: already averaged
-                        field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
-                        eval_averages[field_name] = float(avg_value)
+                    if choice_value is None and avg_value is not None:
+                        eval_metrics[f"avg_{name}", metric_id, "numeric"] = float(
+                            avg_value
+                        )
                     else:
-                        # Fully-errored choices metric: register it so the UI
-                        # renders a zeroed chart card instead of dropping the
-                        # whole eval bar.
-                        choice_metric_ids.add(metric_id)
-                        base_name = metric_name.lower().replace(" ", "_")
-                        if base_name not in choice_counts:
-                            choice_counts[base_name] = {"_metric_id": metric_id}
+                        # Even a fully errored binding gets a zeroed chart with its labels.
+                        counts = choice_counts.setdefault((metric_id, name), {})
+                        if choice_value is not None:
+                            counts[choice_value.lower()] = choice_count
 
             # Fetch choices config for choice-type eval metrics
-            if choice_metric_ids:
+            if choice_counts:
                 simulate_eval_configs = SimulateEvalConfig.objects.filter(
-                    id__in=list(choice_metric_ids)
+                    id__in={metric_id for metric_id, _ in choice_counts}
                 ).select_related("eval_template")
                 config_choices_map = {}
                 for sec in simulate_eval_configs:
@@ -2065,19 +2110,19 @@ class RunTestKPIsView(APIView):
                     if choices:
                         config_choices_map[str(sec.id)] = choices
 
-                for base_name, data in choice_counts.items():
-                    mid = data.pop("_metric_id")
-                    choices_list = config_choices_map.get(str(mid), [])
-                    if not choices_list:
-                        choices_list = list(data)
+                for (metric_id, name), counts in choice_counts.items():
+                    choices_list = config_choices_map.get(metric_id) or list(counts)
+                    field = (name, metric_id, "distribution")
                     if choices_list:
-                        eval_averages[base_name] = {
-                            str(choice): data.get(str(choice).lower(), 0)
-                            for choice in choices_list
+                        eval_metrics[field] = {
+                            **{
+                                str(c): counts.get(str(c).lower(), 0)
+                                for c in choices_list
+                            },
+                            "choices": choices_list,
                         }
-                        eval_averages[base_name]["choices"] = choices_list
                     else:
-                        eval_averages[base_name] = data
+                        eval_metrics[field] = counts
 
             # --- Scenario graphs ---
             scenario_graphs = {}
@@ -2159,7 +2204,7 @@ class RunTestKPIsView(APIView):
             }
 
             # Add evaluation averages to response
-            kpi_data.update(eval_averages)
+            kpi_data.update(_flat_kpi_evals(eval_metrics, set(kpi_data)))
 
             return Response(kpi_data, status=status.HTTP_200_OK)
 
@@ -2299,6 +2344,7 @@ class RunTestCallExecutionsView(APIView):
             if call_exec_ids:
                 call_execs = (
                     CallExecution.objects.filter(id__in=call_exec_ids)
+                    .annotate(result_provider=call_agent_provider_expression())
                     .select_related(
                         "scenario",
                         "test_execution",
@@ -2322,6 +2368,8 @@ class RunTestCallExecutionsView(APIView):
                     "call_execution__test_execution",
                     "call_execution__test_execution__simulator_agent",
                     "call_execution__test_execution__agent_definition",
+                    "call_execution__test_execution__agent_version",
+                    "call_execution__agent_version",
                 )
 
                 for snapshot in snapshots:
@@ -2594,6 +2642,7 @@ class TestExecutionDetailView(APIView):
             # Get call executions for this test execution
             call_executions = (
                 CallExecution.objects.filter(test_execution=test_execution)
+                .annotate(result_provider=call_agent_provider_expression())
                 .select_related(
                     "scenario",
                     "test_execution",
@@ -2889,15 +2938,28 @@ class TestExecutionDetailView(APIView):
                 start = (page - 1) * page_size
                 end = start + page_size
                 paginated_calls = call_executions[start:end]
+                # Mirrors the dispatch in _apply_grouping. Basic groups keep the
+                # request in their links; scenario dataset groups keep bare links.
+                basic_grouping = not any(
+                    field.startswith("scenario_") and "dataset" in field
+                    for field in row_groups
+                )
+
+                def page_link(number):
+                    if not basic_grouping:
+                        return f"?page={number}"
+                    params = request.query_params.copy()
+                    params["page"] = str(number)
+                    return f"?{params.urlencode()}"
 
                 # Create a custom paginated response for grouped results
                 return Response(
                     {
                         "count": len(call_executions),
                         "next": (
-                            f"?page={page + 1}" if end < len(call_executions) else None
+                            page_link(page + 1) if end < len(call_executions) else None
                         ),
-                        "previous": f"?page={page - 1}" if page > 1 else None,
+                        "previous": page_link(page - 1) if page > 1 else None,
                         "results": paginated_calls,
                         "total_pages": (len(call_executions) + page_size - 1)
                         // page_size,
@@ -3072,8 +3134,8 @@ class TestExecutionDetailView(APIView):
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status
             response_data["provider"] = (
-                test_execution.agent_definition.provider
-                if test_execution.agent_definition
+                execution_agent_provider(test_execution)
+                if test_execution.agent_definition_id or test_execution.agent_version_id
                 else "prompt"
             )
             response_data["agent_type"] = agent_type
@@ -5729,13 +5791,10 @@ class RunTestExecutionsView(APIView):
 
             # Batch fetch agent turn counts for all executions in one query
             execution_ids = [te.id for te in result_page]
-            hosted_jobs = {
-                job.test_execution_id: job.id
-                for job in HostedHarnessJob.no_workspace_objects.filter(
-                    test_execution_id__in=execution_ids
-                ).only("id", "test_execution_id")
-            }
-            outcome_counts = receipt_outcome_counts(hosted_jobs.values())
+            receipt_outcomes = hosted_receipt_outcomes(
+                execution_ids, organization_id=user_organization.id
+            )
+            trials = trial_passes(result_page or [])
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
@@ -5952,30 +6011,15 @@ class RunTestExecutionsView(APIView):
                             if test_execution.completed_at
                             else None
                         ),
-                        "outcome_passed": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "passed", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
+                        **outcome_fields(
+                            status=test_execution.status,
+                            receipts=receipt_outcomes.get(test_execution.id),
+                            calls={
+                                "completed": completed_calls,
+                                "failed": failed_calls,
+                            },
                         ),
-                        "outcome_failed": (
-                            sum(
-                                outcome_counts.get(
-                                    hosted_jobs[test_execution.id], {}
-                                ).get(status, 0)
-                                for status in ("failed", "errored")
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_skipped": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "skipped", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
+                        **trials[test_execution.id],
                         **_version_labels(version_labels, test_execution.id),
                     }
                 )
@@ -6642,16 +6686,7 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
 
 def _save_eval_snapshot(call_execution):
     """Save a snapshot of evaluation data only (for eval_only reruns)"""
-
-    # Create snapshot with only evaluation data
-    CallExecutionSnapshot.objects.create(
-        call_execution=call_execution,
-        rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
-        eval_outputs=call_execution.eval_outputs,
-        provider_call_data=call_execution.provider_call_data,
-        overall_score=call_execution.overall_score,
-        tool_outputs=call_execution.tool_outputs,
-    )
+    eval_snapshot(call_execution).save()
 
 
 def _restore_eval_only_rerun_state(call_execution_ids, dispatch_error_message):
@@ -7459,78 +7494,12 @@ class CallExecutionRerunView(APIView):
             )
 
     def _clear_call_execution_data(self, call_execution: CallExecution):
-        """Clear all call execution data for rerun"""
-
-        # Create snapshot of current state before clearing
-        CallExecutionSnapshot.objects.create(
-            call_execution=call_execution,
-            rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
-            service_provider_call_id=call_execution.service_provider_call_id,
-            status=call_execution.status,
-            started_at=call_execution.started_at,
-            completed_at=call_execution.completed_at,
-            ended_at=call_execution.ended_at,
-            duration_seconds=call_execution.duration_seconds,
-            recording_url=call_execution.recording_url,
-            cost_cents=call_execution.cost_cents,
-            stt_cost_cents=call_execution.stt_cost_cents,
-            llm_cost_cents=call_execution.llm_cost_cents,
-            tts_cost_cents=call_execution.tts_cost_cents,
-            vapi_cost_cents=call_execution.vapi_cost_cents,
-            call_summary=call_execution.call_summary,
-            ended_reason=call_execution.ended_reason,
-            overall_score=call_execution.overall_score,
-            response_time_ms=call_execution.response_time_ms,
-            assistant_id=call_execution.assistant_id,
-            customer_number=call_execution.customer_number,
-            call_type=call_execution.call_type,
-            analysis_data=call_execution.analysis_data,
-            evaluation_data=call_execution.evaluation_data,
-            message_count=call_execution.message_count,
-            transcript_available=call_execution.transcript_available,
-            recording_available=call_execution.recording_available,
-            eval_outputs=call_execution.eval_outputs,
-            tool_outputs=call_execution.tool_outputs,
-            provider_call_data=call_execution.provider_call_data,
-            avg_agent_latency_ms=call_execution.avg_agent_latency_ms,
-            user_interruption_count=call_execution.user_interruption_count,
-            user_interruption_rate=call_execution.user_interruption_rate,
-            user_wpm=call_execution.user_wpm,
-            bot_wpm=call_execution.bot_wpm,
-            talk_ratio=call_execution.talk_ratio,
-            ai_interruption_count=call_execution.ai_interruption_count,
-            ai_interruption_rate=call_execution.ai_interruption_rate,
-            avg_stop_time_after_interruption_ms=call_execution.avg_stop_time_after_interruption_ms,
-            conversation_metrics_data=call_execution.conversation_metrics_data,
-            transcripts=list(
-                call_execution.transcripts.values(
-                    "speaker_role",
-                    "content",
-                    "start_time_ms",
-                    "end_time_ms",
-                    "confidence_score",
-                )
-            ),
-        )
-
-        # Clear existing transcripts
-        call_execution.transcripts.all().delete()
-        call_execution.reset_to_default()
-        call_execution.save()
+        """Clear all call execution data for rerun, keeping the call's metadata."""
+        clear_call_for_rerun(call_execution, clear_metadata=False)
 
     def _save_eval_snapshot(self, call_execution):
         """Save a snapshot of evaluation data only (for eval_only reruns)"""
-        from simulate.models.test_execution import CallExecutionSnapshot
-
-        # Create snapshot with only evaluation data
-        CallExecutionSnapshot.objects.create(
-            call_execution=call_execution,
-            rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
-            eval_outputs=call_execution.eval_outputs,
-            provider_call_data=call_execution.provider_call_data,
-            overall_score=call_execution.overall_score,
-            tool_outputs=call_execution.tool_outputs,
-        )
+        eval_snapshot(call_execution).save()
 
 
 class TestExecutionRerunView(APIView):
@@ -7570,6 +7539,8 @@ class TestExecutionRerunView(APIView):
         snapshots_to_create = []
         call_executions_to_update = []
         call_ids_to_delete_transcripts = []
+        # Each call_and_eval call's closing attempt: its snapshot's id and how it ended, read before the reset.
+        closing: dict[Any, tuple[Any, Any]] = {}
 
         # First pass: prepare all objects in memory
         rerun_eval_ids = {}
@@ -7578,16 +7549,7 @@ class TestExecutionRerunView(APIView):
             try:
                 if rerun_type == "eval_only":
                     # Prepare eval-only snapshot
-                    snapshots_to_create.append(
-                        CallExecutionSnapshot(
-                            call_execution=call_execution,
-                            rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
-                            eval_outputs=call_execution.eval_outputs,
-                            provider_call_data=call_execution.provider_call_data,
-                            overall_score=call_execution.overall_score,
-                            tool_outputs=call_execution.tool_outputs,
-                        )
-                    )
+                    snapshots_to_create.append(eval_snapshot(call_execution))
                     # Prepare call execution updates
                     if call_execution.test_execution_id not in rerun_eval_ids:
                         rerun_eval_ids[call_execution.test_execution_id] = (
@@ -7608,63 +7570,12 @@ class TestExecutionRerunView(APIView):
                     )
                     call_executions_to_update.append(call_execution)
                 else:
-                    # call_and_eval: Capture transcript data before we delete them
-                    transcript_data = list(
-                        call_execution.transcripts.values(
-                            "speaker_role",
-                            "content",
-                            "start_time_ms",
-                            "end_time_ms",
-                            "confidence_score",
-                        )
-                    )
-
-                    # Prepare full snapshot with all fields
-                    snapshots_to_create.append(
-                        CallExecutionSnapshot(
-                            call_execution=call_execution,
-                            rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
-                            service_provider_call_id=call_execution.service_provider_call_id,
-                            status=call_execution.status,
-                            started_at=call_execution.started_at,
-                            completed_at=call_execution.completed_at,
-                            ended_at=call_execution.ended_at,
-                            duration_seconds=call_execution.duration_seconds,
-                            recording_url=call_execution.recording_url,
-                            stereo_recording_url=call_execution.stereo_recording_url,
-                            cost_cents=call_execution.cost_cents,
-                            stt_cost_cents=call_execution.stt_cost_cents,
-                            llm_cost_cents=call_execution.llm_cost_cents,
-                            tts_cost_cents=call_execution.tts_cost_cents,
-                            vapi_cost_cents=call_execution.vapi_cost_cents,
-                            call_summary=call_execution.call_summary,
-                            ended_reason=call_execution.ended_reason,
-                            overall_score=call_execution.overall_score,
-                            response_time_ms=call_execution.response_time_ms,
-                            assistant_id=call_execution.assistant_id,
-                            customer_number=call_execution.customer_number,
-                            call_type=call_execution.call_type,
-                            analysis_data=call_execution.analysis_data,
-                            evaluation_data=call_execution.evaluation_data,
-                            message_count=call_execution.message_count,
-                            transcript_available=call_execution.transcript_available,
-                            recording_available=call_execution.recording_available,
-                            eval_outputs=call_execution.eval_outputs,
-                            tool_outputs=call_execution.tool_outputs,
-                            provider_call_data=call_execution.provider_call_data,
-                            monitor_call_data=call_execution.monitor_call_data,
-                            avg_agent_latency_ms=call_execution.avg_agent_latency_ms,
-                            user_interruption_count=call_execution.user_interruption_count,
-                            user_interruption_rate=call_execution.user_interruption_rate,
-                            user_wpm=call_execution.user_wpm,
-                            bot_wpm=call_execution.bot_wpm,
-                            talk_ratio=call_execution.talk_ratio,
-                            ai_interruption_count=call_execution.ai_interruption_count,
-                            ai_interruption_rate=call_execution.ai_interruption_rate,
-                            avg_stop_time_after_interruption_ms=call_execution.avg_stop_time_after_interruption_ms,
-                            conversation_metrics_data=call_execution.conversation_metrics_data,
-                            transcripts=transcript_data,
-                        )
+                    # call_and_eval: the same snapshot every rerun keeps, before the transcripts go
+                    snapshot = call_snapshot(call_execution)
+                    snapshots_to_create.append(snapshot)
+                    closing[call_execution.id] = (
+                        snapshot.id,
+                        attempt_end(call_execution),
                     )
 
                     # Mark for transcript deletion
@@ -7704,6 +7615,25 @@ class TestExecutionRerunView(APIView):
 
                 # Bulk update all call executions
                 if call_executions_to_update:
+                    if rerun_type != "eval_only":
+                        # A worker read or a receipt may have written a call's metadata since it was loaded: lock the
+                        # rows and close each attempt from what they hold now, as a single rerun does.
+                        current = dict(
+                            CallExecution.objects.select_for_update()
+                            .filter(
+                                id__in=[one.id for one in call_executions_to_update]
+                            )
+                            .order_by("id")
+                            .values_list("id", "call_metadata")
+                        )
+                        for one in call_executions_to_update:
+                            snapshot_id, ending = closing[one.id]
+                            one.call_metadata = closed_attempt_metadata(
+                                current.get(one.id),
+                                call_id=one.id,
+                                snapshot_id=snapshot_id,
+                                ending=ending,
+                            )
                     if rerun_type == "eval_only":
                         CallExecution.objects.bulk_update(
                             call_executions_to_update,
@@ -7713,7 +7643,8 @@ class TestExecutionRerunView(APIView):
                     else:
                         CallExecution.objects.bulk_update(
                             call_executions_to_update,
-                            CallExecution.RESET_FIELDS,
+                            # With each closed attempt kept and its record gone (`closed_attempt_metadata`).
+                            [*CallExecution.RESET_FIELDS, "call_metadata"],
                             batch_size=BATCH_SIZE,
                         )
 

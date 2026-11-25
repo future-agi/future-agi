@@ -132,13 +132,11 @@ const ModelContainer = ({
   };
 
   const handleOnModelTypeChange = (newModelType) => {
-    setModelConfig((pre) => {
-      // If changing to "all", keep the current model
-      if (newModelType === "all") {
-        return { ...pre, model_type: newModelType };
-      }
-      // For any other change (from "all" or between types), reset to default
-      return { ...modelConfigDefault, model_type: newModelType };
+    // Filter tabs only narrow the model list. Keep the current configuration
+    // (model, output format, tools, ...) and skip autosave so browsing tabs
+    // does not create a draft version.
+    setModelConfig((pre) => ({ ...pre, model_type: newModelType }), {
+      skipSave: true,
     });
   };
 

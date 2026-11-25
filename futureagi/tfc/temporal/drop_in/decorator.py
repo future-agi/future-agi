@@ -56,6 +56,7 @@ def temporal_activity(
     schedule_to_start_timeout: int | None = None,
     workflow_run_timeout: int | None = None,
     workflow_execution_timeout: int | None = None,
+    workflow_class: type | None = None,
 ):
     """
     Drop-in replacement decorator for @celery_app.task.
@@ -71,6 +72,7 @@ def temporal_activity(
             max_retries is set explicitly.
         rate_limit: Rate limit string (e.g., "100/s") - stored for reference
         name: Activity name (defaults to function name)
+        workflow_class: Optional dedicated workflow instead of TaskRunnerWorkflow.
         schedule_to_start_timeout: Optional activity queue wait ceiling in seconds.
         workflow_run_timeout: Optional workflow-run ceiling in seconds. When set,
             it must exceed the activity queue wait plus activity execution ceiling.
@@ -113,6 +115,7 @@ def temporal_activity(
         # Store metadata for later use
         _ACTIVITY_REGISTRY[activity_name] = {
             "func": func,
+            "workflow_class": workflow_class,
             "time_limit": time_limit,
             "queue": queue,
             "max_retries": max_retries,
@@ -253,7 +256,15 @@ def _create_real_activity(activity_name: str, sync_wrapper: Callable) -> Callabl
             return {"result": result, "status": "completed"}
 
         except Exception as e:
-            activity.logger.error(f"Activity '{activity_name}' FAILED: {str(e)}")
+            # Preserve the local error reason. The Sentry projection reads only
+            # the code-owned fields, not the message or adapter-supplied context.
+            activity.logger.error(
+                f"Activity '{activity_name}' FAILED: {str(e)}",
+                extra={
+                    "tfc_failed_activity": activity_name,
+                    "tfc_error_type": type(e).__name__,
+                },
+            )
             raise
 
     return activity_wrapper

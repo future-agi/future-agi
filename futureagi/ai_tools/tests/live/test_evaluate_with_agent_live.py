@@ -83,9 +83,9 @@ def live_tool_context():
 def _assert_valid(result, choices):
     """Common assertions for a successful eval result."""
     assert not result.is_error, f"Tool returned error: {result.content}"
-    assert (
-        result.data["result"] in choices
-    ), f"Result '{result.data['result']}' not in expected choices {choices}"
+    assert result.data["result"] in choices, (
+        f"Result '{result.data['result']}' not in expected choices {choices}"
+    )
     assert 0.0 <= result.data["confidence"] <= 1.0
     assert result.data["explanation"], "Explanation should not be empty"
     assert result.data["eval_calls"] >= 1
@@ -100,7 +100,6 @@ def _assert_valid(result, choices):
 @pytest.mark.live_llm
 @pytest.mark.django_db(databases=["default"])
 class TestSimpleSpanEvals:
-
     def test_toxicity_check_passes(self, live_tool_context):
         """Professional billing apology should be Not Toxic."""
         result = run_tool(
@@ -152,9 +151,9 @@ class TestSimpleSpanEvals:
         assert not result.is_error
         # result label should be one of the scorer buckets
         valid_scores = {"0.0", "0.2", "0.4", "0.6", "0.8", "1.0"}
-        assert (
-            result.data["result"] in valid_scores
-        ), f"Expected a score bucket, got '{result.data['result']}'"
+        assert result.data["result"] in valid_scores, (
+            f"Expected a score bucket, got '{result.data['result']}'"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +164,6 @@ class TestSimpleSpanEvals:
 @pytest.mark.live_llm
 @pytest.mark.django_db(databases=["default"])
 class TestModerateSpanEvals:
-
     def test_agent_response_rated_1_to_5(self, live_tool_context):
         """Billing resolution agent span should receive a 1-5 quality rating."""
         result = run_tool(
@@ -193,7 +191,6 @@ class TestModerateSpanEvals:
 @pytest.mark.live_llm
 @pytest.mark.django_db(databases=["default"])
 class TestComplexTraceEvals:
-
     def test_billing_dispute_trace_pass_fail_partial(self, live_tool_context):
         """Billing dispute trace: did agent ack error, initiate refund, give timeline?"""
         result = run_tool(
@@ -240,7 +237,6 @@ class TestComplexTraceEvals:
 @pytest.mark.live_llm
 @pytest.mark.django_db(databases=["default"])
 class TestHardSessionEvals:
-
     def test_session_overall_quality(self, live_tool_context):
         """Multi-turn session should receive a 1-5 quality rating."""
         result = run_tool(
@@ -283,7 +279,6 @@ class TestHardSessionEvals:
 @pytest.mark.live_llm
 @pytest.mark.django_db(databases=["default"])
 class TestDatasetRowEvals:
-
     def test_toxic_text_flagged(self, live_tool_context):
         result = run_tool(
             "evaluate_with_agent",
@@ -327,7 +322,6 @@ class TestDatasetRowEvals:
 @pytest.mark.live_llm
 @pytest.mark.django_db(databases=["default"])
 class TestOptionalParamsLive:
-
     def test_with_knowledge_base(self, live_tool_context):
         """Eval with KB attached — orchestrator can search_kb."""
         result = run_tool(

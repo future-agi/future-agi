@@ -1,5 +1,13 @@
+import json
+from unittest.mock import patch
+
+import httpx
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from rest_framework import status
+from traceai_openai import OpenAIInstrumentor
 
 from accounts.models.organization import Organization
 from accounts.models.user import User
@@ -7,7 +15,6 @@ from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from tfc.constants.roles import OrganizationRoles
 from tracer.models.project import Project
-
 
 USER_CODE_EXAMPLE_PATH = "/tracer/users/get_code_example/"
 
@@ -33,7 +40,105 @@ def test_user_code_example_without_project_uses_default_project_name(auth_client
     assert response.status_code == status.HTTP_200_OK
     code_example = response.json()["result"]
     assert 'project_name="New Project"' in code_example
-    assert "user_id=\"newuser@example.com\"" in code_example
+    assert 'user_id="newuser@example.com"' in code_example
+
+
+@pytest.mark.django_db
+def test_user_code_example_uses_current_model_without_legacy_token_limit(auth_client):
+    # Pins the example's request contract, not live provider availability.
+    response = auth_client.get(USER_CODE_EXAMPLE_PATH)
+
+    assert response.status_code == status.HTTP_200_OK
+    code_example = response.json()["result"]
+    assert 'model="gpt-6.1-terra"' in code_example
+    assert "gpt-3.5-turbo" not in code_example
+    assert "max_tokens" not in code_example
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scoped", [False, True])
+def test_copied_user_example_sends_current_request_and_records_trace(
+    auth_client, observe_project, scoped
+):
+    """Execute the returned source with real SDKs and an in-process HTTP peer.
+
+    Only registration/export and the provider HTTP boundary are local substitutes;
+    this does not assert that the named model is available from the live provider.
+    """
+    params = {"project_id": str(observe_project.id)} if scoped else {}
+    response = auth_client.get(USER_CODE_EXAMPLE_PATH, data=params)
+    assert response.status_code == status.HTTP_200_OK
+    requests = []
+
+    def complete(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "chatcmpl-example",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "gpt-6.1-terra",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "A synthetic haiku.",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 8,
+                    "completion_tokens": 5,
+                    "total_tokens": 13,
+                },
+            },
+        )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentor = OpenAIInstrumentor()
+    namespace = {}
+    try:
+        with (
+            patch("fi_instrumentation.register", return_value=provider) as register,
+            patch.dict(
+                "os.environ",
+                OPENAI_API_KEY="synthetic-example-key",
+                OPENAI_BASE_URL="http://localhost/v1",
+            ),
+            patch.object(
+                httpx.Client,
+                "send",
+                autospec=True,
+                side_effect=lambda self, request, **kwargs: complete(request),
+            ),
+        ):
+            exec(
+                compile(response.json()["result"], "<user-example>", "exec"), namespace
+            )
+        assert requests == [
+            {
+                "model": "gpt-6.1-terra",
+                "messages": [{"role": "user", "content": "Write a haiku."}],
+            }
+        ]
+        assert register.call_args.kwargs["project_name"] == (
+            observe_project.name if scoped else "New Project"
+        )
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].attributes["session.id"] == "new-session"
+        assert spans[0].attributes["user.id"] == "newuser@example.com"
+    finally:
+        if "client" in namespace:
+            namespace["client"].close()
+        instrumentor.uninstrument()
+        provider.shutdown()
 
 
 @pytest.mark.django_db
