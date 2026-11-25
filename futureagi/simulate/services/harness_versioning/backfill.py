@@ -16,6 +16,7 @@ import time
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
+from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -257,10 +258,12 @@ def _archive_scenarios(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
     )
     scenarios = []
     for entry in entries:
+        named = PurePosixPath(str(entry.get("folder") or "").strip()).name
         folder = next(
             (
                 found
                 for found in (
+                    named if named in documents else None,
                     by_token.get(_scenario_token(entry.get("folder"))),
                     by_token.get(_scenario_token(entry.get("scenario_key"))),
                     by_name.get(_scenario_token(entry.get("name"))),
@@ -270,6 +273,9 @@ def _archive_scenarios(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
             "",
         )
         document = {**entry, **documents.get(folder, {})}
+        if folder:
+            # The folder it was read from, never the one its document names.
+            document["folder"] = folder
         document["scenario_key"] = str(document.get("scenario_key") or folder or "")
         scenarios.append(document)
     return scenarios
@@ -361,15 +367,31 @@ def _live_rows(models: Models, job: Any) -> list[Any]:
     )
 
 
-def match_members(rows: list[Any], scenarios: list[dict[str, Any]]) -> MemberMatch:
-    """Rows matched to archive scenarios: every key match first, then names; each row once.
+def _folder_name(value: object) -> str:
+    return PurePosixPath(str(value or "").strip()).name
 
-    Matching every key before any name means one scenario's name can never take the row
-    another scenario owns by key.
+
+def match_members(rows: list[Any], scenarios: list[dict[str, Any]]) -> MemberMatch:
+    """Rows matched to archive scenarios: by physical folder first, then every key
+    match, then names; each row once.
+
+    A folder only one row holds is the scenario's own identity, so two scenarios whose
+    documents share a key or a name still take their own rows. Matching every key
+    before any name means one scenario's name can never take the row another
+    scenario owns by key.
     """
     from simulate.services.hosted_harness_gateway import _scenario_token
 
     match = MemberMatch()
+    by_folder: dict[str, Any] = {}
+    shared: set[str] = set()
+    for row in rows:
+        if folder := _folder_name(getattr(row, "folder", "")):
+            if folder in by_folder:
+                shared.add(folder)
+            by_folder.setdefault(folder, row)
+    for folder in shared:
+        by_folder.pop(folder)
     by_key: dict[str, Any] = {}
     for row in rows:
         if token := _scenario_token(row.scenario_key):
@@ -383,6 +405,14 @@ def match_members(rows: list[Any], scenarios: list[dict[str, Any]]) -> MemberMat
     used: set[Any] = set()
     paired: dict[int, tuple[Any, dict[str, Any], int]] = {}
     for position, document in enumerate(scenarios, start=1):
+        row = by_folder.get(_folder_name(document.get("folder")))
+        if row is not None and row.id not in used:
+            used.add(row.id)
+            paired[position] = (row, document, position)
+            match.by_key += 1
+    for position, document in enumerate(scenarios, start=1):
+        if position in paired:
+            continue
         row = by_key.get(_scenario_token(document.get("scenario_key")))
         if row is not None and row.id not in used:
             used.add(row.id)

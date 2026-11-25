@@ -886,6 +886,15 @@ def actor_ids(environment_files: Mapping[str, bytes]) -> set[str]:
     }
 
 
+def _edited(doc: Mapping[str, Any], before: Mapping[str, Any] | None) -> bool:
+    """Whether a Scenarios-tab document differs from the stored one. The folder the
+    suite reader records for a scenario read from its folder is not part of an edit
+    that does not send one."""
+    if before is not None and "folder" not in doc:
+        before = {key: value for key, value in before.items() if key != "folder"}
+    return doc != before
+
+
 def write_suite_edit(
     environment: HostedHarnessJob, suite: list[dict[str, Any]], *, user: Any
 ) -> DraftWrite | None:
@@ -913,7 +922,7 @@ def write_suite_edit(
     problems = [
         one
         for doc in suite
-        if doc != before.get(str(doc.get("scenario_key") or doc.get("name") or ""))
+        if _edited(doc, before.get(str(doc.get("scenario_key") or doc.get("name") or "")))
         for one in actor_reference_problems(doc, known)
     ]
     if problems:

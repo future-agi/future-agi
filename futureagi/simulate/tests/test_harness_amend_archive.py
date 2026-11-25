@@ -228,6 +228,68 @@ def test_a_rewrite_that_would_lose_a_kept_scenario_is_refused():
     assert _rewritten_authoring_archive(_archive(), suite) is None
 
 
+def _two_folders_sharing_a_name():
+    """Two scenario folders whose documents carry the same key and name."""
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as tar:
+        for path, data in {
+            "contract.json": b"{}",
+            **{
+                f"scenarios/refund_{side}/{file}": data
+                for side in ("a", "b")
+                for file, data in {
+                    "scenario.json": json.dumps(
+                        {
+                            "name": "refund",
+                            "scenario_key": "refund",
+                            "instruction": f"call {side}",
+                            "tests": "t",
+                        }
+                    ).encode(),
+                    "ready.py": b"def ready(world):\n    return True\n",
+                }.items()
+            },
+        }.items():
+            member = tarfile.TarInfo(path)
+            member.size = len(data)
+            tar.addfile(member, io.BytesIO(data))
+    return out.getvalue()
+
+
+def _entry(side, **fields):
+    return {
+        "name": "refund",
+        "scenario_key": "refund",
+        "folder": f"scenarios/refund_{side}",
+        **fields,
+    }
+
+
+def test_an_edit_to_one_folder_never_reaches_another_sharing_its_name():
+    after = _read(
+        _rewritten_authoring_archive(
+            _two_folders_sharing_a_name(),
+            [_entry("a", tests="t"), _entry("b", tests="new")],
+        )
+    )
+
+    first = json.loads(after["scenarios/refund_a/scenario.json"])
+    second = json.loads(after["scenarios/refund_b/scenario.json"])
+    assert (first["instruction"], first["tests"]) == ("call a", "t")
+    assert (second["instruction"], second["tests"]) == ("call b", "new")
+
+
+def test_dropping_one_of_two_folders_sharing_a_name_keeps_only_the_other():
+    after = _read(
+        _rewritten_authoring_archive(
+            _two_folders_sharing_a_name(), [_entry("a", tests="new")]
+        )
+    )
+
+    assert json.loads(after["scenarios/refund_a/scenario.json"])["tests"] == "new"
+    assert not any(path.startswith("scenarios/refund_b/") for path in after)
+
+
 class _Result:
     def __init__(self, result="", exit_code=0):
         self.result, self.exit_code = result, exit_code

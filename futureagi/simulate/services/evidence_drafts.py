@@ -292,19 +292,9 @@ def _settle(
         _block(cases, ENVIRONMENT_CHANGED)
         return
     documents = suite_documents(split.suite)
-    by_token = {
-        _token(spelling): document
-        for document in documents
-        for spelling in (
-            document.get("scenario_key"),
-            document.get("name"),
-            document.get("folder"),
-        )
-        if spelling
-    }
     for case in cases:
         key = scenario_key_for(case)
-        document = by_token.get(_token(key))
+        document = _document_named(documents, key)
         proposal = _proposal(split.suite, document, key) if document else None
         if document is None or proposal is None:
             _block([case], _with_reply(NO_SCENARIO, last_words))
@@ -399,6 +389,18 @@ def _added_checks(environment, basis, files, prepared) -> list[dict] | None:
         return None
     names = {one.get("name") for one in existing}
     return [one for one in new.get("sub_goals") or [] if one.get("name") not in names]
+
+
+def _document_named(documents: list[dict], key: str) -> dict | None:
+    """The one document that names ``key``: by its folder first, then its own key,
+    then its name. Two documents naming it the same way are ambiguous, and neither
+    is taken."""
+    token = _token(key)
+    for field in ("folder", "scenario_key", "name"):
+        named = [one for one in documents if _token(one.get(field)) == token]
+        if named:
+            return named[0] if len(named) == 1 else None
+    return None
 
 
 def _token(value: object) -> str:

@@ -6409,20 +6409,39 @@ def _document_tokens(folder: str, document: object) -> set[str]:
     return tokens - {""}
 
 
-def _scenario_folder_kept(folder: str, document: object, tokens: set[str]) -> bool:
-    """A folder goes only when its own scenario.json names a scenario the suite no longer has."""
+def _pinned_folder(one: dict, folders: set[str]) -> str | None:
+    """The physical folder a suite entry names exactly, when the suite has it."""
+    named = Path(str(one.get("folder") or "").strip()).name
+    return named if named in folders else None
+
+
+def _scenario_folder_kept(
+    folder: str, document: object, suite: list[dict], folders: set[str]
+) -> bool:
+    """A folder goes only when its own scenario.json names a scenario the suite no longer
+    has. An entry naming this very folder keeps it; one naming another folder the suite
+    has speaks for that folder alone, never for this one by a shared name."""
     if not isinstance(document, dict):
         return True
-    return bool(_document_tokens(folder, document) & tokens)
+    if any(_pinned_folder(one, folders) == folder for one in suite):
+        return True
+    unpinned = [one for one in suite if _pinned_folder(one, folders) is None]
+    return bool(_document_tokens(folder, document) & _suite_tokens(unpinned))
 
 
-def _edit_for(folder: str, document: object, suite: list[dict]) -> dict | None:
+def _edit_for(
+    folder: str, document: object, suite: list[dict], folders: set[str]
+) -> dict | None:
+    pinned = next((one for one in suite if _pinned_folder(one, folders) == folder), None)
+    if pinned is not None:
+        return pinned
     own = _document_tokens(folder, document)
     return next(
         (
             one
             for one in suite
-            if {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
+            if _pinned_folder(one, folders) is None
+            and {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
             & own
         ),
         None,
@@ -6564,11 +6583,11 @@ def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -
 
 
 def _push_scenarios_to_sandbox(sandbox: Any, suite: list[dict]) -> None:
-    tokens = _suite_tokens(suite)
     listed = sandbox.process.exec(
         "ls -1 /work/authoring/scenarios 2>/dev/null", timeout=60
     )
     present = sorted(name for name in (listed.result or "").split() if name)
+    folders = set(present)
     for folder in present:
         read = sandbox.process.exec(
             f"cat /work/authoring/scenarios/{shlex.quote(folder)}/scenario.json",
@@ -6578,13 +6597,13 @@ def _push_scenarios_to_sandbox(sandbox: Any, suite: list[dict]) -> None:
             document = json.loads(read.result or "") if not read.exit_code else None
         except ValueError:
             document = None
-        if not _scenario_folder_kept(folder, document, tokens):
+        if not _scenario_folder_kept(folder, document, suite, folders):
             sandbox.process.exec(
                 f"rm -rf /work/authoring/scenarios/{shlex.quote(folder)}",
                 timeout=60,
             )
             continue
-        edit = _edit_for(folder, document, suite)
+        edit = _edit_for(folder, document, suite, folders)
         if edit is None or not isinstance(document, dict):
             continue
         document.update(
@@ -6818,17 +6837,17 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
                 documents[parts[1]] = json.loads(data.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
                 documents[parts[1]] = None
-    tokens = _suite_tokens(suite)
     kept = {
         folder
         for folder in folders
-        if _scenario_folder_kept(folder, documents.get(folder), tokens)
+        if _scenario_folder_kept(folder, documents.get(folder), suite, folders)
     }
     held = set().union(
         *(_document_tokens(folder, documents.get(folder)) for folder in kept)
     )
     if folders and any(
-        not {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
+        _pinned_folder(one, folders) not in kept
+        and not {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
         & held
         for one in suite
     ):
@@ -6847,7 +6866,7 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
                 continue
             if parts[:1] == ("scenarios",) and parts[2:] == ("scenario.json",):
                 document = documents.get(parts[1])
-                edit = _edit_for(parts[1], document, suite)
+                edit = _edit_for(parts[1], document, suite, folders)
                 if isinstance(document, dict) and edit is not None:
                     document = {
                         **document,

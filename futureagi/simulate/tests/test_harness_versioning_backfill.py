@@ -2170,6 +2170,57 @@ def test_an_index_entry_finds_its_folder_by_key():
     assert scenario["instruction"] == "ask for a refund"
 
 
+def test_two_folders_sharing_a_key_keep_their_own_folders_and_rows():
+    """A document's own folder field never replaces the folder it was read from, and
+    each folder takes the row recorded for it, though both share a key and a name."""
+    from types import SimpleNamespace as Row
+
+    def document(said):
+        return json.dumps(
+            {
+                "scenario_key": "refund",
+                "name": "Refund",
+                "folder": "scenarios/copied_from",
+                "instruction": said,
+            }
+        ).encode()
+
+    suite = {
+        "scenarios/refund_a/scenario.json": document("first"),
+        "scenarios/refund_b/scenario.json": document("second"),
+    }
+
+    scenarios = _archive_scenarios(suite)
+    match = match_members(
+        [
+            Row(id=2, scenario_key="refund", name="Refund", folder="refund_b"),
+            Row(id=1, scenario_key="refund", name="Refund", folder="scenarios/refund_a"),
+        ],
+        scenarios,
+    )
+
+    assert [(one["folder"], one["instruction"]) for one in scenarios] == [
+        ("refund_a", "first"),
+        ("refund_b", "second"),
+    ]
+    assert [(row.id, position) for row, _, position in match.pairs] == [(1, 1), (2, 2)]
+    assert match.scenarios_without_row == 0
+
+
+def test_an_index_entry_naming_its_folder_by_path_takes_that_folder():
+    suite = {
+        "scenarios.json": json.dumps(
+            [{"folder": "scenarios/refund_b", "scenario_key": "refund"}]
+        ).encode(),
+        "scenarios/refund-b/scenario.json": json.dumps({"instruction": "lookalike"}).encode(),
+        "scenarios/refund_b/scenario.json": json.dumps({"instruction": "own"}).encode(),
+    }
+
+    [scenario] = _archive_scenarios(suite)
+
+    assert (scenario["folder"], scenario["instruction"]) == ("refund_b", "own")
+
+
 class TestReReviewFindings:
     def test_a_run_pinned_earlier_takes_its_environment_versions_agent(
         self, user, workspace, storage

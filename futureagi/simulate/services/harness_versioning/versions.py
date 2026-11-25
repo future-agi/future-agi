@@ -170,7 +170,11 @@ def _sub_goals(files: Mapping[str, bytes]) -> list[dict[str, Any]]:
 
 
 def suite_documents(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
-    """The suite's scenarios, from its index or else from each folder's document."""
+    """The suite's scenarios, from its index or else from each folder's document.
+
+    A record read from a folder keeps that folder as ``folder``, apart from the
+    document's own key and name, so two folders whose documents share a key or a
+    name stay two scenarios."""
     listed = _json(suite, "scenarios.json")
     if isinstance(listed, list):
         return [one for one in listed if isinstance(one, dict)]
@@ -180,7 +184,7 @@ def suite_documents(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
         if len(parts) == 3 and parts[2] == "scenario.json":
             document = _json(suite, path)
             if isinstance(document, dict):
-                found.append({"scenario_key": parts[1], **document})
+                found.append({"scenario_key": parts[1], **document, "folder": parts[1]})
     return found
 
 
