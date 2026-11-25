@@ -25,6 +25,7 @@ const AddNewDataset = ({
   selectedTraces,
   selectedSpans,
   selectAll,
+  selectAllFilters,
   currentTab,
   onSuccess,
 }) => {
@@ -159,6 +160,12 @@ const AddNewDataset = ({
       model_type: "BinaryClassification",
       mapping_config,
       select_all: Boolean(selectAll),
+      // Under select-all the ids below are the deselected rows; the grid's
+      // own filters (time window included) let the server resolve exactly
+      // the rows the grid counted instead of the whole project.
+      ...(selectAll && Array.isArray(selectAllFilters)
+        ? { filters: selectAllFilters }
+        : {}),
       project: observeId,
       ...(currentTab === LLM_TABS.TRACE
         ? {
@@ -341,6 +348,7 @@ AddNewDataset.propTypes = {
   selectedTraces: PropTypes.array,
   selectedSpans: PropTypes.array,
   selectAll: PropTypes.bool,
+  selectAllFilters: PropTypes.array,
   currentTab: PropTypes.string,
   onSuccess: PropTypes.func,
 };
