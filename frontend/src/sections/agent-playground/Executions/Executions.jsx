@@ -1,19 +1,19 @@
-import React, { useState, useCallback, useMemo } from "react";
-import {
-  Box,
-  CircularProgress,
-  Divider,
-  Stack,
-  Typography,
-} from "@mui/material";
+import React, { useState, useMemo } from "react";
+import PropTypes from "prop-types";
+import { Box, Divider, Stack, Typography } from "@mui/material";
 import { useParams } from "react-router-dom";
 import { useGetExecutions } from "src/api/agent-playground/agent-playground";
 import ExecutionsList from "./ExecutionsList";
 import ExecutionDetailView from "./ExecutionDetailView";
+import ContentSkeleton from "src/components/content-skeleton";
 
 export default function Executions() {
   const { agentId } = useParams();
-  const [selectedExecutionId, setSelectedExecutionId] = useState(null);
+  return <AgentExecutions key={agentId} agentId={agentId} />;
+}
+
+function AgentExecutions({ agentId }) {
+  const [chosenExecutionId, setChosenExecutionId] = useState(null);
 
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } =
     useGetExecutions(agentId);
@@ -31,9 +31,7 @@ export default function Executions() {
     [data],
   );
 
-  const handleExecutionChange = useCallback((executionId) => {
-    setSelectedExecutionId(executionId);
-  }, []);
+  const selectedExecutionId = chosenExecutionId ?? executions[0]?.id;
 
   if (isLoading) {
     return (
@@ -45,7 +43,7 @@ export default function Executions() {
           height: "100%",
         }}
       >
-        <CircularProgress size={28} />
+        <ContentSkeleton variant="rows" />
       </Box>
     );
   }
@@ -86,7 +84,7 @@ export default function Executions() {
         <ExecutionsList
           executions={executions}
           selectedExecutionId={selectedExecutionId}
-          onExecutionChange={handleExecutionChange}
+          onExecutionChange={setChosenExecutionId}
           isFetchingNextPage={isFetchingNextPage}
           fetchNextPage={fetchNextPage}
           hasNextPage={hasNextPage}
@@ -100,3 +98,5 @@ export default function Executions() {
     </Stack>
   );
 }
+
+AgentExecutions.propTypes = { agentId: PropTypes.string.isRequired };

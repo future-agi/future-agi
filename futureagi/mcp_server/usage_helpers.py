@@ -5,32 +5,24 @@ import uuid
 
 import structlog
 
-from mcp_server.constants import CATEGORY_TO_GROUP, DEFAULT_TOOL_GROUPS
 from mcp_server.models.connection import MCPConnection
 from mcp_server.models.session import MCPSession
 from mcp_server.models.tool_config import MCPToolGroupConfig
 from mcp_server.models.usage import MCPUsageRecord
+from tfc.ee_gating import FeatureUnavailable, check_ee_feature
 
 logger = structlog.get_logger(__name__)
 
 
 def get_or_create_connection(user, organization, workspace):
     """Get or create an MCPConnection for the given user + workspace."""
-    try:
-        connection = MCPConnection.no_workspace_objects.get(
-            user=user,
-            workspace=workspace,
-            deleted=False,
-        )
-    except MCPConnection.DoesNotExist:
-        connection = MCPConnection(
-            user=user,
-            organization=organization,
-            workspace=workspace,
-            connection_mode="stdio",
-        )
-        connection.save()
-        MCPToolGroupConfig(connection=connection).save()
+    connection, _ = MCPConnection.no_workspace_objects.get_or_create(
+        user=user,
+        workspace=workspace,
+        deleted=False,
+        defaults={"organization": organization, "connection_mode": "stdio"},
+    )
+    MCPToolGroupConfig.no_workspace_objects.get_or_create(connection=connection)
     return connection
 
 
@@ -55,21 +47,22 @@ def get_or_create_session(connection, session_id=None, transport="stdio"):
         except MCPSession.DoesNotExist:
             pass
 
-    # For stateless transports, reuse the most recent active session
-    # within a 30-minute window to avoid creating a new session per request.
-    cutoff = timezone.now() - timedelta(minutes=30)
-    recent = (
-        MCPSession.objects.filter(
-            connection=connection,
-            transport=transport,
-            status="active",
-            last_activity_at__gte=cutoff,
+    if transport == "streamable_http":
+        # Stateless HTTP has no caller-provided session identifier, so reuse
+        # the recent logical session instead of creating one for every POST.
+        cutoff = timezone.now() - timedelta(minutes=30)
+        recent = (
+            MCPSession.objects.filter(
+                connection=connection,
+                transport=transport,
+                status="active",
+                last_activity_at__gte=cutoff,
+            )
+            .order_by("-last_activity_at")
+            .first()
         )
-        .order_by("-last_activity_at")
-        .first()
-    )
-    if recent:
-        return recent
+        if recent:
+            return recent
 
     return MCPSession.objects.create(
         connection=connection,
@@ -82,21 +75,39 @@ def get_or_create_session(connection, session_id=None, transport="stdio"):
 
 def get_enabled_tools(connection):
     """Get the set of enabled tool names for a connection."""
-    from ai_tools.registry import registry
+    from mcp_server.generated_registry import registry
 
     try:
         config = connection.tool_config
     except MCPToolGroupConfig.DoesNotExist:
-        config = MCPToolGroupConfig(connection=connection)
-        config.save()
+        config, _ = MCPToolGroupConfig.no_workspace_objects.get_or_create(
+            connection=connection
+        )
 
-    enabled_groups = config.enabled_groups or DEFAULT_TOOL_GROUPS
+    enabled_groups = config.enabled_groups
     disabled_tools = set(config.disabled_tools or [])
+    entitled = {}
+
+    def has_entitlement(feature):
+        # The same check the tool's REST view makes, so a tool the plan lacks
+        # is neither listed nor callable. A denial, including an entitlement
+        # service that cannot answer, hides the tool.
+        if feature not in entitled:
+            try:
+                check_ee_feature(feature, org_id=str(connection.organization_id))
+                entitled[feature] = True
+            except FeatureUnavailable:
+                entitled[feature] = False
+        return entitled[feature]
 
     enabled_tool_names = set()
     for tool in registry.list_all():
-        group = CATEGORY_TO_GROUP.get(tool.category)
-        if group and group in enabled_groups and tool.name not in disabled_tools:
+        if (
+            tool.group in enabled_groups
+            and tool.name not in disabled_tools
+            and tool.is_available()
+            and (tool.entitlement is None or has_entitlement(tool.entitlement))
+        ):
             enabled_tool_names.add(tool.name)
 
     return enabled_tool_names
@@ -121,14 +132,47 @@ class _UUIDEncoder(json.JSONEncoder):
 
 
 def _sanitize_params(params):
-    """Make params JSON-serializable (convert UUIDs, etc.)."""
+    """Serialize audit parameters without persisting provider credentials."""
     if params is None:
         return {}
-    return json.loads(json.dumps(params, cls=_UUIDEncoder))
+    from tfc.logging.sentry import SENSITIVE_KEY_SUBSTRINGS
+
+    def redact(value):
+        if isinstance(value, dict):
+            return {
+                key: (
+                    "[Filtered]"
+                    if any(
+                        part in key.lower().replace("-", "_")
+                        for part in (
+                            *SENSITIVE_KEY_SUBSTRINGS,
+                            "credential",
+                            "headers",
+                            "config_json",
+                        )
+                    )
+                    else redact(item)
+                )
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        return value
+
+    return redact(json.loads(json.dumps(params, cls=_UUIDEncoder)))
 
 
 def record_usage(session, tool_name, tool_group, params, status, error_msg, latency_ms):
     """Record a tool call in MCPUsageRecord."""
+    sanitized = _sanitize_params(params)
+    # API/provider errors can echo input credentials. Keep these error details
+    # in the caller's response, not the persistent analytics record.
+    if error_msg and sanitized != json.loads(
+        json.dumps(params or {}, cls=_UUIDEncoder)
+    ):
+        error_msg = (
+            "Tool call failed; credential-bearing details omitted from audit log."
+        )
     MCPUsageRecord.objects.create(
         session=session,
         organization=session.organization,
@@ -136,7 +180,7 @@ def record_usage(session, tool_name, tool_group, params, status, error_msg, late
         user=session.user,
         tool_name=tool_name,
         tool_group=tool_group,
-        request_params=_sanitize_params(params),
+        request_params=sanitized,
         response_status=status,
         error_message=error_msg,
         latency_ms=latency_ms,
@@ -145,7 +189,11 @@ def record_usage(session, tool_name, tool_group, params, status, error_msg, late
 
 def update_session_counters(session, is_error: bool):
     """Update session tool_call_count and error_count."""
-    session.tool_call_count += 1
-    if is_error:
-        session.error_count += 1
-    session.save(update_fields=["tool_call_count", "error_count", "last_activity_at"])
+    from django.db.models import F
+    from django.utils import timezone
+
+    MCPSession.objects.filter(pk=session.pk).update(
+        tool_call_count=F("tool_call_count") + 1,
+        error_count=F("error_count") + int(is_error),
+        last_activity_at=timezone.now(),
+    )

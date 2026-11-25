@@ -1,7 +1,9 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import React, { useMemo, useState, useRef } from "react";
 import { Paper, Box, Skeleton } from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import EvalsCustomCellRenderer from "./CustomRenderer/EvalsCustomCellRenderer";
 import EvalCustomHeaderCellRenderer from "./CustomRenderer/EvalCustomHeaderCellRenderer";
@@ -41,7 +43,7 @@ const BottomEvalsTab = ({
     const baseCols = [
       {
         field: "name",
-        headerIcon: "gg:check-o",
+        headerIcon: "solar:check-circle-linear",
         headerName: "Evals",
         width: 258,
         minWidth: 258,
@@ -52,7 +54,7 @@ const BottomEvalsTab = ({
       },
       {
         field: "score",
-        headerIcon: "gg:check-o",
+        headerIcon: "solar:check-circle-linear",
         headerLabel: "Score",
         flex: 1,
         minWidth: 150,
@@ -128,8 +130,6 @@ const BottomEvalsTab = ({
     },
   };
 
-  // if (isLoading) return <LinearProgress />;
-
   return (
     <Paper
       style={{
@@ -151,7 +151,7 @@ const BottomEvalsTab = ({
           domLayout="autoHeight"
           className={rows.length > 0 ? "no-min-height-grid" : undefined}
           headerHeight={44}
-          rowHeight={62}
+          rowHeight={ROW_HEIGHT.default}
           suppressContextMenu
           suppressHorizontalScroll={false}
           suppressVerticalScroll={false}

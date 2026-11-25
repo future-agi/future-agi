@@ -1,5 +1,15 @@
 {
   "version": 1,
+  "limits": {
+    "maxItems": 32,
+    "maxValues": 64,
+    "maxDepth": 8,
+    "stringMaxUtf8Bytes": 4096,
+    "typedStringMaxUtf8Bytes": 16384,
+    "totalStringMaxUtf8Bytes": 229376,
+    "serializedMaxUtf8Bytes": 1441792,
+    "configMaxUtf8Bytes": 131072
+  },
   "operators": {
     "noValue": ["is_null", "is_not_null"],
     "list": ["in", "not_in"],
@@ -30,6 +40,17 @@
         "is_not_null"
       ],
       "boolean": ["equals", "not_equals", "is_null", "is_not_null"]
+    },
+    "structuredSpanAttributeAllowed": {
+      "array": ["contains", "not_contains", "is_null", "is_not_null"],
+      "map": [
+        "equals",
+        "not_equals",
+        "contains",
+        "not_contains",
+        "is_null",
+        "is_not_null"
+      ]
     },
     "filterTypeAllowed": {
       "text": [
@@ -79,8 +100,22 @@
         "is_null",
         "is_not_null"
       ],
-      "thumbs": ["equals", "not_equals", "in", "not_in", "is_null", "is_not_null"],
-      "annotator": ["equals", "not_equals", "in", "not_in", "is_null", "is_not_null"],
+      "thumbs": [
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "is_null",
+        "is_not_null"
+      ],
+      "annotator": [
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "is_null",
+        "is_not_null"
+      ],
       "array": ["contains", "not_contains", "is_null", "is_not_null"]
     }
   },
@@ -109,7 +144,9 @@
       "annotator": "annotator",
       "array": "array",
       "list": "array",
-      "json": "array"
+      "json": "array",
+      "map": "map",
+      "object": "map"
     }
   },
   "columnTypes": {
@@ -123,7 +160,8 @@
       "CUSTOM_COLUMN",
       "NORMAL",
       "PROMPT_METRIC",
-      "PROMPT_METRIC_RUNS"
+      "PROMPT_METRIC_RUNS",
+      "METRIC_FIELD"
     ],
     "aliases": {
       "attribute": "SPAN_ATTRIBUTE",
@@ -131,7 +169,8 @@
       "eval": "EVAL_METRIC",
       "evaluation": "EVAL_METRIC",
       "annotation": "ANNOTATION",
-      "custom_column": "CUSTOM_COLUMN"
+      "custom_column": "CUSTOM_COLUMN",
+      "metric": "METRIC_FIELD"
     }
   }
 }

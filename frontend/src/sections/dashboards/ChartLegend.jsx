@@ -85,10 +85,7 @@ export default function ChartLegend({
             "&:hover": forMeasure
               ? {}
               : {
-                  bgcolor:
-                    theme.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.08)"
-                      : "rgba(0,0,0,0.05)",
+                  bgcolor: "action.hover",
                 },
           }}
         >
@@ -96,7 +93,7 @@ export default function ChartLegend({
             sx={{
               width: 8,
               height: 8,
-              borderRadius: "2px",
+              borderRadius: "4px",
               bgcolor: color,
               flexShrink: 0,
             }}
@@ -105,7 +102,7 @@ export default function ChartLegend({
             variant="caption"
             sx={{
               color: theme.palette.text.secondary,
-              fontSize: "11px",
+              fontSize: "12px",
               fontWeight: 500,
               lineHeight: 1,
             }}
@@ -173,6 +170,7 @@ export default function ChartLegend({
         {visible.map((name, i) => renderItem(name, i, false))}
         {overflow.length > 0 && (
           <Tooltip
+            classes={{ tooltip: "ds-hovercard" }}
             arrow
             placement="bottom"
             title={
@@ -211,14 +209,14 @@ export default function ChartLegend({
                         sx={{
                           width: 8,
                           height: 8,
-                          borderRadius: "2px",
+                          borderRadius: "4px",
                           bgcolor: color,
                           flexShrink: 0,
                         }}
                       />
                       <Typography
                         variant="caption"
-                        sx={{ fontSize: "11px", color: "#fff" }}
+                        sx={{ fontSize: "12px", color: "text.primary" }}
                       >
                         {name}
                       </Typography>
@@ -234,25 +232,19 @@ export default function ChartLegend({
                 alignItems: "center",
                 px: "6px",
                 py: "2px",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 flexShrink: 0,
-                bgcolor:
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.08)"
-                    : "rgba(0,0,0,0.06)",
+                bgcolor: "action.selected",
                 cursor: "default",
                 "&:hover": {
-                  bgcolor:
-                    theme.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.14)"
-                      : "rgba(0,0,0,0.1)",
+                  bgcolor: "action.focus",
                 },
               }}
             >
               <Typography
                 variant="caption"
                 sx={{
-                  fontSize: "11px",
+                  fontSize: "12px",
                   fontWeight: 600,
                   color: theme.palette.text.secondary,
                   lineHeight: 1,

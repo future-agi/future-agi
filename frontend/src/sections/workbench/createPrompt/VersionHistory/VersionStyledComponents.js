@@ -4,7 +4,7 @@ export const DefaultChip = styled(Chip)(({ theme }) => ({
   backgroundColor: theme.palette.primary.dark,
   color: theme.palette.primary.contrastText,
   borderRadius: "100px",
-  fontSize: "11px",
+  fontSize: "12px",
   fontWeight: 500,
   height: "22px",
 

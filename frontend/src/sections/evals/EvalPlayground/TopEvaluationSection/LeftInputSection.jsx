@@ -25,6 +25,8 @@ import { enqueueSnackbar } from "notistack";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { useExecuteCompositeEval } from "../../hooks/useCompositeEval";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 
 const defaultValues = {
   templateType: "Futureagi",
@@ -149,6 +151,7 @@ const LeftInputSection = ({
   const navigate = useNavigate();
   const { role } = useAuthContext();
   const theme = useTheme();
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
   const evalId = evaluation?.id;
   const {
     exhaustionError,
@@ -380,10 +383,10 @@ const LeftInputSection = ({
       } catch (error) {
         if (!handleCreditError(error)) {
           enqueueSnackbar(
-            error?.result ||
-              error?.detail ||
-              error?.message ||
+            getSafeActionErrorMessage(
+              error,
               "Failed to run composite evaluation",
+            ),
             { variant: "error" },
           );
         }
@@ -428,6 +431,7 @@ const LeftInputSection = ({
   };
 
   const { mutate: evaluateMutate, isPending: isEvaluating } = useMutation({
+    meta: { errorHandled: true },
     mutationFn: (data) =>
       axios.post(endpoints.develop.eval.evalPlayground, data),
     onSuccess: (data, variable) => {
@@ -445,10 +449,7 @@ const LeftInputSection = ({
     onError: (error) => {
       if (!handleCreditError(error)) {
         enqueueSnackbar(
-          error?.result ||
-            error?.detail ||
-            error?.message ||
-            "Failed to run evaluation",
+          getSafeActionErrorMessage(error, "Failed to run evaluation"),
           { variant: "error" },
         );
       }
@@ -592,7 +593,7 @@ const LeftInputSection = ({
           py={theme.spacing(2)}
           px={theme.spacing(1.5)}
           border={`1px solid`}
-          borderColor={"black.50"}
+          borderColor={"divider"}
           borderRadius={theme.spacing(0.5)}
           flexDirection={"column"}
           gap={theme.spacing(1.5)}
@@ -635,28 +636,30 @@ const LeftInputSection = ({
         // borderRadius={theme.spacing(0.5)}
         paddingTop={0.5}
       >
-        <HeadingAndSubHeading
-          heading={
-            <FormCheckboxField
-              control={control}
-              fieldName={"errorLocalizer"}
-              label={"Error Localization"}
-              helperText={undefined}
-              labelPlacement="end"
-              defaultValue={formState?.defaultValues?.errorLocalizer}
-              labelProps={{
-                gap: theme.spacing(1),
-              }}
-              checkboxSx={{
-                padding: 0,
-                "&.Mui-checked": {
-                  color: "primary.light",
-                },
-              }}
-            />
-          }
-          subHeading="Pinpoints the errors in your LLM output"
-        />
+        {errorLocalizerAvailable && (
+          <HeadingAndSubHeading
+            heading={
+              <FormCheckboxField
+                control={control}
+                fieldName={"errorLocalizer"}
+                label={"Error Localization"}
+                helperText={undefined}
+                labelPlacement="end"
+                defaultValue={formState?.defaultValues?.errorLocalizer}
+                labelProps={{
+                  gap: theme.spacing(1),
+                }}
+                checkboxSx={{
+                  padding: 0,
+                  "&.Mui-checked": {
+                    color: "primary.light",
+                  },
+                }}
+              />
+            }
+            subHeading="Pinpoints the errors in your LLM output"
+          />
+        )}
         <CreditExhaustionBanner
           error={exhaustionError}
           onUpgrade={handleUpgradeClick}

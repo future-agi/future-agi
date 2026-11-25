@@ -258,7 +258,7 @@ export default function ModelFieldItem({
     <>
       <Box
         sx={{
-          borderRadius: 0.5,
+          borderRadius: "4px",
           padding: (theme) => theme.spacing(0.75, 1.5),
           border: "1px solid",
           borderColor: "primary.dark",
@@ -337,7 +337,7 @@ export default function ModelFieldItem({
                 <Skeleton
                   sx={{
                     bgcolor: "background.neutral",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                   }}
                   variant="rounded"
                   width="100%"
@@ -409,7 +409,7 @@ export default function ModelFieldItem({
                 <Skeleton
                   sx={{
                     bgcolor: "background.neutral",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                   }}
                   variant="rectangular"
                   width="100%"

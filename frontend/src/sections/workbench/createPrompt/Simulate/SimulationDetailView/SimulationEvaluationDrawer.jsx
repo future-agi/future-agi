@@ -14,6 +14,7 @@ import { chatEvalColumns } from "src/components/run-tests/common";
 
 import SimulationEvaluationPage from "./SimulationEvaluationPage";
 import { useSimulationDetailContext } from "./context/SimulationDetailContext";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const SimulationEvaluationDrawer = ({ open, onClose, onSuccess }) => {
   const { id: promptTemplateId } = useParams();
@@ -112,16 +113,18 @@ const SimulationEvaluationDrawer = ({ open, onClose, onSuccess }) => {
     setPickerOpen(true);
   }, []);
 
+  const covered = useDrawerCovered(open);
   return (
     <>
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         variant="temporary"
         onClose={onClose}
         PaperProps={{
           sx: (theme) => ({
-            width: 720,
+            width: 640,
             maxWidth: "95vw",
             height: "100vh",
             position: "fixed",

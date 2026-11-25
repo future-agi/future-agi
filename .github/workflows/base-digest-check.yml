@@ -1,0 +1,82 @@
+# Weekly: do the digest-pinned base images in our Dockerfiles still match
+# their tags? The images pin their bases by digest (for example
+# `ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:...`) so a release reuses
+# its cached layers and an upgrade downloads only what changed. The price is
+# that Debian security fixes in a rebuilt `3.11-slim-bookworm` reach our
+# images only when someone bumps the digest. This job fails, listing the new
+# digests, when a pinned tag has moved. Dependabot cannot do this: it does not
+# update a digest inside an ARG default.
+#
+# To bump: replace the old digest with the new one in every file the summary
+# lists, in one pull request. The next release rebuilds the layers above it.
+name: Base image digests
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/base-digest-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Compare pinned digests with their tags
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys
+          from collections import defaultdict
+
+          # image[:tag]@sha256:<64 hex>, wherever a Dockerfile writes one.
+          PIN = re.compile(r"([a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9._-]+)?)@(sha256:[a-f0-9]{64})")
+          files = subprocess.run(
+              ["git", "ls-files", "*Dockerfile*"], capture_output=True, text=True, check=True
+          ).stdout.split()
+          pins = defaultdict(set)  # (image:tag, pinned digest) -> files
+          for path in files:
+              with open(path, encoding="utf-8") as handle:
+                  for line in handle:
+                      stripped = line.strip()
+                      if not stripped.startswith(("ARG", "FROM", "COPY")):
+                          continue
+                      for ref, digest in PIN.findall(stripped):
+                          if ":" in ref.rsplit("/", 1)[-1]:  # untagged pins cannot move
+                              pins[(ref, digest)].add(path)
+
+          stale, failed = [], []
+          for (ref, pinned), paths in sorted(pins.items()):
+              proc = subprocess.run(
+                  ["docker", "buildx", "imagetools", "inspect", ref, "--format", "{{json .Manifest}}"],
+                  capture_output=True, text=True,
+              )
+              if proc.returncode:
+                  failed.append(f"{ref}: {(proc.stderr or proc.stdout).strip()}")
+                  continue
+              current = json.loads(proc.stdout)["digest"]
+              state = "ok" if current == pinned else "MOVED"
+              print(f"{state:5}  {ref}  pinned {pinned[:19]}…  now {current[:19]}…  ({', '.join(sorted(paths))})")
+              if current != pinned:
+                  stale.append((ref, pinned, current, sorted(paths)))
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"{len(pins)} digest pins checked.\n\n")
+              if stale:
+                  summary.write("| tag | pinned | current | files |\n|---|---|---|---|\n")
+                  for ref, pinned, current, paths in stale:
+                      summary.write(f"| `{ref}` | `{pinned}` | `{current}` | {'<br>'.join(paths)} |\n")
+              for message in failed:
+                  summary.write(f"- could not read {message}\n")
+          for ref, pinned, current, paths in stale:
+              print(f"::error::{ref} moved: replace {pinned} with {current} in {', '.join(paths)}")
+          for message in failed:
+              print(f"::error::could not read {message}")
+          sys.exit(1 if stale or failed else 0)
+          PY

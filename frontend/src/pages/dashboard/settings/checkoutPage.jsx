@@ -35,7 +35,7 @@ export default function CheckoutPage() {
         sx={{ 
           mb: 3, 
           fontSize: '16px', 
-          fontWeight: 'bold',
+          fontWeight: '600',
           color: '#2c3345'
         }}
       >
@@ -46,7 +46,7 @@ export default function CheckoutPage() {
         sx={{
           mb: 2,
           fontSize: "16px",
-          fontWeight: "bold",
+          fontWeight: "600",
           color: "text.primary",
         }}
       >
@@ -57,7 +57,7 @@ export default function CheckoutPage() {
         sx={{ 
           mb: 2, 
           fontSize: '16px', 
-          fontWeight: 'bold',
+          fontWeight: '600',
           color: '#2c3345'
         }}
       >
@@ -119,7 +119,7 @@ export default function CheckoutPage() {
             sx={{
               mb: 2,
               fontSize: "16px",
-              fontWeight: "bold",
+              fontWeight: "600",
               color: "text.primary",
             }}
           >

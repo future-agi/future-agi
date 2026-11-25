@@ -41,6 +41,20 @@ export const supportsConcurrency = (provider) =>
   isLiveKitProvider(provider) || provider === "vapi" || provider === "retell";
 
 /**
+ * Helper text and input bounds for the "Max Concurrent Sessions" field.
+ * `orgLimit` is the organisation's cap when the caller knows it; the "max"
+ * part is left out when it is missing or not a positive number, rather than
+ * printing "max: undefined". The server still enforces its own cap.
+ */
+export const concurrencyFieldProps = (orgLimit) => {
+  const limit = Number.isFinite(orgLimit) && orgLimit > 0 ? orgLimit : null;
+  return {
+    inputProps: limit ? { min: 1, max: limit } : { min: 1 },
+    helperText: `Max simultaneous test calls. If you have multiple agent workers, set this to the total capacity across all workers (default: 5${limit ? `, max: ${limit}` : ""})`,
+  };
+};
+
+/**
  * Canonical copy for the Inbound/Outbound call toggle. Same semantic for
  * every provider — picking the right string based on provider left the
  * three forms drifting. All three forms (vapi, retell, livekit) read
@@ -106,36 +120,36 @@ export const transportFromContactNumber = (contactNumber) =>
 export const callStatusCellStyle = {
   "in-progress": {
     sx: {
-      color: "orange.700",
-      backgroundColor: "orange.o10",
+      color: "status.warning.fg",
+      backgroundColor: "status.warning.bg",
     },
     icon: "/assets/icons/navbar/ic_new_clock.svg",
   },
   completed: {
     sx: {
-      color: "green.700",
-      backgroundColor: "green.o10",
+      color: "status.success.fg",
+      backgroundColor: "status.success.bg",
     },
     icon: "/assets/icons/agent/call_completed.svg",
   },
   failed: {
     sx: {
-      color: "red.700",
-      backgroundColor: "red.o10",
+      color: "status.danger.fg",
+      backgroundColor: "status.danger.bg",
     },
     icon: "/assets/icons/agent/call_failed.svg",
   },
   dropped: {
     sx: {
-      color: "blue.700",
-      backgroundColor: "blue.o10",
+      color: "status.info.fg",
+      backgroundColor: "status.info.bg",
     },
     icon: "/assets/icons/agent/call_dropped.svg",
   },
   "not-connected": {
     sx: {
-      color: "red.700",
-      backgroundColor: "red.o10",
+      color: "status.danger.fg",
+      backgroundColor: "status.danger.bg",
     },
     icon: "/assets/icons/ic_failed.svg",
   },

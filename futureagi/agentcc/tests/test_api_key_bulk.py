@@ -9,6 +9,10 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from agentcc.models import AgentccAPIKey
+from agentcc.serializers.contracts import (
+    APIKeyBulkItemSerializer,
+    APIKeyBulkResponseSerializer,
+)
 
 ADMIN_TOKEN = "agentcc-admin-secret"
 
@@ -63,16 +67,46 @@ class TestAPIKeyBulkExpiresAt:
         # Null expiry stays null (never-expiring keys).
         assert by_id["gw-perpetual"]["expires_at"] is None
 
-    def test_expired_keys_are_not_shipped(
-        self, admin_client, organization, workspace
-    ):
+    def test_expired_keys_are_not_shipped(self, admin_client, organization, workspace):
         past = timezone.now() - timedelta(days=1)
         _make_key(organization, workspace, "gw-expired", "c" * 64, past)
         _make_key(organization, workspace, "gw-live", "d" * 64, None)
 
-        ids = {item["id"] for item in admin_client.get(
-            "/agentcc/api-keys/bulk/"
-        ).json()["result"]}
+        ids = {
+            item["id"]
+            for item in admin_client.get("/agentcc/api-keys/bulk/").json()["result"]
+        }
 
         assert "gw-expired" not in ids  # filtered at the query level
         assert "gw-live" in ids
+
+
+class TestAPIKeyBulkPayload:
+    def test_restored_keys_keep_their_id_prefix_and_org(
+        self, admin_client, organization, workspace
+    ):
+        key = _make_key(organization, workspace, "key_2", "e" * 64, None)
+        key.key_prefix = "sk-agentcc-e..."
+        key.save(update_fields=["key_prefix"])
+
+        (item,) = [
+            item
+            for item in admin_client.get("/agentcc/api-keys/bulk/").json()["result"]
+            if item["id"] == "key_2"
+        ]
+
+        assert item["key_hash"] == "e" * 64
+        assert item["key_prefix"] == "sk-agentcc-e..."
+        assert item["metadata"]["org_id"] == str(organization.id)
+
+    def test_every_field_served_is_declared(
+        self, admin_client, organization, workspace
+    ):
+        _make_key(organization, workspace, "key_3", "f" * 64, None)
+
+        body = admin_client.get("/agentcc/api-keys/bulk/").json()
+
+        for item in body["result"]:
+            assert set(item) == set(APIKeyBulkItemSerializer().fields)
+        response = APIKeyBulkResponseSerializer(data=body)
+        assert response.is_valid(), response.errors

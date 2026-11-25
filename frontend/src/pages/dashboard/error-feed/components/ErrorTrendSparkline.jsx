@@ -33,11 +33,11 @@ function ErrorTrendSparkline({ data }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
 
-  const barColor = isDark ? "#52525b" : "#C8C4D4";
-  const tooltipBg = isDark ? "#1c1c1e" : "#ffffff";
-  const tooltipBorder = isDark ? "#3f3f46" : "#e4e4e7";
-  const tooltipText = isDark ? "#f4f4f5" : "#18181b";
-  const tooltipSub = isDark ? "#a1a1aa" : "#71717a";
+  const barColor = theme.palette.text.disabled;
+  const tooltipBg = theme.palette.background.paper;
+  const tooltipBorder = theme.palette.border.default;
+  const tooltipText = theme.palette.text.primary;
+  const tooltipSub = theme.palette.text.tertiary;
 
   const paddedData = useMemo(() => padToRange(data), [data]);
 
@@ -108,11 +108,11 @@ function ErrorTrendSparkline({ data }) {
                   background:${barColor};display:inline-block;flex-shrink:0;
                 "></span>
                 <span style="font-size:12px;color:${tooltipText};font-weight:500;">Events</span>
-                <span style="font-size:12px;color:${tooltipText};font-weight:700;margin-left:auto;">
+                <span style="font-size:12px;color:${tooltipText};font-weight:600;margin-left:auto;">
                   ${val?.toLocaleString() ?? "—"}
                 </span>
               </div>
-              <div style="font-size:11px;color:${tooltipSub};">${dateStr}</div>
+              <div style="font-size:12px;color:${tooltipSub};">${dateStr}</div>
             </div>
           `;
         },
@@ -144,7 +144,11 @@ function ErrorTrendSparkline({ data }) {
   ]);
 
   if (!data?.length)
-    return <span style={{ color: "#938FA3", fontSize: 12 }}>—</span>;
+    return (
+      <span style={{ color: theme.palette.text.disabled, fontSize: 12 }}>
+        —
+      </span>
+    );
 
   return (
     <Box sx={{ width: "100%" }}>

@@ -1,20 +1,26 @@
 import uuid
+from functools import partial
 
 from django.contrib.auth.models import (
     AbstractBaseUser,
     BaseUserManager,
     PermissionsMixin,
 )
-from django.db import models
+from django.db import models, transaction
+from django.utils import timezone
 
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace
 from tfc.constants.roles import OrganizationRoles, RoleMapping
 from tfc.utils.base_model import BaseModel
+from tracer.services.derived_metrics.pg_response_hooks import (
+    PgResponseManagerMixin,
+    pg_response_save,
+)
 
 
-class CustomUserManager(BaseUserManager):
+class CustomUserManager(PgResponseManagerMixin, BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         if not email:
             raise ValueError("The Email field must be set")
@@ -110,6 +116,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.email
 
+    @pg_response_save
+    def save(self, *args, **kwargs):
+        return super().save(*args, **kwargs)
+
     # --- Multi-org helpers ---
 
     def get_membership(self, organization):
@@ -136,7 +146,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Users with deactivated memberships should NOT get this fallback.
         if self.organization_id and self.organization_id == organization.id:
             # Only use fallback if user has no membership records at all for this org
-            has_any_membership = OrganizationMembership.no_workspace_objects.filter(
+            has_any_membership = OrganizationMembership._base_manager.filter(
                 user=self, organization=organization
             ).exists()
             if not has_any_membership:
@@ -175,7 +185,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Users with deactivated memberships should NOT get this fallback.
         if self.organization_id and self.organization_id == target_org.id:
             # Only use fallback if user has no membership records at all for this org
-            has_any_membership = OrganizationMembership.no_workspace_objects.filter(
+            has_any_membership = OrganizationMembership._base_manager.filter(
                 user=self, organization=target_org
             ).exists()
             if not has_any_membership:
@@ -311,9 +321,20 @@ class OrgApiKey(BaseModel):
     type = models.CharField(
         max_length=50,
         default="system",
-        choices=[("system", "System"), ("user", "User"), ("mcp", "MCP")],
+        choices=[
+            ("system", "System"),
+            ("user", "User"),
+            ("mcp", "MCP"),
+            ("ingest", "Ingest"),
+            ("coding_agent", "Coding agent"),
+        ],
     )
     enabled = models.BooleanField(default=True)
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Optional expiry timestamp. Null means the key never expires.",
+    )
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -328,15 +349,53 @@ class OrgApiKey(BaseModel):
         null=True,
         blank=True,
     )
+    # A plain column: ``accounts`` cannot depend on ``simulate``, which depends on it.
+    simulation_agent_id = models.UUIDField(null=True, blank=True)
+    # The one simulation environment a ``coding_agent`` key may act on; plain for
+    # the same reason.
+    simulation_environment_id = models.UUIDField(null=True, blank=True)
+    # Who made a ``coding_agent`` key, which acts as them. Its ``user`` stays null,
+    # so a build that predates these keys cannot authenticate one as a person.
+    minted_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="minted_api_keys",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(type="coding_agent")
+                | models.Q(
+                    simulation_environment_id__isnull=False,
+                    user__isnull=True,
+                    minted_by__isnull=False,
+                ),
+                name="coding_agent_api_key_names_an_environment",
+                violation_error_message=(
+                    "A coding agent key must name its environment and its minter,"
+                    " and no user."
+                ),
+            ),
             models.UniqueConstraint(
                 fields=["organization", "type"],
                 condition=models.Q(type="system", deleted=False),
                 name="unique_system_api_key_per_org_not_deleted",
                 violation_error_message="Only one system API key is allowed per organization.",
-            )
+            ),
+            # Each agent's sandbox key names that agent, so concurrent first
+            # launches of one agent must converge on a single row.
+            models.UniqueConstraint(
+                fields=["organization", "workspace", "simulation_agent_id"],
+                condition=models.Q(type="ingest", deleted=False),
+                name="unique_ingest_api_key_per_org_workspace_agent_not_deleted",
+                violation_error_message=(
+                    "Only one ingest API key is allowed per organization, "
+                    "workspace and agent."
+                ),
+            ),
         ]
 
     def __str__(self):
@@ -344,12 +403,58 @@ class OrgApiKey(BaseModel):
             return f"{self.organization.display_name} API Key"
         return f"{self.organization.name} API Key"
 
+    @property
+    def is_expired(self):
+        """True once ``expires_at`` has passed; keys without one never expire."""
+        return self.expires_at is not None and self.expires_at <= timezone.now()
+
     def save(self, *args, **kwargs):
         if not self.api_key:
             self.api_key = self.generate_api_key()
         if not self.secret_key:
             self.secret_key = self.generate_secret_key()
+        # Do not compare with a previous timestamp: concurrent full saves can
+        # restore an old value, and every persisted expiry must evict snapshots.
+        # Respect partial/deferred saves that do not write expires_at at all.
+        update_fields = kwargs.get("update_fields", args[3] if len(args) > 3 else None)
+        if update_fields is not None:
+            # Django accepts any iterable, including a single-use generator.
+            update_fields = frozenset(update_fields)
+            if "update_fields" in kwargs:
+                kwargs["update_fields"] = update_fields
+            elif len(args) > 3:
+                args = (*args[:3], update_fields, *args[4:])
+        writes_expiry = (
+            "expires_at" not in self.get_deferred_fields()
+            if update_fields is None
+            else "expires_at" in update_fields
+        )
         super().save(*args, **kwargs)
+        if writes_expiry:
+            # A detached instance can force-update an existing row while its
+            # pre-save _state.adding is True. Invalidate creates too: a caller
+            # may already have cached a negative lookup for that credential.
+            from accounts.key_cache import publish_key_revocation
+
+            # A partial save may leave generated or edited credentials only in
+            # memory. Evict the pair actually stored with the persisted expiry.
+            if update_fields is not None:
+                api_key, secret_key = (
+                    type(self)
+                    .no_workspace_objects.using(self._state.db)
+                    .filter(pk=self.pk)
+                    .values_list("api_key", "secret_key")
+                    .get()
+                )
+            else:
+                api_key, secret_key = self.api_key, self.secret_key
+            # Admin saves run in an outer transaction. Publishing before commit
+            # lets a collector refill its cache from the old row. Snapshot the
+            # credentials now; a later edit of this Python object is irrelevant.
+            transaction.on_commit(
+                partial(publish_key_revocation, api_key, secret_key),
+                using=self._state.db,
+            )
 
     @staticmethod
     def generate_api_key():

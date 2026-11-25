@@ -16,7 +16,7 @@ export default function LayoutOptions({ options, value, onChange }) {
 
     const baseStyles = {
       flexShrink: 0,
-      borderRadius: 0.5,
+      borderRadius: "4px",
       bgcolor: "text.disabled",
     };
 
@@ -98,7 +98,7 @@ export default function LayoutOptions({ options, value, onChange }) {
           width: 1,
           height: 1,
           opacity: 0.08,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           bgcolor: "text.disabled",
           ...(selected && {
             opacity: 0.24,

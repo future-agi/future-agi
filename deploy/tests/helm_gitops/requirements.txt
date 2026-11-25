@@ -1,0 +1,3 @@
+# Controller acceptance only; static contract tests need just PyYAML.
+PyYAML==6.0.3
+playwright==1.57.0

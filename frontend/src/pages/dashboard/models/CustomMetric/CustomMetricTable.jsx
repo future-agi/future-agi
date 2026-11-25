@@ -43,17 +43,12 @@ const columns = ({ setUpdateMetricData }) => {
       sortable: false,
       renderCell: ({ row }) => (
         <Button
-          variant="contained"
+          className="row-hover-action"
+          variant="outlined"
           color="primary"
           size="small"
           fullWidth
-          startIcon={
-            <Iconify
-              icon="solar:pen-bold"
-              sx={{ color: "common.white" }}
-              width={16}
-            />
-          }
+          startIcon={<Iconify icon="solar:pen-bold" width={16} />}
           onClick={(e) => {
             e.stopPropagation();
             // trackEvent(Events.customMetricEditStart);

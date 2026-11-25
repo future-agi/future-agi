@@ -173,17 +173,29 @@ export const useFalconSocket = () => {
                 c.id === convId ? { ...c, title } : c,
               );
               store.setConversations(updated);
-              document.title = `${title} | Falcon AI`;
+              document.title = `${title} | Chat`;
             }
             break;
           }
 
-          case "error":
+          case "error": {
+            const store = useFalconStore.getState();
+            const isCurrentConversation =
+              data?.conversation_id &&
+              data.conversation_id === store.currentConversationId;
+            const messageId =
+              data?.message_id ||
+              (isCurrentConversation ? store.streamingMessageId : null);
+
+            // Unscoped errors must not stop or annotate an unrelated reply.
+            if (!messageId) break;
+
             setStreaming(false);
-            updateMessage(data.message_id, {
-              error: data.error || "An error occurred",
+            updateMessage(messageId, {
+              error: data?.error || data?.message || "An error occurred",
             });
             break;
+          }
 
           case "skill_activated":
             if (data.skill) {

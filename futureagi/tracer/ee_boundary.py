@@ -7,13 +7,25 @@ Each function is a no-op / passthrough when ee is absent.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING
+
+from tfc.ee_gating import is_oss
 
 if TYPE_CHECKING:
     from tracer.types.eval_cluster_types import ClusterableEvalResult, EvalClusterMeta
     from tracer.types.scan_types import ClusterableIssue
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TraceInvestigationUsagePricing:
+    applicable: bool
+    credit_amount: Decimal | None
+    reason: str
+
 
 _ee_available: bool
 try:
@@ -45,7 +57,8 @@ def generate_scan_cluster_severity(category: str, brief: str) -> str | None:
 
 
 def generate_eval_cluster_meta(
-    eval_name: str, reasoning: str,
+    eval_name: str,
+    reasoning: str,
 ) -> EvalClusterMeta | None:
     """LLM-generated title + fix_layer + severity for an eval cluster.
     Returns None on OSS or LLM failure (caller falls back to deterministic title)."""
@@ -124,8 +137,7 @@ def attribute_key_moments(
             return key_moments
         trace_dict = traces[0].to_dict()
         quotes = [
-            (km.get("kevinified") or km.get("verbatim") or "")
-            for km in key_moments
+            (km.get("kevinified") or km.get("verbatim") or "") for km in key_moments
         ]
         attribution = _attribute_key_moments(quotes, trace_dict)
         return [
@@ -135,3 +147,89 @@ def attribute_key_moments(
     except Exception:
         logger.warning("attribute_key_moments_failed", exc_info=True)
         return key_moments
+
+
+def price_trace_investigation_usage(
+    raw_cost_usd: Decimal,
+) -> TraceInvestigationUsagePricing:
+    """Resolve cloud AI credits without exposing billing internals to tracer."""
+    if is_oss():
+        return TraceInvestigationUsagePricing(False, None, "billing_unavailable")
+    try:
+        from ee.usage.deployment import DeploymentMode
+        from ee.usage.services.config import BillingConfig
+    except ImportError:
+        return TraceInvestigationUsagePricing(False, None, "billing_unavailable")
+
+    if not DeploymentMode.is_cloud():
+        return TraceInvestigationUsagePricing(False, None, "non_cloud_deployment")
+    amount = Decimal(str(BillingConfig.get().calculate_ai_credits(raw_cost_usd)))
+    if not amount.is_finite() or amount < 0:
+        raise ValueError("billing configuration produced an invalid credit amount")
+    return TraceInvestigationUsagePricing(True, amount, "")
+
+
+@dataclass(frozen=True)
+class UsageCheck:
+    """Billing's answer to a usage check where nothing is billed: allowed."""
+
+    allowed: bool = True
+    error_code: str = ""
+    reason: str = ""
+
+
+NOT_BILLED = UsageCheck()
+
+
+def jev_credits_per_answer() -> float | None:
+    """What Jev charges for one answer, in credits, or None where its
+    answers aren't billed: without ee's billing, or off Cloud. On Cloud a
+    billing config that fails to load raises, so the caller refuses rather
+    than run unchecked."""
+    try:
+        from ee.jev.metering import credits_per_answer
+        from ee.usage.deployment import DeploymentMode
+    except ImportError:
+        return None
+    if not DeploymentMode.is_cloud():
+        return None
+    return float(credits_per_answer())
+
+
+def jev_key_messages() -> frozenset[str]:
+    """What a failed Jev answer says when the organization's TypeSafe key is
+    missing or TypeSafe rejected it; empty without ee."""
+    try:
+        from ee.jev.errors import key_messages
+    except ImportError:
+        return frozenset()
+    return key_messages()
+
+
+def check_usage(org_id: str, event_type: str, amount: float):
+    """Billing's cap for ``amount`` of ``event_type``, the organization's
+    pause budgets included: its CheckResult, or NOT_BILLED where this
+    deployment has no billing module. A billing error (its Redis, database
+    or config down) raises."""
+    try:
+        from ee.usage.services.budgets import with_pause_budgets
+        from ee.usage.services.metering import check_usage as _check_usage
+    except ImportError:
+        return NOT_BILLED
+    result = _check_usage(org_id, event_type, amount=amount)
+    return with_pause_budgets(org_id, result, amount)
+
+
+def emit_trace_investigation_usage(event_payload: dict) -> None:
+    """Emit a feed-specific credit event through the existing billing path."""
+    if is_oss():
+        raise RuntimeError("cloud usage emitter is unavailable")
+    try:
+        from ee.usage.deployment import DeploymentMode
+        from ee.usage.schemas.events import UsageEvent
+        from ee.usage.services.emitter import emit
+    except ImportError as error:
+        raise RuntimeError("cloud usage emitter is unavailable") from error
+    if not DeploymentMode.is_cloud():
+        raise RuntimeError("cloud usage emission is not applicable")
+    emit(UsageEvent.model_validate(event_payload))

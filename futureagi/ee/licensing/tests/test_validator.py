@@ -500,9 +500,9 @@ class TestSelfSignedLicenseRejected:
                 )
                 result = validator.validate(forged)
 
-        assert (
-            result.state == LicenseState.INVALID
-        ), "self-signed license validated against a self-provided env kid"
+        assert result.state == LicenseState.INVALID, (
+            "self-signed license validated against a self-provided env kid"
+        )
 
     def test_default_kid_env_key_rejected_when_bundled_present(self):
         # EE_LICENSE_PUBLIC_KEY claims the "default" kid — also must not enter

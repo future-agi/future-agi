@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 import { useShallow } from "zustand/react/shallow";
 import { REPLAY_MODULES } from "./configurations";
 
@@ -88,6 +88,8 @@ export const useSessionsGridStore = create((set, get, store) => ({
   setSelectAll: (value) => set(() => ({ selectAll: value })),
   // keeps track of the total row count of the sessions grid
   totalRowCount: 0,
+  totalRowCountLowerBound: null,
+  totalRowCountIsLowerBound: false,
   setTotalRowCount: (value) => set(() => ({ totalRowCount: value })),
   // reset the store to its initial state
   reset: () => {

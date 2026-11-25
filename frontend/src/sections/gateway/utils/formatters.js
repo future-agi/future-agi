@@ -13,9 +13,9 @@ export function formatNumber(value) {
 }
 
 export function formatCost(value) {
-  if (value == null) return "$0.00";
+  if (value == null) return "—";
   const num = Number(value);
-  if (Number.isNaN(num)) return "$0.00";
+  if (!Number.isFinite(num)) return "—";
 
   const abs = Math.abs(num);
 
@@ -26,6 +26,30 @@ export function formatCost(value) {
   if (abs > 0) return `$${num.toFixed(7).replace(/0+$/, "0")}`;
 
   return "$0.00";
+}
+
+export const UNPRICED_COST_SOURCE = "unpriced";
+
+export const UNPRICED_LABEL = "Unpriced";
+
+export const UNPRICED_TOOLTIP =
+  "No price is set for this model, so this request was recorded without a cost. Add a model price to track request costs. Budgets use their own pricing and may still count this request.";
+
+/**
+ * A log is "unpriced" only when the gateway tagged it
+ * `metadata.cost_source === "unpriced"` AND cost is empty or zero.
+ * Other cost sources (e.g. "org_custom") and nonzero costs always win, so
+ * they keep showing the normal formatted cost.
+ */
+export function isUnpriced(log) {
+  if (!log || log.metadata?.cost_source !== UNPRICED_COST_SOURCE) return false;
+  if (log.cost == null || log.cost === "") return true;
+  return Number(log.cost) === 0;
+}
+
+// Axis ticks sit on round values, so zeros past the cents only widen the label
+export function formatCostTick(value) {
+  return formatCost(value).replace(/(\.\d{2}\d*?)0+$/, "$1");
 }
 
 export function formatPercent(value, decimals = 1) {

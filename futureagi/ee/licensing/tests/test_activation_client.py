@@ -12,6 +12,7 @@ from ee.licensing.activation_client import (
     ManagedServiceError,
     ServiceToken,
     call_managed_service,
+    dispatch_managed_request,
     dispatch_managed_stream,
     get_service_token,
     invalidate_token,
@@ -115,10 +116,33 @@ class TestInvalidateToken:
         assert mod._cached_token is None
 
 
+class TestActivate:
+    def test_reports_the_version_deployment_telemetry_reports(self, monkeypatch):
+        """``latest`` is a placeholder tag: telemetry falls back to
+        SERVICE_VERSION, and activation must send the same version."""
+        from ee.licensing.activation_client import _activate
+
+        monkeypatch.setenv("FUTURE_AGI_VERSION", "latest")
+        monkeypatch.setenv("SERVICE_VERSION", "1.8.0")
+        monkeypatch.delenv("GIT_SHA", raising=False)
+        state = MagicMock(instance_id="00000000-0000-0000-0000-000000000001")
+        with (
+            patch(
+                "tfc.deployment_telemetry.state.get_or_create_telemetry_state",
+                return_value=state,
+            ),
+            patch("httpx.post", return_value=MagicMock(status_code=503)) as post,
+        ):
+            assert _activate() is None
+
+        assert post.call_args.kwargs["json"]["version"] == "1.8.0"
+
+
 class _StreamResponse:
-    def __init__(self, lines, status_code=200):
+    def __init__(self, lines, status_code=200, headers=None):
         self.lines = lines
         self.status_code = status_code
+        self.headers = headers or {}
 
     async def __aenter__(self):
         return self
@@ -235,6 +259,53 @@ class TestManagedStreamDispatch:
                     pass
 
         assert exc.value.code == expected_code
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("2", 2),
+        ("0", 0),
+        ("-1", 0),
+        # Kept as sent: the retry policy, not the parser, decides whether a
+        # wait is one to sit out or one to fail on.
+        ("3600", 3600),
+        ("Tue, 14 Nov 2023 22:13:22 GMT", 2),
+        ("Tue, 14 Nov 2023 22:14:20 GMT", 60),
+        ("Tue, 14 Nov 2023 23:13:20 GMT", 3600),
+        ("Tue, 14 Nov 2023 22:13:00 GMT", 0),
+        (None, None),
+        ("", None),
+        ("not a delay", None),
+        ("NaN", None),
+        ("inf", None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_retry_after_survives_managed_status_mapping(
+    monkeypatch, streaming, header, expected
+):
+    monkeypatch.setattr("ee.licensing.activation_client.time.time", lambda: 1700000000)
+    headers = {} if header is None else {"Retry-After": header}
+    kwargs = {
+        "url": "https://judge.example.invalid/v1/chat/completions",
+        "api_key": "synthetic-fixture-key",
+        "json_body": {},
+        "timeout": 300,
+        "on_unauthorized": lambda: None,
+    }
+    with pytest.raises(ManagedServiceError) as exc:
+        if streaming:
+            client = _StreamClient(_StreamResponse([], 429, headers=headers))
+            with patch("httpx.AsyncClient", return_value=client):
+                async for _ in dispatch_managed_stream(**kwargs):
+                    pass
+        else:
+            with patch("httpx.post", return_value=httpx.Response(429, headers=headers)):
+                dispatch_managed_request(**kwargs)
+    assert exc.value.code == "RATE_LIMITED"
+    assert exc.value.retry_after == expected
 
 
 class TestStreamManagedService:

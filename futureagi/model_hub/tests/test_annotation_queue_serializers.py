@@ -55,9 +55,7 @@ class TestQueueStatusRequestSerializer:
 
 class TestQueueHardDeleteRequestSerializer:
     def test_valid(self):
-        s = QueueHardDeleteRequestSerializer(
-            data={"force": True, "confirm_name": "Q"}
-        )
+        s = QueueHardDeleteRequestSerializer(data={"force": True, "confirm_name": "Q"})
         assert s.is_valid(), s.errors
 
     def test_missing_force(self):
@@ -132,9 +130,7 @@ class TestAddQueueItemSerializer:
         assert "source_type" in s.errors
 
     def test_blank_source_id(self):
-        s = AddQueueItemSerializer(
-            data={"source_type": "dataset_row", "source_id": ""}
-        )
+        s = AddQueueItemSerializer(data={"source_type": "dataset_row", "source_id": ""})
         assert not s.is_valid()
         assert "source_id" in s.errors
 

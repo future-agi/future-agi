@@ -17,20 +17,31 @@ import tempfile
 
 import pytest
 
+from agentic_eval.core.embeddings.serving_client import SERVING_START_HINT
 from model_hub.utils.kb_indexer import (
+    KB_EMBEDDINGS_UNAVAILABLE_ERROR,
     KB_INDEX_COL_NAME,
     KB_TABLE_NAME,
     Chunk,
     KBIndexer,
+    KnowledgeBaseIndexingError,
 )
 
 MODULE = "model_hub.utils.kb_indexer"
+# kb_indexer imports the PDF reader inside load_pdf() to keep pypdf off the
+# startup path, so patch it where that import resolves it.
+PDF_READER = "pypdf.PdfReader"
 
 
 @pytest.fixture
 def indexer(mocker):
     """A ``KBIndexer`` with both external boundaries replaced by mocks."""
     embedding_manager = mocker.MagicMock()
+    embedding_manager.text_embeddings_available.return_value = True
+    # One stored vector per chunk, as the real embedding manager returns.
+    embedding_manager.parallel_process_metadata.side_effect = (
+        lambda metadatas, **kwargs: [f"id-{i}" for i in range(len(metadatas))]
+    )
     mocker.patch(f"{MODULE}.EmbeddingManager", return_value=embedding_manager)
     storage = mocker.MagicMock()
     mocker.patch(f"{MODULE}.get_storage_client", return_value=storage)
@@ -101,18 +112,18 @@ class TestFileReaders:
         assert "second para" in text
 
     def test_process_rtf_extracts_plain_text(self, indexer, tmp_path):
-        path = _write(
-            tmp_path, "doc.rtf", r"{\rtf1\ansi hello from rtf\par}"
-        )
+        path = _write(tmp_path, "doc.rtf", r"{\rtf1\ansi hello from rtf\par}")
 
         assert "hello from rtf" in indexer.process_rtf(path)
 
     def test_process_pdf_cleans_extracted_pages(self, indexer, mocker):
-        page_one = mocker.MagicMock(page_content="page  one\x00")
-        page_two = mocker.MagicMock(page_content="page two(cid:7)")
+        page_one = mocker.MagicMock()
+        page_one.extract_text.return_value = "page  one\x00"
+        page_two = mocker.MagicMock()
+        page_two.extract_text.return_value = "page two(cid:7)"
         mocker.patch(
-            f"{MODULE}.PyPDFLoader",
-            return_value=mocker.MagicMock(load=lambda: [page_one, page_two]),
+            PDF_READER,
+            return_value=mocker.MagicMock(pages=[page_one, page_two]),
         )
 
         text = indexer.process_pdf("/tmp/whatever.pdf")
@@ -120,7 +131,7 @@ class TestFileReaders:
         assert text == "page one page two"
 
     def test_process_pdf_propagates_loader_failure(self, indexer, mocker):
-        mocker.patch(f"{MODULE}.PyPDFLoader", side_effect=RuntimeError("corrupt"))
+        mocker.patch(PDF_READER, side_effect=RuntimeError("corrupt"))
 
         with pytest.raises(RuntimeError):
             indexer.process_pdf("/tmp/broken.pdf")
@@ -205,9 +216,7 @@ class TestProcessContent:
     def test_short_text_produces_a_single_batch(self, indexer):
         indexer.process_content("a short document", "file-1", "kb-1", "org-1")
 
-        assert (
-            indexer._test_embedding_manager.parallel_process_metadata.call_count == 1
-        )
+        assert indexer._test_embedding_manager.parallel_process_metadata.call_count == 1
         assert len(indexer.chunks) == 1
 
     def test_batch_failure_is_raised_not_swallowed(self, indexer):
@@ -226,6 +235,79 @@ class TestProcessContent:
 
         file_ids = {chunk.file_id for chunk in indexer.chunks}
         assert file_ids == {"file-1", "file-2"}
+
+
+class TestEmbeddingFailuresFailTheFile:
+    """A file whose chunks were not embedded must not be reported as indexed.
+
+    ``EmbeddingManager.data_formatter`` logs and swallows embedding errors and
+    ``parallel_process_metadata`` skips those rows, so without these checks a
+    knowledge base built while model serving is down showed "Completed" with
+    nothing stored.
+    """
+
+    def test_serving_down_fails_before_embedding_with_actionable_reason(self, indexer):
+        indexer._test_embedding_manager.text_embeddings_available.return_value = False
+
+        with pytest.raises(KnowledgeBaseIndexingError) as exc_info:
+            indexer.process_content("word " * 500, "file-1", "kb-1", "org-1")
+
+        assert str(exc_info.value) == KB_EMBEDDINGS_UNAVAILABLE_ERROR
+        # The same per-setup way to turn serving on as every other feature
+        # that needs it (test_serving_optional pins what it says).
+        assert SERVING_START_HINT in str(exc_info.value)
+        indexer._test_embedding_manager.parallel_process_metadata.assert_not_called()
+        assert indexer.chunks == []
+
+    def test_silently_skipped_chunks_fail_the_file(self, indexer):
+        indexer._test_embedding_manager.parallel_process_metadata.side_effect = (
+            lambda metadatas, **kwargs: []
+        )
+
+        with pytest.raises(KnowledgeBaseIndexingError, match="could not be embedded"):
+            indexer.process_content("word " * 500, "file-1", "kb-1", "org-1")
+
+        assert indexer.chunks == []
+
+    def test_partially_embedded_file_reports_the_shortfall(self, indexer):
+        indexer._test_embedding_manager.parallel_process_metadata.side_effect = (
+            lambda metadatas, **kwargs: ["only-one"]
+        )
+
+        with pytest.raises(KnowledgeBaseIndexingError) as exc_info:
+            indexer.process_content("word " * 500, "file-1", "kb-1", "org-1")
+
+        total = len(
+            indexer._test_embedding_manager.parallel_process_metadata.call_args.kwargs[
+                "metadatas"
+            ]
+        )
+        assert str(exc_info.value).startswith(f"{total - 1} of {total} chunks")
+
+    def test_serving_lost_mid_file_reports_serving(self, indexer):
+        manager = indexer._test_embedding_manager
+        manager.parallel_process_metadata.side_effect = lambda metadatas, **kwargs: []
+        manager.text_embeddings_available.side_effect = [True, False]
+
+        with pytest.raises(KnowledgeBaseIndexingError) as exc_info:
+            indexer.process_content("word " * 500, "file-1", "kb-1", "org-1")
+
+        assert str(exc_info.value) == KB_EMBEDDINGS_UNAVAILABLE_ERROR
+
+    def test_process_s3_file_reports_the_reason_as_the_file_error(
+        self, mocker, indexer, tmp_path
+    ):
+        indexer._test_embedding_manager.text_embeddings_available.return_value = False
+        local = _write(tmp_path, "file-1.txt", "some knowledge")
+        mocker.patch.object(indexer, "download_s3_file", return_value=local)
+
+        result = indexer.process_s3_file("docs/f.txt", "file-1", "kb-1", "org-1")
+
+        assert result == {
+            "file_id": "file-1",
+            "kb_id": "kb-1",
+            "error": KB_EMBEDDINGS_UNAVAILABLE_ERROR,
+        }
 
 
 class TestS3Download:
@@ -269,9 +351,7 @@ class TestProcessS3File:
         assert download.call_args[0][-1] == "docx"
 
     def test_failure_is_reported_as_an_error_dict_not_raised(self, mocker, indexer):
-        mocker.patch.object(
-            indexer, "download_s3_file", side_effect=OSError("gone")
-        )
+        mocker.patch.object(indexer, "download_s3_file", side_effect=OSError("gone"))
 
         result = indexer.process_s3_file("docs/f.txt", "file-1", "kb-1", "org-1")
 
@@ -301,10 +381,7 @@ class TestSearchAndDelete:
         results = indexer.search("kb-1", "what is x")
 
         assert results == [{"chunk_text": "hit"}]
-        kwargs = (
-            indexer._test_embedding_manager
-            .retrieve_avg_rag_based_examples.call_args.kwargs
-        )
+        kwargs = indexer._test_embedding_manager.retrieve_avg_rag_based_examples.call_args.kwargs
         assert kwargs["eval_id"] == "kb-1"
         assert kwargs["table_name"] == KB_TABLE_NAME
         assert kwargs["input_cols"] == [KB_INDEX_COL_NAME]
@@ -320,10 +397,7 @@ class TestSearchAndDelete:
     def test_get_data_subset_passes_top_k_and_threshold(self, indexer):
         indexer.get_data_subset_kb_id(["a", "b"], "kb-1", top_k=7)
 
-        kwargs = (
-            indexer._test_embedding_manager
-            .retrieve_avg_rag_based_examples.call_args.kwargs
-        )
+        kwargs = indexer._test_embedding_manager.retrieve_avg_rag_based_examples.call_args.kwargs
         assert kwargs["top_k"] == 7
         assert kwargs["threshold"] == 0.35
         # one input_col per query

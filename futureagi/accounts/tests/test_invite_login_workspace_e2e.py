@@ -595,9 +595,9 @@ class TestWorkspaceVisibilityRegression:
         resp = client.get(WORKSPACE_LIST_URL)
         assert resp.status_code == status.HTTP_200_OK
         names = _get_workspace_names(resp)
-        assert names == [
-            "Second WS"
-        ], f"Viewer should see only 'Second WS' but got: {names}"
+        assert names == ["Second WS"], (
+            f"Viewer should see only 'Second WS' but got: {names}"
+        )
         client.stop_workspace_injection()
 
     def test_org_member_invited_to_one_workspace_sees_only_that(
@@ -615,9 +615,9 @@ class TestWorkspaceVisibilityRegression:
         resp = client.get(WORKSPACE_LIST_URL)
         assert resp.status_code == status.HTTP_200_OK
         names = _get_workspace_names(resp)
-        assert names == [
-            "Second WS"
-        ], f"Member should see only 'Second WS' but got: {names}"
+        assert names == ["Second WS"], (
+            f"Member should see only 'Second WS' but got: {names}"
+        )
         client.stop_workspace_injection()
 
 

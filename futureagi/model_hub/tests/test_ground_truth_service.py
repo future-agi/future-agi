@@ -16,7 +16,6 @@ from model_hub.services.ground_truth_service import (
 )
 
 
-
 # ─────────────────────────────────────────────────────────────────────
 # Stand-in for the Django models so we don't need a DB fixture.
 # ─────────────────────────────────────────────────────────────────────
@@ -147,17 +146,46 @@ def test_embed_dataset_fails_when_no_mapped_columns():
     assert "mapping" in (result.error or "").lower()
 
 
+def test_embed_dataset_fails_fast_without_model_serving(model_serving_down):
+    """No serving, no embeddings: fail with the reason, before the soft-delete
+    that would throw away the vectors an earlier pass wrote."""
+    from agentic_eval.core.embeddings.serving_client import (
+        SERVING_UNAVAILABLE_MESSAGE,
+    )
+
+    gt = _FakeGT(data=[{"q": "hi"}], variable_mapping={"q": "q"})
+
+    with (
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+        ) as soft_delete,
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata"
+        ) as process,
+    ):
+        result = GroundTruthService.embed_dataset(gt=gt)
+
+    assert result.status == EvalGroundTruth.EmbeddingStatus.FAILED
+    assert result.error == SERVING_UNAVAILABLE_MESSAGE
+    assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.FAILED
+    soft_delete.assert_not_called()
+    process.assert_not_called()
+
+
 def test_embed_dataset_marks_failed_when_writer_raises():
     gt = _FakeGT(
         data=[{"q": "hi"}],
         variable_mapping={"q": "q"},
     )
 
-    with patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
-    ), patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
-        side_effect=RuntimeError("ch unreachable"),
+    with (
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+        ),
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
+            side_effect=RuntimeError("ch unreachable"),
+        ),
     ):
         result = GroundTruthService.embed_dataset(gt=gt)
 
@@ -178,13 +206,15 @@ def test_embed_dataset_marks_completed_on_success():
             for i in range(1, len(kwargs.get("metadatas") or []) + 1):
                 cb(i)
 
-    with patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
-    ), patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
-        side_effect=fake_process,
-    ), patch(
-        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter"
+    with (
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+        ),
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
+            side_effect=fake_process,
+        ),
+        patch("model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter"),
     ):
         result = GroundTruthService.embed_dataset(gt=gt)
 
@@ -207,13 +237,15 @@ def test_embed_dataset_marks_pending_when_mapping_changes_during_embed():
             for i in range(1, len(kwargs.get("metadatas") or []) + 1):
                 cb(i)
 
-    with patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
-    ), patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
-        side_effect=fake_process,
-    ), patch(
-        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter"
+    with (
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+        ),
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
+            side_effect=fake_process,
+        ),
+        patch("model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter"),
     ):
         result = GroundTruthService.embed_dataset(gt=gt)
 
@@ -229,10 +261,13 @@ def test_embed_dataset_marks_failed_when_zero_rows_written():
         variable_mapping={"q": "q"},
     )
 
-    with patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
-    ), patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata"
+    with (
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+        ),
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata"
+        ),
     ):
         # parallel_process_metadata is a noop here: no callback fires, so
         # no source row was persisted. embed_dataset must surface FAILED
@@ -257,11 +292,14 @@ def test_embed_dataset_forwards_progress_callback_to_manager():
     def fake_process(*_args, **kwargs):
         captured["progress_callback"] = kwargs.get("progress_callback")
 
-    with patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
-    ), patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
-        side_effect=fake_process,
+    with (
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+        ),
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
+            side_effect=fake_process,
+        ),
     ):
         GroundTruthService.embed_dataset(gt=gt)
 
@@ -293,14 +331,18 @@ def test_embed_dataset_progress_callback_persists_row_count_via_update():
         update_calls.append(("filter", filter_kwargs))
         return _Queryset()
 
-    with patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
-    ), patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
-        side_effect=fake_process,
-    ), patch(
-        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
-        side_effect=fake_filter,
+    with (
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+        ),
+        patch(
+            "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
+            side_effect=fake_process,
+        ),
+        patch(
+            "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+            side_effect=fake_filter,
+        ),
     ):
         GroundTruthService.embed_dataset(gt=gt)
         cb = captured["progress_callback"]
@@ -308,7 +350,9 @@ def test_embed_dataset_progress_callback_persists_row_count_via_update():
         cb(2)
         cb(3)
 
-    filter_payloads = [c for c in update_calls if isinstance(c, tuple) and c[0] == "filter"]
+    filter_payloads = [
+        c for c in update_calls if isinstance(c, tuple) and c[0] == "filter"
+    ]
     update_payloads = [c for c in update_calls if isinstance(c, dict)]
     assert len(filter_payloads) == 3
     assert all(c[1]["id"] == "gt-fake" for c in filter_payloads)
@@ -325,7 +369,10 @@ def test_embed_dataset_progress_callback_persists_row_count_via_update():
 
 
 def test_retrieve_few_shot_short_circuits_when_not_completed():
-    gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING, variable_mapping={"q": "q"})
+    gt = _FakeGT(
+        embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING,
+        variable_mapping={"q": "q"},
+    )
     rows, column_types = GroundTruthService.retrieve_few_shot(
         gt=gt, inputs={"q": "hi"}, max_results=3
     )
@@ -334,7 +381,9 @@ def test_retrieve_few_shot_short_circuits_when_not_completed():
 
 
 def test_retrieve_few_shot_short_circuits_when_mapping_missing():
-    gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED, variable_mapping={})
+    gt = _FakeGT(
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED, variable_mapping={}
+    )
     rows, column_types = GroundTruthService.retrieve_few_shot(
         gt=gt, inputs={"q": "hi"}, max_results=3
     )
@@ -345,9 +394,9 @@ def test_retrieve_few_shot_short_circuits_when_mapping_missing():
 def test_retrieve_few_shot_builds_rows_from_ch_metadata():
     import base64
 
-    encoded_url = base64.urlsafe_b64encode(
-        b"http://example.com/cat.png"
-    ).decode().rstrip("=")
+    encoded_url = (
+        base64.urlsafe_b64encode(b"http://example.com/cat.png").decode().rstrip("=")
+    )
     gt = _FakeGT(
         embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
         variable_mapping={"q": "question", "img": "image"},
@@ -480,12 +529,15 @@ def test_resolve_preview_examples_returns_empty_list_when_active_but_no_matches(
     template = _FakeTemplate()
     gt = _FakeGT(variable_mapping={"q": "question"}, role_mapping={})
 
-    with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
-        return_value=gt,
-    ), patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
-        return_value=([], {}),
+    with (
+        patch(
+            "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
+            return_value=gt,
+        ),
+        patch(
+            "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
+            return_value=([], {}),
+        ),
     ):
         result = GroundTruthService.resolve_preview_examples(
             eval_template=template,
@@ -501,12 +553,15 @@ def test_resolve_preview_examples_swallows_database_error_returning_none():
 
     template = _FakeTemplate()
     gt = _FakeGT(variable_mapping={"q": "input"}, role_mapping={"output": "answer"})
-    with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
-        return_value=gt,
-    ), patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
-        side_effect=DatabaseError("ch down"),
+    with (
+        patch(
+            "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
+            return_value=gt,
+        ),
+        patch(
+            "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
+            side_effect=DatabaseError("ch down"),
+        ),
     ):
         result = GroundTruthService.resolve_preview_examples(
             eval_template=template,
@@ -519,10 +574,13 @@ def test_resolve_preview_examples_swallows_database_error_returning_none():
 
 def test_resolve_preview_examples_propagates_programmer_errors():
     template = _FakeTemplate()
-    with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
-        side_effect=RuntimeError("boom"),
-    ), pytest.raises(RuntimeError, match="boom"):
+    with (
+        patch(
+            "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
+            side_effect=RuntimeError("boom"),
+        ),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
         GroundTruthService.resolve_preview_examples(
             eval_template=template,
             eval_inputs={"q": "hi"},
@@ -542,12 +600,15 @@ def test_resolve_preview_examples_enriches_rows_with_mappings():
         role_mapping={"output": "answer", "explanation": "notes"},
     )
 
-    with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
-        return_value=gt,
-    ), patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
-        return_value=(retrieved_rows, {"question": "text"}),
+    with (
+        patch(
+            "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
+            return_value=gt,
+        ),
+        patch(
+            "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
+            return_value=(retrieved_rows, {"question": "text"}),
+        ),
     ):
         result = GroundTruthService.resolve_preview_examples(
             eval_template=template,
@@ -569,7 +630,9 @@ def test_resolve_preview_examples_enriches_rows_with_mappings():
 
 def test_update_setup_writes_runtime_knobs_onto_the_row():
     template = _FakeTemplate(owner="system")
-    gt = _FakeGT(columns=["q", "a"], variable_mapping={"q": "q"}, eval_template=template)
+    gt = _FakeGT(
+        columns=["q", "a"], variable_mapping={"q": "q"}, eval_template=template
+    )
 
     class _NoopQS:
         def exclude(self, **_):
@@ -578,12 +641,15 @@ def test_update_setup_writes_runtime_knobs_onto_the_row():
         def update(self, **_):
             return 0
 
-    with patch(
-        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
-        return_value=_NoopQS(),
-    ), patch(
-        "model_hub.services.ground_truth_service.transaction.atomic",
-        return_value=_NoopCM(),
+    with (
+        patch(
+            "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+            return_value=_NoopQS(),
+        ),
+        patch(
+            "model_hub.services.ground_truth_service.transaction.atomic",
+            return_value=_NoopCM(),
+        ),
     ):
         result = GroundTruthService.update_setup(
             gt=gt,
@@ -606,7 +672,9 @@ def test_update_setup_does_not_mutate_eval_template_config():
     """The runtime config no longer rides on the (possibly shared)
     EvalTemplate.config dict - that was the cross-tenant leak."""
     template = _FakeTemplate(owner="system", config={"existing_key": "preserved"})
-    gt = _FakeGT(columns=["q", "a"], variable_mapping={"q": "q"}, eval_template=template)
+    gt = _FakeGT(
+        columns=["q", "a"], variable_mapping={"q": "q"}, eval_template=template
+    )
 
     class _NoopQS:
         def exclude(self, **_):
@@ -615,12 +683,15 @@ def test_update_setup_does_not_mutate_eval_template_config():
         def update(self, **_):
             return 0
 
-    with patch(
-        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
-        return_value=_NoopQS(),
-    ), patch(
-        "model_hub.services.ground_truth_service.transaction.atomic",
-        return_value=_NoopCM(),
+    with (
+        patch(
+            "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+            return_value=_NoopQS(),
+        ),
+        patch(
+            "model_hub.services.ground_truth_service.transaction.atomic",
+            return_value=_NoopCM(),
+        ),
     ):
         GroundTruthService.update_setup(
             gt=gt,
@@ -637,7 +708,9 @@ def test_update_setup_does_not_mutate_eval_template_config():
 
 def test_update_setup_clears_sibling_active_flag():
     template = _FakeTemplate()
-    gt = _FakeGT(columns=["q", "a"], variable_mapping={"q": "q"}, eval_template=template)
+    gt = _FakeGT(
+        columns=["q", "a"], variable_mapping={"q": "q"}, eval_template=template
+    )
     sibling_updates = {}
 
     class _SiblingQS:
@@ -653,12 +726,15 @@ def test_update_setup_clears_sibling_active_flag():
             sibling_updates["excluded_ids"] = list(self._excluded_ids)
             return 1
 
-    with patch(
-        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
-        return_value=_SiblingQS(),
-    ), patch(
-        "model_hub.services.ground_truth_service.transaction.atomic",
-        return_value=_NoopCM(),
+    with (
+        patch(
+            "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+            return_value=_SiblingQS(),
+        ),
+        patch(
+            "model_hub.services.ground_truth_service.transaction.atomic",
+            return_value=_NoopCM(),
+        ),
     ):
         GroundTruthService.update_setup(
             gt=gt,

@@ -69,7 +69,9 @@ export const HeaderComponent = ({ links, routeDepth }) => {
       <Box sx={{ display: "flex", alignItems: "center", gap: "16px" }}>
         {isNestedRoute && (
           <BackButton
-            startIcon={<Iconify icon="octicon:chevron-left-24" width="24px" />}
+            startIcon={
+              <Iconify icon="solar:alt-arrow-left-linear" width="24px" />
+            }
             size="small"
             onClick={handleGoBack}
           >

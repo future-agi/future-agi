@@ -59,7 +59,7 @@ const CallDetailLogs = ({ callLogId, vapiId, module, callLogs }) => {
           endAdornment: search && (
             <InputAdornment position="end">
               <Iconify
-                icon="mingcute:close-line"
+                icon="solar:close-linear"
                 onClick={() => {
                   setSearch("");
                 }}

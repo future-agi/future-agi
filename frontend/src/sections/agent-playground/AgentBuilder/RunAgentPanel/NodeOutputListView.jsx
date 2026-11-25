@@ -58,7 +58,7 @@ export default function NodeOutputListView({
             sx={{
               "& .MuiInputBase-root": {
                 height: 36,
-                fontSize: "13px",
+                fontSize: "12px",
               },
               "& .MuiOutlinedInput-root": {
                 borderRadius: 1,

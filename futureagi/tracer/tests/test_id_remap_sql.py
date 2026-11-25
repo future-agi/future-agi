@@ -15,6 +15,7 @@ import unittest
 from tracer.services.clickhouse.v2.id_remap_sql import (
     NIL_UUID,
     REMAP_ALIAS,
+    bounded_survivor_map_subquery,
     remap_left_join,
     resolved_id_expr,
 )
@@ -44,6 +45,22 @@ class ResolvedIdExprTests(unittest.TestCase):
 
 
 class RemapLeftJoinTests(unittest.TestCase):
+    def test_bounded_map_deduplicates_ids_shared_by_touched_groups(self):
+        sql = bounded_survivor_map_subquery(
+            "end_user_id_remap",
+            candidate_param="candidate_user_ids",
+        )
+
+        self.assertIn("old_id IN %(candidate_user_ids)s", sql)
+        self.assertIn("new_id IN %(candidate_user_ids)s", sql)
+        self.assertIn("WHERE new_id IN (", sql)
+        self.assertIn("GROUP BY any_id", sql)
+        self.assertIn(
+            "argMin(survivor_id, toString(survivor_id)) AS survivor_id",
+            sql,
+        )
+        self.assertNotIn("OVER (PARTITION BY new_id)", sql)
+
     def test_joins_survivor_map_on_any_id(self):
         # The join target is the derived survivor map (NOT the raw table), and
         # the ON key is `any_id` — the union of {every old id} ∪ {every new id},

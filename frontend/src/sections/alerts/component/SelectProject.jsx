@@ -37,8 +37,8 @@ export default function SelectProject({
       PaperProps={{
         sx: {
           p: 2,
-          maxWidth: "540px",
-          minWidth: "540px",
+          maxWidth: "560px",
+          minWidth: "560px",
         },
       }}
       open={open}

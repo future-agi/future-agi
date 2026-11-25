@@ -1,0 +1,25 @@
+name: Prepare backend shard environment
+description: Install the observed shard toolchain and frozen extras, and join the real service health gate.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: date +%s > "$RUNNER_TEMP/backend-setup-start"
+    - id: uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "0.13.9"
+        enable-cache: true
+        cache-dependency-glob: futureagi/uv.lock
+    - uses: ./.github/actions/backend-test-packages
+    - shell: bash
+      working-directory: futureagi
+      env:
+        PROFILE: ${{ inputs.profile }}
+        UV_CACHE_HIT: ${{ steps.uv.outputs.cache-hit }}
+        UV_PYTHON: '3.12.3'
+      run: bash "$GITHUB_ACTION_PATH/setup.sh"
+inputs:
+  profile:
+    description: Baseline (copy/eager, serial health), overlap, or tuned (hardlink/lazy, overlapped health).
+    default: baseline

@@ -5,17 +5,27 @@ import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
 import Iconify from "src/components/iconify";
 import { useRouter } from "src/routes/hooks";
+import {
+  isHiddenFromRestrictedOrgs,
+  useRestrictSimulateToEnvironments,
+} from "src/hooks/useRestrictSimulateToEnvironments";
 
 export default function CompletionCard({ card }) {
   const router = useRouter();
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
 
   if (!card) return null;
 
+  const path = card.action_path || card.action_url;
+  // Falcon links to the scenario, agent definition or test it created; an org
+  // restricted to Environments cannot open those pages.
+  const showAction =
+    card.action_label &&
+    path &&
+    !(restrictSimulateToEnvironments && isHiddenFromRestrictedOrgs(path));
+
   const handleNavigate = () => {
-    const path = card.action_path || card.action_url;
-    if (path) {
-      router.push(path);
-    }
+    router.push(path);
   };
 
   return (
@@ -26,7 +36,7 @@ export default function CompletionCard({ card }) {
         justifyContent: "space-between",
         border: 1,
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         bgcolor: "background.neutral",
         p: 1.5,
         mt: 1,
@@ -41,7 +51,7 @@ export default function CompletionCard({ card }) {
             sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.5 }}
           >
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={16}
               sx={{ color: "success.main" }}
             />
@@ -52,13 +62,13 @@ export default function CompletionCard({ card }) {
         )}
       </Box>
 
-      {card.action_label && (card.action_url || card.action_path) && (
+      {showAction && (
         <Button
           size="small"
           variant="outlined"
           onClick={handleNavigate}
-          startIcon={<Iconify icon="mdi:link-variant" width={16} />}
-          sx={{ textTransform: "none", flexShrink: 0, ml: 1 }}
+          startIcon={<Iconify icon="solar:link-linear" width={16} />}
+          sx={{ flexShrink: 0, ml: 1 }}
         >
           {card.action_label}
         </Button>

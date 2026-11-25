@@ -8,13 +8,13 @@ import CustomTooltip from "src/components/tooltip";
 const getColorsBasedOnValue = (value) => {
   if (value > 0) {
     return {
-      backgroundColor: "green.o10",
-      color: "green.500",
+      backgroundColor: "status.success.bg",
+      color: "status.success.fg",
     };
   } else if (value < 0) {
     return {
-      backgroundColor: "red.o10",
-      color: "red.500",
+      backgroundColor: "status.danger.bg",
+      color: "status.danger.fg",
     };
   } else {
     return {
@@ -50,7 +50,7 @@ const Growth = ({ value, getText }) => {
           paddingX: 1,
           paddingY: "2px",
           backgroundColor,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           gap: 1,
           display: "flex",
           alignItems: "center",

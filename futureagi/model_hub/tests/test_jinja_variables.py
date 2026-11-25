@@ -37,13 +37,13 @@ class TestExtractJinjaVariables:
 
     def test_set_variable_excluded(self):
         """{% set x = ... %} defines a local, not an input variable."""
-        template = "{% set greeting = 'hello' %}" "{{ greeting }} {{ name }}"
+        template = "{% set greeting = 'hello' %}{{ greeting }} {{ name }}"
         assert extract_jinja_variables(template) == ["name"]
 
     def test_if_condition_variable_included(self):
         """Variables in {% if %} conditions are inputs."""
         template = (
-            "{% if verbose %}Details: {{ details }}{% endif %}" "Summary: {{ summary }}"
+            "{% if verbose %}Details: {{ details }}{% endif %}Summary: {{ summary }}"
         )
         assert sorted(extract_jinja_variables(template)) == [
             "details",
@@ -78,9 +78,7 @@ class TestExtractJinjaVariables:
     def test_for_loop_with_tuple_unpacking(self):
         """{% for k, v in mapping.items() %} → 'mapping' is the input."""
         template = (
-            "{% for key, value in data.items() %}"
-            "{{ key }}: {{ value }}"
-            "{% endfor %}"
+            "{% for key, value in data.items() %}{{ key }}: {{ value }}{% endfor %}"
         )
         assert extract_jinja_variables(template) == ["data"]
 

@@ -1,15 +1,11 @@
+import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
+import PageHeader from "src/components/page-header";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Card,
-  Typography,
-  Chip,
-  Stack,
-  CircularProgress,
-  Divider,
-} from "@mui/material";
-import Iconify from "src/components/iconify";
+import { Box, Typography, Chip, Stack, Divider } from "@mui/material";
+import Section from "src/components/section";
 import { useCapabilities } from "src/hooks/useCapabilities";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const LICENSE_STATE_COLOR = {
   active: "success",
@@ -58,23 +54,17 @@ export default function LicensePage() {
         alignItems="center"
         minHeight={360}
       >
-        <CircularProgress />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
 
   if (isError) {
     return (
-      <Box
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-        minHeight={360}
-      >
-        <Typography color="text.secondary">
-          Failed to load license information.
-        </Typography>
-      </Box>
+      <ErrorState
+        title="Failed to load license information"
+        sx={{ minHeight: 360 }}
+      />
     );
   }
 
@@ -82,24 +72,12 @@ export default function LicensePage() {
 
   if (!license) {
     return (
-      <Stack
-        alignItems="center"
-        justifyContent="center"
-        spacing={1}
-        minHeight={360}
-      >
-        <Iconify
-          icon="mdi:license-outline"
-          width={48}
-          sx={{ color: "text.disabled" }}
-        />
-        <Typography variant="subtitle1" color="text.secondary">
-          No license found
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          No active license is configured on this instance.
-        </Typography>
-      </Stack>
+      <EmptyState
+        icon="solar:document-text-linear"
+        title="No license yet"
+        description="No active license is configured on this instance."
+        sx={{ pt: 6, pb: 6, minHeight: 360, justifyContent: "center" }}
+      />
     );
   }
 
@@ -109,18 +87,15 @@ export default function LicensePage() {
 
   return (
     <Box>
-      <Box mb={1}>
-        <Typography variant="h5" fontWeight={700}>
-          License
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Enterprise license details for this deployment.
-        </Typography>
-      </Box>
+      <PageHeader
+        title="License"
+        description="Enterprise license details for this deployment."
+        sx={{ mb: 1 }}
+      />
 
       <Divider sx={{ my: 2 }} />
 
-      <Card variant="outlined" sx={{ p: 3, borderRadius: 2, maxWidth: 720 }}>
+      <Section variant="panel" sx={{ p: 3, maxWidth: 720 }}>
         <Stack
           direction="row"
           justifyContent="space-between"
@@ -128,7 +103,7 @@ export default function LicensePage() {
           mb={3}
         >
           <Box>
-            <Typography variant="h6" fontWeight={700}>
+            <Typography variant="h6" fontWeight={600}>
               {BAND_LABELS[license.band] || license.band}
             </Typography>
             <Typography variant="body2" color="text.secondary">
@@ -199,7 +174,7 @@ export default function LicensePage() {
             </Stack>
           </Box>
         )}
-      </Card>
+      </Section>
     </Box>
   );
 }

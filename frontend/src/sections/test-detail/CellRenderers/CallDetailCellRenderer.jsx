@@ -84,16 +84,16 @@ const CallDetailCellRenderer = (props) => {
                 px: 1,
                 py: 0.5,
                 border: "none",
-                borderRadius: 0.5,
-                bgcolor: "blue.o10",
+                borderRadius: "4px",
+                bgcolor: "status.info.bg",
                 cursor: "pointer",
-                color: "blue.600",
+                color: "status.info.fg",
                 fontSize: 12,
                 fontWeight: 600,
-                "&:hover": { bgcolor: "blue.o10", opacity: 0.8 },
+                "&:hover": { bgcolor: "status.info.bg", opacity: 0.8 },
               }}
             >
-              <Iconify icon="mdi:headphones" width={14} />
+              <Iconify icon="solar:headphones-round-linear" width={14} />
               Listen
             </Box>
           )}

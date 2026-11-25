@@ -23,10 +23,13 @@ from tracer.serializers.feed import (
 from tracer.utils import feed as feed_service
 from tracer.views.feed._permissions import (
     ErrorFeedLicenseRequired,
+    is_authorized_empty_feed_scope,
     resolve_requested_project_ids,
 )
 
 logger = structlog.get_logger(__name__)
+
+NO_ORGANIZATION_MESSAGE = "User not associated with an organization"
 
 ERROR_RESPONSES = {
     400: ApiErrorResponseSerializer,
@@ -54,10 +57,11 @@ class FeedListView(ErrorFeedLicenseRequired, APIView):
         )
         if project_ids is None:
             return self._gm.forbidden_response("Access denied to this project")
-        if not project_ids:
-            return self._gm.forbidden_response(
-                "User not associated with an organization"
-            )
+        # An empty list is only a denial when the request has no established
+        # organization; a valid scope with zero projects lists as empty
+        # (TH-8209). The service handles an empty id list without reads.
+        if not project_ids and not is_authorized_empty_feed_scope(request):
+            return self._gm.forbidden_response(NO_ORGANIZATION_MESSAGE)
 
         try:
             result = feed_service.list_feed_issues(
@@ -100,10 +104,8 @@ class FeedStatsView(ErrorFeedLicenseRequired, APIView):
         )
         if project_ids is None:
             return self._gm.forbidden_response("Access denied to this project")
-        if not project_ids:
-            return self._gm.forbidden_response(
-                "User not associated with an organization"
-            )
+        if not project_ids and not is_authorized_empty_feed_scope(request):
+            return self._gm.forbidden_response(NO_ORGANIZATION_MESSAGE)
 
         try:
             result = feed_service.get_feed_stats(

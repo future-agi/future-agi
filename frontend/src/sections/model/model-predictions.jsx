@@ -1,4 +1,5 @@
-import { Box, Button, Card, Tab, Tabs, Typography, alpha } from "@mui/material";
+import { Box, Button, Tab, Tabs, Typography, alpha } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
 import React, { useEffect, useState } from "react";
 import { m } from "framer-motion";
@@ -43,7 +44,7 @@ export default function ModelPredictions({
   }
 
   return (
-    <Card>
+    <Section variant="panel">
       <Box
         sx={{
           display: "flex",
@@ -58,7 +59,7 @@ export default function ModelPredictions({
           whileTap="tap"
           whileHover="hover"
           variants={varHover(1.05)}
-          startIcon={<Iconify icon="material-symbols:edit" />}
+          startIcon={<Iconify icon="solar:pen-linear" />}
           onClick={columnsPopover.onOpen}
           // sx={{
           //   width: 40,
@@ -75,30 +76,30 @@ export default function ModelPredictions({
         </Button>
       </Box>
 
-      <Tabs
-        value={currentTab}
-        onChange={handleTab}
+      <Box
         sx={{
           px: 2.5,
           boxShadow: (theme) =>
             `inset 0 -2px 0 0 ${alpha(theme.palette.text.disabled, 0.08)}`,
         }}
       >
-        {tabOptions.map((tab) => (
-          <Tab
-            key={tab.value}
-            iconPosition="end"
-            value={tab.value}
-            label={tab.label}
-          />
-        ))}
-      </Tabs>
+        <Tabs value={currentTab} onChange={handleTab}>
+          {tabOptions.map((tab) => (
+            <Tab
+              key={tab.value}
+              iconPosition="end"
+              value={tab.value}
+              label={tab.label}
+            />
+          ))}
+        </Tabs>
+      </Box>
 
       <PredictionTable
       // tableData={}
       // properties={}
       />
-    </Card>
+    </Section>
   );
 }
 

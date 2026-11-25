@@ -1,45 +1,10 @@
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, Typography, useTheme, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
-import React, { useMemo } from "react";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
+import React from "react";
 
 const CustomChartHeader = ({ label, chartType, onToggleType, totalTraces }) => {
   const theme = useTheme();
-
-  const tabWrapperStyles = useMemo(
-    () => ({
-      alignSelf: "flex-start",
-      backgroundColor: "background.neutral",
-      border: 0,
-      padding: theme.spacing(0),
-      borderRadius: "4px",
-      position: "relative",
-    }),
-    [theme],
-  );
-
-  const tabStyles = useMemo(
-    () => ({
-      paddingTop: theme.spacing(0.5),
-      paddingBottom: theme.spacing(0.5),
-      margin: theme.spacing(0.5),
-      borderRadius: "4px",
-      position: "relative",
-      fontWeight: 500,
-      minHeight: "auto",
-      color: theme.palette.text.disabled,
-      "&.Mui-selected": {
-        backgroundColor: "var(--bg-paper) !important",
-        boxShadow: "3px 3px 6px rgba(0, 0, 0, 0.12)",
-        color: "text.primary",
-      },
-    }),
-    [theme],
-  );
 
   return (
     <Box px={2}>
@@ -55,29 +20,26 @@ const CustomChartHeader = ({ label, chartType, onToggleType, totalTraces }) => {
 
         {/* Add container with proper spacing for shadow */}
         <Box>
-          <TabWrapper sx={tabWrapperStyles}>
-            <CustomTabs
+          <Box sx={{ mb: 1.5 }}>
+            <SegmentedTabs
               value={chartType}
               onChange={(e, value) => onToggleType(value)}
-              TabIndicatorProps={{ style: { display: "none" } }}
-              sx={{
-                minHeight: "auto", // Remove default tabs height
-                "& .MuiTabs-flexContainer": {
-                  gap: theme.spacing(0.25), // Small gap between tabs
-                },
-              }}
             >
-              <CustomTab label="Line" value="line" sx={tabStyles} />
-              <CustomTab label="Bar" value="bar" sx={tabStyles} />
-            </CustomTabs>
-          </TabWrapper>
+              <Tab label="Line" value="line" />
+              <Tab label="Bar" value="bar" />
+            </SegmentedTabs>
+          </Box>
         </Box>
       </Box>
 
       {/* Bottom Row: Total Traces */}
       <Box>
         <Typography variant="body2" color="text.disabled">
-          <Box component="span" fontWeight="fontWeightMedium" color="green.500">
+          <Box
+            component="span"
+            fontWeight="fontWeightMedium"
+            color="text.primary"
+          >
             {totalTraces}
           </Box>{" "}
           Total {label}

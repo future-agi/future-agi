@@ -62,10 +62,10 @@ class KBSeedInstructionAgent:
         self,
         table_name: str,
         doc_ids: list[str],
-        model_name: str = ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name,
-        temperature: float = ModelConfigs.VERTEX_GEMINI_2_5_PRO.temperature,
-        max_tokens: int = ModelConfigs.VERTEX_GEMINI_2_5_PRO.max_tokens,
-        provider: str = ModelConfigs.VERTEX_GEMINI_2_5_PRO.provider,
+        model_name: str = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name,
+        temperature: float = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.temperature,
+        max_tokens: int = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.max_tokens,
+        provider: str = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.provider,
         llm: LLM | None = None,
     ):
         """Initialize the agent.
@@ -292,7 +292,7 @@ class KBSeedInstructionAgent:
                 # Combine instruction with seed data chunk for relevance matching
                 queries.append(seed_data)
             queries.append(instruction_text)
-            _cfg = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+            _cfg = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
             llm_q = LLM(
                 model_name=_cfg.model_name,
                 temperature=_cfg.temperature,

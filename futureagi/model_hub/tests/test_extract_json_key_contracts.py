@@ -4,6 +4,7 @@ Contract tests for GetJsonColumnSchemaView.
 Pins the { [field]: { keys: string[] } } response shape that
 ExtractJsonKey.jsx depends on to populate its column dropdown.
 """
+
 import json
 
 import pytest

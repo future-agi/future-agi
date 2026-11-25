@@ -10,6 +10,7 @@ from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from model_hub.services.derived_variable_service import (
     extract_derived_variables_from_output,
 )
+from model_hub.models.openai_tools import openai_tool_envelope
 from model_hub.utils.column_utils import is_json_response_format
 from tfc.constants.api_calls import APICallTypeChoices
 
@@ -88,14 +89,18 @@ async def run_template_async(
                     prompt_messages,
                     variable_combination,
                     config.get("configuration", {}).get("model"),
-                    template_format=config.get("configuration", {}).get("template_format"),
+                    template_format=config.get("configuration", {}).get(
+                        "template_format"
+                    ),
                 )
                 messages_with_replacement = remove_empty_text_from_messages(
                     messages_with_replacement
                 )
 
                 tools_to_send = [
-                    tool.get("config")
+                    openai_tool_envelope(
+                        tool.get("name"), tool.get("description"), tool.get("config")
+                    )
                     for tool in config.get("configuration", {}).get("tools", [])
                     if tool.get("config")
                 ]
@@ -138,7 +143,9 @@ async def run_template_async(
 
                     # Wrap the synchronous DB call
                     if log_and_deduct_cost_for_api_request is not None:
-                        await database_sync_to_async(log_and_deduct_cost_for_api_request)(
+                        await database_sync_to_async(
+                            log_and_deduct_cost_for_api_request
+                        )(
                             organization,
                             APICallTypeChoices.PROMPT_BENCH.value,
                             config=token_config,
@@ -160,14 +167,14 @@ async def run_template_async(
                         if emit is not None and UsageEvent is not None:
                             emit(
                                 UsageEvent(
-                                org_id=str(organization.id),
-                                event_type=APICallTypeChoices.PROMPT_BENCH.value,
-                                properties={
-                                    "source": "run_prompt_gen",
-                                    "source_id": str(template.id),
-                                },
+                                    org_id=str(organization.id),
+                                    event_type=APICallTypeChoices.PROMPT_BENCH.value,
+                                    properties={
+                                        "source": "run_prompt_gen",
+                                        "source_id": str(template.id),
+                                    },
+                                )
                             )
-                        )
                     except Exception:
                         pass  # Metering failure must not break the action
 

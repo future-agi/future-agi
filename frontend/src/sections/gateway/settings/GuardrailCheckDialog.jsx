@@ -21,6 +21,13 @@ import {
 
 import axios, { endpoints } from "src/utils/axios";
 import { logger } from "src/utils/logger";
+import {
+  builtinConfigHelp,
+  hasBuiltinConfigEditor,
+  keywordConfigErrors,
+  keywordConfigNeedsJson,
+  selectedConfigErrors,
+} from "./guardrailChecks";
 
 const ACTION_OPTIONS = ["block", "warn", "mask", "log"];
 const CREDENTIAL_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
@@ -50,7 +57,22 @@ const GuardrailCheckDialog = ({
   checkName,
   initialData,
   providerMeta,
+  keywordPolicyEditor = false,
+  keywordPolicyActive = true,
+  selectedPolicyEditor = false,
+  selectedPolicyActive = true,
 }) => {
+  const policyEditor = selectedPolicyEditor || keywordPolicyEditor;
+  const policyActive = selectedPolicyEditor
+    ? selectedPolicyActive
+    : keywordPolicyActive;
+  const editPolicyKeyword = policyEditor && checkName === "keyword-blocklist";
+  const editPolicyBuiltin = policyEditor && hasBuiltinConfigEditor(checkName);
+  const [builtinJson, setBuiltinJson] = useState("{}");
+  const [builtinErrors, setBuiltinErrors] = useState({});
+  const [keywordConfig, setKeywordConfig] = useState({});
+  const [keywordJson, setKeywordJson] = useState(null);
+  const [keywordErrors, setKeywordErrors] = useState({});
   const [form, setForm] = useState({
     enabled: true,
     action: "block",
@@ -65,6 +87,23 @@ const GuardrailCheckDialog = ({
 
   useEffect(() => {
     if (!open) return;
+
+    if (editPolicyBuiltin) {
+      const config = initialData?.config;
+      setBuiltinJson(
+        JSON.stringify(config === undefined ? {} : config, null, 2),
+      );
+      setBuiltinErrors({});
+    }
+
+    if (editPolicyKeyword) {
+      const config = initialData?.config;
+      setKeywordConfig(config === undefined ? {} : config);
+      setKeywordJson(
+        keywordConfigNeedsJson(config) ? JSON.stringify(config, null, 2) : null,
+      );
+      setKeywordErrors({});
+    }
 
     if (initialData) {
       setForm({
@@ -117,7 +156,7 @@ const GuardrailCheckDialog = ({
       }
       setMaskedCredentials({});
     }
-  }, [open, initialData, providerMeta]);
+  }, [open, initialData, providerMeta, editPolicyKeyword, editPolicyBuiltin]);
 
   // Fetch async options for async-select fields when dialog opens
   useEffect(() => {
@@ -177,8 +216,47 @@ const GuardrailCheckDialog = ({
       data.provider = providerMeta.provider;
     }
 
-    // Add provider-specific fields inside config sub-object
-    if (providerMeta?.fields) {
+    if (editPolicyKeyword) {
+      let config = keywordConfig;
+      if (keywordJson !== null) {
+        try {
+          config = JSON.parse(keywordJson);
+        } catch {
+          setKeywordErrors({
+            config: 'Enter valid JSON, for example {"words":["restricted"]}.',
+          });
+          return;
+        }
+      }
+      const errors =
+        form.enabled && policyActive ? keywordConfigErrors(config) : {};
+      setKeywordErrors(errors);
+      if (Object.keys(errors).length) return;
+      data.config = config;
+    }
+
+    if (editPolicyBuiltin) {
+      let config;
+      try {
+        config = JSON.parse(builtinJson);
+      } catch {
+        setBuiltinErrors({
+          config: "Enter valid JSON. Original edits are kept for correction.",
+        });
+        return;
+      }
+      const errors =
+        form.enabled && policyActive
+          ? selectedConfigErrors(checkName, config, form.confidence_threshold)
+          : {};
+      setBuiltinErrors(errors);
+      if (Object.keys(errors).length) return;
+      data.config = config;
+    }
+
+    // Selected policies use lossless config editors; org/provider editors keep
+    // their existing field contract without the selected-only strict validation.
+    if (providerMeta?.fields && !editPolicyKeyword && !editPolicyBuiltin) {
       const cfg = {};
       providerMeta.fields.forEach(({ key, type }) => {
         const val = providerFields[key];
@@ -425,7 +503,13 @@ const GuardrailCheckDialog = ({
   const hideConfidence = providerMeta?.hideConfidence === true;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         Configure: {displayName}
         {providerMeta?.description && (
@@ -485,14 +569,127 @@ const GuardrailCheckDialog = ({
             </Stack>
           )}
 
-          {/* Provider-specific fields */}
-          {providerMeta?.fields?.length > 0 && (
+          {editPolicyKeyword && (
             <>
               <Divider />
-              <Typography variant="subtitle2">Provider Settings</Typography>
-              {providerMeta.fields.map(renderProviderField)}
+              {keywordJson !== null ? (
+                <TextField
+                  label="Keyword configuration (JSON)"
+                  value={keywordJson}
+                  onChange={(event) => {
+                    setKeywordJson(event.target.value);
+                    setKeywordErrors({});
+                  }}
+                  multiline
+                  minRows={5}
+                  fullWidth
+                  size="small"
+                  error={Object.keys(keywordErrors).length > 0}
+                  helperText={
+                    Object.values(keywordErrors).join(" ") ||
+                    'Original configuration is shown without changes. Use a words array, for example {"words":["restricted"]}.'
+                  }
+                />
+              ) : (
+                <>
+                  <TextField
+                    label="Blocked Keywords"
+                    value={(keywordConfig.words || []).join("\n")}
+                    onChange={(event) => {
+                      const words =
+                        event.target.value === ""
+                          ? []
+                          : event.target.value.split("\n");
+                      setKeywordConfig((prev) => ({ ...prev, words }));
+                      setKeywordErrors({});
+                    }}
+                    multiline
+                    minRows={4}
+                    fullWidth
+                    size="small"
+                    error={Boolean(keywordErrors.words)}
+                    helperText={
+                      keywordErrors.words ||
+                      "One phrase per line; no blank lines. Spaces and commas are literal. Matching ignores case; * is a wildcard."
+                    }
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={keywordConfig.whole_word === true}
+                        onChange={(_, wholeWord) =>
+                          setKeywordConfig((prev) => ({
+                            ...prev,
+                            whole_word: wholeWord,
+                          }))
+                        }
+                      />
+                    }
+                    label={<Typography variant="s1">Whole word</Typography>}
+                  />
+                  <TextField
+                    label="Max matches"
+                    type="number"
+                    value={keywordConfig.max_matches ?? ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setKeywordConfig((prev) => {
+                        const next = { ...prev };
+                        if (value === "") delete next.max_matches;
+                        else next.max_matches = Number(value);
+                        return next;
+                      });
+                      setKeywordErrors({});
+                    }}
+                    size="small"
+                    inputProps={{ min: 1, step: 1 }}
+                    error={Boolean(keywordErrors.max_matches)}
+                    helperText={
+                      keywordErrors.max_matches ||
+                      "Optional positive integer; defaults to 1. Match count divided by this value determines the score."
+                    }
+                  />
+                </>
+              )}
             </>
           )}
+
+          {editPolicyBuiltin && (
+            <>
+              <Divider />
+              <TextField
+                label={`${displayName} configuration (JSON)`}
+                value={builtinJson}
+                onChange={(event) => {
+                  setBuiltinJson(event.target.value);
+                  setBuiltinErrors({});
+                }}
+                multiline
+                minRows={6}
+                fullWidth
+                size="small"
+                error={Object.keys(builtinErrors).length > 0}
+                helperText={
+                  Object.values(builtinErrors).join(" ") ||
+                  "Original configuration is shown without changes. Unknown keys are preserved."
+                }
+              />
+              <Typography variant="s3" color="text.secondary">
+                {builtinConfigHelp(checkName)}
+              </Typography>
+            </>
+          )}
+
+          {/* Provider-specific fields */}
+          {!editPolicyKeyword &&
+            !editPolicyBuiltin &&
+            providerMeta?.fields?.length > 0 && (
+              <>
+                <Divider />
+                <Typography variant="subtitle2">Provider Settings</Typography>
+                {providerMeta.fields.map(renderProviderField)}
+              </>
+            )}
         </Stack>
       </DialogContent>
       <DialogActions>

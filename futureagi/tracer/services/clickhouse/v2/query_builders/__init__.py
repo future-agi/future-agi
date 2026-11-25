@@ -16,7 +16,7 @@ Column-name + access mapping (cheat sheet — full mapping in `columns.py`):
     span_attr_str                  →  attrs_string
     span_attr_num                  →  attrs_number
     span_attr_bool                 →  attrs_bool
-    span_attributes_raw (String)   →  attributes_extra (typed JSON, path access)
+    span_attributes_raw (String)   →  attributes_extra (String JSON)
     resource_attributes_raw        →  resource_attrs (typed JSON)
     metadata_map (Map)             →  metadata (typed JSON)
     _peerdb_is_deleted             →  is_deleted

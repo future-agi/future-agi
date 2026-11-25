@@ -19,7 +19,7 @@ export const ExperimentTabColumnDefs = [
     headerName: "Experiment Name",
     field: "name",
     flex: 1.25,
-    cellStyle: { fontSize: "13px", fontWeight: 500, color: "text.secondary" },
+    cellStyle: { fontSize: "12px", fontWeight: 500, color: "text.secondary" },
   },
   {
     headerName: "Status",

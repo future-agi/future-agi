@@ -324,14 +324,20 @@ def apply_eval_group_to_observation_span(
     model = filters.get("model", None)
     error_localizer = filters.get("error_localizer", False)
 
+    # Both deduplication and name allocation must see previously applied groups,
+    # including configs the read replica has not applied yet.
     # Pre-fetch existing configs for deduplication by template_id + mapping
-    existing_configs = CustomEvalConfig.objects.filter(
-        eval_group=eval_group,
-        kb_id__id=kb_id,
-        model=model,
-        error_localizer=error_localizer,
-        project=project,
-    ).select_related("eval_template")
+    existing_configs = (
+        CustomEvalConfig.objects.using("default")
+        .filter(
+            eval_group=eval_group,
+            kb_id__id=kb_id,
+            model=model,
+            error_localizer=error_localizer,
+            project=project,
+        )
+        .select_related("eval_template")
+    )
 
     existing_configs_lookup = {
         (
@@ -342,9 +348,13 @@ def apply_eval_group_to_observation_span(
     }
 
     # Count existing configs per template for versioning
-    naming_configs = CustomEvalConfig.objects.filter(
-        eval_group=eval_group, eval_template__in=eval_templates, project=project
-    ).values_list("eval_template_id", "name")
+    naming_configs = (
+        CustomEvalConfig.objects.using("default")
+        .filter(
+            eval_group=eval_group, eval_template__in=eval_templates, project=project
+        )
+        .values_list("eval_template_id", "name")
+    )
 
     template_names_count = {}
     for template_id, _name in naming_configs:

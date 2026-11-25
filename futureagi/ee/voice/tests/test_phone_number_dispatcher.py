@@ -728,7 +728,9 @@ class TestSyncAvailablePhoneNumbers:
                 mock_model,
             ),
         ):
-            from ee.voice.temporal.activities.voice_small import sync_available_phone_numbers
+            from ee.voice.temporal.activities.voice_small import (
+                sync_available_phone_numbers,
+            )
 
             count = await sync_available_phone_numbers()
 
@@ -757,7 +759,9 @@ class TestSyncAvailablePhoneNumbers:
                 mock_model,
             ),
         ):
-            from ee.voice.temporal.activities.voice_small import sync_available_phone_numbers
+            from ee.voice.temporal.activities.voice_small import (
+                sync_available_phone_numbers,
+            )
 
             count = await sync_available_phone_numbers()
 
@@ -825,9 +829,9 @@ class TestAcquireAndSignalBatchNoRelease:
             # Verify NO signal was sent to the dispatcher
             for call_args in mock_client.get_workflow_handle.call_args_list:
                 handle_id = call_args[0][0] if call_args[0] else ""
-                assert (
-                    handle_id != "phone-number-dispatcher-singleton"
-                ), "Batch activity should NOT signal the dispatcher for failed grants"
+                assert handle_id != "phone-number-dispatcher-singleton", (
+                    "Batch activity should NOT signal the dispatcher for failed grants"
+                )
 
     @pytest.mark.asyncio
     async def test_releases_phone_from_db_when_signal_fails(self):
@@ -1006,7 +1010,9 @@ class TestReleasePhoneNumberSlotActivity:
                 new=AsyncMock(return_value=mock_client),
             ),
         ):
-            from ee.voice.temporal.activities.voice_small import release_phone_number_slot
+            from ee.voice.temporal.activities.voice_small import (
+                release_phone_number_slot,
+            )
 
             await release_phone_number_slot(input_data)
 
@@ -1027,7 +1033,9 @@ class TestReleasePhoneNumberSlotActivity:
                 new=AsyncMock(side_effect=Exception("Connection failed")),
             ),
         ):
-            from ee.voice.temporal.activities.voice_small import release_phone_number_slot
+            from ee.voice.temporal.activities.voice_small import (
+                release_phone_number_slot,
+            )
 
             with pytest.raises(Exception, match="Connection failed"):
                 await release_phone_number_slot(input_data)

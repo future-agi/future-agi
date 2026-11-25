@@ -120,9 +120,6 @@ const UploadFile = ({ control, type }) => {
             variant="outlined"
             size="small"
             sx={{
-              paddingY: (theme) => theme.spacing(0.75),
-              paddingX: (theme) => theme.spacing(3),
-              borderRadius: (theme) => theme.spacing(1),
               background: (theme) => theme.palette.divider,
               color: "text.primary",
               borderColor: "text.disabled",

@@ -6,13 +6,10 @@ No content selection happens here. The payload carries every span raw; the
 model identifies the user request and the final response itself.
 """
 
+import functools
 import json
 import re
 import statistics
-
-import nltk
-from nltk.corpus import stopwords as _nltk_stopwords
-from nltk.stem import PorterStemmer
 
 
 def _get_span_kind(attrs: dict) -> str:
@@ -27,12 +24,24 @@ def _get_span_kind(attrs: dict) -> str:
                 return str(value)
     return ""
 
+
 # ---------------------------------------------------------------------------
 # KEVINIFY — "Why waste time say lot word when few word do trick"
 # ---------------------------------------------------------------------------
 
-_STEMMER = PorterStemmer()
-_NLTK_STOPS = set(_nltk_stopwords.words("english"))
+
+# nltk is imported lazily: import nltk eagerly pulls scipy + scikit-learn
+# (~80 MB RSS) into every API/worker process at startup, while only the trace
+# scanner needs the stopword list.
+@functools.cache
+def _all_stops() -> frozenset[str]:
+    from nltk.corpus import stopwords as _nltk_stopwords
+
+    from tfc.utils.nltk_data import ensure_nltk_data
+
+    ensure_nltk_data("stopwords")
+    return frozenset(_nltk_stopwords.words("english")) | _EXTRA_STOPS
+
 
 _EXTRA_STOPS = {
     "please",
@@ -90,7 +99,6 @@ _EXTRA_STOPS = {
     "undefined",
 }
 
-_ALL_STOPS = _NLTK_STOPS | _EXTRA_STOPS
 
 _FILLER_RE = re.compile(
     r"(?:based on|in order to|as well as|due to|in terms of|with respect to"
@@ -113,7 +121,13 @@ def kevinify(text, max_len=2000):
     text = _JSON_NOISE_RE.sub(" ", text)
     text = _FILLER_RE.sub(" ", text)
 
+    import nltk  # lazy: see _all_stops()
+
+    from tfc.utils.nltk_data import ensure_nltk_data
+
+    all_stops = _all_stops()
     try:
+        ensure_nltk_data("punkt_tab")
         words = nltk.word_tokenize(text)
     except Exception:
         words = text.split()
@@ -123,7 +137,7 @@ def kevinify(text, max_len=2000):
         clean = w.strip(".,;:!?()-_'\"")
         if not clean or len(clean) <= 1:
             continue
-        if clean.lower() in _ALL_STOPS:
+        if clean.lower() in all_stops:
             continue
         kept.append(clean)
 
@@ -750,7 +764,8 @@ def _is_nontextual(d):
             if isinstance(head, (int, float)):
                 return True
             if isinstance(head, dict) and any(
-                isinstance(head.get(kk), list) and head.get(kk)
+                isinstance(head.get(kk), list)
+                and head.get(kk)
                 and isinstance(head[kk][0], (int, float))
                 for kk in ("embedding", "values", "vector", "scores")
             ):
@@ -786,7 +801,7 @@ def unwrap_output(raw):
             # the completion dimension fires. 11 corpus roots are function-call-only.
             fc = x.get("function_call") or x.get("functionCall")
             if isinstance(fc, dict) and str(fc.get("arguments") or "").strip():
-                return f"[function_call {fc.get('name','')}] {fc['arguments']}"
+                return f"[function_call {fc.get('name', '')}] {fc['arguments']}"
             tcs = x.get("tool_calls")
             if isinstance(tcs, list) and tcs:
                 got = []
@@ -803,7 +818,9 @@ def unwrap_output(raw):
                     if not isinstance(fn, dict):
                         continue
                     if str(fn.get("arguments") or "").strip():
-                        got.append(f"[tool_call {fn.get('name','')}] {fn['arguments']}")
+                        got.append(
+                            f"[tool_call {fn.get('name', '')}] {fn['arguments']}"
+                        )
                 if got:
                     return "\n".join(got)
             if isinstance(x.get("content"), (list, dict)):
@@ -873,7 +890,9 @@ def build_trace_payload(trace_data, prefilter_result, retry_ids=()):
         out = _v3_plain(a.get("output.value", ""), FIELD_RUNAWAY_BUDGET)
         # A span with no content, no status and no flag adds nothing the flow
         # outline doesn't already carry.
-        if not (inp or out or span.get("status_code") not in (None, "Unset") or is_flagged):
+        if not (
+            inp or out or span.get("status_code") not in (None, "Unset") or is_flagged
+        ):
             continue
         entry = {
             "id": sid,

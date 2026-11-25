@@ -1,0 +1,21 @@
+name: Release script checks
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release-images.yml"
+      - ".github/workflows/worker-release-checks.yml"
+      - "scripts/release-error-feed-worker.py"
+      - "scripts/test_release_error_feed_worker.py"
+      - "scripts/verify-platform-image-tags.py"
+      - "scripts/test_verify_platform_image_tags.py"
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Only this workflow's own tests: the rest of scripts/ has its own
+      # workflows (the mypy and Ruff gate self-tests need their pinned tools).
+      - run: python3 -m unittest -v test_release_error_feed_worker test_verify_platform_image_tags
+        working-directory: scripts

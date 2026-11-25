@@ -388,7 +388,8 @@ class LivekitService(VoiceServiceBlueprint):
         self, raw_data: dict[str, Any], call_data_stored: bool
     ) -> FAGICallData:
         """Build FAGICallData from raw dict (already fetched from DB)."""
-        from ee.voice.semantics import FAGICallData; from simulate.semantics import CallExecutionStatus, CallType
+        from ee.voice.semantics import FAGICallData
+        from simulate.semantics import CallExecutionStatus, CallType
 
         lk_data = raw_data.get(PROVIDER_KEY, {})
 
@@ -550,7 +551,8 @@ class LivekitService(VoiceServiceBlueprint):
         service_provider_call_id stores the room name (call_{execution_id}),
         which is what initiate_inbound_call returns as provider_call_id.
         """
-        from ee.voice.semantics import FAGICallData; from simulate.semantics import CallExecutionStatus, CallType
+        from ee.voice.semantics import FAGICallData
+        from simulate.semantics import CallExecutionStatus, CallType
 
         provider_data = call_execution.provider_call_data or {}
         lk_data = provider_data.get(PROVIDER_KEY, {})
@@ -803,15 +805,19 @@ class LivekitService(VoiceServiceBlueprint):
         track_specs = [
             ("stereo", f"{s3_prefix}_stereo_recording.mp3", None),
             ("mono", f"{s3_prefix}_recording.mp3", ["-ac", "1"]),
+            # The agent worker records the room with DUAL_CHANNEL_AGENT audio
+            # mixing: the agent participant, our simulator (the customer), on
+            # the left channel and everyone else, the tested agent (the
+            # assistant), on the right.
             (
                 "assistant",
                 f"{s3_prefix}_assistant_recording.mp3",
-                ["-filter_complex", "pan=mono|c0=c0"],
+                ["-filter_complex", "pan=mono|c0=c1"],
             ),
             (
                 "customer",
                 f"{s3_prefix}_customer_recording.mp3",
-                ["-filter_complex", "pan=mono|c0=c1"],
+                ["-filter_complex", "pan=mono|c0=c0"],
             ),
         ]
 

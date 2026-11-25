@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   ButtonGroup,
-  CircularProgress,
   FormControl,
   InputLabel,
   MenuItem,
@@ -40,6 +39,8 @@ import PerformanceTagDistribution from "./PerformanceTagDistribution";
 import PerformanceGraphDatapoints from "./PerformanceGraphDatapoints";
 import SaveReport from "./SaveReport";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // const formatDate = (date) => format(date, "yyyy-MM-dd HH:mm:ss");
 
@@ -438,7 +439,7 @@ const Performance = () => {
 
   const getDateOptionTitle = (option, isSelected) => {
     if (option === "Custom" && isSelected)
-      return `${format(new Date(dateFilter[0]), "dd/MM/yyyy")} - ${format(new Date(dateFilter[1]), "dd/MM/yyyy")}`;
+      return `${format(new Date(dateFilter[0]), "dd/MM/yyyy")} - ${format(getDateRangeDisplayEnd(dateFilter, "inclusive-local"), "dd/MM/yyyy")}`;
 
     return option;
   };
@@ -494,11 +495,9 @@ const Performance = () => {
                     sx={{
                       // Adjust flex behavior
                       backgroundColor: selected ? "action.hover" : undefined,
-                      fontWeight: selected ? 600 : 400,
-
                       borderColor: "divider",
                       borderWidth: "1px",
-                      px: 1.5, // Slightly more padding
+                      // Slightly more padding
                       minWidth: 0,
                       whiteSpace: "nowrap",
                       overflow: "hidden",
@@ -510,7 +509,6 @@ const Performance = () => {
                         transition:
                           "background-color 0.2s ease, font-weight 0.2s ease, color 0.2s ease, border-color 0.2s ease",
                       },
-                      height: "28px",
                     }}
                     ref={(ref) => {
                       if (option.title === "Custom")
@@ -528,6 +526,8 @@ const Performance = () => {
               open={isDatePickerOpen}
               onClose={() => setIsDatePickerOpen(false)}
               anchorEl={customDatePickerAnc?.current}
+              value={dateFilter}
+              rangeConvention="inclusive-local"
               setDateFilter={setDateFilter}
               setDateOption={setDateOption}
             />
@@ -571,7 +571,7 @@ const Performance = () => {
               alignItems: "center",
             }}
           >
-            <CircularProgress size={22} />
+            <ContentSkeleton variant="rows" />
           </Box>
         ) : (
           <PerformanceGraph data={graphData} />

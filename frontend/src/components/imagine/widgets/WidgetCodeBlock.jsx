@@ -26,7 +26,7 @@ export default function WidgetCodeBlock({ config }) {
           }}
         >
           <Typography
-            sx={{ fontSize: 11, color: "text.secondary", fontWeight: 500 }}
+            sx={{ fontSize: 12, color: "text.secondary", fontWeight: 500 }}
           >
             {language}
           </Typography>

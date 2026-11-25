@@ -27,7 +27,5 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         created, updated = seed_builtin_skills()
         self.stdout.write(
-            self.style.SUCCESS(
-                f"Done: {created} created, {updated} updated."
-            )
+            self.style.SUCCESS(f"Done: {created} created, {updated} updated.")
         )

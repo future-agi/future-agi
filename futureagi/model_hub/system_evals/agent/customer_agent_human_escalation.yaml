@@ -18,7 +18,8 @@ criteria: "You are evaluating whether the agent appropriately escalates to a hum
   \n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
-- Conversation
+- Voice
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

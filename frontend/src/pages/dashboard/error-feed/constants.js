@@ -78,12 +78,12 @@ export const CONFIDENCE = Object.freeze({
   LOW: "L",
 });
 
-// Confidence-badge label + accent colour, keyed by the agent's H/M/L code.
-// Colours match success.main / a warning amber / a neutral grey.
+// Confidence-badge label + status role, keyed by the agent's H/M/L code.
+// Roles index theme.palette.status.
 export const CONF_META = Object.freeze({
-  [CONFIDENCE.HIGH]: { label: "High confidence", color: "#5ACE6D" },
-  [CONFIDENCE.MEDIUM]: { label: "Medium confidence", color: "#E8A13A" },
-  [CONFIDENCE.LOW]: { label: "Low confidence", color: "#8A8A8A" },
+  [CONFIDENCE.HIGH]: { label: "High confidence", role: "success" },
+  [CONFIDENCE.MEDIUM]: { label: "Medium confidence", role: "warning" },
+  [CONFIDENCE.LOW]: { label: "Low confidence", role: "neutral" },
 });
 
 // ── Token pricing — used to estimate per-trace cost in the Overview tab. ─────

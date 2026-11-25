@@ -30,7 +30,37 @@ export const SKIP_PROJECT_MAPPING_PLATFORMS = [
 ];
 
 // Platforms that skip sync settings (no polling / backfill — action-only integrations)
-export const SKIP_SYNC_SETTINGS_PLATFORMS = ["linear"];
+export const SKIP_SYNC_SETTINGS_PLATFORMS = ["linear", "slack", "github"];
+
+export const INSTALL_FLOWS = {
+  slack: {
+    label: "Slack",
+    urlField: "authorization_url",
+    connected: "Slack workspace connected successfully.",
+    manageText:
+      "Reconnect to renew Slack access, or disconnect to stop Error Feed notifications using this workspace.",
+  },
+  github: {
+    label: "GitHub",
+    urlField: "install_url",
+    connected: "GitHub connected successfully.",
+    manageText:
+      "Reconnect to change which repositories the GitHub App can read, or disconnect to stop building environments from its private repositories.",
+  },
+};
+
+export const GITHUB_INSTALL_OUTCOMES = {
+  connected: { severity: "success", text: INSTALL_FLOWS.github.connected },
+  requested: {
+    severity: "info",
+    text: "An owner of the GitHub organization has to approve the install. Connect again once they approve it.",
+  },
+  already_connected: {
+    severity: "warning",
+    text: "This workspace is already connected to another GitHub account. Disconnect it first.",
+  },
+  error: { severity: "error", text: "Could not connect GitHub. Please try again." },
+};
 
 export const DATADOG_SITES = [
   { value: "us1", label: "US1 (datadoghq.com)", domain: "datadoghq.com" },
@@ -117,12 +147,33 @@ export const PLATFORMS = [
     available: true,
   },
   {
+    id: "slack",
+    name: "Slack",
+    description: "Send Error Feed alerts to a Slack channel",
+    wizardDescription: "Connect a Slack workspace for Error Feed alerts",
+    logo: null,
+    icon: "simple-icons:slack",
+    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Slack)
+    iconColor: "#E01E5A",
+    available: true,
+  },
+  {
+    id: "github",
+    name: "GitHub",
+    description: "Build environments from private repositories",
+    wizardDescription: "Install the GitHub App on your repositories",
+    logo: null,
+    icon: "eva:github-fill",
+    available: true,
+  },
+  {
     id: "linear",
     name: "Linear",
     description: "Issue tracking for Error Feed clusters",
     wizardDescription: "Create Linear issues from Error Feed clusters",
     logo: null,
     icon: "simple-icons:linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
     iconColor: "#5E6AD2",
     available: true,
   },

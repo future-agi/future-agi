@@ -553,7 +553,14 @@ def test_retrieve_table_row_shape_for_trial_without_baseline(
 # scorer falls back to ``percentage`` for every row.
 
 
-def _make_template(organization, workspace, name, output_type_normalized, choice_scores=None, pass_threshold=0.5):
+def _make_template(
+    organization,
+    workspace,
+    name,
+    output_type_normalized,
+    choice_scores=None,
+    pass_threshold=0.5,
+):
     return EvalTemplate.objects.create(
         name=name,
         organization=organization,
@@ -564,7 +571,9 @@ def _make_template(organization, workspace, name, output_type_normalized, choice
         choice_scores=choice_scores,
         pass_threshold=pass_threshold,
         config={
-            "output": "choices" if output_type_normalized != "pass_fail" else "Pass/Fail",
+            "output": "choices"
+            if output_type_normalized != "pass_fail"
+            else "Pass/Fail",
             "required_keys": ["output"],
             "eval_type_id": "AgentEvaluator",
         },
@@ -592,8 +601,12 @@ def test_serializer_emits_scoring_fields_for_pass_fail_template(
     )
 
     template = _make_template(
-        organization, workspace, "esc_pass_fail_tpl", "pass_fail",
-        choice_scores=None, pass_threshold=0.7,
+        organization,
+        workspace,
+        "esc_pass_fail_tpl",
+        "pass_fail",
+        choice_scores=None,
+        pass_threshold=0.7,
     )
     uem = _make_user_eval_metric(organization, workspace, dataset, template)
 
@@ -605,6 +618,7 @@ def test_serializer_emits_scoring_fields_for_pass_fail_template(
     # after adding a row below.
 
     from model_hub.models.develop_dataset import Row, Cell
+
     row = Row.objects.create(dataset=dataset, order=0)
     Cell.objects.create(dataset=dataset, column=output_column, row=row, value="Passed")
 
@@ -632,7 +646,10 @@ def test_serializer_emits_scoring_fields_for_deterministic_with_choice_scores(
     from model_hub.models.develop_dataset import Row, Cell
 
     template = _make_template(
-        organization, workspace, "det_choice_tpl", "deterministic",
+        organization,
+        workspace,
+        "det_choice_tpl",
+        "deterministic",
         choice_scores={"Good": 1.0, "Neutral": 0.5, "Bad": 0.0},
     )
     uem = _make_user_eval_metric(organization, workspace, dataset, template)
@@ -657,7 +674,10 @@ def test_serializer_emits_scoring_fields_for_percentage_no_choice_scores(
     from model_hub.models.develop_dataset import Row, Cell
 
     template = _make_template(
-        organization, workspace, "pct_tpl", "percentage",
+        organization,
+        workspace,
+        "pct_tpl",
+        "percentage",
     )
     uem = _make_user_eval_metric(organization, workspace, dataset, template)
     row = Row.objects.create(dataset=dataset, order=0)
@@ -681,7 +701,10 @@ def test_serializer_preserves_pre_existing_keys(
     from model_hub.models.develop_dataset import Row, Cell
 
     template = _make_template(
-        organization, workspace, "pre_existing_keys_tpl", "deterministic",
+        organization,
+        workspace,
+        "pre_existing_keys_tpl",
+        "deterministic",
     )
     uem = _make_user_eval_metric(organization, workspace, dataset, template)
     row = Row.objects.create(dataset=dataset, order=0)
@@ -858,3 +881,16 @@ def test_list_pagination_caps_limit_param():
     request = Request(APIRequestFactory().get("/", {"limit": "100000"}))
 
     assert paginator.get_page_size(request) == 100
+
+
+@pytest.mark.django_db
+def test_optimization_list_keeps_accepting_large_limits(auth_client, output_column):
+    """Documenting the list query must not 400 limit=200; the paginator already
+    silently caps at 100."""
+    run = create_optimization_run(output_column, name="large-limit-run")
+
+    response = auth_client.get("/model-hub/dataset-optimization/", {"limit": 200})
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    ids = {row["id"] for row in response.json()["result"]["table"] if row.get("id")}
+    assert str(run.id) in ids

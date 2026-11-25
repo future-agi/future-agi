@@ -30,5 +30,8 @@ def test_deployment_telemetry_migration_rolls_back_cleanly():
         assert instance_table not in _table_names()
         assert heartbeat_table not in _table_names()
     finally:
+        # Restore the latest usage schema, not just 0026: migrating back to
+        # 0025 also unapplied every later usage migration, and leaving them
+        # off breaks any test that runs after this one in the same database.
         executor.loader.build_graph()
-        executor.migrate(current_target)
+        executor.migrate(executor.loader.graph.leaf_nodes("usage"))

@@ -351,6 +351,7 @@ const ExistingDatasetModal = ({
           navigate(`/dashboard/develop/${createdDatasetId}?tab=data`);
         }
       },
+      meta: { errorHandled: true },
       onError: (error) => {
         enqueueSnackbar(
           getRequestErrorMessage(error, "Failed to add dataset", {
@@ -471,7 +472,7 @@ const ExistingDatasetModal = ({
                 onClick={() => closeDrawer()}
                 sx={{ padding: (theme) => theme.spacing(0) }}
               >
-                <Iconify icon="mingcute:close-line" color="text.primary" />
+                <Iconify icon="solar:close-linear" color="text.primary" />
               </IconButton>
             </Box>
             <HelperText
@@ -542,7 +543,7 @@ const ExistingDatasetModal = ({
                     label={""}
                     optionDirection={"column"}
                     options={[
-                      { label: "Import Data", value: "importData" },
+                      { label: "Import data", value: "importData" },
                       {
                         label: "Import data and prompt configuration",
                         value: "ImportDataPromptConfiguration",
@@ -563,6 +564,9 @@ const ExistingDatasetModal = ({
                       },
                     }}
                     optionSx={{
+                      "& .MuiTypography-root": {
+                        typography: "m3",
+                      },
                       "& .Mui-checked + .MuiTypography-root": {
                         fontWeight: "fontWeightMedium",
                       },
@@ -586,9 +590,10 @@ const ExistingDatasetModal = ({
                       border: "1px solid",
                       borderColor: "divider",
                       borderRadius: theme.spacing(1),
-                      padding: theme.spacing(2),
+                      padding: theme.spacing(1.5),
                       overflow: "auto",
-                      height: `calc(100vh - ${dataset ? "330" : "380"}px)`,
+                      // As tall as its rows, up to the space available.
+                      maxHeight: `calc(100vh - ${dataset ? "330" : "380"}px)`,
                     }}
                   >
                     <ShowComponent
@@ -603,9 +608,30 @@ const ExistingDatasetModal = ({
                         sx={{
                           display: "flex",
                           flexDirection: "column",
-                          gap: theme.spacing(1.5),
+                          gap: theme.spacing(1),
                         }}
                       >
+                        {/* Said once for the whole list, not above every row. */}
+                        <Box
+                          sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 1.5,
+                            pl: dataset ? 0 : 4.5,
+                            typography: "s3",
+                            color: "text.subtitle",
+                          }}
+                        >
+                          <Box sx={{ width: theme.spacing(21) }}>
+                            Source column
+                          </Box>
+                          <Box sx={{ width: 16 }} />
+                          <Box>
+                            {dataset
+                              ? "Column in this dataset"
+                              : "New column name"}
+                          </Box>
+                        </Box>
                         {isSelectedDatasetColumn ? (
                           <FieldSelectionSkeleton check={true} />
                         ) : (
@@ -675,7 +701,7 @@ const ExistingDatasetModal = ({
                       <Box
                         sx={{
                           display: "flex",
-                          height: `calc(100vh - ${dataset ? "380" : "430"}px)`,
+                          py: 6,
                           justifyContent: "center",
                           alignItems: "center",
                         }}
@@ -718,7 +744,6 @@ const ExistingDatasetModal = ({
                   variant="outlined"
                   sx={{
                     typography: "s1",
-                    fontWeight: "fontWeightMedium",
                     paddingY: (theme) => theme.spacing(1),
                     paddingX: (theme) => theme.spacing(3),
                   }}
@@ -734,7 +759,6 @@ const ExistingDatasetModal = ({
                   loading={submitDatasetLoading}
                   sx={{
                     typography: "s1",
-                    fontWeight: "fontWeightMedium",
                     paddingY: (theme) => theme.spacing(1),
                     paddingX: (theme) => theme.spacing(3),
                   }}
@@ -747,7 +771,8 @@ const ExistingDatasetModal = ({
             <Dialog
               open={Boolean(openCreateColumn)}
               onClose={() => setOpenCreateColumn("")}
-              maxWidth="sm"
+              maxWidth={false}
+              PaperProps={{ sx: { maxWidth: 720 } }}
               fullWidth
             >
               <DialogTitle
@@ -761,7 +786,7 @@ const ExistingDatasetModal = ({
                   Create New Column
                 </Typography>
                 <IconButton onClick={() => setOpenCreateColumn("")}>
-                  <Iconify icon="mdi:close" />
+                  <Iconify icon="solar:close-linear" />
                 </IconButton>
               </DialogTitle>
               <form onSubmit={handleFormSubmit(onSubmitCreateColumn)}>

@@ -128,4 +128,3 @@ def get_user_reaction(llm_client, model_name, expert_response):
         ],
     )
     return user_reaction.strip()
-

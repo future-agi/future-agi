@@ -99,7 +99,7 @@ export const SelectedAgentTemplateDrawer = ({
       >
         <BackButton onBack={onClose} />
         <IconButton onClick={onClose}>
-          <Iconify color="text.primary" icon="mingcute:close-line" />
+          <Iconify color="text.primary" icon="solar:close-linear" />
         </IconButton>
       </Box>
 
@@ -123,8 +123,8 @@ export const SelectedAgentTemplateDrawer = ({
             <Box
               sx={{
                 border: "2px solid",
-                borderColor: "purple.o10",
-                backgroundColor: "purple.o10",
+                borderColor: "status.discovery.border",
+                backgroundColor: "status.discovery.bg",
                 display: "flex",
                 justifyContent: "center",
                 alignItems: "center",
@@ -137,7 +137,7 @@ export const SelectedAgentTemplateDrawer = ({
               <SvgColor
                 src="/assets/icons/navbar/ic_agents.svg"
                 sx={{
-                  bgcolor: "purple.500",
+                  bgcolor: "status.discovery.solid",
                   height: 20,
                   width: 20,
                 }}

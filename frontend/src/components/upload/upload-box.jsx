@@ -61,7 +61,7 @@ export default function UploadBox({
     >
       <input {...getInputProps()} />
 
-      {placeholder || <Iconify icon="eva:cloud-upload-fill" width={28} />}
+      {placeholder || <Iconify icon="solar:cloud-upload-linear" width={28} />}
     </Box>
   );
 }

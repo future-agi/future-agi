@@ -11,7 +11,9 @@ from tfc.utils.general_methods import GeneralMethods
 logger = structlog.get_logger(__name__)
 
 
-class AgentccCustomPropertySchemaViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
+class AgentccCustomPropertySchemaViewSet(
+    BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
     """CRUD for custom property schemas. Org-scoped."""
 
     permission_classes = [IsAuthenticated]

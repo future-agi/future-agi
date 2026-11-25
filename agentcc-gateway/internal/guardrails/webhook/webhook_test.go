@@ -167,8 +167,8 @@ func TestWebhook_Timeout(t *testing.T) {
 func TestWebhook_EmptyURL(t *testing.T) {
 	g := New("test-hook", nil)
 	r := g.Check(context.Background(), makeInput("Test"))
-	if !r.Pass {
-		t.Fatal("empty URL should pass")
+	if r.Pass || r.Err == nil {
+		t.Fatal("empty URL must be a typed execution failure")
 	}
 }
 

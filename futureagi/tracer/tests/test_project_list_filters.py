@@ -55,9 +55,9 @@ def _filters(*specs):
 def filter_projects(db, organization, workspace):
     """Three observe projects with distinct names + tags (Postgres only).
 
-      Checkout Service  tags=[prod, critical]
-      Search Service    tags=[production]
-      Billing API       tags=[beta]
+    Checkout Service  tags=[prod, critical]
+    Search Service    tags=[production]
+    Billing API       tags=[beta]
     """
     specs = [
         ("Checkout Service", ["prod", "critical"]),

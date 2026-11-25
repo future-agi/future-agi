@@ -6,6 +6,7 @@ import TemplateAccordion from "src/sections/common/TemplateAccordion";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 
 const OPTIMIZATION_THEME_PARAMS = {
@@ -164,8 +165,8 @@ const OptimizationDetail = ({ selectedOptimization }) => {
       />
       <Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: "14px" }}>
-          {/* <Iconify icon="material-symbols:credit-score-rounded" /> */}
-          <Typography fontWeight={500} fontSize="14px">
+          {/* <Iconify icon="solar:card-linear" /> */}
+          <Typography fontWeight={500} fontSize="12px">
             Template Score
           </Typography>
         </Box>

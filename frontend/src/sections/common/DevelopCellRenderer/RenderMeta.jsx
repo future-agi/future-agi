@@ -33,7 +33,7 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
       >
         <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
           <Iconify
-            icon="material-symbols:schedule-outline"
+            icon="solar:clock-circle-linear"
             width="15px"
             height="15px"
             color="text.secondary"
@@ -74,7 +74,7 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
 
       <Box sx={{ display: "flex", alignItems: "center" }}>
         <Iconify
-          icon="basil:copy-outline"
+          icon="solar:copy-linear"
           width="14px"
           height="14px"
           color="text.disabled"

@@ -214,6 +214,28 @@ def ensure_registration() -> tuple[bool, UUID | None]:
             payload,
             instance_secret=issued_secret,
         )
+        # Queue a lifecycle event after registration succeeds.  The event is
+        # written locally and flushed by the normal event sender, so this
+        # registration path never recursively calls ensure_registration().
+        try:
+            from tfc.deployment_telemetry.events import (
+                _queue_boot_event_for_instance,
+                record_event_for_instance,
+            )
+
+            if not current_disabled:
+                _queue_boot_event_for_instance(state.instance_id)
+            record_event_for_instance(
+                state.instance_id,
+                "telemetry_registered",
+                actor_type="system_worker",
+                actor_id=f"instance:{state.instance_id}",
+                source="system",
+            )
+        except Exception:
+            logger.warning(
+                "deployment_telemetry_registration_event_failed", exc_info=True
+            )
         return is_full, state.instance_id
     except Exception:
         logger.warning("deployment_telemetry_registration_failed", exc_info=True)
@@ -237,16 +259,17 @@ def _log_disclosure() -> None:
         logger.info(
             "deployment_telemetry_disclosure",
             mode="opt_out",
-            sends="one minimal registration ping (instance id + version); "
-            "no emails, no heartbeats",
+            sends="one minimal registration ping (instance id, version, "
+            "deployment type, timestamp); no emails, no heartbeats",
             opt_out_env="FUTURE_AGI_TELEMETRY_DISABLED=true (already set)",
         )
     else:
         logger.info(
             "deployment_telemetry_disclosure",
             mode="enabled",
-            sends="registration (active admin user emails + domains) and periodic "
-            "usage-count heartbeats; never usage content",
+            sends="registration (active admin user emails + domains), periodic "
+            "usage-count heartbeats, and content-free actor journey events; "
+            "never prompts, completions, traces, request bodies, or secrets",
             url=get_telemetry_url(),
             opt_out_env="FUTURE_AGI_TELEMETRY_DISABLED=true",
         )
@@ -261,9 +284,7 @@ def attempt_registration() -> bool:
             is_full, _ = ensure_registration()
             return is_full
         except Exception:
-            logger.warning(
-                "deployment_telemetry_registration_failed", exc_info=True
-            )
+            logger.warning("deployment_telemetry_registration_failed", exc_info=True)
             return False
     finally:
         close_old_connections()
@@ -311,9 +332,10 @@ def _flush_buffer() -> tuple[int, bool]:
     sent_count = 0
     # The signing secret is per-instance (single singleton state row), so
     # load it once and reuse the signed client for every buffered window.
-    secret = DeploymentTelemetryState.objects.values_list(
-        "instance_secret", flat=True
+    state = DeploymentTelemetryState.objects.values(
+        "instance_id", "instance_secret"
     ).first()
+    secret = state["instance_secret"] if state else None
     if not secret:
         # Without a secret every heartbeat will be rejected with 401, but
         # ``request_failed`` log lines give no clue why. Surface the root
@@ -322,14 +344,15 @@ def _flush_buffer() -> tuple[int, bool]:
         logger.error("deployment_telemetry_secret_missing_at_flush")
         return 0, False
     client = TelemetryClient(secret=secret)
-    for path in pending_windows():
+    owner_instance_id = UUID(str(state["instance_id"]))
+    for path in pending_windows(instance_id=str(owner_instance_id)):
         payload = load_window(path)
         if payload is None:
             delete_window(path)
             continue
 
         try:
-            instance_id = UUID(str(payload["instance_id"]))
+            payload_instance_id = UUID(str(payload["instance_id"]))
         except (KeyError, TypeError, ValueError, AttributeError):
             # A buffered window with a malformed instance_id can never resend,
             # so we drop it — but log first so a later "missing window"
@@ -341,7 +364,16 @@ def _flush_buffer() -> tuple[int, bool]:
             delete_window(path)
             continue
 
-        _record_heartbeat_attempt(instance_id)
+        if payload_instance_id != owner_instance_id:
+            logger.warning(
+                "deployment_telemetry_buffer_instance_mismatch",
+                path=str(path),
+                instance_id=str(payload_instance_id),
+            )
+            delete_window(path)
+            continue
+
+        _record_heartbeat_attempt(payload_instance_id)
         if not client.post("/telemetry/heartbeat/", payload).ok:
             return sent_count, False
 
@@ -361,7 +393,15 @@ def _run_telemetry_cycle() -> dict:
 
     registration_is_full, instance_id = ensure_registration()
     if telemetry_is_disabled():
-        clear_buffer()
+        clear_buffer(instance_id=str(instance_id) if instance_id else None)
+        try:
+            from tfc.deployment_telemetry.event_buffer import clear_events
+
+            clear_events(instance_id=str(instance_id) if instance_id else None)
+        except Exception:
+            logger.warning(
+                "deployment_telemetry_event_buffer_clear_failed", exc_info=True
+            )
         return {"skipped": True, "reason": "disabled"}
 
     window_start, window_end = compute_previous_utc_window()
@@ -373,7 +413,7 @@ def _run_telemetry_cycle() -> dict:
         counts,
     )
     store_window(window_start, window_end, payload)
-    prune_expired_windows()
+    prune_expired_windows(instance_id=str(instance_id))
 
     if not registration_is_full:
         return {

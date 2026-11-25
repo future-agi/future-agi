@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
+from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES, ApiErrorCode
 from tfc.utils.serializer_fields import JsonValueField
 
 
@@ -164,9 +164,33 @@ TOO_LARGE_ERROR_CODES = ("export_too_large", "items_too_large")
 class ApiTooLargeErrorSerializer(ApiTextErrorResponseSerializer):
     """413 cap-exceeded envelope with ``code`` narrowed to the contracted set."""
 
-    code = serializers.ChoiceField(
+    code = serializers.ChoiceField(  # type: ignore[assignment]  # DRF field narrows the base serializer's code field
         choices=TOO_LARGE_ERROR_CODES, required=False, allow_blank=True
     )
+
+
+class DatasetLimitCheckFailedErrorSerializer(ApiTextErrorResponseSerializer):
+    """503 of a dataset create whose plan limit could not be verified.
+
+    The code tells the client this 5xx carries a message for the user.
+    """
+
+    code = serializers.ChoiceField(  # type: ignore[assignment]  # DRF field narrows the base serializer's code field
+        choices=(ApiErrorCode.DATASET_LIMIT_CHECK_FAILED.value,),
+        required=False,
+        allow_blank=True,
+    )
+
+
+class ViewerReadOnlyErrorSerializer(ApiDetailErrorResponseSerializer):
+    """403 of a simulation write a Viewer can't make, naming what they tried."""
+
+    code = serializers.ChoiceField(  # type: ignore[assignment]  # DRF field narrows the base serializer's code field
+        choices=(ApiErrorCode.VIEWER_READ_ONLY.value,),
+        required=False,
+        allow_blank=True,
+    )
+    action = serializers.CharField(required=False, allow_blank=True)
 
 
 class ApiSelectionTooLargeDetailSerializer(serializers.Serializer):
@@ -220,11 +244,16 @@ class SetupCheckSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=("passed", "warning", "failed", "skipped"))
     required = serializers.BooleanField()
     detail = serializers.CharField(allow_blank=True)
+    fix = serializers.CharField(allow_blank=True)
+    docs_url = serializers.CharField(allow_blank=True)
 
 
 class SetupChecksResultSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=("ok", "issues"))
     mode = serializers.ChoiceField(choices=("live", "experiment"))
+    setup = serializers.ChoiceField(choices=("standalone", "distributed", "helm"))
+    collector_http_url = serializers.CharField()
+    account_exists = serializers.BooleanField()
     checks = SetupCheckSerializer(many=True)
 
 

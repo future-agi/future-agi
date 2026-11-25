@@ -1,6 +1,11 @@
 package gauth_test
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"os"
 	"strings"
@@ -8,6 +13,31 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/providers/gauth"
 )
+
+func TestTokenProviderJSON(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(map[string]string{
+		"client_email": "test@example.iam.gserviceaccount.com",
+		"private_key":  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded})),
+		"token_uri":    "https://oauth2.googleapis.com/token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gauth.NewTokenProviderJSON(data, gauth.ScopeCloudPlatform); err != nil {
+		t.Fatalf("valid inline service account rejected: %v", err)
+	}
+	if _, err := gauth.NewTokenProviderJSON([]byte(`{"private_key":"bad"}`), gauth.ScopeCloudPlatform); err == nil {
+		t.Fatal("incomplete service account accepted")
+	}
+}
 
 func credentialsFile(t *testing.T) string {
 	t.Helper()

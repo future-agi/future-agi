@@ -11,9 +11,13 @@ from ai_tools.base import ToolContext, ToolResult
 from ai_tools.registry import registry as tool_registry
 from ee.falcon_ai.context_manager import ContextManager
 from ee.falcon_ai.llm_client import FalconLLMClient
-from ee.falcon_ai.modes import detect_mode, filter_tools_for_message, load_tools_for_mode
-from ee.licensing.activation_client import ManagedServiceError
+from ee.falcon_ai.modes import (
+    detect_mode,
+    filter_tools_for_message,
+    load_tools_for_mode,
+)
 from ee.falcon_ai.prompt_builder import PromptBuilder
+from ee.licensing.activation_client import ManagedServiceError
 from tfc.middleware.workspace_context import workspace_context
 
 logger = structlog.get_logger(__name__)
@@ -21,15 +25,24 @@ logger = structlog.get_logger(__name__)
 SELF_CORRECTION_THRESHOLD = 3  # inject hint after this many consecutive errors
 REPETITION_THRESHOLD = 3  # warn if same tool called this many times
 
-_UUID_IN_BACKTICKS = re.compile(
-    r"`([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`"
-)
+_UUID = r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+_UUID_IN_BACKTICKS = re.compile(rf"`{_UUID}`")
+_JSON_ID_FIELD = re.compile(rf'"id"\s*:\s*"{_UUID}"')
 
 
 def _extract_primary_entity_id(result_text: str) -> str | None:
     if not result_text:
         return None
-    match = _UUID_IN_BACKTICKS.search(result_text)
+    if result_text.lstrip().startswith("{"):
+        try:
+            payload = json.loads(result_text)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            top_level = payload.get("id")
+            if isinstance(top_level, str) and re.fullmatch(_UUID, top_level):
+                return top_level
+    match = _JSON_ID_FIELD.search(result_text) or _UUID_IN_BACKTICKS.search(result_text)
     return match.group(1) if match else None
 
 
@@ -54,11 +67,15 @@ class AgentLoop:
         self._budget_warned = False
         # Partial state — accessible after cancellation for saving
         self.partial_content = ""
+        # Text of the last turn alone; ``partial_content`` joins all turns.
+        self.final_turn_content = ""
         self.partial_tool_calls = []
         self.assistant_message_id = None
 
     @staticmethod
-    def _apply_precontent_to_last_user_message(messages, precontent_blocks, file_images):
+    def _apply_precontent_to_last_user_message(
+        messages, precontent_blocks, file_images
+    ):
         """Attach precontent and case media to the last user message; text-only stays a string so per-message truncation still applies."""
         if not (file_images or precontent_blocks):
             return
@@ -154,15 +171,20 @@ class AgentLoop:
         skill=None,
         system_prompt_override=None,
         tools_override=None,
+        raise_on_stream_error: bool = False,
     ):
         """Execute the agent loop with mode detection, parallel tool execution, and retry.
 
         Args:
             system_prompt_override: If provided, replaces the default PromptBuilder
                 system prompt. Used by AgentEvaluator to inject eval-specific instructions.
+            raise_on_stream_error: Evaluation callers propagate failures instead of
+                returning partial content. Chat keeps its error callback behavior.
             tools_override: If provided, replaces the mode-detected tools list.
                 Used by AgentEvaluator to restrict available tools.
         """
+
+        self.tool_context.require_foreground_execution()
 
         # 0. Cluster-RCA delegation. When the cluster-rca skill is active on the
         # first turn, hand off to the dedicated cluster-analysis agent: it streams
@@ -277,10 +299,11 @@ class AgentLoop:
             )
 
         # 3. Context compaction — multi-tier: light strip or full LLM summarization
-        self.conversation, history_messages = (
-            await self.context_manager.compact_if_needed(
-                self.conversation, history_messages, self.llm_client
-            )
+        (
+            self.conversation,
+            history_messages,
+        ) = await self.context_manager.compact_if_needed(
+            self.conversation, history_messages, self.llm_client
         )
 
         # 4. Build messages with context management
@@ -292,7 +315,9 @@ class AgentLoop:
         )
 
         self._apply_precontent_to_last_user_message(
-            messages, precontent_blocks, file_images,
+            messages,
+            precontent_blocks,
+            file_images,
         )
 
         # No mid-conversation system messages — causes 400 errors with Anthropic API.
@@ -308,6 +333,7 @@ class AgentLoop:
         tool_call_counter = 0
         consecutive_errors = 0
 
+        finish_reason = None
         for iteration in range(self.MAX_ITERATIONS):
             # Force wrap-up when approaching the limit
             # Token-budget-based warning — more natural than iteration count
@@ -351,6 +377,7 @@ class AgentLoop:
             # Stream LLM response with retry
             tool_calls_accumulator = {}
             current_content = ""
+            self.final_turn_content = ""
             finish_reason = None
 
             # Debug: log message structure for eval debugging
@@ -440,6 +467,8 @@ class AgentLoop:
             except ManagedServiceError:
                 raise
             except Exception as e:
+                if raise_on_stream_error:
+                    raise
                 error_detail = str(e)
                 # Extract response body from httpx errors for debugging
                 if hasattr(e, "response") and e.response is not None:
@@ -465,6 +494,7 @@ class AgentLoop:
 
             full_content += current_content
             self.partial_content = full_content
+            self.final_turn_content = current_content
             self.partial_tool_calls = all_tool_calls_log
 
             # If LLM returned nothing (no text and no tool calls), break to prevent empty iterations
@@ -721,7 +751,7 @@ class AgentLoop:
                                 "Do NOT call the same tool with the same approach again.\n\n"
                                 f"Available tools you can use: {available_tools}\n\n"
                                 "Common tools: list_datasets, list_eval_templates, whoami, "
-                                "list_projects, search_traces, get_cost_breakdown, "
+                                "list_projects, search_traces, get_usage_overview, "
                                 "list_experiments, list_prompt_templates.\n\n"
                                 "If you cannot complete the task, explain what went wrong "
                                 "and ask the user for help."
@@ -787,6 +817,7 @@ class AgentLoop:
             "input_tokens": self.total_input_tokens,
             "output_tokens": self.total_output_tokens,
             "title": title,
+            "finish_reason": finish_reason,
         }
 
     async def _maybe_generate_title(
@@ -955,10 +986,10 @@ class AgentLoop:
     def _build_completion_card(self, tool_name, result_text):
         """Build a completion card for create actions.
 
-        If `result_text` contains a UUID in backticks (the convention used by
-        all create_* tools — see key_value_block output in ai_tools/tools/**),
-        the first one is treated as the primary entity id and used to deep-link
-        to the detail page. Otherwise we fall back to `path_prefix` (list page).
+        Catalog tools return API JSON, so the primary entity id is the first
+        ``"id": "<uuid>"`` field; native tools render ids in backticks. Either
+        is used to deep-link to the detail page. Otherwise we fall back to
+        `path_prefix` (list page).
         """
         action_map = {
             "create_dataset": {
@@ -967,26 +998,13 @@ class AgentLoop:
                 "path_prefix": "/dashboard/develop/",
                 "detail_path": "/dashboard/develop/{id}",
             },
-            "create_dataset_from_file": {
-                "title": "Dataset created",
-                "action_label": "Go to dataset",
+            "create_dataset_column": {
+                "title": "Column added",
+                "action_label": "Go to datasets",
                 "path_prefix": "/dashboard/develop/",
-                "detail_path": "/dashboard/develop/{id}",
-            },
-            "create_dataset_from_huggingface": {
-                "title": "Dataset created",
-                "action_label": "Go to dataset",
-                "path_prefix": "/dashboard/develop/",
-                "detail_path": "/dashboard/develop/{id}",
             },
             "create_eval_template": {
                 "title": "Evaluation template created",
-                "action_label": "Go to evaluation",
-                "path_prefix": "/dashboard/evaluations/",
-                "detail_path": "/dashboard/evaluations/{id}",
-            },
-            "create_composite_eval": {
-                "title": "Composite evaluation created",
                 "action_label": "Go to evaluation",
                 "path_prefix": "/dashboard/evaluations/",
                 "detail_path": "/dashboard/evaluations/{id}",
@@ -996,17 +1014,6 @@ class AgentLoop:
                 "action_label": "Go to task",
                 "path_prefix": "/dashboard/tasks/",
                 "detail_path": "/dashboard/tasks/{id}",
-            },
-            "create_custom_eval_config": {
-                "title": "Custom eval created",
-                "action_label": "Go to observe",
-                "path_prefix": "/dashboard/observe/",
-            },
-            "create_project": {
-                "title": "Project created",
-                "action_label": "Go to project",
-                "path_prefix": "/dashboard/observe/",
-                "detail_path": "/dashboard/observe/{id}",
             },
             "create_experiment": {
                 "title": "Experiment created",
@@ -1020,16 +1027,6 @@ class AgentLoop:
                 "path_prefix": "/dashboard/workbench/",
                 "detail_path": "/dashboard/workbench/create/{id}",
             },
-            "create_prompt_version": {
-                "title": "Prompt version created",
-                "action_label": "Go to prompts",
-                "path_prefix": "/dashboard/workbench/",
-            },
-            "create_prompt_simulation": {
-                "title": "Prompt simulation created",
-                "action_label": "Go to prompts",
-                "path_prefix": "/dashboard/workbench/",
-            },
             "create_optimization_run": {
                 "title": "Optimization run created",
                 "action_label": "Go to prompts",
@@ -1041,12 +1038,7 @@ class AgentLoop:
                 "path_prefix": "/dashboard/simulate/scenarios/",
                 "detail_path": "/dashboard/simulate/scenarios/{id}",
             },
-            "create_persona": {
-                "title": "Persona created",
-                "action_label": "Go to personas",
-                "path_prefix": "/dashboard/simulate/personas/",
-            },
-            "create_agent_definition": {
+            "create_agent": {
                 "title": "Agent definition created",
                 "action_label": "Go to agent definition",
                 "path_prefix": "/dashboard/simulate/agent-definitions/",
@@ -1058,63 +1050,40 @@ class AgentLoop:
                 "path_prefix": "/dashboard/agents/",
                 "detail_path": "/dashboard/agents/playground/{id}",
             },
-            "create_simulator_agent": {
-                "title": "Simulator agent created",
-                "action_label": "Go to agent definitions",
-                "path_prefix": "/dashboard/simulate/agent-definitions/",
-            },
-            "create_run_test": {
+            "create_simulation_test": {
                 "title": "Run test created",
                 "action_label": "Go to test",
                 "path_prefix": "/dashboard/simulate/test/",
                 "detail_path": "/dashboard/simulate/test/{id}",
             },
-            "create_simulate_eval_config": {
-                "title": "Simulate eval config created",
-                "action_label": "Go to tests",
-                "path_prefix": "/dashboard/simulate/test/",
+            # Dashboards are routed at /dashboard/dashboards/:dashboardId, a
+            # sibling of observe rather than a child of it (see
+            # frontend/src/routes/sections/dashboard.jsx).
+            "create_dashboard": {
+                "title": "Dashboard created",
+                "action_label": "Go to dashboard",
+                "path_prefix": "/dashboard/dashboards/",
+                "detail_path": "/dashboard/dashboards/{id}",
             },
-            "create_annotation_label": {
-                "title": "Annotation label created",
-                "action_label": "Go to labels",
-                "path_prefix": "/dashboard/annotations/labels/",
-            },
-            "create_annotation_queue": {
-                "title": "Annotation queue created",
-                "action_label": "Go to queue",
-                "path_prefix": "/dashboard/annotations/queues/",
-                "detail_path": "/dashboard/annotations/queues/{id}",
-            },
-            "create_annotation": {
-                "title": "Annotation created",
-                "action_label": "Go to annotations",
-                "path_prefix": "/dashboard/annotations/",
-            },
-            "create_trace_annotation": {
-                "title": "Trace annotation created",
-                "action_label": "Go to observe",
+            "create_dashboard_widget": {
+                "title": "Widget added",
+                "action_label": "Go to dashboards",
                 "path_prefix": "/dashboard/observe/",
             },
-            "create_score": {
-                "title": "Score created",
-                "action_label": "Go to observe",
-                "path_prefix": "/dashboard/observe/",
-            },
-            "create_alert_monitor": {
-                "title": "Alert created",
-                "action_label": "Go to alerts",
-                "path_prefix": "/dashboard/alerts/",
+            "create_error_feed_alert_rule": {
+                "title": "Error Feed alert created",
+                "action_label": "Go to Error Feed alerts",
+                "path_prefix": "/dashboard/error-feed/alerts",
             },
             "create_api_key": {
                 "title": "API key created",
                 "action_label": "Go to keys",
                 "path_prefix": "/dashboard/keys/",
             },
-            "create_knowledge_base": {
-                "title": "Knowledge base created",
-                "action_label": "Go to knowledge base",
-                "path_prefix": "/dashboard/knowledge/",
-                "detail_path": "/dashboard/knowledge/{id}",
+            "create_workspace": {
+                "title": "Workspace created",
+                "action_label": "Go to settings",
+                "path_prefix": "/dashboard/settings/",
             },
         }
         card_info = action_map.get(

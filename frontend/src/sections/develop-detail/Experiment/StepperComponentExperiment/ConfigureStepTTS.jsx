@@ -39,8 +39,9 @@ const ConfigureStepTTS = ({
       defaultExpanded={true}
       disableGutters
       sx={{
-        border: "1px solid #E5E7EB",
-        borderRadius: "4px !important",
+        border: "1px solid",
+        borderColor: "border.default",
+        borderRadius: "8px !important",
         boxShadow: "none",
         backgroundColor: "background.default",
         "&:before": { display: "none" },
@@ -53,9 +54,9 @@ const ConfigureStepTTS = ({
       <AccordionSummary
         expandIcon={
           <Iconify
-            icon="line-md:chevron-up"
-            width={22}
-            height={22}
+            icon="solar:alt-arrow-up-linear"
+            width={20}
+            height={20}
             color="text.primary"
           />
         }
@@ -83,7 +84,7 @@ const ConfigureStepTTS = ({
             fontWeight={"fontWeightMedium"}
           >
             Prompts
-            <Typography type="span" sx={{ color: "red.500" }}>
+            <Typography type="span" sx={{ color: "status.danger.fg" }}>
               *
             </Typography>
           </Typography>
@@ -133,7 +134,7 @@ const ConfigureStepTTS = ({
             append(getDefaultPromptConfigByModelType(watchModelType));
           }}
           color={"primary"}
-          startIcon={<Iconify icon="mdi:plus" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           size="medium"
           sx={{ width: "300px", mt: 2 }}
         >

@@ -15,14 +15,11 @@ def get_observability_provider(
     project_id, provider_name: str
 ) -> Optional[ObservabilityProvider]:
     """Return the enabled ObservabilityProvider for a project/provider pair, or None."""
-    return (
-        ObservabilityProvider.objects.filter(
-            project_id=project_id,
-            provider=provider_name,
-            enabled=True,
-        )
-        .first()
-    )
+    return ObservabilityProvider.objects.filter(
+        project_id=project_id,
+        provider=provider_name,
+        enabled=True,
+    ).first()
 
 
 def get_agent_api_key(project_id, provider_name: str) -> Optional[str]:

@@ -1,47 +1,28 @@
-import Quill from "quill";
 import React from "react";
-import { createRoot } from "react-dom/client";
 import "../PromptCardEditor.css";
 import AudioEmbed from "../EmbedComponents/AudioEmbed";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
-const BlockEmbed = Quill.import("blots/block/embed");
+import MediaBlockEmbed from "./MediaBlockEmbed";
 
-class AudioBlot extends BlockEmbed {
-  static create(value) {
-    const node = super.create();
-    node.setAttribute("contenteditable", false);
-    node.setAttribute("id", value.id);
-    node.setAttribute(
-      "data-audio-data",
-      JSON.stringify({
-        url: value.url,
-        audio_name: value.name,
-        audio_size: value.size,
-        audio_type: value.mimeType,
-      }),
-    );
-
-    const root = createRoot(node);
-
-    root.render(
+class AudioBlot extends MediaBlockEmbed {
+  static renderCard(v, callbacks) {
+    const canRemove =
+      !callbacks.readOnly && typeof callbacks.handleRemoveAudio === "function";
+    return (
       <AudioPlaybackProvider>
         <AudioEmbed
-          url={value.url}
-          name={value.name}
-          size={value.size}
+          url={v.url}
+          name={v.name}
+          size={v.size}
           isEmbed
-          id={value.id}
-          onDelete={() => value.handleRemoveAudio(value.id)}
-          mimeType={value.mimeType}
+          id={v.id}
+          onDelete={
+            canRemove ? () => callbacks.handleRemoveAudio(v.id) : undefined
+          }
+          mimeType={v.mimeType}
         />
-      </AudioPlaybackProvider>,
+      </AudioPlaybackProvider>
     );
-
-    return node;
-  }
-
-  static formats() {
-    return null;
   }
 
   // Add value method to properly handle the blot's value
@@ -69,5 +50,7 @@ class AudioBlot extends BlockEmbed {
 
 AudioBlot.blotName = "AudioBlot";
 AudioBlot.tagName = "div";
+AudioBlot.mediaKind = "audio";
+AudioBlot.dataAttribute = "data-audio-data";
 
 export default AudioBlot;

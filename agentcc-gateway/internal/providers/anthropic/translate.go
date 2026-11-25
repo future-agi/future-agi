@@ -263,11 +263,18 @@ func translateMessage(msg models.Message) (anthropicMessage, error) {
 
 		// Add tool use blocks.
 		for _, tc := range msg.ToolCalls {
+			input := json.RawMessage(strings.TrimSpace(tc.Function.Arguments))
+			// Empty or malformed arguments must not discard the assistant's
+			// content when the tool use blocks are marshaled below.
+			if !json.Valid(input) || string(input) == "null" {
+				input = json.RawMessage("{}")
+			}
+
 			blocks = append(blocks, anthropicContentBlock{
 				Type:  "tool_use",
 				ID:    tc.ID,
 				Name:  tc.Function.Name,
-				Input: json.RawMessage(tc.Function.Arguments),
+				Input: input,
 			})
 		}
 
@@ -429,7 +436,8 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 		case "auto":
 			return &anthropicToolChoice{Type: "auto"}, nil
 		case "none":
-			return nil, nil // Anthropic doesn't have "none" — just omit tools.
+			// Tools stay declared so earlier tool_use turns remain valid.
+			return &anthropicToolChoice{Type: "none"}, nil
 		case "required":
 			return &anthropicToolChoice{Type: "any"}, nil
 		}

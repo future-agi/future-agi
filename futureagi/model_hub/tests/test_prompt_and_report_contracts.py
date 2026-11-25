@@ -103,7 +103,7 @@ def test_prompt_metrics_routes_scope_prompt_template_to_workspace(
 
     with patch(
         "model_hub.services.prompt_metrics.fetch_prompt_metrics_query_sql_cte",
-        return_value=[],
+        return_value=([], 0),
     ) as metrics_query:
         response = auth_client.get(
             "/model-hub/prompt/metrics/",

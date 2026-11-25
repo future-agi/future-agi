@@ -9,12 +9,15 @@ export const EVAL_STATUS = {
   COMPLETED: "completed",
   ERRORED: "errored",
   SKIPPED: "skipped",
+  // Simulate only: scoring that never finished within its time limit.
+  TIMED_OUT: "timed_out",
 };
 
 const NON_SCORE_LABELS = {
   [EVAL_STATUS.PENDING]: "Queued",
   [EVAL_STATUS.RUNNING]: "Evaluating…",
   [EVAL_STATUS.SKIPPED]: "Skipped",
+  [EVAL_STATUS.TIMED_OUT]: "Timed out",
 };
 
 // Normalize a backend status string to one of the non-score lifecycle states

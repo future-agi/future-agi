@@ -292,9 +292,6 @@ export default function PromptNodeForm({ nodeId }) {
             });
             clearSelectedNode();
           })}
-          sx={{
-            fontWeight: "fontWeightMedium",
-          }}
         >
           Save prompt
         </LoadingButton>

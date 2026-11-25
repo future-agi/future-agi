@@ -28,7 +28,7 @@ const GetStartedDemoVideo = ({
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
-          boxShadow: 24,
+          boxShadow: (theme) => theme.customShadows?.dialog,
           borderRadius: "12px",
           // py: "24px",
           // px: "32px",
@@ -90,10 +90,7 @@ const GetStartedDemoVideo = ({
                 onClick={viewDockAction}
                 sx={{
                   color: "primary.main",
-                  fontWeight: "500",
-                  fontSize: 14,
-                  px: "24px",
-                  py: "6px",
+
                   borderColor: "primary.main",
                 }}
               >
@@ -106,10 +103,6 @@ const GetStartedDemoVideo = ({
                 sx={{
                   bgcolor: "primary.main",
                   color: "primary.contrastText",
-                  fontWeight: "500",
-                  fontSize: 14,
-                  px: "24px",
-                  py: "6px",
                 }}
               >
                 {buttonTitle}

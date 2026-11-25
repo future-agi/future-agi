@@ -1,4 +1,4 @@
-import { getRandomId } from "src/utils/utils";
+import { getRandomId } from "src/utils/getRandomId";
 import { NODE_TYPES } from "../../utils/constants";
 
 /**

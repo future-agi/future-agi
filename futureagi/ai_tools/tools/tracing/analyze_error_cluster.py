@@ -264,7 +264,7 @@ class AnalyzeErrorClusterTool(BaseTool):
             top_days = weekday_counts.most_common(3)
             day_str = ", ".join(f"{day} ({count})" for day, count in top_days)
             content_parts.append(
-                "### Temporal Pattern\n\n" f"**Most active days:** {day_str}\n"
+                f"### Temporal Pattern\n\n**Most active days:** {day_str}\n"
             )
             if hour_counts:
                 top_hours = hour_counts.most_common(3)

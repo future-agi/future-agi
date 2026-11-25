@@ -60,8 +60,6 @@ def second_user(organization, workspace):
     )
 
 
-
-
 @pytest.fixture
 def manual_queue(auth_client):
     """Create a queue with manual assignment strategy."""

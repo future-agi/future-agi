@@ -1,12 +1,11 @@
 /* eslint-disable react/prop-types */
 /* eslint-disable react-refresh/only-export-components */
-import { Box, Chip, Tooltip, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { Box, Tooltip, Typography } from "@mui/material";
 import { useMemo } from "react";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import CustomTooltip from "src/components/tooltip";
-import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
-
+import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/warningTypes";
 
 export const ScoreCell = ({ value }) => {
   if (value == null)
@@ -15,26 +14,21 @@ export const ScoreCell = ({ value }) => {
         —
       </Typography>
     );
+  // Same bands as before the design system: 0.7 and up passes, below 0.3 fails.
   if (typeof value === "number")
     return (
-      <Chip
+      <StatusBadge
+        role={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "danger"}
         label={value.toFixed(2)}
-        size="small"
-        color={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "error"}
-        sx={{
-          fontSize: (t) => t.typography.s3.fontSize,
-          height: 20,
-          fontWeight: "fontWeightSemiBold",
-        }}
+        variant="badge"
+        dot={false}
+        size="sm"
       />
     );
   return (
-    <Chip
-      label={String(value)}
-      size="small"
-      color="default"
-      sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 20 }}
-    />
+    <Typography variant="s2" sx={{ color: "text.secondary" }}>
+      {String(value)}
+    </Typography>
   );
 };
 
@@ -51,14 +45,62 @@ export const normalizeRow = (raw) => {
 };
 
 export const DEFAULT_COLUMN_CONFIG = [
-  { value: "score", label: "Score", enabled: true, is_visible: true, order_index: 0 },
-  { value: "result", label: "Result", enabled: true, is_visible: true, order_index: 1 },
-  { value: "input", label: "Input", enabled: true, is_visible: true, order_index: 2 },
-  { value: "reason", label: "Reason", enabled: true, is_visible: true, order_index: 3 },
-  { value: "source", label: "Source", enabled: true, is_visible: true, order_index: 4 },
-  { value: "version", label: "Version", enabled: true, is_visible: true, order_index: 5 },
-  { value: "feedback", label: "Feedback", enabled: true, is_visible: true, order_index: 6 },
-  { value: "created_at", label: "Ran at", enabled: true, is_visible: true, order_index: 7 },
+  {
+    value: "score",
+    label: "Score",
+    enabled: true,
+    is_visible: true,
+    order_index: 0,
+  },
+  {
+    value: "result",
+    label: "Result",
+    enabled: true,
+    is_visible: true,
+    order_index: 1,
+  },
+  {
+    value: "input",
+    label: "Input",
+    enabled: true,
+    is_visible: true,
+    order_index: 2,
+  },
+  {
+    value: "reason",
+    label: "Reason",
+    enabled: true,
+    is_visible: true,
+    order_index: 3,
+  },
+  {
+    value: "source",
+    label: "Source",
+    enabled: true,
+    is_visible: true,
+    order_index: 4,
+  },
+  {
+    value: "version",
+    label: "Version",
+    enabled: true,
+    is_visible: true,
+    order_index: 5,
+  },
+  {
+    value: "feedback",
+    label: "Feedback",
+    enabled: true,
+    is_visible: true,
+    order_index: 6,
+  },
+  {
+    value: "created_at",
+    label: "Ran at",
+    enabled: true,
+    is_visible: true,
+    order_index: 7,
+  },
 ];
 
 export const COLUMN_CONFIG_URL_PARAM = "cols";
@@ -70,7 +112,6 @@ export const encodeColumnConfig = (cols) =>
     .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
     .map((c) => (c.enabled && c.is_visible ? c.value : `~${c.value}`))
     .join(",");
-
 
 export const decodeColumnConfig = (str, base) => {
   if (!str) return null;
@@ -106,21 +147,20 @@ export const decodeColumnConfig = (str, base) => {
   return result.length ? result : null;
 };
 
-
-export const StatPill = ({ label, value, color }) => (
+export const StatPill = ({ label, value }) => (
   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
     <Typography variant="s3" color="text.secondary">
       {label}:
     </Typography>
-    <Typography variant="s2" fontWeight="fontWeightBold" color={color}>
+    <Typography variant="s2" fontWeight="fontWeightSemiBold">
       {value}
     </Typography>
   </Box>
 );
 
-
 export const DATE_OPTION_TO_PERIOD = {
   "30 mins": "30m",
+  "1 hr": "1h",
   "6 hrs": "6h",
   Today: "1d",
   Yesterday: "1d",
@@ -133,7 +173,8 @@ export const DATE_OPTION_TO_PERIOD = {
 };
 
 export const periodForRange = (start, end) => {
-  const hours = (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000;
+  const hours =
+    (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000;
   if (!(hours > 0)) return "30d";
   if (hours <= 1) return "30m";
   if (hours <= 6) return "6h";
@@ -144,7 +185,6 @@ export const periodForRange = (start, end) => {
   if (hours <= 24 * 180) return "180d";
   return "365d";
 };
-
 
 const indicatorColumn = {
   id: "indicator",
@@ -159,14 +199,14 @@ const indicatorColumn = {
         ? "transparent"
         : typeof v === "number"
           ? v >= 0.7
-            ? "success.main"
+            ? "status.success.solid"
             : v >= 0.3
-              ? "warning.main"
-              : "error.main"
+              ? "status.warning.solid"
+              : "status.danger.solid"
           : v === 1
-            ? "success.main"
+            ? "status.success.solid"
             : v === 0
-              ? "error.main"
+              ? "status.danger.solid"
               : "text.disabled";
     return (
       <Box
@@ -176,11 +216,12 @@ const indicatorColumn = {
   },
 };
 
-
 const renderResult = ({ getValue, row: tableRow }) => {
   const v = getValue();
   const warnings = tableRow.original?.warnings || [];
-  const partial = warnings.find?.((w) => w?.type === PARTIAL_INPUT_WARNING_TYPE);
+  const partial = warnings.find?.(
+    (w) => w?.type === PARTIAL_INPUT_WARNING_TYPE,
+  );
   const partialBadge = partial ? (
     <CustomTooltip
       show
@@ -191,27 +232,21 @@ const renderResult = ({ getValue, row: tableRow }) => {
       }
     >
       <Box
-        sx={(theme) => ({
+        sx={{
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
           width: 18,
           height: 18,
           borderRadius: "50%",
-          backgroundColor: alpha(
-            theme.palette.warning.main,
-            theme.palette.mode === "dark" ? 0.24 : 0.16,
-          ),
-          color:
-            theme.palette.mode === "dark"
-              ? theme.palette.warning.light
-              : theme.palette.warning.dark,
+          backgroundColor: "status.warning.bg",
+          color: "status.warning.fg",
           cursor: "help",
-        })}
+        }}
         data-testid="usage-partial-input-warning"
       >
         <Iconify
-          icon="material-symbols:warning-rounded"
+          icon="solar:danger-triangle-linear"
           width="14px"
           height="14px"
         />
@@ -223,13 +258,7 @@ const renderResult = ({ getValue, row: tableRow }) => {
     if (tableRow.original?.status === "error") {
       return (
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Chip
-            label="Error"
-            size="small"
-            color="error"
-            variant="outlined"
-            sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 20 }}
-          />
+          <StatusBadge status="error" label="Error" />
           {partialBadge}
         </Box>
       );
@@ -240,13 +269,13 @@ const renderResult = ({ getValue, row: tableRow }) => {
   const isFailed = v === "Failed" || v === "Fail";
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-      <Chip
-        label={v}
-        size="small"
-        color={isPassed ? "success" : isFailed ? "error" : "default"}
-        variant="outlined"
-        sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 20 }}
-      />
+      {isPassed || isFailed ? (
+        <StatusBadge status={isPassed ? "passed" : "failed"} label={v} />
+      ) : (
+        <Typography variant="s2" sx={{ color: "text.secondary" }}>
+          {v}
+        </Typography>
+      )}
       {partialBadge}
     </Box>
   );
@@ -290,12 +319,9 @@ const renderSource = ({ getValue }) => {
           ? "Tracer"
           : v;
   return (
-    <Chip
-      label={label}
-      size="small"
-      variant="outlined"
-      sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 18 }}
-    />
+    <Typography variant="s3" noWrap sx={{ color: "text.tertiary" }}>
+      {label}
+    </Typography>
   );
 };
 
@@ -310,12 +336,13 @@ const renderVersion = ({ getValue }) => {
   const label =
     typeof v === "number" || !String(v).startsWith("v") ? `v${v}` : String(v);
   return (
-    <Chip
-      label={label}
-      size="small"
-      variant="outlined"
-      sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 18 }}
-    />
+    <Typography
+      variant="s3"
+      noWrap
+      sx={{ color: "text.tertiary", fontVariantNumeric: "tabular-nums" }}
+    >
+      {label}
+    </Typography>
   );
 };
 
@@ -323,28 +350,26 @@ const renderFeedback = ({ row: tableRow }) => {
   const original = tableRow.original;
   if (original.composite) {
     const childCount =
-      original.detail?.total_children ??
-      original.detail?.children?.length ??
-      0;
+      original.detail?.total_children ?? original.detail?.children?.length ?? 0;
     return (
       <Tooltip title={`${childCount} child evaluators`}>
-        <Chip
-          label={`${childCount}`}
-          size="small"
-          icon={
-            <Iconify
-              icon="mingcute:grid-2-line"
-              width={12}
-              sx={{ ml: "4px !important" }}
-            />
-          }
-          variant="outlined"
+        <Box
+          component="span"
           sx={{
-            fontSize: (t) => t.typography.s3.fontSize,
-            height: 18,
-            fontWeight: "fontWeightSemiBold",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 0.5,
+            color: "text.tertiary",
           }}
-        />
+        >
+          <Iconify icon="solar:widget-4-linear" width={12} />
+          <Typography
+            variant="s3"
+            sx={{ fontVariantNumeric: "tabular-nums", color: "inherit" }}
+          >
+            {childCount}
+          </Typography>
+        </Box>
       </Tooltip>
     );
   }
@@ -354,13 +379,12 @@ const renderFeedback = ({ row: tableRow }) => {
   return (
     <Tooltip title={`Feedback: ${fb.value}`}>
       <Iconify
-        icon={
-          fb.value === "passed"
-            ? "mingcute:thumb-up-2-fill"
-            : "mingcute:thumb-down-2-fill"
-        }
+        icon={fb.value === "passed" ? "solar:like-bold" : "solar:dislike-bold"}
         width={14}
-        sx={{ color: fb.value === "passed" ? "success.main" : "error.main" }}
+        sx={{
+          color:
+            fb.value === "passed" ? "status.success.fg" : "status.danger.fg",
+        }}
       />
     </Tooltip>
   );
@@ -404,7 +428,12 @@ const COLUMN_DEFS = {
   reason: { meta: { flex: 1.5 }, minSize: 150, cell: renderReason },
   source: { size: 100, cell: renderSource },
   version: { size: 80, cell: renderVersion },
-  feedback: { header: "", size: 50, enableSorting: false, cell: renderFeedback },
+  feedback: {
+    header: "",
+    size: 50,
+    enableSorting: false,
+    cell: renderFeedback,
+  },
   created_at: { size: 140, cell: renderCreatedAt },
 };
 
@@ -412,7 +441,9 @@ const COLUMN_DEFS = {
 export const useColumns = (columnConfig) =>
   useMemo(() => {
     const source =
-      columnConfig && columnConfig.length ? columnConfig : DEFAULT_COLUMN_CONFIG;
+      columnConfig && columnConfig.length
+        ? columnConfig
+        : DEFAULT_COLUMN_CONFIG;
     const dynamic = source
       .filter((c) => c.enabled && c.is_visible)
       .slice()

@@ -646,7 +646,7 @@ const EvalsConfigTab = () => {
               py={theme.spacing(2)}
               px={theme.spacing(1.5)}
               border={`1px solid`}
-              borderColor={"black.50"}
+              borderColor={"divider"}
               borderRadius={theme.spacing(0.5)}
               flexDirection={"column"}
               gap={theme.spacing(1.5)}

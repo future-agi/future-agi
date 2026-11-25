@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "repository": "future-agi/future-agi",
+  "cases": [
+    {
+      "id": "grid-refresh-obsolete-read",
+      "introducing_pr": 2716,
+      "fixing_pr": 3081,
+      "category": "U",
+      "changed_files": [
+        "frontend/src/sections/projects/LLMTracing/SpanGrid.jsx",
+        "frontend/src/sections/projects/LLMTracing/TraceGrid.jsx"
+      ],
+      "expected_finding": "A refresh during an in-flight span or trace grid load completes an obsolete read without retrying it, leaving the same-cache block failed.",
+      "checklist_section": "Testing & scenarios"
+    },
+    {
+      "id": "score-cell-missing-result",
+      "introducing_pr": 255,
+      "fixing_pr": 291,
+      "category": "U",
+      "changed_files": [
+        "frontend/src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/EvaluateCell.jsx"
+      ],
+      "expected_finding": "For SCORE output without data.result, the early return null still bypasses fallback rendering and leaves the cell blank despite the zero-score fix.",
+      "checklist_section": "Correctness & logic"
+    },
+    {
+      "id": "provision-dropped-scenarios",
+      "introducing_pr": 3065,
+      "fixing_pr": 3217,
+      "category": "P",
+      "changed_files": [
+        "futureagi/simulate/services/hosted_harness.py"
+      ],
+      "expected_finding": "provision_scenarios rejects a valid finished suite when live registration rows still include scenarios dropped during authoring, a race exposed by large suites.",
+      "checklist_section": "Correctness & logic"
+    },
+    {
+      "id": "eval-tag-list-contract",
+      "introducing_pr": 883,
+      "fixing_pr": 1413,
+      "category": "C",
+      "changed_files": [
+        "futureagi/model_hub/serializers/develop_dataset_contracts.py"
+      ],
+      "expected_finding": "Declaring eval_tag as JSONField generates an object schema for a list of strings, so the frontend Zod contract check warns on every fetch.",
+      "checklist_section": "Contracts, types & codegen"
+    },
+    {
+      "id": "function-eval-threshold-keyword",
+      "introducing_pr": 1321,
+      "fixing_pr": 1491,
+      "category": "U",
+      "changed_files": [
+        "futureagi/evaluations/engine/instance.py"
+      ],
+      "expected_finding": "The pass_threshold gate checks only function_eval and still adds the keyword to code/function evaluators identified by eval_type_id, whose constructors reject it.",
+      "checklist_section": "Contracts, types & codegen"
+    },
+    {
+      "id": "eval-logger-dict-dispatch",
+      "introducing_pr": 491,
+      "fixing_pr": 618,
+      "category": "U",
+      "changed_files": [
+        "futureagi/tracer/utils/eval.py"
+      ],
+      "expected_finding": "The two new EvalLogger isinstance dispatch chains copy the broken dispatch and write dict-shaped results only to output_str, leaving the typed output columns empty and frontend cells blank.",
+      "checklist_section": "Correctness & logic"
+    },
+    {
+      "id": "span-mapping-column-fields",
+      "introducing_pr": 402,
+      "fixing_pr": 471,
+      "category": "U",
+      "changed_files": [
+        "futureagi/tracer/utils/eval.py"
+      ],
+      "expected_finding": "_resolve_span_path reads only span_attributes, so mappings to span columns such as latency_ms, cost and tokens fail instead of resolving their values.",
+      "checklist_section": "Correctness & logic"
+    },
+    {
+      "id": "eval-runtime-save-roundtrip",
+      "introducing_pr": 206,
+      "fixing_pr": 416,
+      "category": "V",
+      "changed_files": [
+        "frontend/src/sections/tasks/components/TaskConfigPanel.jsx",
+        "frontend/src/sections/test-detail/TestDetailConfigureEval.jsx"
+      ],
+      "expected_finding": "When data_injection is present, the save payload replaces run_config with only data_injection, discarding runtime overrides that disappear on save and reopen.",
+      "checklist_section": "Correctness & logic"
+    },
+    {
+      "id": "catalog-snapshot-revision-recovery",
+      "introducing_pr": 2381,
+      "fixing_pr": 2593,
+      "category": "P",
+      "changed_files": [
+        "fi-collector/pkg/propertycatalog/checkpoint_loader.go",
+        "futureagi/tracer/services/clickhouse/v2/property_catalog/projection.py"
+      ],
+      "expected_finding": "Production recovery rejects the backfill's valid snapshot receipts and resolves definitions by source_version alone across catalog revisions, preventing startup or selecting the wrong revision.",
+      "checklist_section": "Migrations & data"
+    },
+    {
+      "id": "eval-materialize-memory-failure",
+      "introducing_pr": 1220,
+      "fixing_pr": 1308,
+      "category": "P",
+      "changed_files": [
+        "futureagi/tracer/services/eval_tasks/entries.py",
+        "futureagi/tfc/temporal/eval_tasks/workflows.py"
+      ],
+      "expected_finding": "Materialization reads wide JSON columns when it only needs span identifiers, exhausting ClickHouse memory under production load, and the workflow failure leaves the task marked running.",
+      "checklist_section": "Performance"
+    },
+    {
+      "id": "scenario-count-seeded-store",
+      "introducing_pr": 3566,
+      "fixing_pr": 3652,
+      "category": "V",
+      "changed_files": [
+        "frontend/src/sections/simulate/environments/workspace/EnvironmentWorkspace.jsx",
+        "frontend/src/sections/simulate/environments/workspace/runBlocked.js"
+      ],
+      "expected_finding": "The scenario count and run gating read a client store seeded only on load, so editing or deleting scenarios leaves the workspace count and run availability stale.",
+      "checklist_section": "Frontend"
+    },
+    {
+      "id": "credential-sharing-policy",
+      "introducing_pr": 3065,
+      "fixing_pr": 3177,
+      "category": "U",
+      "changed_files": [
+        "futureagi/simulate/services/hosted_harness_gateway.py"
+      ],
+      "expected_finding": "a private credential was shared more widely than its policy allowed",
+      "checklist_section": "Security"
+    },
+    {
+      "id": "span-mapping-json-string-parent",
+      "introducing_pr": 402,
+      "fixing_pr": 455,
+      "category": "U",
+      "changed_files": [
+        "futureagi/tracer/utils/eval.py"
+      ],
+      "expected_finding": "The trace resolver walks only raw span_attributes and does not parse JSON-string input.value parents, so nested paths offered by the picker fail at run time.",
+      "checklist_section": "Contracts, types & codegen"
+    },
+    {
+      "id": "agent-graph-fit-fullscreen",
+      "introducing_pr": 767,
+      "fixing_pr": 1394,
+      "category": "V",
+      "changed_files": [
+        "frontend/src/sections/projects/LLMTracing/GraphSection/AgentPath.jsx"
+      ],
+      "expected_finding": "Fit resets zoom to 1 instead of fitting the graph to its viewport, and fullscreen does not provide usable scrolling, leaving dense traces cut off.",
+      "checklist_section": "Testing & scenarios"
+    },
+    {
+      "id": "manual-queue-unassigned-items",
+      "introducing_pr": 362,
+      "fixing_pr": 401,
+      "category": "U",
+      "changed_files": [
+        "frontend/src/sections/annotations/queues/annotate/annotate-workspace-view.jsx"
+      ],
+      "expected_finding": "Removing the hasAssignments guard blocks every annotator from an unassigned item in a manual queue instead of blocking only items assigned to someone else.",
+      "checklist_section": "Correctness & logic"
+    },
+    {
+      "id": "environment-chat-checkpoint-sync",
+      "introducing_pr": 3065,
+      "fixing_pr": 3166,
+      "category": "V",
+      "changed_files": [
+        "futureagi/simulate/services/hosted_harness_conversation.py"
+      ],
+      "expected_finding": "Edits made through environment chat are saved only to the conversation workspace and never promoted to the environment, leaving the Scenarios tab and subsequent run inputs stale.",
+      "checklist_section": "Correctness & logic"
+    }
+  ]
+}

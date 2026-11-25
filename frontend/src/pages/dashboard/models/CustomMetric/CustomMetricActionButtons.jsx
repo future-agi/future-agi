@@ -1,4 +1,4 @@
-import { Box } from "@mui/material";
+import { Box, IconButton } from "@mui/material";
 import React from "react";
 import "./customMetric.css";
 import Iconify from "src/components/iconify/iconify";
@@ -13,11 +13,14 @@ const CustomMetricActionButtons = ({ onEditClick }) => {
       onClick={(e) => e.stopPropagation()}
     >
       <CustomTooltip title="Edit" placement="top" arrow>
-        <Iconify
+        <IconButton
+          size="small"
+          className="row-hover-action"
+          aria-label="Edit"
           onClick={() => onEditClick()}
-          icon="solar:pen-bold"
-          sx={{ color: "primary.main" }}
-        />
+        >
+          <Iconify icon="solar:pen-bold" sx={{ color: "primary.main" }} />
+        </IconButton>
       </CustomTooltip>
     </Box>
   );

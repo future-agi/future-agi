@@ -1,6 +1,17 @@
 import "@testing-library/jest-dom";
 import { vi } from "vitest";
 
+// ApexCharts measures real DOM layout jsdom does not provide, so it throws on
+// render. Stub react-apexcharts globally — chart tests assert the data/props
+// fed to it, never its pixels.
+vi.mock("react-apexcharts", () => ({
+  default: () => null,
+}));
+
+vi.mock("src/sections/simulate/environments/hooks/useSimulationAccess", () => ({
+  default: vi.fn(() => ({ canEdit: true, canRun: true })),
+}));
+
 // Add any additional global test setup here
 // For example, you might want to mock certain modules globally:
 

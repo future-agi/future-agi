@@ -1,0 +1,12 @@
+<!-- Query defaults for the standalone install: two threads per query, no query log. -->
+<clickhouse>
+    <profiles>
+        <default>
+            <max_threads>2</max_threads>
+            <max_block_size>8192</max_block_size>
+            <input_format_parallel_parsing>0</input_format_parallel_parsing>
+            <output_format_parallel_formatting>0</output_format_parallel_formatting>
+            <log_queries>0</log_queries>
+        </default>
+    </profiles>
+</clickhouse>

@@ -42,7 +42,7 @@ const DictInput = ({ control, fieldConfig, config, configKey }) => {
             size="small"
             onClick={() => append({ key: "", value: "" })}
           >
-            <Iconify icon="mdi:plus" width={16} />
+            <Iconify icon="solar:add-linear" width={16} />
           </IconButton>
         </Box>
         <HelperText text={helperText} />
@@ -56,7 +56,7 @@ const DictInput = ({ control, fieldConfig, config, configKey }) => {
             Value
           </Typography>
           <IconButton size="small" sx={{ visibility: "hidden" }}>
-            <Iconify icon="mdi:minus" width={12} />
+            <Iconify icon="solar:minus-linear" width={12} />
           </IconButton>
         </Box>
       </ShowComponent>
@@ -84,7 +84,7 @@ const DictInput = ({ control, fieldConfig, config, configKey }) => {
               fullWidth
             />
             <IconButton size="small" onClick={() => remove(index)}>
-              <Iconify icon="mdi:minus" width={12} />
+              <Iconify icon="solar:minus-linear" width={12} />
             </IconButton>
           </Box>
         ))}

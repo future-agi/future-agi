@@ -135,6 +135,7 @@ export default function GroupsGrid({ isEvalsView, onGroupSelect }) {
     setPlaygroundEvaluation(null);
   };
 
+  const isFirstRun = !isLoading && allGroups.length === 0 && !debouncedSearch;
   return (
     <>
       <Stack
@@ -146,36 +147,40 @@ export default function GroupsGrid({ isEvalsView, onGroupSelect }) {
           overflow: "hidden",
         }}
       >
-        <Stack
-          justifyContent={"space-between"}
-          direction={"row"}
-          alignItems={"center"}
-        >
-          <FormSearchField
-            size="small"
-            placeholder="Search"
-            sx={{ minWidth: "360px" }}
-            searchQuery={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            disabled={isLoading && !searchQuery}
-          />
-          <Button
-            onClick={handleCreate}
-            color="primary"
-            variant="outlined"
-            disabled={
-              !RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role]
-            }
-            startIcon={
-              <SvgColor
-                src="/assets/icons/ic_add.svg"
-                sx={{ color: "inherit" }}
-              />
-            }
+        {!isFirstRun && (
+          <Stack
+            justifyContent={"space-between"}
+            direction={"row"}
+            alignItems={"center"}
           >
-            Create Groups
-          </Button>
-        </Stack>
+            <FormSearchField
+              size="small"
+              placeholder="Search"
+              sx={{ minWidth: "360px" }}
+              searchQuery={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              disabled={isLoading && !searchQuery}
+            />
+            <Button
+              onClick={handleCreate}
+              color="primary"
+              variant="outlined"
+              disabled={
+                !RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][
+                  role
+                ]
+              }
+              startIcon={
+                <SvgColor
+                  src="/assets/icons/ic_add.svg"
+                  sx={{ color: "inherit" }}
+                />
+              }
+            >
+              Create Groups
+            </Button>
+          </Stack>
+        )}
 
         <Stack gap={1} sx={{ flex: 1, overflow: "hidden" }}>
           <Typography
@@ -281,11 +286,24 @@ export default function GroupsGrid({ isEvalsView, onGroupSelect }) {
 
             {!isLoading && allGroups.length === 0 && !debouncedSearch && (
               <EmptyLayout
-                title={"No groups has been added"}
-                description={
-                  "Create a new group to organize related evaluations with shared variable mappings."
-                }
+                title="No groups yet"
+                description="Group related evals so they share variable mappings."
                 hideIcon
+                action={
+                  <Button
+                    onClick={handleCreate}
+                    color="primary"
+                    variant="contained"
+                    size="small"
+                    disabled={
+                      !RolePermission.EVALS[
+                        PERMISSIONS.EDIT_CREATE_DELETE_EVALS
+                      ][role]
+                    }
+                  >
+                    Create group
+                  </Button>
+                }
               />
             )}
           </Box>

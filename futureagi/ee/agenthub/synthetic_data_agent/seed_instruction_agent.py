@@ -56,10 +56,10 @@ class SeedInstructionAgent:
 
     def __init__(
         self,
-        model_name: str = ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name,
-        temperature: float = ModelConfigs.VERTEX_GEMINI_2_5_PRO.temperature,
-        max_tokens: int = ModelConfigs.VERTEX_GEMINI_2_5_PRO.max_tokens,
-        provider: str = ModelConfigs.VERTEX_GEMINI_2_5_PRO.provider,
+        model_name: str = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name,
+        temperature: float = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.temperature,
+        max_tokens: int = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.max_tokens,
+        provider: str = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.provider,
         llm: Optional[LLM] = None,
     ):
         """

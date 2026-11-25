@@ -44,7 +44,7 @@ const ThemeSelectorChild = React.forwardRef(({ setOpen }, popperTimeoutRef) => {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: 1,
-        boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.1)",
+        boxShadow: (theme) => theme.customShadows?.dropdown,
         p: 0.5,
         minWidth: "160px",
         display: "flex",
@@ -66,7 +66,7 @@ const ThemeSelectorChild = React.forwardRef(({ setOpen }, popperTimeoutRef) => {
               px: 1,
               py: 0.5,
               cursor: "pointer",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               backgroundColor: isActive ? "background.neutral" : "transparent",
               "&:hover": {
                 backgroundColor: "background.neutral",
@@ -78,20 +78,20 @@ const ThemeSelectorChild = React.forwardRef(({ setOpen }, popperTimeoutRef) => {
           >
             <Iconify
               icon={option.icon}
-              width={18}
+              width={16}
               sx={{ color: "text.primary" }}
             />
             <Typography
               typography="s2_1"
               color="text.primary"
-              fontWeight={500}
+              fontWeight={400}
               sx={{ flex: 1 }}
             >
               {option.label}
             </Typography>
             {isActive && (
               <Iconify
-                icon="mdi:check"
+                icon="solar:check-linear"
                 width={16}
                 sx={{ color: "primary.main" }}
               />

@@ -137,3 +137,49 @@ def get_error_localizer_state_by_eval_config(
             "input_types": task.input_types,
         }
     return state_by_eval_config
+
+
+def get_observe_error_localizer_state(
+    eval_logger_id: UUID | str | None,
+    *,
+    organization: Any,
+) -> ErrorLocalizerState | None:
+    """Return the localization task state for one Observe eval result.
+
+    Observe tasks are keyed by ``source_id = EvalLogger.id``. The failure or
+    skip reason lives only on the task, so readers that show a span eval need
+    this to tell "failed" apart from "never ran".
+
+    Reads the primary: the result comes from ClickHouse, which can be ahead
+    of a lagging replica, so the worker's task row may be seconds old.
+    """
+    if not eval_logger_id or organization is None:
+        return None
+    task = (
+        ErrorLocalizerTask.no_workspace_objects.using("default")
+        .filter(
+            source=ErrorLocalizerSource.OBSERVE,
+            source_id=str(eval_logger_id),
+            organization=organization,
+            deleted=False,
+        )
+        .only(
+            "status",
+            "error_analysis",
+            "error_message",
+            "selected_input_key",
+            "input_data",
+            "input_types",
+        )
+        .first()
+    )
+    if task is None:
+        return None
+    return {
+        "error_analysis": task.error_analysis or None,
+        "error_localizer_status": task.status,
+        "error_localizer_message": task.error_message or None,
+        "selected_input_key": task.selected_input_key,
+        "input_data": task.input_data,
+        "input_types": task.input_types,
+    }

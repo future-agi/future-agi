@@ -1,15 +1,28 @@
 import { describe, expect, it } from "vitest";
+import { FILTER_CONTRACT, COLUMN_TYPE_ALIASES } from "src/api/contracts/filter-contract.generated";
 import {
   CREATED_AT,
   buildDefaultDateEntry,
   combineGraphFilters,
+  isCreatedAtFilter,
+  resolveAgentGraphProjectScopes,
   selectPanelGraphFilters,
+  singleProjectIdFromFilters,
 } from "../graphFilterUtils";
-import { FILTER_FOR_HAS_EVAL } from "../../common";
+import {
+  FILTER_FOR_ERRORS,
+  FILTER_FOR_HAS_EVAL,
+  FILTER_FOR_NON_ANNOTATED,
+} from "../../common";
 
 const dateFilter = {
   dateFilter: ["2026-07-01T00:00:00.000Z", "2026-07-08T00:00:00.000Z"],
 };
+
+const nonNativeTypes = [
+  ...FILTER_CONTRACT.columnTypes.allowed.filter((type) => !["NORMAL", "SYSTEM_METRIC"].includes(type)),
+  ...Object.keys(COLUMN_TYPE_ALIASES).filter((alias) => COLUMN_TYPE_ALIASES[alias] !== "SYSTEM_METRIC"),
+];
 
 const statusFilter = {
   id: "fe-key-1",
@@ -42,7 +55,58 @@ const metricFilter = {
   },
 };
 
+const nameFilter = {
+  id: "fe-key-3",
+  column_id: "trace_name",
+  filter_config: {
+    col_type: "NORMAL",
+    filter_type: "text",
+    filter_op: "contains",
+    filter_value: "checkout",
+  },
+};
+
+const propertyFilter = {
+  id: "fe-key-4",
+  registryId: "custom_attribute:customer.plan",
+  column_id: "customer.plan",
+  filter_config: {
+    col_type: "SPAN_ATTRIBUTE",
+    filter_type: "text",
+    filter_op: "equals",
+    filter_value: "enterprise",
+  },
+};
+
 describe("combineGraphFilters", () => {
+  it.each(nonNativeTypes)("does not borrow native time from explicit %s", (col_type) => {
+    const typed = { column_id: "created_at", filter_config: { col_type, filter_type: "datetime", filter_op: "between", filter_value: dateFilter.dateFilter } };
+    expect(isCreatedAtFilter(typed)).toBe(false);
+    expect(combineGraphFilters({ filters: [typed], dateFilter })).toEqual([typed, ...buildDefaultDateEntry([], dateFilter)]);
+    expect(combineGraphFilters({ filters: [createdAtFilter, typed], dateFilter })).toEqual([typed, createdAtFilter]);
+  });
+
+  it.each([undefined, "NORMAL", "SYSTEM_METRIC", "system"])("keeps native date scope for %s", (col_type) => {
+    const native = { ...createdAtFilter, filter_config: { ...createdAtFilter.filter_config, ...(col_type && { col_type }) } };
+    expect(isCreatedAtFilter(native)).toBe(true);
+    expect(combineGraphFilters({ filters: [native], dateFilter })).toEqual([native]);
+  });
+
+  it("prefers nested source identity over conflicting legacy root date metadata", () => {
+    const typed = { ...createdAtFilter, col_type: "SYSTEM_METRIC", filter_config: { ...createdAtFilter.filter_config, col_type: "SPAN_ATTRIBUTE" } };
+    expect(isCreatedAtFilter(typed)).toBe(false);
+  });
+
+  it("source audit: raw created_at must not replace the selected graph time window", () => {
+    const raw = { column_id: "created_at", filter_config: { col_type: "SPAN_ATTRIBUTE", filter_type: "text", filter_op: "equals", filter_value: "customer-value" } };
+    expect(combineGraphFilters({ filters: [raw], dateFilter })).toEqual([raw, ...buildDefaultDateEntry([], dateFilter)]);
+  });
+
+  it("source audit: raw created_at must not be deduplicated against a native date", () => {
+    const raw = { column_id: "created_at", filter_config: { col_type: "SPAN_ATTRIBUTE", filter_type: "text", filter_op: "not_equals", filter_value: "customer-value" } };
+    expect(combineGraphFilters({ filters: [createdAtFilter, raw], dateFilter })).toEqual([raw, createdAtFilter]);
+  });
+
   it("users/sessions mode (extraFilters omitted): non-date filters survive", () => {
     const result = combineGraphFilters({
       filters: [statusFilter, createdAtFilter],
@@ -53,26 +117,30 @@ describe("combineGraphFilters", () => {
     expect(result.map((f) => f.column_id)).toEqual(["status", CREATED_AT]);
   });
 
-  it("trace/span mode with EMPTY extraFilters still strips col-level filters", () => {
-    // Regression: the mode gate must key off prop presence, not emptiness.
-    // An `extraFilters = []` default made this branch run for users/sessions.
+  it("trace/span mode preserves validated filters when extraFilters is empty", () => {
     const result = combineGraphFilters({
       filters: [statusFilter, createdAtFilter],
       extraFilters: [],
       dateFilter,
       hasEvalFilter: false,
     });
-    expect(result.map((f) => f.column_id)).toEqual([CREATED_AT]);
+    expect(result.map((f) => f.column_id)).toEqual(["status", CREATED_AT]);
   });
 
-  it("trace/span mode: toolbar extraFilters are forwarded", () => {
+  it("preserves status, name, and property filters while applying graph filters", () => {
     const result = combineGraphFilters({
-      filters: [statusFilter],
+      filters: [statusFilter, nameFilter, propertyFilter, createdAtFilter],
       extraFilters: [metricFilter],
       dateFilter,
       hasEvalFilter: false,
     });
-    expect(result.map((f) => f.column_id)).toEqual(["latency", CREATED_AT]);
+    expect(result).toEqual([
+      statusFilter,
+      nameFilter,
+      propertyFilter,
+      metricFilter,
+      createdAtFilter,
+    ]);
   });
 
   it("adds a default created_at entry only when none exists", () => {
@@ -82,9 +150,9 @@ describe("combineGraphFilters", () => {
       dateFilter,
       hasEvalFilter: false,
     });
-    expect(
-      withExplicit.filter((f) => f.column_id === CREATED_AT),
-    ).toHaveLength(1);
+    expect(withExplicit.filter((f) => f.column_id === CREATED_AT)).toHaveLength(
+      1,
+    );
 
     const withDefault = combineGraphFilters({
       filters: [],
@@ -97,6 +165,26 @@ describe("combineGraphFilters", () => {
     expect(withDefault[0].filter_config.filter_op).toBe("between");
   });
 
+  it("keeps one created_at filter with deterministic source precedence", () => {
+    const explicitGraphDateFilter = {
+      ...createdAtFilter,
+      filter_config: {
+        ...createdAtFilter.filter_config,
+        filter_value: ["2026-06-01T00:00:00.000Z", "2026-06-02T00:00:00.000Z"],
+      },
+    };
+
+    const result = combineGraphFilters({
+      filters: [statusFilter, createdAtFilter],
+      extraFilters: [metricFilter, explicitGraphDateFilter],
+      dateFilter,
+      hasEvalFilter: false,
+    });
+
+    expect(result).toEqual([statusFilter, metricFilter, createdAtFilter]);
+    expect(result.filter(isCreatedAtFilter)).toHaveLength(1);
+  });
+
   it("appends the has-eval filter when enabled", () => {
     const result = combineGraphFilters({
       filters: [],
@@ -105,6 +193,48 @@ describe("combineGraphFilters", () => {
       hasEvalFilter: true,
     });
     expect(result).toEqual([FILTER_FOR_HAS_EVAL]);
+  });
+
+  it.each([
+    [false, false, []],
+    [true, false, ["status"]],
+    [false, true, ["has_annotation"]],
+    [true, true, ["status", "has_annotation"]],
+  ])(
+    "keeps Display filters aligned for errors=%s nonAnnotated=%s",
+    (errors, nonAnnotated, expectedColumns) => {
+      const metricFilters = [
+        ...(errors ? [FILTER_FOR_ERRORS] : []),
+        ...(nonAnnotated ? [FILTER_FOR_NON_ANNOTATED] : []),
+      ];
+      const result = combineGraphFilters({
+        filters: [],
+        extraFilters: [],
+        metricFilters,
+        dateFilter: undefined,
+        hasEvalFilter: false,
+      });
+
+      expect(result.map((filter) => filter.column_id)).toEqual(expectedColumns);
+    },
+  );
+
+  it("composes Basic, Display, eval-only, and date filters once", () => {
+    const result = combineGraphFilters({
+      filters: [],
+      extraFilters: [metricFilter],
+      metricFilters: [FILTER_FOR_ERRORS, FILTER_FOR_NON_ANNOTATED],
+      dateFilter,
+      hasEvalFilter: true,
+    });
+
+    expect(result.map((filter) => filter.column_id)).toEqual([
+      "latency",
+      "status",
+      "has_annotation",
+      "has_eval",
+      CREATED_AT,
+    ]);
   });
 });
 
@@ -133,5 +263,103 @@ describe("selectPanelGraphFilters", () => {
   it("hydrates from primary filters otherwise", () => {
     expect(selectPanelGraphFilters("primary", primary, compare)).toBe(primary);
     expect(selectPanelGraphFilters(undefined, primary, compare)).toBe(primary);
+  });
+});
+
+describe("singleProjectIdFromFilters", () => {
+  it.each(nonNativeTypes)("does not borrow project scope from explicit %s", (col_type) => {
+    const typed = { column_id: "project_id", filter_config: { col_type, filter_type: "text", filter_op: "in", filter_value: ["raw-project"] } };
+    const native = { column_id: "project_id", filter_config: { col_type: "SYSTEM_METRIC", filter_type: "text", filter_op: "equals", filter_value: "native-project" } };
+    expect(singleProjectIdFromFilters([typed])).toBeNull();
+    expect(singleProjectIdFromFilters([typed, native])).toBe("native-project");
+    expect(resolveAgentGraphProjectScopes({ primaryFilters: [typed], compareFilters: [native] })).toEqual({ primaryProjectId: null, compareProjectId: "native-project" });
+  });
+
+  it.each([undefined, "NORMAL", "SYSTEM_METRIC", "system"])("keeps positive native project scope for %s", (col_type) => {
+    const native = { column_id: "project_id", filter_config: { filter_type: "text", filter_op: "in", filter_value: ["native-project"], ...(col_type && { col_type }) } };
+    expect(singleProjectIdFromFilters([native])).toBe("native-project");
+    expect(singleProjectIdFromFilters([{ ...native, filter_config: { ...native.filter_config, filter_op: "not_in" } }])).toBeNull();
+  });
+
+  it("prefers nested source identity over conflicting legacy root project metadata", () => {
+    expect(singleProjectIdFromFilters([{ column_id: "project_id", col_type: "SYSTEM_METRIC", filter_config: { col_type: "SPAN_ATTRIBUTE", filter_type: "text", filter_op: "equals", filter_value: "raw-project" } }])).toBeNull();
+  });
+
+  it.each([
+    ["equals", "project-1"],
+    ["is", "project-1"],
+    ["in", ["project-1"]],
+  ])("extracts one positive project scope for %s", (filterOp, filterValue) => {
+    expect(
+      singleProjectIdFromFilters([
+        {
+          column_id: "project_id",
+          filter_config: {
+            filter_type: "text",
+            filter_op: filterOp,
+            filter_value: filterValue,
+          },
+        },
+      ]),
+    ).toBe("project-1");
+  });
+
+  it.each([
+    ["in", ["project-1", "project-2"]],
+    ["not_in", ["project-1"]],
+    ["not_equals", "project-1"],
+  ])("does not invent a single scope for %s %j", (filterOp, filterValue) => {
+    expect(
+      singleProjectIdFromFilters([
+        {
+          column_id: "project_id",
+          filter_config: { filter_op: filterOp, filter_value: filterValue },
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it("fails closed when multiple Project filters are present", () => {
+    const filter = {
+      column_id: "project_id",
+      filter_config: { filter_op: "in", filter_value: ["project-1"] },
+    };
+    expect(singleProjectIdFromFilters([filter, filter])).toBeNull();
+  });
+});
+
+describe("resolveAgentGraphProjectScopes", () => {
+  const projectFilter = (projectId) => ({
+    column_id: "project_id",
+    filter_config: {
+      filter_op: "equals",
+      filter_value: projectId,
+    },
+  });
+
+  it("uses the route project for both panes on a project Observe page", () => {
+    expect(
+      resolveAgentGraphProjectScopes({
+        routeProjectId: "route-project",
+        primaryFilters: [projectFilter("ignored-primary")],
+        compareFilters: [projectFilter("ignored-compare")],
+      }),
+    ).toEqual({
+      primaryProjectId: "route-project",
+      compareProjectId: "route-project",
+    });
+  });
+
+  it("keeps primary and compare project filters independent in user detail", () => {
+    expect(
+      resolveAgentGraphProjectScopes({
+        routeProjectId: null,
+        primaryFilters: [projectFilter("primary-project")],
+        compareFilters: [projectFilter("compare-project")],
+      }),
+    ).toEqual({
+      primaryProjectId: "primary-project",
+      compareProjectId: "compare-project",
+    });
   });
 });

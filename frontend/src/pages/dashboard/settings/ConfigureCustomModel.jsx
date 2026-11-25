@@ -122,7 +122,8 @@ const ConfigureCustomModel = ({
           onClick={() => append({ key: "", value: "" })}
           startIcon={
             <SvgColor
-              sx={{ color: "text.primary", height: 16, width: 16 }}
+              width={16}
+              sx={{ color: "text.primary" }}
               src={"/assets/icons/ic_add.svg"}
             />
           }

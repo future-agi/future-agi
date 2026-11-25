@@ -257,7 +257,9 @@ class TestAgentPromptOptimiserCRUD:
         listed_ids = {row["id"] for row in table}
         assert str(active_fixture.run.id) in listed_ids
         assert str(hidden_fixture.run.id) not in listed_ids
-        active_row = next(row for row in table if row["id"] == str(active_fixture.run.id))
+        active_row = next(
+            row for row in table if row["id"] == str(active_fixture.run.id)
+        )
         assert active_row["optimisation_name"] == active_fixture.run.name
         assert active_row["model"] == "gpt-4o-mini"
 
@@ -290,9 +292,7 @@ class TestAgentPromptOptimiserCRUD:
             id=response.data["id"]
         )
         assert created_run.test_execution_id == active_fixture.test_execution.id
-        assert (
-            created_run.test_execution.run_test.workspace_id == workspace.id
-        )
+        assert created_run.test_execution.run_test.workspace_id == workspace.id
         assert created_run.model == "gpt-4o-mini"
         assert mock_optimiser_side_effects["steps"] == [str(created_run.id)]
         assert mock_optimiser_side_effects["workflow"] == [str(created_run.id)]
@@ -324,17 +324,28 @@ class TestAgentPromptOptimiserCRUD:
         assert mock_optimiser_side_effects["steps"] == []
         assert mock_optimiser_side_effects["workflow"] == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="AgentPromptOptimiserRunCreateSerializer silently drops unknown fields; XPASSes when reject_unknown_fields is added.",
+    @pytest.mark.parametrize(
+        ("extra", "named"),
+        [
+            ({"legacy_extra": "ignore me"}, "legacy_extra"),
+            # A typo of a real field: without the check, the run would start
+            # with the default name instead of the one the caller sent.
+            ({"nmae": "Typo"}, "nmae"),
+            ({"zeta": 1, "alpha": 2}, "alpha"),
+        ],
     )
-    def test_create_ignores_unknown_body_field(
+    def test_create_rejects_unknown_body_field_before_work(
         self,
         auth_client,
         active_fixture,
         mock_optimiser_side_effects,
+        extra,
+        named,
     ):
-        payload = {**_create_payload(active_fixture.test_execution.id), "legacy_extra": "ignore me"}
+        payload = {**_create_payload(active_fixture.test_execution.id), **extra}
+        baseline_count = AgentPromptOptimiserRun.no_workspace_objects.filter(
+            test_execution=active_fixture.test_execution
+        ).count()
 
         response = auth_client.post(
             "/simulate/api/agent-prompt-optimiser/",
@@ -343,6 +354,37 @@ class TestAgentPromptOptimiserCRUD:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["result"] == f"{named}: Unknown field."
+        assert (
+            AgentPromptOptimiserRun.no_workspace_objects.filter(
+                test_execution=active_fixture.test_execution
+            ).count()
+            == baseline_count
+        )
+        assert mock_optimiser_side_effects["steps"] == []
+        assert mock_optimiser_side_effects["workflow"] == []
+
+    def test_create_names_the_invalid_configuration_key(
+        self,
+        auth_client,
+        active_fixture,
+        mock_optimiser_side_effects,
+    ):
+        payload = _create_payload(active_fixture.test_execution.id)
+        payload["configuration"] = {**payload["configuration"], "beam_sizee": 3}
+
+        response = auth_client.post(
+            "/simulate/api/agent-prompt-optimiser/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["result"] == (
+            "configuration: Unexpected keys provided for optimizer 'protegi': "
+            "beam_sizee"
+        )
+        assert mock_optimiser_side_effects["workflow"] == []
 
     def test_retrieve_returns_full_detail_body(
         self, auth_client, active_fixture, mock_provider_logo
@@ -515,9 +557,7 @@ class TestAgentPromptOptimiserSubResources:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_graph_groups_evaluations_by_eval_config(
-        self, auth_client, active_fixture
-    ):
+    def test_graph_groups_evaluations_by_eval_config(self, auth_client, active_fixture):
         response = auth_client.get(
             f"/simulate/api/agent-prompt-optimiser/{active_fixture.run.id}/graph/"
         )
@@ -562,9 +602,7 @@ class TestAgentPromptOptimiserTrialRoutes:
         assert result["trial_name"] == "Trial 1"
         assert result["optimisation_name"] == active_fixture.run.name
 
-    def test_trial_prompt_unknown_trial_returns_400(
-        self, auth_client, active_fixture
-    ):
+    def test_trial_prompt_unknown_trial_returns_400(self, auth_client, active_fixture):
         # Product returns 400 (PROMPT_TRIAL_NOT_FOUND) rather than 404 for unknown trials.
         response = auth_client.get(
             f"/simulate/api/agent-prompt-optimiser/{active_fixture.run.id}/"
@@ -573,9 +611,7 @@ class TestAgentPromptOptimiserTrialRoutes:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_trial_prompt_cross_tenant_returns_404(
-        self, auth_client, hidden_fixture
-    ):
+    def test_trial_prompt_cross_tenant_returns_404(self, auth_client, hidden_fixture):
         response = auth_client.get(
             f"/simulate/api/agent-prompt-optimiser/{hidden_fixture.run.id}/"
             f"trial/{hidden_fixture.trial.id}/prompt/"
@@ -583,9 +619,7 @@ class TestAgentPromptOptimiserTrialRoutes:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_trial_evaluations_returns_scored_rows(
-        self, auth_client, active_fixture
-    ):
+    def test_trial_evaluations_returns_scored_rows(self, auth_client, active_fixture):
         response = auth_client.get(
             f"/simulate/api/agent-prompt-optimiser/{active_fixture.run.id}/"
             f"trial/{active_fixture.trial.id}/evaluations/"
@@ -619,9 +653,7 @@ class TestAgentPromptOptimiserTrialRoutes:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_trial_scenarios_returns_trial_item_rows(
-        self, auth_client, active_fixture
-    ):
+    def test_trial_scenarios_returns_trial_item_rows(self, auth_client, active_fixture):
         response = auth_client.get(
             f"/simulate/api/agent-prompt-optimiser/{active_fixture.run.id}/"
             f"trial/{active_fixture.trial.id}/scenarios/"

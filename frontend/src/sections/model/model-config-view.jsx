@@ -1,13 +1,6 @@
 import React from "react";
-import {
-  Box,
-  Button,
-  Card,
-  Divider,
-  Grid,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Divider, Grid, Stack, Typography } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
 import { useGetDatasetDetails } from "src/api/model/dataset";
 import { useBoolean } from "src/hooks/use-boolean";
@@ -23,7 +16,7 @@ export default function ModelConfigView({ model }) {
   return (
     <>
       <Stack spacing={3} direction={"column"}>
-        <Card>
+        <Section variant="panel">
           <Box sx={{ my: 2, mx: 2 }}>
             <Grid container>
               <Grid item xs>
@@ -49,9 +42,9 @@ export default function ModelConfigView({ model }) {
               {model?.baselineModelVersion} {model?.baselineModelBatch}
             </Typography>
           </Box>
-        </Card>
+        </Section>
 
-        <Card>
+        <Section variant="panel">
           <Box sx={{ my: 2, mx: 2 }}>
             <Grid container>
               <Grid item xs>
@@ -68,7 +61,7 @@ export default function ModelConfigView({ model }) {
               model={model}
             />
           </Box>
-        </Card>
+        </Section>
       </Stack>
 
       <BaselineDialog dialog={baselineDialog} model={model} />

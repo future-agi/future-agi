@@ -15,11 +15,10 @@ const FixMyAgentHeader = ({ onClose }) => {
     >
       <Box sx={{ display: "flex", flexDirection: "column" }}>
         <Typography variant="m3" fontWeight="fontWeightSemiBold">
-          Fix My Agent
+          Debug failures
         </Typography>
         <Typography variant="s1">
-          Here are the top issues and their fixes to agent quality and reduce
-          failures.
+          The top issues in this run, and how to fix them.
         </Typography>
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -27,10 +26,7 @@ const FixMyAgentHeader = ({ onClose }) => {
           variant="outlined"
           size="small"
           sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
+            flexShrink: 0,
           }}
           onClick={() => {
             window.open(
@@ -54,7 +50,7 @@ const FixMyAgentHeader = ({ onClose }) => {
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
     </Box>

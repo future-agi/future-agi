@@ -2,13 +2,11 @@ import React, { useEffect, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useWorkspaceFromList } from "src/api/workspaces/list";
 import {
-  Box,
-  Typography,
-  TextField,
-  Button,
-} from "@mui/material";
+  useWorkspaceFromList,
+  workspacesListKey,
+} from "src/api/workspaces/list";
+import { Box, Typography, TextField, Button } from "@mui/material";
 import { useSnackbar } from "notistack";
 import { LoadingScreen } from "src/components/loading-screen";
 import axiosInstance, { endpoints } from "src/utils/axios";
@@ -27,7 +25,7 @@ export default function WorkspaceGeneral() {
   const isOrgAdminPlus = role === "Owner" || role === "Admin";
 
   // Fetch workspace list and find this workspace
-  const { workspace, isLoading } = useWorkspaceFromList(workspaceId);
+  const { workspace, isLoading, isError } = useWorkspaceFromList(workspaceId);
 
   useEffect(() => {
     if (workspace) {
@@ -56,9 +54,7 @@ export default function WorkspaceGeneral() {
         queryKey: ["user-workspaces-for-settings"],
       });
       // Refresh the workspace switcher dropdown
-      queryClient.invalidateQueries({
-        queryKey: ["workspaces-list"],
-      });
+      queryClient.invalidateQueries({ queryKey: workspacesListKey });
     },
     onError: (err) => {
       enqueueSnackbar(
@@ -78,7 +74,24 @@ export default function WorkspaceGeneral() {
 
   if (isLoading) {
     return (
-      <LoadingScreen variant="orbit" sx={{ height: "100%", minHeight: "60vh" }} />
+      <LoadingScreen
+        variant="orbit"
+        sx={{ height: "100%", minHeight: "60vh" }}
+      />
+    );
+  }
+
+  // Without the workspace there is nothing to edit, and `canEdit` comes from
+  // the org role — an Owner would otherwise get a blank name field with a live
+  // Save that renames the workspace to "".
+  if (isError || !workspace) {
+    return (
+      <Box sx={{ py: 6, textAlign: "center" }}>
+        <Typography typography="s1" sx={{ color: "text.secondary" }}>
+          This workspace could not be loaded. Reload the page, or pick another
+          workspace from the switcher.
+        </Typography>
+      </Box>
     );
   }
 

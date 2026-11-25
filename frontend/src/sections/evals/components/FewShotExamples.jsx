@@ -14,6 +14,8 @@ const FewShotExamples = ({
   selectedDatasets = [],
   onChange,
   disabled = false,
+  isJevModel = false,
+  modelLabel = "Jev",
 }) => {
   const { data: datasets = [], isLoading } = useQuery({
     queryKey: ["datasets-for-fewshot"],
@@ -30,7 +32,9 @@ const FewShotExamples = ({
           Few-shot Examples
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          Select datasets to guide the LLM judge with example evaluations
+          {isJevModel
+            ? `${modelLabel} does not support few-shot examples. Your selected datasets are preserved.`
+            : "Select datasets to guide the LLM judge with example evaluations"}
         </Typography>
       </Box>
 
@@ -50,9 +54,9 @@ const FewShotExamples = ({
             .filter(Boolean)
         }
         onChange={(_, newVal) => onChange(newVal)}
-        disabled={disabled}
+        disabled={disabled || isJevModel}
         sx={
-          disabled
+          disabled || isJevModel
             ? {
                 cursor: "not-allowed",
                 "& .MuiInputBase-root": { cursor: "not-allowed" },
@@ -67,8 +71,8 @@ const FewShotExamples = ({
             }
             sx={{
               "& .MuiInputBase-root": {
-                fontSize: "13px",
-                ...(disabled && { cursor: "not-allowed" }),
+                fontSize: "12px",
+                ...((disabled || isJevModel) && { cursor: "not-allowed" }),
               },
             }}
           />
@@ -80,8 +84,7 @@ const FewShotExamples = ({
               key={opt.id}
               label={opt.name}
               size="small"
-              icon={<Iconify icon="mdi:database-outline" width={14} />}
-              sx={{ fontSize: "12px", height: 24 }}
+              icon={<Iconify icon="solar:database-linear" width={14} />}
             />
           ))
         }
@@ -96,13 +99,13 @@ const FewShotExamples = ({
               }}
             >
               <Iconify
-                icon="mdi:database-outline"
+                icon="solar:database-linear"
                 width={16}
                 sx={{ color: "text.secondary", flexShrink: 0 }}
               />
               <Typography
                 variant="body2"
-                sx={{ fontSize: "13px", flex: 1 }}
+                sx={{ fontSize: "12px", flex: 1 }}
                 noWrap
               >
                 {option.name}
@@ -122,7 +125,7 @@ const FewShotExamples = ({
         noOptionsText="No datasets found"
       />
 
-      {selectedDatasets.length > 0 && (
+      {selectedDatasets.length > 0 && !isJevModel && (
         <Typography
           variant="caption"
           color="text.secondary"
@@ -140,6 +143,8 @@ FewShotExamples.propTypes = {
   selectedDatasets: PropTypes.array,
   onChange: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
+  isJevModel: PropTypes.bool,
+  modelLabel: PropTypes.string,
 };
 
 export default FewShotExamples;

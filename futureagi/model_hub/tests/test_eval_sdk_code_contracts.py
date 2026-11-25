@@ -65,11 +65,14 @@ def test_eval_sdk_code_uses_placeholders_without_creating_user_key(
 
     assert response.status_code == status.HTTP_200_OK
     _assert_eval_sdk_placeholders(response.json()["result"])
-    assert OrgApiKey.no_workspace_objects.filter(
-        organization=user.organization,
-        type="user",
-        user=user,
-    ).count() == 0
+    assert (
+        OrgApiKey.no_workspace_objects.filter(
+            organization=user.organization,
+            type="user",
+            user=user,
+        ).count()
+        == 0
+    )
 
 
 @pytest.mark.django_db
@@ -99,13 +102,9 @@ def test_eval_sdk_code_does_not_expose_existing_user_key(auth_client, user, work
 
 
 @pytest.mark.django_db
-def test_eval_sdk_code_rejects_template_from_another_organization(
-    auth_client, user
-):
+def test_eval_sdk_code_rejects_template_from_another_organization(auth_client, user):
     other_org = Organization.objects.create(name="Other Eval SDK Snippet Org")
-    template = _create_user_eval_template(
-        other_org, name="eval-sdk-other-organization"
-    )
+    template = _create_user_eval_template(other_org, name="eval-sdk-other-organization")
     OrgApiKey.no_workspace_objects.filter(
         organization=user.organization,
         type="user",
@@ -115,8 +114,11 @@ def test_eval_sdk_code_rejects_template_from_another_organization(
     response = _get_eval_sdk_code(auth_client, template.id)
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert OrgApiKey.no_workspace_objects.filter(
-        organization=user.organization,
-        type="user",
-        user=user,
-    ).count() == 0
+    assert (
+        OrgApiKey.no_workspace_objects.filter(
+            organization=user.organization,
+            type="user",
+            user=user,
+        ).count()
+        == 0
+    )

@@ -14,12 +14,12 @@ curated EndUser dimension and wraps the result in the standard
 
 Resolution reads the CDC ``tracer_enduser`` dimension (the collector writes
 all observe data to ClickHouse): the string ``user_id`` is mapped to end-user
-UUIDs via a ``SELECT id FROM tracer_enduser FINAL WHERE user_id = ...`` subquery.
+UUIDs via a ``SELECT ... id FROM tracer_enduser FINAL WHERE user_id = ...``
+subquery, and those IDs are expanded through ``end_user_id_remap`` to every
+old/new ID their spans may carry.
 """
 
 import unittest
-
-import pytest
 
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
@@ -156,17 +156,32 @@ class UserIdFilterTests(unittest.TestCase):
             )
             self.assertIn("FROM tracer_enduser", sql)
 
+    def test_explicit_user_named_span_attributes_keep_raw_map_semantics(self):
+        for column_id in ("end_user_id", "user", "user_id", "user_id_type"):
+            with self.subTest(column_id=column_id):
+                b = self._build()
+                sql = b._build_condition(
+                    col_id=column_id,
+                    col_type=ClickHouseFilterBuilder.SPAN_ATTRIBUTE,
+                    filter_type="text",
+                    filter_op="equals",
+                    filter_value="raw-provider-value",
+                )
+
+                self.assertIsNotNone(sql)
+                self.assertIn("span_attr_str", sql)
+                self.assertNotIn("FROM tracer_enduser", sql)
+                self.assertNotIn("FROM end_users", sql)
+
     def test_user_filter_always_resolves_via_tracer_enduser(self):
         """``col_id == 'user'`` is treated as a string filter against
         ``tracer_enduser.user_id`` regardless of value shape — every value is
         matched as a user_id string (the old UUID-direct back-compat branch is
         gone).
 
-        This pins only what the builder emits *today* and is compatible with the
-        survivor-collapse form too: the historical id-remap wrapped this same
-        ``user_id =`` / ``FROM tracer_enduser`` inner lookup rather than
-        replacing it. The missing remap layer is tracked separately by
-        ``test_user_filter_should_survivor_collapse_via_id_remap`` below.
+        The remap expansion wraps this same ``user_id =`` /
+        ``FROM tracer_enduser`` inner lookup rather than replacing it; it is
+        pinned by ``test_user_filter_should_survivor_collapse_via_id_remap``.
         """
         b = self._build()
         sql = b._build_condition(
@@ -184,33 +199,14 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertNotIn("FROM end_users", sql)
         self.assertIn("FROM tracer_enduser", sql)
         self.assertIn("user_id =", sql)
-        self.assertEqual(
-            b._params.get("col_1"), "08ad78f8-1974-45c1-b6bc-4f2b2ba0b243"
-        )
+        self.assertEqual(b._params.get("col_1"), "08ad78f8-1974-45c1-b6bc-4f2b2ba0b243")
 
-    @pytest.mark.xfail(
-        reason=(
-            "TH-XXXX: the user/session FILTER builder lost id-remap "
-            "survivor-collapse. `_resolved_enduser_membership` dropped out of "
-            "query_builders/filters.py in merge 3e614ae27 (the `main` side of a "
-            "conflict, not a decision); the design landed in 183b2a36f / "
-            "ba315c8b1 and is still live in span_list/session_list/"
-            "session_analytics/session_time_series/user_time_series. Until the "
-            "filter builder is re-aligned (or the remap is dropped from those "
-            "modules too), a cross-cutover straddler that the list/analytics "
-            "queries count as one entity is split by this filter. Impact is zero "
-            "pre-flip; this xfail preserves the deleted signal so it surfaces at "
-            "flip time. See atharva-bhange review on PR #1811."
-        ),
-        strict=False,
-    )
     def test_user_filter_should_survivor_collapse_via_id_remap(self):
-        """DESIRED (currently un-emitted): the ``user`` filter should resolve
-        ``end_user_id`` new→old through ``end_user_id_remap`` so a straddler's
-        pre- and post-cutover ids unify — matching span_list/session_list.
-
-        Restored verbatim from the assertions this PR deleted; xfails until the
-        filter builder regains the remap (see the ticket in the marker).
+        """The ``user`` filter expands the matched dimension IDs through
+        ``end_user_id_remap`` so a straddler's pre- and post-cutover IDs (and
+        a consolidated duplicate's old ID) all match, as the list and analytics
+        readers resolve them. Only the touched remap groups are read; the live
+        result is pinned by ``test_user_filter_id_remap_ch``.
         """
         b = self._build()
         sql = b._build_condition(
@@ -221,8 +217,11 @@ class UserIdFilterTests(unittest.TestCase):
             filter_value="08ad78f8-1974-45c1-b6bc-4f2b2ba0b243",
         )
         self.assertIsNotNone(sql)
-        self.assertIn("end_user_id_remap", sql)
-        self.assertIn("id_remap.survivor_id", sql)
+        self.assertIn("FROM end_user_id_remap AS remap_match FINAL", sql)
+        self.assertIn("matching_end_user_group_ids AS", sql)
+        self.assertIn("WHERE remap.new_id IN (", sql)
+        self.assertIn("SELECT DISTINCT id AS end_user_id FROM tracer_enduser", sql)
+        self.assertNotIn("OVER (PARTITION BY new_id)", sql)
 
     def test_user_id_contains(self):
         b = self._build()
@@ -236,8 +235,8 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertIsNotNone(sql)
         self.assertIn("trace_id IN (", sql)
         self.assertIn("FROM tracer_enduser", sql)
-        self.assertIn("user_id LIKE", sql)
-        self.assertEqual(b._params.get("col_1"), "%admin%")
+        self.assertIn("positionUTF8(toString(user_id)", sql)
+        self.assertEqual(b._params.get("col_1"), "admin")
 
     def test_user_id_not_contains_flips_outer(self):
         b = self._build()
@@ -250,9 +249,11 @@ class UserIdFilterTests(unittest.TestCase):
         )
         self.assertIsNotNone(sql)
         self.assertIn("trace_id NOT IN (", sql)
-        self.assertIn("user_id LIKE", sql)
-        self.assertNotIn("user_id NOT LIKE", sql)
-        self.assertEqual(b._params.get("col_1"), "%admin%")
+        self.assertIn("positionUTF8(toString(user_id)", sql)
+        self.assertNotIn(
+            "positionUTF8(toString(user_id), toString(%(col_1)s)) = 0", sql
+        )
+        self.assertEqual(b._params.get("col_1"), "admin")
 
     def test_user_id_null_ops_do_not_query_end_users(self):
         # Null ops compare end_user_id against the zero-UUID directly — no

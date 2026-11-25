@@ -599,8 +599,6 @@ export const getBlocks = (quill) => {
         type: "image_url",
         image_url: {
           ...imageObject,
-          img_name: imageObject.imgName,
-          img_size: imageObject.imgSize,
         },
       });
       imageObject = null;
@@ -610,9 +608,6 @@ export const getBlocks = (quill) => {
         type: "audio_url",
         audio_url: {
           ...audioObject,
-          audio_name: audioObject.audioName,
-          audio_size: audioObject.audioSize,
-          audio_type: audioObject.audioType,
         },
       });
       audioObject = null;
@@ -653,7 +648,7 @@ export const PROMPT_EDITOR_OPTIONS = [
     name: "delete",
     label: "Delete",
     icon: "/assets/icons/components/ic_delete.svg",
-    color: "red.600",
+    color: "status.danger.fg",
   },
 ];
 

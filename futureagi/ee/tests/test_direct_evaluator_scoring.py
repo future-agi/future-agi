@@ -76,12 +76,15 @@ class TestChoicesSkipGateWithConfig:
         )
         # run_eval_func returns the post-format_eval_value payload.
         fake_eval_result = {"output": {"score": 1.0, "choice": "good"}, "reason": "r"}
-        with patch(
-            "model_hub.views.utils.evals.run_eval_func",
-            return_value=fake_eval_result,
-        ), patch(
-            "model_hub.models.evals_metric.EvalTemplate.objects.get",
-            side_effect=Exception("skip DB fetch"),
+        with (
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value=fake_eval_result,
+            ),
+            patch(
+                "model_hub.models.evals_metric.EvalTemplate.objects.get",
+                side_effect=Exception("skip DB fetch"),
+            ),
         ):
             score, reason = _direct_evaluator()._run_eval_with_config(
                 _EvalConfig(template), {}, "output_text", "prompt"
@@ -108,12 +111,15 @@ class TestChoicesSkipGateWithConfig:
             choice_scores=None,
         )
         fake_eval_result = {"output": "0.5", "reason": "r"}
-        with patch(
-            "model_hub.views.utils.evals.run_eval_func",
-            return_value=fake_eval_result,
-        ), patch(
-            "model_hub.models.evals_metric.EvalTemplate.objects.get",
-            side_effect=Exception("skip DB fetch"),
+        with (
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value=fake_eval_result,
+            ),
+            patch(
+                "model_hub.models.evals_metric.EvalTemplate.objects.get",
+                side_effect=Exception("skip DB fetch"),
+            ),
         ):
             score, _ = _direct_evaluator()._run_eval_with_config(
                 _EvalConfig(template), {}, "output_text", "prompt"
@@ -128,9 +134,7 @@ class TestNestedListResultReasonExtraction:
     """
 
     def test_nested_list_result_reason_unwrapped(self):
-        template = _eval_template(
-            output="score", output_type_normalized="percentage"
-        )
+        template = _eval_template(output="score", output_type_normalized="percentage")
         result = _RunResult(
             eval_results=[
                 [

@@ -38,12 +38,12 @@ const CallLogsDetailDrawerHeaderSection = ({ data, onAnnotate }) => {
         {/* <Stack bgcolor="green.50" p={1} borderRadius={1}>
             {data?.type === CallType.INBOUND ? (
               <Iconify
-                icon="hugeicons:call-02"
+                icon="solar:phone-linear"
                 sx={{ width: 24, height: 24, color: "blue.600" }}
               />
             ) : (
               <Iconify
-                icon="tabler:phone-calling"
+                icon="solar:phone-linear"
                 sx={{ width: 24, height: 24, color: "green.500" }}
               />
             )}
@@ -89,7 +89,7 @@ const CallLogsDetailDrawerHeaderSection = ({ data, onAnnotate }) => {
             <>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                 <Iconify
-                  icon="material-symbols:schedule-outline"
+                  icon="solar:clock-circle-linear"
                   width="14px"
                   height="14px"
                   color="text.disabled"
@@ -125,11 +125,10 @@ const CallLogsDetailDrawerHeaderSection = ({ data, onAnnotate }) => {
             variant="soft"
             size="small"
             onClick={onAnnotate}
-            startIcon={<Iconify icon="basil:edit-alt-outline" width={16} />}
+            startIcon={<Iconify icon="solar:pen-linear" width={16} />}
             sx={{
               color: "text.secondary",
               backgroundColor: "action.hover",
-              fontWeight: "fontWeightMedium",
             }}
           >
             Annotate
@@ -139,10 +138,7 @@ const CallLogsDetailDrawerHeaderSection = ({ data, onAnnotate }) => {
           variant="outlined"
           size="small"
           sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
+            flexShrink: 0,
           }}
           onClick={() => {
             handleOnDocsClicked("call-log-observe");
@@ -165,10 +161,9 @@ const CallLogsDetailDrawerHeaderSection = ({ data, onAnnotate }) => {
           onClick={() => setCallLogsSideDrawerData(null)}
           sx={{
             color: "text.primary",
-            p: 0.5,
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
     </Box>

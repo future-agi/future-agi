@@ -25,9 +25,7 @@ def _patch_db():
     Returns ``(patcher, mock_class, mock_instance)``. Caller is
     responsible for ``patcher.stop()``.
     """
-    patcher = patch(
-        "agentic_eval.core.embeddings.embedding_manager.ClickHouseVectorDB"
-    )
+    patcher = patch("agentic_eval.core.embeddings.embedding_manager.ClickHouseVectorDB")
     cls = patcher.start()
     instance = MagicMock()
     instance.bulk_upsert_vectors.side_effect = lambda **kwargs: [
@@ -175,22 +173,27 @@ def _stub_text_model(*_args, **_kwargs):
 
 def test_data_formatter_url_check_does_not_crash_on_numeric_values(manager_module):
     manager = manager_module.EmbeddingManager()
-    with patch.object(
-        manager_module.EmbeddingManager,
-        "input_checker",
-        return_value={"q": "text"},
-    ), patch.object(
-        manager_module.model_manager,
-        "_use_serving",
-        True,
-    ), patch.object(
-        type(manager_module.model_manager),
-        "text_model",
-        new_callable=lambda: property(lambda _self: _stub_text_model),
-    ), patch.object(
-        manager_module.EmbeddingManager,
-        "encode_path",
-    ) as encode_path:
+    with (
+        patch.object(
+            manager_module.EmbeddingManager,
+            "input_checker",
+            return_value={"q": "text"},
+        ),
+        patch.object(
+            manager_module.model_manager,
+            "_use_serving",
+            True,
+        ),
+        patch.object(
+            type(manager_module.model_manager),
+            "text_model",
+            new_callable=lambda: property(lambda _self: _stub_text_model),
+        ),
+        patch.object(
+            manager_module.EmbeddingManager,
+            "encode_path",
+        ) as encode_path,
+    ):
         for raw in (1, 1.5, True, False):
             row = {"q": raw, "item_id": "id-x"}
             vectors, metadata = manager.data_formatter(
@@ -207,23 +210,28 @@ def test_data_formatter_url_check_does_not_crash_on_numeric_values(manager_modul
 
 def test_data_formatter_url_check_still_encodes_http_strings(manager_module):
     manager = manager_module.EmbeddingManager()
-    with patch.object(
-        manager_module.EmbeddingManager,
-        "input_checker",
-        return_value={"q": "text"},
-    ), patch.object(
-        manager_module.model_manager,
-        "_use_serving",
-        True,
-    ), patch.object(
-        type(manager_module.model_manager),
-        "text_model",
-        new_callable=lambda: property(lambda _self: _stub_text_model),
-    ), patch.object(
-        manager_module.EmbeddingManager,
-        "encode_path",
-        return_value="encoded://x",
-    ) as encode_path:
+    with (
+        patch.object(
+            manager_module.EmbeddingManager,
+            "input_checker",
+            return_value={"q": "text"},
+        ),
+        patch.object(
+            manager_module.model_manager,
+            "_use_serving",
+            True,
+        ),
+        patch.object(
+            type(manager_module.model_manager),
+            "text_model",
+            new_callable=lambda: property(lambda _self: _stub_text_model),
+        ),
+        patch.object(
+            manager_module.EmbeddingManager,
+            "encode_path",
+            return_value="encoded://x",
+        ) as encode_path,
+    ):
         row = {"q": "http://example.com/x", "item_id": "id-x"}
         vectors, metadata = manager.data_formatter(
             row_dict=row,
@@ -239,6 +247,7 @@ def test_data_formatter_url_check_still_encodes_http_strings(manager_module):
 
 def _legacy_standard_b64_encode(text: str) -> str:
     import base64
+
     return base64.b64encode(text.encode()).decode()
 
 

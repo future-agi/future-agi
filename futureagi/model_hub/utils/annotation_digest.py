@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import structlog
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Min, Q
 from django.utils import timezone
@@ -103,9 +104,7 @@ def _reviewer_pending_by_queue(
     """Return ``{queue_id: {queue, count, oldest}}`` for review work."""
     # Queues where the user can review: explicit reviewers and managers.
     review_queue_ids = list(
-        AnnotationQueueAnnotator.objects.filter(
-            user=user, deleted=False
-        )
+        AnnotationQueueAnnotator.objects.filter(user=user, deleted=False)
         .filter(
             annotation_queue_role_q(
                 AnnotatorRole.REVIEWER.value,
@@ -179,11 +178,15 @@ def _verify_unsubscribe_token(token: str) -> Optional[str]:
 
 
 def _frontend_url() -> str:
-    return os.environ.get("FRONTEND_URL", "https://app.futureagi.com").rstrip("/")
+    """This install's UI. Future AGI Cloud's names app.futureagi.com; a
+    self-hosted install's names its own."""
+    return settings.FRONTEND_BASE_URL
 
 
 def _backend_url() -> str:
-    return os.environ.get("BACKEND_URL", "https://api.futureagi.com").rstrip("/")
+    """This install's API. BASE_URL defaults to api.futureagi.com on Cloud
+    only, so a self-hosted unsubscribe link never leaves the install."""
+    return (os.environ.get("BACKEND_URL") or settings.BASE_URL).rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -205,9 +208,10 @@ def _send_realtime_for_user(user, now: datetime) -> bool:
         return False
 
     # Throttle: at most 1 realtime email per hour per user.
-    if state.last_realtime_digest_at and (
-        now - state.last_realtime_digest_at
-    ) < REALTIME_THROTTLE:
+    if (
+        state.last_realtime_digest_at
+        and (now - state.last_realtime_digest_at) < REALTIME_THROTTLE
+    ):
         return False
 
     since = state.last_realtime_digest_at
@@ -337,9 +341,10 @@ def _send_daily_for_user(user, now: datetime) -> bool:
     if local_hour != state.daily_digest_hour_local:
         return False
 
-    if state.last_daily_digest_at and (
-        now - state.last_daily_digest_at
-    ) < DAILY_MIN_GAP:
+    if (
+        state.last_daily_digest_at
+        and (now - state.last_daily_digest_at) < DAILY_MIN_GAP
+    ):
         return False
 
     # Current-state snapshot — pass since=None so we count everything pending,

@@ -38,8 +38,12 @@ class ListApiKeysTool(BaseTool):
 
         org = context.organization
 
-        qs = OrgApiKey.no_workspace_objects.filter(organization=org).order_by(
-            "-created_at"
+        # Sandbox ingest keys belong to the platform, so they are never listed,
+        # whatever ``key_type`` asks for.
+        qs = (
+            OrgApiKey.no_workspace_objects.filter(organization=org)
+            .exclude(type="ingest")
+            .order_by("-created_at")
         )
 
         if params.key_type:
@@ -53,7 +57,10 @@ class ListApiKeysTool(BaseTool):
         for key in keys:
             # Mask the API key, only show first 8 chars
             masked_key = f"{key.api_key[:8]}..." if key.api_key else "—"
-            status = "active" if key.enabled else "inactive"
+            if key.is_expired:
+                status = "expired"
+            else:
+                status = "active" if key.enabled else "inactive"
             workspace_name = key.workspace.name if key.workspace else "—"
             user_email = key.user.email if key.user else "—"
 
@@ -78,6 +85,9 @@ class ListApiKeysTool(BaseTool):
                     "workspace": workspace_name,
                     "user": user_email,
                     "enabled": key.enabled,
+                    "expires_at": (
+                        key.expires_at.isoformat() if key.expires_at else None
+                    ),
                 }
             )
 

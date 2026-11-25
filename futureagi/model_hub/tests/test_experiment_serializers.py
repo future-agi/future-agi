@@ -76,9 +76,7 @@ class TestExtraFieldsMixinPassthrough:
 
     def test_payload_with_no_extras_still_works(self):
         # The mixin must not break the all-typed-keys-only case.
-        s = PromptModelParamsSerializer(
-            data={"temperature": 0.5, "max_tokens": 100}
-        )
+        s = PromptModelParamsSerializer(data={"temperature": 0.5, "max_tokens": 100})
         assert s.is_valid(), s.errors
         assert s.validated_data == {"temperature": 0.5, "max_tokens": 100}
 

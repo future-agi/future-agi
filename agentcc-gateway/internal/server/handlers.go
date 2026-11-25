@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 	"github.com/futureagi/agentcc-gateway/internal/video"
+	"github.com/futureagi/agentcc-gateway/internal/video/lifecycle"
 )
 
 // maxSessionIDLen is the maximum allowed byte length for a session ID.
@@ -42,9 +44,15 @@ const maxSessionIDLen = 255
 type Handlers struct {
 	registry       *providers.Registry
 	engine         *pipeline.Engine
+	runCharges     runChargeStore // assistants runs awaiting their charge
 	healthMonitor  *routing.HealthMonitor
 	maxBodySize    int64
 	defaultTimeout time.Duration
+
+	// maxTimeout is the ceiling resolveTimeout clamps to, the same one
+	// middleware.Timeout puts on the request context. Zero means no clamp,
+	// for a Handlers built without it.
+	maxTimeout time.Duration
 
 	// captureStreamContent reassembles streamed completions so post-plugins
 	// see the text. Set when a sink is configured to record bodies.
@@ -57,6 +65,8 @@ type Handlers struct {
 
 	// Model metadata database (shared atomic pointer for hot-reload).
 	modelDB *atomic.Pointer[modeldb.ModelDB]
+	// catalogue owns the layers under modelDB; nil until SetCatalogue.
+	catalogue *modeldb.Catalogue
 
 	// Per-org multi-tenant support.
 	tenantStore      *tenant.Store
@@ -65,9 +75,21 @@ type Handlers struct {
 	// Key store for early org_id peek (before auth plugin runs).
 	keyStore *authpkg.KeyStore
 
+	// Decision calls by internal callers: the upstream for each dialect taken
+	// from config.yaml (its base_url only), and the providers built for the
+	// keys those callers bring.
+	decisionBaseURLs       map[string]string
+	keyedDecisionProviders keyedDecisionProviders
+
 	// Async inference support.
 	asyncStore  *async.Store
 	asyncWorker *async.Worker
+	// asyncKeyRequired is set by server wiring when license auth is enabled
+	// without API-key auth: async jobs then have no anonymous owner.
+	asyncKeyRequired bool
+	// resultIPACL holds the global network rules applied when stored results
+	// (async jobs, batches, admin video jobs) are read or changed.
+	resultIPACL config.IPACLConfig
 
 	// Responses API store.
 	responsesStore *responses.Store
@@ -75,8 +97,15 @@ type Handlers struct {
 	// Files API store.
 	fileStore *files.Store
 
+	// trustedProxies is ip_acl.trusted_proxies: how many X-Forwarded-For hops
+	// clientIP trusts.
+	trustedProxies int
+
 	// Video generation store.
-	videoStore video.Store
+	videoIPACL    config.IPACLConfig
+	videoStore    video.Store
+	videoService  *lifecycle.Service
+	videoSyncWait time.Duration
 
 	// Phase 12A: Advanced routing components.
 	complexityAnalyzer   *routing.ComplexityAnalyzer
@@ -96,23 +125,27 @@ type Handlers struct {
 	conditionalRouter atomic.Pointer[routing.ConditionalRouter]
 	modelTimeouts     atomic.Pointer[map[string]time.Duration]
 	mirror            atomic.Pointer[routing.Mirror]
+
+	// mirrorSlots counts in-flight mirror requests across reloads: the
+	// requests a replaced mirror started still count against the new one.
+	mirrorSlots *routing.MirrorSlots
 }
 
-// orgModelMatches checks if an org provider's registered model matches the
-// requested model. It first tries exact match, then prefix-stripping:
-// "anthropic/claude-haiku-4-5" matches provider "anthropic" with model "claude-haiku-4-5".
-func orgModelMatches(registeredModel, requestedModel, providerID string) bool {
-	if registeredModel == requestedModel {
-		return true
+// applyCacheHeaders copies the cache request headers into the metadata the
+// cache plugin reads. Every route that runs the cache plugin calls it.
+func applyCacheHeaders(rc *models.RequestContext, r *http.Request) {
+	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
+		rc.Metadata["cache_ttl"] = v
 	}
-	if idx := strings.IndexByte(requestedModel, '/'); idx > 0 {
-		prefix := requestedModel[:idx]
-		bareModel := requestedModel[idx+1:]
-		if strings.EqualFold(prefix, providerID) && registeredModel == bareModel {
-			return true
-		}
+	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
+		rc.Metadata["cache_namespace"] = v
 	}
-	return false
+	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
+		rc.Metadata["cache_force_refresh"] = "true"
+	}
+	if v := r.Header.Get("Cache-Control"); v != "" {
+		rc.Metadata["cache_control"] = v
+	}
 }
 
 func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
@@ -127,6 +160,9 @@ func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
 
 func cloneRequestHeaders(r *http.Request) http.Header {
 	headers := r.Header.Clone()
+	// A caller's own provider key is for one decision call. Whatever route it
+	// was sent to, the copy kept for logs, spans and plugins never carries it.
+	headers.Del(models.ProviderKeyHeader)
 	if headers.Get("Authorization") == "" {
 		if apiKey := headers.Get("x-api-key"); apiKey != "" {
 			headers.Set("Authorization", "Bearer "+apiKey)
@@ -171,41 +207,35 @@ func mergeModelObjects(globalModels, orgModels []models.ModelObject) []models.Mo
 	return merged
 }
 
-func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *models.RequestContext, orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, error) {
-	if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, model, providerID) {
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = model
-						return orgProvider, nil
-					}
-				}
-			}
-		}
-	}
-
-	provider, err := h.resolveProvider(ctx, rc, model)
+func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *models.RequestContext, orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, error) {
+	provider, upstreamModel, err := h.resolveProviderOrgFirst(ctx, rc, orgID, orgCfg, model)
 	if err != nil {
-		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, model); orgP != nil {
-				rc.Provider = providerID
-				rc.Metadata["org_provider"] = "true"
-				return orgP, nil
-			}
-		}
-		return nil, err
+		return nil, "", err
 	}
 
 	if shouldApplyOrgProviderOverride(rc) {
 		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 	}
-	return provider, nil
+	return provider, upstreamModel, nil
+}
+
+// resolveProviderOrgFirst resolves model to the org's own provider for it when
+// there is one, and otherwise through resolveProvider. When the org's
+// providers for the model all fail to build and the key may use only those,
+// it reports that failure without trying them again.
+func (h *Handlers) resolveProviderOrgFirst(ctx context.Context, rc *models.RequestContext, orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, error) {
+	if orgID != "" {
+		p, providerID, upstreamModel, err := h.orgProviderFor(orgID, orgCfg, model)
+		if p != nil {
+			rc.Provider = providerID
+			rc.Metadata["org_provider_model_match"] = model
+			return p, upstreamModel, nil
+		}
+		if err != nil && h.orgProvidersOnly(ctx, rc) {
+			return nil, "", orgProviderError(model, providerID, err)
+		}
+	}
+	return h.resolveProviderForOrg(ctx, rc, model, orgCfg)
 }
 
 // SetCaptureStreamContent enables reassembly of streamed completions. Off by
@@ -213,13 +243,14 @@ func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *model
 func (h *Handlers) SetCaptureStreamContent(v bool) { h.captureStreamContent = v }
 
 // NewHandlers creates a Handlers instance.
-func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore) *Handlers {
+func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout, maxTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore) *Handlers {
 	h := &Handlers{
 		registry:           registry,
 		engine:             engine,
 		healthMonitor:      healthMonitor,
 		maxBodySize:        maxBodySize,
 		defaultTimeout:     defaultTimeout,
+		maxTimeout:         maxTimeout,
 		guardrailEngine:    guardrailEngine,
 		policyStore:        policyStore,
 		streamGuardrailCfg: streamGuardrailCfg,
@@ -234,20 +265,25 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 	if len(modelTimeouts) > 0 {
 		h.modelTimeouts.Store(&modelTimeouts)
 	}
+	h.mirrorSlots = &routing.MirrorSlots{}
+	mirror.ShareSlots(h.mirrorSlots)
 	h.mirror.Store(mirror)
 	return h
 }
 
 // ReloadRouting rebuilds all routing components from new config and atomically swaps them.
 func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registry) error {
-	// Rebuild model database and update shared pointer.
-	if h.modelDB != nil {
+	// Rebuild model database and update shared pointer. The catalogue keeps
+	// the last fetched models; rebuilding from BundledModels would drop them.
+	if h.catalogue != nil {
+		h.catalogue.SetOverrides(ConvertModelOverrides(cfg.ModelDatabase.Overrides))
+	} else if h.modelDB != nil {
 		newDB := modeldb.New(modeldb.BundledModels, ConvertModelOverrides(cfg.ModelDatabase.Overrides))
 		h.modelDB.Store(newDB)
 	}
 
 	// Rebuild router in registry.
-	if err := registry.ReloadRouter(cfg.Routing); err != nil {
+	if err := registry.ReloadRouter(cfg.Routing, h.healthMonitor); err != nil {
 		return fmt.Errorf("reload router: %w", err)
 	}
 
@@ -277,9 +313,15 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 	}
 
 	var cbReg *routing.CircuitBreakerRegistry
-	if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
-		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
+	if cfg.Routing.CircuitBreaker.Enabled {
+		var onChange func(string, bool)
+		if router := registry.Router(); router != nil {
+			onChange = router.SetHealthy
+		}
+		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, onChange)
 	}
+	// Observe the same breakers that the failover chain updates.
+	h.healthMonitor.SetCircuitBreakerRegistry(cbReg)
 
 	if registry.Router() != nil && cfg.Routing.Failover.Enabled {
 		fo := routing.NewFailover(cfg.Routing.Failover, registry.Router(), retryer, cbReg)
@@ -302,6 +344,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 			return registry.GetProvider(providerID)
 		}
 		m := routing.NewMirror(cfg.Routing.Mirror, mirrorLookup)
+		m.ShareSlots(h.mirrorSlots)
 		h.mirror.Store(m)
 	} else {
 		h.mirror.Store(nil)
@@ -319,6 +362,23 @@ func (h *Handlers) resolveOrgConfig(rc *models.RequestContext) (string, *tenant.
 	return h.tenantStore.ResolveOrgConfig(rc.Metadata)
 }
 
+// lookupRequestKey returns the API key the request presented, or nil. It does
+// not authenticate and writes nothing.
+func (h *Handlers) lookupRequestKey(rc *models.RequestContext) *authpkg.APIKey {
+	if h.keyStore == nil {
+		return nil
+	}
+	authHeader := rc.Metadata["authorization"]
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil
+	}
+	rawKey := strings.TrimPrefix(authHeader, "Bearer ")
+	if rawKey == "" {
+		return nil
+	}
+	return h.keyStore.Lookup(rawKey)
+}
+
 // peekKeyOrgID does a lightweight key lookup to extract org_id from the API key
 // metadata BEFORE the auth plugin runs. This is needed because resolveOrgConfig
 // depends on rc.Metadata["key_org_id"] which the auth plugin sets — but auth runs
@@ -327,18 +387,7 @@ func (h *Handlers) resolveOrgConfig(rc *models.RequestContext) (string, *tenant.
 // The auth plugin still performs full validation (status, expiry, IP, model access).
 // This peek is read-only and only copies the org_id; it does NOT authenticate.
 func (h *Handlers) peekKeyOrgID(rc *models.RequestContext) {
-	if h.keyStore == nil {
-		return
-	}
-	authHeader := rc.Metadata["authorization"]
-	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		return
-	}
-	rawKey := strings.TrimPrefix(authHeader, "Bearer ")
-	if rawKey == "" {
-		return
-	}
-	apiKey := h.keyStore.Lookup(rawKey)
+	apiKey := h.lookupRequestKey(rc)
 	if apiKey == nil {
 		return
 	}
@@ -398,26 +447,101 @@ func (h *Handlers) applyOrgProviderOverride(orgID string, orgCfg *tenant.OrgConf
 // provider config. It checks each enabled provider's model list and creates a
 // cached provider instance with the org's API key.
 func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string) {
-	if orgCfg == nil || h.orgProviderCache == nil {
-		return nil, ""
+	if p, providerID, _, _ := h.orgProviderFor(orgID, orgCfg, model); p != nil {
+		return p, providerID
 	}
+	return nil, ""
+}
+
+// orgProviderIDs lists the org's enabled providers in the order inference
+// tries them: sorted by ID, so a model several providers list always goes to
+// the same one. servable are those with credentials, which inference may use;
+// the rest are enabled but cannot serve.
+func orgProviderIDs(orgCfg *tenant.OrgConfig) (servable, unservable []string) {
 	for providerID, pcfg := range orgCfg.Providers {
-		if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
+		switch {
+		case pcfg == nil || !pcfg.Enabled:
+		case pcfg.HasCredentials():
+			servable = append(servable, providerID)
+		default:
+			unservable = append(unservable, providerID)
+		}
+	}
+	slices.Sort(servable)
+	slices.Sort(unservable)
+	return servable, unservable
+}
+
+// orgProviderFor returns the org's enabled provider for model that can be
+// built, its ID, and the model name to send it.
+//
+// "<provider>/<model>" names the provider, and the provider is sent the name
+// without its prefix. It wins over a provider that lists the whole name, so
+// adding a provider whose model names carry a vendor prefix (Perplexity's
+// "anthropic/claude-sonnet-5-5") does not take traffic from the org's own
+// "anthropic" provider. Callers reach that provider as
+// "perplexity/anthropic/claude-sonnet-5-5". Otherwise the provider that lists
+// model exactly is used. Providers are tried in ID order, so a tie always
+// resolves the same way.
+//
+// When every match fails to build, it returns the first failure and that
+// provider's ID instead.
+func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, string, error) {
+	return h.orgProviderForExcluding(orgID, orgCfg, model, nil)
+}
+
+func (h *Handlers) orgProviderForExcluding(orgID string, orgCfg *tenant.OrgConfig, model string, excluded map[string]bool) (providers.Provider, string, string, error) {
+	if orgCfg == nil || h.orgProviderCache == nil {
+		return nil, "", "", nil
+	}
+	ids, _ := orgProviderIDs(orgCfg)
+
+	var failedID string
+	var firstErr error
+	for _, m := range orgModelMatches(orgCfg, ids, model) {
+		if excluded[m.providerID] {
 			continue
 		}
-		for _, m := range pcfg.Models {
-			if orgModelMatches(m, model, providerID) {
-				p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, pcfg.APIKey, pcfg)
-				if err != nil {
-					slog.Warn("failed to create org provider for model",
-						"org_id", orgID, "provider", providerID, "model", model, "error", err)
-					continue
-				}
-				return p, providerID
+		pcfg := orgCfg.Providers[m.providerID]
+		p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, m.providerID, pcfg.APIKey, pcfg)
+		if err != nil {
+			slog.Warn("failed to create org provider for model",
+				"org_id", orgID, "provider", m.providerID, "model", model, "error", err)
+			if firstErr == nil {
+				failedID, firstErr = m.providerID, err
+			}
+			continue
+		}
+		return p, m.providerID, m.upstreamModel, nil
+	}
+	return nil, failedID, "", firstErr
+}
+
+// orgModelMatch is one of the org's providers that can serve a model, and the
+// model name to send it.
+type orgModelMatch struct{ providerID, upstreamModel string }
+
+// orgModelMatches lists, in the order inference tries them, the providers
+// among ids that serve model: the provider a "<provider>/<model>" name
+// names, then the providers that list the whole name, each in ID order. Model
+// discovery uses the same list, so a model is shown with the price of the
+// provider a request for it goes to.
+func orgModelMatches(orgCfg *tenant.OrgConfig, ids []string, model string) []orgModelMatch {
+	var matches []orgModelMatch
+	if prefix, bare, ok := strings.Cut(model, "/"); ok {
+		for _, providerID := range ids {
+			if strings.EqualFold(prefix, providerID) && slices.Contains(orgCfg.Providers[providerID].Models, bare) {
+				matches = append(matches, orgModelMatch{providerID, bare})
 			}
 		}
 	}
-	return nil, ""
+	for _, providerID := range ids {
+		named := slices.ContainsFunc(matches, func(m orgModelMatch) bool { return m.providerID == providerID })
+		if !named && slices.Contains(orgCfg.Providers[providerID].Models, model) {
+			matches = append(matches, orgModelMatch{providerID, model})
+		}
+	}
+	return matches
 }
 
 func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
@@ -427,29 +551,62 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 		if orgCfg.Routing.Retry != nil && orgCfg.Routing.Retry.Enabled {
 			retryer = routing.NewRetryer(h.buildOrgRetryConfig(orgCfg.Routing.Retry))
 		}
-		return routing.NewFailover(foCfg, h.registry.Router(), retryer, nil)
+		return routing.NewFailover(foCfg, h.registry.Router(), retryer, h.healthMonitor.CircuitBreakerRegistry())
 	}
 	return h.failover.Load()
 }
 
-func (h *Handlers) resolveFallbackProvider(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string) (providers.Provider, string, string, bool) {
-	if orgProvider, orgProviderID := h.resolveOrgProvider(orgID, orgCfg, fallbackModel); orgProvider != nil {
-		return orgProvider, orgProviderID, fallbackModel, true
-	}
+// providerAllowedByLock compares canonical routing IDs, not org adapter IDs.
+// These result fields are server-owned: caller metadata cannot establish a lock.
+func providerAllowedByLock(rc *models.RequestContext, id string) bool {
+	return rc.Metadata["provider_locked"] != "true" ||
+		(rc.Metadata["provider_lock_target"] != "" && id == rc.Metadata["provider_lock_target"])
+}
 
-	fbResult, fbErr := h.registry.ResolveWithRouting(fallbackModel)
-	if fbErr != nil {
-		return nil, "", fallbackModel, false
+func (h *Handlers) resolveFallbackProviderExcluding(ctx context.Context, orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, model string, excluded map[string]bool) (providers.Provider, string, string, bool) {
+	if ctx.Err() != nil {
+		return nil, "", model, false
 	}
-	fbProvider := fbResult.Provider
-	if shouldApplyOrgProviderOverride(rc) {
-		fbProvider = h.applyOrgProviderOverride(orgID, orgCfg, fbResult.Provider.ID(), fbResult.Provider)
+	if rc.Metadata["provider_locked"] == "true" {
+		// Restrict candidates before selection so a competing mapping cannot hide
+		// an eligible same-provider fallback. Preserve the caller's exclusions
+		// and the registry's model-map, routing, alias and prefix semantics.
+		lockedExcluded := make(map[string]bool, len(excluded))
+		for id, skip := range excluded {
+			lockedExcluded[id] = skip
+		}
+		for _, id := range h.registry.ProviderIDs() {
+			if !providerAllowedByLock(rc, id) {
+				lockedExcluded[id] = true
+			}
+		}
+		if orgCfg != nil {
+			for id := range orgCfg.Providers {
+				if !providerAllowedByLock(rc, id) {
+					lockedExcluded[id] = true
+				}
+			}
+		}
+		excluded = lockedExcluded
 	}
-	resolvedModel := fallbackModel
-	if fbResult.ModelOverride != "" {
-		resolvedModel = fbResult.ModelOverride
+	if p, id, upstream, _ := h.orgProviderForExcluding(orgID, orgCfg, model, excluded); p != nil && providerAllowedByLock(rc, id) {
+		return p, id, upstream, true
 	}
-	return fbProvider, fbResult.Provider.ID(), resolvedModel, true
+	// Keep the credential eligibility already established for an explicit lock,
+	// but only for that accepted provider, never any other operator candidate.
+	if (h.orgProvidersOnly(ctx, rc) && rc.Metadata["provider_locked"] != "true") || ctx.Err() != nil {
+		return nil, "", model, false
+	}
+	overrides := h.targetOverrides(ctx, rc, orgID, orgCfg)
+	result, err := h.registry.ResolveForScope(model, excluded, overrides.healthException())
+	if err != nil || !providerAllowedByLock(rc, result.Provider.ID()) {
+		return nil, "", model, false
+	}
+	p := overrides.apply(result.Provider.ID(), result.Provider)
+	if result.ModelOverride != "" {
+		model = result.ModelOverride
+	}
+	return p, result.Provider.ID(), model, true
 }
 
 // applyOrgRoutingOverrides applies per-org routing config to the request context.
@@ -793,24 +950,158 @@ func (h *Handlers) applyOrgModelMapOverrides(orgCfg *tenant.OrgConfig, rc *model
 	}
 }
 
-// resolveTimeout returns the effective timeout for a request.
-// Priority: x-agentcc-timeout header > model-specific > server default.
-func (h *Handlers) resolveTimeout(rc *models.RequestContext, r *http.Request) time.Duration {
-	// 1. Request header override (Go duration string, e.g. "30s", "2m", "500ms").
-	if v := r.Header.Get("x-agentcc-timeout"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
+// orgModelTimeout returns the timeout the request's org set for rc.Model.
+// Handlers resolve the timeout before they apply org overrides, so this reads
+// the org from the request's key instead of from rc.
+func (h *Handlers) orgModelTimeout(rc *models.RequestContext) (time.Duration, bool) {
+	if h.tenantStore == nil {
+		return 0, false
+	}
+	apiKey := h.lookupRequestKey(rc)
+	if apiKey == nil {
+		return 0, false
+	}
+	orgCfg := h.tenantStore.Get(apiKey.Metadata["org_id"])
+	if orgCfg == nil || orgCfg.Routing == nil {
+		return 0, false
+	}
+	raw, ok := orgCfg.Routing.ModelTimeouts[rc.Model]
+	if !ok {
+		return 0, false
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		slog.Warn("org model timeout is not a positive duration, ignoring it",
+			"model", rc.Model,
+			"value", raw,
+		)
+		return 0, false
+	}
+	return d, true
+}
+
+// appliedTimeoutMs narrows the resolved timeout to the one that really bounded
+// the call. The provider holds its own client timeout, which covers the whole
+// exchange including a streamed body, so the shorter of the two is what the
+// caller gets. Reporting the resolved value alone advertises a limit nothing
+// enforces, which is how a per-model timeout above a provider's own came to
+// look like it had been applied.
+//
+// resolved is already formatted; it is returned unchanged when the provider
+// states no timeout. Callers that retry pass the instance that served the response.
+func appliedTimeoutMs(provider providers.Provider, resolved string) string {
+	ms, err := strconv.ParseInt(resolved, 10, 64)
+	if err != nil || ms <= 0 {
+		return resolved
+	}
+	reporter, ok := provider.(providers.ClientTimeoutReporter)
+	if !ok {
+		return resolved
+	}
+	ceiling := reporter.ClientTimeout()
+	if ceiling <= 0 || ceiling.Milliseconds() >= ms {
+		return resolved
+	}
+	return strconv.FormatInt(ceiling.Milliseconds(), 10)
+}
+
+// orgInstanceServed reports whether the org's own provider instance served the
+// request, rather than the operator's base provider.
+//
+// Two of the three resolve paths leave a marker. The third,
+// applyOrgProviderOverride, leaves none — but it runs exactly when
+// shouldApplyOrgProviderOverride allows it, so asking that same question here
+// keeps one answer in one place. The case it rules out is an internal key: it
+// keeps the base provider even when its org has an instance of its own.
+func orgInstanceServed(rc *models.RequestContext) bool {
+	return rc.Metadata["org_provider"] == "true" ||
+		rc.Metadata["org_provider_model_match"] != "" ||
+		shouldApplyOrgProviderOverride(rc)
+}
+
+// recordServedBy records p as the provider instance that answered rc, for
+// post-plugins that judge the response by its instance (reported cost). p is
+// usually a narrower interface over the same instance.
+func recordServedBy(rc *models.RequestContext, p any) {
+	if served, ok := p.(providers.Provider); ok && served != nil {
+		rc.ServedBy = served
+	}
+}
+
+// servingProvider resolves the instance for handlers without chat retries.
+// Chat response writers retain the successful instance instead, since retries
+// can switch between base and org providers with the same ID.
+func (h *Handlers) servingProvider(rc *models.RequestContext) (providers.Provider, bool) {
+	if rc.Provider == "" {
+		return nil, false
+	}
+	if h.orgProviderCache != nil && orgInstanceServed(rc) {
+		if orgID := rc.Metadata["org_id"]; orgID != "" {
+			if p := h.orgProviderCache.Get(orgID, rc.Provider); p != nil {
+				return p, true
+			}
 		}
 	}
+	if h.registry == nil {
+		return nil, false
+	}
+	return h.registry.GetProvider(rc.Provider)
+}
 
-	// 2. Per-model timeout from config.
+// pinPriceTable records the price-table name of p, the instance that served rc.
+// Chat pins it where the successful instance is known, since retries and
+// failover can switch instances. Other handlers leave it unset and
+// servedPriceTableName derives it.
+func pinPriceTable(rc *models.RequestContext, p providers.Provider) {
+	name := providers.PriceTableName(p)
+	rc.ServedPriceTable = &name
+}
+
+// servedPriceTableName is the name the price table keys the models of the
+// provider that served rc under. It follows the instance that served, never
+// the org's config, which can differ from it (an internal key keeps the base
+// provider) and can change while the request runs.
+func (h *Handlers) servedPriceTableName(rc *models.RequestContext) string {
+	if rc.ServedPriceTable != nil {
+		return *rc.ServedPriceTable
+	}
+	p, _ := h.servingProvider(rc)
+	return providers.PriceTableName(p)
+}
+
+// resolveTimeout returns the effective timeout for a request.
+// Priority: request header > the org's model timeout > config.yaml model
+// timeout > server default, and never above server.max_request_timeout.
+// The clamp is what keeps the answer honest: the request context carries that
+// same maximum, so a larger value here would be a number nothing enforces.
+func (h *Handlers) resolveTimeout(rc *models.RequestContext, r *http.Request) time.Duration {
+	d := h.resolveRequestedTimeout(rc, r)
+	if h.maxTimeout > 0 {
+		return min(d, h.maxTimeout)
+	}
+	return d
+}
+
+// resolveRequestedTimeout is resolveTimeout before the clamp.
+func (h *Handlers) resolveRequestedTimeout(rc *models.RequestContext, r *http.Request) time.Duration {
+	// 1. Request header override.
+	if d, ok := middleware.RequestTimeoutHeader(r); ok {
+		return d
+	}
+
+	// 2. Per-model timeout from the org's config.
+	if d, ok := h.orgModelTimeout(rc); ok {
+		return d
+	}
+
+	// 3. Per-model timeout from config.yaml.
 	if mt := h.modelTimeouts.Load(); mt != nil {
 		if d, ok := (*mt)[rc.Model]; ok && d > 0 {
 			return d
 		}
 	}
 
-	// 3. Server default.
+	// 4. Server default.
 	return h.defaultTimeout
 }
 
@@ -855,21 +1146,14 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.Request = &req
+	if !completeChatWire(body) {
+		rc.GuardrailInputUnsupported = "chat request contains unknown message fields"
+	}
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 
-	// Ensure streaming requests always include usage in the final chunk
-	// so post-plugins (cost, logging) have accurate token counts.
-	if req.Stream {
-		if req.StreamOptions == nil {
-			req.StreamOptions = &models.StreamOptions{IncludeUsage: true}
-		} else {
-			req.StreamOptions.IncludeUsage = true
-		}
-	}
-
 	// Extract client IP for IP ACL and audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
@@ -903,19 +1187,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["x-guardrail-policy"] = v
 	}
 
-	// Extract cache-related headers into metadata for cache plugin.
-	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
-		rc.Metadata["cache_ttl"] = v
-	}
-	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
-		rc.Metadata["cache_namespace"] = v
-	}
-	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
-		rc.Metadata["cache_force_refresh"] = "true"
-	}
-	if v := r.Header.Get("Cache-Control"); v != "" {
-		rc.Metadata["cache_control"] = v
-	}
+	applyCacheHeaders(rc, r)
 
 	// Resolve effective timeout (header > model > default) and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -1000,6 +1272,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Keep the caller's model provenance before gateway retargeting (routing,
+	// failover, fallback, mirror). Responses omissions no longer depend on
+	// whether the caller or the gateway chose the target model.
+	req.CallerModel = req.Model
+
 	// 3. Complexity-based routing (only if not provider-locked).
 	if !providerLocked && h.complexityAnalyzer.IsEnabled() && !strings.Contains(rc.Model, "/") {
 		if override := r.Header.Get("x-agentcc-complexity-override"); override != "" {
@@ -1017,54 +1294,14 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve provider (with load balancing and failover if configured).
 	var provider providers.Provider
-	var orgModelResolved bool
-
-	// Check if the org has a provider that specifically registers this model.
-	if !providerLocked && orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		slog.Info("checking org providers for model", "model", req.Model, "org_providers_count", len(orgCfg.Providers))
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				slog.Info("skipping org provider", "provider", providerID, "nil", provCfg == nil, "enabled", provCfg != nil && provCfg.Enabled, "has_credentials", provCfg != nil && provCfg.HasCredentials())
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, req.Model, providerID) {
-					slog.Info("org provider model match, creating override", "provider", providerID, "model", m)
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						provider = orgProvider
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = req.Model
-						orgModelResolved = true
-						break
-					}
-				}
-			}
-			if orgModelResolved {
-				break
-			}
-		}
-	}
-
 	if providerLocked {
 		provider = lockedProvider
-	} else if !orgModelResolved {
+	} else {
 		var err error
-		provider, err = h.resolveProvider(ctx, rc, req.Model)
+		provider, req.Model, err = h.resolveProviderOrgFirst(ctx, rc, orgID, orgCfg, req.Model)
 		if err != nil {
-			// Try org provider model lists before giving up.
-			if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-				if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
-					provider = orgP
-					rc.Provider = providerID
-					rc.Metadata["org_provider"] = "true"
-					err = nil
-				}
-			}
-			if err != nil {
-				models.WriteErrorFromError(w, err)
-				return
-			}
+			models.WriteErrorFromError(w, err)
+			return
 		}
 	}
 
@@ -1109,22 +1346,6 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// Note: x-agentcc-timeout-ms is set via setAgentccHeaders (before WriteHeader)
 	// using rc.Metadata["timeout_ms"] which was populated above.
 
-	// Record provider latency for routing (after response).
-	if router := h.registry.Router(); router != nil {
-		if d, ok := rc.Timings["provider"]; ok {
-			router.RecordLatency(rc.Provider, d)
-		}
-	}
-
-	// Record health metrics.
-	if h.healthMonitor != nil && rc.Provider != "" {
-		if len(rc.Errors) > 0 {
-			h.healthMonitor.RecordError(rc.Provider, rc.Errors[0])
-		} else {
-			h.healthMonitor.RecordSuccess(rc.Provider)
-		}
-	}
-
 	// Traffic mirroring (async, fire-and-forget).
 	// Copy request fields before rc is released to the pool.
 	if m := h.mirror.Load(); m != nil && len(rc.Errors) == 0 && !rc.IsStream {
@@ -1154,16 +1375,84 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// resolveProvider resolves the provider for a model, with failover support for non-streaming.
-// For failover, it tries providers sequentially until one succeeds at the provider call level.
-func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContext, model string) (providers.Provider, error) {
+// unavailableModelError explains why a non-internal key cannot use model. When
+// one of the org's own providers lists the model but cannot be built (its
+// base_url was refused, say) that is the reason to report: the generic
+// answer would send the caller looking at their API key instead.
+func (h *Handlers) unavailableModelError(rc *models.RequestContext, model string) error {
+	if orgID, orgCfg := h.resolveOrgConfig(rc); orgID != "" {
+		if _, providerID, _, err := h.orgProviderFor(orgID, orgCfg, model); err != nil {
+			return orgProviderError(model, providerID, err)
+		}
+	}
+	return models.ErrForbidden(fmt.Sprintf("model %q is not available for this API key", model))
+}
+
+// orgProviderError turns an org provider that could not be built into the
+// error the caller sees. Only a refused base_url is explained in detail; other
+// build errors can carry config the caller should not see (orgProviderFor
+// logs them).
+func orgProviderError(model, providerID string, err error) *models.APIError {
+	var urlErr *providers.BaseURLError
+	if errors.As(err, &urlErr) {
+		status, errType, code := http.StatusForbidden, models.ErrTypePermission, "provider_base_url_blocked"
+		if urlErr.Reason == providers.BaseURLInvalid || urlErr.Reason == providers.BaseURLUnresolvable {
+			status, errType, code = http.StatusBadGateway, models.ErrTypeServer, "provider_base_url_unusable"
+		}
+		return &models.APIError{
+			Status: status,
+			Type:   errType,
+			Code:   code,
+			Message: fmt.Sprintf("model %q is served by your organization's provider %q, but the gateway will not call it: %s.",
+				model, providerID, urlErr.PublicMessage()),
+		}
+	}
+	return &models.APIError{
+		Status:  http.StatusBadGateway,
+		Type:    models.ErrTypeServer,
+		Code:    "provider_unavailable",
+		Message: fmt.Sprintf("model %q is served by your organization's provider %q, but the gateway could not set that provider up; check its configuration.", model, providerID),
+	}
+}
+
+// orgProvidersOnly reports whether rc's key may use only its org's own
+// providers: any key but an internal one, unless a license authorized the
+// request.
+func (h *Handlers) orgProvidersOnly(ctx context.Context, rc *models.RequestContext) bool {
+	return h.orgProvidersOnlyForKeyType(ctx, rc.Metadata["key_type"])
+}
+
+// orgProvidersOnlyForKeyType is the rule behind orgProvidersOnly for callers
+// that have a key type but no request context, such as the model listings.
+func (h *Handlers) orgProvidersOnlyForKeyType(ctx context.Context, keyType string) bool {
+	return h.keyStore != nil && keyType != "internal" && !middleware.IsLicenseAuthorized(ctx)
+}
+
+// globalModelsVisible reports whether r may see the global provider catalog.
+// It mirrors the call-time guard in resolveProvider: a key that cannot call a
+// global model must not be told the model exists.
+func (h *Handlers) globalModelsVisible(r *http.Request) bool {
+	keyType := ""
+	if ki := h.lookupHeaderKey(r); ki != nil {
+		keyType = ki.KeyType
+	}
+	return !h.orgProvidersOnlyForKeyType(r.Context(), keyType)
+}
+
+// resolveProvider resolves the provider for a model and the model name to send
+// it. The two names differ when a conditional route, a routing target, or a
+// model fallback overrides the requested model; the caller puts the returned
+// name on its own request, since only chat requests live on rc.Request.
+func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContext, model string) (providers.Provider, string, error) {
+	return h.resolveProviderForOrg(ctx, rc, model, nil)
+}
+
+func (h *Handlers) resolveProviderForOrg(ctx context.Context, rc *models.RequestContext, model string, orgCfg *tenant.OrgConfig) (providers.Provider, string, error) {
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers.
 	// This guard runs first so no code path (model map, conditional routes, registry)
 	// can bypass it for user keys.
-	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx) {
-		return nil, models.ErrForbidden(
-			fmt.Sprintf("model %q is not available for this API key", model),
-		)
+	if h.orgProvidersOnly(ctx, rc) {
+		return nil, "", h.unavailableModelError(rc, model)
 	}
 
 	// Check per-org model map first — allows orgs to alias model names to providers.
@@ -1174,7 +1463,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 				rc.Provider = providerID
 				rc.Metadata["model_map_matched"] = model
 				rc.Metadata["model_map_provider"] = providerID
-				return p, nil
+				return p, model, nil
 			}
 			slog.Warn("org model map matched but provider not found, falling through",
 				"model", model, "provider", providerID)
@@ -1189,9 +1478,9 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 				rc.Provider = action.Provider
 				rc.Metadata["routing_rule"] = action.Name
 				if action.ModelOverride != "" {
-					rc.Request.Model = action.ModelOverride
+					return p, action.ModelOverride, nil
 				}
-				return p, nil
+				return p, model, nil
 			}
 			slog.Warn("conditional route matched but provider not found",
 				"rule", action.Name, "provider", action.Provider)
@@ -1199,22 +1488,24 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	}
 
 	// Try primary model first.
-	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers —
-	// they should only use org-configured providers (resolved above) or be rejected.
-	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx) {
-		return nil, fmt.Errorf("model %q is not available for this API key: configure provider access via the control plane", model)
+	var overrides orgTargetOverride
+	if shouldApplyOrgProviderOverride(rc) {
+		overrides = h.targetOverrides(ctx, rc, rc.Metadata["org_id"], orgCfg)
 	}
-
-	result, err := h.registry.ResolveWithRouting(model)
+	result, err := h.registry.ResolveForScope(model, nil, overrides.healthException())
 	if err == nil {
 		rc.Provider = result.Provider.ID()
+		p := overrides.apply(rc.Provider, result.Provider)
+		if p != result.Provider {
+			rc.Metadata["org_provider"] = "true"
+		}
 		if result.StrategyName != "" {
 			rc.Metadata["routing_strategy"] = result.StrategyName
 		}
 		if result.ModelOverride != "" {
-			rc.Request.Model = result.ModelOverride
+			return p, result.ModelOverride, nil
 		}
-		return result.Provider, nil
+		return p, model, nil
 	}
 
 	// Try model fallbacks: org-level first, then global.
@@ -1226,26 +1517,44 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	}
 
 	if effectiveFallbacks != nil && effectiveFallbacks.HasFallbacks(model) {
+		var orgCfg *tenant.OrgConfig
+		if h.tenantStore != nil {
+			orgCfg = h.tenantStore.Get(rc.Metadata["org_id"])
+		}
 		for _, fbModel := range effectiveFallbacks.GetChain(model) {
-			fbResult, fbErr := h.registry.ResolveWithRouting(fbModel)
-			if fbErr == nil {
-				rc.Provider = fbResult.Provider.ID()
-				rc.Request.Model = fbModel
+			p, id, upstream, ok := h.resolveFallbackProviderExcluding(ctx, rc.Metadata["org_id"], orgCfg, rc, fbModel, nil)
+			if ok {
+				rc.Provider = id
 				rc.Flags.FallbackUsed = true
 				rc.Metadata["original_model"] = model
-				rc.Metadata["fallback_model"] = fbModel
-				if fbResult.StrategyName != "" {
-					rc.Metadata["routing_strategy"] = fbResult.StrategyName
+				rc.Metadata["fallback_model"] = upstream
+				if base, exists := h.registry.GetProvider(id); !exists || base != p {
+					rc.Metadata["org_provider_model_match"] = fbModel
 				}
-				if fbResult.ModelOverride != "" {
-					rc.Request.Model = fbResult.ModelOverride
-				}
-				return fbResult.Provider, nil
+				return p, upstream, nil
 			}
 		}
 	}
+	if router := h.registry.Router(); router != nil && router.TargetCount(model) > 0 {
+		return nil, "", models.ErrProvidersUnavailable(fmt.Sprintf("all providers for model %q are unavailable", model))
+	}
 
-	return nil, err
+	return nil, "", err
+}
+
+// dispatchChat records translation decisions for this physical attempt and pins
+// price and attribution to the adapter that actually served the response.
+func (h *Handlers) dispatchChat(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, p providers.Provider) error {
+	noteChatResponsesRouteDrops(w, rc, p, rc.Request)
+	resp, err := h.callChatProvider(ctx, p, rc.Request)
+	if err != nil {
+		return err
+	}
+	pinPriceTable(rc, p)
+	rc.ServedBy = p
+	rc.Response = resp
+	rc.ResolvedModel = resp.Model
+	return nil
 }
 
 func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig) {
@@ -1257,53 +1566,33 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return
 	}
 
-	// Resolve model fallback chain (org-level first, then global).
-	var modelChain []string
-	if len(rc.OrgModelFallbacks) > 0 {
-		modelChain = rc.OrgModelFallbacks[rc.Model]
-	} else if mf := h.modelFallbacks.Load(); mf != nil {
-		modelChain = mf.GetChain(rc.Model)
-	}
-
+	registry := h.healthMonitor.CircuitBreakerRegistry()
 	originalModel := rc.Request.Model
-	orgID := rc.Metadata["org_id"]
-
+	servingProvider := provider
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		resp, err := provider.ChatCompletion(ctx, rc.Request)
-		if err == nil {
-			rc.Response = resp
-			rc.ResolvedModel = resp.Model
-			return nil
-		}
-
-		if len(modelChain) == 0 || effectiveFailover == nil || !effectiveFailover.ShouldFailover(err) {
-			return err
-		}
-
-		for _, fbModel := range modelChain {
-			fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-			if !ok {
-				continue
-			}
-
-			rc.Provider = fbProviderID
-			rc.Request.Model = resolvedModel
-
-			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
-			if fbCallErr == nil {
-				rc.Response = fbResp
-				rc.ResolvedModel = fbResp.Model
-				rc.Flags.FallbackUsed = true
-				rc.Metadata["original_model"] = originalModel
-				rc.Metadata["fallback_model"] = resolvedModel
+		call := func(p providers.Provider, recheck bool) error {
+			return h.callProvider(ctx, registry, rc, p, func() error {
+				if recheck {
+					if err := h.reAdmitChangedInspection(ctx, rc); err != nil {
+						return routing.RejectDispatch(err)
+					}
+				}
+				if err := h.dispatchChat(ctx, w, rc, p); err != nil {
+					return err
+				}
+				servingProvider = p
 				return nil
-			}
+			})
 		}
-
-		return err
+		if err := call(provider, false); err != nil {
+			return h.callModelFallbacks(ctx, rc, orgCfg, originalModel, err, effectiveFailover != nil && effectiveFailover.ShouldFailover(err), func(p providers.Provider) error {
+				return call(p, true)
+			})
+		}
+		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "chat.completions", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1313,7 +1602,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return
 	}
 
-	h.setAgentccHeaders(w, rc)
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rc.Response)
@@ -1321,21 +1610,23 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) {
 	originalModel := rc.Request.Model
-	orgID := rc.Metadata["org_id"]
+	registry := fo.CircuitBreakers()
+	var servingProvider providers.Provider
 
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		foResult, err := fo.Execute(ctx, rc.Model, func(ctx context.Context, providerID string, modelOverride string) error {
-			p, ok := h.registry.GetProvider(providerID)
-			if !ok {
-				return fmt.Errorf("provider %q not found", providerID)
+		call := func(callCtx context.Context, p providers.Provider) error {
+			if err := h.reAdmitChangedInspection(callCtx, rc); err != nil {
+				return routing.RejectDispatch(err)
 			}
-
-			if shouldApplyOrgProviderOverride(rc) {
-				p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)
+			if err := h.dispatchChat(callCtx, w, rc, p); err != nil {
+				return err
 			}
-
+			servingProvider = p
+			return nil
+		}
+		foResult, err := h.executeProviderFailover(ctx, rc, fo, orgCfg, func(ctx context.Context, providerID string, p providers.Provider, modelOverride string) error {
 			// Reset for this attempt.
 			rc.Provider = providerID
 			rc.Response = nil
@@ -1346,46 +1637,13 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
-			resp, err := p.ChatCompletion(ctx, rc.Request)
-			if err != nil {
-				return err
-			}
-			rc.Response = resp
-			rc.ResolvedModel = resp.Model
-			return nil
+			return call(ctx, p)
 		})
 
 		if err != nil {
-			// Provider failover exhausted — try model fallback chain.
-			var modelChain []string
-			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[originalModel]
-			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(originalModel)
-			}
-
-			for _, fbModel := range modelChain {
-				// Resolve fallback model: check org providers first, then global registry.
-				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-				if !ok {
-					continue
-				}
-
-				rc.Provider = fbProviderID
-				rc.Request.Model = resolvedModel
-
-				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
-				if fbCallErr == nil {
-					rc.Response = fbResp
-					rc.ResolvedModel = fbResp.Model
-					rc.Flags.FallbackUsed = true
-					rc.Metadata["original_model"] = originalModel
-					rc.Metadata["fallback_model"] = resolvedModel
-					return nil
-				}
-			}
-
-			return err
+			return h.callModelFallbacks(ctx, rc, orgCfg, originalModel, err, true, func(p providers.Provider) error {
+				return h.callProvider(ctx, registry, rc, p, func() error { return call(ctx, p) })
+			})
 		}
 
 		// Record failover metadata.
@@ -1400,7 +1658,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "chat.completions", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1410,7 +1668,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 		return
 	}
 
-	h.setAgentccHeaders(w, rc)
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rc.Response)
@@ -1426,91 +1684,115 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var chunks <-chan models.StreamChunk
 	var errCh <-chan error
 	var firstChunk *models.StreamChunk
+	var servingProvider providers.Provider
 	var upstreamStreamCancel context.CancelFunc
+	// Time to the serving attempt's first chunk: the routing latency signal,
+	// as before per-attempt sampling, rather than the whole stream's length.
+	var firstChunkLatency time.Duration
+	var lease *routing.ProbeLease
+	defer func() { lease.Abandon() }()
+	// When the serving attempt's first chunk is only an acknowledgement, the
+	// routing latency is taken at the next chunk, counted from servingStart.
+	var servingStart time.Time
+	var awaitingOutput bool
+	// routingLatency is the latency an outcome is recorded with: to the first
+	// output, or, for a stream that ends before any, the time it ran.
+	routingLatency := func() time.Duration {
+		if awaitingOutput {
+			return time.Since(servingStart)
+		}
+		return firstChunkLatency
+	}
 	defer func() {
 		if upstreamStreamCancel != nil {
 			upstreamStreamCancel()
 		}
 	}()
 	effectiveFailover := h.effectiveFailover(orgCfg)
+	registry := h.healthMonitor.CircuitBreakerRegistry()
+	if effectiveFailover != nil {
+		registry = effectiveFailover.CircuitBreakers()
+	}
+	finish := func(err error) {
+		lease.Complete(ctx, err)
+		h.recordProviderOutcome(ctx, servingProvider, routingLatency(), err)
+	}
 
+	// callCtx bounds an attempt only until its first chunk. The stream itself
+	// lives on the request context: failover cancels callCtx as soon as the
+	// attempt returns, which would otherwise end the stream after one chunk.
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
-		attemptCtx, attemptCancel := context.WithCancel(callCtx)
+		if err := h.reAdmitChangedInspection(callCtx, rc); err != nil {
+			return routing.RejectDispatch(err)
+		}
+		attemptCtx, attemptCancel := context.WithCancel(ctx)
+		start := time.Now()
+		noteChatResponsesRouteDrops(w, rc, callProvider, rc.Request)
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
-			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			err := models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			h.recordProviderOutcome(callCtx, callProvider, time.Since(start), err)
+			return err
 		}
 
-		chunk, err := waitForFirstStreamChunk(attemptCtx, candidateChunks, candidateErrCh)
+		chunk, err := waitForFirstStreamChunk(callCtx, candidateChunks, candidateErrCh)
 		if err != nil {
+			h.recordProviderOutcome(callCtx, callProvider, time.Since(start), err)
 			cancelAndDrainStream(attemptCancel, candidateChunks)
 			return err
 		}
+		firstChunkLatency = time.Since(start)
+		servingStart = start
+		awaitingOutput = chunk.Acknowledgement
 
 		if upstreamStreamCancel != nil {
 			cancelAndDrainStream(upstreamStreamCancel, chunks)
 		}
 		upstreamStreamCancel = attemptCancel
+		servingProvider = callProvider
+		pinPriceTable(rc, callProvider)
+		rc.ServedBy = callProvider
 		chunks = candidateChunks
 		errCh = candidateErrCh
 		firstChunk = chunk
 		return nil
 	}
 
+	// Direct/model fallback calls own their admission; routed startup retries
+	// are already admitted by executeProviderFailover.
+	openAdmittedStream := func(callCtx context.Context, p providers.Provider) error {
+		admitted, err := h.admitDirectProvider(callCtx, registry, rc, rc.Provider, p)
+		if err != nil {
+			return err
+		}
+		err = openStream(callCtx, p)
+		if err != nil {
+			admitted.Complete(callCtx, err)
+		} else {
+			lease = admitted
+		}
+		return err
+	}
+
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		originalModel := rc.Request.Model
-		orgID := rc.Metadata["org_id"]
-
 		tryModelFallbacks := func(firstErr error) error {
-			if effectiveFailover == nil || !effectiveFailover.ShouldFailover(firstErr) {
-				return firstErr
-			}
-
-			var modelChain []string
-			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[originalModel]
-			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(originalModel)
-			}
-
-			for _, fbModel := range modelChain {
-				fallbackModel := fbModel
-				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fallbackModel)
-				if !ok {
-					continue
-				}
-
-				rc.Provider = fbProviderID
-				rc.Request.Model = resolvedModel
-				if err := openStream(ctx, fbProvider); err == nil {
-					rc.Flags.FallbackUsed = true
-					rc.Metadata["original_model"] = originalModel
-					rc.Metadata["fallback_model"] = resolvedModel
-					return nil
-				}
-			}
-
-			rc.Request.Model = originalModel
-			return firstErr
+			return h.callModelFallbacks(ctx, rc, orgCfg, originalModel, firstErr, effectiveFailover != nil && effectiveFailover.ShouldFailover(firstErr), func(p providers.Provider) error {
+				return openAdmittedStream(ctx, p)
+			})
 		}
 
 		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
-			result, err := effectiveFailover.Execute(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
-				p, ok := h.registry.GetProvider(providerID)
-				if !ok {
-					return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", providerID))
-				}
-				if shouldApplyOrgProviderOverride(rc) {
-					p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)
-				}
+			result, err := h.executeProviderFailover(ctx, rc, effectiveFailover, orgCfg, func(callCtx context.Context, id string, p providers.Provider, modelOverride string) error {
+				rc.Provider = id
 				if modelOverride != "" {
 					rc.Request.Model = modelOverride
 				} else {
 					rc.Request.Model = originalModel
 				}
 				return openStream(callCtx, p)
-			})
+			}, &lease)
 			if err != nil {
 				return tryModelFallbacks(err)
 			}
@@ -1531,14 +1813,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			return nil
 		}
 
-		if err := openStream(ctx, provider); err != nil {
+		if err := openAdmittedStream(ctx, provider); err != nil {
 			return tryModelFallbacks(err)
 		}
 		return nil
 	}
 
 	// Run pre-plugins before opening the upstream stream.
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "chat.completions", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1557,7 +1839,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	}
 
 	// Set Prism headers after pre-plugins have run but before the streaming body starts.
-	h.setAgentccHeaders(w, rc)
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
 	sseWriter.WriteHeaders()
 
 	// Create a cancellable context for stream guardrail checks.
@@ -1568,6 +1850,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// Track the last usage from stream chunks so we can populate rc.Response
 	// after the stream completes (providers send usage in the final chunk).
 	var lastUsage *models.Usage
+	var streamed streamedChars
 	var streamID string
 	var streamCreated int64
 	capture := newStreamCapture(h.captureStreamContent)
@@ -1577,12 +1860,16 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// before every return from the streaming loop. When detach is true, uses
 	// a background context so post-plugins run even after client disconnect.
 	finalizeStream := func(detach bool) *models.StreamChunk {
+		usage := lastUsage
+		if usage == nil && streamed > 0 {
+			usage = estimatedStreamUsage(rc, chatPromptTokens(rc.Request), streamed)
+		}
 		rc.Response = &models.ChatCompletionResponse{
 			ID:      streamID,
 			Object:  "chat.completion",
 			Created: streamCreated,
 			Model:   rc.ResolvedModel,
-			Usage:   lastUsage, // nil is OK — means provider didn't send usage
+			Usage:   usage, // nil only when nothing was relayed
 		}
 		capture.applyTo(rc.Response)
 		pluginCtx := ctx
@@ -1632,10 +1919,11 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				lastUsage = chunk.Usage
 			}
 			capture.observe(chunk)
+			streamed.addChunk(chunk)
 
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					rc.Flags.GuardrailTriggered = true
+					res.StoreBlock(rc)
 					sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
 					finalizeStream(false)
 					return
@@ -1656,9 +1944,21 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				outcome := closedStreamOutcome(ctx, errCh)
+				finish(outcome.err)
+				if outcome.err != nil {
+					apiErr := outcome.apiError(ctx)
+					if apiErr != nil {
+						rc.AddError(apiErr)
+						sseWriter.WriteError(apiErr)
+					}
+					finalizeStream(ctx.Err() != nil)
+					return
+				}
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
+						res.StoreBlock(rc)
 						sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
 					} else if res.Disclaimer != "" {
 						disclaimer := res.Disclaimer
@@ -1682,6 +1982,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				sseWriter.WriteDone()
 				return
 			}
+			if awaitingOutput && !chunk.Acknowledgement {
+				if chunk.ReceivedAt.IsZero() {
+					firstChunkLatency = time.Since(servingStart)
+				} else {
+					firstChunkLatency = chunk.ReceivedAt.Sub(servingStart)
+				}
+				awaitingOutput = false
+			}
 			if streamID == "" && chunk.ID != "" {
 				streamID = chunk.ID
 			}
@@ -1695,11 +2003,12 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				lastUsage = chunk.Usage
 			}
 			capture.observe(chunk)
+			streamed.addChunk(chunk)
 
 			// Run streaming guardrail check.
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					rc.Flags.GuardrailTriggered = true
+					res.StoreBlock(rc)
 					sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
 					finalizeStream(false)
 					return
@@ -1716,19 +2025,33 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 
 		case err, ok := <-errCh:
-			if ok && err != nil {
-				if apiErr, isAPI := err.(*models.APIError); isAPI {
-					sseWriter.WriteError(apiErr)
-				} else {
-					sseWriter.WriteError(models.ErrInternal(err.Error()))
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if err != nil {
+				finish(err)
+				apiErr, isAPI := err.(*models.APIError)
+				if !isAPI {
+					apiErr = models.ErrInternal(err.Error())
 				}
+				rc.AddError(apiErr)
+				sseWriter.WriteError(apiErr)
 				finalizeStream(false)
 				return
 			}
 
 		case <-ctx.Done():
-			// Client disconnected — streamCancel() in defer will stop guardrail goroutines.
-			// Drain remaining chunks to unblock the provider goroutine.
+			outcome := closedStreamOutcome(ctx, errCh)
+			finish(outcome.err)
+			// The client left, or the request reached its deadline; only the
+			// second has anyone to tell. streamCancel() in defer stops the
+			// guardrail goroutines. Drain remaining chunks to unblock the
+			// provider goroutine.
+			if apiErr := outcome.apiError(ctx); apiErr != nil {
+				rc.AddError(apiErr)
+				sseWriter.WriteError(apiErr)
+			}
 			go func() {
 				for range chunks {
 				}
@@ -1753,28 +2076,15 @@ func (h *Handlers) buildStreamingMetadataChunk(rc *models.RequestContext, stream
 		streamCreated = time.Now().Unix()
 	}
 
-	var cost float64
-	if rawCost, ok := rc.Metadata["cost"]; ok {
-		if parsed, err := strconv.ParseFloat(rawCost, 64); err == nil {
-			cost = parsed
-		}
+	return &models.StreamChunk{
+		ID:              streamID,
+		Object:          "chat.completion.chunk",
+		Created:         streamCreated,
+		Model:           model,
+		Choices:         []models.StreamChoice{},
+		Usage:           usage,
+		AgentccMetadata: streamMetadata(rc),
 	}
-
-	chunk := &models.StreamChunk{
-		ID:      streamID,
-		Object:  "chat.completion.chunk",
-		Created: streamCreated,
-		Model:   model,
-		Choices: []models.StreamChoice{},
-		Usage:   usage,
-	}
-	if include := rc.RequestHeaders.Get("x-agentcc-include-metadata"); include == "1" || strings.EqualFold(include, "true") {
-		chunk.AgentccMetadata = &models.AgentccStreamMetadata{
-			Cost:      cost,
-			LatencyMs: rc.Elapsed().Milliseconds(),
-		}
-	}
-	return chunk
 }
 
 func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChunk, errCh <-chan error) (*models.StreamChunk, error) {
@@ -1782,6 +2092,11 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				// A provider sends its error before it closes chunks, and
+				// sends none once ctx is done; see closedStreamError.
+				if outcome := closedStreamOutcome(ctx, errCh); outcome.err != nil {
+					return nil, outcome.err
+				}
 				return nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before sending any chunks")
 			}
 			return &chunk, nil
@@ -1794,7 +2109,7 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 				return nil, err
 			}
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, closedStreamOutcome(ctx, errCh).err
 		}
 	}
 }
@@ -1813,9 +2128,20 @@ func cancelAndDrainStream(cancel context.CancelFunc, chunks <-chan models.Stream
 }
 
 func (h *Handlers) setAgentccHeaders(w http.ResponseWriter, rc *models.RequestContext) {
+	provider, _ := h.servingProvider(rc)
+	h.setAgentccHeadersForProvider(w, rc, provider)
+}
+
+// Chat retries can switch between base and org instances with the same ID.
+// Pass the successful instance rather than reconstructing it from routing metadata.
+func (h *Handlers) setAgentccHeadersForProvider(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider) {
 	w.Header().Set("x-agentcc-provider", rc.Provider)
 	if rc.ResolvedModel != "" {
 		w.Header().Set("x-agentcc-model-used", rc.ResolvedModel)
+	}
+
+	if reason := rc.Metadata[metadataErrorKey]; reason != "" {
+		w.Header().Set("x-agentcc-metadata-error", reason)
 	}
 
 	latency := rc.Elapsed()
@@ -1829,6 +2155,14 @@ func (h *Handlers) setAgentccHeaders(w http.ResponseWriter, rc *models.RequestCo
 	} else if rc.Flags.CacheHit {
 		w.Header().Set("x-agentcc-cache", "hit")
 	}
+	// A cache hit makes no provider attempt, so nothing above set the notes
+	// header. Report the notes the cache restored with the cached response;
+	// callers cannot write translation_drops metadata (see the denylist).
+	if rc.Flags.CacheHit {
+		if drops := rc.Metadata["translation_drops"]; drops != "" {
+			w.Header().Set("x-agentcc-translation-drops", drops)
+		}
+	}
 	if rc.Flags.GuardrailTriggered {
 		w.Header().Set("x-agentcc-guardrail-triggered", "true")
 	}
@@ -1839,7 +2173,7 @@ func (h *Handlers) setAgentccHeaders(w http.ResponseWriter, rc *models.RequestCo
 		w.Header().Set("x-agentcc-routing-strategy", strategy)
 	}
 	if timeout, ok := rc.Metadata["timeout_ms"]; ok {
-		w.Header().Set("x-agentcc-timeout-ms", timeout)
+		w.Header().Set("x-agentcc-timeout-ms", appliedTimeoutMs(provider, timeout))
 	}
 
 	// Advanced routing headers.
@@ -1903,14 +2237,27 @@ func applyCallerMetadata(rc *models.RequestContext, r *http.Request, body json.R
 		mergeCallerMetadata(rc, body)
 	}
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		mergeCallerMetadata(rc, json.RawMessage(meta))
+		parseMetadataHeader(meta, rc)
 	}
 }
 
+// metadataErrorKey flags a request whose x-agentcc-metadata header carried no
+// dimensions because it is not a JSON object. The request still goes through:
+// refusing it would break callers that send a bad header today. The flag
+// reaches the request log row and the x-agentcc-metadata-error response
+// header, so the unattributed cost can be traced back to its caller.
+const metadataErrorKey = "metadata_error"
+
 // parseMetadataHeader records the dimensions carried by the x-agentcc-metadata
-// header alone, for endpoints that read the header before their body exists.
+// header, and flags a header that is not a JSON object.
 func parseMetadataHeader(meta string, rc *models.RequestContext) {
-	mergeCallerMetadata(rc, json.RawMessage(meta))
+	if !mergeCallerMetadata(rc, json.RawMessage(meta)) {
+		rc.Metadata[metadataErrorKey] = "x-agentcc-metadata is not a JSON object"
+		// Requests on config-file keys write no log row, so this line is what
+		// an operator can find. The header's value is not logged.
+		slog.Warn("x-agentcc-metadata is not a JSON object",
+			"request_id", rc.RequestID, "header_bytes", len(meta))
+	}
 }
 
 // applyCallerExtras snapshots the request body's unknown top-level fields onto
@@ -2033,10 +2380,10 @@ func isCredentialShapedKey(key string) bool {
 // its JSON text. Strict string-only decoding threw away the whole object over
 // one numeric value, which is a silent and very confusing way to lose every
 // dimension a caller sent.
-func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) {
+func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) bool {
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return false
 	}
 	for k, rv := range m {
 		if isBlockedMetadataKey(k) {
@@ -2054,6 +2401,7 @@ func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) {
 		}
 		rc.Metadata[k] = v
 	}
+	return true
 }
 
 // isBlockedMetadataKey returns true for metadata keys that must not be
@@ -2072,44 +2420,29 @@ func isBlockedMetadataKey(key string) bool {
 	// Block specific keys that don't follow a prefix pattern.
 	//
 	// The cost family is listed exactly rather than by prefix. The plugins own
-	// "cost" and "cost_source" and nothing else, while any prefix wide enough
-	// to cover them also swallows cost_center and cost_code — ordinary business
-	// dimensions. A new internal cost_* key must be added here by hand.
+	// "cost", "cost_source" and the four cost_* keys below and nothing else,
+	// while any prefix wide enough to cover them also swallows cost_center and
+	// cost_code — ordinary business dimensions. A new internal cost_* key must
+	// be added here by hand (the cost plugin's Metadata* constants).
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source":
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source",
+		"cost_reported_unit", "cost_is_byok", "cost_catalogue", "cost_reported_zero",
+		"translation_drops", usageEstimatedKey, metadataErrorKey:
+		return true
+	case "provider_locked", "provider_lock_target":
+		// Lock results belong to the server; provider_lock remains a caller request.
 		return true
 	}
 	return false
 }
 
-// extractClientIP extracts the client IP address from the request.
-// It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
-func extractClientIP(r *http.Request) string {
-	// Check X-Forwarded-For (may contain multiple IPs: client, proxy1, proxy2).
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
-		}
-	}
-
-	// Check X-Real-IP.
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr (strip port).
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx > 0 {
-		// Handle IPv6 in brackets: [::1]:8080
-		if addr[0] == '[' {
-			if bracketIdx := strings.Index(addr, "]"); bracketIdx > 0 {
-				return addr[1:bracketIdx]
-			}
-		}
-		return addr[:idx]
-	}
-	return addr
+// clientIP returns the client address recorded as client_ip and judged by
+// ip_acl and per-key allowed_ips. X-Forwarded-For is honoured only for the
+// configured number of trusted proxy hops (ip_acl.trusted_proxies); with the
+// default of 0 it is the TCP peer. X-Real-IP is never trusted. See
+// trustedClientIP.
+func (h *Handlers) clientIP(r *http.Request) string {
+	return trustedClientIP(r, h.trustedProxies)
 }
 
 // extractBodySessionID extracts session_id from the request body's "metadata"
@@ -2142,49 +2475,26 @@ func (h *Handlers) ModelDB() *modeldb.ModelDB {
 
 // ListModels handles GET /v1/models.
 func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
-	allModels := h.registry.ListAllModels()
+	var allModels []models.ModelObject
+	if h.globalModelsVisible(r) {
+		allModels = h.registry.ListAllModels()
+	}
 	db := h.ModelDB()
 
 	if scopedModels, ok := h.orgScopedModels(r); ok {
 		allModels = mergeModelObjects(allModels, scopedModels)
 	}
 
+	orgID := h.headerOrgID(r)
+	tables := map[string]string{} // price-table name per provider, resolved once
 	enriched := make([]models.EnrichedModelObject, 0, len(allModels))
 	for _, m := range allModels {
-		em := models.EnrichedModelObject{
-			ID:      m.ID,
-			Object:  m.Object,
-			Created: m.Created,
-			OwnedBy: m.OwnedBy,
+		table, ok := tables[m.OwnedBy]
+		if !ok {
+			table = h.priceTableName(orgID, m.OwnedBy)
+			tables[m.OwnedBy] = table
 		}
-
-		if db != nil {
-			if info, ok := db.Get(m.ID); ok {
-				em.Mode = string(info.Mode)
-				em.MaxInputTokens = info.MaxInputTokens
-				em.MaxOutputTokens = info.MaxOutputTokens
-				if info.DeprecationDate != "" {
-					em.Deprecated = true
-				}
-				if info.Pricing.HasPricing() {
-					em.Pricing = &models.ModelPricingAPI{
-						InputPerMTokens:       info.Pricing.InputPerMTok(),
-						OutputPerMTokens:      info.Pricing.OutputPerMTok(),
-						CachedInputPerMTokens: info.Pricing.CachedInputPerToken * 1_000_000,
-					}
-				}
-				em.Capabilities = &models.ModelCapsAPI{
-					Vision:          info.Capabilities.Vision,
-					FunctionCalling: info.Capabilities.FunctionCalling,
-					Streaming:       info.Capabilities.Streaming,
-					ResponseSchema:  info.Capabilities.ResponseSchema,
-					PromptCaching:   info.Capabilities.PromptCaching,
-					Reasoning:       info.Capabilities.Reasoning,
-				}
-			}
-		}
-
-		enriched = append(enriched, em)
+		enriched = append(enriched, enrichModel(db, m, table))
 	}
 
 	resp := models.EnrichedModelListResponse{
@@ -2197,9 +2507,82 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool) {
-	if h.tenantStore == nil || h.keyStore == nil {
-		return nil, false
+// enrichModel adds what the price table says about m. The entry is found by
+// ModelDB.PriceKey, as the cost plugin prices a request, so a model the
+// provider lists bare ("sonar") shows the entry keyed under the provider
+// ("perplexity/sonar"). table is the provider's price-table name.
+func enrichModel(db *modeldb.ModelDB, m models.ModelObject, table string) models.EnrichedModelObject {
+	em := models.EnrichedModelObject{
+		ID:      m.ID,
+		Object:  m.Object,
+		Created: m.Created,
+		OwnedBy: m.OwnedBy,
+	}
+	if db == nil {
+		return em
+	}
+	info, ok := db.Get(db.PriceKey(m.ID, m.OwnedBy, table))
+	if !ok {
+		return em
+	}
+	em.Mode = string(info.Mode)
+	em.MaxInputTokens = info.MaxInputTokens
+	em.MaxOutputTokens = info.MaxOutputTokens
+	if info.DeprecationDate != "" {
+		em.Deprecated = true
+	}
+	if info.Pricing.HasPricing() {
+		em.Pricing = &models.ModelPricingAPI{
+			InputPerMTokens:       info.Pricing.InputPerMTok(),
+			OutputPerMTokens:      info.Pricing.OutputPerMTok(),
+			CachedInputPerMTokens: info.Pricing.CachedInputPerToken * 1_000_000,
+		}
+	}
+	em.Capabilities = &models.ModelCapsAPI{
+		Vision:          info.Capabilities.Vision,
+		FunctionCalling: info.Capabilities.FunctionCalling,
+		Streaming:       info.Capabilities.Streaming,
+		ResponseSchema:  info.Capabilities.ResponseSchema,
+		PromptCaching:   info.Capabilities.PromptCaching,
+		Reasoning:       info.Capabilities.Reasoning,
+	}
+	return em
+}
+
+// priceTableName is the name the price table keys a provider's models under,
+// as the provider that would serve an org's request states it: the org's own
+// provider when the org has that provider enabled, else the config.yaml
+// provider with that ID. The org's name comes from its config, not from a
+// built instance, which exists only after the org's first request through it.
+// It is for model discovery, where nothing is served; costing uses
+// servedPriceTableName.
+func (h *Handlers) priceTableName(orgID, providerID string) string {
+	if orgID != "" && h.orgProviderCache != nil && h.tenantStore != nil {
+		if cfg := h.tenantStore.Get(orgID); cfg != nil {
+			if pc := cfg.Providers[providerID]; pc != nil && pc.Enabled {
+				return h.orgProviderCache.PriceTableName(providerID, pc)
+			}
+		}
+	}
+	if h.registry == nil {
+		return ""
+	}
+	p, _ := h.registry.GetProvider(providerID)
+	return providers.PriceTableName(p)
+}
+
+// headerOrgID is the org of the API key presented in r's headers, or "".
+func (h *Handlers) headerOrgID(r *http.Request) string {
+	if ki := h.lookupHeaderKey(r); ki != nil {
+		return ki.Metadata["org_id"]
+	}
+	return ""
+}
+
+// lookupHeaderKey returns the API key presented in r's headers, or nil.
+func (h *Handlers) lookupHeaderKey(r *http.Request) *authpkg.APIKey {
+	if h.keyStore == nil {
+		return nil
 	}
 	rawKey := ""
 	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
@@ -2208,9 +2591,16 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 		rawKey = apiKey
 	}
 	if rawKey == "" {
+		return nil
+	}
+	return h.keyStore.Lookup(rawKey)
+}
+
+func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool) {
+	if h.tenantStore == nil {
 		return nil, false
 	}
-	ki := h.keyStore.Lookup(rawKey)
+	ki := h.lookupHeaderKey(r)
 	if ki == nil {
 		return nil, false
 	}
@@ -2223,21 +2613,27 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 		return nil, false
 	}
 
+	// A model several providers list is owned by the one inference routes to
+	// (orgModelMatches), so its price is the same on every call and matches
+	// what a request costs. A model only providers that cannot serve list keeps
+	// the first of those.
+	servable, unservable := orgProviderIDs(orgCfg)
 	seen := make(map[string]bool)
 	result := make([]models.ModelObject, 0)
-	for providerName, pc := range orgCfg.Providers {
-		if !pc.Enabled {
-			continue
-		}
-		for _, modelID := range pc.Models {
+	for _, providerName := range append(servable, unservable...) {
+		for _, modelID := range orgCfg.Providers[providerName].Models {
 			if seen[modelID] {
 				continue
 			}
 			seen[modelID] = true
+			owner := providerName
+			if matches := orgModelMatches(orgCfg, servable, modelID); len(matches) > 0 {
+				owner = matches[0].providerID
+			}
 			result = append(result, models.ModelObject{
 				ID:      modelID,
 				Object:  "model",
-				OwnedBy: providerName,
+				OwnedBy: owner,
 			})
 		}
 	}
@@ -2255,24 +2651,30 @@ func (h *Handlers) GetModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	found := func(m models.ModelObject) {
+		em := enrichModel(h.ModelDB(), m, h.priceTableName(h.headerOrgID(r), m.OwnedBy))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(em)
+	}
+
 	if scopedModels, ok := h.orgScopedModels(r); ok {
 		for _, m := range scopedModels {
 			if m.ID == modelID {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(m)
+				found(m)
 				return
 			}
 		}
 	}
 
-	// Check global registry for non-tenant deployments.
-	allModels := h.registry.ListAllModels()
+	// The global catalog is visible only to keys that can call it.
+	var allModels []models.ModelObject
+	if h.globalModelsVisible(r) {
+		allModels = h.registry.ListAllModels()
+	}
 	for _, m := range allModels {
 		if m.ID == modelID {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(m)
+			found(m)
 			return
 		}
 	}

@@ -41,7 +41,7 @@ const InputPromptBoxCopy = ({
             boxShadow: "none",
           },
           "& .MuiInputBase-input::placeholder": {
-            fontSize: "14px",
+            fontSize: "12px",
           },
           border: "none",
           boxShadow: "none",

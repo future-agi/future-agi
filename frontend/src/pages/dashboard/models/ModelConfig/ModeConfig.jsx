@@ -1,4 +1,5 @@
-import { Box, Button, Card, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
+import Section from "src/components/section";
 import React, { useState } from "react";
 import ModelBaselineCard from "./ModelBaselineCard";
 import ModelPerformanceConfigCard from "./ModelPerformanceConfigCard";
@@ -47,7 +48,7 @@ const ModeConfig = () => {
         isMetricAdded={isMetricAdded}
         defaultMetricId={defaultMetric}
       />
-      <Card>
+      <Section variant="panel">
         <Box
           sx={{
             padding: 2.5,
@@ -58,7 +59,7 @@ const ModeConfig = () => {
             alignItems: "center",
           }}
         >
-          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
             Model Settings
           </Typography>
         </Box>
@@ -82,7 +83,7 @@ const ModeConfig = () => {
             Delete
           </Button>
         </Box>
-      </Card>
+      </Section>
       <DeleteConfirm
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}

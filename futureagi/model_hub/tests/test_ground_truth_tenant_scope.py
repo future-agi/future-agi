@@ -98,10 +98,14 @@ def test_system_template_isolates_gt_between_two_orgs():
     gt_a = _make_gt(template=template, org=org_a, workspace=ws_a, is_active=True)
 
     found_for_a = GroundTruthService.load_active_gt(
-        eval_template=template, organization_id=org_a.id, workspace_id=ws_a.id,
+        eval_template=template,
+        organization_id=org_a.id,
+        workspace_id=ws_a.id,
     )
     found_for_b = GroundTruthService.load_active_gt(
-        eval_template=template, organization_id=org_b.id, workspace_id=ws_b.id,
+        eval_template=template,
+        organization_id=org_b.id,
+        workspace_id=ws_b.id,
     )
 
     assert found_for_a is not None and found_for_a.id == gt_a.id
@@ -172,12 +176,17 @@ def test_enabled_false_is_treated_as_unwired():
     template = _make_system_template()
     org, workspace, _ = _make_org_with_workspace("Tenant Disabled")
     _make_gt(
-        template=template, org=org, workspace=workspace,
-        is_active=True, enabled=False,
+        template=template,
+        org=org,
+        workspace=workspace,
+        is_active=True,
+        enabled=False,
     )
 
     found = GroundTruthService.load_active_gt(
-        eval_template=template, organization_id=org.id, workspace_id=workspace.id,
+        eval_template=template,
+        organization_id=org.id,
+        workspace_id=workspace.id,
     )
 
     assert found is None
@@ -194,7 +203,9 @@ def test_soft_deleted_active_row_drops_out_of_lookup():
     gt.save(update_fields=["deleted", "is_active", "updated_at"])
 
     found = GroundTruthService.load_active_gt(
-        eval_template=template, organization_id=org.id, workspace_id=workspace.id,
+        eval_template=template,
+        organization_id=org.id,
+        workspace_id=workspace.id,
     )
 
     assert found is None
@@ -209,7 +220,10 @@ def test_partial_unique_constraint_rejects_two_active_rows_for_same_tenant():
     with pytest.raises(IntegrityError):
         with transaction.atomic():
             _make_gt(
-                template=template, org=org, workspace=workspace, is_active=True,
+                template=template,
+                org=org,
+                workspace=workspace,
+                is_active=True,
             )
 
 
@@ -284,7 +298,9 @@ def test_load_active_gt_picks_only_the_active_row_among_siblings():
     _make_gt(template=template, org=org, workspace=workspace, is_active=False)
 
     found = GroundTruthService.load_active_gt(
-        eval_template=template, organization_id=org.id, workspace_id=workspace.id,
+        eval_template=template,
+        organization_id=org.id,
+        workspace_id=workspace.id,
     )
 
     assert found is not None
@@ -295,7 +311,10 @@ def test_load_active_gt_picks_only_the_active_row_among_siblings():
 def test_user_template_active_gt_in_owner_org_resolves(organization, workspace):
     template = _make_user_template(organization, workspace)
     gt = _make_gt(
-        template=template, org=organization, workspace=workspace, is_active=True,
+        template=template,
+        org=organization,
+        workspace=workspace,
+        is_active=True,
     )
 
     found = GroundTruthService.load_active_gt(
@@ -325,10 +344,14 @@ def test_same_org_two_workspaces_have_independent_active_gt():
     gt_b = _make_gt(template=template, org=org, workspace=ws_b, is_active=True)
 
     found_a = GroundTruthService.load_active_gt(
-        eval_template=template, organization_id=org.id, workspace_id=ws_a.id,
+        eval_template=template,
+        organization_id=org.id,
+        workspace_id=ws_a.id,
     )
     found_b = GroundTruthService.load_active_gt(
-        eval_template=template, organization_id=org.id, workspace_id=ws_b.id,
+        eval_template=template,
+        organization_id=org.id,
+        workspace_id=ws_b.id,
     )
 
     assert found_a is not None and found_a.id == gt_a.id
@@ -460,21 +483,24 @@ def test_inject_context_injects_gt_blocks_only_for_owning_tenant(monkeypatch):
         return retrieved_for_a, {}
 
     monkeypatch.setattr(
-        "model_hub.services.ground_truth_service."
-        "GroundTruthService.retrieve_few_shot",
+        "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
         fake_retrieve,
     )
 
     mapped_for_a = {"input": "hello"}
     GroundTruthService.inject_context(
-        mapped_for_a, template,
-        organization_id=org_a.id, workspace_id=ws_a.id,
+        mapped_for_a,
+        template,
+        organization_id=org_a.id,
+        workspace_id=ws_a.id,
     )
 
     mapped_for_b = {"input": "hello"}
     GroundTruthService.inject_context(
-        mapped_for_b, template,
-        organization_id=org_b.id, workspace_id=ws_b.id,
+        mapped_for_b,
+        template,
+        organization_id=org_b.id,
+        workspace_id=ws_b.id,
     )
 
     assert "ground_truth_blocks" in mapped_for_a
@@ -485,13 +511,17 @@ def test_inject_context_injects_gt_blocks_only_for_owning_tenant(monkeypatch):
 @pytest.mark.e2e
 @pytest.mark.django_db
 def test_setup_endpoint_persists_to_row_not_to_template_config(
-    auth_client, organization, workspace,
+    auth_client,
+    organization,
+    workspace,
 ):
     """HTTP-level proof: PUT /setup/ writes the runtime knobs onto the
     EvalGroundTruth row, and leaves EvalTemplate.config untouched."""
     template = _make_user_template(organization, workspace)
     gt = _make_gt(
-        template=template, org=organization, workspace=workspace,
+        template=template,
+        org=organization,
+        workspace=workspace,
         embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING,
     )
 

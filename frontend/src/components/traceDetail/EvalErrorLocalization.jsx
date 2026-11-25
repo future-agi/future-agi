@@ -29,6 +29,10 @@ import { canonicalEntries } from "src/utils/utils";
  *      /tracer/custom-eval-config/run_evaluation/ (which recomputes the
  *      error analysis as a side effect).
  *
+ *   3. Inline mode — call-detail payloads provide the analysis/status and
+ *      localized input directly, without IDs for starting a new task. This is
+ *      the read-only mode used by Environment run drawers.
+ *
  * UI states across both modes:
  *   • completed + analysis → ErrorLocalizeCard with highlighted segments
  *   • running / pending    → purple spinner banner
@@ -43,6 +47,7 @@ const EvalErrorLocalization = ({
   projectVersionId,
   initialAnalysis,
   initialStatus,
+  initialMessage,
   datapoint,
   selectedInputKey,
 }) => {
@@ -89,6 +94,14 @@ const EvalErrorLocalization = ({
       return data?.result || null;
     },
     enabled: traceFetchEnabled,
+    // Keep polling while the span's localization task is still queued or
+    // running, so the spinner resolves to the finished or failed card.
+    refetchInterval: (q) => {
+      const r = q?.state?.data;
+      if (!r || r.error_analysis) return false;
+      const status = r.error_localizer_status;
+      return status === "pending" || status === "running" ? 3000 : false;
+    },
     refetchOnWindowFocus: false,
     // Suppress global onError toast (app.jsx); inline empty state already rendered.
     meta: { errorHandled: true },
@@ -113,6 +126,27 @@ const EvalErrorLocalization = ({
     initialAnalysis ||
     traceData?.errorAnalysis ||
     traceData?.error_analysis ||
+    null;
+
+  // Trace mode: the details response carries the localized input snapshot
+  // the card highlights, plus the localization task's status and reason.
+  const traceInputKey = traceData?.selected_input_key || null;
+  const traceDatapoint = traceData
+    ? {
+        selected_input_key: traceInputKey,
+        selectedInputKey: traceInputKey,
+        input_data: traceData.input_data || {},
+        input_types: traceData.input_types || {},
+      }
+    : null;
+  const effectiveDatapoint =
+    datapoint || (mode === "trace" ? traceDatapoint : null);
+  const effectiveInputKey =
+    selectedInputKey || (mode === "trace" ? traceInputKey : null);
+  const statusMessage =
+    cellPollData?.error_message ||
+    initialMessage ||
+    traceData?.error_localizer_message ||
     null;
 
   // ── Cell-mode trigger ───────────────────────────────────────────────────
@@ -175,7 +209,12 @@ const EvalErrorLocalization = ({
 
   const effectiveStatus = analysis
     ? "completed"
-    : cellPollData?.status || initialStatus || null;
+    : cellPollData?.status ||
+      initialStatus ||
+      traceData?.error_localizer_status ||
+      null;
+  // Trace-mode re-runs need the project version, which Observe rows lack.
+  const canRetry = mode === "cell" || (mode === "trace" && !!projectVersionId);
 
   // ── Loading state (trace mode, waiting on first fetch) ─────────────────
   if (mode === "trace" && traceLoading && !analysis) {
@@ -191,7 +230,7 @@ const EvalErrorLocalization = ({
         }}
       >
         <CircularProgress size={12} thickness={5} />
-        <Typography variant="caption" sx={{ fontSize: 11 }}>
+        <Typography variant="caption" sx={{ fontSize: 12 }}>
           Checking error localization…
         </Typography>
       </Box>
@@ -219,28 +258,31 @@ const EvalErrorLocalization = ({
           <Typography
             variant="caption"
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.secondary",
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Possible Error
           </Typography>
           {isAudioLocalization ? (
             <AudioErrorCard
-              valueInfos={{ errorAnalysis: analysis }}
-              column={selectedInputKey || "input"}
+              valueInfos={{
+                ...(effectiveDatapoint || {}),
+                errorAnalysis: analysis,
+              }}
+              column={effectiveInputKey || "input"}
             />
           ) : (
             entries.map(([key, value]) => (
               <ErrorLocalizeCard
                 key={key}
                 value={value}
-                column={selectedInputKey || key}
+                column={effectiveInputKey || key}
                 tabValue="raw"
-                datapoint={datapoint}
+                datapoint={effectiveDatapoint}
               />
             ))
           )}
@@ -248,9 +290,6 @@ const EvalErrorLocalization = ({
       );
     }
   }
-
-  // Without any IDs we can't offer run/retry actions.
-  if (!mode) return null;
 
   // ── State 2: running ─────────────────────────────────────────────────────
   if (effectiveStatus === "pending" || effectiveStatus === "running") {
@@ -265,10 +304,7 @@ const EvalErrorLocalization = ({
           borderRadius: "6px",
           border: "1px solid",
           borderColor: "primary.main",
-          backgroundColor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(124, 77, 255, 0.08)"
-              : "rgba(124, 77, 255, 0.04)",
+          backgroundColor: "action.hover",
         }}
       >
         <CircularProgress size={13} thickness={5} />
@@ -283,7 +319,7 @@ const EvalErrorLocalization = ({
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ display: "block", fontSize: 10 }}
+            sx={{ display: "block", fontSize: 12 }}
           >
             Usually 30–90 seconds.
           </Typography>
@@ -304,46 +340,48 @@ const EvalErrorLocalization = ({
           py: 1,
           borderRadius: "6px",
           border: "1px solid",
-          borderColor: "error.light",
-          backgroundColor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(255, 86, 48, 0.08)"
-              : "rgba(255, 86, 48, 0.04)",
+          borderColor: "status.danger.border",
+          backgroundColor: "status.danger.bg",
         }}
       >
         <Typography variant="caption" fontWeight={600} color="error.main">
           Error localization failed
         </Typography>
-        {cellPollData?.error_message && (
+        {statusMessage && (
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ fontSize: 10 }}
+            sx={{ fontSize: 12 }}
           >
-            {cellPollData.error_message}
+            {statusMessage}
           </Typography>
         )}
-        <Box>
-          <Button
-            size="small"
-            variant="outlined"
-            color="primary"
-            onClick={() => triggerMutation.mutate()}
-            disabled={triggerMutation.isPending}
-            sx={{ textTransform: "none", fontSize: 11, mt: 0.25 }}
-          >
-            Retry
-          </Button>
-        </Box>
+        {canRetry && (
+          <Box>
+            <Button
+              size="small"
+              variant="outlined"
+              color="primary"
+              onClick={() => triggerMutation.mutate()}
+              disabled={triggerMutation.isPending}
+              sx={{ mt: 0.25 }}
+            >
+              Retry
+            </Button>
+          </Box>
+        )}
       </Box>
     );
   }
 
   // ── State 4: skipped ─────────────────────────────────────────────────────
   if (effectiveStatus === "skipped") {
-    return (
-      <SkippedLocalizationBanner message={cellPollData?.error_message} />
-    );
+    return <SkippedLocalizationBanner message={statusMessage} />;
+  }
+
+  // ── State 4b: finished without a localizable segment ───────────────────
+  if (mode === "trace" && effectiveStatus === "completed" && statusMessage) {
+    return <SkippedLocalizationBanner message={statusMessage} />;
   }
 
   // ── State 5: not yet run — show dashed card with Run button ──────────────
@@ -361,10 +399,7 @@ const EvalErrorLocalization = ({
         borderRadius: "6px",
         border: "1px dashed",
         borderColor: "divider",
-        backgroundColor: (theme) =>
-          theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.02)",
+        backgroundColor: "background.neutral",
       }}
     >
       <Iconify
@@ -376,14 +411,14 @@ const EvalErrorLocalization = ({
         <Typography
           variant="caption"
           fontWeight={600}
-          sx={{ display: "block", fontSize: 11 }}
+          sx={{ display: "block", fontSize: 12 }}
         >
           No error localization yet
         </Typography>
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ display: "block", fontSize: 10 }}
+          sx={{ display: "block", fontSize: 12 }}
         >
           {mode === "cell"
             ? "Pinpoint which parts of the input caused this eval to fail."
@@ -400,10 +435,7 @@ const EvalErrorLocalization = ({
           loading={triggerMutation.isPending}
           onClick={() => triggerMutation.mutate()}
           sx={{
-            textTransform: "none",
-            fontSize: 11,
             flexShrink: 0,
-            height: 26,
           }}
         >
           Run
@@ -420,6 +452,7 @@ EvalErrorLocalization.propTypes = {
   projectVersionId: PropTypes.string,
   initialAnalysis: PropTypes.object,
   initialStatus: PropTypes.string,
+  initialMessage: PropTypes.string,
   datapoint: PropTypes.object,
   selectedInputKey: PropTypes.string,
 };

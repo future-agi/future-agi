@@ -4,7 +4,7 @@ import { Button } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { copyToClipboard } from "src/utils/utils";
+import { copyToClipboard } from "src/utils/copyToClipboard";
 
 export default function CopyLinkButton({ text, label = "Copy", sx }) {
   const [copied, setCopied] = useState(false);
@@ -28,7 +28,7 @@ export default function CopyLinkButton({ text, label = "Copy", sx }) {
         startIcon={
           <Iconify
             icon={copied ? "solar:check-read-linear" : "solar:copy-linear"}
-            width={15}
+            width={16}
           />
         }
         sx={{ flexShrink: 0, minWidth: 96, ...sx }}

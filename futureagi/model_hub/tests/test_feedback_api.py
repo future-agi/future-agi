@@ -234,6 +234,9 @@ def test_legacy_feedback_generated_routes_round_trip(auth_client, user, workspac
     submit_payload = _result(submit_response)
     assert submit_payload["action_type"] == "retune"
     embedding_manager.return_value.parallel_process_metadata.assert_called_once()
+    assert embedding_manager.return_value.parallel_process_metadata.call_args.kwargs[
+        "metadatas"
+    ]["feedback_id"] == str(feedback_id)
     embedding_manager.return_value.close.assert_called_once()
 
     feedback.refresh_from_db()
@@ -249,9 +252,7 @@ def test_legacy_feedback_generated_routes_round_trip(auth_client, user, workspac
 
 
 @pytest.mark.django_db
-def test_get_template_returns_choice_scores_when_defined(
-    auth_client, user, workspace
-):
+def test_get_template_returns_choice_scores_when_defined(auth_client, user, workspace):
     """Feedback template must surface choice_scores so the FE can render a
     choice picker with derived scores instead of a raw numeric input."""
     organization = user.organization

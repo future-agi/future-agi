@@ -108,12 +108,40 @@ class TestDatatypeConverter(APITestCase):
         """Boolean conversion — matrix over all input variants."""
         converter = DatatypeConverter(DataTypeChoices.BOOLEAN.value)
         cases = (
-            [(v, BooleanChoices.TRUE.value, False) for v in
-             ("true", "True", "TRUE", "1", "yes", "Yes", "YES", "passed", "Passed")]
-            + [(v, BooleanChoices.FALSE.value, False) for v in
-               ("false", "False", "FALSE", "0", "no", "No", "NO", "failed", "Failed")]
+            [
+                (v, BooleanChoices.TRUE.value, False)
+                for v in (
+                    "true",
+                    "True",
+                    "TRUE",
+                    "1",
+                    "yes",
+                    "Yes",
+                    "YES",
+                    "passed",
+                    "Passed",
+                )
+            ]
             + [
-                ("random value", BooleanChoices.FALSE.value, True),  # defaults, asserts note
+                (v, BooleanChoices.FALSE.value, False)
+                for v in (
+                    "false",
+                    "False",
+                    "FALSE",
+                    "0",
+                    "no",
+                    "No",
+                    "NO",
+                    "failed",
+                    "Failed",
+                )
+            ]
+            + [
+                (
+                    "random value",
+                    BooleanChoices.FALSE.value,
+                    True,
+                ),  # defaults, asserts note
                 ("", BooleanChoices.FALSE.value, False),  # empty
             ]
         )
@@ -137,8 +165,8 @@ class TestDatatypeConverter(APITestCase):
             ("42", True, "42"),
             ("0", True, "0"),
             ("-100", True, "-100"),
-            ("42.7", True, "42"),        # truncates decimals
-            ("  123  ", True, "123"),    # strips whitespace
+            ("42.7", True, "42"),  # truncates decimals
+            ("  123  ", True, "123"),  # strips whitespace
             ("abc", False, "Cannot convert"),
             ("12.34.56", False, "Cannot convert"),
             ("hello", False, "Cannot convert"),
@@ -275,10 +303,10 @@ class TestDatatypeConverter(APITestCase):
         converter = DatatypeConverter(DataTypeChoices.JSON.value)
         # (input, expected_success, expected_value, mode)
         cases = [
-            ('{"key": "value"}',       True,  {"key": "value"}, "json_equals"),
-            ("[1, 2, 3]",              True,  [1, 2, 3],         "json_equals"),
-            ("{'key': 'value'}",       True,  {"key": "value"}, "json_equals"),
-            ("",                       True,  "{}",              "eq"),
+            ('{"key": "value"}', True, {"key": "value"}, "json_equals"),
+            ("[1, 2, 3]", True, [1, 2, 3], "json_equals"),
+            ("{'key': 'value'}", True, {"key": "value"}, "json_equals"),
+            ("", True, "{}", "eq"),
         ]
         for value, expected_success, expected, mode in cases:
             with self.subTest(value=value):
@@ -387,9 +415,7 @@ class TestDatatypeConverter(APITestCase):
         converter = DatatypeConverter(
             DataTypeChoices.IMAGE.value, dataset_id=str(self.dataset.id)
         )
-        own_url = (
-            "https://fi-content-dev.s3.ap-south-1.amazonaws.com/images/uuid/uuid"
-        )
+        own_url = "https://fi-content-dev.s3.ap-south-1.amazonaws.com/images/uuid/uuid"
         cell = self._create_cell(json.dumps([own_url]))
 
         result = converter._convert_single_cell(cell)
@@ -739,7 +765,9 @@ class TestDatatypeConverter(APITestCase):
 
     @patch("model_hub.views.develop_dataset.upload_image_to_s3")
     @patch("model_hub.views.develop_dataset.validate_file_url")
-    def test_convert_to_images_single_url_becomes_array(self, mock_validate, mock_upload):
+    def test_convert_to_images_single_url_becomes_array(
+        self, mock_validate, mock_upload
+    ):
         """Test IMAGES conversion converts single URL to array"""
         mock_validate.return_value = None
         mock_upload.return_value = "https://s3.bucket/image1.jpg"

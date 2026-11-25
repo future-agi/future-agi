@@ -1,4 +1,5 @@
 import {
+  Box,
   Tab,
   Table,
   TableBody,
@@ -91,51 +92,52 @@ export default function DatasetSummary({ model, dataset }) {
 
   return (
     <>
-      <Tabs
-        value={filters.status}
-        onChange={handleFilterStatus}
+      <Box
         sx={{
           px: 2.5,
           boxShadow: (theme) =>
             `inset 0 -2px 0 0 ${alpha(theme.palette.text.disabled, 0.08)}`,
         }}
       >
-        {FIELDS_OPTIONS.map((tab) => (
-          <Tab
-            key={tab.value}
-            iconPosition="end"
-            value={tab.value}
-            label={tab.label}
-            icon={
-              tab.showCount ? (
-                <Label
-                  variant={
-                    ((tab.value === "all" || tab.value === filters.status) &&
-                      "filled") ||
-                    "soft"
-                  }
-                  color={"default"}
-                >
-                  {tab.value === "all" &&
-                    datasetDetails?.predictionLabel.length +
-                      datasetDetails?.categorical.length +
-                      datasetDetails?.numerical.length +
-                      datasetDetails?.vector.length +
-                      datasetDetails?.tags.length}
-                  {tab.value === "categoricalFeatures" &&
-                    datasetDetails?.categorical.length}
-                  {tab.value === "numericFeatures" &&
-                    datasetDetails?.numerical.length}
-                  {tab.value === "embeddings" && datasetDetails?.vector.length}
-                  {tab.value === "tags" && datasetDetails?.tags.length}
-                  {tab.value === "predictions"}
-                  {tab.value === "actuals"}
-                </Label>
-              ) : null
-            }
-          />
-        ))}
-      </Tabs>
+        <Tabs value={filters.status} onChange={handleFilterStatus}>
+          {FIELDS_OPTIONS.map((tab) => (
+            <Tab
+              key={tab.value}
+              iconPosition="end"
+              value={tab.value}
+              label={tab.label}
+              icon={
+                tab.showCount ? (
+                  <Label
+                    variant={
+                      ((tab.value === "all" || tab.value === filters.status) &&
+                        "filled") ||
+                      "soft"
+                    }
+                    color={"default"}
+                  >
+                    {tab.value === "all" &&
+                      datasetDetails?.predictionLabel.length +
+                        datasetDetails?.categorical.length +
+                        datasetDetails?.numerical.length +
+                        datasetDetails?.vector.length +
+                        datasetDetails?.tags.length}
+                    {tab.value === "categoricalFeatures" &&
+                      datasetDetails?.categorical.length}
+                    {tab.value === "numericFeatures" &&
+                      datasetDetails?.numerical.length}
+                    {tab.value === "embeddings" &&
+                      datasetDetails?.vector.length}
+                    {tab.value === "tags" && datasetDetails?.tags.length}
+                    {tab.value === "predictions"}
+                    {tab.value === "actuals"}
+                  </Label>
+                ) : null
+              }
+            />
+          ))}
+        </Tabs>
+      </Box>
       {(filters.status === "all" || filters.status === "predictions") && (
         <TableContainer sx={{ position: "relative", overflow: "unset" }}>
           <Table>

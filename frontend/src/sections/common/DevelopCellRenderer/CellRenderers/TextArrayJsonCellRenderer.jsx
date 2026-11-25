@@ -68,7 +68,7 @@ const TextArrayJsonCellRenderer = ({
       content.push(
         <span
           key={`highlight-${i}`}
-          style={{ backgroundColor: "var(--score-yellow)", fontWeight: "bold" }}
+          style={{ backgroundColor: "var(--score-yellow)", fontWeight: "600" }}
         >
           {value.slice(start, end)}
         </span>,

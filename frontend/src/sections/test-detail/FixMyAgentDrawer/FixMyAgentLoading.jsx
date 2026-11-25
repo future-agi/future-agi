@@ -23,10 +23,7 @@ const FixMyAgentLoading = () => {
           backgroundColor: "action.hover",
         }}
       >
-        <CircularProgress
-          sx={{ width: "23px !important", height: "23px !important" }}
-          color="inherit"
-        />
+        <CircularProgress size={23} color="inherit" />
       </Box>
       <Box
         sx={{

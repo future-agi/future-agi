@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +27,6 @@ type GuardrailPlugin struct {
 	dynamicFactory DynamicFactory       // creates guardrails not in registry
 	policyStore    *policy.Store
 	tenantStore    *tenant.Store // nil-safe; per-org guardrail overrides
-	failOpen       bool
 	defaultTimeout time.Duration
 
 	// Cache for dynamically created guardrails (e.g., FI Eval with per-org API keys).
@@ -37,10 +37,8 @@ type GuardrailPlugin struct {
 // NewPlugin creates a new guardrail pipeline plugin.
 func NewPlugin(engine *Engine, registry map[string]Guardrail, dynamicFactory DynamicFactory, policyStore *policy.Store, tenantStore *tenant.Store) *GuardrailPlugin {
 	timeout := 30 * time.Second
-	failOpen := false
 	if engine != nil {
 		timeout = engine.DefaultTimeout()
-		failOpen = engine.FailOpen()
 	}
 	return &GuardrailPlugin{
 		engine:         engine,
@@ -48,7 +46,6 @@ func NewPlugin(engine *Engine, registry map[string]Guardrail, dynamicFactory Dyn
 		dynamicFactory: dynamicFactory,
 		policyStore:    policyStore,
 		tenantStore:    tenantStore,
-		failOpen:       failOpen,
 		defaultTimeout: timeout,
 		dynamicCache:   make(map[string]map[string]Guardrail),
 	}
@@ -59,6 +56,14 @@ func (p *GuardrailPlugin) Priority() int { return 50 } // After auth (20), RBAC 
 
 // ProcessRequest runs pre-stage guardrails.
 func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Speech has no chat body at admission. The relay binds this plugin after auth
+	// and checks complete protocol text units before forwarding them instead.
+	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
+		return pipeline.ResultContinue()
+	}
+	ctx = p.withResolvedKeyPolicies(ctx, rc)
+	preserveSelectedProjection(rc, StagePre)
+	wasComplete := rc.Inspection.IsComplete(models.InspectionInput, inspectionPayload(rc, StagePre))
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
 	if p.engine != nil && p.engine.PreCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -66,10 +71,7 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 			return pipeline.ResultError(err)
 		}
 
-		input := &CheckInput{
-			Request:  rc.Request,
-			Metadata: rc.Metadata,
-		}
+		input := checkInput(rc, false)
 
 		result := p.engine.RunPre(ctx, input, keyPolicy, reqPolicy)
 		pluginResult := p.processResult(rc, result)
@@ -79,11 +81,30 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	}
 
 	// 2. Run dynamic guardrails from org config (managed mode).
-	return p.runOrgGuardrails(ctx, rc, StagePre)
+	if result := p.runOrgGuardrails(ctx, rc, StagePre); result.Action != pipeline.Continue {
+		return result
+	}
+	refreshInspection(rc, StagePre, wasComplete)
+	if err := p.AdmitSelectedRequest(ctx, rc); err != nil {
+		return pipeline.ResultError(err)
+	}
+	return pipeline.ResultContinue()
 }
 
 // ProcessResponse runs post-stage guardrails.
 func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Declaration-only dispatch refusals already recorded their selected outcome.
+	// There is no response to inspect; the post seam is invoked only to finalize
+	// observers/accounting. Re-running checks here duplicates the refusal and can
+	// run unrelated legacy rules against a request that never reached a handler.
+	if rc.EndpointType == "inspection_admission" && rc.Flags.ShortCircuited && rc.Request == nil && rc.Response == nil {
+		return pipeline.ResultContinue()
+	}
+	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
+		return pipeline.ResultContinue()
+	}
+	preserveSelectedProjection(rc, StagePost)
+	wasComplete := rc.Inspection.IsComplete(models.InspectionOutput, inspectionPayload(rc, StagePost))
 	// 1. Run static engine rules.
 	if p.engine != nil && p.engine.PostCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -91,23 +112,30 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 			return pipeline.ResultError(err)
 		}
 
-		input := &CheckInput{
-			Request:  rc.Request,
-			Response: rc.Response,
-			Metadata: rc.Metadata,
-		}
+		input := checkInput(rc, true)
 
 		result := p.engine.RunPost(ctx, input, keyPolicy, reqPolicy)
 
 		if result.Blocked {
-			rc.Response = nil
+			// The content goes; the usage stays. The upstream billed the
+			// request, so cost, budgets and credits must still count it.
+			if rc.Response != nil {
+				rc.Response = &models.ChatCompletionResponse{Model: rc.Response.Model, Usage: rc.Response.Usage}
+			}
 			rc.Flags.GuardrailTriggered = true
 			if len(result.Triggered) > 0 {
 				tg := result.Triggered[0]
 				rc.Metadata["guardrail_name"] = tg.Name
 				rc.Metadata["guardrail_action"] = "blocked"
 			}
-			storeGuardrailResults(rc, result)
+			// A stream the streaming checker stopped already stored these
+			// checks' results; this re-run on the captured text repeats them.
+			if !rc.Flags.StreamGuardrailBlocked {
+				storeGuardrailResults(rc, result)
+			}
+			if result.Unavailable {
+				return pipeline.ResultError(models.ErrGuardrailUnavailable(p.buildBlockMessage(result)))
+			}
 			return pipeline.ResultError(models.ErrGuardrailBlocked(
 				"content_blocked",
 				p.buildBlockMessage(result),
@@ -118,12 +146,33 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 	}
 
 	// 2. Run dynamic guardrails from org config (managed mode).
-	return p.runOrgGuardrails(ctx, rc, StagePost)
+	if result := p.runOrgGuardrails(ctx, rc, StagePost); result.Action != pipeline.Continue {
+		return result
+	}
+	refreshInspection(rc, StagePost, wasComplete)
+	if err := p.AdmitSelectedOutput(ctx, rc); err != nil {
+		return pipeline.ResultError(err)
+	}
+	return pipeline.ResultContinue()
+}
+
+// orgCheck is one enabled org check resolved to its implementation.
+type orgCheck struct {
+	name  string
+	check *tenant.GuardrailCheck
+	g     Guardrail
 }
 
 // runOrgGuardrails runs guardrails defined in the org's tenant config.
 // This enables managed mode where guardrail rules come from the control plane
 // rather than from config.yaml.
+//
+// The org's pipeline settings are honoured:
+//   - fail_open decides what happens when a check errors or times out
+//     (only explicit tenant opt-in enables fail-open; omission is false).
+//   - pipeline_mode "sequential" runs checks one after another and stops at
+//     the first block; anything else (the dashboard default, "parallel")
+//     runs them concurrently and stops waiting as soon as one blocks.
 func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.RequestContext, stage Stage) pipeline.PluginResult {
 	if p.tenantStore == nil {
 		return pipeline.ResultContinue()
@@ -135,98 +184,66 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	}
 
 	orgCfg := p.tenantStore.Get(orgID)
-	if orgCfg == nil || orgCfg.Guardrails == nil || len(orgCfg.Guardrails.Checks) == 0 {
+	if orgCfg == nil || orgCfg.Guardrails == nil {
 		return pipeline.ResultContinue()
+	}
+	gcfg := orgCfg.Guardrails
+
+	checks := p.collectOrgChecks(orgID, gcfg, stage)
+	if len(checks) == 0 {
+		return pipeline.ResultContinue()
+	}
+
+	timeout := p.defaultTimeout
+	if gcfg.TimeoutMs > 0 {
+		timeout = time.Duration(gcfg.TimeoutMs) * time.Millisecond
+	}
+	failOpen := gcfg.FailOpen
+
+	input := checkInput(rc, stage == StagePost)
+
+	var outcomes []*CheckResult
+	var blockIdx int
+	if strings.EqualFold(strings.TrimSpace(gcfg.PipelineMode), "sequential") {
+		outcomes, blockIdx = p.runOrgChecksSequential(ctx, checks, input, timeout, failOpen)
+	} else {
+		outcomes, blockIdx = p.runOrgChecksParallel(ctx, checks, input, timeout, failOpen)
 	}
 
 	result := &PipelineResult{}
 
-	for name, check := range orgCfg.Guardrails.Checks {
-		if !check.Enabled {
+	// The blocking check goes first so block metadata and the error message
+	// name the check that actually blocked.
+	if blockIdx >= 0 {
+		p.recordOrgOutcome(result, orgID, rc, checks[blockIdx], outcomes[blockIdx])
+	}
+	for i, c := range checks {
+		if i == blockIdx {
 			continue
 		}
+		p.recordOrgOutcome(result, orgID, rc, c, outcomes[i])
+	}
 
-		// Skip if already handled by static engine rules.
-		if p.engine != nil && p.engine.HasRule(name) {
-			continue
+	if blockIdx >= 0 {
+		blocker := checks[blockIdx].name
+		result.Blocked = true
+		storeGuardrailResults(rc, result)
+		if len(result.Warnings) > 0 {
+			rc.Metadata["guardrail_warnings"] = strings.Join(result.Warnings, "; ")
 		}
-
-		// Get or create the guardrail implementation.
-		g := p.getGuardrail(orgID, name, check)
-		if g == nil {
-			slog.Debug("guardrail implementation not found",
-				"name", name,
-				"org_id", orgID,
-			)
-			continue
+		rc.Flags.GuardrailTriggered = true
+		rc.Metadata["guardrail_name"] = blocker
+		rc.Metadata["guardrail_action"] = "blocked"
+		if stage == StagePost && rc.Response != nil {
+			rc.Response = &models.ChatCompletionResponse{Model: rc.Response.Model, Usage: rc.Response.Usage}
 		}
-
-		// Check stage matches.
-		if g.Stage() != stage {
-			continue
+		if outcomes[blockIdx].Err != nil {
+			return pipeline.ResultError(models.ErrGuardrailUnavailable(p.buildBlockMessage(result)))
 		}
-
-		// Determine timeout.
-		timeout := p.defaultTimeout
-		if orgCfg.Guardrails.TimeoutMs > 0 {
-			timeout = time.Duration(orgCfg.Guardrails.TimeoutMs) * time.Millisecond
-		}
-
-		// Build input.
-		input := &CheckInput{
-			Request:  rc.Request,
-			Metadata: rc.Metadata,
-		}
-		if stage == StagePost {
-			input.Response = rc.Response
-		}
-
-		// Run with timeout and panic recovery.
-		cr := p.runGuardrailSafe(ctx, g, input, timeout)
-		if cr == nil {
-			continue
-		}
-
-		// Apply threshold.
-		threshold := check.ConfidenceThreshold
-		triggered := shouldTrigger(cr, threshold)
-		if !triggered {
-			continue
-		}
-
-		action := parseAction(check.Action)
-
-		tg := TriggeredGuardrail{
-			Name:      name,
-			Score:     cr.Score,
-			Threshold: threshold,
-			Action:    action,
-			Message:   cr.Message,
-		}
-		result.Triggered = append(result.Triggered, tg)
-
-		switch action {
-		case ActionBlock:
-			result.Blocked = true
-			storeGuardrailResults(rc, result)
-			rc.Flags.GuardrailTriggered = true
-			rc.Metadata["guardrail_name"] = name
-			rc.Metadata["guardrail_action"] = "blocked"
-			return pipeline.ResultError(models.ErrGuardrailBlocked(
-				"content_blocked",
-				p.buildBlockMessage(result),
-			))
-		case ActionWarn:
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", name, cr.Message))
-		case ActionLog:
-			slog.Info("guardrail triggered (log mode)",
-				"guardrail", name,
-				"org_id", orgID,
-				"score", cr.Score,
-				"threshold", threshold,
-				"message", cr.Message,
-			)
-		}
+		return pipeline.ResultError(models.ErrGuardrailBlocked(
+			"content_blocked",
+			p.buildBlockMessage(result),
+		))
 	}
 
 	// Apply metadata for non-blocking triggers.
@@ -237,18 +254,191 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	return pipeline.ResultContinue()
 }
 
+// collectOrgChecks returns the org's enabled checks for this stage, sorted by
+// name so execution order (sequential) and result order are deterministic.
+func (p *GuardrailPlugin) collectOrgChecks(orgID string, gcfg *tenant.GuardrailConfig, stage Stage) []orgCheck {
+	names := make([]string, 0, len(gcfg.Checks))
+	for name := range gcfg.Checks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	checks := make([]orgCheck, 0, len(names))
+	for _, name := range names {
+		check := gcfg.Checks[name]
+		if check == nil || !check.Enabled {
+			continue
+		}
+
+		// Skip if already handled by static engine rules.
+		if p.engine != nil && p.engine.HasRule(name) {
+			continue
+		}
+
+		g := p.getGuardrail(orgID, name, check)
+		if g == nil {
+			slog.Debug("guardrail implementation not found",
+				"name", name,
+				"org_id", orgID,
+			)
+			continue
+		}
+
+		if g.Stage() != stage {
+			continue
+		}
+
+		checks = append(checks, orgCheck{name: name, check: check, g: g})
+	}
+	return checks
+}
+
+// orgCheckBlocks reports whether a check outcome blocks the request.
+func orgCheckBlocks(c orgCheck, cr *CheckResult) bool {
+	return cr != nil && !cr.FailureAdmitted && shouldTrigger(cr, c.check.ConfidenceThreshold) && parseAction(c.check.Action) == ActionBlock
+}
+
+// runOrgChecksSequential runs checks one at a time, stopping at the first
+// block. It returns per-check outcomes (nil = not run or passed) and the
+// index of the blocking check, or -1.
+func (p *GuardrailPlugin) runOrgChecksSequential(ctx context.Context, checks []orgCheck, input *CheckInput, timeout time.Duration, failOpen bool) ([]*CheckResult, int) {
+	outcomes := make([]*CheckResult, len(checks))
+	for i, c := range checks {
+		outcomes[i] = p.runOrgCheck(ctx, c.g, input, timeout, failOpen)
+		if orgCheckBlocks(c, outcomes[i]) {
+			return outcomes, i
+		}
+	}
+	return outcomes, -1
+}
+
+// runOrgChecksParallel runs remediators first in deterministic order, then
+// read-only checks concurrently against independent snapshots of the remediated
+// content. As soon as one blocks, pending checks are cancelled, but already
+// collected outcomes are retained.
+func (p *GuardrailPlugin) runOrgChecksParallel(ctx context.Context, checks []orgCheck, input *CheckInput, timeout time.Duration, failOpen bool) ([]*CheckResult, int) {
+	if len(checks) == 1 {
+		return p.runOrgChecksSequential(ctx, checks, input, timeout, failOpen)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type outcome struct {
+		idx int
+		cr  *CheckResult
+	}
+	// Buffered so goroutines never block after we stop reading.
+	ch := make(chan outcome, len(checks))
+	outcomes := make([]*CheckResult, len(checks))
+	for i, c := range checks {
+		if mutatesInput(c.g) {
+			outcomes[i] = p.runOrgCheck(runCtx, c.g, input, timeout, failOpen)
+			if orgCheckBlocks(c, outcomes[i]) {
+				return outcomes, i
+			}
+		}
+	}
+	pending := 0
+	for i, c := range checks {
+		if mutatesInput(c.g) {
+			continue
+		}
+		pending++
+		owned, err := cloneCheckInput(input)
+		if err != nil {
+			ch <- outcome{idx: i, cr: &CheckResult{Err: err, FailureAdmitted: failOpen, Message: "guardrail_unavailable: could not snapshot guardrail input"}}
+			continue
+		}
+		go func(i int, c orgCheck, owned *CheckInput) {
+			ch <- outcome{idx: i, cr: p.runGuardrailSafe(runCtx, c.g, owned, timeout, failOpen)}
+		}(i, c, owned)
+	}
+
+	for range pending {
+		o := <-ch
+		outcomes[o.idx] = o.cr
+		if orgCheckBlocks(checks[o.idx], o.cr) {
+			// Remaining checks are cancelled; anything they report now would
+			// be an artefact of the cancellation, so drop it.
+			cancel()
+			return outcomes, o.idx
+		}
+	}
+	return outcomes, -1
+}
+
+// recordOrgOutcome applies a check's threshold and action to the aggregate
+// result. Block decisions are made by the caller.
+func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string, rc *models.RequestContext, c orgCheck, cr *CheckResult) {
+	threshold := c.check.ConfidenceThreshold
+	if !shouldTrigger(cr, threshold) {
+		return
+	}
+
+	action := parseAction(c.check.Action)
+	if cr.FailureAdmitted {
+		action = ActionLog
+	}
+	message, outcome := guardrailOutcome(rc, cr, action)
+	result.Triggered = append(result.Triggered, TriggeredGuardrail{
+		Name: c.name, Score: cr.Score, Threshold: threshold, Action: action,
+		Message: message, PolicyName: "Organization guardrails", PolicyScope: "org",
+		Mode: "enforce", Outcome: outcome,
+	})
+
+	switch action {
+	case ActionWarn:
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", c.name, cr.Message))
+	case ActionLog:
+		slog.Info("guardrail triggered (log mode)",
+			"guardrail", c.name,
+			"org_id", orgID,
+			"score", cr.Score,
+			"threshold", threshold,
+			"message", cr.Message,
+		)
+	}
+}
+
+// checkInput is what a guardrail checks. On a route that forwards the client's
+// own body, Request is nil and Response holds usage only; the handler puts the
+// text in GuardrailRequest and GuardrailResponse instead.
+//
+// Legacy org/static checks retain their mutable working view, including on
+// native routes. Selected checks use a separately owned original-wire view.
+func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
+	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata}
+	if input.Request == nil {
+		input.Request = rc.GuardrailRequest
+	}
+	if withResponse {
+		input.Response = rc.Response
+		if rc.GuardrailResponse != nil {
+			input.Response = rc.GuardrailResponse
+		}
+	}
+	return input
+}
+
 // getGuardrail resolves a guardrail implementation by name.
 // Checks the static registry first, then the dynamic cache, and finally
 // tries to create a new dynamic guardrail from the check config.
 func (p *GuardrailPlugin) getGuardrail(orgID, name string, check *tenant.GuardrailCheck) Guardrail {
+	return p.getGuardrailScoped(orgID, name, name, check)
+}
+
+// getGuardrailScoped isolates per-policy dynamic configurations while retaining
+// the original registry lookup and factory name.
+func (p *GuardrailPlugin) getGuardrailScoped(orgID, name, cacheKey string, check *tenant.GuardrailCheck) Guardrail {
 	preferDynamic := check != nil && len(check.Config) > 0 && p.dynamicFactory != nil
 
 	if preferDynamic {
-		if g := p.getCachedDynamicGuardrail(orgID, name); g != nil {
+		if g := p.getCachedDynamicGuardrail(orgID, cacheKey); g != nil {
 			return g
 		}
 
-		if g := p.createDynamicGuardrail(orgID, name, check.Config); g != nil {
+		if g := p.createDynamicGuardrailScoped(orgID, name, cacheKey, check.Config); g != nil {
 			return g
 		}
 	}
@@ -261,7 +451,7 @@ func (p *GuardrailPlugin) getGuardrail(orgID, name string, check *tenant.Guardra
 	}
 
 	// 2. Try dynamic cache (previously created external guardrails).
-	if g := p.getCachedDynamicGuardrail(orgID, name); g != nil {
+	if g := p.getCachedDynamicGuardrail(orgID, cacheKey); g != nil {
 		return g
 	}
 
@@ -270,7 +460,7 @@ func (p *GuardrailPlugin) getGuardrail(orgID, name string, check *tenant.Guardra
 		return nil
 	}
 
-	g := p.createDynamicGuardrail(orgID, name, check.Config)
+	g := p.createDynamicGuardrailScoped(orgID, name, cacheKey, check.Config)
 	if g == nil {
 		return nil
 	}
@@ -292,6 +482,10 @@ func (p *GuardrailPlugin) getCachedDynamicGuardrail(orgID, name string) Guardrai
 }
 
 func (p *GuardrailPlugin) createDynamicGuardrail(orgID, name string, cfg map[string]interface{}) Guardrail {
+	return p.createDynamicGuardrailScoped(orgID, name, name, cfg)
+}
+
+func (p *GuardrailPlugin) createDynamicGuardrailScoped(orgID, name, cacheKey string, cfg map[string]interface{}) Guardrail {
 	if cfg == nil || p.dynamicFactory == nil {
 		return nil
 	}
@@ -306,7 +500,7 @@ func (p *GuardrailPlugin) createDynamicGuardrail(orgID, name string, cfg map[str
 	if _, ok := p.dynamicCache[orgID]; !ok {
 		p.dynamicCache[orgID] = make(map[string]Guardrail)
 	}
-	p.dynamicCache[orgID][name] = g
+	p.dynamicCache[orgID][cacheKey] = g
 	p.dynamicMu.Unlock()
 
 	slog.Info("created dynamic guardrail from org config",
@@ -318,7 +512,7 @@ func (p *GuardrailPlugin) createDynamicGuardrail(orgID, name string, cfg map[str
 }
 
 // runGuardrailSafe runs a guardrail check with timeout and panic recovery.
-func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, input *CheckInput, timeout time.Duration) *CheckResult {
+func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, input *CheckInput, timeout time.Duration, failOpen bool) *CheckResult {
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -342,39 +536,45 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 		ch <- result{cr: cr}
 	}()
 
+	var res result
 	select {
-	case res := <-ch:
-		if res.err != nil {
-			slog.Error("dynamic guardrail error",
-				"guardrail", g.Name(),
-				"error", res.err,
-				"fail_open", p.failOpen,
-			)
-			if p.failOpen {
-				return nil
-			}
-			return &CheckResult{
-				Pass:    false,
-				Score:   1.0,
-				Message: fmt.Sprintf("guardrail %q error: %v", g.Name(), res.err),
-			}
-		}
-		return res.cr
+	case res = <-ch:
 	case <-checkCtx.Done():
+	}
+	// A context-aware check can return a cancellation result at the same
+	// instant the deadline fires. Apply the same org policy in either case.
+	if checkCtx.Err() != nil {
 		slog.Warn("dynamic guardrail timed out",
 			"guardrail", g.Name(),
 			"timeout", timeout,
-			"fail_open", p.failOpen,
+			"fail_open", failOpen,
 		)
-		if p.failOpen {
-			return nil
-		}
 		return &CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Message: fmt.Sprintf("guardrail %q timed out", g.Name()),
+			FailureAdmitted: failOpen,
+			Pass:            false,
+			Score:           1.0,
+			Message:         fmt.Sprintf("guardrail_unavailable: %q", g.Name()),
+			Err:             checkCtx.Err(),
 		}
 	}
+	if res.err == nil {
+		res.err = checkResultError(res.cr)
+	}
+	if res.err != nil {
+		slog.Error("dynamic guardrail error",
+			"guardrail", g.Name(),
+			"error", res.err,
+			"fail_open", failOpen,
+		)
+		return &CheckResult{
+			FailureAdmitted: failOpen,
+			Pass:            false,
+			Score:           1.0,
+			Message:         fmt.Sprintf("guardrail_unavailable: %q", g.Name()),
+			Err:             res.err,
+		}
+	}
+	return res.cr
 }
 
 // resolvePolicy looks up the per-org, per-key, and per-request policy overrides.
@@ -460,6 +660,9 @@ func (p *GuardrailPlugin) processResult(rc *models.RequestContext, result *Pipel
 		}
 		// Store structured results even for blocks, so logs capture which guardrails fired.
 		storeGuardrailResults(rc, result)
+		if result.Unavailable {
+			return pipeline.ResultError(models.ErrGuardrailUnavailable(p.buildBlockMessage(result)))
+		}
 		return pipeline.ResultError(models.ErrGuardrailBlocked(
 			"content_blocked",
 			p.buildBlockMessage(result),
@@ -500,7 +703,9 @@ func storeGuardrailResults(rc *models.RequestContext, result *PipelineResult) {
 			Score:     tg.Score,
 			Threshold: tg.Threshold,
 			Action:    actionString(tg.Action),
-			Message:   tg.Message,
+			Message:   tg.Message, PolicyID: tg.PolicyID, PolicyName: tg.PolicyName,
+			PolicyScope: tg.PolicyScope, Mode: tg.Mode, Outcome: tg.Outcome,
+			WouldAction: tg.WouldAction,
 		})
 	}
 }

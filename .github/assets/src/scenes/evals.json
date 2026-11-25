@@ -1,0 +1,171 @@
+{
+ "url": "localhost:3000/dashboard/evaluations/create",
+ "imgW": 3200,
+ "imgH": 2000,
+ "duration": 13.0,
+ "images": {
+  "before": "shots/eval-before.png",
+  "after": "shots/eval-after.png",
+  "jev": "shots/eval-jev.png"
+ },
+ "keys": [
+  {
+   "t": 0,
+   "img": "before",
+   "view": [
+    0,
+    0,
+    3200,
+    2000
+   ]
+  },
+  {
+   "t": 0.9,
+   "img": "before",
+   "view": [
+    0,
+    0,
+    3200,
+    2000
+   ]
+  },
+  {
+   "t": 2.0,
+   "img": "before",
+   "view": [
+    400,
+    180,
+    1560,
+    936
+   ]
+  },
+  {
+   "t": 3.6,
+   "img": "before",
+   "view": [
+    400,
+    180,
+    1560,
+    936
+   ]
+  },
+  {
+   "t": 4.4,
+   "img": "before",
+   "view": [
+    0,
+    0,
+    3200,
+    2000
+   ]
+  },
+  {
+   "t": 5.3,
+   "img": "before",
+   "view": [
+    0,
+    0,
+    3200,
+    2000
+   ]
+  },
+  {
+   "t": 5.6,
+   "img": "after",
+   "view": [
+    0,
+    0,
+    3200,
+    2000
+   ],
+   "switchAt": 5.3
+  },
+  {
+   "t": 6.8,
+   "img": "after",
+   "view": [
+    1940,
+    560,
+    1260,
+    756
+   ]
+  },
+  {
+   "t": 9.0,
+   "img": "after",
+   "view": [
+    1940,
+    560,
+    1260,
+    756
+   ]
+  },
+  {
+   "t": 9.7,
+   "img": "jev",
+   "view": [
+    1940,
+    860,
+    1260,
+    756
+   ],
+   "switchAt": 9.2
+  },
+  {
+   "t": 12.2,
+   "img": "jev",
+   "view": [
+    1940,
+    860,
+    1260,
+    756
+   ]
+  },
+  {
+   "t": 13.0,
+   "img": "jev",
+   "view": [
+    1940,
+    860,
+    1260,
+    756
+   ]
+  }
+ ],
+ "cursor": [
+  {
+   "t": 4.3,
+   "x": 2300,
+   "y": 1500
+  },
+  {
+   "t": 5.0,
+   "x": 2781,
+   "y": 1930,
+   "click": true
+  },
+  {
+   "t": 5.3,
+   "x": 2781,
+   "y": 1930
+  }
+ ],
+ "cursorEnd": 5.35,
+ "captions": [
+  {
+   "t0": 2.0,
+   "t1": 3.6,
+   "text": "Write the rule in plain words and pick a judge model"
+  },
+  {
+   "t0": 6.9,
+   "t1": 9.0,
+   "text": "Tested on a failing example: the judge fails it and says why"
+  },
+  {
+   "t0": 9.8,
+   "t1": 12.9,
+   "text": "The same check with Jev: a typed verdict with its probability"
+  }
+ ]
+}

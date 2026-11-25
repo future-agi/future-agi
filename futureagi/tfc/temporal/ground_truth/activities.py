@@ -62,9 +62,7 @@ async def generate_ground_truth_embeddings_activity(
     from tfc.telemetry import otel_sync_to_async
 
     try:
-        result = await otel_sync_to_async(_run_embed_dataset)(
-            input.ground_truth_id
-        )
+        result = await otel_sync_to_async(_run_embed_dataset)(input.ground_truth_id)
     except Exception as exc:
         logger.exception(
             "generate_ground_truth_embeddings_error",

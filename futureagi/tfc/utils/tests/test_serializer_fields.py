@@ -115,7 +115,10 @@ class TestStringOrArrayFieldRuntimeGuard:
     def test_accepts_list(self):
         # The other allowed shape: array of content-part objects
         # (OpenAI multi-part format).
-        payload = [{"type": "text", "text": "Hi"}, {"type": "image_url", "image_url": "..."}]
+        payload = [
+            {"type": "text", "text": "Hi"},
+            {"type": "image_url", "image_url": "..."},
+        ]
         s = _ArrayFieldHost(data={"content": payload})
         assert s.is_valid(), s.errors
         assert s.validated_data["content"] == payload

@@ -23,9 +23,15 @@ def classify_url(url: str) -> str:
 
     url_lower = url.lower().split("?")[0]  # Remove query params
 
-    if any(url_lower.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp")):
+    if any(
+        url_lower.endswith(ext)
+        for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp")
+    ):
         return "image"
-    if any(url_lower.endswith(ext) for ext in (".mp3", ".wav", ".ogg", ".m4a", ".webm", ".flac", ".aac")):
+    if any(
+        url_lower.endswith(ext)
+        for ext in (".mp3", ".wav", ".ogg", ".m4a", ".webm", ".flac", ".aac")
+    ):
         return "audio"
     if url_lower.endswith(".pdf"):
         return "pdf"
@@ -69,10 +75,12 @@ def process_file_urls(file_urls: list[str]) -> dict:
         file_type = classify_url(url)
 
         if file_type == "image":
-            image_blocks.append({
-                "type": "image_url",
-                "image_url": {"url": url},
-            })
+            image_blocks.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": url},
+                }
+            )
 
         elif file_type == "audio":
             # For audio: note in context that audio URL is available
@@ -114,12 +122,14 @@ def _extract_pdf_text(url: str, max_chars: int = 10000) -> Optional[str]:
     """Extract text from a PDF URL."""
     try:
         import io
+
         response = urlopen(url, timeout=15)
         pdf_bytes = response.read()
 
         # Try PyPDF2/pypdf
         try:
             from pypdf import PdfReader
+
             reader = PdfReader(io.BytesIO(pdf_bytes))
             text = ""
             for page in reader.pages[:20]:  # Max 20 pages
@@ -133,6 +143,7 @@ def _extract_pdf_text(url: str, max_chars: int = 10000) -> Optional[str]:
         # Fallback: try pdfminer
         try:
             from pdfminer.high_level import extract_text as pdfminer_extract
+
             text = pdfminer_extract(io.BytesIO(pdf_bytes), maxpages=20)
             return text[:max_chars] if text.strip() else None
         except ImportError:

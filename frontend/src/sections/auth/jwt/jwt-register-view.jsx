@@ -16,9 +16,12 @@ import { useAuthContext } from "src/auth/hooks";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
-import { trackSignupConversion } from "src/utils/googleAds";
-import { trackRedditSignup } from "src/utils/redditAds";
-import { trackTwitterSignup } from "src/utils/twitterAds";
+// Ad-platform signup conversions are disabled; Google Analytics runs through
+// Google Tag Manager. To restore them, uncomment these imports and the calls
+// below (see src/utils/googleAds.js).
+// import { trackSignupConversion } from "src/utils/googleAds";
+// import { trackRedditSignup } from "src/utils/redditAds";
+// import { trackTwitterSignup } from "src/utils/twitterAds";
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
 import "./register.css";
@@ -39,7 +42,7 @@ import {
 } from "src/hooks/useDeploymentMode";
 
 export default function JwtRegisterView() {
-  const { register, login, awsRegister } = useAuthContext();
+  const { register, login, marketplaceRegister } = useAuthContext();
   const [errorMsg, setErrorMsg] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
   // Confirmed read only: the hook falls back to "oss" when deployment-info
@@ -59,6 +62,7 @@ export default function JwtRegisterView() {
   const [loading, setLoading] = useState(false);
   const queryParams = new URLSearchParams(location.search);
   const onboarding_token = queryParams.get("onboarding_token");
+  const onboarding_gcp_token = queryParams.get("onboarding_gcp_token");
 
   const RegisterSchema = Yup.object().shape({
     fullName: Yup.string().required("Full name required"),
@@ -179,11 +183,21 @@ export default function JwtRegisterView() {
         ...(isOSS ? { password: data?.password } : {}),
       };
       let response;
-      if (onboarding_token) {
-        response = await awsRegister({
-          ...payload,
-          onboarding_token: onboarding_token,
-        });
+      const marketplaceToken = onboarding_gcp_token || onboarding_token;
+      if (marketplaceToken) {
+        response = await marketplaceRegister(
+          onboarding_gcp_token
+            ? endpoints.auth.gcpSignUp
+            : endpoints.auth.awsSignUp,
+          // Both marketplace endpoints reject unknown fields, so send only the
+          // three they declare. company_name, recaptcha and allow_email are
+          // meaningless here: the onboarding token is the proof of purchase.
+          {
+            onboarding_token: marketplaceToken,
+            email: payload.email,
+            full_name: payload.full_name,
+          },
+        );
       } else {
         response = await register(payload);
       }
@@ -204,24 +218,25 @@ export default function JwtRegisterView() {
           [PropertyName.email]: data.email,
           [PropertyName.name]: data.fullName,
         });
-        if (typeof window.gtag === "function") {
-          trackSignupConversion({
-            email: data.email,
-            method: "email",
-            userId: response?.result?.user_id,
-          });
-        }
-        if (typeof window.rdt === "function") {
-          trackRedditSignup({
-            email: data.email,
-            userId: response?.result?.user_id,
-          });
-        }
-        trackTwitterSignup({
-          email: data.email,
-          method: "email",
-          userId: response?.result?.user_id,
-        });
+        // Disabled ad-platform signup conversions (see the imports above):
+        // if (typeof window.gtag === "function") {
+        //   trackSignupConversion({
+        //     email: data.email,
+        //     method: "email",
+        //     userId: response?.result?.user_id,
+        //   });
+        // }
+        // if (typeof window.rdt === "function") {
+        //   trackRedditSignup({
+        //     email: data.email,
+        //     userId: response?.result?.user_id,
+        //   });
+        // }
+        // trackTwitterSignup({
+        //   email: data.email,
+        //   method: "email",
+        //   userId: response?.result?.user_id,
+        // });
 
         if (isOSS) {
           try {
@@ -357,7 +372,9 @@ export default function JwtRegisterView() {
   const handleServiceProvider = async (provider) => {
     persistReturnTo();
     try {
-      const response = await axios.get(endpoints.auth.service(provider));
+      const response = await axios.get(
+        endpoints.auth.service(provider, onboarding_gcp_token),
+      );
       logger.debug("Service provider response:", {
         provider,
         response: response.data,
@@ -397,7 +414,7 @@ export default function JwtRegisterView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -408,7 +425,7 @@ export default function JwtRegisterView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.secondary",
           maxWidth: "440px",
           fontFamily: "Inter",
@@ -421,17 +438,17 @@ export default function JwtRegisterView() {
   );
 
   const renderForm = (
-    <Stack spacing={2.5} maxWidth={"440px"}>
+    <Stack spacing={2} maxWidth={"440px"}>
       <RegionSelect />
       <RHFTextField
         placeholder="Enter fullname"
-        size="small"
+        size="medium"
         name="fullName"
         label="Full Name"
       />
       <RHFTextField
         placeholder="Enter Email address"
-        size="small"
+        size="medium"
         name="email"
         label={requireWorkEmail ? "Business Email ID" : "Email ID"}
       />
@@ -439,12 +456,12 @@ export default function JwtRegisterView() {
         <>
           <RHFTextField
             placeholder="Enter password"
-            size="small"
+            size="medium"
             name="password"
             label="Set Password"
             type={password.value ? "text" : "password"}
             autoComplete="new-password"
-            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
             InputProps={{
               endAdornment: (
                 <InputAdornment position="end">
@@ -463,12 +480,12 @@ export default function JwtRegisterView() {
           />
           <RHFTextField
             placeholder="Re-enter password"
-            size="small"
+            size="medium"
             name="confirmPassword"
             label="Confirm Password"
             type={confirmPassword.value ? "text" : "password"}
             autoComplete="new-password"
-            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
             InputProps={{
               endAdornment: (
                 <InputAdornment position="end">
@@ -489,27 +506,26 @@ export default function JwtRegisterView() {
       )}
       {!!errorMsg && (
         <Alert
-          icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+          icon={
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              color="status.danger.fg"
+            />
+          }
           severity="error"
-          sx={{
-            color: "red.500",
-            border: "1px solid",
-            borderColor: "red.200",
-            backgroundColor: "red.o5",
-          }}
         >
           {errorMsg}
         </Alert>
       )}
 
       <LoadingButton
+        size="large"
         disabled={registerSuccess}
         fullWidth
         color="primary"
         type="submit"
         variant="contained"
         loading={loading}
-        sx={{ height: "42px", borderRadius: 0.5 }}
       >
         Continue
       </LoadingButton>
@@ -563,20 +579,15 @@ export default function JwtRegisterView() {
         {!isOSS && (
           <>
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                color: "text.primary",
-                height: 44,
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={() => handleServiceProvider("google")}
               startIcon={<Iconify icon="logos:google-icon" width={20} />}
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Continue with Google
               </Typography>
@@ -586,7 +597,7 @@ export default function JwtRegisterView() {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius:0.5,
+          borderRadius:"4px",
           display: "flex",
           height: 44,
 
@@ -604,7 +615,7 @@ export default function JwtRegisterView() {
           sx={{
             fontWeight: 500,
             paddingLeft: "10px",
-            fontSize: "15px",
+            fontSize: "12px",
             marginRight: -1.5,
           }}
         >
@@ -612,13 +623,9 @@ export default function JwtRegisterView() {
         </Typography>
       </Button> */}
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                height: 44,
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={() => handleServiceProvider("github")}
               startIcon={
                 <Iconify
@@ -630,40 +637,37 @@ export default function JwtRegisterView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px", color: "text.primary" }}
+                sx={{ fontSize: "12px", color: "text.primary" }}
               >
                 Continue with Github
               </Typography>
             </Button>
-            <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                height: 44,
-                color: "text.primary",
-              }}
-              onClick={handleSsoLogin}
-              startIcon={
-                <SvgColor
-                  sx={{ marginLeft: 2 }}
-                  src="/assets/icons/ic_sso_saml.svg"
-                />
-              }
-            >
-              <Typography
-                fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px", marginRight: -1.5 }}
+            {!onboarding_gcp_token && (
+              <Button
+                size="large"
+                variant="outlined"
+                color="inherit"
+                onClick={handleSsoLogin}
+                startIcon={
+                  <SvgColor
+                    sx={{ marginLeft: 2 }}
+                    src="/assets/icons/ic_sso_saml.svg"
+                  />
+                }
               >
-                Continue with SSO/SAML
-              </Typography>
-            </Button>
+                <Typography
+                  fontWeight={"fontWeightMedium"}
+                  sx={{ fontSize: "12px", marginRight: -1.5 }}
+                >
+                  Continue with SSO/SAML
+                </Typography>
+              </Button>
+            )}
           </>
         )}
 
         <Typography
-          fontSize={"15px"}
+          fontSize={"12px"}
           fontWeight={"fontWeightMedium"}
           color="text.secondary"
           sx={{ textAlign: "center" }}
