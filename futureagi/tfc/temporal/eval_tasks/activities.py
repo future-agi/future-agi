@@ -472,7 +472,9 @@ def _reap_sync(
         )
         fenced = require_running or bool(workflow_generation)
         # Answers of given-up Instant entries are recorded after the task lock
-        # is released (see ``StaleRunningClaims.fail_exhausted``).
+        # is released (see ``StaleRunningClaims.fail_exhausted``), from the
+        # entries themselves: if this worker exits first, a retry of this
+        # activity (or any later reap of the task) copies them.
         answers_after_lock: list | None = [] if fenced else None
         with transaction.atomic() if fenced else nullcontext():
             if require_running:

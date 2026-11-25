@@ -103,8 +103,13 @@ class StaleRunningClaims:
         return self.failed
 
     def record_failed_answers(self) -> None:
-        if self.failed:
-            _record_instant_answers(self.task, self.now)
+        """Copy the Instant answers of every given-up entry still missing one.
+
+        Chosen from the entries themselves, not from this reap's count: when a
+        worker exits after the reap commits and before this runs, the retried
+        activity (or the next reap, or the sweep) finds them and copies them.
+        """
+        _record_instant_answers(self.task)
 
     def requeue_retryable(self) -> int:
         return self.stale.filter(attempts__lt=self.max_attempts).update(
@@ -136,26 +141,31 @@ def reap_stale_running(
     return claims.requeue_retryable(), failed
 
 
-def _record_instant_answers(task: EvalTask, at) -> None:
-    """An Instant eval run shows the entries just given up on as failed (not
-    still pending) while it runs. Never fails the reap."""
-    from tracer.services.instant_eval_answers import record_answers
+def _record_instant_answers(task: EvalTask) -> None:
+    """An Instant eval run shows the entries given up on as failed (not still
+    pending) while it runs. Never fails the reap.
 
-    # Primary: these rows were failed a moment ago, and a replica may not
-    # have them yet.
-    ids = (
-        EvalLogger.objects.using("default")
-        .filter(
-            eval_task_id=str(task.id),
-            status=EvalEntryStatus.ERRORED,
-            error_message=_GAVE_UP,
-            updated_at=at,
-        )
-        .values_list("id", flat=True)
+    The entries are locked and rechecked in the transaction that copies their
+    answers, and one a Retry is requeueing is skipped (``lock_unanswered``):
+    reading them first and copying later could bring back an answer the
+    Retry just dropped."""
+    from tracer.services.instant_eval_answers import (
+        is_instant_task,
+        lock_unanswered,
+        record_answers,
     )
+
     try:
-        with transaction.atomic():
-            record_answers(task.id, ids)
+        if not is_instant_task(task.id):
+            return
+        # On the primary (a raw cursor of the default connection): these
+        # rows were failed a moment ago, and a replica may not have them yet.
+        with transaction.atomic(using="default"):
+            ids = lock_unanswered(
+                task.id, status=EvalEntryStatus.ERRORED, error_message=_GAVE_UP
+            )
+            if ids:
+                record_answers(task.id, ids)
     except Exception:
         logger.warning(
             "instant_eval_reaped_answers_failed", task_id=str(task.id), exc_info=True

@@ -199,21 +199,51 @@ def _probe_task_lock_while_recording_answers(monkeypatch, task):
         finally:
             connections.close_all()
 
-    def recording(task, at):
+    def recording(task, *args, **kwargs):
         with ThreadPoolExecutor(max_workers=1) as pool:
             seen.append(pool.submit(contender).result(timeout=5))
-        return original(task, at)
+        return original(task, *args, **kwargs)
 
     monkeypatch.setattr(reaper, "_record_instant_answers", recording)
     return seen
 
 
+@pytest.fixture
+def instant_stale_entry(stale_running_entry):
+    """``stale_running_entry`` on a task an Instant eval run reads: its span
+    is one of the run's rows, so a given-up entry has an answer to copy."""
+    from tracer.models.instant_eval import InstantEvalRow, InstantEvalRun
+
+    task, entry = stale_running_entry
+    InstantEvalRun.objects.create(
+        eval_task=task,
+        project=task.project,
+        organization=task.project.organization,
+        unit="spans",
+        row_type="spans",
+        rows_requested=1,
+        population=1,
+    )
+    InstantEvalRow.objects.create(
+        task=task, row_id=entry.observation_span_id, unit="spans"
+    )
+    return task, entry
+
+
+def _answers(task):
+    from tracer.models.instant_eval import InstantEvalAnswer
+
+    return list(InstantEvalAnswer.objects.filter(task=task).values_list("label", flat=True))
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("guard", ["generation", "require_running"])
 def test_fenced_reap_records_given_up_answers_after_the_task_lock(
-    stale_running_entry, monkeypatch, guard
+    instant_stale_entry, monkeypatch, guard
 ):
-    task, entry = stale_running_entry
+    from tracer.services.instant_eval_summary import ERROR
+
+    task, entry = instant_stale_entry
     current = _stamp(task, EvalTaskStatus.RUNNING)
     EvalLogger.objects.filter(pk=entry.pk).update(attempts=3)
     seen = _probe_task_lock_while_recording_answers(monkeypatch, task)
@@ -229,16 +259,18 @@ def test_fenced_reap_records_given_up_answers_after_the_task_lock(
     assert seen == ["free"]
     entry.refresh_from_db()
     assert entry.status == EvalEntryStatus.ERRORED
+    assert _answers(task) == [ERROR]
 
 
 @pytest.mark.django_db(transaction=True)
 def test_recovery_records_given_up_answers_after_the_task_lock(
-    stale_running_entry, monkeypatch
+    instant_stale_entry, monkeypatch
 ):
     from tfc.temporal.eval_tasks import client
     from tracer.services.eval_tasks.recovery import recover_task
+    from tracer.services.instant_eval_summary import ERROR
 
-    task, entry = stale_running_entry
+    task, entry = instant_stale_entry
     EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.RUNNING)
     task.refresh_from_db()
     EvalLogger.objects.filter(pk=entry.pk).update(attempts=3)
@@ -252,27 +284,160 @@ def test_recovery_records_given_up_answers_after_the_task_lock(
 
     assert (outcome["failed"], outcome["restarted"]) == (1, True)
     assert seen == ["free"]
+    assert _answers(task) == [ERROR]
 
 
 @pytest.mark.django_db
 def test_given_up_answers_read_their_entries_from_the_primary(
-    stale_running_entry, monkeypatch
+    instant_stale_entry, monkeypatch
 ):
     """With EvalLogger reads routed to a replica, the entries the reap failed
     a moment ago may not be there yet."""
     from tfc.routers import ReadReplicaRouter
     from tracer.services.eval_tasks.reaper import reap_stale_running
 
-    task, entry = stale_running_entry
+    task, entry = instant_stale_entry
     EvalLogger.objects.filter(pk=entry.pk).update(attempts=3)
-    read_from = []
+    route = ReadReplicaRouter.db_for_read
     monkeypatch.setattr(
-        ReadReplicaRouter, "db_for_read", lambda self, model, **hints: "replica"
+        ReadReplicaRouter,
+        "db_for_read",
+        lambda self, model, **hints: (
+            "replica" if model is EvalLogger else route(self, model, **hints)
+        ),
     )
+    copied = []
     monkeypatch.setattr(
         "tracer.services.instant_eval_answers.record_answers",
-        lambda _task_id, ids: read_from.append(ids.db) or 0,
+        lambda _task_id, ids: copied.extend(str(i) for i in ids) or 0,
     )
 
     assert reap_stale_running(task, older_than_seconds=600, max_attempts=3) == (0, 1)
-    assert read_from == ["default"]
+    assert copied == [str(entry.pk)]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_retry_between_the_reap_and_its_answer_copy_is_not_undone(
+    instant_stale_entry, monkeypatch
+):
+    """Retry requeues a given-up entry and drops its answer while the fenced
+    reap, its task lock released, is copying that answer. The copy must not
+    bring the dropped answer back over the requeued entry."""
+    from django.db.models import F
+
+    from tracer.models.instant_eval import InstantEvalRun
+    from tracer.services.eval_tasks.reaper import StaleRunningClaims
+    from tracer.services.instant_eval_answers import forget_answers
+
+    task, entry = instant_stale_entry
+    current = _stamp(task, EvalTaskStatus.RUNNING)
+    EvalLogger.objects.filter(pk=entry.pk).update(attempts=3)
+    reaped, retrying, copied, dropped = Event(), Event(), Event(), Event()
+    record = StaleRunningClaims.record_failed_answers
+
+    def record_while_retry_runs(self):
+        # The reap has committed and released the task lock.
+        reaped.set()
+        assert retrying.wait(10)
+
+        def on_query(execute, sql, params, many, context):
+            result = execute(sql, params, many, context)
+            if sql.startswith("INSERT INTO tracer_instant_eval_answer"):
+                # Keep the copy open across the Retry's answer delete.
+                copied.set()
+                assert dropped.wait(10)
+            return result
+
+        with connection.execute_wrapper(on_query):
+            return record(self)
+
+    monkeypatch.setattr(
+        StaleRunningClaims, "record_failed_answers", record_while_retry_runs
+    )
+
+    def worker():
+        try:
+            return activities._reap_sync(
+                str(task.pk), 600, 3, True, workflow_generation=current
+            )
+        finally:
+            copied.set()  # finished, whether or not it copied anything
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(worker)
+        assert reaped.wait(10), "the reap never reached its answer copy"
+        # The Instant eval Retry (``_retry_failed``), one statement at a time.
+        with transaction.atomic():
+            assert (
+                EvalLogger.objects.filter(
+                    pk=entry.pk, status=EvalEntryStatus.ERRORED
+                ).update(
+                    status=EvalEntryStatus.PENDING,
+                    error=False,
+                    error_message=None,
+                    skipped_reason=None,
+                    attempts=0,
+                )
+                == 1
+            )
+            retrying.set()
+            assert copied.wait(10)
+            forget_answers(task.id, [entry.pk])
+            dropped.set()
+            InstantEvalRun.objects.filter(eval_task=task).update(
+                answers_version=F("answers_version") + 1
+            )
+        reaped_result = result.result(timeout=30)
+
+    assert reaped_result["failed"] == 1
+    entry.refresh_from_db()
+    assert entry.status == EvalEntryStatus.PENDING
+    assert _answers(task) == []
+
+
+class _WorkerExit(BaseException):
+    """The worker process stops: nothing after this point runs."""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("guard", ["generation", "require_running"])
+def test_an_answer_copy_lost_after_the_reap_committed_is_made_on_retry(
+    instant_stale_entry, monkeypatch, guard
+):
+    from tracer.services.eval_tasks.reaper import StaleRunningClaims
+    from tracer.services.instant_eval_summary import ERROR
+
+    task, entry = instant_stale_entry
+    current = _stamp(task, EvalTaskStatus.RUNNING)
+    EvalLogger.objects.filter(pk=entry.pk).update(attempts=3)
+    kwargs = (
+        {"workflow_generation": current}
+        if guard == "generation"
+        else {"require_running": True}
+    )
+
+    def worker_exits(self):
+        raise _WorkerExit
+
+    with monkeypatch.context() as patch:
+        patch.setattr(StaleRunningClaims, "record_failed_answers", worker_exits)
+        with pytest.raises(_WorkerExit):
+            activities._reap_sync(str(task.pk), 600, 3, True, **kwargs)
+    entry.refresh_from_db()
+    assert entry.status == EvalEntryStatus.ERRORED  # the reap committed
+    assert _answers(task) == []
+
+    # Temporal retries the activity; nothing is left for it to reap.
+    retried = activities._reap_sync(str(task.pk), 600, 3, True, **kwargs)
+    assert (retried["requeued"], retried["failed"]) == (0, 0)
+    assert _answers(task) == [ERROR]
+
+    # Once copied, later reaps find nothing to copy.
+    copies = []
+    monkeypatch.setattr(
+        "tracer.services.instant_eval_answers.record_answers",
+        lambda *args: copies.append(args) or 0,
+    )
+    activities._reap_sync(str(task.pk), 600, 3, True, **kwargs)
+    assert copies == []
