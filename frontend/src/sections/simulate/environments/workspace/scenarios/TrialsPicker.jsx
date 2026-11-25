@@ -13,7 +13,7 @@ import { CompositionLabels } from "../composition/CompositionPanel";
 const TRIAL_PRESETS = [1, 3, 5, 8];
 const DEFAULT_TRIALS_LABEL = 1;
 
-export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size = "sm", composition = null }) {
+export default function TrialsPicker({ trials, onChange, scenarioCount = 0, composition = null }) {
   const [anchor, setAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState(String(trials || 1));
@@ -170,8 +170,6 @@ TrialsPicker.propTypes = {
   trials: PropTypes.number,
   onChange: PropTypes.func,
   scenarioCount: PropTypes.number,
-  // Accepted for existing callers; the button now follows the theme size.
-  size: PropTypes.oneOf(["sm", "xs"]),
   // A composition pins every run to an agent version, suite and binding; shown before Run.
   composition: PropTypes.object,
 };

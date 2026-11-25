@@ -223,19 +223,6 @@ export const shortDigest = (digest) => {
   return hex ? hex.slice(0, 12) : "";
 };
 
-// The adaptation's steps (environment-releases.md §7.5), each done once the builder's tool for it
-// succeeded. A backend may prefix a tool with its server (`mcp__adaptation__run_proof`).
-export const ADAPTATION_STEPS = [
-  { key: "binding", label: "Binding drafted", tool: "submit_binding" },
-  { key: "proof", label: "Binding proved", tool: "run_proof" },
-  {
-    key: "conflicts",
-    label: "Policy conflicts reviewed",
-    tool: "report_conflicts",
-  },
-  { key: "sealed", label: "Approved and sealed", tool: "finish_adaptation" },
-];
-
 // How agent-learning-kit's adaptation workbench opens its approval question (`approval_question`).
 export const isAdaptationApproval = (question) =>
   String(question?.prompt || "").startsWith("Use this binding for ");
@@ -244,23 +231,6 @@ export const isAdaptationApproval = (question) =>
 const ADAPTATION_YES = new Set(["yes", "y", "true", "approve", "approved", "ok"]);
 export const isAdaptationYes = (answer) =>
   ADAPTATION_YES.has(String(answer || "").trim().toLowerCase());
-
-// Which steps are done, from the conversation's tool results in order. A new binding voids the
-// proof of the one before it, so an earlier proof never shows a later binding as proved.
-export const adaptationProgress = (conversation) => {
-  const done = new Set();
-  for (const event of conversation?.events || []) {
-    if (event?.kind !== "tool_result" || event?.payload?.is_error) continue;
-    const tool = String(event?.payload?.tool || "");
-    const step = ADAPTATION_STEPS.find(
-      (one) => tool === one.tool || tool.endsWith(`__${one.tool}`),
-    );
-    if (!step) continue;
-    if (step.key === "binding") done.delete("proof");
-    done.add(step.key);
-  }
-  return done;
-};
 
 export const BINDING_MODE_LABELS = {
   canonical: "Canonical",
@@ -273,26 +243,6 @@ export const SCENARIO_ORIGIN_LABELS = {
   specialized: "Specialized",
   custom: "Custom",
 };
-
-// Adaptation questions carry `{value, label}` options; older builder questions carry strings.
-export const questionOptions = (payload) =>
-  (Array.isArray(payload?.options) ? payload.options : []).map((option) =>
-    option && typeof option === "object"
-      ? {
-          value: option.value,
-          label: displayText(option.label ?? option.value),
-        }
-      : { value: option, label: displayText(option) },
-  );
-
-// Message ids the user already answered: a question or proposal is settled once a user turn
-// replies to it, so its buttons must not offer a second answer.
-export const answeredMessageIds = (messages = []) =>
-  new Set(
-    (Array.isArray(messages) ? messages : [])
-      .filter((message) => message?.role === "user" && message?.reply_to)
-      .map((message) => String(message.reply_to)),
-  );
 
 export const percent = (rate) =>
   typeof rate === "number" && Number.isFinite(rate)
