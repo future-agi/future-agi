@@ -141,13 +141,12 @@ export const WORKSPACE_COPY = {
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
   },
-  // The env-version pin: lists every version of the world, and makes an
-  // earlier one the default.
+  // The env-version pin: lists every version of the world, and makes
+  // another one the default.
   pin: {
     prefix: "env",
     heading: "Environment versions",
-    subtitle:
-      "Runs use the default version. You can roll back to an earlier one.",
+    subtitle: "Runs use the default version. You can roll back to another one.",
     default: "default",
     rollBack: (label) => `Roll back to ${label}`,
     fullHistory: "See full history",

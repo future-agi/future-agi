@@ -25,7 +25,7 @@ import ViewerLock from "../components/ViewerLock";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 
 // The environment-version pin: the header names the default environment version,
-// and clicking it lists every version of the world, where an earlier active one
+// and clicking it lists every version of the world, where another active one
 // can be made the default. Shown once the server has answered (a failed refresh
 // keeps the last answer); hidden when versioning is off, has just been switched
 // off, or the environment has no versions.

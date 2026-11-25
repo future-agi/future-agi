@@ -255,7 +255,7 @@ describe("EnvVersionPin", () => {
     expect(items[1]).toHaveTextContent("v1");
     expect(items[1]).not.toHaveTextContent(/\bdefault\b/);
     expect(
-      screen.getByText(/You can roll back to an earlier one/),
+      screen.getByText(/You can roll back to another one/),
     ).toBeInTheDocument();
   });
 
