@@ -382,6 +382,9 @@ export default function CompareActions({
   onRerun,
   onRegrade,
   onOptimize,
+  rechecked = 0,
+  includeRechecked = true,
+  onIncludeRechecked,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
   const [displayAnchor, setDisplayAnchor] = useState(null);
@@ -514,6 +517,25 @@ export default function CompareActions({
           />
           Flaky only
         </MenuItem>
+        {rechecked > 0 && onIncludeRechecked && (
+          <Tooltip
+            arrow
+            placement="right"
+            title="Re-graded after the world changed — may mix world and agent effects."
+          >
+            <MenuItem
+              onClick={() => onIncludeRechecked(!includeRechecked)}
+              sx={{ typography: "s2", gap: 1 }}
+            >
+              <Checkbox
+                size="small"
+                checked={includeRechecked}
+                sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
+              />
+              {`Include re-graded scenarios (${rechecked})`}
+            </MenuItem>
+          </Tooltip>
+        )}
         <MenuItem
           onClick={() => {
             setFilterAnchor(filterMenuAnchor);
@@ -573,6 +595,9 @@ export default function CompareActions({
 }
 
 CompareActions.propTypes = {
+  rechecked: PropTypes.number,
+  includeRechecked: PropTypes.bool,
+  onIncludeRechecked: PropTypes.func,
   filters: PropTypes.array,
   onFilters: PropTypes.func,
   evals: PropTypes.array,

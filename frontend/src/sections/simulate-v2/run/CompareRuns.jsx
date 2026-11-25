@@ -50,6 +50,7 @@ import {
   snapshotsEqual,
   newViewId,
 } from "../_mock/compareView";
+import { movementOf } from "../_mock/compareCells";
 import {
   withPairs,
   bridgeOf,
@@ -337,6 +338,83 @@ export default function CompareRuns() {
       ? heldFixedAcross(own, env, envState)
       : null;
   }, [comparisonRaw.runs, env, envState]);
+  /* The compared run, its setup against the baseline's, and the trend over
+     the runs that share that setup. */
+  const { sameAgent, setupDiffs, verdictRead, movedCount } = useMemo(() => {
+    const runs = comparisonRaw.runs;
+    const none = {
+      sameAgent: false,
+      setupDiffs: [],
+      verdictRead: read,
+      movedCount: null,
+    };
+    if (!env || !read || runs.length < 2) return none;
+    const base = runs[0];
+    const target = runs.find((r) => r.id === read.targetId) || runs[1];
+    const fullOf = (r) => {
+      const opt =
+        r.kind === "trial"
+          ? (envState.optimizations || []).find(
+              (o) => o.id === r.selfImprovementId,
+            )
+          : null;
+      return (
+        (envState.runs || []).find((x) => x.id === r.id) ||
+        (opt && (envState.runs || []).find((x) => x.id === opt.fromRunId)) ||
+        r
+      );
+    };
+    const setupOf = (r) => {
+      if (r._env || base._env) return ["setup"];
+      const h = heldFixedAcross([base, fullOf(r)], env, envState);
+      return (h?.differs || [])
+        .filter((d) => d.id !== "agent" && d.id !== "trials")
+        .map((d) => d.label);
+    };
+    const same =
+      !!base.agentVersion &&
+      base.agentVersion === target.agentVersion &&
+      base.kind !== "trial" &&
+      target.kind !== "trial";
+    let trend = read.trend;
+    if (trend?.points) {
+      const byId = new Map(runs.map((r) => [r.id, r]));
+      const own = (id) =>
+        Date.parse(
+          byId.get(id)?.finishedAt || byId.get(id)?.startedAt || "",
+        ) || 0;
+      /* A candidate comes right after the run it was built from, whatever
+         its own timestamp says. */
+      const at = (id) => {
+        const r = byId.get(id);
+        const opt =
+          r?.kind === "trial"
+            ? (envState.optimizations || []).find(
+                (o) => o.id === r.selfImprovementId,
+              )
+            : null;
+        const src = opt && byId.get(opt.fromRunId);
+        return src ? Math.max(own(id), own(src.id) + 1) : own(id);
+      };
+      const points = trend.points
+        .filter((p) => p.runId === base.id || !setupOf(byId.get(p.runId)).length)
+        .sort((x, y) => at(x.runId) - at(y.runId));
+      trend = points.length >= 2 ? { ...trend, points } : null;
+    }
+    const ti = runs.indexOf(target);
+    const moved = comparisonRaw.rows
+      ? comparison.rows.filter((row) =>
+          movementOf(row.cells?.[ti], row.cells?.[0]),
+        ).length
+      : null;
+    return {
+      sameAgent: same,
+      setupDiffs: same ? setupOf(target) : [],
+      verdictRead: { ...read, trend },
+      movedCount: moved,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comparisonRaw.runs, comparison.rows, env, envState, read]);
   const envHeadline = useMemo(() => {
     const runs = comparisonRaw.runs;
     if (!env || !read || runs.length < 2 || runs.some((r) => r._env))
@@ -737,9 +815,9 @@ export default function CompareRuns() {
                 ];
                 return `${envs.length === 1 && envs[0] ? `${envs[0]} · ` : ""}${same ? "same behaviour, only credentials differ · " : ""}`;
               })()}
-              {comparison.coverage.shared} scenarios
+              {comparison.rows.length} scenarios
               {comparison.coverage.partial > 0 &&
-                ` · ${comparison.coverage.partial} in only some`}
+                ` · ${comparison.coverage.partial} not in every run`}
               {sampleNote}
             </Typography>
           </Box>
@@ -797,10 +875,10 @@ export default function CompareRuns() {
                     component="span"
                     sx={{ color: "text.secondary", fontWeight: 500 }}
                   >
-                    {comparison.coverage.notInAll > 0 &&
-                    comparison.coverage.common > 0
-                      ? ` · ${r.sharedPassRate ?? "—"}% on ${comparison.coverage.common} shared`
-                      : ` · ${String(scenarioPassText(r, { env, envState })).split(" ")[0]}`}
+                    {/* Each run's own pass rate — the same number as the
+                        runs list and its run page; a candidate that ran
+                        part of the set says on how many. */}
+                    {` · ${String(scenarioPassText(r, { env, envState })).split(" ")[0]}${r.kind === "trial" && r.partial && r.total ? ` on ${r.total}` : ""}`}
                   </Box>
                 </Typography>
               </Tooltip>
@@ -854,6 +932,9 @@ export default function CompareRuns() {
           />
 
           <CompareActions
+            rechecked={read?.counts?.rechecked || 0}
+            includeRechecked={!excludeRechecked}
+            onIncludeRechecked={(on) => setExcludeRechecked(!on)}
             filters={filters}
             onFilters={setFilters}
             evals={comparison.evals}
@@ -1115,7 +1196,9 @@ export default function CompareRuns() {
                 }}
               />
               <CompareVerdict
-                read={read}
+                read={verdictRead}
+                sameAgent={sameAgent}
+                setupDiffs={setupDiffs}
                 held={held}
                 mustPass={mustPass}
                 onShowMustPass={() =>
@@ -1380,7 +1463,9 @@ export default function CompareRuns() {
             >
               {view.view !== "table" &&
                 `${comparedWithText(comparison.runs)} · `}
-              {changed} of {comparison.rows.length} changed
+              {movedCount != null && comparison.runs.length > 1
+                ? `${movedCount} changed vs ${runLabelOf(comparison.runs[0])}`
+                : `${changed} of ${comparison.rows.length} changed`}
               {rows.length !== comparison.rows.length &&
                 ` · showing ${rows.length}`}
               {/* The table's number columns read one run against the

@@ -1,16 +1,7 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import {
-  Box,
-  Stack,
-  Typography,
-  Button,
-  Checkbox,
-  Tooltip,
-  FormControlLabel,
-} from "@mui/material";
+import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { neutralCheckboxSx } from "../components/primitives";
 import { textTone } from "../components/textTone";
 import { noiseBandText, PAIR_FLOOR, verdictWithMustPass } from "../_mock/pairs";
 
@@ -75,13 +66,24 @@ export default function CompareVerdict({
   onShowMustPass,
   promote = null,
   onImprove = null,
+  sameAgent = false,
+  setupDiffs = [],
 }) {
   if (!read) return null;
   const { counts, interval: iv, fixes, warnings, trend, band } = read;
-  const label = verdictWithMustPass(read.label, mustPass);
-  const floor = label.id === "rows";
-  const side = label.id === "side";
-  const inconclusive = label.id === "inconclusive" || floor;
+  const rawLabel = verdictWithMustPass(read.label, mustPass);
+  /* Same agent on both sides: whatever moved is the setup or noise, never the
+     agent — said so, not read as an agent result. */
+  const label = sameAgent
+    ? {
+        id: "same-agent",
+        label: "Same agent",
+        note: "Both runs use the same agent version, so this isn't an agent result.",
+      }
+    : rawLabel;
+  const floor = !sameAgent && label.id === "rows";
+  const side = !sameAgent && label.id === "side";
+  const inconclusive = !sameAgent && (label.id === "inconclusive" || floor);
   const cheapest = inconclusive ? fixes.find((f) => f.can) || fixes[0] : null;
   const others = inconclusive
     ? fixes.filter((f) => f !== cheapest && f.can)
@@ -345,7 +347,11 @@ export default function CompareVerdict({
             >
               <Tooltip
                 arrow
-                title={`${label.note} Improved or Regressed when the 95% interval excludes zero${band && band.source !== "estimate" && band.source !== "default" ? " and the change beats the noise" : ""}; No meaningful change when it sits inside the noise; Inconclusive otherwise. ${noiseBandText(band) || ""}`}
+                title={
+                  sameAgent
+                    ? label.note
+                    : `${label.note} Improved or Regressed when the 95% interval excludes zero${band && band.source !== "estimate" && band.source !== "default" ? " and the change beats the noise" : ""}; No meaningful change when it sits inside the noise; Inconclusive otherwise. ${noiseBandText(band) || ""}`
+                }
               >
                 <Stack
                   direction="row"
@@ -397,19 +403,21 @@ export default function CompareVerdict({
                   </Typography>
                 </Stack>
               </Tooltip>
-              <Typography
-                sx={{
-                  typography: "s1",
-                  fontWeight: 600,
-                  fontVariantNumeric: "tabular-nums",
-                  color:
-                    label.id === "regressed"
-                      ? "status.danger.fg"
-                      : "text.primary",
-                }}
-              >
-                {`${signed(iv.delta)} pts`}
-              </Typography>
+              {!sameAgent && (
+                <Typography
+                  sx={{
+                    typography: "s1",
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
+                    color:
+                      label.id === "regressed"
+                        ? "status.danger.fg"
+                        : "text.primary",
+                  }}
+                >
+                  {`${signed(iv.delta)} pts`}
+                </Typography>
+              )}
               <Tooltip
                 arrow
                 title={[
@@ -433,35 +441,13 @@ export default function CompareVerdict({
                     borderColor: "text.disabled",
                   }}
                 >
-                  {`pass rate, on ${iv.n} of ${read.total} scenarios${band ? ` · noise ±${band.points}` : ""}`}
+                  {sameAgent
+                    ? setupDiffs.length
+                      ? `Setup changed: ${setupDiffs.join(" · ")} · ${signed(iv.delta)} pts`
+                      : `Same agent and setup · ${signed(iv.delta)} pts${band ? ` · noise ±${band.points}` : ""}`
+                    : `pass rate, on ${iv.n} of ${read.total} scenarios${band ? ` · noise ±${band.points}` : ""}`}
                 </Typography>
               </Tooltip>
-              <Box flex={1} />
-              {counts.rechecked > 0 && (
-                <Tooltip
-                  arrow
-                  title="Rechecked pairs count in the delta, badged: the world changed, so it may mix agent and world effects."
-                >
-                  <FormControlLabel
-                    sx={{
-                      m: 0,
-                      "& .MuiFormControlLabel-label": {
-                        typography: "s3",
-                        color: "text.secondary",
-                      },
-                    }}
-                    control={
-                      <Checkbox
-                        size="small"
-                        checked={!read.excludeRechecked}
-                        onChange={(e) => onExcludeRechecked(!e.target.checked)}
-                        sx={{ p: 0.5, mr: 0.25, ...neutralCheckboxSx }}
-                      />
-                    }
-                    label={`Include ${counts.rechecked} rechecked`}
-                  />
-                </Tooltip>
-              )}
             </Stack>
           )}
         </Box>
@@ -498,21 +484,26 @@ export default function CompareVerdict({
               </Tooltip>
             ))}
         {/* A confirmed regression: improve the agent from these failures. */}
-        {onImprove && (label.id === "regressed" || mustPass.length > 0) && (
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            onClick={onImprove}
-            startIcon={<Iconify icon="solar:magic-stick-3-linear" width={14} />}
-            sx={{ flexShrink: 0 }}
-          >
-            Improve agent
-          </Button>
-        )}
+        {/* Same agent: the change came from the setup, not something to improve. */}
+        {onImprove &&
+          !sameAgent &&
+          (label.id === "regressed" || mustPass.length > 0) && (
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={onImprove}
+              startIcon={
+                <Iconify icon="solar:magic-stick-3-linear" width={14} />
+              }
+              sx={{ flexShrink: 0 }}
+            >
+              Improve agent
+            </Button>
+          )}
         {/* Choosing the winner is its own reviewed step — comparing deploys
             nothing; that note is on hover. */}
-        {promote && (
+        {promote && !sameAgent && (
           <Tooltip
             arrow
             title={
@@ -697,6 +688,8 @@ export default function CompareVerdict({
   );
 }
 CompareVerdict.propTypes = {
+  sameAgent: PropTypes.bool,
+  setupDiffs: PropTypes.array,
   /* Must-pass rows that passed on the baseline and fail now: [{ id, title }]. */
   mustPass: PropTypes.array,
   onShowMustPass: PropTypes.func,

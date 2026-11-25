@@ -599,11 +599,7 @@ function RunColumn({
               value={detail.outcome.label}
               color={detail.outcome.color}
             />
-            <Meta
-              label="Duration"
-              value={`${Math.floor(Math.round(detail.durationS) / 60)}m ${String(Math.round(detail.durationS) % 60).padStart(2, "0")}s`}
-            />
-            <Meta label="Avg Latency" value={formatLatency(detail.latencyMs)} />
+            {/* Duration and latency are in the stats grid below — once. */}
           </Stack>
           <Stack
             direction="row"
@@ -725,7 +721,10 @@ function RunColumn({
               overflow: "hidden",
             }}
           >
-            <Stat label="Duration" value={`${detail.durationS}s`} />
+            <Stat
+              label="Duration"
+              value={`${Math.floor(Math.round(detail.durationS) / 60)}m ${String(Math.round(detail.durationS) % 60).padStart(2, "0")}s`}
+            />
             <Stat label="Turns" value={detail.stats.turnCount} />
             <Stat label="Latency" value={formatLatency(detail.latencyMs)} />
             <Stat
@@ -1977,7 +1976,8 @@ function Recording({ detail }) {
 
   return (
     <Box sx={{ px: 2, pt: 1.5 }}>
-      <SectionLabel>Recording</SectionLabel>
+      {/* A condensed playback, not the call's real length (Duration above). */}
+      <SectionLabel>Playback · condensed</SectionLabel>
 
       <Box
         sx={{

@@ -28,6 +28,39 @@ const scored = (c) => !!c && ["passed", "flaky", "failed"].includes(c.status);
 const EVAL_W = 88;
 const GAP = 12;
 
+/* Decimals each number keeps once averaged: CSAT and turns one, the rest
+   whole numbers (cost keeps cents). */
+const DECIMALS = { csat: 1, turns: 1, cost: 2 };
+const roundTo = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
+const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+/* The cell's trials as cells: its own trials when it ran several, else
+   just the cell. */
+const trialsOf = (cell) => {
+  const n = cell?.task?.samples?.length || 0;
+  if (!scored(cell) || n < 2) return [cell];
+  return Array.from({ length: n }, (_, k) => trialCellOf(cell, k));
+};
+/* A metric on the main row: the average across the run's trials. */
+const avgMetric = (m, cell) => {
+  const vs = trialsOf(cell)
+    .map((t) => m.value(t))
+    .filter((v) => v != null);
+  if (!vs.length) return null;
+  return vs.length === 1 && trialsOf(cell).length === 1
+    ? vs[0]
+    : roundTo(mean(vs), DECIMALS[m.key] ?? 0);
+};
+const avgEval = (cell, id) => {
+  const rs = trialsOf(cell)
+    .map((t) => evalPctOf(t, id))
+    .filter(Boolean);
+  if (!rs.length) return null;
+  if (trialsOf(cell).length === 1) return rs[0];
+  const pct = Math.round(mean(rs.map((r) => r.pct)));
+  return { pct, passed: rs.every((r) => r.passed) };
+};
+
 export default function CompareRunColumns({
   groups,
   view,
@@ -45,7 +78,24 @@ export default function CompareRunColumns({
   const [open, setOpen] = useState(() => new Set());
   const [only, setOnly] = useState(null);
 
-  const metrics = metricDefsOf(view);
+  /* Turns says nothing when every value is the same: leave the column out. */
+  const turnsSame = useMemo(() => {
+    const vals = new Set();
+    const every = allRows || groups.flatMap((g) => g.rows);
+    const turns = metricDefsOf({ columns: { turns: true } })[0];
+    every.forEach((row) =>
+      row.cells.forEach((c) =>
+        trialsOf(c).forEach((t) => {
+          const v = scored(t) ? turns.value(t) : null;
+          if (v != null) vals.add(v);
+        }),
+      ),
+    );
+    return vals.size <= 1;
+  }, [allRows, groups]);
+  const metrics = metricDefsOf(view).filter(
+    (m) => !(m.key === "turns" && turnsSame),
+  );
   const showEvals = view.columns.scorers && evals.length > 0;
   const template = [
     "24px",
@@ -373,8 +423,10 @@ export default function CompareRunColumns({
                   })}
 
                   {metrics.map((m) => {
-                    const v = m.value(cmpCell);
-                    const was = scored(baseCell) ? m.value(baseCell) : null;
+                    const v = avgMetric(m, cmpCell);
+                    const was = scored(baseCell)
+                      ? avgMetric(m, baseCell)
+                      : null;
                     return (
                       <ValueWithDelta
                         key={m.key}
@@ -390,10 +442,10 @@ export default function CompareRunColumns({
                   {showEvals &&
                     evals.map((e) => {
                       const now = scored(cmpCell)
-                        ? evalPctOf(cmpCell, e.id)
+                        ? avgEval(cmpCell, e.id)
                         : null;
                       const was = scored(baseCell)
-                        ? evalPctOf(baseCell, e.id)
+                        ? avgEval(baseCell, e.id)
                         : null;
                       return (
                         <ValueWithDelta

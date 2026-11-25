@@ -789,7 +789,12 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
       const per = trial?.perScenario || {};
       const source = (envState.runs || []).find((r) => r.id === opt?.fromRunId);
       if (source) {
-        const baseTasks = rebuildRun(env, envState, source);
+        /* A candidate only ran the scenarios in its perScenario; the rest
+           have no task, so their cell reads "missing" (Not run). */
+        const ranIds = Object.keys(per);
+        const baseTasks = rebuildRun(env, envState, source).filter(
+          (task) => !ranIds.length || per[task.scenarioId] || per[task.id],
+        );
         const tasks = baseTasks.map((task) => {
           const outcome = per[task.scenarioId] || per[task.id];
           /* Only what the trial changed moves: a fix passes, a break fails,
