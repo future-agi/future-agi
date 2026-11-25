@@ -164,9 +164,9 @@ def _applied(
     environment_digest = composition["environment"][-1]["digest"]
     suite_dir = change / "suite"
     suite, personas = _checked_suite(suite_dir, environment_digest)
-    if _digest_of(suite.get("parent")) != current or suite[
-        "digest"
-    ] != summary.get("suite"):
+    if _digest_of(suite.get("parent")) != current or suite["digest"] != summary.get(
+        "suite"
+    ):
         raise _error(
             "composition_change_invalid",
             "the sealed suite is not a child of the composition's suite",

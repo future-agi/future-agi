@@ -3375,14 +3375,14 @@
 
 **Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
 
-**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:44`
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:50`
 
 **Tags:** —
 
 **User steps:**
 
 1. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
-2. open the environment's Scenarios tab, choose Import evidence, then Add a transcript
+2. open the environment's Scenarios tab, choose Add scenarios, then Upload transcript or file
 3. paste a transcript whose second line has an unknown speaker, import it and read the refusal
 4. fix the line, name the transcript and import it
 5. land on the Scenarios tab with the import's review open

@@ -248,8 +248,9 @@ def _asked_to_approve() -> QuerySet[HostedHarnessConversation]:
 
 def _awaiting_ids() -> QuerySet[HostedHarnessJob, Any]:
     """Adaptations in review that are awaiting approval: the approval question is open and
-    nobody has answered it, whatever an earlier attempt's was answered. Until it is asked the mapping is still being checked (building),
-    as the design says, and Approve has nothing to answer."""
+    nobody has answered it, whatever an earlier attempt's was answered. Until it is asked the
+    mapping is still being checked (building), as the design says, and Approve has nothing to
+    answer."""
     return HostedHarnessJob.no_workspace_objects.filter(
         payload__metadata__adaptation__mode="review",
         id__in=_asked_to_approve().values("job_id"),

@@ -20,6 +20,8 @@ from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessJob,
     HostedHarnessScenario,
+)
+from simulate.models import (
     TestExecution as SimulationExecution,
 )
 from simulate.services import harness_fit, hosted_harness_gateway
