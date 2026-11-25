@@ -1,13 +1,9 @@
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack } from "@mui/material";
 import { visuallyHidden } from "@mui/utils";
+import MetricStrip from "src/components/metric-strip";
+import { historyCard } from "./historyCard";
 
-const card = {
-  border: "1px solid",
-  borderColor: "divider",
-  borderRadius: "8px",
-  minWidth: 0,
-};
 const bar = (width, height, sx) => (
   <Skeleton variant="rounded" width={width} height={height} sx={sx} />
 );
@@ -54,25 +50,17 @@ export default function HistorySkeleton({ label }) {
   return (
     <Busy label={label}>
       <Stack spacing={2} sx={{ p: 3 }}>
-        <Box
-          sx={{
-            ...card,
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "repeat(2, minmax(0, 1fr))",
-              md: "repeat(4, minmax(0, 1fr))",
-            },
-          }}
-        >
-          {[0, 1, 2, 3].map((tile) => (
-            <Stack key={tile} spacing={0.75} sx={{ px: 2, py: 1.5 }}>
-              {bar("40%", 10)}
-              {bar(48, 20)}
-              {bar("60%", 10)}
-            </Stack>
-          ))}
-        </Box>
-        <Box sx={card}>
+        {/* As tall as the strip's own lines, so nothing jumps. */}
+        <MetricStrip
+          wrap
+          items={[0, 1, 2, 3].map((tile) => ({
+            key: String(tile),
+            label: <Skeleton width="40%" height={16} />,
+            value: <Skeleton width={48} height={28} />,
+            hint: <Skeleton width="60%" height={18} />,
+          }))}
+        />
+        <Box sx={historyCard}>
           <Stack spacing={1} sx={{ px: 2.5, py: 2 }}>
             {bar(80, 14)}
             {bar("85%", 10)}

@@ -17,9 +17,11 @@ import {
   useEnvironmentVersions,
   useMoveDefault,
 } from "src/api/simulate-environments/versions";
+import MetricStrip from "src/components/metric-strip";
 import { VERSIONS_COPY } from "../workspace.constants";
 import { named } from "../agents/agentVersionStatus";
 import HistoryEntry from "./HistoryEntry";
+import { historyCard } from "./historyCard";
 import HistorySkeleton from "./HistorySkeleton";
 import {
   HISTORY_KINDS,
@@ -30,56 +32,6 @@ import {
 } from "./historyTimeline";
 
 const COPY = VERSIONS_COPY.history;
-const MONO = "ui-monospace, Menlo, monospace";
-
-const card = {
-  border: "1px solid",
-  borderColor: "divider",
-  borderRadius: "8px",
-  bgcolor: "background.paper",
-  minWidth: 0,
-};
-
-function Tile({ id, label, value, sub, mono = true }) {
-  return (
-    <Box
-      data-testid={`history-tile-${id}`}
-      sx={{ px: 2, py: 1.5, minWidth: 0, bgcolor: "background.paper" }}
-    >
-      <Typography
-        sx={{ typography: "s3", color: "text.subtitle", fontWeight: 500 }}
-      >
-        {label}
-      </Typography>
-      <Typography
-        noWrap
-        sx={{
-          typography: "m1",
-          fontWeight: 600,
-          fontFamily: mono ? MONO : undefined,
-          mt: 0.5,
-        }}
-      >
-        {value}
-      </Typography>
-      <Typography
-        noWrap
-        sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
-      >
-        {sub}
-      </Typography>
-    </Box>
-  );
-}
-Tile.propTypes = {
-  id: PropTypes.string.isRequired,
-  label: PropTypes.string.isRequired,
-  value: PropTypes.node,
-  sub: PropTypes.node,
-  // Version labels read in mono; counts don't.
-  mono: PropTypes.bool,
-};
-
 // The History tab: every agent, environment and scenario version as one
 // timeline, newest first, without the discarded ones. A row opens what changed
 // in that version.
@@ -212,52 +164,41 @@ export default function VersionsPanel({ env }) {
 
   return frame(
     <>
-      <Box
-        sx={{
-          ...card,
-          overflow: "hidden",
-          display: "grid",
-          gridTemplateColumns: {
-            xs: "repeat(2, minmax(0, 1fr))",
-            md: "repeat(4, minmax(0, 1fr))",
+      <MetricStrip
+        wrap
+        items={[
+          {
+            key: "environment",
+            label: tiles.environment,
+            value: envDefault ? named(envDefault) : COPY.none,
+            hint: envDefault && (newerEnv ? tiles.newer : tiles.inUse),
           },
-          // The 1px gaps show the divider colour, so the lines stay right
-          // however many tiles sit in a row.
-          gap: "1px",
-          bgcolor: "divider",
-        }}
+          {
+            key: "agent",
+            label: tiles.agent,
+            value: data.defaults.agent ? named(data.defaults.agent) : COPY.none,
+            hint: data.defaults.agent && tiles.agentSub,
+          },
+          {
+            key: "scenarios",
+            label: tiles.scenarios,
+            value: suite ? named(suite) : COPY.none,
+            hint:
+              suite?.scenarioCount != null &&
+              tiles.scenariosSub(suite.scenarioCount),
+          },
+          {
+            key: "evaluations",
+            label: tiles.evaluations,
+            // A lone dash when the environment doesn't say how many.
+            value: evaluations ?? "—",
+            hint: tiles.evaluationsSub,
+          },
+        ]}
+      />
+      <Box
+        sx={{ ...historyCard, overflow: "hidden", bgcolor: "background.paper" }}
       >
-        <Tile
-          id="environment"
-          label={tiles.environment}
-          value={envDefault ? named(envDefault) : COPY.none}
-          sub={envDefault && (newerEnv ? tiles.newer : tiles.inUse)}
-        />
-        <Tile
-          id="agent"
-          label={tiles.agent}
-          value={data.defaults.agent ? named(data.defaults.agent) : COPY.none}
-          sub={data.defaults.agent && tiles.agentSub}
-        />
-        <Tile
-          id="scenarios"
-          label={tiles.scenarios}
-          value={suite ? named(suite) : COPY.none}
-          sub={
-            suite?.scenarioCount != null &&
-            tiles.scenariosSub(suite.scenarioCount)
-          }
-        />
-        <Tile
-          id="evaluations"
-          mono={false}
-          label={tiles.evaluations}
-          // A lone dash when the environment doesn't say how many.
-          value={evaluations ?? "—"}
-          sub={tiles.evaluationsSub}
-        />
-      </Box>
-      <Box sx={{ ...card, overflow: "hidden" }}>
         {/* The card's width depends on the chat panel, not the viewport, so
             the filter wraps under the text once the text would get narrow. */}
         <Stack

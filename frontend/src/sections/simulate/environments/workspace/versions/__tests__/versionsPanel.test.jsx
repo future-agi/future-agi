@@ -240,6 +240,8 @@ const row = (piece, label) => {
 };
 const entryOf = (piece, label) =>
   row(piece, label).closest('[data-testid^="history-entry-"]');
+// The whole tile, found by its hint: label, value and hint together.
+const tile = (hint) => screen.getByText(hint).parentElement;
 const openActions = async (user, piece, label) => {
   await user.click(
     within(entryOf(piece, label)).getByRole("button", {
@@ -1212,23 +1214,21 @@ describe("VersionsPanel", () => {
       ],
     };
     render(<VersionsPanel env={ENV} />);
-    expect(screen.getByTestId("history-tile-environment")).toHaveTextContent(
-      "v1runs use this · a newer one exists",
+    expect(tile("runs use this · a newer one exists")).toHaveTextContent(
+      "Environmentv1",
     );
   });
 
   it("states what runs use now in the strip, with no side panel", () => {
     render(<VersionsPanel env={{ ...ENV, counts: { evaluations: 5 } }} />);
-    expect(screen.getByTestId("history-tile-environment")).toHaveTextContent(
-      "v2latest · runs use this",
+    expect(tile("latest · runs use this")).toHaveTextContent("Environmentv2");
+    expect(tile("default agent version")).toHaveTextContent(
+      "Agent being testedv4",
     );
-    expect(screen.getByTestId("history-tile-agent")).toHaveTextContent("v4");
-    expect(screen.getByTestId("history-tile-scenarios")).toHaveTextContent(
-      "v22 scenarios in this version",
+    expect(tile("2 scenarios in this version")).toHaveTextContent(
+      "Scenariosv2",
     );
-    expect(screen.getByTestId("history-tile-evaluations")).toHaveTextContent(
-      "5score each run",
-    );
+    expect(tile("score each run")).toHaveTextContent("Evaluations5");
     expect(screen.queryByText("What runs use now")).toBeNull();
   });
 
