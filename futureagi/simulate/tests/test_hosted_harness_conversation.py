@@ -2502,6 +2502,7 @@ def test_a_question_asked_again_under_a_new_id_takes_the_answer_and_never_holds_
         reply_to=uuid.UUID(first),
     )
     # The turn was stopped before the answer reached it, and the builder asks the same question again.
+    _deliver(conversation, capability, next(sent), "turn_started", {"resumed": True})
     ask(again)
 
     conversation.refresh_from_db()

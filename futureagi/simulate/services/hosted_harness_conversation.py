@@ -113,7 +113,12 @@ def serialize_conversation(
         "stage": conversation.current_stage,
         "active_invocation_id": conversation.active_invocation_id,
         "blocking_input": conversation.blocking_input,
-        "messages": [_serialize_message(message) for message in messages],
+        "messages": [
+            _serialize_message(
+                message, acked_through=conversation.command_acked_through
+            )
+            for message in messages
+        ],
         "events": [_serialize_event(event) for event in events],
         "event_watermark": conversation.event_acked_through,
         "runtime": {
@@ -1150,6 +1155,46 @@ ASKED_AGAIN = (
     "Not taken as the answer: the builder asked again. Answer with one of the options."
 )
 
+_TURN_BOUNDARIES = ("turn_started", "turn_completed", "turn_interrupted")
+_QUESTION_EVENTS = ("question_requested", "confirmation_requested")
+
+
+def _questions_asked_this_turn(
+    conversation: HostedHarnessConversation, before_sequence: int
+) -> set[uuid.UUID]:
+    turn_began = (
+        conversation.events.filter(
+            kind__in=_TURN_BOUNDARIES, sequence__lt=before_sequence
+        )
+        .order_by("-sequence")
+        .values_list("sequence", flat=True)
+        .first()
+        or 0
+    )
+    return set(
+        conversation.events.filter(
+            kind__in=_QUESTION_EVENTS,
+            sequence__gt=turn_began,
+            sequence__lt=before_sequence,
+            message_id__isnull=False,
+        ).values_list("message_id", flat=True)
+    )
+
+
+def _close_taken_answers(conversation: HostedHarnessConversation) -> None:
+    conversation.messages.filter(
+        role=HostedHarnessConversationMessage.Role.USER,
+        reply_to__isnull=False,
+        sequence__lte=conversation.command_acked_through,
+        state__in=(
+            HostedHarnessConversationMessage.State.DELIVERED,
+            HostedHarnessConversationMessage.State.STREAMING,
+        ),
+    ).update(
+        state=HostedHarnessConversationMessage.State.COMPLETED,
+        updated_at=timezone.now(),
+    )
+
 
 def _project_event(
     conversation: HostedHarnessConversation, event: dict[str, Any]
@@ -1241,13 +1286,16 @@ def _project_event(
         ).exists():
             # Asked again after a restart, but already answered.
             return
-        # An answer still queued for another question can't be taken any more: that question is closed and the builder
-        # asks this one in its place, so the person answers this one. The answer says why it stopped.
+        asked_this_turn = _questions_asked_this_turn(conversation, event["sequence"])
         for stale in conversation.messages.filter(
             role=HostedHarnessConversationMessage.Role.USER,
             state=HostedHarnessConversationMessage.State.QUEUED,
             reply_to__isnull=False,
         ).exclude(reply_to=message_id):
+            if stale.reply_to in asked_this_turn:
+                stale.state = HostedHarnessConversationMessage.State.COMPLETED
+                stale.save(update_fields=["state", "updated_at"])
+                continue
             stale.state = HostedHarnessConversationMessage.State.FAILED
             stale.payload = {**(stale.payload or {}), "failure_reason": ASKED_AGAIN}
             stale.save(update_fields=["state", "payload", "updated_at"])
@@ -1267,6 +1315,7 @@ def _project_event(
                 id=control_id,
                 role=HostedHarnessConversationMessage.Role.USER,
             ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
+        _close_taken_answers(conversation)
         conversation.state = HostedHarnessConversation.State.WARM_IDLE
         conversation.active_invocation_id = None
         return
@@ -1277,15 +1326,7 @@ def _project_event(
                 id=command_id,
                 role=HostedHarnessConversationMessage.Role.USER,
             ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
-        conversation.messages.filter(
-            role=HostedHarnessConversationMessage.Role.USER,
-            reply_to__isnull=False,
-            sequence__lte=conversation.command_acked_through,
-            state__in=(
-                HostedHarnessConversationMessage.State.DELIVERED,
-                HostedHarnessConversationMessage.State.STREAMING,
-            ),
-        ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
+        _close_taken_answers(conversation)
         blocking_message_id = (conversation.blocking_input or {}).get("message_id")
         answered = bool(
             blocking_message_id
@@ -2514,13 +2555,26 @@ def _workspace_scenario_count(body: bytes) -> int:
         )
 
 
-def _serialize_message(message: HostedHarnessConversationMessage) -> dict[str, Any]:
+def _shown_state(message: HostedHarnessConversationMessage, acked_through: int) -> str:
+    if (
+        message.role == HostedHarnessConversationMessage.Role.USER
+        and message.reply_to is not None
+        and message.state == HostedHarnessConversationMessage.State.DELIVERED
+        and message.sequence <= acked_through
+    ):
+        return HostedHarnessConversationMessage.State.COMPLETED
+    return message.state
+
+
+def _serialize_message(
+    message: HostedHarnessConversationMessage, *, acked_through: int = 0
+) -> dict[str, Any]:
     return {
         "message_id": str(message.id),
         "sequence": message.sequence,
         "role": message.role,
         "kind": message.kind,
-        "state": message.state,
+        "state": _shown_state(message, acked_through),
         "stage": message.stage,
         # A rebuild's briefing is for its sandbox; the workspace shows its labels.
         "content": (
