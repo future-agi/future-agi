@@ -35,7 +35,7 @@ def isolated_storage(monkeypatch, tmp_path, settings):
     ]
     settings.UPLOAD_BUCKET_NAME = ""
     monkeypatch.setattr(
-        compare_storage, "_client_and_bucket", lambda: (client, PRIVATE_BUCKET)
+        compare_storage, "_client_and_bucket", lambda **_: (client, PRIVATE_BUCKET)
     )
     monkeypatch.setattr(legacy_cleanup, "logger", Mock())
     monkeypatch.setattr(compare_storage, "logger", Mock(), raising=False)
@@ -317,7 +317,7 @@ def test_remote_listing_failure_is_logged(isolated_storage):
 def test_missing_private_bucket_does_not_delete_or_hide_failure(
     monkeypatch, isolated_storage
 ):
-    def unavailable():
+    def unavailable(**_):
         raise RuntimeError("synthetic missing bucket")
 
     monkeypatch.setattr(compare_storage, "_client_and_bucket", unavailable)

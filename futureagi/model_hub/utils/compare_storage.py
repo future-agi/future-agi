@@ -66,10 +66,10 @@ def compare_bucket_name() -> str:
     return bucket
 
 
-def _client_and_bucket():
+def _client_and_bucket(*, allow_create: bool = True):
     bucket = compare_bucket_name()
     client = get_storage_client()
-    ensure_private_bucket(client, bucket)
+    ensure_private_bucket(client, bucket, allow_create=allow_create)
     return client, bucket
 
 
@@ -131,7 +131,7 @@ def read_compare_json(compare_id, name: str):
 def delete_compare_objects(compare_id) -> None:
     """Remove every object of one comparison. Raises when listing or removal
     fails, so the caller can keep what lets it retry."""
-    client, bucket = _client_and_bucket()
+    client, bucket = _client_and_bucket(allow_create=False)
     _remove_prefix(client, bucket, compare_id)
 
 
@@ -139,7 +139,7 @@ def delete_compare_metadata(compare_id) -> None:
     """Remove a comparison's metadata, after which every read of the
     comparison answers as not found. Raises on a storage error; removing
     metadata that is already gone is not an error."""
-    client, bucket = _client_and_bucket()
+    client, bucket = _client_and_bucket(allow_create=False)
     client.remove_object(
         bucket, compare_object_key(compare_id, COMPARE_METADATA_OBJECT)
     )
@@ -352,7 +352,7 @@ def sweep_remote_compare_objects(deadline: float, now: datetime | None = None) -
     now = now or datetime.now(UTC)
     private_deadline = time.monotonic() + (deadline - time.monotonic()) / 2
     try:
-        client, bucket = _client_and_bucket()
+        client, bucket = _client_and_bucket(allow_create=False)
     except Exception:
         logger.exception("compare_bucket_unavailable")
         complete = False
