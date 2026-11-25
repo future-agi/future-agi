@@ -238,16 +238,34 @@ test('SET-E2E-003: optional-expiry keys stop access and remain distinguishable f
     const headers = { 'X-Api-Key': key.api_key, 'X-Secret-Key': key.secret_key };
     // Empty OTLP export is a valid request, accepted before expiry. Authentication
     // assertions are single calls, not polled or retried.
+    const target = rows[0].expires_at.getTime();
     if (kind === 'near') {
       const before = await request.post(`${E2E.collectorUrl}/v1/traces`, {
         headers, data: { resourceSpans: [] },
       });
+      const completedAt = Date.now();
       expect(before.status()).toBe(200);
-      await expect.poll(() => Date.now() >= expires.getTime(), { timeout: UI_READY }).toBe(true);
+      expect(completedAt, 'accepted request must complete before stored expiry').toBeLessThan(target);
+
+      const deadline = performance.now() + UI_READY;
+      for (;;) {
+        const remaining = target - Date.now();
+        const budget = deadline - performance.now();
+        if (budget <= 0) throw new Error(`Clock did not reach expiry ${target} within the wait budget`);
+        if (remaining <= 0) break;
+        await new Promise(resolve => setTimeout(resolve, Math.min(remaining, budget)));
+      }
     }
+    const dispatchedAt = Date.now();
     const refused = await request.post(`${E2E.collectorUrl}/v1/traces`, {
       headers, data: { resourceSpans: [] },
     });
+    if (kind === 'near') {
+      // Measure dispatch, not response latency. One second is the admin widget's
+      // timestamp resolution, not a grace period before sending the probe.
+      expect(dispatchedAt).toBeGreaterThanOrEqual(target);
+      expect(dispatchedAt - target, 'missed stored expiry boundary (ms)').toBeLessThanOrEqual(1000);
+    }
     expect(refused.status()).toBe(401);
     expect((await refused.json()).code).toBe('api_key_expired');
     const apiRefused = await request.get(`${E2E.apiUrl}${HEALTH}`, { headers });
