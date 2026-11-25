@@ -30,6 +30,10 @@ from model_hub.serializers.decision_models import (
     ModelListQuerySerializer,
     ModelListResponseSerializer,
 )
+from model_hub.utils.run_prompt_errors import (
+    RunPromptValidationError,
+    get_run_prompt_error_message,
+)
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
@@ -91,10 +95,6 @@ from model_hub.services.column_service import (
 )
 from model_hub.utils.model_provider_update import (
     one_time_model_providers_update,
-)
-from model_hub.utils.run_prompt_errors import (
-    RunPromptValidationError,
-    get_run_prompt_error_message,
 )
 from model_hub.utils.utils import (
     get_model_mode,
@@ -2031,7 +2031,9 @@ class PreviewRunPromptColumnView(APIView):
                     break
                 except Exception as e:
                     logger.exception(
-                        "run_prompt_preview_row_failed", row_id=str(row.id), error=str(e)
+                        "run_prompt_preview_row_failed",
+                        row_id=str(row.id),
+                        error=str(e),
                     )
                     responses.append(get_run_prompt_error_message(e, phase=error_phase))
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}

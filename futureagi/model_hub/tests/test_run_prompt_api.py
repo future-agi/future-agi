@@ -1432,9 +1432,7 @@ def execute_prompt_error_case(auth_client, dataset, row, organization):
 
 @pytest.mark.django_db
 class TestRunPromptErrorDisclosure:
-    GENERIC_ERROR = (
-        "Unable to run prompt. Please try again or contact support if the problem persists."
-    )
+    GENERIC_ERROR = "Unable to run prompt. Please try again or contact support if the problem persists."
 
     @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
     @pytest.mark.parametrize("phase", ["preparation", "constructor", "provider"])
@@ -1443,7 +1441,9 @@ class TestRunPromptErrorDisclosure:
         self, execute_prompt_error_case, path, phase, error_type
     ):
         # A ValueError is not proof of local validation. I/O and providers use it too.
-        error = error_type("upstream body: internal connection at /srv/private/client.py")
+        error = error_type(
+            "upstream body: internal connection at /srv/private/client.py"
+        )
         messages, cell_status, logger, provider = execute_prompt_error_case(
             path, phase=phase, failure=error
         )
@@ -1477,7 +1477,9 @@ class TestRunPromptErrorDisclosure:
         monkeypatch.setattr(
             module.litellm.utils, "supports_audio_input", lambda **kw: False
         )
-        monkeypatch.setattr(module.litellm.utils, "supports_pdf_input", lambda **kw: False)
+        monkeypatch.setattr(
+            module.litellm.utils, "supports_pdf_input", lambda **kw: False
+        )
         monkeypatch.setattr(
             "model_hub.views.prompt_template.get_model_mode", lambda model: "chat"
         )
@@ -1485,15 +1487,24 @@ class TestRunPromptErrorDisclosure:
         def validate(*args, **kwargs):
             if validation in ("placeholder", "template"):
                 text = (
-                    "{missing_column}" if validation == "placeholder" else "{{ missing + }}"
+                    "{missing_column}"
+                    if validation == "placeholder"
+                    else "{{ missing + }}"
                 )
-                template_format = "f-string" if validation == "placeholder" else "jinja2"
+                template_format = (
+                    "f-string" if validation == "placeholder" else "jinja2"
+                )
                 return module.process_text_with_media(
                     text, {}, {}, 0, "gpt-4o", template_format=template_format
                 )
             media_type = f"{validation}_url"
             return module.process_list_content(
-                [{"type": media_type, media_type: {"url": "https://example.com/media"}}],
+                [
+                    {
+                        "type": media_type,
+                        media_type: {"url": "https://example.com/media"},
+                    }
+                ],
                 {},
                 {},
                 0,

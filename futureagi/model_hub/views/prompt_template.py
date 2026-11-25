@@ -10,6 +10,7 @@ from uuid import UUID
 import litellm
 import structlog
 
+from model_hub.utils.run_prompt_errors import RunPromptValidationError
 from tfc.ee_stub import _ee_stub
 from tfc.utils.ssrf_guard import safe_fetch
 
@@ -123,7 +124,6 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
     params_with_defaults_for_response,
 )
-from model_hub.utils.run_prompt_errors import RunPromptValidationError
 from model_hub.utils.utils import (
     get_model_mode,
     remove_empty_text_from_messages,
