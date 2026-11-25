@@ -608,6 +608,8 @@ def start_hosted_harness_gateway_workflow(
     max_infrastructure_attempts: int,
     initial_backoff_seconds: float,
     max_backoff_seconds: float,
+    *,
+    allow_completed_restart: bool = False,
 ) -> str:
     return async_to_sync(_start_hosted_harness_gateway_workflow_async)(
         job_id,
@@ -615,6 +617,7 @@ def start_hosted_harness_gateway_workflow(
         max_infrastructure_attempts,
         initial_backoff_seconds,
         max_backoff_seconds,
+        allow_completed_restart=allow_completed_restart,
     )
 
 
@@ -624,8 +627,11 @@ async def _start_hosted_harness_gateway_workflow_async(
     max_infrastructure_attempts: int,
     initial_backoff_seconds: float,
     max_backoff_seconds: float,
+    *,
+    allow_completed_restart: bool = False,
 ) -> str:
     from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+    from temporalio.exceptions import WorkflowAlreadyStartedError
 
     from simulate.temporal.types.hosted_harness_gateway import (
         HostedHarnessGatewayInput,
@@ -637,20 +643,28 @@ async def _start_hosted_harness_gateway_workflow_async(
 
     client = await get_client()
     workflow_id = f"hosted-harness-{job_id}"
-    await client.start_workflow(
-        HostedHarnessGatewayWorkflow.run,
-        HostedHarnessGatewayInput(
-            job_id=job_id,
-            endpoint_base_url=endpoint_base_url,
-            max_infrastructure_attempts=max_infrastructure_attempts,
-            initial_backoff_seconds=initial_backoff_seconds,
-            max_backoff_seconds=max_backoff_seconds,
-        ),
-        id=workflow_id,
-        task_queue=QUEUE_RUNNER,
-        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
-        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-    )
+    try:
+        await client.start_workflow(
+            HostedHarnessGatewayWorkflow.run,
+            HostedHarnessGatewayInput(
+                job_id=job_id,
+                endpoint_base_url=endpoint_base_url,
+                max_infrastructure_attempts=max_infrastructure_attempts,
+                initial_backoff_seconds=initial_backoff_seconds,
+                max_backoff_seconds=max_backoff_seconds,
+            ),
+            id=workflow_id,
+            task_queue=QUEUE_RUNNER,
+            id_reuse_policy=(
+                WorkflowIDReusePolicy.ALLOW_DUPLICATE
+                if allow_completed_restart
+                else WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+            ),
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        )
+    except WorkflowAlreadyStartedError:
+        if allow_completed_restart:
+            raise
     return workflow_id
 
 

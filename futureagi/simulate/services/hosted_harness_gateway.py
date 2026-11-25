@@ -1130,6 +1130,56 @@ _SOURCE_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SOURCE_REF = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 
+def _select_source_archive(body: bytes, path: str) -> bytes:
+    parts = tuple(Path(path).parts)
+    if (
+        not parts
+        or path.startswith(("/", "~"))
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise HostedHarnessError(
+            "github_source_path_invalid",
+            "source path is not a directory in the resolved commit",
+            status_code=422,
+        )
+    selected = ("source", *parts)
+    out = io.BytesIO()
+    found_directory = False
+    with (
+        tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as source,
+        tarfile.open(fileobj=out, mode="w:gz") as target,
+    ):
+        for original in source.getmembers():
+            member_parts = _archive_parts(original.name)
+            if member_parts[: len(selected)] != selected:
+                continue
+            if member_parts == selected and original.isdir():
+                found_directory = True
+            member = copy.copy(original)
+            suffix = member_parts[len(selected) :]
+            member.name = str(Path("source", *suffix))
+            if member.islnk():
+                link_parts = _archive_parts(member.linkname)
+                if link_parts[: len(selected)] != selected:
+                    raise HostedHarnessError(
+                        "github_source_path_invalid",
+                        "source path contains a hard link outside the selected directory",
+                        status_code=422,
+                    )
+                member.linkname = str(Path("source", *link_parts[len(selected) :]))
+            target.addfile(
+                member,
+                source.extractfile(original) if original.isfile() else None,
+            )
+    if not found_directory:
+        raise HostedHarnessError(
+            "github_source_path_invalid",
+            "source path is not a directory in the resolved commit",
+            status_code=422,
+        )
+    return out.getvalue()
+
+
 def acquire_source_archive(
     organization_id: Any,
     workspace_id: Any,
@@ -1188,7 +1238,10 @@ def acquire_source_archive(
             commit_sha=pinned_commit,
         )
         if stored is not None:
-            return stored, pinned_commit
+            path = str(source.get("path") or "")
+            return (
+                _select_source_archive(stored, path) if path else stored
+            ), pinned_commit
     credential = nullcontext("")
     if source.get("visibility") == "private":
         installation_id = str(source.get("installation_id") or "")
@@ -1242,7 +1295,8 @@ def acquire_source_archive(
                 status_code=503,
                 retryable=True,
             )
-        return body, commit_sha
+        path = str(source.get("path") or "")
+        return (_select_source_archive(body, path) if path else body), commit_sha
 
 
 class HostedSourceAcquirer:
@@ -2839,6 +2893,25 @@ class HostedHarnessGateway:
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
+        metadata = payload.get("metadata") or {}
+        simulation_only = bool(metadata.get("simulation_only"))
+        certification_run = bool(metadata.get("certification"))
+        fresh_build = authoring_archive is None and not simulation_only
+        harness_builds = fresh_build and getattr(
+            settings, "ALK_HOSTED_BUILDER_SESSION", True
+        )
+        if certification_run and (fresh_build or authoring_archive is not None):
+            allowed_domains = _normalize_egress_domains(
+                [
+                    *allowed_domains,
+                    *_authoring_egress_domains(
+                        simulator_env, "", provider_profile=False
+                    ),
+                ]
+            )
+            _validate_resolved_egress_domains(
+                allowed_domains, max_domains=self.client.max_egress_domains
+            )
         # Decided before the attempt is registered or a sandbox exists, and applied in one
         # step below, so a failure anywhere in it leaves the secrets, the egress list and
         # the document exactly as they were.
@@ -3108,15 +3181,7 @@ class HostedHarnessGateway:
                 if authoring_target_secrets
                 else ""
             )
-            simulation_only = bool(
-                (dispatch_payload.get("metadata") or {}).get("simulation_only")
-            )
             # A fresh build is the conversation's harness's work; this command waits for it.
-            harness_builds = (
-                authoring_archive is None
-                and not simulation_only
-                and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
-            )
             bundle_command = (
                 "rm -rf /work/bundle && "
                 "cp -a /work/authoring/environment-bundle /work/bundle && "
