@@ -12,6 +12,7 @@ import {
   useTheme,
 } from "@mui/material";
 import { useEditSyntheticDataStore } from "./state";
+import useSyntheticGenerationFailure from "./useSyntheticGenerationFailure";
 import SvgColor from "../../../../components/svg-color";
 import PropTypes from "prop-types";
 import EachColumnSummary from "../CreateSyntheticData/Summary/EachColumnSummary";
@@ -25,7 +26,6 @@ import { useDevelopDetailContext } from "src/sections/develop-detail/Context/Dev
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import { useDatasetOriginStore } from "../../../develop-detail/states";
 import CustomDialog from "../../../develop-detail/Common/CustomDialog/CustomDialog";
-import { getDatasetQueryOptions } from "src/api/develop/develop-detail";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const titleProps = {
@@ -247,24 +247,25 @@ export default function SyntheticSummaryDrawer() {
     openEditDrawer: _openEditDrawer,
     setOpenEditDrawer,
     setOpenConfirmEdit,
-    failedToGenerateData,
     openConfirmEdit,
+    setFailedToGenerateData,
   } = useEditSyntheticDataStore();
   const navigate = useNavigate();
   const { processingComplete } = useDatasetOriginStore();
 
-  const { data: tableData } = useQuery(
-    getDatasetQueryOptions(dataset, 0, [], [], "", { enabled: false }),
-  );
+  // Same state the data tab overlay reads, so a failure the overlay shows
+  // always offers the retry here.
+  const { failed: generationFailed, result: tableResult } =
+    useSyntheticGenerationFailure(dataset);
 
   const { data, isLoading } = useQuery({
     queryKey: [
       dataset,
-      tableData?.data?.result?.synthetic_dataset,
+      tableResult?.synthetic_dataset,
       openSummaryDrawer,
     ],
     queryFn: () => axios.get(endpoints.develop.getSyntheticConfig(dataset)),
-    enabled: !!dataset && !!tableData?.data?.result?.synthetic_dataset,
+    enabled: !!dataset && !!tableResult?.synthetic_dataset,
     select: (d) => d.data?.result?.data,
   });
 
@@ -273,6 +274,8 @@ export default function SyntheticSummaryDrawer() {
       return axios.put(endpoints.develop.updateSyntheticDataset(dataset), data);
     },
     onSuccess: (res) => {
+      // A new run has started, so the last load failure no longer applies.
+      setFailedToGenerateData(false);
       refreshGrid();
       setOpenSummaryDrawer(false);
       enqueueSnackbar(res?.data?.result?.message || "Dataset updated", {
@@ -369,7 +372,7 @@ export default function SyntheticSummaryDrawer() {
             justifyContent={"flex-end"}
             gap={2}
           >
-            <ShowComponent condition={Boolean(failedToGenerateData)}>
+            <ShowComponent condition={generationFailed}>
               <Button
                 disabled={isUpdating}
                 onClick={handleRegenerate}
