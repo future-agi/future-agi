@@ -292,6 +292,22 @@ def _validate_secret_refs_hosted(secret_refs: dict) -> None:
             )
 
 
+def _created_browser_sites(payload: dict[str, Any]) -> list[str]:
+    """The sites a create request gives its browser, read strictly; none without a browser.
+
+    A ``browser`` section names at least one site. A wrong list is refused here, with a coded
+    400, before anything is stored or any sandbox starts.
+    """
+    from simulate.services.browser_sites import browser_sites
+
+    browser = payload.get("browser")
+    if browser is None:
+        return []
+    return browser_sites(
+        browser.get("allowed_sites") if isinstance(browser, dict) else None
+    )
+
+
 def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) -> None:
     """Reject an egress set unsupported by the configured sandbox provider."""
     from simulate.services.hosted_harness import HostedHarnessError
@@ -326,6 +342,7 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         target_inputs,
         _known_simulator_egress_inputs(),
         _hostname_from_url(callback_url),
+        browser_sites=_created_browser_sites(payload),
     )
     _validate_resolved_egress_domains(
         domains, max_domains=sandbox_egress_domain_limit()

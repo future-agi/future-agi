@@ -52,6 +52,7 @@ from simulate.models import (
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.agent_contracts import store_build_contract
+from simulate.services.browser_sites import browser_sites_at_pin
 from simulate.services.code_archives import (
     store_commit_archive,
     stored_commit_archive,
@@ -1765,6 +1766,24 @@ def _with_egress_allowed_hosts(
     return document
 
 
+def _with_browser_allowed_sites(
+    payload: Mapping[str, Any], sites: Iterable[str]
+) -> dict[str, Any]:
+    """A copy of the document naming the sites the kit's browser may open, and only those.
+
+    The key is the platform's to set: without sites it is removed, so a value sent in a request's
+    metadata never reaches the kit.
+    """
+    document = dict(payload)
+    metadata = dict(document.get("metadata") or {})
+    metadata.pop("browser_allowed_sites", None)
+    sites = list(sites)
+    if sites:
+        metadata["browser_allowed_sites"] = sites
+    document["metadata"] = metadata
+    return document
+
+
 def _with_used_scenario_keys(
     payload: Mapping[str, Any], job: HostedHarnessJob
 ) -> dict[str, Any]:
@@ -2146,8 +2165,14 @@ def _resolved_egress_domains(
     target_secrets: Mapping[str, Any] | None = None,
     simulator_env: Mapping[str, Any] | None = None,
     callback_host: str | None = None,
+    *,
+    browser_sites: Iterable[str],
 ) -> set[str]:
-    """Build the authoritative minimized domain union for one managed launch."""
+    """Build the authoritative minimized domain union for one managed launch.
+
+    ``browser_sites`` is the job's sites at its pin (``browser_sites_at_pin``), empty without a
+    browser. It has no default, so a caller can't leave the browser's sites out of the union.
+    """
     target_secrets = target_secrets or {}
     simulator_env = simulator_env or {}
     security = payload.get("security") or {}
@@ -2198,6 +2223,8 @@ def _resolved_egress_domains(
         values.extend(simulator_livekit)
     values.extend(_connector_egress_domains(payload, target_secrets))
     values.extend(domain for domain in customer_domains if isinstance(domain, str))
+    # The browser's sites, so a page on one of them loads through the sandbox's own list too.
+    values.extend(browser_sites)
     if callback_host:
         values.append(callback_host)
     return _normalize_egress_domains(values)
@@ -2592,7 +2619,16 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
-                    _with_simulation_mark(guest_job_document(payload), simulation_mark),
+                    # The build reads the sites only to refuse a browser agent without them; the
+                    # browser starts at a run, so the build's own egress list stays as it is.
+                    _with_browser_allowed_sites(
+                        _with_simulation_mark(
+                            guest_job_document(payload), simulation_mark
+                        ),
+                        browser_sites_at_pin(
+                            payload, getattr(job, "environment_version", None)
+                        ),
+                    ),
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode(),
@@ -2831,6 +2867,9 @@ class HostedHarnessGateway:
             secrets_map,
             simulator_env,
             platform_host,
+            browser_sites=browser_sites_at_pin(
+                payload, getattr(job, "environment_version", None)
+            ),
         )
         # Validate customer inputs independently so their existing API-level cap and
         # private-host protection remain fail-closed; the resolved cap is checked
@@ -3652,11 +3691,15 @@ class HostedHarnessGateway:
         simulator_env = _platform_simulator_material()
         _add_scoped_guest_pin_policy(simulator_env, job)
         platform_host = _hostname_from_url(endpoint_base_url)
+        browser_sites = browser_sites_at_pin(
+            job.payload, getattr(job, "environment_version", None)
+        )
         allowed_domains = _resolved_egress_domains(
             job.payload,
             {},
             simulator_env,
             platform_host,
+            browser_sites=browser_sites,
         )
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
@@ -3703,11 +3746,14 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(
                 json.dumps(
                     _with_used_scenario_keys(
-                        _with_egress_allowed_hosts(
-                            _with_simulation_mark(
-                                guest_job_document(job.payload), simulation_mark
+                        _with_browser_allowed_sites(
+                            _with_egress_allowed_hosts(
+                                _with_simulation_mark(
+                                    guest_job_document(job.payload), simulation_mark
+                                ),
+                                allowed_domains,
                             ),
-                            allowed_domains,
+                            browser_sites,
                         ),
                         job,
                     ),
@@ -5655,7 +5701,11 @@ def prepare_dispatch_payload(
     API keys and secret values remain exclusively in ``secrets.json`` and the stored job payload is
     never mutated.
     """
-    dispatched = guest_job_document(payload)
+    # The browser's own bound, kept even where the sandbox's egress is not enforced.
+    dispatched = _with_browser_allowed_sites(
+        guest_job_document(payload),
+        browser_sites_at_pin(payload, getattr(job, "environment_version", None)),
+    )
     agent = dict(dispatched.get("agent") or {})
     # The secret values remain exclusively in the one-shot secrets file, but ALK's
     # bundle preflight still needs to know which environment names were resolved.

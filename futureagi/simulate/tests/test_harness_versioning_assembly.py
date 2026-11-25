@@ -884,6 +884,7 @@ class TestTodaysPath:
                 {},
                 {"AGENTCC_BASE_URL": "https://gateway.example.test"},
                 "platform.example.com",
+                browser_sites=[],
             )
         )
 
