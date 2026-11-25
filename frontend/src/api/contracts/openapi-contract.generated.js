@@ -73043,6 +73043,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         security: {
           $ref: "#/definitions/HarnessSecurity",
         },
+        browser: {
+          $ref: "#/definitions/HarnessBrowser",
+        },
         retry: {
           $ref: "#/definitions/HarnessRetry",
         },
@@ -73391,6 +73394,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         security: {
           $ref: "#/definitions/HarnessSecurity",
+        },
+        browser: {
+          $ref: "#/definitions/HarnessBrowser",
         },
         retry: {
           $ref: "#/definitions/HarnessRetry",
@@ -115072,6 +115078,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           default: 1073741824,
           minimum: 0,
+        },
+      },
+    },
+    HarnessBrowser: {
+      required: ["allowed_sites"],
+      type: "object",
+      properties: {
+        allowed_sites: {
+          description:
+            "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs (sign-in, API, files): host names such as example.com, or *.example.com for the hosts under a name. No scheme, port, path or address. At least one, at most 10.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 253,
+          },
+          maxItems: 100,
         },
       },
     },

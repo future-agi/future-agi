@@ -52261,6 +52261,10 @@ export const simulateApiHarnessJobsCreateBodySecurityDefault = {
   allow_host_runtime_control: false,
   allowed_egress_domains: [],
 };
+export const simulateApiHarnessJobsCreateBodyBrowserAllowedSitesItemMax = 253;
+
+export const simulateApiHarnessJobsCreateBodyBrowserAllowedSitesMax = 100;
+
 export const simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsDefault = 2;
 export const simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsMax = 5;
 
@@ -52462,6 +52466,20 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
         ),
     })
     .default(simulateApiHarnessJobsCreateBodySecurityDefault),
+  browser: zod
+    .object({
+      allowed_sites: zod
+        .array(
+          zod
+            .string()
+            .max(simulateApiHarnessJobsCreateBodyBrowserAllowedSitesItemMax),
+        )
+        .max(simulateApiHarnessJobsCreateBodyBrowserAllowedSitesMax)
+        .describe(
+          "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs (sign-in, API, files): host names such as example.com, or *.example.com for the hosts under a name. No scheme, port, path or address. At least one, at most 10.",
+        ),
+    })
+    .optional(),
   retry: zod
     .object({
       max_infrastructure_attempts: zod
@@ -52621,6 +52639,10 @@ export const simulateApiHarnessJobsPreflightBodySecurityDefault = {
   allow_host_runtime_control: false,
   allowed_egress_domains: [],
 };
+export const simulateApiHarnessJobsPreflightBodyBrowserAllowedSitesItemMax = 253;
+
+export const simulateApiHarnessJobsPreflightBodyBrowserAllowedSitesMax = 100;
+
 export const simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsDefault = 2;
 export const simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsMax = 5;
 
@@ -52828,6 +52850,20 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
         ),
     })
     .default(simulateApiHarnessJobsPreflightBodySecurityDefault),
+  browser: zod
+    .object({
+      allowed_sites: zod
+        .array(
+          zod
+            .string()
+            .max(simulateApiHarnessJobsPreflightBodyBrowserAllowedSitesItemMax),
+        )
+        .max(simulateApiHarnessJobsPreflightBodyBrowserAllowedSitesMax)
+        .describe(
+          "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs (sign-in, API, files): host names such as example.com, or *.example.com for the hosts under a name. No scheme, port, path or address. At least one, at most 10.",
+        ),
+    })
+    .optional(),
   retry: zod
     .object({
       max_infrastructure_attempts: zod
