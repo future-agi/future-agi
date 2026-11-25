@@ -20,6 +20,9 @@ vi.mock("src/api/agents/agentDetail", async () => ({
   },
   useChangeVersion: () => ({ mutate, isPending: false }),
 }));
+vi.mock("src/api/agent-definition/agent-definition-version", () => ({
+  useAgentDefinitionVersions: () => state.versions,
+}));
 vi.mock("src/auth/hooks", () => ({ useAuthContext: () => auth }));
 vi.mock("notistack", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -45,6 +48,7 @@ beforeEach(() => {
   };
   mutate.mockReset();
   snackbar.mockReset();
+  state.versions = { data: { pages: [{ results: [] }] } };
   state.values = loaded([
     { name: "AGENT_API_TOKEN", required: false, madeByEnvironment: true },
     { name: "DB_URL", required: true, madeByEnvironment: false },
@@ -136,6 +140,40 @@ describe("AgentValuesTab", () => {
       screen.getByText(/makes this value itself; yours isn't needed/),
     ).toBeInTheDocument();
     expect(screen.queryByText("Save values")).not.toBeInTheDocument();
+  });
+
+  it("holds the save while another version is still being checked", () => {
+    state.versions = {
+      data: {
+        pages: [
+          {
+            results: [
+              {
+                id: "v3",
+                version_number: 3,
+                version_name_display: "v3",
+                preflight_status: "pending",
+              },
+            ],
+          },
+        ],
+      },
+    };
+    render(<AgentValuesTab />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+
+    expect(screen.getByText(/v3 is still being checked/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save values" })).toBeDisabled();
+  });
+
+  it("offers a provider key a change, never a removal", () => {
+    state.values = loaded([
+      { name: "VAPI_API_KEY", required: false, providerKey: true },
+    ]);
+    render(<AgentValuesTab />);
+
+    expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
   });
 
   it("names the required values the agent has none for", () => {

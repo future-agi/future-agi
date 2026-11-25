@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useSnackbar } from "notistack";
 import {
   Alert,
@@ -9,7 +9,10 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
 import {
+  pollWhileChecking,
+  toVersion,
   useAgentVersionValues,
   useChangeVersion,
 } from "src/api/agents/agentDetail";
@@ -75,13 +78,15 @@ function ValueRow({ row, pending, canEdit, onChange, onRemove, onUndo }) {
                 Change
               </Button>
             )}
-            <Button
-              size="small"
-              color="error"
-              onClick={() => onRemove(row.name)}
-            >
-              Remove
-            </Button>
+            {!row.providerKey && (
+              <Button
+                size="small"
+                color="error"
+                onClick={() => onRemove(row.name)}
+              >
+                Remove
+              </Button>
+            )}
           </>
         )}
       </Stack>
@@ -145,6 +150,8 @@ ValueRow.propTypes = {
     name: PropTypes.string.isRequired,
     required: PropTypes.bool,
     madeByEnvironment: PropTypes.bool,
+    // A voice provider's key (Vapi, Retell, LiveKit): changed, never removed.
+    providerKey: PropTypes.bool,
   }).isRequired,
   pending: PropTypes.oneOf(["set", "remove", null]),
   canEdit: PropTypes.bool,
@@ -235,6 +242,19 @@ export default function AgentValuesTab() {
   const productionId = agent?.activeVersionId ?? null;
   const values = useAgentVersionValues(agentId, productionId);
   const change = useChangeVersion(agentId);
+  const versions = useAgentDefinitionVersions({
+    selectedAgentId: agentId,
+    refetchInterval: pollWhileChecking,
+  });
+  // A save starts from production: one made while another version is still
+  // being checked would leave that version's change out.
+  const checking = useMemo(
+    () =>
+      (versions.data?.pages?.[0]?.results ?? [])
+        .map(toVersion)
+        .find((v) => v.check === "pending") ?? null,
+    [versions.data],
+  );
   const [draft, setDraft] = useState(emptyDraft);
   const managed = !!agent?.managedBy;
   const canEdit =
@@ -368,12 +388,18 @@ export default function AgentValuesTab() {
                 before its next run. That uses sandbox time, no model calls.
               </Typography>
             )}
+            {checking && (
+              <Typography sx={{ typography: "s2", color: "status.warning.fg" }}>
+                {checking.label} is still being checked. Save once its check
+                ends, so this change starts from it.
+              </Typography>
+            )}
             <Stack direction="row" spacing={1}>
               <Button
                 size="small"
                 variant="contained"
                 color="primary"
-                disabled={change.isPending}
+                disabled={change.isPending || !!checking}
                 onClick={save}
               >
                 Save values

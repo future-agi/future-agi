@@ -243,6 +243,7 @@ export const toVersionValues = (d) => ({
     name: one.name,
     required: !!one.required,
     madeByEnvironment: !!one.made_by_environment,
+    providerKey: !!one.provider_key,
   })),
   missingRequired: d?.missing_required_names ?? [],
   madeByEnvironment: d?.made_by_environment ?? [],
