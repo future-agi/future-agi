@@ -494,6 +494,7 @@ const LAUNCH_SCENARIOS = [
   name,
   passed,
   failing_sub_goals: failing,
+  split: null,
 }));
 
 export function fixtureLaunchOptions(sourceRunId) {
@@ -553,6 +554,8 @@ export function fixtureLaunchOptions(sourceRunId) {
     },
     blocked: null,
     variations_blocked: null,
+    held_back_from: "sample",
+    release_label: null,
   };
 }
 

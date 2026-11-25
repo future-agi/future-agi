@@ -65,6 +65,7 @@ from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
     KEYS,
     _move_default_suite,
     _receipts,
+    _release,
     _run,
     temporal,
 )
@@ -617,6 +618,22 @@ class TestSettle:
         assert {one.key for one in brief.inventory} == {*KEYS, *names}
         assert {one.scenario_key for one in brief.source_failures} == {PARENT, *names}
         assert variations.advance(str(fix_run.id)) == VariationsStep.DONE
+
+    def test_on_a_release_the_variations_of_a_test_split_case_are_held_back_with_it(
+        self, environment, source_run, fix_run, storage
+    ):
+        # Released after the launch: the settle reads the splits again.
+        _release(source_run, test=[PARENT], train=[KEYS[1]])
+        _land(fix_run, storage, _builder_save(environment))
+        names = [_named(fix_run, n) for n in (1, 2, 3)]
+        _finish(_base_run(fix_run), failed=names)
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.DONE
+
+        fix_run.refresh_from_db()
+        request = FixRequest.model_validate(fix_run.request)
+        # A sample holds none back below twelve cases; the test split holds them all.
+        assert request.held_back_scenario_keys == [PARENT, *names]
 
     def test_too_few_failing_even_so_ends_with_its_reason_and_keeps_what_it_found(
         self, environment, fix_run, storage

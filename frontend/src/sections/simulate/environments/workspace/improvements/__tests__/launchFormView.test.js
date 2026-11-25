@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 
 import {
   heldBackCount,
+  heldBackNote,
+  heldBackOf,
+  testSplitKeys,
   countsLine,
   reviewSentence,
   budgetSteps,
@@ -49,6 +52,61 @@ describe("held back", () => {
       "12 failing: 8 to fix, 4 held back to prove it · 9 protected",
     );
     expect(countsLine(3, 1)).toBe("3 failing to fix · 1 protected");
+  });
+});
+
+// A run of release 2026.11.1: two failing cases in its test split, one in train.
+const RELEASED = {
+  held_back_from: "release",
+  release_label: "2026.11.1",
+  scenarios: [
+    { key: "a", split: "test" },
+    { key: "b", split: "test" },
+    { key: "c", split: "train" },
+    { key: "d", split: null },
+  ],
+};
+
+describe("held back on a release", () => {
+  it("holds back the picked cases of the test split, however few", () => {
+    expect(testSplitKeys(RELEASED)).toEqual(["a", "b"]);
+    expect(heldBackOf(RELEASED, ["a", "c"])).toBe(1);
+    expect(countsLine(2, 0, LIMITS, heldBackOf(RELEASED, ["a", "c"]))).toBe(
+      "2 failing: 1 to fix, 1 held back to prove it · 0 protected",
+    );
+  });
+
+  it("samples off a release", () => {
+    const sampled = { held_back_from: "sample", release_label: null };
+    expect(
+      heldBackOf(
+        sampled,
+        Array.from({ length: 12 }, (_, i) => `${i}`),
+      ),
+    ).toBe(4);
+    expect(heldBackOf(sampled, ["a", "b"])).toBe(0);
+    expect(heldBackNote(sampled)).toBeNull();
+  });
+
+  it("names the release whose test split is held back", () => {
+    expect(heldBackNote(RELEASED)).toBe(
+      "Held back: release 2026.11.1's test split. It learns only from the train split.",
+    );
+  });
+
+  it("refuses a pick that is all test split, as the launch does", () => {
+    const check = (targets) =>
+      launchError({
+        targets,
+        protectedKeys: [],
+        surfaces: ["prompt"],
+        limits: LIMITS,
+        testKeys: testSplitKeys(RELEASED),
+      });
+    expect(check(["a", "b"])).toBe(
+      "All 2 failing cases are in the test split. Pick failing cases from the train split, or run the train split.",
+    );
+    expect(check(["a", "c"])).toBeNull();
   });
 });
 
