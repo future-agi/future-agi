@@ -26,17 +26,7 @@ import (
 //
 // It is nil when the client left: nobody is reading.
 func streamEndError(ctx context.Context, err error) *models.APIError {
-	switch {
-	case errors.Is(ctx.Err(), context.Canceled):
-		return nil
-	case ctx.Err() != nil:
-		return models.ErrGatewayTimeout("request timed out before the stream finished")
-	}
-	var apiErr *models.APIError
-	if errors.As(err, &apiErr) {
-		return apiErr
-	}
-	return common.ReadError(err, 0, "stream read")
+	return streamOutcome{err: err}.apiError(ctx)
 }
 
 // closedStreamError says whether a stream whose chunk channel has closed
@@ -50,8 +40,8 @@ func streamEndError(ctx context.Context, err error) *models.APIError {
 // failed or timed-out stream as a finished one whenever the closed chunk
 // channel won.
 func closedStreamError(ctx context.Context, errCh <-chan error) (apiErr *models.APIError, finished bool) {
-	if apiErr := pendingStreamError(errCh); apiErr != nil {
-		return apiErr, false
+	if err := pendingStreamOutcome(errCh); err != nil {
+		return queuedStreamError(err), false
 	}
 	if ctx.Err() != nil {
 		return streamEndError(ctx, ctx.Err()), false
@@ -59,22 +49,56 @@ func closedStreamError(ctx context.Context, errCh <-chan error) (apiErr *models.
 	return nil, true
 }
 
-// pendingStreamError is the error waiting on a provider's error channel, or
-// nil when there is none. It never blocks.
-func pendingStreamError(errCh <-chan error) *models.APIError {
+// Keep the raw error for retry and accounting. A queued provider error has
+// already happened; a deadline observed by the reader must not replace it.
+type streamOutcome struct {
+	err          error
+	fromProvider bool
+}
+
+func closedStreamOutcome(ctx context.Context, errCh <-chan error) streamOutcome {
+	if ctx.Err() != context.Canceled {
+		if err := pendingStreamOutcome(errCh); err != nil {
+			return streamOutcome{err: err, fromProvider: true}
+		}
+	}
+	return streamOutcome{err: ctx.Err()}
+}
+
+func (o streamOutcome) apiError(ctx context.Context) *models.APIError {
+	cause := ctx.Err()
+	switch {
+	case errors.Is(cause, context.Canceled):
+		return nil
+	case cause != nil:
+		if o.fromProvider {
+			return queuedStreamError(o.err)
+		}
+		return models.ErrGatewayTimeout("request timed out before the stream finished")
+	}
+	var apiErr *models.APIError
+	if errors.As(o.err, &apiErr) {
+		return apiErr
+	}
+	return common.ReadError(o.err, 0, "stream read")
+}
+
+// A nil, open or closed error channel must never delay stream termination.
+func pendingStreamOutcome(errCh <-chan error) error {
 	select {
-	case err, ok := <-errCh:
-		if !ok || err == nil {
-			return nil
-		}
-		var apiErr *models.APIError
-		if errors.As(err, &apiErr) {
-			return apiErr
-		}
-		return models.ErrUpstreamProvider(0, err.Error())
+	case err := <-errCh:
+		return err
 	default:
 		return nil
 	}
+}
+
+func queuedStreamError(err error) *models.APIError {
+	var apiErr *models.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr
+	}
+	return models.ErrUpstreamProvider(0, err.Error())
 }
 
 // upstreamStreamError is a failure the upstream reported inside its own

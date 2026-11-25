@@ -11,18 +11,18 @@ writer:
   database: default
   table: spans
   # Retry policy. 5 retries with exponential backoff (100ms → 10s capped)
-  # tolerates the 99.9p HTTP latency spike from CH compaction. After that
-  # we dead-letter to disk — no silent drops, no infinite loop on a
-  # malformed payload (4xx skips the retry budget).
+  # Failed batches go to the dead-letter file if its disk write succeeds.
+  # Most 4xx responses skip retries; 429 is retryable. This is not a
+  # durable pre-ack queue, and retry latency has not been capacity-certified.
   max_retries: 5
   initial_backoff: 100ms
   max_backoff: 10s
   request_timeout: 30s
   # Local path inside the container; bind-mount to /var/lib/fi-collector
-  # on the host in compose so a container restart preserves the queue.
+  # on the host so a container restart preserves written dead-letter rows.
   dead_letter_file: /var/lib/fi-collector/dead_letter.jsonl
-  # We default async_insert OFF — our own batching is the primary
-  # backpressure mechanism. Flip on under acute write spikes only.
+  # Synchronous canonical inserts by default. Enabling async_insert changes
+  # confirmation semantics and is incompatible with observed catalog mode.
   async_insert: false
 
 server:
@@ -99,4 +99,7 @@ observed_catalog:
   replay_interval: 1s
 
 admin:
-  addr: ":9464" # /healthz and /metrics
+  # The Docker image checks http://127.0.0.1:9464/healthz. If you move the
+  # listener, also set HEALTHCHECK_URL to a URL reachable inside the container
+  # (e.g. http://127.0.0.1:9500/healthz for addr: ":9500").
+  addr: ":9464" # /healthz only; FI_ADMIN_ADDR overrides this address

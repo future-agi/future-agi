@@ -12,6 +12,10 @@ from rest_framework.response import Response
 
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.schema_defaults import (
+    EncodedInputDefaultInspector,
+    RepeatedQueryArrayInspector,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -49,6 +53,12 @@ def _documented_response_has_schema(response):
 
 class ManagementAPIAutoSchema(SwaggerAutoSchema):
     """Add a common typed error contract to management API operations."""
+
+    field_inspectors = [
+        EncodedInputDefaultInspector,
+        RepeatedQueryArrayInspector,
+        *SwaggerAutoSchema.field_inspectors,
+    ]
 
     def get_operation(self, operation_keys=None):
         if (

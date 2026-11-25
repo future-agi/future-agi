@@ -26,13 +26,20 @@ detect_public_ip() {
 }
 
 print_summary() { # frontend port, backend port
-  local frontend_port="$1" backend_port="$2" lan_ip public_ip collector_http_port collector_url gateway_port
+  local frontend_port="$1" backend_port="$2" lan_ip public_ip collector_http_port collector_url api_url gateway_port
   local ui_url upgrade_cmd setup_line host_api profiles
   lan_ip=$(detect_lan_ip)
 
   collector_http_port=$(env_value FI_COLLECTOR_OTLP_HTTP_PORT 4318)
   # The URL SDKs send traces to, as the compose files give it to the app.
   collector_url=$(compose_env_value FI_COLLECTOR_PUBLIC_URL "http://localhost:${collector_http_port}")
+  # The API URL SDKs call (FI_BASE_URL), in the app's order: BASE_URL, which
+  # reaches it from .env only (the compose files do not interpolate it), then
+  # the UI's VITE_HOST_API, then the published API port.
+  api_url=$(env_value BASE_URL "")
+  [[ -n "$api_url" ]] || api_url=$(compose_env_value VITE_HOST_API "")
+  [[ -n "$api_url" ]] || api_url="http://localhost:${backend_port}"
+  api_url="${api_url%/}"
   gateway_port=$(env_value AGENTCC_GATEWAY_PORT 8090)
   ui_url="http://localhost:${frontend_port}"
   upgrade_cmd="git pull && ./bin/install"
@@ -92,8 +99,8 @@ print_summary() { # frontend port, backend port
   say "  ${BOLD}3. Send your first trace${RESET} ${DIM}(on this machine; paste with your keys from step 2)${RESET}"
   say ""
   # Flush left, so the heredoc and the Python indentation survive a copy-paste.
-  say "pip install fi-instrumentation-otel"
-  say "export FI_API_KEY=\"<your API key>\" FI_SECRET_KEY=\"<your secret key>\" FI_BASE_URL=\"${collector_url}\""
+  say "pip install -U \"fi-instrumentation-otel>=1.5.0\""
+  say "export FI_API_KEY=\"<your API key>\" FI_SECRET_KEY=\"<your secret key>\" FI_BASE_URL=\"${api_url}\" FI_TRACES_URL=\"${collector_url}\""
   say "python3 - <<'PY'"
   say "from fi_instrumentation import register"
   say "from fi_instrumentation.fi_types import ProjectType"

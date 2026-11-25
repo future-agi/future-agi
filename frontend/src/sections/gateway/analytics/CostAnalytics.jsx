@@ -12,7 +12,7 @@ import {
 import Section from "src/components/section";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
-import { seriesColors } from "src/theme/data-colors";
+import { monoSeriesColors, seriesLabelColors } from "src/theme/data-colors";
 import { useAnalyticsCost } from "./hooks/useAnalyticsCost";
 import { formatCost, formatCostTick } from "../utils/formatters";
 import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
@@ -33,13 +33,14 @@ function toNumericCost(value) {
 // ---------------------------------------------------------------------------
 
 function buildBarChartOptions(theme, categories) {
+  const colors = monoSeriesColors(theme);
   return {
     chart: {
       type: "bar",
       toolbar: { show: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: seriesColors(theme),
+    colors,
     plotOptions: {
       bar: {
         horizontal: true,
@@ -51,7 +52,11 @@ function buildBarChartOptions(theme, categories) {
     dataLabels: {
       enabled: true,
       formatter: (val) => formatCost(val),
-      style: { fontSize: "12px", fontWeight: 600 },
+      style: {
+        fontSize: "12px",
+        fontWeight: 600,
+        colors: seriesLabelColors(theme, colors),
+      },
       offsetX: 5,
     },
     xaxis: {
@@ -98,7 +103,7 @@ function buildDonutChartOptions(theme, labels) {
       toolbar: { show: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: seriesColors(theme),
+    colors: monoSeriesColors(theme),
     labels,
     dataLabels: {
       enabled: false,
@@ -114,7 +119,7 @@ function buildDonutChartOptions(theme, labels) {
             name: { show: false },
             value: {
               show: true,
-              fontSize: "13px",
+              fontSize: "12px",
               fontWeight: 600,
               formatter: (val) => formatCost(Number(val)),
             },
@@ -122,7 +127,7 @@ function buildDonutChartOptions(theme, labels) {
               show: true,
               showAlways: true,
               label: "Total",
-              fontSize: "13px",
+              fontSize: "12px",
               formatter: (w) => {
                 const total = w.globals.seriesTotals.reduce((a, b) => a + b, 0);
                 return formatCost(total);
@@ -158,7 +163,7 @@ function buildDonutChartOptions(theme, labels) {
               donut: {
                 size: "70%",
                 labels: {
-                  value: { fontSize: "13px" },
+                  value: { fontSize: "12px" },
                   total: { fontSize: "12px" },
                 },
               },

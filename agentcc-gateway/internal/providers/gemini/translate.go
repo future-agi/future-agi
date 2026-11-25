@@ -1002,6 +1002,14 @@ func mapGeminiFinishReason(reason string) string {
 		return "content_filter"
 	case "RECITATION":
 		return "content_filter"
+	case "BLOCKLIST":
+		return "content_filter"
+	case "PROHIBITED_CONTENT":
+		return "content_filter"
+	case "SPII":
+		return "content_filter"
+	case "IMAGE_SAFETY":
+		return "content_filter"
 	case "OTHER":
 		return "stop"
 	default:

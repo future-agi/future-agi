@@ -23,6 +23,7 @@ import {
   VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
   supportsConcurrency,
+  concurrencyFieldProps,
   validateLiveKitCredentials,
 } from "../../constants";
 import { ShowComponent } from "src/components/show";
@@ -403,6 +404,7 @@ export default function AgentVoiceForm() {
           <FormTextFieldV2
             control={control}
             fieldName="apiKey"
+            fieldType="password"
             label="Provider API Key"
             placeholder="Enter your provider’s API key to authenticate the agent"
             required={observabilityEnabled || keysRequired}
@@ -479,7 +481,7 @@ export default function AgentVoiceForm() {
                   target="_blank"
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
-                  fontSize="13px"
+                  fontSize="12px"
                   sx={{ textDecoration: "underline" }}
                 >
                   Learn more
@@ -526,6 +528,7 @@ export default function AgentVoiceForm() {
           <FormTextFieldV2
             control={control}
             fieldName="livekitApiKey"
+            type="password"
             placeholder="APIxxxxxxxxxxxxxxxx"
             label="LiveKit API Key"
             required
@@ -634,8 +637,7 @@ export default function AgentVoiceForm() {
             type="number"
             size="small"
             fullWidth
-            inputProps={{ min: 1, max: orgLimit }}
-            helperText={`Max simultaneous test calls. If you have multiple agent workers, set this to the total capacity across all workers (default: 5, max: ${orgLimit})`}
+            {...concurrencyFieldProps(orgLimit)}
           />
         </ShowComponent>
         <ShowComponent

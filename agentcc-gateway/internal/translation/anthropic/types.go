@@ -228,6 +228,7 @@ type ErrorResponse struct {
 type ErrorDetail struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+	Code    string `json:"code,omitempty"` // the gateway's error code, when it has one
 }
 
 // KnownRequestFields returns the JSON keys POST /v1/messages defines, so a

@@ -31,8 +31,10 @@ def _ensure_test_score_tenant_column():
 
 
 class PreviousRootReplay(TraceListQueryBuilderV2):
-    def _root_replay_query(self, identities, *, content):
-        sql, params = super()._root_replay_query(identities, content=content)
+    def _root_replay_query(self, identities, *, content, trace_rollup=False):
+        sql, params = super()._root_replay_query(
+            identities, content=content, trace_rollup=trace_rollup
+        )
         prefix = "content" if content else "page_hydration"
         return re.sub(
             r"AND \(observation_type, service_name,\s*toStartOfHour\(start_time\), trace_id\)"
@@ -75,7 +77,6 @@ def queries(subject, rows):
 @pytest.fixture
 def trace_engine(request):
     execute, insert = request.getfixturevalue("engine")
-    execute("ALTER TABLE spans ADD COLUMN trace_name String DEFAULT ''")
     execute("ALTER TABLE spans ADD COLUMN trace_session_id Nullable(UUID)")
     execute("ALTER TABLE spans ADD COLUMN metadata Map(String,String)")
     execute("""CREATE TABLE traces (
