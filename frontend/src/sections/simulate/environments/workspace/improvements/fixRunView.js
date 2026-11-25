@@ -766,13 +766,18 @@ export function candidateGroups(fix) {
       },
     ]);
   });
+  // While the epoch runs, the candidate being checked leads, open.
+  const rank = (id) => (live && id === "pending" ? -1 : groupRank(id));
   return [...groups.entries()]
-    .sort(([a], [b]) => groupRank(a) - groupRank(b))
+    .sort(([a], [b]) => rank(a) - rank(b))
     .map(([id, rows]) => ({
       id,
       label: groupLabel(id, fix, live),
       // With no winner, the closest calls were stopped at held back.
-      open: OPEN_GROUPS.has(id) || (!hasWinner && id === "held-back"),
+      open:
+        OPEN_GROUPS.has(id) ||
+        (!hasWinner && id === "held-back") ||
+        (live && id === "pending"),
       rows: rows.sort(
         (a, b) =>
           (b.target?.score ?? -1) - (a.target?.score ?? -1) ||

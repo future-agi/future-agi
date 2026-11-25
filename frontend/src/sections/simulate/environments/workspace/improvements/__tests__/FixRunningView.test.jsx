@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render as rtlRender, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
 import { MemoryRouter } from "react-router-dom";
@@ -8,9 +9,8 @@ import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtur
 
 import FixRunningView from "../FixRunningView";
 import TrialChart from "../TrialChart";
-import TrialsTable from "../TrialsTable";
 
-// The trials table reads theme.palette.data, so render with the app theme.
+// The trial chart reads theme.palette.data, so render with the app theme.
 const appTheme = createTheme({ palette: palette("light") });
 // eslint-disable-next-line react/prop-types
 const AppTheme = ({ children }) => (
@@ -55,7 +55,7 @@ describe("FixRunningView", () => {
     const fix = byId("fix-search");
     fix.candidates[1].verdict = null;
     renderView(fix);
-    expect(screen.getByTestId("trial-2")).toHaveTextContent("Pending");
+    expect(screen.getByTestId("candidate-2")).toHaveTextContent("Running");
     expect(screen.getAllByTestId("trial-point")).toHaveLength(1);
     expect(
       screen.getByText(
@@ -69,56 +69,29 @@ describe("FixRunningView", () => {
   });
 });
 
-describe("TrialsTable", () => {
-  it("lists trials with what they tried, status, pass rate and its change", () => {
-    renderView(byId("fix-search"));
-    const row = within(screen.getByTestId("trial-1"));
-    expect(
-      row.getByText(
-        "Tried: Escalate refused late cancellations to the front desk.",
-      ),
-    ).toBeInTheDocument();
-    expect(row.getByText("Rejected")).toBeInTheDocument();
-    expect(row.getByText("0%")).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("trial-2")).getByText("↑ 34 pts"),
-    ).toBeInTheDocument();
-  });
-
-  it("links a running trial to its live check run", () => {
+describe("the running view's candidates", () => {
+  it("uses the finished page's table: the candidate being checked leads, open", async () => {
+    const user = userEvent.setup();
     renderView(byId("fix-search"));
     expect(
-      within(screen.getByTestId("trial-2")).getByRole("link", {
-        name: "Running · Watch live",
-      }),
-    ).toHaveAttribute(
+      screen.getAllByTestId(/^candidate-group-/).map((g) => g.dataset.testid),
+    ).toEqual(["candidate-group-pending", "candidate-group-target"]);
+    const running = within(screen.getByTestId("candidate-2"));
+    expect(running.getByText("Running")).toBeInTheDocument();
+    expect(running.getByText("↑ 34 pts")).toBeInTheDocument();
+    expect(running.getByRole("link", { name: "Open run" })).toHaveAttribute(
       "href",
       "/dashboard/simulate/environments/env-1/runs/rt-fix-search/te-fix-search-c2",
     );
-  });
-
-  it("reads Did not run, with no Watch live, for a pending trial on a stopped fix", () => {
-    const fix = { ...byId("fix-search"), state: "stopped", stage: null };
-    render(
-      <MemoryRouter>
-        <TrialsTable fix={fix} />
-      </MemoryRouter>,
-    );
-    const trial = screen.getByTestId("trial-2");
-    expect(trial).toHaveTextContent("Did not run");
-    expect(trial).not.toHaveTextContent("Watch live");
-  });
-
-  it("badges each candidate C1, C2, never T", () => {
-    render(
-      <MemoryRouter>
-        <TrialsTable fix={byId("fix-search")} />
-      </MemoryRouter>,
-    );
+    // A rejected candidate sits in its check's group, folded as it is once
+    // the epoch ends.
+    expect(screen.queryByTestId("candidate-1")).toBeNull();
+    await user.click(screen.getByTestId("candidate-group-target"));
+    const rejected = within(screen.getByTestId("candidate-1"));
     expect(
-      within(screen.getByTestId("trial-1")).getByText("C1"),
+      rejected.getByText("Escalate refused late cancellations to the front desk."),
     ).toBeInTheDocument();
-    expect(within(screen.getByTestId("trial-1")).queryByText("T1")).toBeNull();
+    expect(rejected.getByText("0%")).toBeInTheDocument();
   });
 
   it("says the agent was measured automatically only when the platform says so", () => {
