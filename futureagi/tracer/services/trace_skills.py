@@ -4,6 +4,8 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
+from clickhouse_driver.errors import ServerException
+
 from model_hub.models.skills_hub import HubSkillVersion
 from model_hub.selectors.skills_hub_v12 import resources_for_scope
 from model_hub.services.skills_hub.errors import SkillsHubError
@@ -22,9 +24,28 @@ from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
     RuntimeReadSession,
 )
 from tracer.services.clickhouse.v2.query_builders.trace_skills import (
+    CohortStatementTooLarge,
+    ServerBoundCohort,
     TraceSkillsQueryBuilder,
 )
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+
+
+class _TraceProjectionSession(RuntimeReadSession):
+    def execute(self, statement):
+        sql, params = statement
+        if not isinstance(params, ServerBoundCohort):
+            return super().execute(statement)
+        # The locked replica path strips even driver-only query settings. Do
+        # not submit unbound SQL there or silently return a partial population.
+        if not getattr(self.service, "supports_per_query_read_settings", False):
+            raise CohortStatementTooLarge("Server-bound cohort reads unavailable")
+        return self.service.execute_ch_query(
+            sql,
+            params,
+            settings={"server_side_params": True},
+            timeout_ms=self.deadline.remaining_ms(),
+        )
 
 
 def _uuid(value):
@@ -44,6 +65,19 @@ def _catalog(principal, ids, kind):
             pk__in=valid_ids,
         ).select_related("skill")
     }
+
+
+def _verified_identities(principal):
+    """Read at most the allowed catalogue; a handle-only cohort never needs it."""
+    versions = HubSkillVersion.objects.filter(
+        skill__in=resources_for_scope(scope=principal.scope, kind="skill"),
+    ).values_list("skill_id", "id", "digest")[:10001]
+    for index, (skill, version, digest) in enumerate(versions):
+        if index == 10000:
+            raise SkillsHubError(
+                "runtime_read_too_large", "Too many versions for this read.", status=503
+            )
+        yield str(skill), str(version), digest
 
 
 def _skill_rows(rows, catalog, project_id):
@@ -111,34 +145,34 @@ def trace_skills_projection(*, principal, workspace, query):
         raise SkillsHubError(
             "invalid_runtime_query", "Restart this trace read.", status=400
         ) from exc
-    session = RuntimeReadSession(
+    session = _TraceProjectionSession(
         V2AnalyticsQueryService(), deadline=ReadDeadline.start(3000)
     )
     if query["projection"] == "cohort":
         builder = TraceSkillsQueryBuilder(
             project_ids=[project.pk], start=query["from"], end=query["to"]
         )
-        versions = list(
-            HubSkillVersion.objects.filter(
-                skill__in=resources_for_scope(scope=principal.scope, kind="skill"),
-            ).values_list("skill_id", "id", "digest")[:10001]
-        )
-        if len(versions) > 10000:
-            raise SkillsHubError(
-                "runtime_read_too_large", "Too many versions for this read.", status=503
-            )
-        verified = tuple(
-            (str(skill), str(version), digest) for skill, version, digest in versions
-        )
         try:
             row = read_runtime_statement(
                 session,
                 builder.build_summary(
                     filters=query["filters"],
-                    verified_identities=verified,
+                    verified_identities=_verified_identities(principal),
                 ),
                 max_rows=1,
             )[0]
+        except (CohortStatementTooLarge, ServerException) as exc:
+            # The aggregate cannot return a partial page. Only the compiler's
+            # deliberate throwIf is a size limit; don't hide unrelated CH errors.
+            if isinstance(exc, ServerException) and not (
+                exc.code == 395 and "Skill load replay key budget exceeded" in str(exc)
+            ):
+                raise
+            raise SkillsHubError(
+                "runtime_read_too_large",
+                "Narrow the time window or the filters for this cohort read.",
+                status=503,
+            ) from exc
         except UnsupportedFilterShapeError as exc:
             raise SkillsHubError(
                 "invalid_runtime_query",

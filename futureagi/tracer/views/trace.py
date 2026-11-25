@@ -5323,24 +5323,47 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
         tasks: dict[str, Any] = {}
-        if (
-            project_id
-            and validated_data.get("include_skill_links")
-            and page_number == 0
-        ):
-            # Probe live loads across the project/window, not just this page's IDs.
+
+        def _probe_skill_links():
+            # Discover across the project, not just this page's traces. Only an
+            # elected load inside the *full* time filter proves availability.
+            from tracer.services.clickhouse.query_builders.filters import (
+                SkillEvidenceWindow,
+            )
             from tracer.services.clickhouse.v2.query_builders.filters import (
                 ClickHouseFilterBuilderV2,
             )
+            from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
+                iter_runtime_load_replays,
+            )
 
             start, end = builder.parse_time_range(filters)
-            live_loads = ClickHouseFilterBuilderV2(
-                project_id=str(project_id)
-            ).skill_live_rows_sql()
-            tasks["skill_links"] = (
-                f"SELECT 1 FROM ({live_loads}) LIMIT 1",
-                {"project_id": project_id, "start_date": start, "end_date": end},
-            )
+            window = SkillEvidenceWindow.from_bounds(start, end, filters)
+            compiler = ClickHouseFilterBuilderV2(project_id=str(project_id))
+            calls = rows = payload_bytes = 0
+
+            def read_rows(sql, params):
+                nonlocal calls, rows, payload_bytes
+                data = _execute_enrichment(sql, params).data
+                calls += 1
+                rows += len(data)
+                payload_bytes += len(
+                    json.dumps(
+                        data, default=str, ensure_ascii=False, separators=(",", ":")
+                    ).encode("utf-8")
+                )
+                return data
+
+            for replay, params in iter_runtime_load_replays(
+                compiler,
+                read_rows,
+                skill_window=window,
+                max_keys=page_read_settings["max_result_rows"],
+            ):
+                if read_rows(f"SELECT 1 FROM ({replay}) LIMIT 1", params):
+                    return True, calls, rows, payload_bytes
+            return False, calls, rows, payload_bytes
+
         content_task_names: list[str] = []
         attribute_task_names: list[str] = []
         attribute_task_expected_rows: dict[str, int] = {}
@@ -5412,6 +5435,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         )
         future_names: dict[concurrent.futures.Future, str] = {}
         try:
+            if (
+                project_id
+                and validated_data.get("include_skill_links")
+                and page_number == 0
+            ):
+                future_names[pool.submit(_probe_skill_links)] = "skill_links"
             for task_name, (task_query, task_params) in tasks.items():
                 future = pool.submit(_execute_enrichment, task_query, task_params)
                 future_names[future] = task_name
@@ -5497,6 +5526,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return rows
 
         query_count += len(future_names)
+        skill_links_exist = None
+        probe = enrichment_results.pop("skill_links", None)
+        if probe is not None:
+            skill_links_exist, calls, rows, payload_bytes = probe
+            query_count += calls - 1  # one future, possibly several key/winner reads
+            query_rows_returned += rows
+            query_result_payload_bytes += payload_bytes
         resolved_users = enrichment_results.get("users")
         query_count += max(0, getattr(resolved_users, "query_count", 1) - 1)
         for task_result in enrichment_results.values():
@@ -5937,8 +5973,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             metadata_total_rows = cursor_seen_rows
 
         metadata = {"total_rows": metadata_total_rows}
-        if "skill_links" in enrichment_results:
-            metadata["skill_links_exist"] = bool(enrichment_results["skill_links"].data)
+        if skill_links_exist is not None:
+            metadata["skill_links_exist"] = skill_links_exist
         if bounded_page is not None:
             published_has_more = (
                 bool(bounded_page.complete and bounded_page.has_more) or cursor_has_more

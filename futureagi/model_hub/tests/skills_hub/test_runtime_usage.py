@@ -94,7 +94,7 @@ def test_eval_coverage_reads_configured_live_results(settings, table, guard):
     )
     assert f"FROM {table} AS raw_eval_logger FINAL" in sql
     assert guard + " = 0" in sql
-    assert params["config_ids"] == (config,) and params["trace_ids"] == (trace,)
+    assert params["config_ids"] == [config] and params["trace_ids"] == [trace]
 
 
 def test_agent_filter_rejects_foreign_project_and_binds_names():

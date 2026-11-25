@@ -7,15 +7,84 @@ Project permissions and catalogue identities are resolved by the caller.
 from __future__ import annotations
 
 from datetime import datetime
+from itertools import product
 from uuid import UUID
 
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
-from tracer.services.clickhouse.query_builders.filters import SKILL_VERSION_IDS_SQL
-from tracer.services.clickhouse.read_budget import ReadDeadline, WallCappedAnalytics
+from tracer.services.clickhouse.query_builders.filters import (
+    SKILL_REPLAY_BATCH_SIZE,
+    SKILL_VERSION_IDS_SQL,
+    SkillEvidenceWindow,
+)
+from tracer.services.clickhouse.query_service import QueryResult
+from tracer.services.clickhouse.read_budget import (
+    ReadDeadline,
+    ReadDeadlineExceeded,
+    WallCappedAnalytics,
+)
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
+    _append_v2_settings,
 )
+
+# A runtime fact statement returns this extra row solely to signal overflow.
+_FACT_SENTINEL = 20_001
+# The native driver renders %(...)s before sending the SQL, even for an array.
+# At most two arrays per replay, leaving 64 KiB of the 256 KiB query budget
+# for the fixed statement, settings, and up to 50 authorized project IDs.
+_ARRAY_SQL_BYTES = 96 * 1024
+
+
+class _FactPages(dict):
+    """Ordinary statement binds, plus disjoint pages for RuntimeReadSession."""
+
+    def __init__(self, values, statements):
+        super().__init__(values)
+        self.statements = statements
+
+    @classmethod
+    def for_arrays(cls, params, *names):
+        def statements(sql, _read_keys):
+            for batches in product(*(_array_batches(params[n]) for n in names)):
+                yield sql, {**params, **dict(zip(names, batches, strict=True))}
+
+        return cls(params, statements)
+
+
+def _array_batches(values):
+    """Disjoint input sets bounded by *escaped bytes*, not by row count."""
+    batch, size = [], 2  # the array brackets
+    for key in dict.fromkeys(values):
+        fields = key if isinstance(key, tuple) else (key,)
+        # Each UTF-8 byte can at most double under native string escaping.
+        # Include quotes, tuple parentheses, commas and spaces in the bound.
+        cost = 4 + sum(4 + 2 * len(s.encode("utf-8")) for s in fields)
+        if cost + 2 > _ARRAY_SQL_BYTES:
+            raise ReadDeadlineExceeded(
+                "Runtime identity exceeds the replay byte budget"
+            )
+        if size + cost > _ARRAY_SQL_BYTES:
+            yield batch
+            batch, size = [], 2
+        batch.append(key)
+        size += cost
+    if batch:
+        yield batch
+
+
+def iter_runtime_load_replays(
+    compiler, read_keys, *, skill_window, failed=False, max_keys=SKILL_REPLAY_BATCH_SIZE
+):
+    """Bound both the number of discovered keys and their native SQL bytes."""
+    for source, binds in compiler.iter_skill_load_replays(
+        read_keys,
+        skill_window=skill_window,
+        failed=failed,
+        batch_size=min(max_keys, SKILL_REPLAY_BATCH_SIZE),
+    ):
+        for keys in _array_batches(binds["skill_replay_keys"]):
+            yield source, {**binds, "skill_replay_keys": keys}
 
 
 class RuntimeDependencyUnavailable(RuntimeError):
@@ -31,8 +100,16 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             raise ValueError("Runtime reads require a nonempty timezone-aware window")
         self.project_ids = projects
         self.start, self.end = start, end
-        self.params = {"project_ids": projects, "start_date": start, "end_date": end}
-        self.compiler = ClickHouseFilterBuilderV2(project_ids=list(projects))
+        self.skill_window = SkillEvidenceWindow.from_bounds(start, end)
+        self.params = {
+            "project_ids": projects,
+            "start_date": start,
+            "end_date": end,
+            **self.skill_window.params,
+        }
+        self.compiler = ClickHouseFilterBuilderV2(
+            project_ids=list(projects), skill_window=self.skill_window
+        )
 
     def _live_source(self, *, failed=False, trace_batch=False, skill_window=None):
         compiler = self.compiler
@@ -40,7 +117,7 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             compiler = ClickHouseFilterBuilderV2(
                 project_ids=list(self.project_ids),
                 candidate_ids_param="trace_ids" if trace_batch else None,
-                skill_window=skill_window,
+                skill_window=skill_window or self.skill_window,
             )
         method = getattr(compiler, "skill_live_rows_sql", None)
         if method is None:
@@ -154,10 +231,19 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
         if agent is not None:
             params.update(agent_project=str(agent[0]), service=agent[1], agent=agent[2])
             predicate += " AND toString(project_id) = %(agent_project)s AND service_name = %(service)s AND agent_name = %(agent)s"
-        return (
-            f"SELECT * FROM ({self._live_source(failed=failed)}) WHERE {predicate} LIMIT 20001",
-            params,
-        )
+
+        def facts(source):
+            return f"SELECT * FROM ({source}) WHERE {predicate} LIMIT {_FACT_SENTINEL}"
+
+        def statements(_sql, read_keys):
+            if not (params["skill_names"] if failed else params["identities"]):
+                return
+            for source, binds in iter_runtime_load_replays(
+                self.compiler, read_keys, skill_window=self.skill_window, failed=failed
+            ):
+                yield _append_v2_settings(facts(source)), {**params, **binds}
+
+        return facts(self._live_source(failed=failed)), _FactPages(params, statements)
 
     def build_context_members(self, *, resource_id, identities):
         """Context cohorts include stamped spans even without a leaf skill load.
@@ -188,7 +274,8 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
                 WHERE project_id IN %(project_ids)s AND (project_id, trace_id, id) IN (
                     SELECT project_id, trace_id, id FROM spans
                     WHERE project_id IN %(project_ids)s
-                      AND start_time >= %(start_date)s AND start_time < %(end_date)s
+                      AND start_time >= fromUnixTimestamp64Micro(%(skill_window_start_us)s)
+                      AND start_time < fromUnixTimestamp64Micro(%(skill_window_end_us)s)
                       AND attrs_string['fi.context.id'] = %(resource_id)s
                 )
                 GROUP BY project_id, trace_id, id
@@ -196,7 +283,8 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             WHERE state.6 = 0 AND (state.1 != 'context.load' OR state.3 != 'ERROR')
               AND state.4['fi.context.id'] = %(resource_id)s
               AND (state.4['fi.context.id'], state.4['fi.context.version_id'], state.4['fi.context.digest']) IN %(context_identities)s
-              AND state.2 >= %(start_date)s AND state.2 < %(end_date)s
+              AND state.2 >= fromUnixTimestamp64Micro(%(skill_window_start_us)s)
+              AND state.2 < fromUnixTimestamp64Micro(%(skill_window_end_us)s)
             LIMIT 20001
         """,
             params,
@@ -204,7 +292,11 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
 
     def build_usage_spans(self, *, members):
         """Replay complete traces, not just spans started in the load window."""
-        params = {**self.params, "members": tuple(members)}
+        params = {
+            **self.params,
+            "project_ids": list(self.project_ids),
+            "members": [(str(project), str(trace)) for project, trace in members],
+        }
         return (
             f"""
             SELECT project_id, trace_id, id, state.1 AS parent_span_id,
@@ -216,13 +308,17 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
                        argMax(tuple(parent_span_id, status, latency_ms, cost,
                                     total_tokens, {SKILL_VERSION_IDS_SQL}, start_time, attrs_string['fi.context.version_id']), _version) AS state
                 FROM spans
-                WHERE project_id IN %(project_ids)s
-                  AND (toString(project_id), trace_id) IN %(members)s
+                WHERE project_id IN (SELECT arrayJoin(CAST(%(project_ids)s, 'Array(UUID)')))
+                  AND (project_id, trace_id) IN (
+                      SELECT m.1, m.2 FROM (
+                          SELECT arrayJoin(CAST(%(members)s, 'Array(Tuple(UUID, String))')) AS m
+                      )
+                  )
                 GROUP BY project_id, trace_id, id
                 HAVING argMax(is_deleted, _version) = 0
-            ) LIMIT 20001
+            ) LIMIT {_FACT_SENTINEL}
         """,
-            params,
+            _FactPages.for_arrays(params, "members"),
         )
 
     def build_usage_evals(self, *, config_ids, members):
@@ -230,8 +326,8 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
         # UUID join as EvalMetricsQueryBuilderV2; results on ANY live span count.
         params = {
             **self.params,
-            "config_ids": tuple(config_ids),
-            "trace_ids": tuple(sorted({trace for _, trace in members})),
+            "config_ids": list(map(str, config_ids)),
+            "trace_ids": sorted({str(trace) for _, trace in members}),
         }
         table, live = eval_logger_source(
             "raw_eval_logger", include_cdc_tombstone_guard=True
@@ -243,11 +339,11 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
                    output_float, output_bool, output_str
             FROM {table} AS raw_eval_logger FINAL
             WHERE {live} AND error = 0 AND ifNull(output_str, '') != 'ERROR'
-              AND toString(custom_eval_config_id) IN %(config_ids)s
-              AND toString(raw_eval_logger.trace_id) IN %(trace_ids)s
-            LIMIT 20001
+              AND toString(custom_eval_config_id) IN (SELECT arrayJoin(%(config_ids)s))
+              AND toString(raw_eval_logger.trace_id) IN (SELECT arrayJoin(%(trace_ids)s))
+            LIMIT {_FACT_SENTINEL}
         """,
-            params,
+            _FactPages.for_arrays(params, "config_ids", "trace_ids"),
         )
 
     def build_library_counts(self, *, verified_identities):
@@ -365,7 +461,8 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
                   AND (project_id, trace_id, id) IN (
                       SELECT project_id, trace_id, id FROM spans
                       WHERE project_id IN %(project_ids)s
-                        AND start_time >= %(start_date)s AND start_time < %(end_date)s
+                        AND start_time >= fromUnixTimestamp64Micro(%(skill_window_start_us)s)
+                        AND start_time < fromUnixTimestamp64Micro(%(skill_window_end_us)s)
                         AND name = 'context.load'
                         AND attrs_string['fi.context.id'] = %(resource_id)s
                   )
@@ -374,7 +471,8 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             WHERE state.6 = 0 AND state.1 = 'context.load' AND state.3 != 'ERROR'
               AND state.4['fi.context.id'] = %(resource_id)s
               AND state.4['fi.context.version_id'] IN %(version_ids)s
-              AND state.2 >= %(start_date)s AND state.2 < %(end_date)s
+              AND state.2 >= fromUnixTimestamp64Micro(%(skill_window_start_us)s)
+              AND state.2 < fromUnixTimestamp64Micro(%(skill_window_end_us)s)
             ORDER BY start_time DESC, id DESC LIMIT 1
         """,
             params,
@@ -474,8 +572,29 @@ class RuntimeReadSession:
         self.deadline = deadline
         self.service = WallCappedAnalytics(service, deadline, floor_ms=25)
 
-    def execute(self, statement):
-        sql, params = statement
+    def _read(self, sql, params):
         return self.service.execute_ch_query(
             sql, params, timeout_ms=self.deadline.remaining_ms()
+        )
+
+    def execute(self, statement):
+        sql, params = statement
+        if not isinstance(params, _FactPages):
+            return self._read(sql, params)
+
+        # Use byte-bounded client-side binds on both profiles. The pinned native
+        # driver cannot encode nested quoted strings in server-side array binds.
+        def read_keys(query, binds):
+            return self._read(query, binds).data
+
+        rows = []
+        started_ms = self.deadline.elapsed_ms()
+        for page_sql, page_binds in params.statements(sql, read_keys):
+            page = self._read(page_sql, page_binds)
+            rows.extend(page.data[: _FACT_SENTINEL - len(rows)])
+            if len(rows) == _FACT_SENTINEL:
+                # The consumer rejects the sentinel; do not start another read.
+                break
+        return QueryResult(
+            rows, len(rows), "clickhouse", self.deadline.elapsed_ms() - started_ms
         )

@@ -22,7 +22,10 @@ from tracer.selectors.trace_filter_reads import (
     read_bounded_filter_page,
 )
 from tracer.services.clickhouse.page_dedup import paginate_deduped
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import (
+    BaseQueryBuilder,
+    _unix_microseconds,
+)
 from tracer.services.clickhouse.query_builders.filters import EvalFilterMetadata
 from tracer.services.clickhouse.query_builders.session_list import (
     SessionListQueryBuilder,
@@ -5087,7 +5090,9 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(row_count: int) 
     _check_page_enrichments(row_count, expect_offer=row_count == 1)
 
 
-def _check_page_enrichments(row_count, *, expect_offer, offer_query=None):
+def _check_page_enrichments(
+    row_count, *, expect_offer, offer_query=None, time_filters=None
+):
     from tracer.views.trace import (
         TRACE_LIST_CANDIDATE_DEADLINE_MS,
         TRACE_LIST_ENRICHMENT_CHUNK_SIZE,
@@ -5098,6 +5103,8 @@ def _check_page_enrichments(row_count, *, expect_offer, offer_query=None):
         TraceView,
     )
 
+    time_filters = [_short_time_filter()] if time_filters is None else time_filters
+    lower, upper = BaseQueryBuilder.parse_time_range(time_filters, strict=True)
     started = END - timedelta(minutes=1)
     rows = [
         {
@@ -5135,15 +5142,34 @@ def _check_page_enrichments(row_count, *, expect_offer, offer_query=None):
 
         def execute_ch_query(self, query, params, *, timeout_ms, settings):
             self.calls.append((params, timeout_ms, settings))
-            if query.startswith("SELECT 1 FROM ("):
+            if "skill_page_size" in params:
+                assert params["skill_window_start_us"] == _unix_microseconds(lower)
+                assert params["skill_window_end_us"] == _unix_microseconds(upper)
+                data = (
+                    offer_query(query, params)
+                    if offer_query
+                    else (
+                        [
+                            {
+                                "project_id": PROJECT_ID,
+                                "trace_id": "trace-0",
+                                "id": "load",
+                            }
+                        ]
+                        if expect_offer
+                        else []
+                    )
+                )
+            elif query.startswith("SELECT 1 FROM ("):
                 from tracer.tests.test_skill_filters import assert_skill_span_source
 
-                assert_skill_span_source(query)
-                assert params == {
-                    "project_id": PROJECT_ID,
-                    "start_date": END - timedelta(minutes=30),
-                    "end_date": END,
-                }
+                if "skill_replay_keys" not in params:
+                    assert_skill_span_source(query)
+                else:
+                    assert "skill_load_days AS" in query
+                assert params["project_id"] == PROJECT_ID
+                assert params["skill_window_start_us"] == _unix_microseconds(lower)
+                assert params["skill_window_end_us"] == _unix_microseconds(upper)
                 assert "LIMIT 1" in query
                 data = (
                     offer_query(query, params)
@@ -5201,7 +5227,7 @@ def _check_page_enrichments(row_count, *, expect_offer, offer_query=None):
             project_id=PROJECT_ID,
             validated_data={
                 "filters": [
-                    _short_time_filter(),
+                    *time_filters,
                     _attribute_filter("final_status", "Rejected"),
                 ],
                 "page_number": 0,
@@ -5221,7 +5247,11 @@ def _check_page_enrichments(row_count, *, expect_offer, offer_query=None):
     expected_chunks = (
         row_count + TRACE_LIST_ENRICHMENT_CHUNK_SIZE - 1
     ) // TRACE_LIST_ENRICHMENT_CHUNK_SIZE
-    assert payload["metadata"]["query_count"] == 2 * expected_chunks + 3
+    probe_calls = sum(
+        "skill_window_start_us" in params for params, _, _ in analytics.calls
+    )
+    assert probe_calls >= 1
+    assert payload["metadata"]["query_count"] == 2 * expected_chunks + 2 + probe_calls
     assert payload["metadata"]["skill_links_exist"] is expect_offer
     assert 0 <= payload["metadata"]["query_elapsed_ms"] < 3_000
     assert (
@@ -5233,7 +5263,7 @@ def _check_page_enrichments(row_count, *, expect_offer, offer_query=None):
         == settings.INTERACTIVE_READ_DEFAULT_WALL_MS
     )
     assert TRACE_LIST_ENRICHMENT_MAX_WORKERS == 2
-    assert len(analytics.calls) == 2 * expected_chunks + 2
+    assert len(analytics.calls) == 2 * expected_chunks + 1 + probe_calls
     content_chunks = [
         params["content_trace_ids"]
         for params, _timeout_ms, _settings in analytics.calls

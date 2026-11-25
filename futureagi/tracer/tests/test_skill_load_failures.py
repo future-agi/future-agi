@@ -71,6 +71,8 @@ def test_failed_load_has_no_verified_link_and_preserves_scope(skill_client, writ
     }
     assert {key: row[key] for key in expected} == expected
     identity_fields = {"skill_id", "skill_version_id", "skill_digest", "skill_version"}
+    failure_columns = set(expected) | {"project_id", "start_time", "_version"}
+    assert set(row) == failure_columns
     assert identity_fields.isdisjoint(row)
     query = SkillRuntimeQueryBuilder(
         project_ids=[span["project_id"]], start=START, end=START + timedelta(hours=1)
@@ -80,10 +82,12 @@ def test_failed_load_has_no_verified_link_and_preserves_scope(skill_client, writ
     )
     (usage,) = skill_client.query(sql, parameters=params).named_results()
     assert usage["span_id"] == span["id"]
+    assert set(usage) == failure_columns
     assert identity_fields.isdisjoint(usage)
     sql, params = query.build_trace_loads(trace_ids=[span["trace_id"]], failed=True)
     (hydrated,) = skill_client.query(sql, parameters=params).named_results()
     assert hydrated["span_id"] == span["id"]
+    assert set(hydrated) <= failure_columns
     assert identity_fields.isdisjoint(hydrated)
     sql, params = query.build_trace_loads(trace_ids=[span["trace_id"]])
     assert skill_client.query(sql, parameters=params).result_rows == []

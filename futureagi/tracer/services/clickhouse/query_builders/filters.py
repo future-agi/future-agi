@@ -10,8 +10,8 @@ Django ORM querysets.
 import math
 import re
 import uuid
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, NamedTuple
 
@@ -78,6 +78,9 @@ SKILL_FILTER_COLUMNS = {
     "skill.root_status": (None, "text", {"equals"}),
     "skill.trace_cohort": (None, "text", {"equals"}),
 }
+# Bound the ID sets used to discover historical partitions, not the result rows.
+SKILL_REPLAY_BATCH_SIZE = 1024
+
 _SKILL_FAILED_COLUMNS = frozenset(
     {
         "skill.id",
@@ -96,7 +99,7 @@ _SKILL_FAILED_COLUMNS = frozenset(
 
 @dataclass(frozen=True)
 class SkillEvidenceWindow:
-    """Compiler-owned, exact admission window shared by split graph sources.
+    """Exact event-time admission window shared by skill evidence readers.
 
     Parameters are bound once on the outer query. Never apply this condition to
     replayed metrics, or use an excluded timestamp to hide a newer tombstone.
@@ -112,12 +115,7 @@ class SkillEvidenceWindow:
     loaded_identity_condition: str | None = None
 
     @classmethod
-    def from_bounds(cls, start: datetime, end: datetime, filters: list[dict]):
-        from tracer.services.clickhouse.query_builders.base import (
-            BaseQueryBuilder,
-            _unix_microseconds,
-        )
-
+    def from_bounds(cls, start: datetime, end: datetime, filters=()):
         # Widgets pass the chart's explicit display range separately from its
         # canonical filters. Intersect them before admitting a load or witness;
         # the caller can still display the full axis and replay entire traces.
@@ -132,9 +130,18 @@ class SkillEvidenceWindow:
                 },
             },
         ]
-        window = BaseQueryBuilder.analyze_bounded_datetime_filters(bounded_filters)
+        return cls.from_filters(bounded_filters)
+
+    @classmethod
+    def from_filters(cls, filters):
+        from tracer.services.clickhouse.query_builders.base import (
+            BaseQueryBuilder,
+            _unix_microseconds,
+        )
+
+        window = BaseQueryBuilder.analyze_bounded_datetime_filters(filters)
         excluded, params = BaseQueryBuilder.bounded_datetime_exclusion_sql(
-            bounded_filters, param_prefix="graph_datetime"
+            filters, param_prefix="graph_datetime"
         )
         return cls(
             cls.bounds + (f" AND ({excluded})" if excluded else ""),
@@ -143,6 +150,21 @@ class SkillEvidenceWindow:
                 "skill_window_start_us": _unix_microseconds(window.start),
                 "skill_window_end_us": _unix_microseconds(window.end),
             },
+        )
+
+    def with_verified_loads(
+        self, identities: Iterable[tuple[str, str, str]]
+    ) -> "SkillEvidenceWindow":
+        """Limit successful loads to one project's catalogue, not failure evidence."""
+        verified = tuple(identities)
+        return replace(
+            self,
+            params={**self.params, "summary_verified_identities": verified},
+            loaded_identity_condition=(
+                "(skill_id, skill_version_id, skill_digest) IN %(summary_verified_identities)s"
+                if verified
+                else "0 = 1"
+            ),
         )
 
 
@@ -1833,18 +1855,140 @@ class ClickHouseFilterBuilder:
     # Public API
     # ------------------------------------------------------------------
 
-    def _skill_window_bounds(self) -> str:
+    def _skill_window_bounds(self, window: SkillEvidenceWindow | None = None) -> str:
         return (
-            self.skill_window.bounds
-            if self.skill_window
+            window.bounds
+            if window
             else "start_time >= %(start_date)s AND start_time < %(end_date)s"
         )
 
-    def skill_live_rows_sql(self, *, failed: bool = False) -> str:
-        """Live load evidence from the latest revision of each candidate span.
+    def _skill_candidate_filter(self) -> str:
+        """Select candidate *traces* even when Observe is classifying spans."""
+        if self.query_mode == self.QUERY_MODE_TRACE:
+            return self._candidate_filter("trace_id")
+        if self.query_mode == self.QUERY_MODE_SPAN:
+            span_batch = self._candidate_span_entity_filter("trace_id", "id")
+            if span_batch:
+                # A sibling load can qualify a root-only span candidate batch.
+                span_source = self.resolved_candidate_spans_table or "spans"
+                return (
+                    " AND (project_id, trace_id) IN (SELECT project_id, trace_id "
+                    f"FROM {span_source} WHERE {self._project_scope_predicate()}{span_batch})"
+                )
+        return ""
 
-        The load window and closed snapshot choose keys, not revisions. Replay
-        those keys across all dates so corrections and key-only deletes win.
+    def _skill_replay_sql(self, keys_sql: str, *, span_keys: bool) -> tuple[str, str]:
+        """Return the CTEs and physical read for all revisions of precisely these keys.
+
+        Only the narrow identity/date discovery touches historical partitions.
+        Use bare indexed IDs for both reads; the complete identity prevents ID
+        collisions across tenants (and across traces for OTel span IDs).
+        """
+        keys = "skill_load_keys" if span_keys else "skill_root_keys"
+        days = "skill_load_days" if span_keys else "skill_root_days"
+        identity = "project_id, trace_id, id" if span_keys else "project_id, trace_id"
+        guard = f"{self._project_scope_predicate()} AND trace_id IN (SELECT trace_id FROM {keys})"
+        if span_keys:
+            guard += f" AND id IN (SELECT id FROM {keys})"
+        if span_keys or self._org_scoped:
+            guard += f" AND ({identity}) IN (SELECT DISTINCT {identity} FROM {keys})"
+        return (
+            f"WITH {keys} AS ({keys_sql}), {days} AS ("
+            f"SELECT DISTINCT toDate(start_time) AS revision_day FROM spans PREWHERE {guard})",
+            f"FROM spans AS rev PREWHERE {guard} "
+            f"AND toDate(rev.start_time) IN (SELECT revision_day FROM {days})",
+        )
+
+    def _skill_load_key_predicate(
+        self, failed: bool, window: SkillEvidenceWindow | None
+    ) -> str:
+        # Never require a reported name. Only successful loads necessarily
+        # carry this key; neither predicate is valid during revision replay.
+        witness = (
+            ""
+            if failed
+            else (
+                " AND indexHint(has(mapKeys(attrs_string), 'fi.skill.version_id'))"
+                " AND has(attrs_string.keys, 'fi.skill.version_id')"
+            )
+        )
+        return (
+            f"{self._project_scope_predicate()} AND {self._skill_window_bounds(window)}"
+            f"{self._skill_candidate_filter()}{witness} AND name = 'skill.load'"
+        )
+
+    def iter_skill_load_replays(
+        self,
+        read_keys: Callable[[str, dict], Iterable[dict]],
+        *,
+        skill_window: SkillEvidenceWindow,
+        failed: bool = False,
+        batch_size: int = SKILL_REPLAY_BATCH_SIZE,
+        params: dict | None = None,
+    ) -> Iterator[tuple[str, dict]]:
+        """Yield one exact evidence SELECT per keyset page, in candidate order.
+
+        ``read_keys`` must use the caller's deadline and return every row or
+        raise. Existence readers may stop on a verified winner. Exact readers
+        must exhaust the iterator (an empty *winner* page is not EOF) or fail
+        their read budget. ``params`` can carry a caller's candidate trace IDs.
+        No value obtained from ClickHouse is interpolated back into SQL.
+        """
+        if not self.project_ids or self.table != "spans":
+            raise ValueError("Skill load paging requires project-scoped spans")
+        if (
+            type(batch_size) is not int
+            or not 1 <= batch_size <= SKILL_REPLAY_BATCH_SIZE
+        ):
+            raise ValueError("Invalid skill load replay batch size")
+        scope = (
+            {"project_ids": tuple(self.project_ids)}
+            if self._org_scoped
+            else {"project_id": self.project_ids[0]}
+        )
+        binds = {**(params or {}), **scope, **skill_window.params}
+        condition = self._skill_load_key_predicate(failed, skill_window)
+        after = None
+        replay = self.skill_live_rows_sql(
+            failed=failed, skill_window=skill_window, bound_load_keys=True
+        )
+        while True:
+            cursor = (
+                ""
+                if after is None
+                else (" AND (toString(project_id), trace_id, id) > %(skill_after_key)s")
+            )
+            sql = (
+                f"SELECT DISTINCT project_id, trace_id, id FROM spans WHERE {condition}{cursor} "
+                "ORDER BY toString(project_id), trace_id, id LIMIT %(skill_page_size)s"
+            )
+            page_params = {**binds, "skill_page_size": batch_size}
+            if after is not None:
+                page_params["skill_after_key"] = after
+            keys = [
+                (str(row["project_id"]), row["trace_id"], row["id"])
+                for row in read_keys(sql, page_params)
+            ]
+            if len(keys) > batch_size:
+                raise ValueError("Skill load key page exceeds its bound")
+            if keys:
+                yield replay, {**binds, "skill_replay_keys": keys}
+            if len(keys) < batch_size:
+                return
+            after = keys[-1]
+
+    def skill_live_rows_sql(
+        self,
+        *,
+        failed: bool = False,
+        skill_window: SkillEvidenceWindow | None = None,
+        bound_load_keys: bool = False,
+    ) -> str:
+        """Live load evidence from the latest eligible revision of each logical span.
+
+        Raw SQL callers bind ``skill_window.params`` on the containing query.
+        ``translate`` binds them itself. Only legacy callers with no window
+        object use the outer query's ``start_date``/``end_date`` parameters.
         """
         if not self.project_ids:
             raise _unsupported_filter_shape("SKILL filters require a project scope")
@@ -1853,74 +1997,101 @@ class ClickHouseFilterBuilder:
         )
 
         project = self._project_scope_predicate()
-        candidate = ""
-        if self.query_mode == self.QUERY_MODE_TRACE:
-            candidate = self._candidate_filter("trace_id")
-        elif self.query_mode == self.QUERY_MODE_SPAN:
-            span_batch = self._candidate_span_entity_filter("trace_id", "id")
-            if span_batch:
-                # The load can be a sibling of a candidate span.
-                span_source = self.resolved_candidate_spans_table or "spans"
-                candidate = (
-                    " AND (project_id, trace_id) IN (SELECT project_id, trace_id "
-                    f"FROM {span_source} WHERE {project}{span_batch})"
+        skill_window = skill_window or self.skill_window
+        bounds = self._skill_window_bounds(skill_window)
+        window = skill_window.condition if skill_window else bounds
+        admitted_version = ""
+        if self.table == ResolvedSpanSource.SAMPLING.value:
+            # SamplingQuery's dependency_source has already applied its arrival
+            # watermark but still contains tombstones. Elect here before the
+            # sampling_source live-row filter, or a pre-cutoff deletion under
+            # a changed sorting key can resurrect the old physical row. The
+            # winner itself (not just its logical key) must have been admitted.
+            ctes = ""
+            if bound_load_keys:
+                raise ValueError("Load key pages are not a sampling source")
+            # dependency_source supplies all eligible revisions of the traces
+            # being sampled; sampling_source defines candidate row admission.
+            keys_sql = (
+                "SELECT project_id, trace_id, id FROM sampling_source WHERE "
+                f"{project} AND {bounds}{self._skill_candidate_filter()} AND name = 'skill.load'"
+            )
+            replay = (
+                f"FROM dependency_source WHERE {project} "
+                f"AND (project_id, trace_id, id) IN ({keys_sql})"
+            )
+            admitted_version = (
+                " AND (project_id, trace_id, span_id, live_version) IN "
+                f"(SELECT project_id, trace_id, id, _version FROM {ResolvedSpanSource.SAMPLING.value})"
+            )
+        else:
+            if bound_load_keys:
+                keys_sql = (
+                    "SELECT toUUID(k.1) AS project_id, k.2 AS trace_id, k.3 AS id "
+                    "FROM (SELECT arrayJoin(%(skill_replay_keys)s) AS k)"
                 )
-        snapshot = (
-            " AND (project_id, trace_id, id) IN "
-            f"(SELECT project_id, trace_id, id FROM {ResolvedSpanSource.SAMPLING.value})"
-            if self.table == ResolvedSpanSource.SAMPLING.value
-            else ""
-        )
-        bounds = self._skill_window_bounds()
-        window = self.skill_window.condition if self.skill_window else bounds
-        outcome = (
-            "status = 'ERROR' AND skill_version_id = ''"
-            if failed
-            else "skill_version_id != '' AND status != 'ERROR'"
-        )
-        if (
-            not failed
-            and self.skill_window
-            and self.skill_window.loaded_identity_condition
-        ):
-            outcome += f" AND ({self.skill_window.loaded_identity_condition})"
-        error_type = (
-            "argMax(attrs_string['error.type'], _version) AS error_type,"
-            if failed
-            else ""
-        )
-        return f"""
-            SELECT * EXCEPT (latest_name, latest_deleted, live_version),
-                   latest_deleted AS is_deleted, live_version AS _version
-            FROM (
-                SELECT project_id, trace_id, id AS span_id,
-                       argMax(start_time, _version) AS start_time,
+            else:
+                # Embedded membership/aggregate statements cannot page. Admit
+                # one full batch, or fail explicitly *before* historical replay.
+                # A LIMIT on the evidence itself could silently undercount.
+                cap = SKILL_REPLAY_BATCH_SIZE
+                keys_sql = (
+                    "SELECT project_id, trace_id, id FROM (SELECT *, count() OVER () AS key_count "
+                    "FROM (SELECT DISTINCT project_id, trace_id, id FROM spans WHERE "
+                    f"{self._skill_load_key_predicate(failed, skill_window)} LIMIT {cap + 1})) "
+                    f"WHERE throwIf(key_count > {cap}, 'Skill load replay key budget exceeded') = 0"
+                )
+            ctes, replay = self._skill_replay_sql(keys_sql, span_keys=True)
+        if failed:
+            projection = (
+                "project_id, trace_id, span_id, start_time, skill_name, requested_label, "
+                "requested_version, load_via, error_type, service_name, agent_name, "
+                "context_id, context_version_id"
+            )
+            specific_fields = (
+                "argMax(attrs_string['error.type'], _version) AS error_type,"
+            )
+            outcome = "status = 'ERROR' AND skill_version_id = ''"
+        else:
+            projection = (
+                "project_id, trace_id, span_id, start_time, skill_id, skill_version_id, "
+                "skill_name, skill_version, skill_digest, requested_label, requested_version, "
+                "load_via, evidence, cached, root_file, status, service_name, agent_name, "
+                "context_id, context_version_id, via_context_version_id, binding_id"
+            )
+            specific_fields = """
                        argMax(attrs_string['fi.skill.id'], _version) AS skill_id,
-                       argMax(attrs_string['fi.skill.version_id'], _version) AS skill_version_id,
-                       argMax(attrs_string['fi.skill.name'], _version) AS skill_name,
                        argMax(toUInt32(attrs_number['fi.skill.version']), _version) AS skill_version,
                        argMax(attrs_string['fi.skill.digest'], _version) AS skill_digest,
-                       argMax(attrs_string['fi.skill.requested_label'], _version) AS requested_label,
-                       argMax(toUInt32(attrs_number['fi.skill.requested_version']), _version) AS requested_version,
-                       argMax(attrs_string['fi.skill.load.via'], _version) AS load_via,
                        argMax(attrs_string['fi.skill.load.evidence'], _version) AS evidence,
                        argMax(toUInt8(attrs_bool['fi.skill.load.cached']), _version) AS cached,
                        argMax(toUInt8(attrs_bool['fi.skill.load.root_file']), _version) AS root_file,
+                       argMax(attrs_string['fi.skill.via_context.version_id'], _version) AS via_context_version_id,
+                       argMax(attrs_string['fi.context.binding_id'], _version) AS binding_id,"""
+            outcome = "skill_version_id != '' AND status != 'ERROR'"
+            if skill_window and skill_window.loaded_identity_condition:
+                outcome += f" AND ({skill_window.loaded_identity_condition})"
+        return f"""
+            SELECT {projection}, latest_deleted AS is_deleted, live_version AS _version
+            FROM (
+                {ctes}
+                SELECT project_id, trace_id, id AS span_id,
+                       argMax(start_time, _version) AS start_time,
+                       argMax(attrs_string['fi.skill.version_id'], _version) AS skill_version_id,
+                       argMax(attrs_string['fi.skill.name'], _version) AS skill_name,
+                       argMax(attrs_string['fi.skill.requested_label'], _version) AS requested_label,
+                       argMax(toUInt32(attrs_number['fi.skill.requested_version']), _version) AS requested_version,
+                       argMax(attrs_string['fi.skill.load.via'], _version) AS load_via,
                        argMax(status, _version) AS status, argMax(service_name, _version) AS service_name,
                        argMax(if(attrs_string['gen_ai.agent.name'] != '', attrs_string['gen_ai.agent.name'],
                                  attrs_string['fi.context.name']), _version) AS agent_name,
                        argMax(attrs_string['fi.context.id'], _version) AS context_id,
                        argMax(attrs_string['fi.context.version_id'], _version) AS context_version_id,
-                       argMax(attrs_string['fi.skill.via_context.version_id'], _version) AS via_context_version_id,
-                       argMax(attrs_string['fi.context.binding_id'], _version) AS binding_id,
-                       {error_type}
+                       {specific_fields}
                        argMax(name, _version) AS latest_name, argMax(is_deleted, _version) AS latest_deleted,
                        max(_version) AS live_version
-                FROM spans WHERE {project} AND (project_id, trace_id, id) IN (
-                    SELECT project_id, trace_id, id FROM spans WHERE {project} AND {bounds}
-                      AND name = 'skill.load'{candidate}{snapshot}
-                ) GROUP BY project_id, trace_id, id
-            ) WHERE latest_deleted = 0 AND latest_name = 'skill.load' AND ({window}) AND {outcome}
+                {replay} GROUP BY project_id, trace_id, id
+            ) WHERE latest_deleted = 0 AND latest_name = 'skill.load' AND ({window}) AND {outcome}{admitted_version}
         """.strip()
 
     def skill_cohort_rows_sql(
@@ -2039,7 +2210,23 @@ class ClickHouseFilterBuilder:
             return []
         if not self.project_ids:
             raise _unsupported_filter_shape("SKILL filters require a project scope")
+        from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+        from tracer.services.clickhouse.query_builders.session_list import (
+            ResolvedSpanSource,
+        )
+
+        sampled = self.table == ResolvedSpanSource.SAMPLING.value
+        window = self.skill_window
+        if window is None and any(
+            BaseQueryBuilder.is_datetime_filter(f) for f in filters
+        ):
+            window = SkillEvidenceWindow.from_filters(filters)
+        if window:
+            self._params.update(window.params)
         conditions = []
+        # Span-local scope must stay on the outer span, unlike trace membership.
+        span_conditions = []
+        first_load_members = None
         root_statuses = set()
         # Identity-only single-project trace classifiers omit project_id from
         # their final relation. The bound project is equally authoritative;
@@ -2097,17 +2284,38 @@ class ClickHouseFilterBuilder:
                         if config["filter_op"] == "in"
                         else [config["filter_value"]]
                     )
-                    # Residual candidate relations do not project the array.
-                    # Resolve it on the current span identity, never a sibling.
-                    conditions.append(
+                    # The stamp/time on an old revision only nominates its
+                    # identity. Never let a sibling, removed stamp, moved span,
+                    # or an out-of-window tombstone supply the final witness.
+                    source = "sampling_source" if sampled else "spans"
+                    keys = (
+                        f"SELECT DISTINCT project_id, trace_id, id FROM {source} "
+                        f"WHERE {self._project_scope_predicate()} AND {self._skill_window_bounds(window)}"
+                        f"{self._candidate_span_entity_filter('trace_id', 'id')} "
+                        f"AND hasAny({SKILL_VERSION_IDS_SQL}, %({param})s)"
+                    )
+                    if sampled:
+                        ctes = ""
+                        replay = (
+                            f"FROM dependency_source AS rev WHERE {self._project_scope_predicate()} "
+                            f"AND (project_id, trace_id, id) IN ({keys})"
+                        )
+                        fence = (
+                            " AND (project_id, trace_id, id, live_version) IN "
+                            "(SELECT project_id, trace_id, id, _version FROM sampling_source)"
+                        )
+                    else:
+                        ctes, replay = self._skill_replay_sql(keys, span_keys=True)
+                        fence = ""
+                    condition = (
+                        window.condition if window else self._skill_window_bounds()
+                    )
+                    span_conditions.append(
                         f"{span_identity} IN (SELECT project_id, trace_id, id FROM ("
-                        "SELECT project_id, trace_id, id, "
-                        f"argMax(tuple({SKILL_VERSION_IDS_SQL}, is_deleted), _version) AS scope_state "
-                        "FROM spans WHERE "
-                        + self._project_scope_predicate()
-                        + " AND start_time >= %(start_date)s AND start_time < %(end_date)s "
-                        "GROUP BY project_id, trace_id, id) WHERE scope_state.2 = 0 "
-                        f"AND hasAny(scope_state.1, %({param})s))"
+                        f"{ctes} SELECT project_id, trace_id, id, max(_version) AS live_version, "
+                        f"argMax(tuple({SKILL_VERSION_IDS_SQL}, is_deleted, rev.start_time), _version) AS scope_state, "
+                        f"scope_state.3 AS start_time {replay} GROUP BY project_id, trace_id, id) "
+                        f"WHERE scope_state.2 = 0 AND ({condition}) AND hasAny(scope_state.1, %({param})s){fence})"
                     )
                 else:
                     predicate = self._skill_row_predicate(item, failed=failed)
@@ -2117,18 +2325,18 @@ class ClickHouseFilterBuilder:
                         else positives
                     )
                     target.append(predicate)
-            source = self.skill_live_rows_sql(failed=failed)
+            source = self.skill_live_rows_sql(failed=failed, skill_window=window)
             # Negative membership is absence of a matching row, never a row
             # with a different value. Other positive selectors still correlate.
             positive = " AND ".join(positives) or "1 = 1"
             if positives or explicit_result:
-                conditions.append(
-                    f"{trace_identity} IN (SELECT project_id, trace_id FROM ("
-                    + source
-                    + ") WHERE "
-                    + positive
-                    + ")"
+                members_sql = (
+                    f"SELECT project_id, trace_id FROM ({source}) WHERE {positive}"
                 )
+                membership = f"{trace_identity} IN ({members_sql})"
+                conditions.append(membership)
+                if first_load_members is None:
+                    first_load_members = membership, members_sql
             for negative in negatives:
                 conditions.append(
                     f"{trace_identity} NOT IN (SELECT project_id, trace_id FROM ("
@@ -2139,33 +2347,74 @@ class ClickHouseFilterBuilder:
                     + negative
                     + ")"
                 )
-        for status in sorted(root_statuses):
-            param = self._next_param("skill_root_status")
-            self._params[param] = "ERROR"
-            operator = "=" if status == "error" else "!="
-            # The load window chooses traces, not roots. Replay all spans of
-            # candidate traces first (including key-only tombstones), then use
-            # the same canonical root as runtime metrics: earliest (time, id).
-            # An existential ERROR root can disagree with the canonical root
-            # when malformed telemetry contains more than one root.
-            conditions.append(
-                f"{trace_identity} IN (SELECT project_id, trace_id FROM ("
-                "SELECT project_id, trace_id, "
-                "countIf(root_state.1 = '') AS roots, "
-                "argMinIf(tuple(root_state.2), tuple(root_state.4, id), "
-                "root_state.1 = '') AS canonical_root FROM ("
-                "SELECT project_id, trace_id, id, "
-                "argMax(tuple(parent_span_id, status, is_deleted, start_time), _version) AS root_state "
-                "FROM spans WHERE "
-                + self._project_scope_predicate()
-                + " AND (project_id, trace_id) IN (SELECT project_id, trace_id FROM spans WHERE "
-                + self._project_scope_predicate()
-                + f" AND {self._skill_window_bounds()}) "
-                "GROUP BY project_id, trace_id, id) WHERE root_state.3 = 0 "
-                "GROUP BY project_id, trace_id) "
-                f"WHERE roots > 0 AND canonical_root.1 {operator} %({param})s)"
+        if not root_statuses:
+            return conditions + span_conditions
+        if len(root_statuses) > 1:
+            # The same canonical root cannot be both OK and ERROR.
+            return ["0 = 1"]
+
+        candidate = self._skill_candidate_filter()
+        seed_source = ResolvedSpanSource.SAMPLING.value if sampled else "spans"
+        if candidate:
+            # A finite batch is already a cheap upper bound. Do not inline a
+            # complete load election once per root date/key discovery subquery.
+            keys_sql = (
+                f"SELECT project_id, trace_id FROM {seed_source} WHERE {self._project_scope_predicate()} "
+                f"AND {self._skill_window_bounds(window)}{candidate}"
             )
-        return conditions
+            span_conditions.extend(conditions)
+        else:
+            if first_load_members is not None:
+                condition, keys_sql = first_load_members
+                conditions.remove(condition)
+            else:
+                # Handle and negative cohorts need not have a load at all.
+                keys_sql = (
+                    f"SELECT project_id, trace_id FROM {seed_source} WHERE {self._project_scope_predicate()} "
+                    f"AND {self._skill_window_bounds(window)}"
+                )
+                if span_conditions:
+                    keys_sql += " AND " + " AND ".join(span_conditions)
+            if conditions:
+                # Qualify nested identities: dashboard adapters qualify the
+                # outer (project_id, trace_id), which is not this seed row.
+                other_groups = [
+                    "(skill_seed.project_id, skill_seed.trace_id)"
+                    + cond[len(trace_identity) :]
+                    if cond.startswith(trace_identity + " ")
+                    else cond
+                    for cond in conditions
+                ]
+                keys_sql = (
+                    f"SELECT project_id, trace_id FROM ({keys_sql}) AS skill_seed WHERE "
+                    + " AND ".join(other_groups)
+                )
+        if sampled:
+            ctes = ""
+            replay = (
+                f"FROM dependency_source WHERE {self._project_scope_predicate()} "
+                f"AND (project_id, trace_id) IN ({keys_sql})"
+            )
+        else:
+            ctes, replay = self._skill_replay_sql(keys_sql, span_keys=False)
+        param = self._next_param("skill_root_status")
+        self._params[param] = "ERROR"
+        operator = "=" if "error" in root_statuses else "!="
+        # The load window chooses traces, not roots. Elect the canonical root
+        # from every live span in those traces (earliest timestamp, then ID).
+        span_conditions.append(
+            f"{trace_identity} IN (SELECT project_id, trace_id FROM ("
+            "SELECT project_id, trace_id, "
+            "countIf(root_state.1 = '') AS roots, "
+            "argMinIf(tuple(root_state.2), tuple(root_state.4, id), "
+            "root_state.1 = '') AS canonical_root FROM ("
+            f"{ctes} SELECT project_id, trace_id, id, "
+            "argMax(tuple(parent_span_id, status, is_deleted, start_time), _version) AS root_state "
+            f"{replay} GROUP BY project_id, trace_id, id) WHERE root_state.3 = 0 "
+            "GROUP BY project_id, trace_id) "
+            f"WHERE roots > 0 AND canonical_root.1 {operator} %({param})s)"
+        )
+        return span_conditions
 
     def translate(self, filters: list[dict]) -> tuple[str, dict[str, Any]]:
         """Translate a filter list to ClickHouse WHERE clause fragments.
