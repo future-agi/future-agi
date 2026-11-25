@@ -7,7 +7,7 @@ from decimal import Decimal
 from hashlib import blake2b
 from math import isfinite
 from numbers import Real
-from threading import BoundedSemaphore, Thread
+from threading import BoundedSemaphore, Lock, Thread
 from time import monotonic
 from types import SimpleNamespace
 from uuid import UUID
@@ -671,6 +671,57 @@ _RETAINED_PAGE_RESERVE_MS = 1_000
 _RETAINED_PAGE_HANDOFF_MS = 100
 
 
+@dataclass(frozen=True)
+class _RetainedLookup:
+    """The one in-flight lookup that concurrent first pages may join."""
+
+    future: Future
+    window_end: datetime
+    deadline: ReadDeadline
+
+
+# Guards _retained_lookup and the slot hand-over, never a ClickHouse read.
+_RETAINED_LOOKUP_LOCK = Lock()
+_retained_lookup: _RetainedLookup | None = None
+
+
+def _retained_lookup_refused_reason() -> str | None:
+    """Name a lane that would refuse the optional lookup, before any slot.
+
+    A server profile locked at readonly=1 accepts no client settings, and the
+    optional metadata read is never sent without its server-side time cap.
+    """
+    # Resolve at call time; the selector uses this same process-wide client.
+    from tracer.services.clickhouse.v2 import query_service
+
+    client = query_service.get_v2_query_client()
+    if getattr(client, "server_enforced_readonly", False) and not getattr(
+        client, "allow_query_settings_with_server_readonly", False
+    ):
+        return "server_enforced_readonly"
+    return None
+
+
+def _joined_retained_start(
+    lookup: _RetainedLookup,
+    retained_start: datetime | None,
+    *,
+    window_end: datetime,
+) -> datetime | None:
+    """Reuse another page's global part minimum only where it is exact here.
+
+    A minimum earlier than this window's end belongs to a part inside it too.
+    ``None`` (or a minimum at or after this end) proves an empty window only if
+    the other lookup covered at least this window; otherwise stay lossless.
+    """
+
+    if retained_start is not None and retained_start < window_end:
+        return retained_start
+    if lookup.window_end >= window_end:
+        return None
+    return _FILTER_VALUE_RETAINED_START
+
+
 def _batched_span_system_retained_window_start(
     project_ids,
     *,
@@ -681,8 +732,11 @@ def _batched_span_system_retained_window_start(
 
     Budget for wakeup, seen-state preparation and page admission, then spend
     at most half of what remains. This caps our requested wait; scheduling and
-    queue delays can still reduce the time left at page entry.
+    queue delays can still reduce the time left at page entry. Every span-table
+    first page (fixed-scope and workspace lanes) uses this bounded path.
     """
+    global _retained_lookup
+
     # Anchor before sampling the parent so setup cannot renew either wall.
     lookup_deadline = ReadDeadline.start(ATTRIBUTE_READ_METADATA_TIMEOUT_MS)
     try:
@@ -693,13 +747,73 @@ def _batched_span_system_retained_window_start(
         ) // 2
     except ReadDeadlineExceeded:
         return _FILTER_VALUE_RETAINED_START
-    if budget < 25 or not _RETAINED_LOOKUP_SLOT.acquire(blocking=False):
+    if budget < 25:
+        return _FILTER_VALUE_RETAINED_START
+    try:
+        refused_reason = _retained_lookup_refused_reason()
+    except Exception as exc:  # noqa: BLE001 - optional metadata; epoch is lossless
+        logger.warning(
+            "dashboard_filter_value_retained_window_lookup_failed",
+            error_class=type(exc).__name__,
+        )
+        return _FILTER_VALUE_RETAINED_START
+    if refused_reason is not None:
+        logger.info(
+            "dashboard_filter_value_retained_window_lookup_skipped",
+            reason=refused_reason,
+        )
         return _FILTER_VALUE_RETAINED_START
     lookup_deadline = replace(
         lookup_deadline, total_ms=min(budget, lookup_deadline.total_ms)
     )
 
-    future: Future[datetime | None] = Future()
+    with _RETAINED_LOOKUP_LOCK:
+        joined = _retained_lookup
+        if joined is None:
+            if not _RETAINED_LOOKUP_SLOT.acquire(blocking=False):
+                return _FILTER_VALUE_RETAINED_START
+            leader = _RetainedLookup(Future(), window_end, lookup_deadline)
+            _retained_lookup = leader
+
+    if joined is not None:
+        # Concurrent first pages share the in-flight read instead of skipping
+        # the floor. Never wait past the leader's own waiter: a stalled driver
+        # must not add its allowance to every later first page.
+        try:
+            wait_ms = min(
+                lookup_deadline.remaining_ms(), joined.deadline.remaining_ms()
+            )
+        except ReadDeadlineExceeded:
+            logger.info(
+                "dashboard_filter_value_retained_window_lookup_skipped",
+                reason="expired_lookup_in_flight",
+            )
+            return _FILTER_VALUE_RETAINED_START
+        try:
+            retained_start = _joined_retained_start(
+                joined,
+                joined.future.result(timeout=wait_ms / 1000),
+                window_end=window_end,
+            )
+            return retained_attribute_window_start(
+                retained_start, window_end=window_end
+            )
+        except Exception as exc:  # noqa: BLE001 - optional metadata; epoch is lossless
+            logger.warning(
+                "dashboard_filter_value_retained_window_lookup_failed",
+                error_class=type(exc).__name__,
+            )
+            return _FILTER_VALUE_RETAINED_START
+
+    future = leader.future
+
+    def finish():
+        global _retained_lookup
+
+        with _RETAINED_LOOKUP_LOCK:
+            if _retained_lookup is leader:
+                _retained_lookup = None
+            _RETAINED_LOOKUP_SLOT.release()
 
     def lookup():
         try:
@@ -711,7 +825,7 @@ def _batched_span_system_retained_window_start(
             )
             return selector.retained_window_start(project_ids, window_end=window_end)
         finally:
-            _RETAINED_LOOKUP_SLOT.release()
+            finish()
 
     def run():
         try:
@@ -723,14 +837,18 @@ def _batched_span_system_retained_window_start(
         # Executor workers are joined at interpreter shutdown, even after the
         # request timed out. A late optional read must not hold the process open.
         Thread(target=run, name="retained-window", daemon=True).start()
-    except RuntimeError:  # Thread did not start: no worker owns the slot.
-        _RETAINED_LOOKUP_SLOT.release()
+    except RuntimeError as exc:  # Thread did not start: no worker owns the slot.
+        future.set_exception(exc)
+        finish()
         return _FILTER_VALUE_RETAINED_START
     try:
         retained_start = future.result(timeout=lookup_deadline.remaining_ms() / 1000)
         return retained_attribute_window_start(retained_start, window_end=window_end)
-    except Exception:  # noqa: BLE001 - optional metadata; epoch is lossless
-        logger.warning("dashboard_filter_value_retained_window_lookup_failed")
+    except Exception as exc:  # noqa: BLE001 - optional metadata; epoch is lossless
+        logger.warning(
+            "dashboard_filter_value_retained_window_lookup_failed",
+            error_class=type(exc).__name__,
+        )
         return _FILTER_VALUE_RETAINED_START
 
 
@@ -4128,7 +4246,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             }
                         )
 
-                    selector = None
                     if cursor_token:
                         cursor_state, cursor_window_mode = decode_native_list_cursor(
                             cursor_token,
@@ -4165,23 +4282,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             window_start = cursor_state.window_start
                             window_end = cursor_state.window_end
                     else:
-                        selector = AttributeReadSelector(
-                            typed_only=True,
-                            json_attribute_mode="arrays",
-                            wall_timeout_ms=(
-                                filter_value_deadline.remaining_ms(
-                                    ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
-                                )
-                            ),
-                        )
                         window_end = datetime.now(UTC)
-                        retained_start = selector.retained_window_start(
+                        # Optional metadata: bounded, shared with concurrent
+                        # first pages, and epoch (lossless) when unavailable.
+                        window_start = _batched_span_system_retained_window_start(
                             project_ids,
                             window_end=window_end,
-                        )
-                        window_start = retained_attribute_window_start(
-                            retained_start,
-                            window_end=window_end,
+                            deadline=filter_value_deadline,
                         )
                         segment_end = window_end
                         segment_start = None
@@ -5120,23 +5227,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                         "The continuation cursor is invalid.",
                                     )
                         else:
-                            selector = AttributeReadSelector(
-                                typed_only=True,
-                                json_attribute_mode="arrays",
-                                wall_timeout_ms=(
-                                    filter_value_deadline.remaining_ms(
-                                        ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
-                                    )
-                                ),
-                            )
                             window_end = datetime.now(UTC)
-                            retained_start = selector.retained_window_start(
+                            # Optional metadata: bounded, shared with concurrent
+                            # first pages, and epoch (lossless) when unavailable.
+                            # The page selector below then takes the remaining wall.
+                            window_start = _batched_span_system_retained_window_start(
                                 project_ids,
                                 window_end=window_end,
-                            )
-                            window_start = retained_attribute_window_start(
-                                retained_start,
-                                window_end=window_end,
+                                deadline=filter_value_deadline,
                             )
                             segment_end = window_end
                             segment_start = None
