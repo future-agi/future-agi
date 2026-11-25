@@ -37,7 +37,7 @@ describe("TrialsPicker — which value is chosen", () => {
   });
 });
 
-describe("TrialsPicker — a custom value out of range", () => {
+describe("TrialsPicker with a custom value out of range", () => {
   const openCustom = async (
     user,
     { scenarioCount = 3, onChange = vi.fn() } = {},
