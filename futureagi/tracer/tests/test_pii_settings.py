@@ -67,14 +67,16 @@ class TestGetPiiSettingsForProjects:
         result = get_pii_settings_for_projects({"proj-a"}, "org1")
         assert result["proj-a"] is True
 
-    def test_fail_open_on_db_error(self):
+    def test_db_error_redacts_only_unresolved_projects_without_caching(self):
         from tracer.utils.pii_settings import get_pii_settings_for_projects
 
+        cache.set("pii_redaction:org1:disabled", False, 300)
         with mock.patch("tracer.models.project.Project.objects") as mock_objects:
             mock_objects.filter.side_effect = RuntimeError("DB down")
+            result = get_pii_settings_for_projects({"unknown", "disabled"}, "org1")
 
-            result = get_pii_settings_for_projects({"proj-a"}, "org1")
-            assert result["proj-a"] is False
+        assert result == {"unknown": True, "disabled": False}
+        assert cache.get("pii_redaction:org1:unknown") is None
 
     def test_null_metadata_defaults_false(self):
         from tracer.utils.pii_settings import get_pii_settings_for_projects

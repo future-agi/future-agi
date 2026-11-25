@@ -430,7 +430,22 @@ def scrub_pii_in_value(value: Any, *, strict: bool = False) -> Any:
             pass
         return scrub_pii_in_string(value, strict=strict)
     if isinstance(value, dict):
-        return {k: scrub_pii_in_value(v, strict=strict) for k, v in value.items()}
+        scrubbed = {}
+        next_suffix = {}
+        for key, item in value.items():
+            name = key
+            if isinstance(key, str):
+                base = scrub_pii_in_string(key, strict=strict)
+                name = base
+                if base != key:
+                    # Reserve original names even if their turn comes later.
+                    suffix = next_suffix.get(base, 2)
+                    while name in value or name in scrubbed:
+                        name = f"{base}_{suffix}"
+                        suffix += 1
+                    next_suffix[base] = suffix
+            scrubbed[name] = scrub_pii_in_value(item, strict=strict)
+        return scrubbed
     if isinstance(value, list):
         return [scrub_pii_in_value(item, strict=strict) for item in value]
     return value

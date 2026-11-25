@@ -1,7 +1,7 @@
 """
 Per-project PII redaction settings with Django cache.
 
-Fail-open: if lookup fails, default to False (don't block ingestion).
+If lookup fails, redact projects whose settings could not be resolved.
 """
 
 import structlog
@@ -60,10 +60,10 @@ def get_pii_settings_for_projects(
             cache.set(_cache_key(org_id, name), False, _CACHE_TTL)
 
     except Exception:
-        logger.warning("pii_settings_lookup_failed", exc_info=True)
-        # Fail-open: default to False for all uncached projects
+        logger.warning("pii_settings_lookup_failed")
+        # Redact unresolved projects for this batch only; retry lookup next time.
         for name in uncached:
-            result[name] = False
+            result.setdefault(name, True)
 
     return result
 
