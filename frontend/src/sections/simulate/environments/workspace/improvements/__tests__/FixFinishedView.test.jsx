@@ -65,6 +65,10 @@ vi.mock("../LaunchFixDialog", () => ({
 }));
 
 const axios = (await import("src/utils/axios")).default;
+// Mocked for every test in setupTests.js; a viewer case overrides it.
+const { default: useSimulationAccess } = await import(
+  "../../../hooks/useSimulationAccess"
+);
 const { headline, listResult } = await import("../fixRunView");
 const { default: FixRunPage } = await import("../FixRunPage");
 const { default: FixFinishedView, FinishedActions } = await import(
@@ -717,6 +721,48 @@ describe("FixFinishedView", () => {
         name: "Run Epoch again",
       }),
     ).toHaveAttribute("href", "/dashboard/error-feed/S-1A2B3C4D");
+  });
+
+  it("keeps an issue's rerun on an epoch that found no safe improvement", () => {
+    view(
+      fixOf("fix-no-improvement", {
+        issue: { job_id: "j", cluster_id: "S-1A2B3C4D", project_id: "p" },
+      }),
+    );
+    expect(
+      within(screen.getByTestId("epoch-ending")).getAllByRole("link", {
+        name: "Run Epoch again",
+      }),
+    ).toHaveLength(1);
+    // From a run, What to try next has the one way on.
+    expect(
+      screen.getAllByRole("button", { name: /^Run (Epoch again|a new epoch)$/ }),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    ["a failed epoch's Retry", "fix-failed", {}, /^Retry Epoch/],
+    ["a stopped epoch's rerun", "fix-stopped", {}, "Run Epoch again"],
+    ["a no-safe epoch's new epoch", "fix-no-improvement", {}, "Run a new epoch"],
+  ])("locks %s for a viewer, with why", async (_, id, extra, name) => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
+    });
+    try {
+      view(fixOf(id, extra));
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      await userEvent.setup().hover(button.parentElement);
+      expect(
+        await screen.findByText("You don't have permission to start runs."),
+      ).toBeInTheDocument();
+    } finally {
+      vi.mocked(useSimulationAccess).mockReturnValue({
+        canEdit: true,
+        canRun: true,
+      });
+    }
   });
 
   it("offers no way on when the run it started from is gone", () => {
