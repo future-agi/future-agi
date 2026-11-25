@@ -284,6 +284,26 @@ def test_health_reads_clamp_and_restore_native_ping_timeout(fails):
 
 
 @pytest.mark.unit
+def test_health_reads_refuse_a_retained_lookup_before_touching_the_connection():
+    from tracer.services.clickhouse.health_client import HealthCheckClient
+
+    # The health read takes the base read's arguments; a retained lookup's
+    # expiry is not a health budget, so it is refused, never silently dropped.
+    driver = Mock()
+    with pytest.raises(ValueError, match="retained"):
+        HealthCheckClient._execute_native_read_with_remaining_timeout(
+            driver,
+            "SELECT 1",
+            {},
+            query_settings=None,
+            started_at=monotonic(),
+            timeout_ms=1000,
+            retained_until=monotonic() + 1,
+        )
+    driver.execute.assert_not_called()
+
+
+@pytest.mark.unit
 def test_health_progress_packets_share_one_deadline(monkeypatch):
     from tracer.services.clickhouse import health_client
 
