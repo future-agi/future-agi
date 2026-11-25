@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertContractedResponse,
   findOpenApiEndpoint,
   shouldEnforceApiResponseContracts,
   validateContractedRequestConfig,
@@ -11,6 +12,163 @@ import { OPENAPI_CONTRACT } from "../openapi-contract.generated";
 describe("OpenAPI runtime contract", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it("keeps the metrics rollout capability typed and default-OFF", () => {
+    expect(
+      OPENAPI_CONTRACT.definitions.CapabilitiesResponse.properties
+        .metrics_enabled,
+    ).toMatchObject({ type: "boolean", default: false });
+  });
+
+  it("does not expose the retired comparison route while keeping saved-run reads", () => {
+    const runId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
+    expect(
+      findOpenApiEndpoint(
+        `/tracer/derived-metric-runs/${runId}/compare/`,
+        "get",
+      ),
+    ).toBeNull();
+    expect(
+      findOpenApiEndpoint(`/tracer/derived-metric-runs/${runId}/`, "get"),
+    ).toMatchObject({
+      template: "/tracer/derived-metric-runs/{id}/",
+      method: "get",
+    });
+  });
+
+  it("accepts a run seed as the decimal text a run shows, past what a JSON number keeps", () => {
+    const run = (seed) =>
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/run/",
+        method: "post",
+        data: { scenario_ids: ["refund"], trials: 1, seed },
+      });
+    expect(run("42")).toMatchObject({ ok: true });
+    expect(run("7902065059689103066")).toMatchObject({ ok: true });
+    // Past 2^63 - 1 it is still sent: the server refuses it with its own message, never a silent client gate.
+    expect(run("12345678901234567890123")).toMatchObject({ ok: true });
+  });
+
+  it("sends an actor check whatever id was typed, so the check itself says what is wrong with it", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-validation/",
+        method: "post",
+        data: {
+          op: "create",
+          changes: { name: "Priya Raman" },
+          id: "a".repeat(70),
+        },
+      }),
+    ).toMatchObject({ ok: true });
+    // A value over a field's bound reaches the check too, which says so on that field.
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-validation/",
+        method: "post",
+        data: {
+          op: "create",
+          changes: { name: "x".repeat(501), max_turns: 0 },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts typed Error Feed thresholds in create, update and list contracts", () => {
+    const alertId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/alerts/",
+        method: "post",
+        data: {
+          kind: "error_feed",
+          trigger_type: "severity_reached",
+          severity_threshold: "high",
+        },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: `/tracer/alerts/error_feed/${alertId}/`,
+        method: "patch",
+        data: { trigger_type: "occurrences_crossed", occurrence_threshold: 7 },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/alerts/",
+        method: "post",
+        data: { kind: "error_feed", occurrence_threshold: "7" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateContractedResponse({
+        config: { url: "/tracer/alerts/?kind=error_feed", method: "get" },
+        status: 200,
+        data: {
+          status: true,
+          result: {
+            alerts: [
+              {
+                id: alertId,
+                kind: "error_feed",
+                name: "Occurrence alert",
+                enabled: true,
+                project_id: null,
+                trigger_type: "occurrences_crossed",
+                occurrence_threshold: 7,
+                last_triggered_at: null,
+                failure_reason: null,
+              },
+            ],
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts an Observe eval log's 16-hex collector span id (TH-4804)", () => {
+    const traceId = "22222222-2222-4222-8222-222222222222";
+    const spanId = "f9da550bd36da78b";
+    const response = (sourceNavigation) => ({
+      config: { url: "/model-hub/get-eval-logs", method: "get" },
+      status: 200,
+      data: {
+        status: true,
+        result: {
+          log_id: "10000000-0000-4000-8000-000000000001",
+          created_at: "2026-11-11T22:40:00Z",
+          evaluation_id: "10000000-0000-4000-8000-000000000001",
+          source: "Tracer",
+          required_keys: ["output"],
+          values: { output: "stored input" },
+          output: { output: 1, reason: "judged the span" },
+          input_data_types: { output: "text" },
+          span_id: spanId,
+          trace_id: traceId,
+          ...sourceNavigation,
+        },
+      },
+    });
+
+    expect(validateContractedResponse(response())).toMatchObject({
+      ok: true,
+    });
+    expect(
+      validateContractedResponse(
+        response({
+          source_navigation: {
+            status: "ready",
+            kind: "trace",
+            project_id: "33333333-3333-4333-8333-333333333333",
+            trace_id: traceId,
+            span_id: spanId,
+            retryable: false,
+          },
+        }),
+      ),
+    ).toMatchObject({ ok: true });
   });
 
   it("keeps response contracts warn-only unless explicitly promoted to strict", () => {
@@ -87,6 +245,60 @@ describe("OpenAPI runtime contract", () => {
     expect(result.error.message).toContain(
       "request body contract validation failed",
     );
+  });
+
+  it("accepts an actor record of any fields on add and edit", () => {
+    const base =
+      "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actors/";
+    const manager = {
+      id: "manager",
+      name: "Priya Raman",
+      role: "store manager",
+      permitted_actions: ["refunds.approve"],
+      constraints: { may_agree: ["Refunds up to $500"], private: [] },
+      activation: {
+        trigger: { kind: "on_tool", tool: "refunds.request_approval" },
+        fallback: "silent",
+      },
+      loudness_ratio: null,
+    };
+    const colleague = {
+      id: "colleague",
+      name: "Jordan",
+      channel: "audio_mix",
+      loudness_ratio: 0.5,
+    };
+    for (const [url, method, actor] of [
+      [base, "post", manager],
+      [`${base}manager/`, "put", manager],
+      [base, "post", colleague],
+    ]) {
+      expect(
+        validateContractedRequestConfig({
+          url,
+          method,
+          data: { actor, expected_revision: 0 },
+        }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
+  it("accepts actor limits as numbers, nulls and a model name", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-limits/",
+        method: "put",
+        data: {
+          limits: {
+            live_turns_per_actor: 7,
+            max_active: null,
+            max_messages: 12,
+            model: "gemini-3.7-flash",
+          },
+          expected_revision: 3,
+        },
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it("accepts provider-ID harness requests without a source upload", () => {
@@ -476,6 +688,139 @@ describe("OpenAPI runtime contract", () => {
       "response contract validation failed",
     );
     expect(result.error.message).toContain("result");
+  });
+
+  it("skips an empty 204 on an endpoint that only declares a 200, in strict mode too", () => {
+    vi.stubEnv("VITE_API_CONTRACT_STRICT_RESPONSES", "true");
+    const config = {
+      url: "/simulate/v3/call-executions/call-1/workers/",
+      method: "get",
+    };
+    const empty = { config, status: 204, data: "" };
+    expect(assertContractedResponse(empty)).toBe(empty);
+    // A 204 that does carry a body is still checked, as is an empty 200.
+    expect(
+      validateContractedResponse({ config, status: 204, data: { workers: 1 } })
+        .ok,
+    ).toBe(false);
+    expect(
+      validateContractedResponse({ config, status: 200, data: "" }).ok,
+    ).toBe(false);
+  });
+
+  it("accepts a call's worker record with text payloads and the parts it did not see", () => {
+    const call = {
+      seq: 2,
+      type: "tool_call",
+      worker_id: "r/lookup",
+      tool: "get_order",
+      status: "error",
+      input: "order 1042",
+      output: "store unavailable",
+      at: "2026-10-31T11:59:57",
+      attribution: "reported",
+    };
+    const handOff = {
+      seq: 1,
+      type: "delegated",
+      worker_id: "r/lookup",
+      task: "find order 1042",
+      at: "2026-10-31T11:59:56",
+      attribution: "reported",
+    };
+    const record = {
+      workers: [],
+      events: [handOff, call],
+      coordinator: null,
+      collected_at: "2026-10-31T12:00:00Z",
+      project_id: null,
+      steps: [
+        {
+          kind: "handoff",
+          key: 1,
+          parent: null,
+          depth: 1,
+          worker_id: "r/lookup",
+          handoff: handOff,
+          returned: null,
+          turn: 1,
+          order: 1,
+          relationship: "observed",
+        },
+        {
+          kind: "handoff",
+          key: 3,
+          parent: null,
+          depth: 1,
+          worker_id: "r/lookup",
+          handoff: null,
+          returned: null,
+          turn: null,
+          order: 1,
+          relationship: "unknown",
+        },
+        {
+          kind: "tool_call",
+          key: 2,
+          parent: 1,
+          depth: 1,
+          worker_id: "r/lookup",
+          call,
+          turn: 1,
+          order: 2,
+          relationship: "observed",
+        },
+      ],
+      turns: [
+        {
+          turn: 1,
+          request: null,
+          response: null,
+          children: [1],
+          handoffs: [1],
+          calls_outside: 0,
+          expects_messages: true,
+        },
+        {
+          turn: null,
+          request: null,
+          response: null,
+          children: [3],
+          handoffs: [3],
+          calls_outside: 0,
+          expects_messages: false,
+        },
+      ],
+      depth: 1,
+      parallel: 0,
+      asynchronous: 0,
+      overlap_unknown: false,
+      worker_depths: {},
+      counts: {
+        hand_offs: 2,
+        workers: 1,
+        finished: 0,
+        did_not_finish: 2,
+        passed: 0,
+        cut_off: 0,
+      },
+      cut_off: false,
+      beyond_boundary: false,
+      placements: [],
+      stopped_by_user: false,
+      pending: false,
+      state: "recorded",
+    };
+    const result = validateContractedResponse({
+      config: {
+        url: "/simulate/v3/call-executions/call-1/workers/",
+        method: "get",
+      },
+      status: 200,
+      data: record,
+    });
+    expect(result.error?.message).toBeUndefined();
+    expect(result.ok).toBe(true);
   });
 
   it("validates default error responses instead of falling back to success schemas", () => {

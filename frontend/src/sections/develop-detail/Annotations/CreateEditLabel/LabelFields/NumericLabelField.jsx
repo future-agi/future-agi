@@ -12,7 +12,6 @@ const styles = {
       height: 18,
       backgroundColor: "action.hover",
       border: "3px solid var(--bg-paper)",
-      boxShadow: "0px 2px 4px rgba(0, 0, 0, 0.1)",
       "&:hover": {
         boxShadow: "none",
       },

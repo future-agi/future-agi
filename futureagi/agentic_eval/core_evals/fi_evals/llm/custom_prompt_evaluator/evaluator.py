@@ -36,6 +36,8 @@ class CustomPromptEvaluator(LLM):
     This evaluator can be configured with custom examples and instructions.
     """
 
+    _fractional_score_threshold: float | None = None
+
     def __init__(
         self,
         rule_prompt: str,
@@ -59,6 +61,9 @@ class CustomPromptEvaluator(LLM):
         self._output_type = output_type
         self._model = model
         self.system_template_value = ""  # Store the template value for use in messages
+        if kwargs.get("fractional_score") and output_type in ("score", "numeric"):
+            self._fractional_score_threshold = float(kwargs.get("pass_threshold", 0.5))
+            self.system_template_value = "a numeric fraction between 0 and 1"
         self._choices = choices
         self._multi_choice = multi_choice
         self._choice_scores = kwargs.get("choice_scores")
@@ -134,6 +139,12 @@ class CustomPromptEvaluator(LLM):
                 "- explanation: An explanation of why the result is Pass or Fail.\n"
             )
         elif self._output_type in ("score", "numeric"):
+            if self._fractional_score_threshold is not None:
+                return (
+                    judge_preamble + "Return a JSON object with two fields:\n"
+                    "- explanation: Show what counts in the numerator and denominator according to the rubric.\n"
+                    "- result: The resulting fraction as a number between 0 and 1. Do not round it to tenths."
+                )
             self.system_template_value = (
                 "score in 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0"
             )
@@ -300,7 +311,7 @@ class CustomPromptEvaluator(LLM):
         )
 
         # Create template context from kwargs with context windowing for large values
-        from .context_window import fit_to_context
+        from .context_window import fit_to_context_with_metadata
 
         template_context = {}
         for key in required_keys:
@@ -308,15 +319,23 @@ class CustomPromptEvaluator(LLM):
                 raise ValueError(f"Missing required key in kwargs: {key}")
             value = kwargs[key]
             # Apply context windowing for large values (traces, spans, JSON blobs)
-            if isinstance(value, str) and len(value) > _MAX_CONTEXT_CHARS:
-                value = fit_to_context(
+            original_length = 0
+            if isinstance(value, str):
+                original_length = len(value)
+            elif isinstance(value, (dict, list)):
+                original_length = len(json.dumps(value, default=str))
+            if original_length > _MAX_CONTEXT_CHARS:
+                formatted = fit_to_context_with_metadata(
                     value, max_total_chars=_MAX_CONTEXT_CHARS, label=key
                 )
-            elif isinstance(value, (dict, list)):
-                serialized = json.dumps(value, default=str)
-                if len(serialized) > _MAX_CONTEXT_CHARS:
-                    value = fit_to_context(
-                        value, max_total_chars=_MAX_CONTEXT_CHARS, label=key
+                value = formatted.text
+                if formatted.truncated:
+                    logger.warning(
+                        "custom_prompt_eval_input_truncated",
+                        field=key,
+                        original_length=original_length,
+                        truncated_length=len(value),
+                        limit=_MAX_CONTEXT_CHARS,
                     )
             template_context[key] = value
 
@@ -397,20 +416,25 @@ class CustomPromptEvaluator(LLM):
         # Inject row_context when data injection is enabled (no mapping required)
         row_context = kwargs.get("row_context")
         if row_context and not required_keys:
-            from .context_window import fit_row_to_context
-
             rendered_prompt += "\n\n## Data\n"
             if isinstance(row_context, (dict, list)):
-                rendered_prompt += fit_row_to_context(
-                    row_context, max_chars=_MAX_CONTEXT_CHARS
-                )
+                original_length = len(json.dumps(row_context, default=str))
             else:
-                ctx_str = str(row_context)
-                if len(ctx_str) > _MAX_CONTEXT_CHARS:
-                    ctx_str = fit_to_context(
-                        ctx_str, max_total_chars=_MAX_CONTEXT_CHARS, label="data"
-                    )
-                rendered_prompt += ctx_str
+                row_context = str(row_context)
+                original_length = len(row_context)
+            formatted = fit_to_context_with_metadata(
+                row_context, max_total_chars=_MAX_CONTEXT_CHARS
+            )
+            ctx_str = formatted.text
+            if formatted.truncated:
+                logger.warning(
+                    "custom_prompt_eval_input_truncated",
+                    field="row_context",
+                    original_length=original_length,
+                    truncated_length=len(ctx_str),
+                    limit=_MAX_CONTEXT_CHARS,
+                )
+            rendered_prompt += ctx_str
 
         logger.info(
             "custom_prompt_eval_template_rendered",
@@ -439,11 +463,16 @@ class CustomPromptEvaluator(LLM):
         )
 
         gt_blocks = kwargs.get("ground_truth_blocks") or []
+        feedback_blocks = kwargs.get("few_shots") or []
+        if isinstance(feedback_blocks, str):
+            feedback_blocks = [{"type": "text", "text": feedback_blocks}]
 
-        # GT exemplars first, then the case text, then case media.
-        if media_blocks or gt_blocks:
+        if media_blocks or gt_blocks or feedback_blocks:
             user_content = (
-                gt_blocks + [{"type": "text", "text": user_text}] + media_blocks
+                gt_blocks
+                + feedback_blocks
+                + [{"type": "text", "text": user_text}]
+                + media_blocks
             )
         else:
             user_content = user_text
@@ -518,9 +547,9 @@ class CustomPromptEvaluator(LLM):
             provider=self.provider,
             message_count=len(messages),
             has_media=bool(media_blocks),
-            detected_modalities=list(detected_media_types.values())
-            if detected_media_types
-            else [],
+            detected_modalities=(
+                list(detected_media_types.values()) if detected_media_types else []
+            ),
         )
 
         try:
@@ -591,9 +620,9 @@ class CustomPromptEvaluator(LLM):
                 output_type=self._output_type,
                 message_count=len(messages),
                 has_media=bool(media_blocks),
-                detected_modalities=list(detected_media_types.values())
-                if detected_media_types
-                else [],
+                detected_modalities=(
+                    list(detected_media_types.values()) if detected_media_types else []
+                ),
                 required_keys=required_keys,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
@@ -662,7 +691,11 @@ class CustomPromptEvaluator(LLM):
             "name": self.name,
             "display_name": self.display_name,
             "data": {"result": result_value},
-            "failure": True if result_value == "Fail" else False,
+            "failure": (
+                result_value < self._fractional_score_threshold
+                if self._fractional_score_threshold is not None
+                else result_value == "Fail"
+            ),
             "metadata": metadata,
             "reason": chat_completion_response_json["explanation"],
             "runtime": eval_runtime_ms,

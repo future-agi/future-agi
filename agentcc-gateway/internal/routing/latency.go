@@ -26,7 +26,7 @@ func NewLatencyTracker(alpha float64) *LatencyTracker {
 
 // Record updates the EWMA for a provider with a new latency observation.
 func (t *LatencyTracker) Record(providerID string, d time.Duration) {
-	ms := float64(d.Milliseconds())
+	ms := float64(d) / float64(time.Millisecond)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -35,6 +35,23 @@ func (t *LatencyTracker) Record(providerID string, d time.Duration) {
 	} else {
 		t.ewma[providerID] = ms
 	}
+}
+
+// RecordFailure folds a failed call's duration into the EWMA as
+// max(elapsed, current average): a slow failure pushes the average up, so
+// least-latency moves off a provider that starts failing, while a fast
+// failure never makes a provider look faster than it is.
+func (t *LatencyTracker) RecordFailure(providerID string, elapsed time.Duration) {
+	ms := float64(elapsed) / float64(time.Millisecond)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	prev, ok := t.ewma[providerID]
+	if !ok {
+		t.ewma[providerID] = ms
+		return
+	}
+	t.ewma[providerID] = t.alpha*math.Max(ms, prev) + (1-t.alpha)*prev
 }
 
 // Get returns the current EWMA latency for a provider in milliseconds.

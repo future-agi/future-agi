@@ -19,6 +19,8 @@ from django.db.models.lookups import GreaterThan, Regex
 from django.db.models.sql.datastructures import BaseTable
 
 NUMERIC_JSON_PATTERN = r"^-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+# A score's text after ``lower(btrim(...))``, which may carry a plus sign.
+NUMERIC_TEXT_PATTERN = r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
 
 
 class _LateralProjection(BaseTable):
@@ -91,12 +93,7 @@ class NormalizedEvalNumber(Func):
             )
         expression = Case(
             When(
-                Regex(
-                    normalized,
-                    Value(
-                        r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
-                    ),
-                ),
+                Regex(normalized, Value(NUMERIC_TEXT_PATTERN)),
                 then=converted,
             ),
             output_field=FloatField(),

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,12 +8,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // decision under test) stays real — it lives in its own `callRouting` module.
 const useCallDetail = vi.fn();
 const useCallExecutionV3Detail = vi.fn();
+const useCallTraces = vi.fn(() => ({
+  projectId: null,
+  traces: [],
+  isError: false,
+}));
+const useHasWorkers = vi.fn(() => true);
+const useTrialRoutes = vi.fn(() => ({ data: undefined }));
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     useCallDetail: (...a) => useCallDetail(...a),
     useCallExecutionV3Detail: (...a) => useCallExecutionV3Detail(...a),
+    useCallTraces: (...a) => useCallTraces(...a),
+    useHasWorkers: (...a) => useHasWorkers(...a),
+    useTrialRoutes: (...a) => useTrialRoutes(...a),
   };
 });
 
@@ -30,14 +40,32 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
     hidePathTabs,
     showFixWithFalcon,
     hideAnnotationTab,
+    leftPanelTabs,
+    leftPanelTab,
+    onLeftPanelTabChange,
+    wide,
   }) => (
     <div
       data-testid="voice-drawer"
+      data-wide={String(!!wide)}
+      data-left-tabs={(leftPanelTabs ?? []).map((tab) => tab.label).join(",")}
       data-hide-path-tabs={String(!!hidePathTabs)}
       data-show-fix-with-falcon={String(showFixWithFalcon)}
       data-hide-annotation-tab={String(!!hideAnnotationTab)}
+      data-eval-statuses={JSON.stringify(
+        Object.fromEntries(
+          Object.entries(data?.eval_metrics ?? {}).map(([id, row]) => [
+            id,
+            row?.status ?? null,
+          ]),
+        ),
+      )}
     >
       voice:{data?.id}:{data?.transcript?.map((turn) => turn.content).join("|")}
+      <button type="button" onClick={() => onLeftPanelTabChange("workers")}>
+        choose participants
+      </button>
+      {leftPanelTabs?.find((tab) => tab.value === leftPanelTab)?.content}
       <button type="button" onClick={onPrev} disabled={!hasPrev}>
         prev
       </button>
@@ -45,6 +73,35 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
         next
       </button>
     </div>
+  ),
+}));
+
+// Remembers the call it mounted for, so a panel reused across calls shows up.
+vi.mock("../CallWorkersPanel", async () => {
+  const { useState } = await import("react");
+  return {
+    default: function WorkersPanelStub({ callExecutionId, callStartedAt }) {
+      const [mountedFor] = useState(callExecutionId);
+      return (
+        <div
+          data-testid="workers-panel"
+          data-call-started={callStartedAt ?? ""}
+        >
+          {mountedFor}
+        </div>
+      );
+    },
+  };
+});
+
+vi.mock("../CallTracesPanel", () => ({
+  default: ({ projectId, traces, isError }) => (
+    <div
+      data-testid="call-traces"
+      data-project-id={projectId ?? ""}
+      data-count={traces.length}
+      data-error={String(isError)}
+    />
   ),
 }));
 
@@ -132,6 +189,39 @@ describe("isVoiceCall", () => {
   });
 });
 
+describe("CallDrawer — trial picker", () => {
+  it("lists a multi-agent call's trials from its trial routes, and opens one that is off the table's page", async () => {
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
+    useHasWorkers.mockReturnValue(true);
+    useTrialRoutes.mockReturnValue({
+      data: {
+        trials: [
+          { number: 1, call_execution_id: "chat-1", result: "passed" },
+          { number: 2, call_execution_id: "off-page", result: "failed" },
+        ],
+      },
+    });
+    const onOpenTrial = vi.fn();
+    render(
+      <CallDrawer
+        task={{ ...chatTask, sourceScenarioKey: "refund" }}
+        executionId="ex1"
+        trials={[{ id: "chat-1", trialIndex: 1, status: "passed" }]}
+        onPickTrial={vi.fn()}
+        onOpenTrial={onOpenTrial}
+        agentType="text"
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Trial 2, Failed" }));
+    expect(onOpenTrial).toHaveBeenCalledWith("off-page", null);
+    useTrialRoutes.mockReturnValue({ data: undefined });
+  });
+});
+
 describe("CallDrawer — chat branch", () => {
   it("renders the ported drawer with transcript, analytics and the failed-eval banner", async () => {
     useCallDetail.mockReturnValue({
@@ -162,9 +252,9 @@ describe("CallDrawer — chat branch", () => {
     // The reason shows once in the failed-eval banner already.
     expect(screen.getAllByText("wrong amount")).toHaveLength(1);
     await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
-    expect(screen.getAllByText("Failed")).toHaveLength(2);
+    expect(screen.getAllByText("Failed")).toHaveLength(3);
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
-    expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fix with AI")).not.toBeInTheDocument();
     expect(screen.queryByText("Add Evals")).not.toBeInTheDocument();
     await user.click(screen.getByText("Refund correctness"));
     // The expanded eval adds its explanation — banner + drawer = two.
@@ -286,9 +376,17 @@ describe("CallDrawer — chat branch", () => {
 // `mapCallRow`, the real drawer.
 describe("CallDrawer — chat prev/next", () => {
   const renderChat = (props = {}) => {
-    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
     return render(
-      <CallDrawer task={chatTask} agentType="text" onClose={() => {}} {...props} />,
+      <CallDrawer
+        task={chatTask}
+        agentType="text"
+        onClose={() => {}}
+        {...props}
+      />,
     );
   };
 
@@ -298,8 +396,12 @@ describe("CallDrawer — chat prev/next", () => {
     const onNext = vi.fn();
     renderChat({ hasPrev: true, hasNext: false, onPrev, onNext });
 
-    expect(screen.getByRole("button", { name: "Next conversation (↓)" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Previous conversation (↑)" }));
+    expect(
+      screen.getByRole("button", { name: "Next conversation (↓)" }),
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "Previous conversation (↑)" }),
+    );
     expect(onPrev).toHaveBeenCalledTimes(1);
     expect(onNext).not.toHaveBeenCalled();
   });
@@ -326,21 +428,18 @@ describe("CallDrawer — chat prev/next", () => {
   it.each([
     ["the transcript", () => screen.getByText("Refund issued.")],
     ["the analytics pane", () => screen.getByText("Words")],
-  ])(
-    "leaves ↑/↓ to scroll %s instead of stepping",
-    (_pane, target) => {
-      const onNext = vi.fn();
-      const onPrev = vi.fn();
-      renderChat({ hasPrev: true, hasNext: true, onPrev, onNext });
+  ])("leaves ↑/↓ to scroll %s instead of stepping", (_pane, target) => {
+    const onNext = vi.fn();
+    const onPrev = vi.fn();
+    renderChat({ hasPrev: true, hasNext: true, onPrev, onNext });
 
-      // fireEvent returns false when the default (the browser's scroll) was
-      // prevented.
-      expect(fireEvent.keyDown(target(), { key: "ArrowDown" })).toBe(true);
-      expect(fireEvent.keyDown(target(), { key: "ArrowUp" })).toBe(true);
-      expect(onNext).not.toHaveBeenCalled();
-      expect(onPrev).not.toHaveBeenCalled();
-    },
-  );
+    // fireEvent returns false when the default (the browser's scroll) was
+    // prevented.
+    expect(fireEvent.keyDown(target(), { key: "ArrowDown" })).toBe(true);
+    expect(fireEvent.keyDown(target(), { key: "ArrowUp" })).toBe(true);
+    expect(onNext).not.toHaveBeenCalled();
+    expect(onPrev).not.toHaveBeenCalled();
+  });
 
   it("says conversation, not call — this is a chat", () => {
     useCallDetail.mockReturnValue({
@@ -355,8 +454,12 @@ describe("CallDrawer — chat prev/next", () => {
 
   it("disables both arrows when nothing is passed", () => {
     renderChat();
-    expect(screen.getByRole("button", { name: "Previous conversation (↑)" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next conversation (↓)" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Previous conversation (↑)" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Next conversation (↓)" }),
+    ).toBeDisabled();
   });
 });
 
@@ -475,7 +578,171 @@ describe("CallDrawer — the run-detail endpoint's removed verdicts, through to 
   });
 });
 
+describe("CallDrawer — chat evals that have no verdict", () => {
+  const scoringPayload = {
+    ...RAW_CHAT_PAYLOAD,
+    eval_metrics: { cfg_t: {}, cfg_f: {} },
+    evaluations: [
+      {
+        id: "cfg_t",
+        name: "Resolution",
+        value: null,
+        reason: "Scoring timed out: no progress for 10 minutes.",
+        status: "timed_out",
+      },
+      {
+        id: "cfg_f",
+        name: "Policy",
+        value: null,
+        reason: "Model quota hit",
+        status: "failed",
+      },
+    ],
+  };
+
+  it("lists a timed-out and a failed eval from the call detail", async () => {
+    useCallDetail.mockReturnValue({
+      callDetail: mapCallDetail(scoringPayload),
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
+    await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
+    expect(screen.getByText("Timed out")).toBeInTheDocument();
+    expect(screen.getByText("Error")).toBeInTheDocument();
+  });
+
+  it("marks a failed eval from the list row while the detail loads", async () => {
+    useCallDetail.mockReturnValue({ callDetail: null, isLoading: true });
+    const user = userEvent.setup();
+    const task = {
+      ...chatTask,
+      evalResults: mapCallRow(scoringPayload, [
+        { id: "cfg_t", type: "evaluation" },
+        { id: "cfg_f", type: "evaluation" },
+      ]).evalResults,
+    };
+    render(<CallDrawer task={task} agentType="text" onClose={() => {}} />);
+    await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
+    expect(screen.getByText("Timed out")).toBeInTheDocument();
+    expect(screen.getByText("Error")).toBeInTheDocument();
+  });
+});
+
 describe("CallDrawer — voice branch", () => {
+  it("times a voice call's participants from the call's start, so a step seeks the recording to its moment", async () => {
+    const user = userEvent.setup();
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "v-start",
+        transcript: [],
+        evaluations: [],
+        start_time: "2026-09-29T11:35:29.394000Z",
+      },
+      isPending: false,
+    });
+    useHasWorkers.mockReturnValue(true);
+    render(
+      <CallDrawer
+        task={{ id: "v-start", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "choose participants" }),
+    );
+    expect(screen.getByTestId("workers-panel")).toHaveAttribute(
+      "data-call-started",
+      "2026-09-29T11:35:29.394000Z",
+    );
+  });
+
+  it("keeps a multi-agent call's width while the next call's record loads", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "v1", transcript: [], evaluations: [] },
+      isPending: false,
+    });
+    useHasWorkers.mockReturnValue(true);
+    const { rerender } = render(
+      <CallDrawer
+        task={{ id: "v1", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-wide",
+      "true",
+    );
+    useHasWorkers.mockReturnValue(undefined);
+    rerender(
+      <CallDrawer
+        task={{ id: "v2", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-wide",
+      "true",
+    );
+    useHasWorkers.mockReturnValue(true);
+  });
+
+  it("says why a held voice trial was not graded above the voice drawer", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-held", transcript: [], evaluations: [] },
+      isPending: false,
+    });
+    const reason =
+      "Inconclusive, a problem of the scenario, not the agent: Rebuild the environment to enforce them.";
+    render(
+      <CallDrawer
+        task={{
+          id: "voice-held",
+          simulationCallType: "voice",
+          outcomeReason: reason,
+        }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByTestId("voice-drawer")).toBeInTheDocument();
+  });
+
+  it("hands the voice drawer each unscored eval's status", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "voice-s",
+        transcript: [],
+        eval_metrics: { cfg_t: {}, cfg_ok: { name: "Tone", value: 0.9 } },
+        evaluations: [
+          {
+            id: "cfg_t",
+            name: "Resolution",
+            reason: "late",
+            status: "timed_out",
+          },
+          { id: "cfg_p", name: "Policy", reason: "", status: "pending" },
+          { id: "cfg_ok", name: "Tone", score: 0.9, status: "succeeded" },
+        ],
+      },
+      isPending: false,
+    });
+    render(
+      <CallDrawer
+        task={{ id: "voice-s", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(
+      JSON.parse(screen.getByTestId("voice-drawer").dataset.evalStatuses),
+    ).toEqual({ cfg_t: "timed_out", cfg_ok: null, cfg_p: "pending" });
+  });
+
   it("routes a voice call to the real product voice drawer, fed the call detail", () => {
     useCallExecutionV3Detail.mockReturnValue({
       data: {
@@ -513,7 +780,7 @@ describe("CallDrawer — voice branch", () => {
       "data-hide-path-tabs",
       "true",
     );
-    // Fix with Falcon isn't wired into the environment flow yet.
+    // Fix with AI isn't wired into the environment flow yet.
     expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
       "data-show-fix-with-falcon",
       "false",
@@ -586,4 +853,466 @@ describe("CallDrawer — voice branch", () => {
     expect(screen.getByRole("button", { name: "prev" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "next" })).toBeDisabled();
   });
+});
+
+describe("CallDrawer — the call's traces", () => {
+  const ROWS = [{ traceId: "trace-1", name: "book_ride" }];
+
+  afterEach(() => {
+    useHasWorkers.mockReturnValue(true);
+    useCallTraces.mockReturnValue({
+      projectId: null,
+      traces: [],
+      isError: false,
+    });
+  });
+
+  it("says why a voice call kept no transcript, from the server's reason", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "voice-1",
+        transcript: [],
+        processing_skipped: true,
+        processing_skip_reason: "Call transcript is unavailable.",
+      },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByText("Call transcript is unavailable."),
+    ).toBeInTheDocument();
+  });
+
+  it("gives a voice call no World state tab while actors are off", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [], actors_enabled: false },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces",
+    );
+  });
+
+  it("gives a voice call with shared records a World state tab while actors are off", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "voice-1",
+        transcript: [],
+        actors_enabled: false,
+        trial_state: {
+          shared_records: [
+            {
+              key: "order_id=1042",
+              argument: "order_id",
+              value: "1042",
+              actions: [],
+            },
+          ],
+        },
+      },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces,World state",
+    );
+  });
+
+  it("gives a voice call no World state tab until the server says actors are on", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [] },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces",
+    );
+  });
+
+  it("gives a voice call a Traces tab beside the transcript, read for that call", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
+      isPending: false,
+    });
+    useCallTraces.mockReturnValue({
+      projectId: "hidden-project",
+      traces: ROWS,
+      isError: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(useCallTraces).toHaveBeenLastCalledWith("exec-1", "voice-1");
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces,Participants,World state",
+    );
+  });
+
+  it("keeps the tab when the read fails, so the panel can say so", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
+      isPending: false,
+    });
+    useCallTraces.mockReturnValue({
+      projectId: null,
+      traces: [],
+      isError: true,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces,Participants,World state",
+    );
+  });
+
+  it("gives a voice call a Traces tab even when the run has nothing to read", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(useCallTraces).toHaveBeenLastCalledWith(null, "voice-1");
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces,Participants,World state",
+    );
+  });
+
+  it("gives a chat a Traces tab beside the transcript that opens the call's traces", async () => {
+    const user = userEvent.setup();
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
+    useCallTraces.mockReturnValue({
+      projectId: "hidden-project",
+      traces: ROWS,
+      isError: false,
+    });
+
+    render(
+      <CallDrawer
+        task={chatTask}
+        executionId="exec-1"
+        agentType="text"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(useCallTraces).toHaveBeenLastCalledWith("exec-1", "chat-1");
+    expect(screen.queryByTestId("call-traces")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Traces" }));
+
+    const panel = screen.getByTestId("call-traces");
+    expect(panel).toHaveAttribute("data-project-id", "hidden-project");
+    expect(panel).toHaveAttribute("data-count", "1");
+  });
+
+  it("gives a chat a Traces tab even when the run has nothing to read", () => {
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
+
+    render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
+
+    expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Traces" })).toBeInTheDocument();
+  });
+
+  it("has no Participants tab for a call that handed no work to other agents", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
+      isPending: false,
+    });
+    useCallDetail.mockReturnValue({
+      callDetail: { ...CHAT_DETAIL, actorsEnabled: true },
+      isLoading: false,
+    });
+
+    const { unmount } = render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces,World state",
+    );
+    unmount();
+    render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
+    expect(screen.getByRole("tab", { name: "Traces" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Participants" })).toBeNull();
+    useHasWorkers.mockReturnValue(true);
+  });
+
+  describe("stepping to another call with Participants chosen", () => {
+    afterEach(() => useHasWorkers.mockReturnValue(true));
+    const voiceTask = (id) => ({ id, simulationCallType: "voice" });
+    const leftTabs = () =>
+      screen.getByTestId("voice-drawer").getAttribute("data-left-tabs");
+
+    it("in chat, stays there until the record is known absent, with a fresh panel per call", async () => {
+      const user = userEvent.setup();
+      useCallDetail.mockReturnValue({
+        callDetail: CHAT_DETAIL,
+        isLoading: false,
+      });
+      const drawer = (id) => (
+        <CallDrawer
+          task={{ ...chatTask, id }}
+          agentType="text"
+          onClose={() => {}}
+        />
+      );
+      const { rerender } = render(drawer("a"));
+      await user.click(screen.getByRole("tab", { name: "Participants" }));
+      expect(screen.getByTestId("workers-panel")).toHaveTextContent("a");
+
+      useHasWorkers.mockReturnValue(undefined);
+      rerender(drawer("b"));
+      expect(screen.getByRole("tab", { name: "Participants" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.getByTestId("workers-panel")).toHaveTextContent("b");
+
+      useHasWorkers.mockReturnValue(false);
+      rerender(drawer("b"));
+      expect(screen.queryByRole("tab", { name: "Participants" })).toBeNull();
+      expect(screen.getByText("Refund issued.")).toBeInTheDocument();
+
+      useHasWorkers.mockReturnValue(true);
+      rerender(drawer("c"));
+      expect(screen.getByTestId("workers-panel")).toHaveTextContent("c");
+    });
+
+    it("in chat, shows no tab for an unread record unless it was chosen", () => {
+      useHasWorkers.mockReturnValue(undefined);
+      useCallDetail.mockReturnValue({
+        callDetail: CHAT_DETAIL,
+        isLoading: false,
+      });
+      render(
+        <CallDrawer task={chatTask} agentType="text" onClose={() => {}} />,
+      );
+      expect(screen.queryByRole("tab", { name: "Participants" })).toBeNull();
+    });
+
+    it("in voice, keeps the choice through the next call's loading, until the record is known absent", async () => {
+      const user = userEvent.setup();
+      useCallExecutionV3Detail.mockReturnValue({
+        data: { id: "a", transcript: [], actors_enabled: true },
+        isPending: false,
+      });
+      const drawer = (id) => (
+        <CallDrawer task={voiceTask(id)} agentType="voice" onClose={() => {}} />
+      );
+      const { rerender } = render(drawer("a"));
+      await user.click(
+        screen.getByRole("button", { name: "choose participants" }),
+      );
+      expect(screen.getByTestId("workers-panel")).toHaveTextContent("a");
+
+      // The next call's detail isn't cached: the product drawer unmounts for a moment.
+      useHasWorkers.mockReturnValue(undefined);
+      useCallExecutionV3Detail.mockReturnValue({
+        data: undefined,
+        isPending: true,
+      });
+      rerender(drawer("b"));
+      expect(screen.queryByTestId("voice-drawer")).toBeNull();
+
+      useCallExecutionV3Detail.mockReturnValue({
+        data: { id: "b", transcript: [], actors_enabled: true },
+        isPending: false,
+      });
+      rerender(drawer("b"));
+      expect(leftTabs()).toBe("Traces,Participants,World state");
+      expect(screen.getByTestId("workers-panel")).toHaveTextContent("b");
+
+      useHasWorkers.mockReturnValue(false);
+      rerender(drawer("b"));
+      expect(leftTabs()).toBe("Traces,World state");
+    });
+
+    it("in voice, shows no tab for an unread record unless it was chosen", () => {
+      useHasWorkers.mockReturnValue(undefined);
+      useCallExecutionV3Detail.mockReturnValue({
+        data: { id: "a", transcript: [], actors_enabled: true },
+        isPending: false,
+      });
+      render(
+        <CallDrawer
+          task={voiceTask("a")}
+          agentType="voice"
+          onClose={() => {}}
+        />,
+      );
+      expect(leftTabs()).toBe("Traces,World state");
+    });
+
+    it("in voice, keeps ↑/↓ for the panel instead of stepping to another call", async () => {
+      const user = userEvent.setup();
+      const stepped = vi.fn();
+      document.addEventListener("keydown", stepped);
+      useCallExecutionV3Detail.mockReturnValue({
+        data: { id: "a", transcript: [], actors_enabled: true },
+        isPending: false,
+      });
+      render(
+        <CallDrawer
+          task={voiceTask("a")}
+          agentType="voice"
+          onClose={() => {}}
+        />,
+      );
+      await user.click(
+        screen.getByRole("button", { name: "choose participants" }),
+      );
+      fireEvent.keyDown(screen.getByTestId("workers-panel"), {
+        key: "ArrowDown",
+      });
+      document.removeEventListener("keydown", stepped);
+      expect(stepped).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("CallDrawer — an earlier attempt and the next call", () => {
+  const VOICE_A = {
+    id: "voice-a",
+    transcript: [],
+    evaluations: [],
+    attempt_number: 2,
+    earlier_attempts: [
+      {
+        attempt: "a1",
+        number: 1,
+        rerun_at: "2026-11-17T09:00:00+00:00",
+        kept: true,
+        trial_state: null,
+      },
+    ],
+  };
+
+  it.each([
+    ["still loading", { data: undefined, isPending: true }],
+    [
+      "loaded with no earlier attempt",
+      {
+        data: { id: "voice-b", transcript: [], evaluations: [] },
+        isPending: false,
+      },
+    ],
+  ])(
+    "an attempt picked on one voice call never reads the next call's detail (%s)",
+    async (_name, next) => {
+      const user = userEvent.setup();
+      useCallExecutionV3Detail.mockReturnValue({
+        data: VOICE_A,
+        isPending: false,
+      });
+      const { rerender } = render(
+        <CallDrawer
+          task={{ id: "voice-a", simulationCallType: "voice" }}
+          agentType="voice"
+          onClose={() => {}}
+        />,
+      );
+      await user.click(
+        screen.getByRole("button", { name: "choose participants" }),
+      );
+      await user.click(screen.getByRole("combobox", { name: "Attempt" }));
+      await user.click(
+        screen.getByRole("option", { name: /Attempt 1, re-run at/ }),
+      );
+
+      // Next: the same drawer, now on call B.
+      useCallExecutionV3Detail.mockReturnValue(next);
+      rerender(
+        <CallDrawer
+          task={{ id: "voice-b", simulationCallType: "voice" }}
+          agentType="voice"
+          onClose={() => {}}
+        />,
+      );
+      // No crash: B renders (or loads) with no attempt carried over from A.
+      expect(screen.queryByRole("combobox", { name: "Attempt" })).toBeNull();
+    },
+  );
 });

@@ -129,8 +129,9 @@ export const SURFACE_LIST = [
   },
 ];
 
-export const getSurface = (id) =>
-  SURFACE_LIST.find((s) => s.id === id) || SURFACE_LIST[0];
+// Null for an id the list doesn't know (or none yet), so a caller shows that
+// the channel isn't known instead of guessing Voice.
+export const getSurface = (id) => SURFACE_LIST.find((s) => s.id === id) || null;
 
 /** Domains = the business world an environment mocks out. */
 export const DOMAINS = [

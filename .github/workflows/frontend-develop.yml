@@ -4,17 +4,45 @@ on:
   push:
     branches: [develop, dev]
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-develop.yml'
+      - "frontend/**"
+      - ".github/workflows/frontend-develop.yml"
   pull_request:
-    branches: [main, develop, dev]
+    # Every base branch, so stacked PRs into feature branches get CI too.
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-develop.yml'
+      - "frontend/**"
+      - ".github/workflows/frontend-develop.yml"
+  schedule:
+    - cron: "23 4 * * *"
   workflow_dispatch:
+    inputs:
+      profile_shards:
+        type: boolean
+        description: Compare an unrestricted Vitest run with two duration-balanced file shards
+        default: false
+      timings_run_id:
+        type: string
+        description: Prior successful profile run ID for shard weights (leave empty for an equal-weight cold start)
+        required: false
+      workers:
+        type: choice
+        description: Fork workers per runner during the comparison
+        options: ["1", "2", "3", "4"]
+        default: "2"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One active run per pull request: a newer push cancels the older run.
+  # Independent push, scheduled and manual runs do not cancel one another.
+  group: frontend-develop-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Quality checks and unit tests
+  # Quality checks and the whole test suite, once. `test:run` is every test:
+  # `test:unit` and `test:integration` only filter the same files by test name,
+  # so running all three ran most tests three times. No coverage here: see the
+  # coverage job for why the verdict must not come from a coverage run.
   quality-and-tests:
     runs-on: ubuntu-latest
     defaults:
@@ -22,78 +50,188 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+          persist-credentials: false
+
+      # This marker also lets the feature push verify the exact tested tree
+      # and immutable PR base, rather than assuming that an open PR ran CI.
+      - name: PR inputs ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} ${{ github.sha }}
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^2)" = "$HEAD"
+          git merge-base "$HEAD" "$BASE" >/dev/null
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.18'
-          cache: 'yarn'
+          node-version: "22.18"
+          cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Type check
+      - name: Design system lint (changed lines)
+        if: github.event_name == 'pull_request'
+        env:
+          DS_LINT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: yarn lint:ds:changed
+
+      - name: Design system opt-outs
+        run: yarn ds:optouts
+
+      - name: Test Vitest shard planner and verifier
+        run: node scripts/ci-vitest-shards.mjs self-test
+
+      - name: Test contract code generation
+        run: yarn test:contracts-codegen
+
+      # Run the real compiler, but keep existing contract-schema diagnostics
+      # advisory until the schema defaults and index-signature debt are resolved.
+      - name: Type check (advisory)
+        continue-on-error: true
         run: yarn type-check
 
-      - name: Run unit tests
-        run: yarn test:unit --coverage --reporter=verbose
+      - name: Run all tests
+        if: github.event_name != 'workflow_dispatch' || !inputs.profile_shards
+        run: yarn test:run --reporter=verbose
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+  # Benchmark both Vitest paths directly from dispatch, with identical runner
+  # setup. Quality checks, coverage and the build are outside this comparison.
+  profile-reference:
+    if: github.event_name == 'workflow_dispatch' && inputs.profile_shards
+    outputs:
+      reference_id: ${{ steps.reference.outputs.artifact-id }}
+      reference_digest: ${{ steps.reference.outputs.artifact-digest }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - run: yarn install --frozen-lockfile
+
+      - name: Profile unrestricted reference
+        env:
+          CI_VITEST_INVENTORY: ci-profile/reference.json
+          WORKERS: ${{ inputs.workers }}
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          mkdir -p ci-profile
+          echo "$(nproc) CPUs, $WORKERS fork workers" >> "$GITHUB_STEP_SUMMARY"
+          time yarn test:run --pool=forks --minWorkers=1 --maxWorkers="$WORKERS" \
+            --reporter=default --reporter=blob --reporter=./scripts/ci-vitest-shards.mjs \
+            --outputFile.blob=ci-profile/reference.blob
+
+      - name: Verify a failing test has a real nonzero exit
+        run: |
+          set -euo pipefail
+          fixture=$(mktemp -d src/ci-profile-negative-XXXXXX)
+          trap 'rm -rf -- "$fixture"' EXIT
+          printf '%s\n' "it('CI negative fixture', () => expect(1).toBe(2));" > "$fixture/negative.test.js"
+          status=0
+          yarn test:run "$fixture/negative.test.js" --reporter=json --outputFile=ci-profile/negative.json || status=$?
+          test "$status" = 1
+          jq -e '.success == false and .numFailedTests == 1 and .numTotalTests == 1 and
+            .testResults[0].assertionResults[0].title == "CI negative fixture" and
+            .testResults[0].assertionResults[0].status == "failed"' ci-profile/negative.json >/dev/null
+
+      - name: Upload reference inventory
+        id: reference
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-reference-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: frontend/ci-profile/reference.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload unrestricted Vitest blob
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.profile_shards }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-blob-reference-${{ github.run_attempt }}
+          path: frontend/ci-profile/reference.blob
+          if-no-files-found: error
+          retention-days: 7
+
+  # Coverage of the whole suite, on pushes, scheduled and manual runs. Not on pull
+  # requests: quality-and-tests holds the verdict there, and a coverage run
+  # cannot be trusted with it. With coverage on, vitest converts the coverage
+  # on its main thread after the last test (70 to 105 seconds here). Past its
+  # 60-second worker RPC limit it exits 1 with every test passed. So this job
+  # ignores vitest's exit code and fails only when no coverage file was
+  # written. reportOnFailure makes vitest write the file even when a test
+  # failed: a test that fails here and passes in quality-and-tests (the run is
+  # slower with coverage on) must not turn the coverage job red.
+  coverage:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: "yarn"
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Run all tests with coverage
+        run: |
+          yarn test:run --coverage --coverage.reportOnFailure || echo "::warning::vitest exited $? in the coverage run; quality-and-tests holds the verdict on the tests"
+          test -s coverage/lcov.info
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
-        if: always()
         with:
           file: ./frontend/coverage/lcov.info
           flags: develop-branch
           name: develop-coverage
 
-  # Integration and component tests
-  integration-tests:
-    runs-on: ubuntu-latest
-    needs: quality-and-tests
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22.18'
-          cache: 'yarn'
-          cache-dependency-path: frontend/yarn.lock
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Run integration tests
-        run: yarn test:integration --reporter=verbose
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-
-      - name: Run all component tests
-        run: yarn test:run --reporter=verbose
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-
-  # Build validation
+  # Build validation, in parallel with the tests: neither needs the other.
   build-check:
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      attempt: ${{ steps.identity.outputs.attempt }}
     runs-on: ubuntu-latest
-    needs: quality-and-tests
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.18'
-          cache: 'yarn'
+          node-version: "22.18"
+          cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
@@ -104,10 +242,20 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=8192
 
+      - name: Record producing attempt
+        id: identity
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -s dist/index.html
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
       - name: Upload build artifacts
+        id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: develop-build
+          name: develop-build-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          if-no-files-found: error
+          include-hidden-files: true
           path: frontend/dist/
           retention-days: 7
 
@@ -116,55 +264,218 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-check
     if: github.event_name == 'pull_request'
+    permissions:
+      actions: read
+    steps:
+      - name: Fetch exact build from successful producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVES: ${{ needs.build-check.outputs.artifact_id }} ${{ needs.build-check.outputs.artifact_digest }} develop-build ${{ needs.build-check.outputs.attempt }} dist
+        # Outputs come from the successful dependency, not a name search. A
+        # failed-only rerun may legitimately use that job's earlier attempt.
+        run: &fetch-archives |
+          set -euo pipefail
+          while read -r id digest leg attempt dest; do
+            [[ "$id" =~ ^[0-9]+$ && "$digest" =~ ^[0-9a-f]{64}$ && "$attempt" =~ ^[1-9][0-9]*$ ]]
+            if [[ "$leg" == develop-build ]]; then
+              (( attempt <= GITHUB_RUN_ATTEMPT ))
+            else
+              (( attempt == GITHUB_RUN_ATTEMPT )) || { echo 'Rerun all jobs for a same-attempt Vitest comparison.'; exit 1; }
+            fi
+            name="$leg-$GITHUB_RUN_ID-$attempt-$GITHUB_SHA"
+            api="repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            gh api "$api" | jq -e --arg name "$name" --arg digest "sha256:$digest" --argjson run "$GITHUB_RUN_ID" \
+              '.name == $name and .digest == $digest and .workflow_run.id == $run and .expired == false' >/dev/null
+            zip="$RUNNER_TEMP/$id.zip"
+            gh api "$api/zip" > "$zip"
+            printf '%s  %s\n' "$digest" "$zip" | sha256sum --check --status
+            mkdir -p "$dest"
+            unzip -q "$zip" -d "$dest"
+          done <<< "$ARCHIVES"
+
+      - name: Check dist entry point
+        run: test -s dist/index.html
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+
+      - name: Audit built site with Lighthouse
+        id: lighthouse
+        continue-on-error: true
+        env:
+          LHCI_BUILD_CONTEXT__CURRENT_HASH: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          npx --yes --package=@lhci/cli@0.12.0 lhci autorun --collect.staticDistDir=dist --upload.target=temporary-public-storage --failOnUploadFailure
+          # LHCI 0.12 groups by finalUrl and can exit zero after individual uploads fail.
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const { readdirSync, readFileSync } = require('node:fs');
+          const complete = (urls, links) => urls.length > 0 && urls.every(url =>
+            typeof url === 'string' && typeof links[url] === 'string' && /^https:\/\/[^/]+\/.+/.test(links[url]));
+          const example = { a: 'https://example.org/report.html' };
+          assert(complete(['a', 'a'], example));
+          assert(!complete([], example) && !complete(['a'], {}) && !complete(['a', 'b'], example));
+          const read = name => JSON.parse(readFileSync(`.lighthouseci/${name}`, 'utf8'));
+          const urls = readdirSync('.lighthouseci').filter(name => /^lhr-\d+\.json$/.test(name)).map(name => read(name).finalUrl);
+          assert(complete(urls, read('links.json')), 'Missing Lighthouse report link for an audited URL');
+          NODE
+
+      - name: Report advisory result
+        if: always()
+        env:
+          OUTCOME: ${{ steps.lighthouse.outcome }}
+        run: echo "Lighthouse audit (advisory) — $OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+
+  profile-shards:
+    name: profile-shard-${{ matrix.leg }}
+    if: github.event_name == 'workflow_dispatch' && inputs.profile_shards
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [1, 2]
+    outputs:
+      leg1: ${{ steps.receipt.outputs.leg1 }}
+      leg2: ${{ steps.receipt.outputs.leg2 }}
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: '22.18'
-          cache: 'yarn'
-          cache-dependency-path: frontend/yarn.lock
+          persist-credentials: false
 
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Build app
-        run: yarn build
+      # Historical durations affect weights only. Discovery always uses this
+      # checkout; deleted files are ignored and unseen files get a fixed weight.
+      - name: Fetch historical timing inventory
+        if: inputs.timings_run_id != ''
         env:
-          NODE_OPTIONS: --max-old-space-size=8192
+          GH_TOKEN: ${{ github.token }}
+          PRIOR: ${{ inputs.timings_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$PRIOR" =~ ^[1-9][0-9]*$ && "$PRIOR" != "$GITHUB_RUN_ID" ]]
+          runs="repos/$GITHUB_REPOSITORY/actions/runs"
+          dispatch=$(gh api "$runs/$GITHUB_RUN_ID" --jq '.created_at')
+          name=$(gh api "$runs/$PRIOR" | jq -er --arg dispatch "$dispatch" '
+            select(.path == ".github/workflows/frontend-develop.yml" and .event == "workflow_dispatch" and
+              .status == "completed" and .conclusion == "success" and .updated_at <= $dispatch) |
+            "vitest-reference-\(.id)-\(.run_attempt)-\(.head_sha)"')
+          metadata=$(gh api "$runs/$PRIOR/artifacts?name=$name" | jq -er --arg name "$name" '
+            [.artifacts[] | select(.name == $name and (.expired | not))] | select(length == 1) | .[0] | "\(.id) \(.digest)"')
+          read -r id digest <<< "$metadata"
+          [[ "$id" =~ ^[0-9]+$ && "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          archive="$RUNNER_TEMP/prior-reference.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$archive"
+          printf '%s  %s\n' "${digest#sha256:}" "$archive" | sha256sum --check --status
+          unzip -p "$archive" reference.json > "$RUNNER_TEMP/prior-reference.json"
+          echo "CI_VITEST_HISTORY=$RUNNER_TEMP/prior-reference.json" >> "$GITHUB_ENV"
 
-      - name: Install Lighthouse CI
-        run: npm install -g @lhci/cli@0.12.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - run: yarn install --frozen-lockfile
 
-      - name: Start preview server
-        run: yarn start &
+      - name: Profile exact file shard
+        env:
+          BASELINE: ${{ inputs.timings_run_id || 'cold start (equal weights)' }}
+          CI_VITEST_PLAN: ci-profile/plan.json
+          CI_VITEST_INVENTORY: ci-profile/result.json
+          WORKERS: ${{ inputs.workers }}
+          LEG: ${{ matrix.leg }}
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          mkdir -p ci-profile
+          echo "Timing baseline: $BASELINE" >> "$GITHUB_STEP_SUMMARY"
+          echo "$(nproc) CPUs, $WORKERS fork workers, shard $LEG/2" >> "$GITHUB_STEP_SUMMARY"
+          time yarn test:run --pool=forks --minWorkers=1 --maxWorkers="$WORKERS" --shard="$LEG/2" \
+            --reporter=default --reporter=blob --reporter=./scripts/ci-vitest-shards.mjs \
+            --outputFile.blob=ci-profile/result.blob
 
-      - name: Wait for server
-        run: sleep 10
+      - name: Upload shard results (including test failures)
+        id: upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-leg${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: frontend/ci-profile/
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Run Lighthouse CI
-        run: lhci autorun --upload.target=temporary-public-storage || echo "Lighthouse CI completed"
-        continue-on-error: true
+      - name: Record immutable result for this leg
+        id: receipt
+        env:
+          LEG: ${{ matrix.leg }}
+          ID: ${{ steps.upload.outputs.artifact-id }}
+          DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: echo "leg$LEG=$ID $DIGEST vitest-leg$LEG $GITHUB_RUN_ATTEMPT leg$LEG" >> "$GITHUB_OUTPUT"
+
+  verify-profile:
+    needs: [profile-reference, profile-shards]
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.profile_shards }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require both actual Vitest exits
+        env:
+          REFERENCE: ${{ needs.profile-reference.result }}
+          SHARDS: ${{ needs.profile-shards.result }}
+        run: test "$REFERENCE" = success && test "$SHARDS" = success
+      - name: Download all receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVES: |-
+            ${{ needs.profile-reference.outputs.reference_id }} ${{ needs.profile-reference.outputs.reference_digest }} vitest-reference ${{ github.run_attempt }} ci-reference
+            ${{ needs.profile-shards.outputs.leg1 }}
+            ${{ needs.profile-shards.outputs.leg2 }}
+        run: *fetch-archives
+      - name: Verify test identities and outcomes
+        run: |
+          set -euo pipefail
+          cmp leg1/plan.json leg2/plan.json
+          test -s leg1/result.blob
+          test -s leg2/result.blob
+          node scripts/ci-vitest-shards.mjs verify ci-reference/reference.json leg1/plan.json leg1/result.json leg2/result.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Compare dispatch-to-Vitest verdicts
+        # A rerun has no new dispatch timestamp. It can prove parity, not latency.
+        if: github.run_attempt == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh api "$api" > "$RUNNER_TEMP/run.json"
+          gh api "$api/attempts/1/jobs?per_page=100" > "$RUNNER_TEMP/jobs.json"
+          node scripts/ci-vitest-shards.mjs latency "$RUNNER_TEMP/run.json" "$RUNNER_TEMP/jobs.json" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Summary for develop branch
   develop-summary:
     runs-on: ubuntu-latest
-    needs: [quality-and-tests, integration-tests, build-check]
+    needs: [quality-and-tests, build-check, coverage, performance-tests, verify-profile]
     if: always()
     steps:
       - name: Develop Branch Summary
+        env:
+          QUALITY: ${{ needs.quality-and-tests.result }}
+          BUILD: ${{ needs.build-check.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          PERFORMANCE: ${{ needs.performance-tests.result }}
+          COMPARISON: ${{ needs.verify-profile.result }}
         run: |
-          echo "## 🔄 Develop Branch Pipeline Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Quality & Tests: ${{ needs.quality-and-tests.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Build Check: ${{ needs.build-check.result }}" >> $GITHUB_STEP_SUMMARY
-
-          if [[ "${{ needs.quality-and-tests.result }}" == "success" && "${{ needs.integration-tests.result }}" == "success" && "${{ needs.build-check.result }}" == "success" ]]; then
-            echo "✅ All checks passed - Ready for main branch merge!" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Some checks failed - Please review before merging" >> $GITHUB_STEP_SUMMARY
-          fi
+          printf '## Frontend pipeline\n- Quality and unit tests: %s\n- Build: %s\n- Coverage: %s\n- Performance job (audit advisory): %s\n- Shard comparison: %s\n' \
+            "$QUALITY" "$BUILD" "$COVERAGE" "$PERFORMANCE" "$COMPARISON" >> "$GITHUB_STEP_SUMMARY"

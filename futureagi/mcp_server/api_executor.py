@@ -15,11 +15,15 @@ from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.authentication import APIKeyAuthentication
+from accounts.authentication import APIKeyAuthentication, workspace_write_denied
 from mcp_server.generated_registry import GeneratedTool
 from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
+    clear_workspace_context,
+    get_current_organization,
+    get_current_user,
     get_current_workspace,
+    set_workspace_context,
     workspace_context,
 )
 
@@ -39,6 +43,23 @@ def ensure_urlconf_loaded() -> None:
     _ = get_resolver().url_patterns
 
 
+def load_urlconf_outside_workspace() -> None:
+    """Load the URLconf with any bound workspace temporarily cleared.
+
+    In-process callers such as Falcon bind the caller's workspace before each
+    tool call, so they cannot use ``ensure_urlconf_loaded`` directly.
+    """
+    saved = (get_current_workspace(), get_current_organization(), get_current_user())
+    if saved[0] is None:
+        ensure_urlconf_loaded()
+        return
+    clear_workspace_context()
+    try:
+        ensure_urlconf_loaded()
+    finally:
+        set_workspace_context(workspace=saved[0], organization=saved[1], user=saved[2])
+
+
 class APIExecutionError(RuntimeError):
     def __init__(self, message: str, *, status_code: int = 500, data: Any = None):
         super().__init__(message)
@@ -54,12 +75,15 @@ class MCPRequestContext:
     authentication time; the executor refuses to run a tool anywhere else.
     ``api_key`` is the ``OrgApiKey`` row when the caller used key auth, so the
     Django request resolves the tenant exactly as the REST API would for it.
+    ``oauth_scopes`` is the set of tool groups an OAuth access token was granted;
+    ``None`` means the caller did not authenticate with an OAuth token.
     """
 
     user: Any
     organization: Any
     workspace: Any
     api_key: Any = None
+    oauth_scopes: frozenset[str] | None = None
 
 
 class DjangoAPIExecutor:
@@ -140,6 +164,7 @@ class DjangoAPIExecutor:
                 f"Generated API route no longer resolves: {method} {path}"
             ) from exc
         request.resolver_match = match
+        request.mcp_response = True
 
         # Reuse the existing workspace membership and write-access checks, then
         # inject the already authenticated MCP user for normal DRF permissions.
@@ -160,7 +185,7 @@ class DjangoAPIExecutor:
                     context.user, request.workspace
                 )
             ):
-                raise PermissionDenied("Write access denied to this workspace")
+                raise workspace_write_denied(request)
         except APIException as exc:
             raise APIExecutionError(
                 str(exc.detail), status_code=exc.status_code, data=exc.detail
@@ -277,8 +302,14 @@ class DjangoAPIExecutor:
             status_code = getattr(response, "status_code", 500)
             try:
                 data = json.loads(response.content)
-            except (AttributeError, json.JSONDecodeError, TypeError):
+            except (AttributeError, TypeError, ValueError):  # Not JSON, or not text.
                 data = getattr(response, "content", None)
+                # A text body, such as an Epoch candidate's git patch, is the
+                # result itself: return its text, not the bytes' repr.
+                if isinstance(data, bytes) and response.get(
+                    "Content-Type", ""
+                ).startswith("text/"):
+                    data = data.decode(response.charset, errors="replace")
 
         if status_code >= 400:
             message = "Django API request failed"
@@ -293,7 +324,14 @@ class DjangoAPIExecutor:
 
         unwrap = tool.response.get("unwrap")
         if unwrap and isinstance(data, dict) and unwrap in data:
-            return data[unwrap]
+            data = data[unwrap]
+        for dotted in tool.response.get("omit", []):
+            *parents, leaf = dotted.split(".")
+            target = data
+            for key in parents:
+                target = target.get(key) if isinstance(target, dict) else None
+            if isinstance(target, dict):
+                target.pop(leaf, None)
         return data
 
 

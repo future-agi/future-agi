@@ -7,6 +7,9 @@ import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useCancelExecution } from "src/sections/common/simulation/hooks/useCancelExecution";
 import { refusalText } from "../evals/refusalText";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
 
 const STOP_FALLBACK = "Couldn't stop the run. Try again";
 
@@ -18,7 +21,7 @@ const STOP_FALLBACK = "Couldn't stop the run. Try again";
  * the same one the product test-run pages use) and refreshes the runs list and
  * this run's detail so the status moves on the next read.
  *
- * Sized to the StatusChip it sits beside (22px). `label` is "Stop" in the tight
+ * Small button beside the StatusChip. `label` is "Stop" in the tight
  * table cell; the run-detail header has room for "Stop simulation".
  */
 export default function StopRunControl({ executionId, stoppable = false, label = "Stop" }) {
@@ -37,9 +40,11 @@ function StopRunButton({ executionId, label }) {
   const [confirming, setConfirming] = useState(false);
   const queryClient = useQueryClient();
   const cancel = useCancelExecution({ errorHandled: true });
+  const { canRun } = useSimulationAccess();
 
   const onConfirm = () => {
     setConfirming(false);
+    if (!canRun) return;
     cancel.mutate(executionId, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ["run-test-executions"] });
@@ -62,31 +67,27 @@ function StopRunButton({ executionId, label }) {
     // so stop them at the root — a click inside must never open the table row.
     <span onClick={(e) => e.stopPropagation()} role="presentation" style={{ display: "inline-flex" }}>
       {/* Shaped like the product test-runs grid's Stop (TestRunsGrid StatusCell),
-          at the StatusChip's height, in red since it cancels the run. */}
-      <Button
-        variant="outlined"
-        color="error"
-        size="small"
-        aria-label="Stop simulation"
-        disabled={cancel.isPending}
-        onClick={() => setConfirming(true)}
-        startIcon={<Iconify icon="bi:stop-circle" width={12} />}
-        sx={{
-          flexShrink: 0,
-          whiteSpace: "nowrap",
-          borderRadius: "4px",
-          px: 1,
-          minWidth: 0,
-          height: 22,
-          textTransform: "none",
-          fontSize: 12,
-          "& .MuiButton-startIcon": { mr: 0.5 },
-        }}
-      >
-        {cancel.isPending ? "Stopping…" : label}
-      </Button>
+          in red since it cancels the run. */}
+      <ViewerLock locked={!canRun} title={WORKSPACE_COPY.viewer.stop}>
+        <Button
+          variant="outlined"
+          color="error"
+          size="small"
+          aria-label="Stop simulation"
+          disabled={!canRun || cancel.isPending}
+          onClick={() => setConfirming(true)}
+          startIcon={<Iconify icon="solar:stop-circle-linear" width={12} />}
+          sx={{
+            flexShrink: 0,
+            whiteSpace: "nowrap",
+            minWidth: 0,
+          }}
+        >
+          {cancel.isPending ? "Stopping…" : label}
+        </Button>
+      </ViewerLock>
       <ConfirmDialog
-        open={confirming}
+        open={confirming && canRun}
         onClose={() => setConfirming(false)}
         title="Stop this run?"
         content={(

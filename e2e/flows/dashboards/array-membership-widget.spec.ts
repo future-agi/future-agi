@@ -299,15 +299,21 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         browse_status: 'exhausted', attribute_types_exact: false, attribute_types: types });
       expect(sortOptions(body.result.values)).toEqual(sortOptions(expected));
     };
-    const searchMembers = async (search: string, expected: Member[]) => {
+    const searchMembers = async (search: string, expected: Member[], { fresh = false } = {}) => {
       await uiExpect(popup).toBeVisible();
+      // Reload discards the app's query cache, but not our response history. Fence
+      // those searches before filling so an old receipt cannot bypass the debounce.
+      // Repeated searches within the same page may legitimately reuse cached data.
+      const startedAt = fresh ? Date.now() : 0;
       await searchBox.fill(search);
       await uiExpect(searchBox).toHaveValue(search);
-      const matches = (receipt: Receipt<ValueBody>) => receipt.status === 200 && isDeepStrictEqual(receipt.scope, expectedScope) &&
+      const matches = (receipt: Receipt<ValueBody>) => receipt.startedAt >= startedAt &&
+        receipt.status === 200 && isDeepStrictEqual(receipt.scope, expectedScope) &&
         receipt.input.property_id === propertyId && receipt.input.attribute_type === 'array' &&
         (receipt.input.search || '') === search && receipt.body.result.query_complete === true;
       await expect.poll(() => values.some(matches), { timeout: UI_READY }).toBe(true);
       const receipt = values.filter(matches).at(-1)!;
+      expect(receipt.status).toBe(200);
       expect(receipt.input).toMatchObject({ property_id: propertyId, metric_name: arrayKey,
         metric_type: 'custom_attribute', source: 'traces', project_ids: '', page_size: 10, attribute_type: 'array' });
       assertValues(receipt.body, arrayOptions(expected), ['array']);
@@ -319,8 +325,8 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         { timeout: UI_READY }).toEqual(expected.map(String).sort());
       return popup.locator(`p[title="${search}"]`).locator('..');
     };
-    const assertPair = async (search: '0' | 'false', checked: boolean) => {
-      const rows = await searchMembers(search, search === '0' ? [0, '0'] : [false, 'false']);
+    const assertPair = async (search: '0' | 'false', checked: boolean, options: { fresh?: boolean } = {}) => {
+      const rows = await searchMembers(search, search === '0' ? [0, '0'] : [false, 'false'], options);
       await uiExpect(rows).toHaveCount(2);
       // No first() guess for indistinguishable labels: require BOTH native checkboxes.
       for (let index = 0; index < 2; index++) await uiExpect(rows.nth(index).getByRole('checkbox')).toBeChecked({ checked });
@@ -389,6 +395,19 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
       await testInfo.attach(`${label}-table`, { contentType: 'image/png', body: await page.screenshot() });
       return receipt;
     };
+    // Do not reuse the other owner's idle discovery context for this readback.
+    // The actor, endpoint and no-redirect policy stay the same.
+    const readOtherOrgWidget = async (path: string) => {
+      const other = scopeActors.ownerB;
+      const reader = await request.newContext({ baseURL: E2E.apiUrl, extraHTTPHeaders: scopeActors.headers(other) });
+      try {
+        const response = await reader.get(`${E2E.apiUrl}${path}`, { maxRedirects: 0 });
+        const status = response.status();
+        scopeActors.receipts.push({ method: 'GET', path, status, organizationId: other.organizationId,
+          workspaceId: other.workspaceId, authenticated: true });
+        return { status, body: await response.json() as Widget };
+      } finally { await reader.dispose(); }
+    };
     const saveWidget = async (label: string, expected: Config) => {
       const previousId = savedWidget?.id;
       const path = previousId ? `${DASHBOARDS}${dashboardId}/widgets/${previousId}/` : `${DASHBOARDS}${dashboardId}/widgets/`;
@@ -414,7 +433,8 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         .toEqual([{ id: saved.id, name: widgetName, query_config: input.query_config, chart_config: input.chart_config }]);
       await Promise.all([actor, scopeActors.ownerB, emptyActor].map(async selectedActor => {
         const nestedPath = `${DASHBOARDS}${dashboardId}/widgets/${saved.id}/`;
-        const scoped = await scopeActors.send<Widget>(selectedActor, 'GET', nestedPath);
+        const scoped = selectedActor === scopeActors.ownerB ? await readOtherOrgWidget(nestedPath)
+          : await scopeActors.send<Widget>(selectedActor, 'GET', nestedPath);
         scopeResults.push({ path: nestedPath, organizationId: selectedActor.organizationId, workspaceId: selectedActor.workspaceId, ...scoped });
         expect(scoped.status).toBe(selectedActor === actor ? 200 : 404);
         if (selectedActor === actor) expect(scoped.body).toMatchObject({ id: saved.id, name: widgetName, query_config: input.query_config, chart_config: input.chart_config });
@@ -430,7 +450,7 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
         const [created] = await Promise.all([
           page.waitForResponse(response => new URL(response.url()).pathname === DASHBOARDS && response.request().method() === 'POST', { timeout: UI_READY }),
-          page.getByRole('button', { name: 'Create Dashboard', exact: true }).click(),
+          page.getByRole('button', { name: /^create dashboard$/i }).click(),
         ]);
         expect(created.status()).toBe(200); expect(scopeOf(created)).toEqual(expectedScope);
         dashboardId = ((await created.json()) as { result: { id: string } }).result.id;
@@ -444,7 +464,7 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         expect(named.status()).toBe(200); expect(scopeOf(named)).toEqual(expectedScope);
         expect(named.request().postDataJSON()).toMatchObject({ name: dashboardName });
         saves.push({ label: 'dashboard-create-rename', created: await created.json(), renamed: await named.json(), scope: scopeOf(named) });
-        await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+        await page.getByRole('button', { name: /^add widget$/i }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click();
         await page.getByPlaceholder('Untitled widget').fill(widgetName);
         await page.getByPlaceholder('Untitled widget').press('Enter');
@@ -595,8 +615,8 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
           .getByText(widgetName, { exact: true }).click(), false, raw, true);
         await assertEditorControls();
         await arrayValueControl.click();
-        await uiExpect((await searchMembers(h, [h])).getByRole('checkbox')).toBeChecked();
-        await assertPair('false', true); await assertPair('0', true);
+        await uiExpect((await searchMembers(h, [h], { fresh: true })).getByRole('checkbox')).toBeChecked();
+        await assertPair('false', true, { fresh: true }); await assertPair('0', true, { fresh: true });
         await testInfo.attach('reopened-mixed-checkboxes', { contentType: 'image/png', body: await page.screenshot() });
         // Applying an unchanged selection closes the popup; no artificial query required.
         await popup.getByRole('button', { name: 'Add', exact: true }).click();
@@ -635,13 +655,13 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
           .getByText(widgetName, { exact: true }).click(), false, raw);
         await assertEditorControls();
         await queryAfter('restore-token', configFor([h], true), [2, 4], async () => {
-          await arrayValueControl.click(); await searchMembers(miss, []);
+          await arrayValueControl.click(); await searchMembers(miss, [], { fresh: true });
           const specify = popup.locator(`[data-widget-filter-exact-value="${miss}"]`);
           await uiExpect(specify.getByRole('checkbox')).toBeChecked();
           await testInfo.attach('persisted-specify-checked', { contentType: 'image/png', body: await page.screenshot() });
           await specify.click(); await uiExpect(specify.getByRole('checkbox')).not.toBeChecked();
           await uiExpect(popup.getByRole('button', { name: 'Add', exact: true })).toBeDisabled();
-          const row = await searchMembers(h, [h]); await uiExpect(row.getByRole('checkbox')).not.toBeChecked();
+          const row = await searchMembers(h, [h], { fresh: true }); await uiExpect(row.getByRole('checkbox')).not.toBeChecked();
           await row.click(); await popup.getByRole('button', { name: 'Add', exact: true }).click();
         });
         await assertEditorControls(); await saveWidget('restored-token', configFor([h], true));

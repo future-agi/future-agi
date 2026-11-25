@@ -17,6 +17,7 @@ import CustomTooltip from "src/components/tooltip";
 import useIsTruncated from "src/hooks/useIsTruncated";
 import {
   TRACE_COLUMNS,
+  compactHiddenSx,
   defaultTraceColumns,
   GROUPINGS,
   neutralCheckboxSx,
@@ -29,41 +30,51 @@ export function TraceGroupByPicker({ value, onChange }) {
   const current = GROUPINGS.find((g) => g.id === value) || GROUPINGS[0];
   return (
     <>
-      <Button
+      <CustomTooltip
+        show
         size="small"
-        variant="outlined"
-        onClick={(e) => setAnchor(e.currentTarget)}
-        startIcon={
-          <Iconify
-            icon={current.icon}
-            width={15}
-            sx={{ color: "primary.main" }}
-          />
-        }
-        endIcon={
-          <Iconify
-            icon="solar:alt-arrow-down-linear"
-            width={12}
-            sx={{ color: "text.subtitle" }}
-          />
-        }
-        sx={toolbarButtonSx}
+        arrow
+        title={`Group by · ${current.label}`}
       >
-        Group by
-        <Box
-          component="span"
-          sx={{
-            mx: 0.5,
-            color: "text.subtitle",
-            fontWeight: "fontWeightRegular",
-          }}
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={(e) => setAnchor(e.currentTarget)}
+          startIcon={
+            <Iconify
+              icon={current.icon}
+              width={15}
+              sx={{ color: "text.subtitle" }}
+            />
+          }
+          endIcon={
+            <Iconify
+              icon="solar:alt-arrow-down-linear"
+              width={12}
+              sx={{ color: "text.subtitle" }}
+            />
+          }
+          sx={toolbarButtonSx}
         >
-          ·
-        </Box>
-        <Box component="span" sx={{ color: "primary.main" }}>
-          {current.label}
-        </Box>
-      </Button>
+          <Box component="span" sx={compactHiddenSx}>
+            Group by
+          </Box>
+          <Box
+            component="span"
+            sx={{
+              mx: 0.5,
+              color: "text.subtitle",
+              fontWeight: "fontWeightRegular",
+              ...compactHiddenSx,
+            }}
+          >
+            ·
+          </Box>
+          <Box component="span" sx={{ color: "text.subtitle" }}>
+            {current.label}
+          </Box>
+        </Button>
+      </CustomTooltip>
       <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}>
         {GROUPINGS.map((g) => (
           <MenuItem
@@ -164,41 +175,51 @@ export function TraceColumnsPicker({
     }, []);
   return (
     <>
-      <Button
+      <CustomTooltip
+        show
         size="small"
-        variant="outlined"
-        onClick={(e) => setAnchor(e.currentTarget)}
-        startIcon={
-          <Iconify
-            icon="solar:widget-4-linear"
-            width={15}
-            sx={{ color: "text.subtitle" }}
-          />
-        }
-        endIcon={
-          <Iconify
-            icon="solar:alt-arrow-down-linear"
-            width={12}
-            sx={{ color: "text.subtitle" }}
-          />
-        }
-        sx={toolbarButtonSx}
+        arrow
+        title={`Columns · ${shownCount}/${offered.length + evals.length}`}
       >
-        Columns
-        <Box
-          component="span"
-          sx={{
-            mx: 0.5,
-            color: "text.subtitle",
-            fontWeight: "fontWeightRegular",
-          }}
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={(e) => setAnchor(e.currentTarget)}
+          startIcon={
+            <Iconify
+              icon="solar:widget-4-linear"
+              width={15}
+              sx={{ color: "text.subtitle" }}
+            />
+          }
+          endIcon={
+            <Iconify
+              icon="solar:alt-arrow-down-linear"
+              width={12}
+              sx={{ color: "text.subtitle" }}
+            />
+          }
+          sx={toolbarButtonSx}
         >
-          ·
-        </Box>
-        <Box component="span" sx={{ color: "text.subtitle" }}>
-          {shownCount}/{offered.length + evals.length}
-        </Box>
-      </Button>
+          <Box component="span" sx={compactHiddenSx}>
+            Columns
+          </Box>
+          <Box
+            component="span"
+            sx={{
+              mx: 0.5,
+              color: "text.subtitle",
+              fontWeight: "fontWeightRegular",
+              ...compactHiddenSx,
+            }}
+          >
+            ·
+          </Box>
+          <Box component="span" sx={{ color: "text.subtitle" }}>
+            {shownCount}/{offered.length + evals.length}
+          </Box>
+        </Button>
+      </CustomTooltip>
       <Menu
         anchorEl={anchor}
         open={!!anchor}
@@ -216,10 +237,8 @@ export function TraceColumnsPicker({
             key={`h-${section.name}`}
             sx={{
               typography: "s3",
-              fontWeight: "fontWeightBold",
+              fontWeight: 500,
               color: "text.subtitle",
-              textTransform: "uppercase",
-              letterSpacing: 0.4,
               px: 2,
               py: 0.5,
               mt: i === 0 ? 0.5 : 0,

@@ -20,7 +20,6 @@ const envState = {
   agent: { via: "endpoint", typeId: "voice" },
   additionalAgents: [{ id: "agent-extra", typeId: "text" }],
   activeAgentId: "agent-extra",
-  agentVersions: [{ id: "agent-v1", label: "v1" }],
   scenarios: [{ id: "s1" }, { id: "s2" }],
   evals: [{ id: "task_success" }],
   scenarioSource: "templates",
@@ -47,11 +46,6 @@ describe("forkEnvironment", () => {
     expect(fork.envState.seededFromTemplate).toBe(false);
   });
 
-  it("restarts the env version lineage at v1 noting the source", () => {
-    expect(fork.envState.envVersions[0].label).toBe("v1");
-    expect(fork.envState.envVersions[0].note).toBe("Forked from Voice support.");
-  });
-
   it("carries no run history", () => {
     expect(fork.envState.runs).toEqual([]);
   });
@@ -71,9 +65,8 @@ describe("forkEnvironment", () => {
     expect(fork.envState.evals).not.toBe(envState.evals);
   });
 
-  it("copies the agent and its version history", () => {
+  it("copies the agent", () => {
     expect(fork.envState.agent).toEqual(envState.agent);
-    expect(fork.envState.agentVersions[0].label).toBe("v1");
   });
 
   it("carries the additional agents into a fresh array and keeps the active pointer", () => {

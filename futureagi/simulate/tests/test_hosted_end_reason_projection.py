@@ -1,3 +1,4 @@
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -25,12 +26,13 @@ def projected_call(monkeypatch):
         alk_simulate_ingestion, "_apply_harness_evaluation_outputs", lambda _: None
     )
     monkeypatch.setattr(
-        hosted_harness_ingestion.transaction, "on_commit", lambda _: None
+        hosted_harness_ingestion.transaction, "on_commit", lambda *_, **__: None
     )
     return SimpleNamespace(
         call_metadata={},
         conversation_metrics_data={},
         ended_reason="old-reason",
+        completed_at=None,
         test_execution=SimpleNamespace(run_test_id=None),
         id="call-id",
         save=MagicMock(),
@@ -106,3 +108,71 @@ def test_replacement_receipt_clears_prior_provider_and_harness_end_reason(
     assert projected_call.call_metadata["hosted_harness_receipt"] == body
     receipt_call = projected_call.call_metadata["hosted_harness_receipt"]["call"]
     assert receipt_call is None or "target_metrics" not in receipt_call
+
+
+def _apply_ungraded_receipt(call, failure):
+    hosted_harness_ingestion._apply_receipt_to_call(
+        SimpleNamespace(call_execution=call, job=SimpleNamespace(), scenario_key="s"),
+        {
+            "digest": "ungraded",
+            "status": "errored" if failure else "failed",
+            "call": None,
+            "sub_goals": [{"name": "booked_at_most_once", "held": None}],
+            "failure": failure,
+        },
+    )
+    return call.call_metadata["harness_grading_error"]
+
+
+@pytest.mark.parametrize(
+    ("code", "ending"),
+    [
+        ("target_agent_stalled", "The agent stopped responding during the trial."),
+        ("agent_exited_before_ready", "The agent stopped before it was ready."),
+        ("new_engine_code", "The trial ended before grading could finish."),
+        ({"reason": "stalled"}, "The trial ended before grading could finish."),
+        (["agent_exited_before_ready"], "The trial ended before grading could finish."),
+        (None, "The trial ended before grading could finish."),
+    ],
+)
+def test_ungraded_trial_explains_its_ending(projected_call, code, ending):
+    failure = {"message": "internal engine diagnostic"}
+    if code is not None:
+        failure["code"] = code
+    message = _apply_ungraded_receipt(projected_call, deepcopy(failure))
+
+    assert message.endswith(ending)
+    assert "grading failure" not in message
+    assert failure["message"] not in message
+    if code is not None:
+        assert str(code) not in message
+    assert projected_call.call_metadata["hosted_harness_receipt"]["failure"] == failure
+
+
+def test_a_completed_trial_with_missing_verdicts_is_a_grading_failure(
+    projected_call,
+):
+    message = _apply_ungraded_receipt(projected_call, None)
+
+    assert message.endswith("This is a grading failure, not an agent failure.")
+
+
+def test_a_grading_failure_names_the_sub_goals_that_were_not_measured(projected_call):
+    hosted_harness_ingestion._apply_receipt_to_call(
+        SimpleNamespace(
+            call_execution=projected_call, job=SimpleNamespace(), scenario_key="s"
+        ),
+        {
+            "digest": "partly-measured",
+            "status": "failed",
+            "call": None,
+            "sub_goals": [
+                {"name": "said_the_fee", "verdict": "pass"},
+                {"name": "heard_the_supervisor", "verdict": "unmeasured"},
+                {"name": "cancelled_once", "held": None},
+            ],
+            "failure": None,
+        },
+    )
+    message = projected_call.call_metadata["harness_grading_error"]
+    assert "(1/3 executed, 1 not measured)" in message

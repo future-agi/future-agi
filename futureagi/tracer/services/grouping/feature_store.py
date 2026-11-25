@@ -9,20 +9,65 @@ after both ClickHouse inserts can be read back.
 import math
 import re
 import uuid
+from collections import defaultdict
 from collections.abc import Sequence
 
 from tracer.services.clickhouse.client import ClickHouseClient
+from tracer.services.clickhouse.read_budget import is_clickhouse_query_size_error
 
 VECTOR_TABLE = "f6_grouping_features"
 BUCKET_TABLE = "f6_grouping_buckets"
 MAX_FEATURES_PER_REPORT = 200
 MAX_BUCKETS_PER_FEATURE = 8
-MAX_CANDIDATE_IDS = 512
+# Digest IN-lists are substituted into the SQL text (~68 bytes each), so one
+# statement per view needs room for every candidate of a large project.
+MAX_QUERY_BYTES = 16 * 1024 * 1024
 SOURCE_DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 HEX_DIGEST = re.compile(r"^[a-f0-9]{64}$")
-BUCKET_KEY = re.compile(
-    r"^(semantics|task):[0-7]:(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$"
-)
+
+
+def nearest_sql(pending_count: int) -> str:
+    """Exact cosine top-``limit`` per pending vector in one candidate scan.
+
+    The pending vectors are a constant, so each candidate row is read once and
+    keeps one minimum distance per pending vector, and only a running top
+    ``limit`` per pending vector is sorted. Cost is linear in candidates; a
+    join would copy both vectors into every pair. The distance terms are
+    unrolled because a lambda over ``vector`` copies it once per pending.
+    No FINAL: a feature digest hashes its whole record, vector included, so a
+    replicated row has the same distances and the GROUP BY folds it. Self is
+    scored ``inf`` so it never takes a top-``limit`` slot. A pending digest
+    missing from ClickHouse fails the statement on an array size mismatch.
+    """
+    distances = ", ".join(
+        f"cosineDistance(vector, pending.2[{index}])"
+        for index in range(1, pending_count + 1)
+    )
+    return f"""WITH (
+    SELECT (groupArray(pending_occurrence), groupArray(pending_vector)) FROM (
+        SELECT feature_digest, any(occurrence_id) AS pending_occurrence,
+            any(vector) AS pending_vector
+        FROM {VECTOR_TABLE}
+        WHERE organization_id = %(org)s AND project_id = %(project)s
+          AND view = %(view)s AND feature_digest IN %(pending)s
+        GROUP BY feature_digest ORDER BY feature_digest)
+) AS pending
+SELECT toString(pending.1[k]) AS pending_id, nearest.2 AS candidate_id,
+    nearest.1 AS distance
+FROM (
+    SELECT groupArraySortedForEach(%(limit)s)(arrayMap(
+        (d, p) -> (if(p = occurrence_id, inf, d), toString(occurrence_id)),
+        distances, pending.1)) AS ranked
+    FROM (
+        SELECT occurrence_id, minForEach([{distances}]) AS distances
+        FROM {VECTOR_TABLE}
+        WHERE organization_id = %(org)s AND project_id = %(project)s
+          AND view = %(view)s AND feature_digest IN %(candidates)s
+        GROUP BY occurrence_id))
+ARRAY JOIN ranked AS top, arrayEnumerate(ranked) AS k
+ARRAY JOIN top AS nearest
+WHERE candidate_id != pending_id
+ORDER BY pending_id, distance, candidate_id"""
 
 
 def _bucket_key(view: str, item: dict) -> str:
@@ -35,16 +80,6 @@ def _bucket_key(view: str, item: dict) -> str:
     if not 0 <= item["table"] < 8 or not 0 <= item["signature"] <= 255:
         raise ValueError("invalid LSH bucket")
     return f"{view}:{item['table']}:{item['signature']}"
-
-
-def probe_bucket_keys(rows: Sequence[dict]) -> list[str]:
-    keys = set()
-    for row in rows:
-        for bucket in row["bucket_keys"]:
-            table, signature = bucket["table"], bucket["signature"]
-            for candidate in [signature, *(signature ^ (1 << bit) for bit in range(8))]:
-                keys.add(f"{row['view']}:{table}:{candidate}")
-    return sorted(keys)
 
 
 def grouping_feature_ddl() -> tuple[str, str]:
@@ -280,20 +315,52 @@ class GroupingFeatureStore:
         *,
         organization_id: uuid.UUID,
         project_id: uuid.UUID,
-        bucket_keys: Sequence[str],
-    ) -> list[str]:
-        if not 1 <= len(bucket_keys) <= 144 or any(
-            not BUCKET_KEY.fullmatch(key) for key in bucket_keys
-        ):
-            raise ValueError("invalid bounded LSH probe keys")
-        rows = self.client.execute_read(
-            f"SELECT DISTINCT occurrence_id FROM {BUCKET_TABLE} FINAL "
-            "WHERE organization_id=%(org)s AND project_id=%(project)s AND bucket_key IN %(keys)s "
-            "ORDER BY occurrence_id LIMIT 513",
-            {"org": organization_id, "project": project_id, "keys": tuple(bucket_keys)},
-        )[0]
-        if len(rows) > MAX_CANDIDATE_IDS:
-            raise RuntimeError(
-                "LSH bucket candidate limit reached; retry with bounded pagination"
-            )
-        return [str(row[0]) for row in rows]
+        pending: Sequence[dict],
+        candidates: Sequence[dict],
+        limit: int,
+    ) -> dict[tuple[str, str], list[str]]:
+        """Exact cosine top-``limit`` candidates per pending occurrence and view.
+
+        ``pending`` and ``candidates`` are ready feature receipts (``view`` and
+        ``feature_digest``). The caller restricts candidates to eligible
+        features, so the bound is the requested neighbours, not the index size.
+        Each list is nearest first, ties broken by id; one statement per view.
+        """
+        if limit < 1:
+            raise ValueError("candidate limit must be positive")
+        digests = defaultdict(lambda: ([], []))
+        for side, rows in ((0, pending), (1, candidates)):
+            for row in rows:
+                if row["view"] not in {"semantics", "task"} or not HEX_DIGEST.fullmatch(
+                    row["feature_digest"]
+                ):
+                    raise ValueError("invalid candidate feature receipt")
+                digests[row["view"]][side].append(row["feature_digest"])
+        nearest = defaultdict(list)
+        for view, (pending_digests, candidate_digests) in sorted(digests.items()):
+            if not pending_digests or not candidate_digests:
+                continue
+            try:
+                rows = self.client.execute_read(
+                    nearest_sql(len(set(pending_digests))),
+                    {
+                        "org": organization_id,
+                        "project": project_id,
+                        "view": view,
+                        "pending": tuple(pending_digests),
+                        "candidates": tuple(candidate_digests),
+                        "limit": limit,
+                    },
+                    settings={"max_query_size": MAX_QUERY_BYTES},
+                )[0]
+            except Exception as exc:
+                if is_clickhouse_query_size_error(exc):
+                    raise RuntimeError(
+                        "candidate digest list exceeds ClickHouse max_query_size"
+                    ) from exc
+                raise
+            for pending_id, candidate_id, distance in rows:
+                if not math.isfinite(distance):
+                    raise RuntimeError("grouping candidate distance is invalid")
+                nearest[(pending_id, view)].append(candidate_id)
+        return dict(nearest)

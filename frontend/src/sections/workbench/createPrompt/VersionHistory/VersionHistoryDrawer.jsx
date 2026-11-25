@@ -24,6 +24,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import CustomAgentTabs from "src/sections/agents/CustomAgentTabs";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const LIMIT_CHECKBOX_MESSAGE =
   "Compare limit is upto 3 version only, Deselect other options to select this one";
@@ -111,7 +112,7 @@ const VersionHistoryChild = ({ onClose }) => {
           onClick={onClose}
           sx={{ position: "absolute", top: "10px", right: "12px" }}
         >
-          <Iconify icon="mingcute:close-line" color="text.primary" />
+          <Iconify icon="solar:close-linear" color="text.primary" />
         </IconButton>
       </Box>
 
@@ -145,7 +146,6 @@ const VersionHistoryChild = ({ onClose }) => {
                 setIsCompareActive(!isCompareActive);
                 setCompareSelectedVersions([]);
               }}
-              sx={{ height: "30px" }}
             >
               {isCompareActive ? "Cancel select" : "Select to compare"}
             </Button>
@@ -261,18 +261,20 @@ const VersionHistoryDrawer = () => {
 
   const onClose = () => setVersionHistoryOpen(false);
 
+  const covered = useDrawerCovered(versionHistoryOpen);
   return (
     <Drawer
       anchor="right"
       open={versionHistoryOpen}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          width: "1028px",
-          borderRadius: "10px",
+          width: "960px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

@@ -36,8 +36,8 @@ const getIconForLogs = (type) => {
   // ✅ fallback icon (previously missing return)
   return (
     <Iconify
-      icon="mdi-light:message"
-      sx={{ width: 18, height: 18, color: "green.600" }}
+      icon="solar:chat-round-line-linear"
+      sx={{ width: 20, height: 20, color: "status.success.fg" }}
     />
   );
 };

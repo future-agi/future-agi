@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.db import transaction
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound
@@ -5,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion, CallExecution
 from simulate.serializers.requests.agent_version import (
@@ -16,7 +19,7 @@ from simulate.serializers.response.agent_definition import (
 from simulate.serializers.response.agent_version import (
     AgentVersionActivateResponseSerializer,
     AgentVersionCreateResponseSerializer,
-    AgentVersionDeleteResponseSerializer,
+    AgentVersionDetailResponseSerializer,
     AgentVersionListResponseSerializer,
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
@@ -27,11 +30,16 @@ from simulate.serializers.response.run_test_evals import (
 )
 from simulate.serializers.test_execution import CallExecutionSerializer
 from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
     is_masked,
+    refuse_moved_secrets,
     resolve_api_key_for_version,
     resolve_api_secret_for_version,
+    resolve_server_url_for_version,
     sync_provider_credentials,
 )
+from simulate.services.agent_overview import version_list_context
+from simulate.services.harness_agent_versions import connected_agent
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
     _build_template_statistics,
@@ -48,13 +56,32 @@ from tfc.utils.api_serializers import (
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tracer.utils.observability_provider import create_observability_provider
+from tracer.services.observability_switch import (
+    ObservabilityRefused,
+    agent_is_source,
+    observability_is_on,
+    refusal_body,
+    set_agent_observability,
+)
 
 
 def _error_response(message, status_code):
     return Response(
         build_error_envelope(message, status_code=status_code),
         status=status_code,
+    )
+
+
+def _agents_page_only(agent):
+    if not connected_agent(agent.id):
+        return None
+    return Response(
+        build_error_envelope(
+            "This agent's versions are managed on its agent page",
+            status_code=status.HTTP_409_CONFLICT,
+            code="use_agents_page",
+        ),
+        status=status.HTTP_409_CONFLICT,
     )
 
 
@@ -89,7 +116,9 @@ class AgentVersionListView(APIView):
             paginator = ExtendedPageNumberPagination()
             result_page = paginator.paginate_queryset(versions, request)
 
-            serializer = AgentVersionListResponseSerializer(result_page, many=True)
+            serializer = AgentVersionListResponseSerializer(
+                result_page, many=True, context=version_list_context(result_page or [])
+            )
             return paginator.get_paginated_response(serializer.data)
 
         except AgentDefinition.DoesNotExist:
@@ -112,12 +141,14 @@ class CreateAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("create an agent version")
     @validated_request(
         request_serializer=AgentVersionCreateRequestSerializer,
         responses={
             201: AgentVersionCreateResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -132,10 +163,13 @@ class CreateAgentVersionView(APIView):
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
             )
+            refused = _agents_page_only(agent)
+            if refused is not None:
+                return refused
 
             validated = request.validated_data
             commit_message = validated.get("commit_message", "")
-            observability_enabled = validated.get("observability_enabled", False)
+            observability_enabled = validated.get("observability_enabled")
 
             incoming_api_key = validated.get("api_key")
             preserve_existing_api_key = incoming_api_key is not None and is_masked(
@@ -151,6 +185,14 @@ class CreateAgentVersionView(APIView):
                 incoming_livekit_api_secret is not None
                 and is_masked(incoming_livekit_api_secret)
             )
+            active_version = agent.active_version or agent.latest_version
+            if preserve_livekit_api_key or preserve_livekit_api_secret:
+                refuse_moved_secrets(
+                    stored_url=resolve_server_url_for_version(active_version),
+                    new_url=(validated.get("livekit_url") or "").strip(),
+                    api_key=incoming_livekit_api_key or "",
+                    api_secret=incoming_livekit_api_secret or "",
+                )
 
             # Update agent definition fields directly from validated data
             update_fields = [
@@ -169,13 +211,13 @@ class CreateAgentVersionView(APIView):
                 "model",
                 "model_details",
             ]
-            changed = False
+            changed_fields = []
             for field in update_fields:
                 if field == "api_key" and preserve_existing_api_key:
                     continue
                 if field in validated:
                     setattr(agent, field, validated[field])
-                    changed = True
+                    changed_fields.append(field)
 
             if "knowledge_base" in validated:
                 kb_id = validated["knowledge_base"]
@@ -201,95 +243,141 @@ class CreateAgentVersionView(APIView):
                             status=status.HTTP_400_BAD_REQUEST,
                         )
                 agent.knowledge_base_id = kb_id
-                changed = True
-            if changed:
-                agent.save()
-            provider = agent.observability_provider
+                changed_fields.append("knowledge_base")
+            with transaction.atomic():
+                if changed_fields:
+                    # Only these columns: a full save would write back this
+                    # request's stale copy of the observability link.
+                    agent.save(update_fields=[*changed_fields, "updated_at"])
 
-            if provider:
-                is_project_deleted = provider.project.deleted
-                if is_project_deleted:
-                    agent.observability_provider = None
-                    agent.save()
-                else:
-                    provider.enabled = observability_enabled
-                    provider.save()
-            else:
-                if observability_enabled:
-                    provider = create_observability_provider(
-                        enabled=True,
-                        user_id=str(request.user.id),
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                        workspace=getattr(request.user, "workspace", None),
-                        project_name=agent.agent_name,
-                        provider=agent.provider,
+                # Resolve masked secrets *before* creating the new version so we read
+                # them from the active version rather than the brand-new one. The UI
+                # resends the LiveKit key/secret masked (it never holds the real
+                # value), so without this a new version blanks them → the hosted
+                # runner authenticates with empty creds and room create returns 401.
+                existing_api_key = None
+                existing_livekit_api_key = None
+                existing_livekit_api_secret = None
+                if (
+                    preserve_existing_api_key
+                    or preserve_livekit_api_key
+                    or preserve_livekit_api_secret
+                ):
+                    if active_version:
+                        if preserve_existing_api_key:
+                            existing_api_key = resolve_api_key_for_version(
+                                active_version
+                            )
+                        if preserve_livekit_api_key:
+                            existing_livekit_api_key = resolve_api_key_for_version(
+                                active_version
+                            )
+                        if preserve_livekit_api_secret:
+                            existing_livekit_api_secret = (
+                                resolve_api_secret_for_version(active_version)
+                            )
+
+                version = agent.create_version(
+                    description=agent.description,
+                    commit_message=commit_message,
+                    status=AgentVersion.StatusChoices.ACTIVE,
+                )
+                version.activate()
+
+                creds_input = ProviderCredentialsInput(
+                    provider=validated.get("provider") or agent.provider or "",
+                    api_key=(
+                        existing_api_key
+                        if preserve_existing_api_key
+                        else validated.get("api_key")
+                    ),
+                    assistant_id=validated.get("assistant_id"),
+                    livekit_url=validated.get("livekit_url"),
+                    livekit_api_key=(
+                        existing_livekit_api_key
+                        if preserve_livekit_api_key
+                        else validated.get("livekit_api_key")
+                    ),
+                    livekit_api_secret=(
+                        existing_livekit_api_secret
+                        if preserve_livekit_api_secret
+                        else validated.get("livekit_api_secret")
+                    ),
+                    livekit_agent_name=validated.get("livekit_agent_name"),
+                    livekit_config_json=validated.get("livekit_config_json"),
+                    livekit_max_concurrency=validated.get("livekit_max_concurrency"),
+                    provider_was_provided="provider" in request.data,
+                )
+                # The page always sends the provider and LiveKit settings, so a code
+                # agent saved with every credential blank would get an empty row.
+                # A request with no credential fields writes no row, so the agent is
+                # only read when fields were sent.
+                sent_fields = creds_input.provider_was_provided or any(
+                    value is not None
+                    for value in (
+                        creds_input.api_key,
+                        creds_input.assistant_id,
+                        creds_input.livekit_url,
+                        creds_input.livekit_api_key,
+                        creds_input.livekit_api_secret,
+                        creds_input.livekit_agent_name,
+                        creds_input.livekit_config_json,
+                        creds_input.livekit_max_concurrency,
                     )
-                    agent.observability_provider = provider
-                    agent.save()
+                )
+                # Only the fields the provider's row would save count, so a LiveKit
+                # agent's leftover key or assistant id does not make a blank row.
+                if (creds_input.provider or "").strip() in (
+                    "livekit",
+                    "livekit_bridge",
+                ):
+                    saved_values = (
+                        creds_input.livekit_url,
+                        creds_input.livekit_api_key,
+                        creds_input.livekit_api_secret,
+                        creds_input.livekit_agent_name,
+                    )
+                    saved_config = creds_input.livekit_config_json
+                else:
+                    saved_values = (creds_input.api_key, creds_input.assistant_id)
+                    saved_config = None
+                has_credential_value = any(
+                    (value or "").strip() for value in saved_values
+                )
+                # Max Concurrency and Room Config are kept only on this row, and the
+                # page sends the default when nothing was changed.
+                has_setting_value = bool(saved_config) or (
+                    creds_input.livekit_max_concurrency is not None
+                    and creds_input.livekit_max_concurrency
+                    != settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
+                )
+                if not (
+                    sent_fields
+                    and not has_credential_value
+                    and not has_setting_value
+                    and agent_is_source(agent)
+                ):
+                    sync_provider_credentials(version, creds_input)
 
-            # Resolve masked secrets *before* creating the new version so we read
-            # them from the active version rather than the brand-new one. The UI
-            # resends the LiveKit key/secret masked (it never holds the real
-            # value), so without this a new version blanks them → the hosted
-            # runner authenticates with empty creds and room create returns 401.
-            existing_api_key = None
-            existing_livekit_api_key = None
-            existing_livekit_api_secret = None
-            if (
-                preserve_existing_api_key
-                or preserve_livekit_api_key
-                or preserve_livekit_api_secret
-            ):
-                active_version = agent.active_version or agent.latest_version
-                if active_version:
-                    if preserve_existing_api_key:
-                        existing_api_key = resolve_api_key_for_version(active_version)
-                    if preserve_livekit_api_key:
-                        existing_livekit_api_key = resolve_api_key_for_version(
-                            active_version
-                        )
-                    if preserve_livekit_api_secret:
-                        existing_livekit_api_secret = resolve_api_secret_for_version(
-                            active_version
-                        )
+                if observability_enabled is None:
+                    # An absent field leaves a code agent's switch as it is.
+                    observability_enabled = observability_is_on(
+                        agent
+                    ) and agent_is_source(agent)
+                set_agent_observability(
+                    agent_definition=agent,
+                    enabled=observability_enabled,
+                    user_id=str(request.user.id),
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    workspace=agent.workspace,
+                )
 
-            version = agent.create_version(
-                description=agent.description,
-                commit_message=commit_message,
-                status=AgentVersion.StatusChoices.ACTIVE,
-            )
-            version.activate()
-
-            creds_input = ProviderCredentialsInput(
-                provider=validated.get("provider") or agent.provider or "",
-                api_key=existing_api_key
-                if preserve_existing_api_key
-                else validated.get("api_key"),
-                assistant_id=validated.get("assistant_id"),
-                livekit_url=validated.get("livekit_url"),
-                livekit_api_key=(
-                    existing_livekit_api_key
-                    if preserve_livekit_api_key
-                    else validated.get("livekit_api_key")
-                ),
-                livekit_api_secret=(
-                    existing_livekit_api_secret
-                    if preserve_livekit_api_secret
-                    else validated.get("livekit_api_secret")
-                ),
-                livekit_agent_name=validated.get("livekit_agent_name"),
-                livekit_config_json=validated.get("livekit_config_json"),
-                livekit_max_concurrency=validated.get("livekit_max_concurrency"),
-                provider_was_provided="provider" in request.data,
-            )
-            sync_provider_credentials(version, creds_input)
-
-            # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
-            version.configuration_snapshot = version.create_snapshot(
-                commit_message=version.commit_message or ""
-            )
-            version.save(update_fields=["configuration_snapshot"])
+                # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
+                version.configuration_snapshot = version.create_snapshot(
+                    commit_message=version.commit_message or ""
+                )
+                version.save(update_fields=["configuration_snapshot"])
 
             response_data = {
                 "message": "Agent version created successfully",
@@ -301,6 +389,10 @@ class CreateAgentVersionView(APIView):
             return _error_response(
                 "Agent definition not found", status.HTTP_404_NOT_FOUND
             )
+        except ObservabilityRefused as error:
+            return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except CredentialsNeedReentry as error:
+            return _error_response(error.message, status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return _error_response(
                 f"Failed to create agent version: {str(e)}",
@@ -317,7 +409,7 @@ class AgentVersionDetailView(APIView):
 
     @swagger_auto_schema(
         responses={
-            200: AgentVersionResponseSerializer,
+            200: AgentVersionDetailResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
@@ -336,7 +428,9 @@ class AgentVersionDetailView(APIView):
 
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
 
-            serializer = AgentVersionResponseSerializer(version)
+            serializer = AgentVersionDetailResponseSerializer(
+                version, context=version_list_context([version])
+            )
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:
@@ -359,11 +453,13 @@ class ActivateAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("change the production version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
             200: AgentVersionActivateResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -379,6 +475,9 @@ class ActivateAgentVersionView(APIView):
                 or request.user.organization,
                 deleted=False,
             )
+            refused = _agents_page_only(agent)
+            if refused is not None:
+                return refused
 
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
             version.activate()
@@ -402,67 +501,6 @@ class ActivateAgentVersionView(APIView):
             )
 
 
-class DeleteAgentVersionView(APIView):
-    """
-    API View to delete an agent version (soft delete).
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    @swagger_auto_schema(
-        responses={
-            200: AgentVersionDeleteResponseSerializer,
-            400: ApiErrorWithDetailsResponseSerializer,
-            404: ApiErrorWithDetailsResponseSerializer,
-            500: ApiErrorWithDetailsResponseSerializer,
-        },
-    )
-    def delete(self, request, agent_id, version_id, *args, **kwargs):
-        """
-        Soft delete an agent version.
-        """
-        try:
-            agent = AgentDefinition.objects.get(
-                id=agent_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-            )
-
-            version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
-
-            if version.is_active:
-                active_versions = AgentVersion.objects.filter(
-                    agent_definition=agent, status="active"
-                ).exclude(id=version_id)
-
-                if not active_versions.exists():
-                    return _error_response(
-                        "Cannot delete the only active version. Please activate another version first.",
-                        status.HTTP_400_BAD_REQUEST,
-                    )
-
-            version.delete()
-
-            response_data = {"message": "Agent version deleted successfully"}
-            return Response(
-                AgentVersionDeleteResponseSerializer(response_data).data,
-                status=status.HTTP_200_OK,
-            )
-
-        except AgentDefinition.DoesNotExist:
-            return _error_response(
-                "Agent definition not found", status.HTTP_404_NOT_FOUND
-            )
-        except AgentVersion.DoesNotExist:
-            return _error_response("Agent version not found", status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return _error_response(
-                f"Failed to delete agent version: {str(e)}",
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-
 class RestoreAgentVersionView(APIView):
     """
     API View to restore an agent definition from a specific version.
@@ -470,6 +508,7 @@ class RestoreAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("restore an agent version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={

@@ -3,9 +3,11 @@ package blocklist
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -21,12 +23,14 @@ type BlocklistGuardrail struct {
 	patterns   []blocklistPattern
 	wholeWord  bool
 	maxMatches int
+	configErr  error
 }
 
 // New creates a BlocklistGuardrail from rule config.
 func New(cfg map[string]interface{}) *BlocklistGuardrail {
 	g := &BlocklistGuardrail{
 		maxMatches: 1,
+		configErr:  validateConfig(cfg),
 	}
 
 	if cfg != nil {
@@ -62,7 +66,46 @@ func New(cfg map[string]interface{}) *BlocklistGuardrail {
 	return g
 }
 
-func (g *BlocklistGuardrail) Name() string           { return "keyword-blocklist" }
+// ValidateConfig reports whether the original construction config is usable for
+// a selected policy. Validation is opt-in: legacy org/static callers of New and
+// Check retain their existing behavior. Capture the error at construction so a
+// later caller mutation cannot validate a checker built from different data.
+func (g *BlocklistGuardrail) ValidateConfig() error { return g.configErr }
+
+func validateConfig(cfg map[string]interface{}) error {
+	words, ok := cfg["words"].([]interface{})
+	if !ok || len(words) == 0 {
+		return errors.New("keyword-blocklist words must be a nonempty array of nonblank strings")
+	}
+	for _, item := range words {
+		word, ok := item.(string)
+		if !ok || strings.TrimSpace(word) == "" {
+			return errors.New("keyword-blocklist words must be a nonempty array of nonblank strings")
+		}
+	}
+	if value, present := cfg["whole_word"]; present {
+		if _, ok := value.(bool); !ok {
+			return errors.New("keyword-blocklist whole_word must be a boolean")
+		}
+	}
+	if value, present := cfg["max_matches"]; present {
+		valid := false
+		switch n := value.(type) {
+		case int:
+			valid = n > 0
+		case float64:
+			// The exclusive power-of-two bound avoids rounding MaxInt up on
+			// 64-bit platforms and matches the constructor's int conversion.
+			valid = n > 0 && n < math.Ldexp(1, strconv.IntSize-1) && math.Trunc(n) == n
+		}
+		if !valid {
+			return errors.New("keyword-blocklist max_matches must be a positive integer within the supported range")
+		}
+	}
+	return nil
+}
+
+func (g *BlocklistGuardrail) Name() string            { return "keyword-blocklist" }
 func (g *BlocklistGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check scans messages for blocklisted words/phrases.

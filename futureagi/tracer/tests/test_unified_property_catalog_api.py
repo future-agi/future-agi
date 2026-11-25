@@ -456,3 +456,342 @@ def test_current_metrics_rechecks_scope_before_reader(permission):
         )
     assert response.status_code == 400
     reader.assert_not_called()
+
+
+# These cases traverse JWT authentication, workspace authorization, the actual
+# validated action and the real scoped Postgres catalog reader. No reader mock.
+CATALOG_URL = "/tracer/dashboard/metrics/"
+
+
+@pytest.fixture
+def catalog_actor(user, workspace, observe_project):
+    from rest_framework.test import APIClient
+
+    client = APIClient()
+    login = client.post(
+        "/accounts/token/",
+        {"email": user.email, "password": "testpassword123"},
+        format="json",
+    )
+    assert login.status_code == 200
+    client.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {login.data['access']}",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    return SimpleNamespace(
+        client=client,
+        user=user,
+        organization=user.organization,
+        workspace=workspace,
+        project=observe_project,
+    )
+
+
+def _catalog_http(actor, method="get", **query):
+    data = {
+        "cursor_mode": True,
+        "page_size": 50,
+        "category": "metric",
+        "project_ids": str(actor.project.id),
+        **query,
+    }
+    if method == "post":
+        return actor.client.post(CATALOG_URL, data, format="json")
+    return actor.client.get(CATALOG_URL, data)
+
+
+def _catalog_items(response):
+    from tracer.serializers.dashboard import DashboardMetricCatalogItemSerializer
+
+    assert response.status_code == 200, response.data
+    items = response.json()["result"]["metrics"]
+    for item in items:
+        typed = DashboardMetricCatalogItemSerializer(data=item)
+        assert typed.is_valid(), typed.errors
+        # In particular, serialization must not discard descriptor metadata or
+        # trim the accepted display labels (including newline/tab boundaries).
+        assert typed.data == item
+    return items
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+@pytest.mark.parametrize("kind", ["share", "count"])
+def test_http_metric_labels_projection_and_b06_roundtrip(catalog_actor, method, kind):
+    from tracer.tests.test_property_catalog_metric_fields import (
+        create_metric,
+        validate_descriptor,
+    )
+    from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
+
+    labels = {"match": "\nResolved\tfully\n", "other": "\tNot\nresolved\t"}
+    metric, active = create_metric(catalog_actor, kind=kind, value_labels=labels)
+    session = _catalog_items(
+        _catalog_http(catalog_actor, method, context="sessions", level="conversation")
+    )[0]
+    assert session["metric_id"] == str(metric.id)
+    assert session["column_id"] == session["property_id"] == f"metric_field:{metric.id}"
+    assert session["property_kind"] == "metric_field"
+    assert session["category"] == "metric"
+    assert session["version_id"] == str(active.id) and session["version"] == 1
+    assert session["definition_hash"] == active.definition_hash
+    assert session["kind"] == kind and session["group_dims"] == ["locale"]
+    assert session["type"] == session["output_type"] == "boolean"
+    assert session["value_labels"] == labels and session["filterable"] is True
+    assert set(session["operators"]) == FILTER_TYPE_ALLOWED_OPS["boolean"]
+    for label in labels.values():
+        validate_descriptor(catalog_actor, session, "sessions", value=label)
+    projected = _catalog_items(
+        _catalog_http(catalog_actor, method, context="users", level="conversation")
+    )[0]
+    assert projected["property_id"] == session["property_id"]
+    assert projected["level"] == "user" and projected["source_level"] == "conversation"
+    assert projected["projection"] == "per_user" and projected["source"] == "users"
+    assert projected["type"] == projected["output_type"] == "number"
+    assert projected["value_labels"] == {} and projected["filterable"] is True
+    assert (projected["unit"], projected["value_format"]) == (
+        ("%", "percent") if kind == "share" else ("", "number")
+    )
+    assert set(projected["operators"]) == FILTER_TYPE_ALLOWED_OPS["number"]
+    validate_descriptor(catalog_actor, projected, "users", value=0)
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_http_active_version_not_draft_and_explicit_users_only(catalog_actor, method):
+    from rest_framework.exceptions import ValidationError
+
+    from tracer.models.derived_metric import DerivedMetric
+    from tracer.tests.test_property_catalog_metric_fields import (
+        create_metric,
+        create_version,
+        validate_descriptor,
+    )
+
+    metric, active = create_metric(catalog_actor)
+    before = _catalog_items(_catalog_http(catalog_actor, method, context="sessions"))
+    draft = create_version(
+        metric,
+        version=2,
+        kind="count",
+        level="user",
+        user_rule="any",
+        value_labels={"match": "New\nmatch", "other": "New\tother"},
+        definition_hash="a" * 64,
+    )
+    DerivedMetric.no_workspace_objects.filter(id=metric.id).update(current_version=2)
+    assert (
+        _catalog_items(_catalog_http(catalog_actor, method, context="sessions"))
+        == before
+    )
+    DerivedMetric.activate_version(metric.id, draft.id, expected_active_id=active.id)
+    for query in (
+        {},
+        {"source": "users"},
+        {"context": "sessions"},
+        {"context": "tasks"},
+    ):
+        assert _catalog_items(_catalog_http(catalog_actor, method, **query)) == []
+    item = _catalog_items(_catalog_http(catalog_actor, method, context="users"))[0]
+    assert item["version"] == 2 and item["version_id"] == str(draft.id)
+    assert item["definition_hash"] == "a" * 64 and item["kind"] == "count"
+    assert item["value_labels"] == draft.value_labels
+    assert item["source_level"] == item["level"] == "user"
+    assert item["projection"] == "user_metric" and item["filterable"] is False
+    with pytest.raises(ValidationError, match="not available"):
+        validate_descriptor(catalog_actor, item, "users")
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_http_catalog_scope_and_viewer_read_only(catalog_actor, method, settings):
+    from accounts.models import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.workspace import Workspace, WorkspaceMembership
+    from tracer.models.derived_metric import DerivedMetric
+    from tracer.models.project import Project
+    from tracer.tests.test_property_catalog_metric_fields import create_metric
+
+    actor = catalog_actor
+    visible, _ = create_metric(actor)
+    sibling = Project.no_workspace_objects.create(
+        name="Other project",
+        workspace=actor.workspace,
+        organization=actor.organization,
+        trace_type="observe",
+        model_type=actor.project.model_type,
+    )
+    create_metric(actor, project=sibling)
+    foreign_ws = Workspace.no_workspace_objects.create(
+        name="Other workspace",
+        organization=actor.organization,
+        created_by=actor.user,
+    )
+    foreign_project = Project.no_workspace_objects.create(
+        name="Foreign project",
+        workspace=foreign_ws,
+        organization=actor.organization,
+        trace_type="observe",
+        model_type=actor.project.model_type,
+    )
+    create_metric(actor, project=foreign_project)
+    deleted, _ = create_metric(actor)
+    DerivedMetric.no_workspace_objects.filter(id=deleted.id).update(deleted=True)
+    wrong_org, _ = create_metric(actor)
+    other_org = Organization.objects.create(name="Other catalog organization")
+    DerivedMetric.no_workspace_objects.filter(id=wrong_org.id).update(
+        organization=other_org
+    )
+    wrong_ws, _ = create_metric(actor)
+    DerivedMetric.no_workspace_objects.filter(id=wrong_ws.id).update(
+        workspace=foreign_ws
+    )
+    OrganizationMembership.no_workspace_objects.filter(user=actor.user).update(level=1)
+    WorkspaceMembership.no_workspace_objects.filter(user=actor.user).update(level=1)
+    items = _catalog_items(_catalog_http(actor, method, context="sessions"))
+    assert [item["metric_id"] for item in items] == [str(visible.id)]
+    assert (
+        _catalog_http(actor, method, project_ids=str(foreign_project.id)).status_code
+        == 400
+    )
+    assert actor.client.post("/tracer/dashboard/", {}, format="json").status_code == 403
+    assert (
+        actor.client.post("/tracer/dashboard/query/", {}, format="json").status_code
+        == 403
+    )
+    expected = 403 if settings.METRICS_ENABLED else 404
+    assert (
+        actor.client.post("/tracer/derived-metrics/", {}, format="json").status_code
+        == expected
+    )
+    # DEFAULT/unset, explicit OFF and ON runners all execute this assertion;
+    # catalog metadata availability must not turn the feature's API on.
+    assert actor.client.get("/tracer/derived-metrics/capabilities/").status_code == (
+        200 if settings.METRICS_ENABLED else 404
+    )
+    Project.no_workspace_objects.filter(id=actor.project.id).update(deleted=True)
+    assert _catalog_http(actor, method, context="sessions").status_code == 400
+    actor.client.credentials()
+    assert (
+        actor.client.get(CATALOG_URL, {"cursor_mode": True, "page_size": 1}).status_code
+        == 401
+    )
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+@pytest.mark.parametrize("field,value", [("context", "users"), ("level", "span")])
+def test_http_cursor_rejects_changed_context_or_level(
+    catalog_actor, method, field, value
+):
+    from tracer.tests.test_property_catalog_metric_fields import create_metric
+
+    for _ in range(2):
+        create_metric(catalog_actor)
+    query = {"context": "sessions", "level": "conversation", "page_size": 1}
+    first = _catalog_http(catalog_actor, method, **query)
+    assert len(_catalog_items(first)) == 1
+    assert first.data["result"]["has_more"] is True
+    cursor = first.data["result"]["next_cursor"]
+    valid = _catalog_http(catalog_actor, method, **query, cursor=cursor)
+    assert len(_catalog_items(valid)) == 1
+    assert valid.data["result"]["metrics"] != first.data["result"]["metrics"]
+    replay = _catalog_http(
+        catalog_actor, method, **{**query, field: value}, cursor=cursor
+    )
+    assert replay.status_code == 400
+    assert "cursor_mismatch" in str(replay.data)
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_http_trace_fields_stay_disabled(catalog_actor, method, settings):
+    from tracer.models.derived_metric import DerivedMetric
+    from tracer.services.derived_metrics.errors import MetricInputError
+    from tracer.tests.test_property_catalog_metric_fields import (
+        create_metric,
+        create_version,
+    )
+
+    assert not getattr(settings, "DERIVED_METRICS_TRACE_ENABLED", False)
+    metric, active = create_metric(catalog_actor)
+    draft = create_version(metric, version=2, level="trace")
+    with pytest.raises(MetricInputError, match="Trace metrics are not enabled"):
+        DerivedMetric.activate_version(
+            metric.id, draft.id, expected_active_id=active.id
+        )
+    assert (
+        _catalog_items(
+            _catalog_http(catalog_actor, method, context="traces", level="trace")
+        )
+        == []
+    )
+    assert (
+        len(_catalog_items(_catalog_http(catalog_actor, method, context="sessions")))
+        == 1
+    )
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"context": "invalid"},
+        {"level": "session"},
+        {"cursor_mode": False, "context": "users"},
+        {"cursor_mode": False, "level": "conversation"},
+        {"cursor_mode": False, "category": "metric"},
+        {"workflow": "observability", "context": "sessions"},
+    ],
+)
+def test_http_rejects_invalid_or_legacy_metric_selectors(catalog_actor, method, query):
+    assert _catalog_http(catalog_actor, method, **query).status_code == 400
+
+
+@pytest.mark.parametrize("workflow", ["observability", "dataset", "simulation"])
+def test_legacy_workflow_contract_still_admitted(workflow):
+    serializer = DashboardMetricsCatalogQuerySerializer(data={"workflow": workflow})
+    assert serializer.is_valid(), serializer.errors
+
+
+def test_live_catalog_schema_describes_request_and_metric_fields():
+    from django.urls import include, path
+    from drf_yasg import openapi
+    from drf_yasg.generators import OpenAPISchemaGenerator
+    from rest_framework.routers import SimpleRouter
+
+    router = SimpleRouter()
+    router.register("dashboard", DashboardViewSet, basename="dashboard")
+    schema = OpenAPISchemaGenerator(
+        info=openapi.Info(title="Catalog contract", default_version="v1"),
+        patterns=[path("tracer/", include(router.urls))],
+    ).get_schema(public=True)
+    route = next(
+        value for key, value in schema["paths"].items() if key.endswith("/metrics/")
+    )
+    params = {p["name"]: p for p in route["get"]["parameters"]}
+    assert "users" in params["context"]["enum"]
+    assert set(params["level"]["enum"]) == {"conversation", "span", "trace", "user"}
+    assert "metric" in params["category"]["enum"]
+    definitions = schema["definitions"]
+    body = next(p for p in route["post"]["parameters"] if p["in"] == "body")
+    request = definitions[body["schema"]["$ref"].rsplit("/", 1)[-1]]["properties"]
+    assert {"context", "level", "category"} <= set(request)
+    item = definitions["DashboardMetricCatalogItem"]["properties"]
+    assert "metric_field" in item["property_kind"]["enum"]
+    assert {
+        "metric_id",
+        "column_id",
+        "project_id",
+        "version_id",
+        "version",
+        "kind",
+        "level",
+        "source_level",
+        "projection",
+        "value_format",
+        "value_labels",
+        "definition_hash",
+        "group_dims",
+        "operators",
+        "filterable",
+    } <= set(item)
+    assert item["value_labels"]["additionalProperties"]["type"] == "string"
+    assert item["filterable"]["type"] == "boolean"
+    assert item["version"]["type"] == "integer"
+    assert item["operators"]["items"]["type"] == "string"

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 import pytest
 
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
 from tfc.licensing.types import (
     DeploymentFlavor,
@@ -22,6 +23,10 @@ from tfc.licensing.types import (
     LicenseType,
 )
 from tracer.views.feed._permissions import ErrorFeedLicenseRequired
+
+preserve_capability_service = capability_testing.preserve_capability_service
+
+pytestmark = pytest.mark.usefixtures("preserve_capability_service")
 
 
 class _FakeResolver:
@@ -44,7 +49,6 @@ def _snapshot(state: LicenseState, features: frozenset[str]) -> LicenseSnapshot:
 
 
 def _configure_ee(snapshot: LicenseSnapshot) -> None:
-    service._configured = False
     service.configure(
         flavor=DeploymentFlavor.SELF_HOSTED_EE,
         location=DeploymentLocation.SELF_HOSTED,
@@ -53,19 +57,11 @@ def _configure_ee(snapshot: LicenseSnapshot) -> None:
 
 
 def _configure_oss() -> None:
-    service._configured = False
     service.configure(
         flavor=DeploymentFlavor.OSS,
         location=DeploymentLocation.SELF_HOSTED,
         license_resolver=None,
     )
-
-
-@pytest.fixture(autouse=True)
-def _reset_service():
-    yield
-    _configure_oss()
-    service._configured = False
 
 
 class TestErrorFeedGate:
@@ -119,9 +115,9 @@ class TestErrorFeedGate:
             CreateLinearIssueView,
             LinearTeamsView,
         ):
-            assert issubclass(
-                view, ErrorFeedLicenseRequired
-            ), f"{view.__name__} lost the error-feed license gate"
+            assert issubclass(view, ErrorFeedLicenseRequired), (
+                f"{view.__name__} lost the error-feed license gate"
+            )
 
 
 class TestOpenedGates:
@@ -141,28 +137,41 @@ class TestTwoTierGating:
     require a license off-cloud."""
 
     @pytest.mark.parametrize(
-        "feature", ["optimization", "scim", "custom_roles", "synthetic_data"]
+        "feature",
+        ["optimization", "scim", "custom_roles", "synthetic_data", "jev_models"],
     )
     def test_unlocked_paid_features_open_on_oss(self, feature):
         _configure_oss()
         check_ee_feature(feature, org_id="org_1")  # must not raise
 
-    @pytest.mark.parametrize("feature", ["optimization", "agentic_eval"])
+    @pytest.mark.parametrize("feature", ["optimization", "agentic_eval", "jev_models"])
     def test_unlocked_paid_features_open_on_unlicensed_ee(self, feature):
         _configure_ee(_snapshot(LicenseState.EXPIRED, frozenset()))
         check_ee_feature(feature, org_id="org_1")  # must not raise
 
-    @pytest.mark.parametrize("feature", ["turing_models", "falcon_ai", "protect"])
+    @pytest.mark.parametrize(
+        "feature",
+        ["turing_models", "falcon_ai", "protect", "instant_eval", "insights"],
+    )
     def test_locked_features_deny_on_oss(self, feature):
         _configure_oss()
         with pytest.raises(FeatureUnavailable):
             check_ee_feature(feature, org_id="org_1")
 
-    def test_locked_set_is_exactly_the_reserved_four(self):
+    def test_locked_set_is_exactly_the_reserved_features(self):
         from tfc.capabilities.registry import OSS_LOCKED_FEATURES, PAID_FEATURES
 
+        # Jev is Community (open off-cloud); Instant eval and Insights are
+        # Enterprise-only like the error feed.
         assert OSS_LOCKED_FEATURES == frozenset(
-            {"falcon_ai", "turing_models", "protect", "error_feed"}
+            {
+                "falcon_ai",
+                "turing_models",
+                "protect",
+                "error_feed",
+                "instant_eval",
+                "insights",
+            }
         )
         assert OSS_LOCKED_FEATURES <= PAID_FEATURES
 

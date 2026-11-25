@@ -1,6 +1,23 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
+import { WORKERS_COPY } from "../workers.constants";
+
+const tool = (name, description, writes) => ({
+  tool: name,
+  status: "simulated",
+  reset_between_trials: true,
+  runs_at: null,
+  writes,
+  description,
+  arguments: [],
+  returns: [],
+  requires: [],
+  refuses: "",
+  effect: writes ? "write" : "read",
+  effects: "",
+  tables: { recorded: false, read: [], changed: [], label: "Not recorded" },
+});
 
 // A voice environment with two tools, two hard rules and a seeded table —
 // enough to exercise the world (capability graph), the internals (tables +
@@ -12,15 +29,28 @@ const voiceEnv = {
     { name: "lookup_account", desc: "Reads the caller's account." },
     { name: "issue_refund", desc: "Refunds a charge." },
   ],
-  rules: ["Never disclose another caller's data.", "Only refund verified callers."],
-  seed: { tables: [{ name: "customers", rows: 240, note: "40 with saved cards" }] },
+  rules: [
+    "Never disclose another caller's data.",
+    "Only refund verified callers.",
+  ],
+  worldTables: [
+    { name: "customers", rows: 240, note: "40 with saved cards", fields: [] },
+  ],
+  worldTotalRows: 240,
+  toolStatus: [
+    tool("lookup_account", "Reads the caller's account.", false),
+    tool("issue_refund", "Refunds a charge.", true),
+  ],
 };
 
 const renderPanel = (props = {}) =>
   render(
     <RlContractPanel
       env={voiceEnv}
-      envState={{ evals: [{ id: "task_success" }], agent: { name: "Support agent" } }}
+      envState={{
+        evals: [{ id: "task_success" }],
+        agent: { name: "Support agent" },
+      }}
       patch={vi.fn()}
       onGo={vi.fn()}
       {...props}
@@ -28,10 +58,10 @@ const renderPanel = (props = {}) =>
   );
 
 describe("RlContractPanel", () => {
-  it("leads with the environment-contract heading and blurb", () => {
+  it("opens on its content, with no heading repeating the tab", () => {
     renderPanel();
-    expect(screen.getByText("Environment contract")).toBeInTheDocument();
-    expect(screen.getByText(/What this environment is made of/)).toBeInTheDocument();
+    expect(screen.queryByText("Environment contract")).toBeNull();
+    expect(screen.queryByText(/What this environment is made of/)).toBeNull();
   });
 
   it("renders the world-internals cards over real data only: tables and tools", () => {
@@ -45,13 +75,53 @@ describe("RlContractPanel", () => {
     expect(screen.queryByText("Check implementations")).toBeNull();
   });
 
-  it("renders the run end conditions — terminate, truncate, clock and seed", () => {
-    renderPanel();
+  it("renders the authored run end conditions: terminate, truncate and clock", () => {
+    renderPanel({
+      env: {
+        ...voiceEnv,
+        endConditions: {
+          ended_reasons: ["customer-ended-call", "silence-timed-out"],
+          max_turns: 10,
+          max_duration_seconds: 3600,
+          clock: "real-time",
+        },
+      },
+    });
     expect(screen.getByText("Run end conditions")).toBeInTheDocument();
     expect(screen.getByText("Terminate")).toBeInTheDocument();
+    expect(screen.getByText("customer-ended-call")).toBeInTheDocument();
     expect(screen.getByText("Truncate")).toBeInTheDocument();
-    expect(screen.getByText(/^Clock ·/)).toBeInTheDocument();
-    expect(screen.getByText("Deterministic seed")).toBeInTheDocument();
+    expect(screen.getByText("10 turns")).toBeInTheDocument();
+    expect(screen.getByText("Clock · real-time")).toBeInTheDocument();
+  });
+
+  it("has no seed row: the API carries no seed for it to describe", () => {
+    renderPanel({
+      env: { ...voiceEnv, endConditions: { ended_reasons: ["cancelled"] } },
+    });
+    expect(screen.queryByText("Deterministic seed")).toBeNull();
+  });
+
+  it("says a template or fork has no end conditions because it was never built", () => {
+    renderPanel({ env: { ...voiceEnv, endConditions: null } });
+    expect(screen.getByText("Not authored yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("This environment hasn't been built, so it has none."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/The build writes these/)).toBeNull();
+  });
+
+  it("says the end conditions are not authored yet instead of showing sample ones", () => {
+    renderPanel({ env: { ...voiceEnv, endConditions: null }, backed: true });
+    expect(
+      screen.getByText(
+        /The build writes these once it has read how a run of this agent ends/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Run end conditions")).toBeInTheDocument();
+    expect(screen.getByText("Not authored yet")).toBeInTheDocument();
+    expect(screen.queryByText("Terminate")).toBeNull();
+    expect(screen.queryByText(/^Clock ·/)).toBeNull();
   });
 
   it("lists each declared tool with its description and no inferred effect chip", () => {
@@ -66,23 +136,32 @@ describe("RlContractPanel", () => {
     expect(screen.queryByText("Writes data")).toBeNull();
   });
 
-  it("shows where a tool runs only when ALK reported an entrypoint for it", () => {
+  it("shows where a tool runs only when the contract says, in its words", () => {
     renderPanel({
       env: {
         ...voiceEnv,
-        toolEntrypoints: [
-          { tool: "issue_refund", module: "billing", callable: "refund" },
+        toolStatus: [
+          { ...voiceEnv.toolStatus[0] },
+          { ...voiceEnv.toolStatus[1], runs_at: "billing.refund" },
         ],
       },
     });
     expect(screen.getByText("billing.refund")).toBeInTheDocument();
-    // lookup_account has no entrypoint, so it carries no invented location.
+    // lookup_account has no location, so none is invented.
     expect(screen.queryByText(/lookup_account\./)).toBeNull();
   });
 
-  it("no longer mounts the dummy Actors section (commented out, to be picked up later)", () => {
-    renderPanel();
-    expect(screen.queryByText("Colleague with a different plan")).toBeNull();
+  it("has no actors section, because actors have their own tab", () => {
+    renderPanel({
+      env: {
+        ...voiceEnv,
+        id: "env-1",
+        versioning: { enabled: true },
+        callActors: [{ id: "friend" }],
+      },
+    });
+    expect(screen.queryByText("In the world")).toBeNull();
+    expect(screen.queryByText(/^Actors/)).toBeNull();
   });
 
   describe("template lock (read-only until forked)", () => {
@@ -99,5 +178,61 @@ describe("RlContractPanel", () => {
       expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
       expect(patch).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("Participants card", () => {
+  // As the API serves them: a non-null channel and the tools each may use.
+  const workers = [
+    {
+      id: "order_lookup",
+      name: "Order-lookup worker",
+      display_name: "Order-lookup worker",
+      tools: ["get_order", "list_refunds", "update_order_status"],
+      allowed_tools: ["get_order", "list_refunds"],
+      tools_shown: ["get_order", "list_refunds"],
+      binding: "separate",
+      enforcement: "unknown",
+      enforcement_label:
+        "Not confirmed yet: no run has shown this participant's own calls",
+    },
+    {
+      id: "refund",
+      name: "Refund worker",
+      display_name: "Refund worker",
+      tools: ["list_refunds", "issue_refund"],
+      allowed_tools: [],
+      tools_shown: ["list_refunds", "issue_refund"],
+      binding: "not_declared",
+      enforcement: "not_enforced",
+      enforcement_label:
+        "Limits can't be enforced: this participant runs inside the app, so its calls can't be told apart",
+    },
+  ];
+
+  it("lists each declared worker with its served channel and only the tools it may use", () => {
+    renderPanel({ env: { ...voiceEnv, workers } });
+    const rows = screen.getAllByTestId("declared-worker");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText("get_order")).toBeTruthy();
+    expect(within(rows[0]).queryByText("update_order_status")).toBeNull();
+    // No channel is claimed for a worker whose contract entry does not say.
+    expect(rows[1]).not.toHaveTextContent(WORKERS_COPY.binding.shared);
+    expect(rows[1]).toHaveTextContent(WORKERS_COPY.binding.not_declared);
+  });
+
+  it("calls them Participants, as the agent and the call drawers do, in product words", () => {
+    renderPanel({ env: { ...voiceEnv, workers } });
+    expect(screen.getByText("Participants")).toBeInTheDocument();
+    expect(screen.getByText("2 participants")).toBeInTheDocument();
+    const rows = screen.getAllByTestId("declared-worker");
+    expect(rows[0]).toHaveTextContent("Own connection");
+    expect(rows[1]).toHaveTextContent("Connection not declared");
+    expect(screen.queryByText(/channel/i)).toBeNull();
+  });
+
+  it("hides the workers card when the contract declares none", () => {
+    renderPanel();
+    expect(screen.queryByTestId("declared-workers")).toBeNull();
   });
 });

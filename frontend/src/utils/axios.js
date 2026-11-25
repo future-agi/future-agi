@@ -21,6 +21,7 @@ import {
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
+import { retryAfterSeconds } from "./retryAfter";
 import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
 
 // ----------------------------------------------------------------------
@@ -79,6 +80,7 @@ const avoidRedirect = [
   "/mcp/authorize",
   "/auth/jwt/two-factor",
   "/auth/jwt/org-removed",
+  "/shared/",
 ];
 
 axiosInstance.interceptors.request.use((config) =>
@@ -138,8 +140,34 @@ axiosInstance.interceptors.response.use(
       );
     }
 
+    // A signed-out viewer of a shared link has no session to refresh or end:
+    // let the page show its own "Sign in required" screen.
+    const signedOutOnSharedLink =
+      window.location.pathname.startsWith("/shared/") &&
+      (!getRememberMe() || !getRefreshToken());
+
+    // A dead session token on a shared link (nothing to refresh it with)
+    // turns even a public link into a 401. Drop the session and ask once
+    // more without it; a restricted link then answers 401 on its own.
+    if (
+      status === RESPONSE_CODES.UNAUTHORIZED &&
+      signedOutOnSharedLink &&
+      originalRequest?.headers?.Authorization &&
+      !originalRequest._sharedRetry
+    ) {
+      setSession(null);
+      clearTokens();
+      originalRequest._sharedRetry = true;
+      delete originalRequest.headers.Authorization;
+      return axiosInstance(originalRequest);
+    }
+
     // Handle 401 and try refresh
-    if (status === RESPONSE_CODES.UNAUTHORIZED && !originalRequest?._retry) {
+    if (
+      status === RESPONSE_CODES.UNAUTHORIZED &&
+      !originalRequest?._retry &&
+      !signedOutOnSharedLink
+    ) {
       const refreshToken = getRefreshToken();
       const rememberMe = getRememberMe();
 
@@ -167,10 +195,18 @@ axiosInstance.interceptors.response.use(
       setIsRefreshing(true);
 
       try {
+        const refreshGeneration = localStorage.getItem("fai_auth_generation");
         const res = await refreshTokenRequest();
         const newAccessToken = res.data?.access;
 
         if (!newAccessToken) throw new Error("No access token returned");
+
+        if (refreshGeneration !== localStorage.getItem("fai_auth_generation")) {
+          const sessionReplaced = new Error("session replaced");
+          processQueue(sessionReplaced, null);
+          window.location.replace("/dashboard/develop");
+          throw sessionReplaced;
+        }
 
         // 🪪 Save new token in storage + axios headers
         // Workspace header is managed by WorkspaceProvider (reads from sessionStorage).
@@ -196,6 +232,9 @@ axiosInstance.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         return axiosInstance(originalRequest);
       } catch (err) {
+        if (err?.message === "session replaced") {
+          return Promise.reject(err);
+        }
         processQueue(err, null); // ❌ Fail queued requests too
         setSession(null);
         resetUser();
@@ -262,7 +301,17 @@ axiosInstance.interceptors.response.use(
       statusCode: error.response?.status,
       // Keep Axios' transport classification without overwriting a semantic
       // API error code from the response body (for example snapshot_changed).
-      transportCode: error.code,
+      transportCode:
+        error.code ||
+        (!error.response && error.request ? "ERR_NETWORK" : undefined),
+      // Preserve only the validated admission wait, not all response headers.
+      ...(status === 429 && {
+        retryAfterSeconds: retryAfterSeconds(
+          error.response?.headers?.get?.("retry-after") ??
+            error.response?.headers?.["retry-after"] ??
+            error.response?.headers?.["Retry-After"],
+        ),
+      }),
     };
 
     return Promise.reject(customError);
@@ -484,6 +533,8 @@ export const endpoints = {
     knowledgeBase: apiPath("/model-hub/knowledge-base/"),
     list: apiPath("/model-hub/knowledge-base/get/"),
     files: apiPath("/model-hub/knowledge-base/files/"),
+    downloadFile: (kbId) =>
+      apiPath("/model-hub/kb/{id}/download-file/", { id: kbId }),
   },
   customMetric: {
     list: (modelId) =>
@@ -1370,6 +1421,30 @@ export const endpoints = {
       `${apiPath("/tracer/observation-span/retrieve_loading/")}?observation_span_id=${id}`,
     getTracesForObserveProject: () =>
       apiPath("/tracer/trace/list_traces_of_session/"),
+    insightsConfigs: () => apiPath("/tracer/insights/configs/"),
+    insightsConfig: (configId) =>
+      apiPath("/tracer/insights/configs/{config_id}/", { config_id: configId }),
+    insightsDraft: () => apiPath("/tracer/insights/draft/"),
+    insightsPreview: () => apiPath("/tracer/insights/preview/"),
+    insightsEstimate: () => apiPath("/tracer/insights/estimate/"),
+    insightsRuns: () => apiPath("/tracer/insights/runs/"),
+    insightsRun: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/", { run_id: runId }),
+    insightsRunStop: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/stop/", { run_id: runId }),
+    insightsRunUnits: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/units/", { run_id: runId }),
+    insightsRunMedia: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/media/", { run_id: runId }),
+    insightsRunAsk: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/ask/", { run_id: runId }),
+    instantEvalRuns: () => apiPath("/tracer/instant-eval/runs/"),
+    instantEvalEstimate: () => apiPath("/tracer/instant-eval/estimate/"),
+    instantEvalStart: () => apiPath("/tracer/instant-eval/start/"),
+    instantEvalSummary: () => apiPath("/tracer/instant-eval/summary/"),
+    instantEvalRows: () => apiPath("/tracer/instant-eval/rows/"),
+    instantEvalExport: () => apiPath("/tracer/instant-eval/export/"),
+    instantEvalControl: () => apiPath("/tracer/instant-eval/control/"),
     getAgentGraph: () => apiPath("/tracer/trace/agent_graph/"),
     getTraceForObserveExport: apiPath("/tracer/trace/get_trace_export_data/"),
     getSpansForObserveProject: () =>
@@ -1410,6 +1485,8 @@ export const endpoints = {
     getEvalDetails: (observationSpanId, customEvalConfigId) =>
       `${apiPath("/tracer/observation-span/get_evaluation_details/")}?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
     createEvalTask: () => apiPath("/tracer/eval-task/"),
+    samplingPreview: () => apiPath("/tracer/eval-task/sampling_preview/"),
+    samplingAudit: () => apiPath("/tracer/eval-task/sampling_audit/"),
     getEvalTaskDetails: (id) =>
       withQuery(apiPath("/tracer/eval-task/get_eval_details/"), {
         eval_id: id,
@@ -1513,6 +1590,10 @@ export const endpoints = {
   },
   agentDefinitions: {
     list: apiPath("/simulate/agent-definitions/"),
+    edit: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/edit/", {
+        agent_id: id,
+      }),
     create: apiPath("/simulate/agent-definitions/create/"),
     versions: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/versions/", {
@@ -1534,12 +1615,88 @@ export const endpoints = {
       ),
     detail: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/", { agent_id: id }),
+    runs: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/runs/", {
+        agent_id: id,
+      }),
+    storedAgent: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/",
+        { agent_id: id, version_id: version },
+      ),
+    changeVersion: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/versions/change/", {
+        agent_id: id,
+      }),
+    productionVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/",
+        { agent_id: id, version_id: version },
+      ),
+    retryVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/",
+        { agent_id: id, version_id: version },
+      ),
+    discardVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/",
+        { agent_id: id, version_id: version },
+      ),
+    buildPreflight: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/build-preflight/", {
+        agent_id: id,
+      }),
+    foundCheck: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/found-check/", {
+        agent_id: id,
+      }),
+    scan: apiPath("/simulate/agents/scan/"),
+    scanDetail: (id) =>
+      apiPath("/simulate/agents/scan/{scan_id}/", { scan_id: id }),
+    connect: apiPath("/simulate/agents/connect/"),
+    connectAvailability: apiPath("/simulate/agents/connect/availability/"),
+    codeTree: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/",
+        { agent_id: id, version_id: version },
+      ),
+    codeFile: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/",
+        { agent_id: id, version_id: version },
+      ),
+    codeChanges: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/",
+        { agent_id: id, version_id: version },
+      ),
+    codeCompare: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/",
+        { agent_id: id, version_id: version },
+      ),
+    codePatches: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/patches/",
+        { agent_id: id, version_id: version },
+      ),
+    environmentAgentPolicy: (environmentId) =>
+      apiPath("/simulate/api/harness-environments/{id}/agent-policy/", {
+        id: environmentId,
+      }),
     delete: apiPath("/simulate/agent-definitions/"),
+    deleteOne: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/delete/", {
+        agent_id: id,
+      }),
     getTestAnalytics: (agent, version) =>
       apiPath(
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/",
         { agent_id: agent, version_id: version },
       ),
+    observabilityProvider: (id) =>
+      apiPath("/tracer/observability-provider/{id}/", { id }),
     verifyApiKey: apiPath("/tracer/observability-provider/verify_api_key/"),
     verifyAssistantId: apiPath(
       "/tracer/observability-provider/verify_assistant_id/",
@@ -1720,6 +1877,39 @@ export const endpoints = {
         { call_execution_id: id },
       ),
   },
+  // Fix my agent v0. Functions only: apiPath throws until the backend's
+  // paths are in the generated contract (yarn contracts:generate).
+  agentFixRuns: {
+    list: () => apiPath("/simulate/api/agent-fix-runs/"),
+    launchOptions: () =>
+      apiPath("/simulate/api/agent-fix-runs/launch-options/"),
+    detail: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/", { id }),
+    stop: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/stop/", { id }),
+    retry: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/retry/", { id }),
+    makeDefault: (id, candidateId) =>
+      apiPath(
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/",
+        { id, candidate_id: candidateId },
+      ),
+    pullRequest: (id, candidateId) =>
+      apiPath(
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/",
+        { id, candidate_id: candidateId },
+      ),
+    patch: (id, candidateId) =>
+      apiPath(
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/",
+        { id, candidate_id: candidateId },
+      ),
+  },
+  // An epoch run from an Error Feed issue, before and after it launches.
+  agentFixIssues: {
+    list: () => apiPath("/simulate/api/agent-fix-issues/"),
+    plan: () => apiPath("/simulate/api/agent-fix-issues/plan/"),
+    detail: (id) => apiPath("/simulate/api/agent-fix-issues/{id}/", { id }),
+    run: (id) => apiPath("/simulate/api/agent-fix-issues/{id}/run/", { id }),
+    stop: (id) => apiPath("/simulate/api/agent-fix-issues/{id}/stop/", { id }),
+  },
   runResultsV3: {
     calls: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/calls/", {
@@ -1729,8 +1919,16 @@ export const endpoints = {
       apiPath("/simulate/v3/call-executions/{call_execution_id}/", {
         call_execution_id: id,
       }),
+    traces: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/traces/", {
+        test_execution_id: id,
+      }),
     analytics: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/analytics/", {
+        test_execution_id: id,
+      }),
+    reliability: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/reliability/", {
         test_execution_id: id,
       }),
     export: (id) =>
@@ -1762,6 +1960,43 @@ export const endpoints = {
     list: apiPath("/accounts/workspace/list/"),
     create: apiPath("/accounts/workspaces/"),
     switch: apiPath("/accounts/workspace/switch/"),
+  },
+  derivedMetrics: {
+    list: apiPath("/tracer/derived-metrics/"),
+    detail: (id) => apiPath("/tracer/derived-metrics/{id}/", { id }),
+    validate: apiPath("/tracer/derived-metrics/validate/"),
+    evaluators: apiPath("/tracer/derived-metrics/evaluators/"),
+    capabilities: apiPath("/tracer/derived-metrics/capabilities/"),
+    draftPreview: apiPath("/tracer/derived-metrics/preview/"),
+    cancelDraftPreview: apiPath("/tracer/derived-metrics/preview/cancel/"),
+    preview: (id) => apiPath("/tracer/derived-metrics/{id}/preview/", { id }),
+    cancelPreview: (id) =>
+      apiPath("/tracer/derived-metrics/{id}/preview/cancel/", { id }),
+    kpi: (id) => apiPath("/tracer/derived-metrics/{id}/kpi/", { id }),
+    trend: (id) => apiPath("/tracer/derived-metrics/{id}/trend/", { id }),
+    drivers: (id) => apiPath("/tracer/derived-metrics/{id}/drivers/", { id }),
+    history: (id) => apiPath("/tracer/derived-metrics/{id}/history/", { id }),
+    fields: (id) => apiPath("/tracer/derived-metrics/{id}/fields/", { id }),
+    unitValues: (id) =>
+      apiPath("/tracer/derived-metrics/{id}/unit-values/", { id }),
+    refresh: (id) => apiPath("/tracer/derived-metrics/{id}/refresh/", { id }),
+    activate: (id) => apiPath("/tracer/derived-metrics/{id}/activate/", { id }),
+    snapshots: (id) =>
+      apiPath("/tracer/derived-metrics/{id}/snapshots/", { id }),
+    snapshot: (id, snapshotId) =>
+      apiPath("/tracer/derived-metrics/{id}/snapshots/{snapshot_id}/", {
+        id,
+        snapshot_id: snapshotId,
+      }),
+    // Legacy snapshot/run consumers remain intact until their own migration.
+    runs: (id) => apiPath("/tracer/derived-metrics/{id}/runs/", { id }),
+    run: (id) => apiPath("/tracer/derived-metric-runs/{id}/", { id }),
+    results: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/results/", { id }),
+    contributors: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/contributors/", { id }),
+    recompute: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/recompute/", { id }),
   },
   dashboard: {
     list: apiPath("/tracer/dashboard/"),
@@ -1824,6 +2059,13 @@ export const endpoints = {
         access_id: accessId,
       }),
     resolve: (token) => apiPath("/tracer/shared/{token}/", { token: token }),
+    issueSidebar: (token) =>
+      apiPath("/tracer/shared/{token}/sidebar/", { token: token }),
+    issueTrace: (token, traceId) =>
+      apiPath("/tracer/shared/{token}/traces/{trace_id}/", {
+        token: token,
+        trace_id: traceId,
+      }),
   },
   organizations: {
     list: apiPath("/accounts/organizations/"),
@@ -1833,6 +2075,17 @@ export const endpoints = {
     update: apiPath("/accounts/organizations/update/"),
   },
   errorFeed: {
+    alerts: {
+      list: apiPath("/tracer/alerts/"),
+      options: apiPath("/tracer/alerts/options/"),
+      detail: (id) =>
+        apiPath("/tracer/alerts/{kind}/{alert_id}/", {
+          kind: "error_feed",
+          alert_id: id,
+        }),
+      test: (id) =>
+        apiPath("/tracer/alerts/error_feed/{alert_id}/test/", { alert_id: id }),
+    },
     list: apiPath("/tracer/feed/issues/"),
     stats: apiPath("/tracer/feed/issues/stats/"),
     detail: (clusterId) =>
@@ -1937,6 +2190,12 @@ export const endpoints = {
     updateApiKey: (id) => apiPath("/agentcc/api-keys/{id}/", { id: id }),
     revokeApiKey: (id) => apiPath("/agentcc/api-keys/{id}/revoke/", { id: id }),
     syncApiKeys: apiPath("/agentcc/api-keys/sync/"),
+    guardrailPolicies: apiPath("/agentcc/guardrail-policies/"),
+    guardrailPolicyDetail: (id) =>
+      apiPath("/agentcc/guardrail-policies/{id}/", { id: id }),
+    applyGuardrailPolicy: (id) =>
+      apiPath("/agentcc/guardrail-policies/{id}/apply/", { id: id }),
+    syncGuardrailPolicies: apiPath("/agentcc/guardrail-policies/sync/"),
     requestLogs: apiPath("/agentcc/request-logs/"),
     requestLogDetail: (id) =>
       apiPath("/agentcc/request-logs/{id}/", { id: id }),
@@ -2044,6 +2303,17 @@ export const endpoints = {
     },
   },
   integrations: {
+    slack: {
+      install: apiPath("/integrations/slack/install/"),
+      channels: (id) =>
+        apiPath("/integrations/connections/{connection_id}/slack/channels/", {
+          connection_id: id,
+        }),
+    },
+    github: {
+      install: apiPath("/integrations/github/install/"),
+      installComplete: apiPath("/integrations/github/install/complete/"),
+    },
     connections: {
       list: apiPath("/integrations/connections/"),
       create: apiPath("/integrations/connections/"),
@@ -2056,6 +2326,15 @@ export const endpoints = {
         apiPath("/integrations/connections/{id}/pause/", { id: id }),
       resume: (id) =>
         apiPath("/integrations/connections/{id}/resume/", { id: id }),
+      repositories: (id) =>
+        apiPath("/integrations/connections/{connection_id}/repositories/", {
+          connection_id: id,
+        }),
+      branches: (id, repositoryId) =>
+        apiPath(
+          "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/",
+          { connection_id: id, repository_id: repositoryId },
+        ),
     },
     validate: apiPath("/integrations/connections/validate/"),
     syncLogs: apiPath("/integrations/sync-logs/"),

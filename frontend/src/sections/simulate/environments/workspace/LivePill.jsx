@@ -1,19 +1,19 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { BUILD_STATUS, ENV_STATUS, STATUS_META } from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
-// The status pill beside an environment's name. Three states keyed on the env's
-// build status: green "Ready" once the environment is built and runnable, a
-// pulsing "Building" while it is still being derived (you cannot correct a world
-// that isn't done being built), and a static "Failed" once a build stage is
-// terminal-failed — a failed build must not read as still building.
+// The status chip beside an environment's name, drawn by the shared
+// StatusBadge. Keyed on the env's build status: "Ready" once the environment is
+// built and runnable, a live "Building" while it is still being derived (you
+// cannot correct a world that isn't done being built), and a static "Failed"
+// once a build stage is terminal-failed — a failed build must not read as still
+// building.
 //
-// Colours come from STATUS_META, the same source the table's StatusPill uses, so
-// the pill inside the workspace matches the chip outside it (Building was amber
-// here vs purple in the table before this).
+// Roles come from STATUS_META, the same source the table's StatusPill uses, so
+// the chip inside the workspace matches the one outside it.
 export default function LivePill({ env, building }) {
   const isCancelling = env?.status === ENV_STATUS.CANCELLING;
   const isCancelled = env?.status === ENV_STATUS.CANCELLED;
@@ -21,19 +21,19 @@ export default function LivePill({ env, building }) {
   const isBuilding = building ?? env?.buildStatus === BUILD_STATUS.BUILDING;
   const isFailed = !isBuilding && env?.buildStatus === BUILD_STATUS.FAILED;
   const isRunning = !isBuilding && !isFailed && env?.status === ENV_STATUS.RUNNING;
-  const tone = isCancelled
-    ? STATUS_META.cancelled.color
+  const key = isCancelled
+    ? ENV_STATUS.CANCELLED
     : isCancelling
-      ? STATUS_META.cancelling.color
+      ? ENV_STATUS.CANCELLING
       : isFailed
-        ? STATUS_META.failed.color
+        ? ENV_STATUS.FAILED
         : isFinalizing
-          ? STATUS_META.finalizing.color
+          ? ENV_STATUS.FINALIZING
           : isBuilding
-            ? STATUS_META.building.color
+            ? ENV_STATUS.BUILDING
             : isRunning
-              ? STATUS_META.running.color
-              : STATUS_META.ready.color;
+              ? ENV_STATUS.RUNNING
+              : ENV_STATUS.READY;
   const label = isCancelled
     ? WORKSPACE_COPY.cancelledLabel
     : isCancelling
@@ -60,43 +60,19 @@ export default function LivePill({ env, building }) {
             : isRunning
               ? WORKSPACE_COPY.runningTooltip
               : WORKSPACE_COPY.liveTooltip;
+  // The in-flight states pulse; the rest sit still.
+  const pulsing = isBuilding || isFinalizing || isCancelling;
 
   return (
     <CustomTooltip show title={tooltip} size="small" arrow>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.5}
-        sx={{
-          px: 0.75,
-          height: 22,
-          borderRadius: 0.75,
-          cursor: "default",
-          color: tone,
-          bgcolor: (t) => alpha(tone, t.palette.mode === "dark" ? 0.16 : 0.1),
-          border: () => `1px solid ${alpha(tone, 0.24)}`,
-        }}
-      >
-        <Box
-          sx={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            bgcolor: tone,
-            animation:
-              isBuilding || isFinalizing || isCancelling
-                ? "env-pulse 1.4s ease-in-out infinite"
-                : undefined,
-            "@keyframes env-pulse": {
-              "0%,100%": { opacity: 0.4 },
-              "50%": { opacity: 1 },
-            },
-          }}
+      <Box component="span" sx={{ display: "inline-flex", cursor: "default" }}>
+        <StatusBadge
+          status={pulsing ? "building" : key}
+          role={STATUS_META[key].role}
+          label={label}
+          variant="badge"
         />
-        <Typography sx={{ typography: "s3", fontWeight: "fontWeightSemiBold" }}>
-          {label}
-        </Typography>
-      </Stack>
+      </Box>
     </CustomTooltip>
   );
 }

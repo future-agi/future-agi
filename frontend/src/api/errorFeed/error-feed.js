@@ -55,7 +55,10 @@ export const useErrorFeedList = (params, options = {}) => {
   return useQuery({
     ...options,
     queryKey: KEYS.list(params),
-    queryFn: () => axios.get(endpoints.errorFeed.list, { params }),
+    // Thread React Query's AbortSignal so a list read in flight is cancelled
+    // when the page unmounts or params change (TH-8209).
+    queryFn: ({ signal }) =>
+      axios.get(endpoints.errorFeed.list, { params, signal }),
     select: (res) => res?.data?.result,
     staleTime: 30 * 1000,
     keepPreviousData: true,
@@ -116,6 +119,25 @@ export const useErrorFeedOverview = (clusterId, options = {}) => {
     queryFn: () => axios.get(endpoints.errorFeed.overview(clusterId)),
     select: (res) => res?.data?.result,
     enabled,
+  });
+};
+
+// The overview endpoint's `rep_limit` max, so one request covers the export.
+export const EXPORT_TRACE_LIMIT = 200;
+
+/**
+ * One-shot Overview read for the issue exports: every card up to the max for
+ * the traces CSV, or a smaller sample for the analysis. Kept apart from
+ * useErrorFeedOverview so an export payload never replaces the tab's cache.
+ */
+export const useExportErrorFeedTraces = () => {
+  return useMutation({
+    mutationFn: ({ clusterId, repLimit = EXPORT_TRACE_LIMIT }) =>
+      axios
+        .get(endpoints.errorFeed.overview(clusterId), {
+          params: { rep_limit: repLimit },
+        })
+        .then((res) => res?.data?.result),
   });
 };
 

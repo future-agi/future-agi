@@ -10,6 +10,7 @@ import requests
 from integrations.models import (
     ConnectionStatus,
     IntegrationConnection,
+    IntegrationPlatform,
     SyncLog,
     SyncStatus,
 )
@@ -94,6 +95,18 @@ class TestPollActiveIntegrations:
         """Error connections are not polled for sync."""
         poll_active_integrations()
         mock_sync.delay.assert_not_called()
+
+    @patch("integrations.temporal.activities.sync_integration_connection")
+    def test_skips_action_only_slack(self, mock_sync, integration_connection):
+        integration_connection.platform = IntegrationPlatform.SLACK
+        integration_connection.project = None
+        integration_connection.save(update_fields=["platform", "project"])
+
+        poll_active_integrations()
+
+        mock_sync.delay.assert_not_called()
+        integration_connection.refresh_from_db()
+        assert integration_connection.status == ConnectionStatus.ACTIVE
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +199,19 @@ class TestSyncIntegrationConnection:
 
         integration_connection.refresh_from_db()
         assert integration_connection.status == ConnectionStatus.PAUSED
+
+    def test_action_only_slack_remains_active_if_sync_called_directly(
+        self, integration_connection
+    ):
+        integration_connection.platform = IntegrationPlatform.SLACK
+        integration_connection.project = None
+        integration_connection.save(update_fields=["platform", "project"])
+
+        sync_integration_connection(str(integration_connection.id))
+
+        integration_connection.refresh_from_db()
+        assert integration_connection.status == ConnectionStatus.ACTIVE
+        assert not SyncLog.objects.filter(connection=integration_connection).exists()
 
     @patch("time.sleep")
     @patch("integrations.transformers.base.get_transformer")

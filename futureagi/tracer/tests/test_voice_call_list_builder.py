@@ -1216,7 +1216,8 @@ def test_eval_query_replays_legacy_latest_state_without_final():
     s = _squash(sql)
     assert "FROM tracer_eval_logger PREWHERE trace_id IN" in s
     assert "argMax(_peerdb_is_deleted, _peerdb_version)" in s
-    assert "coalesce(argMax(deleted, _peerdb_version), 0)" in s
+    assert "coalesce(argMax(tuple(deleted), _peerdb_version).1, 0)" in s
+    assert "argMax(tuple(status), _peerdb_version).1 AS latest_status" in s
     assert "WHERE latest_is_deleted = 0" in s
     assert "FINAL" not in s
 
@@ -1226,7 +1227,10 @@ def test_eval_query_excludes_non_terminal_and_errored_rows():
     qb = VoiceCallListQueryBuilder(project_id=PROJECT_ID, eval_config_ids=["c1"])
     sql, _ = qb.build_eval_query(["t1"])
     s = _squash(sql)
-    assert "latest_status NOT IN ('pending', 'running', 'skipped', 'errored')" in s
+    assert (
+        "ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')"
+        in s
+    )
     assert "latest_error = 0" in s
 
 

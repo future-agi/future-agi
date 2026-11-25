@@ -32,7 +32,11 @@ const AddColumnField = ({
 
   return (
     <Box
-      sx={{ border: "2px solid rgba(241, 240, 245, 1)", borderRadius: "4px" }}
+      sx={{
+        border: "1px solid",
+        borderColor: "border.default",
+        borderRadius: "8px",
+      }}
     >
       <ConfirmDialog
         open={showConfirmation}
@@ -46,7 +50,6 @@ const AddColumnField = ({
             type="button"
             color="error"
             size="small"
-            sx={{ paddingX: "24px" }}
             onClick={handleDelete}
           >
             Yes, delete

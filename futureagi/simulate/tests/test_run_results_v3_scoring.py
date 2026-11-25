@@ -9,7 +9,12 @@ import pytest
 from django.db import connection
 
 from simulate.models import CallExecution
-from simulate.services.run_results_v3 import _eval_outcome, call_outcome, eval_rows
+from simulate.services.run_results_v3 import (
+    _eval_outcome,
+    call_outcome,
+    eval_rows,
+    sub_goal_entries,
+)
 from simulate.services.run_results_v3_queries import (
     _configured_eval_verdict,
     run_calls_queryset,
@@ -19,6 +24,9 @@ from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     resolve_eval_scoring_spec,
 )
+
+# A finished two-call Run, for the runs list counts.
+from simulate.tests.test_rerun_calls_in_run import calls, finished_run  # noqa: F401
 
 
 def _config(output_type: str):
@@ -182,7 +190,7 @@ def test_configured_verdict_query_compiles_without_database():
     config.eval_template.choice_scores = {"good": 1.0, "bad": 0.0}
     with (
         patch(
-            "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
+            "simulate.services.run_results_v3_scoring.SimulateEvalConfig.objects.filter"
         ) as filtered,
         patch(
             "simulate.services.run_results_v3_queries.HostedHarnessJob.all_objects.filter"
@@ -190,7 +198,7 @@ def test_configured_verdict_query_compiles_without_database():
     ):
         filtered.return_value.select_related.return_value = [config]
         jobs.return_value.values_list.return_value = []
-        queryset = run_calls_queryset(SimpleNamespace(run_test=None), [uuid.uuid4()])
+        queryset = run_calls_queryset(SimpleNamespace(run_test_id=None), [uuid.uuid4()])
 
     sql = str(queryset.query)
     assert "result_scenario_key" in sql
@@ -326,13 +334,33 @@ def test_sql_scoring_matches_python(
         ("analyzing", "in_progress"),
         ("completed", "inconclusive"),
         ("failed", "error"),
-        ("cancelled", "error"),
+        ("cancelled", "cancelled"),
     ],
 )
 def test_call_outcome_distinguishes_lifecycle_from_terminal_verdict(
     execution_status, expected
 ):
     call = SimpleNamespace(call_metadata={}, status=execution_status, eval_outputs={})
+    assert call_outcome(call, {}) == expected
+
+
+@pytest.mark.parametrize(
+    "harness_status,expected",
+    [
+        # A user stop: the receipt arrives errored, the call is cancelled with ended_reason user_canceled.
+        ("errored", "cancelled"),
+        (None, "cancelled"),
+        # A skipped scenario is stored cancelled too, but nobody stopped it.
+        ("skipped", "error"),
+    ],
+)
+def test_a_call_the_user_stopped_is_cancelled_not_an_error(harness_status, expected):
+    call = SimpleNamespace(
+        call_metadata={"harness_outcome_status": harness_status},
+        status=CallExecution.CallStatus.CANCELLED,
+        ended_reason="user_canceled",
+        eval_outputs={},
+    )
     assert call_outcome(call, {}) == expected
 
 
@@ -347,3 +375,98 @@ def test_active_call_ignores_previous_harness_verdict(execution_status):
     )
     expected = "queued" if execution_status in {"pending", "queued"} else "in_progress"
     assert call_outcome(call, {}) == expected
+
+
+@pytest.mark.parametrize("harness_status", ["passed", None])
+def test_a_worker_s_own_failed_check_never_fails_the_call(harness_status):
+    checks = {
+        "task": {
+            "kind": "checkpoint",
+            "name": "task",
+            "output": "Passed",
+            "status": "completed",
+            "source": "harness",
+            "output_type": "Pass/Fail",
+        },
+        "worker": {
+            "kind": "checkpoint",
+            "name": "worker check",
+            "output": "Failed",
+            "status": "completed",
+            "source": "harness",
+            "output_type": "Pass/Fail",
+            "subject": "worker:order_lookup",
+        },
+    }
+    call = SimpleNamespace(
+        call_metadata={"harness_outcome_status": harness_status}
+        if harness_status
+        else {},
+        status=CallExecution.CallStatus.COMPLETED,
+        eval_outputs=checks,
+    )
+    assert call_outcome(call, {}) == "passed"
+
+
+@pytest.mark.django_db
+def test_the_runs_list_counts_a_stopped_call_as_cancelled_not_errored(
+    finished_run,  # noqa: F811
+    calls,  # noqa: F811
+):
+    from simulate.services.harness_environment import receipt_outcome_counts
+    from simulate.tests.test_run_resume import _result
+
+    stopped, skipped = calls
+    for call, status in ((stopped, "errored"), (skipped, "skipped")):
+        call.status = CallExecution.CallStatus.CANCELLED
+        call.ended_reason = "user_canceled" if status == "errored" else None
+        call.call_metadata = {**call.call_metadata, "harness_outcome_status": status}
+        call.save(update_fields=["status", "ended_reason", "call_metadata"])
+        _result(finished_run, call, status=status)
+
+    assert receipt_outcome_counts([finished_run.id])[finished_run.id]["by_status"] == {
+        "cancelled": 1,
+        "skipped": 1,
+    }
+
+
+@pytest.mark.django_db
+def test_the_runs_list_counts_a_call_stopped_before_its_receipt_as_cancelled(
+    finished_run,  # noqa: F811
+    calls,  # noqa: F811
+):
+    from simulate.services.harness_environment import receipt_outcome_counts
+
+    # Neither call has a receipt: one was stopped before the guest sealed it, the other is a skipped case.
+    stopped, skipped = calls
+    stopped.status = CallExecution.CallStatus.CANCELLED
+    stopped.call_metadata = {}
+    stopped.save(update_fields=["status", "call_metadata"])
+    skipped.status = CallExecution.CallStatus.CANCELLED
+    skipped.call_metadata = {"harness_outcome_status": "skipped"}
+    skipped.save(update_fields=["status", "call_metadata"])
+
+    assert receipt_outcome_counts([finished_run.id])[finished_run.id]["by_status"] == {
+        "cancelled": 1
+    }
+
+
+def test_a_worker_s_own_check_names_its_worker_and_the_task_s_does_not():
+    task, own = sub_goal_entries(
+        [
+            {"name": "refund_issued", "verdict": "fail"},
+            {"name": "read_only", "verdict": "fail", "subject": "worker:order_lookup"},
+        ]
+    )
+    assert (task["subject_kind"], task.get("worker_id")) == ("task", None)
+    assert (own["subject_kind"], own["worker_id"]) == ("worker", "order_lookup")
+    # Shown by the worker's recorded name, else its id; a task's check by its own name.
+    assert (task["display_name"], own["display_name"]) == (
+        "refund_issued",
+        "read_only (order_lookup)",
+    )
+    named = sub_goal_entries(
+        [{"name": "read_only", "verdict": "fail", "subject": "worker:order_lookup"}],
+        {"order_lookup": "Order-lookup worker"},
+    )
+    assert named[0]["display_name"] == "read_only (Order-lookup worker)"
