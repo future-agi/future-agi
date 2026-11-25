@@ -34,14 +34,15 @@ class _ManagedNativeReadStream:
         self._query_settings = query_settings
         self._deadline = 0.0
         self._admission_acquired = False
-        self._client = None
-        self._driver_connection = None
-        self._original_connect_timeout = None
-        self._original_send_receive_timeout = None
-        self._original_sync_request_timeout = None
-        self._original_disable_reconnect = None
-        self._socket = None
-        self._original_socket_timeout = None
+        # Duck-typed clickhouse-driver objects and their original settings.
+        self._client: Any = None
+        self._driver_connection: Any = None
+        self._original_connect_timeout: Any = None
+        self._original_send_receive_timeout: Any = None
+        self._original_sync_request_timeout: Any = None
+        self._original_disable_reconnect: Any = None
+        self._socket: Any = None
+        self._original_socket_timeout: Any = None
         self._original_socket_timeout_known = False
         self._exhausted = False
 

@@ -580,7 +580,7 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.equal(rejected.status, 1);
   assert.match(rejected.stdout, /no builds were started/);
   assert.deepEqual(workflow.permissions, { contents: 'read' });
-  assert.deepEqual(workflow.jobs.changes.permissions, { contents: 'read', actions: 'read' });
+  assert.deepEqual(workflow.jobs.changes.permissions, { contents: 'read', actions: 'read', issues: 'read' });
   assert.deepEqual(workflow.jobs.e2e.permissions, { contents: 'read', packages: 'read' });
   assert.deepEqual(workflow.jobs.report.permissions, { contents: 'read', actions: 'read' });
   assert.equal(Object.values(workflow.jobs).filter(job => job.permissions).length, 3);

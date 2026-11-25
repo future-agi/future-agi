@@ -180,6 +180,9 @@ function repoPayload(draft, name) {
   if (ref) source.ref = ref;
   const subfolder = normalizeSubfolder(draft.subfolder);
   if (subfolder) source.subfolder = subfolder;
+  if (/^[0-9a-f]{40}$/i.test(draft.commitSha || "")) {
+    source.commit_sha = draft.commitSha;
+  }
   if (draft.visibility === "private" && String(draft.installationId || "").trim()) {
     source.installation_id = String(draft.installationId).trim();
   }

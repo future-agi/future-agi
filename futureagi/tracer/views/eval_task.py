@@ -28,7 +28,7 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers
 from rest_framework import status as drf_status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.fields import DateTimeField
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -1806,6 +1806,14 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
 
     def get_queryset(self):
         eval_task_id = self.kwargs.get("pk")
+        if eval_task_id:
+            # The router also sends unknown action names here as a pk. This
+            # queryset filters by id before DRF's object lookup can catch an
+            # invalid UUID, so normalize it to a 404 before ORM coercion.
+            try:
+                eval_task_id = uuid_module.UUID(str(eval_task_id))
+            except ValueError:
+                raise NotFound() from None
 
         # Get base queryset with automatic filtering from mixin
         queryset = self._scope_eval_task_queryset(super().get_queryset())

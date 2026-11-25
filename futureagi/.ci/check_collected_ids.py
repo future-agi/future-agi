@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -519,23 +520,160 @@ def malformed_inventory(inventory):
     )
 
 
+# A GitHub API read can fail for a moment or come back cut short: gh then says
+# "unexpected end of JSON input" (run 45334240608). Such a read is retried from
+# scratch, a few times with backoff, then fails closed with the exact error. A
+# partial response is never used.
+API_TRIES = 4
+TRANSIENT = re.compile(
+    r"unexpected end of JSON input|HTTP 5\d\d|HTTP 429|rate limit|timed? ?out"
+    r"|connection (?:reset|refused)|\bEOF\b|TLS handshake|temporarily unavailable"
+    r"|Bad Gateway|Service Unavailable|Gateway Timeout",
+    re.IGNORECASE,
+)
+
+
+class GhApiError(subprocess.CalledProcessError):
+    """A gh api read that failed: names the read, its tries and gh's own error."""
+
+    def __init__(self, returncode, cmd, stderr, tries):
+        super().__init__(returncode, cmd, stderr=stderr)
+        self.tries = tries
+
+    def __str__(self):
+        error = (self.stderr or b"").decode("utf-8", "replace").strip()
+        return f"{' '.join(self.cmd)} failed after {self.tries} tries: {error}"
+
+
+def gh_api(args, *, parse_json=True, run=None, pause=None):
+    """`gh api ARGS`: its parsed JSON, or its bytes when parse_json is false."""
+    cmd = ["gh", "api", *args]
+    for attempt in range(1, API_TRIES + 1):
+        result = (run or subprocess.run)(cmd, capture_output=True)
+        if result.returncode == 0:
+            if not parse_json:
+                return result.stdout
+            try:
+                return json.loads(result.stdout)
+            except ValueError as exc:
+                error = ValueError(
+                    f"{' '.join(cmd)} returned cut-short JSON after {attempt} tries: {exc}"
+                )
+                transient = True
+        else:
+            error = GhApiError(result.returncode, cmd, result.stderr, attempt)
+            transient = bool(
+                TRANSIENT.search((result.stderr or b"").decode("utf-8", "replace"))
+            )
+        if not transient or attempt == API_TRIES:
+            raise error
+        (pause or time.sleep)(2**attempt)
+    raise AssertionError("unreachable")
+
+
 def run_date(root):
     """The run's creation date (UTC), which every attempt of the run shares."""
-    created = json.loads(subprocess.check_output(["gh", "api", root]))["created_at"]
+    created = gh_api([root])["created_at"]
     return datetime.date.fromisoformat(created[:10])
 
 
 def pages(endpoint, field):
-    raw = subprocess.check_output(["gh", "api", "--paginate", "--slurp", endpoint])
-    return [row for page in json.loads(raw) for row in page[field]]
+    # Every page again on each try: a cut-short listing is never completed.
+    return [
+        row
+        for page in gh_api(["--paginate", "--slurp", endpoint])
+        for row in page[field]
+    ]
+
+
+# GitHub can list a run's jobs seconds behind the jobs themselves: merge group
+# run 45343675711 read its jobs between 07:30:08 and 07:30:17Z without metrics
+# shard 4, which had finished at 07:30:04Z (its artifact was already listed).
+# The verdict knows every planned producer, so it reads both listings again,
+# in full, until each producer is listed as finished in this run attempt with
+# its artifact listed (the artifacts listing is held to the same rule), pausing
+# this many seconds between reads (90 in all). Then it judges what is listed:
+# nothing missing is ever taken as present.
+SETTLE_PAUSES = (5, 10, 15, 30, 30)
+
+
+def run_attempt(environ):
+    """This run attempt (GITHUB_RUN_ATTEMPT), or None outside Actions."""
+    value = environ.get("GITHUB_RUN_ATTEMPT", "")
+    return int(value) if value.isdigit() and int(value) >= 1 else None
+
+
+def unsettled(legs, prefix, jobs, artifacts, attempt):
+    """The planned producers the listings do not show yet.
+
+    A producer is shown once its job is listed as finished in this attempt
+    (every attempt lists every job: a job it did not re-run appears as a copy)
+    and its artifact is listed. Without a known attempt, its latest job counts.
+    """
+    missing = []
+    for key, leg in legs.items():
+        name = f"{prefix}{leg['name']} shard {leg['group']}"
+        listed = jobs.get(name, [])
+        if attempt:
+            current = [job for job in listed if job.get("run_attempt") == attempt]
+        else:
+            current = sorted(listed, key=lambda job: job.get("run_attempt") or 0)[-1:]
+        if not current or not all(
+            job.get("started_at") and job.get("completed_at") for job in current
+        ):
+            missing.append(f"job {name!r}")
+        elif any(job.get("conclusion") != "success" for job in current):
+            # The verdict fails on an unsuccessful producer whatever else is
+            # listed, so waiting for its artifact cannot change it.
+            continue
+        if not artifacts.get(key):
+            missing.append(f"artifact {key}")
+    return missing
+
+
+def listings(root, legs, prefix, attempt, *, pause=None):
+    """(jobs by name, collected-ids artifacts by name, producers still unlisted)."""
+    for wait in (*SETTLE_PAUSES, None):
+        jobs = collections.defaultdict(list)
+        for job in pages(root + "/jobs?filter=all&per_page=100", "jobs"):
+            jobs[job["name"]].append(job)
+        artifacts = collections.defaultdict(list)
+        for artifact in pages(root + "/artifacts?per_page=100", "artifacts"):
+            if artifact["name"].startswith("collected-ids-"):
+                artifacts[artifact["name"]].append(artifact)
+        missing = unsettled(legs, prefix, jobs, artifacts, attempt)
+        if not missing or wait is None:
+            return jobs, artifacts, missing
+        sys.stdout.write(
+            f"The run's listings do not show {', '.join(missing)} yet;"
+            f" reading them again in {wait} s\n"
+        )
+        (pause or time.sleep)(wait)
+    raise AssertionError("unreachable")
+
+
+def download_artifact(artifact, repo, *, fetch=None, pause=None):
+    """The artifact's bytes, matching its digest. A download cut short does not
+    match it, so it is fetched again from scratch, then fails closed."""
+    fetch = fetch or (
+        lambda: gh_api(
+            [f"repos/{repo}/actions/artifacts/{int(artifact['id'])}/zip"],
+            parse_json=False,
+        )
+    )
+    for attempt in range(1, API_TRIES + 1):
+        raw = fetch()
+        if artifact["digest"] == "sha256:" + hashlib.sha256(raw).hexdigest():
+            return raw
+        if attempt < API_TRIES:
+            (pause or time.sleep)(2**attempt)
+    raise ValueError(
+        f"digest mismatch for artifact {artifact['id']} after {API_TRIES} downloads"
+    )
 
 
 def verify_artifact(artifact, repo):
-    raw = subprocess.check_output(
-        ["gh", "api", f"repos/{repo}/actions/artifacts/{int(artifact['id'])}/zip"]
-    )
-    if artifact["digest"] != "sha256:" + hashlib.sha256(raw).hexdigest():
-        raise ValueError(f"digest mismatch for artifact {artifact['id']}")
+    raw = download_artifact(artifact, repo)
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         receipt = json.loads(archive.read("receipt.json"))
         records = [
@@ -550,6 +688,21 @@ def verify_artifact(artifact, repo):
     return receipt, records, collection, inventory
 
 
+def job_prefix(environ):
+    """How this run's job names are prefixed: "<caller job> / " when called.
+
+    A caller passes it (Retarget proof: "retarget-backend / "). Without one,
+    today's names hold: queue runs call backend-ci through the job named
+    "backend", and direct runs have no prefix.
+    """
+    prefix = environ.get("BACKEND_JOB_PREFIX", "")
+    if prefix:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]* / ", prefix):
+            raise ValueError(f"invalid job prefix {prefix!r}")
+        return prefix
+    return "backend / " if environ["GITHUB_EVENT_NAME"] == "merge_group" else ""
+
+
 def verify_run():
     run_id, repo = os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_REPOSITORY"]
     root = f"repos/{repo}/actions/runs/{run_id}"
@@ -557,20 +710,14 @@ def verify_run():
     wanted = {f"collected-ids-{leg['suite']}-{leg['group']}": leg for leg in legs}
     if not wanted or len(wanted) != len(legs):
         raise ValueError("empty or duplicated matrix")
-    # Queue runs call backend-ci through the explicitly named reusable job.
-    prefix = "backend / " if os.environ["GITHUB_EVENT_NAME"] == "merge_group" else ""
-    by_job = collections.defaultdict(list)
-    for job in pages(root + "/jobs?filter=all&per_page=100", "jobs"):
-        by_job[job["name"]].append(job)
-    artifacts = [
-        a
-        for a in pages(root + "/artifacts?per_page=100", "artifacts")
-        if a["name"].startswith("collected-ids-")
-    ]
-    by_name = collections.defaultdict(list)
-    for artifact in artifacts:
-        by_name[artifact["name"]].append(artifact)
+    prefix = job_prefix(os.environ)
+    by_job, by_name, unlisted = listings(root, wanted, prefix, run_attempt(os.environ))
     problems = []
+    if unlisted:
+        problems.append(
+            f"after {sum(SETTLE_PAUSES)} s of reading, the run's listings still"
+            f" do not show {', '.join(unlisted)}"
+        )
     # Rule expiry is judged on the run's creation date, which every attempt of
     # the run shares: re-running only this job cannot change the verdict.
     try:

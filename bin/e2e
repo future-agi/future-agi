@@ -22,9 +22,9 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 # admission-bound queues. PeerDB is included through the same bootstrap graph as
 # OSS. Completed one-shot dependencies gate the application; the harness never
 # recreates failed jobs.
-SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench code-executor link-canary link-worker-canary
+SERVICES=(frontend backend worker worker-reading worker-exact-aggregation worker-sql-workbench code-executor link-canary link-worker-canary
   postgres clickhouse redis minio
-  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack mock-google
+  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack mock-daytona mock-google
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
 # E2E_STACK=standalone: the same suite against the Standalone setup
 # (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
@@ -89,7 +89,7 @@ verify_images() {
   if [[ ${E2E_STACK:-distributed} == standalone ]]; then
     services+=(app)
   else
-    services+=(backend worker worker-exact-aggregation worker-sql-workbench frontend fi-collector fi-property-catalog-consumer agentcc-gateway)
+    services+=(backend worker worker-reading worker-exact-aggregation worker-sql-workbench frontend fi-collector fi-property-catalog-consumer agentcc-gateway)
   fi
   for service in "${services[@]}"; do
     case $service in

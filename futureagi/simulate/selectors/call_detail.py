@@ -4,23 +4,34 @@ actors' model use already worked out."""
 
 import uuid
 from collections.abc import Collection, Mapping, Sequence
+from datetime import datetime
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import structlog
 
+from simulate.constants.hosted_harness import TRIAL_STATE_KEY
 from simulate.models import CallExecution, HostedHarnessArtifact
+from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.services.harness_actor_labels import (
     CHAT_CHANNEL,
     FallbackView,
     fallback_of,
 )
+from simulate.services.harness_worker_states import attempt_metadata, stopped_workers_of
 from simulate.services.hosted_harness_ingestion import (
-    TRIAL_STATE_KEY,
     UPLOAD_BUCKET_NAME,
     get_object_url,
 )
+from simulate.services.run_results_v3 import recorded_calls
 from simulate.services.run_results_v3_queries import call_actor_delivery
-from simulate.types import CallActorDelivery
+from simulate.types import (
+    CallActorDelivery,
+    SharedRecord,
+    SharedRecordAction,
+    SharedRecordTruncation,
+    StoppedWorker,
+    worker_subject_id,
+)
 from simulate.utils.stored_transcript_roles import call_actor_label
 
 logger = structlog.get_logger(__name__)
@@ -89,6 +100,12 @@ class BlockedCall(TypedDict, total=False):
 APPROVAL_MISSING = "approval_missing"
 
 
+class RefusedAction(TypedDict):
+    action: str
+    code: str
+    reason: str
+
+
 class StateChange(TypedDict, total=False):
     """What one participant attempted in the trial and what the world made of it, as the harness counts it."""
 
@@ -104,6 +121,9 @@ class StateChange(TypedDict, total=False):
     read_actions: list[str]
     no_change: bool
     blocked: list[BlockedCall]
+    refused_actions: list[RefusedAction]
+    # The worker this participant is, when it is one of the agent's workers.
+    worker_id: str
 
 
 class ActorDecision(TypedDict):
@@ -205,6 +225,8 @@ class TrialNotice(TypedDict, total=False):
     on_call: int | None
     mode: str | None
     count: int
+    # The workers a notice names, e.g. a separate worker that reached the world without its own channel.
+    workers: list[str]
 
 
 class TrialStart(TypedDict, total=False):
@@ -245,6 +267,11 @@ class TrialState(TypedDict):
     usage_total: NotRequired[UsageTotal]
     limits: NotRequired[dict[str, int | float | str | None]]
     end_state_url: NotRequired[str]
+    # A multi-agent trial's records two or more participants named, and the workers the harness stopped.
+    shared_records: NotRequired[list[SharedRecord]]
+    # As the harness sealed it; None for a trial sealed before it said which bound was reached.
+    shared_records_truncated: NotRequired[bool | None]
+    stopped_workers: NotRequired[list[StoppedWorker]]
 
 
 # Why a trial's world actions were not recorded, in the words World state shows; an older record says no reason.
@@ -335,6 +362,8 @@ def tagged_function_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str, 
         actor = call.get("actor_id")
         acted = bool(actor) and actor != AGENT
         one = {**call, "kind": "world_actor_action" if acted else "agent_call"}
+        if not acted:
+            one["tool_label"] = _TOOL_ROW_LABELS[_call_kind(call)]
         if acted:
             one["actor_name"] = call.get("actor_name") or actor
             if not one.get("outcome"):
@@ -379,6 +408,54 @@ def _unlabelled(text: str, labels: set[str]) -> str:
     )
 
 
+def tool_call_count(
+    transcript: Sequence[Mapping[str, object]], calls: Sequence[Mapping[str, object]]
+) -> int:
+    """The agent's tool calls, from the call's tool trace when it has one, else from the transcript; a world actor's
+    action is not one, and a hand-off to another agent is a Participants step, not a tool call."""
+    # A hosted chat call keeps the same calls in both, so only one of them is counted.
+    traced: list[object] = [
+        one for one in calls if one.get("kind") != "world_actor_action"
+    ]
+    made: list[object] = traced or [
+        one
+        for turn in transcript
+        if isinstance(listed := turn.get("tool_calls"), list)
+        for one in listed
+    ]
+    return sum(
+        1 for one in made if not (isinstance(one, Mapping) and one.get("delegated_to"))
+    )
+
+
+# How the transcript names a row of tool calls, by what the calls recorded: work done, work handed out, control passed.
+_TOOL_ROW_LABELS = {
+    "tool_call": "Tool call",
+    "handoff": "Hand-off",
+    "transferred": "Control pass",
+}
+_MIXED_TOOL_ROW = "Tool calls and hand-offs"
+
+
+def _call_kind(call: Mapping[str, Any]) -> str:
+    """What an agent's call recorded it did: passed control, handed work to another agent, or called a tool."""
+    if call.get("kind") == "transferred":
+        return "transferred"
+    return "handoff" if call.get("delegated_to") else "tool_call"
+
+
+def _tool_row(listed: Sequence[object]) -> dict[str, object]:
+    """A row's tool calls as the transcript shows them: how many hand work to another agent, and the row's label."""
+    calls = [one for one in listed if isinstance(one, Mapping)]
+    kinds = {_call_kind(one) for one in calls}
+    return {
+        "handoffs": sum(1 for one in calls if one.get("delegated_to")),
+        "tool_label": _TOOL_ROW_LABELS[next(iter(kinds))]
+        if len(kinds) == 1
+        else _MIXED_TOOL_ROW,
+    }
+
+
 def transcript_turns(
     rows: Sequence[Mapping[str, Any]], actors: Sequence[Mapping[str, str]], chat: bool
 ) -> list[dict[str, Any]]:
@@ -391,6 +468,9 @@ def transcript_turns(
         row = dict(source)
         # A chat row names its speaker only by `role`; every turn says it as `speaker_role` too.
         row.setdefault("speaker_role", row.get("role"))
+        listed = row.get("tool_calls")
+        if isinstance(listed, list) and listed:
+            row.update(_tool_row(listed))
         if chat:
             items = [
                 item for item in row.get("content") or [] if isinstance(item, dict)
@@ -875,12 +955,28 @@ def _approval_notices(calls: Sequence[Mapping[str, Any]]) -> list[TrialNotice]:
     ]
 
 
+def _state_change(entry: dict[str, Any]) -> StateChange:
+    change = cast(
+        StateChange,
+        {**entry, "name": AGENT_NAME} if entry.get("who") == AGENT else dict(entry),
+    )
+    worker = worker_subject_id(entry.get("who"))
+    if worker is not None:
+        change["worker_id"] = worker
+    return change
+
+
 def trial_state(
-    call: CallExecution, *, calls: Sequence[Mapping[str, Any]] = ()
+    call: CallExecution,
+    *,
+    calls: Sequence[Mapping[str, Any]] = (),
+    metadata: Mapping[str, Any] | None = None,
 ) -> TrialState | None:
     """The trial's World state, ready to show; every list is present and `unreadable` is said once. ``calls`` are the
-    call's recorded tool calls, read for the writes the world held back for an approval."""
-    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+    call's recorded tool calls, read for the writes the world held back for an approval; ``metadata`` an earlier
+    attempt's, when not the call's own."""
+    if metadata is None:
+        metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     state = metadata.get(TRIAL_STATE_KEY)
     if state is None:
         return None
@@ -894,13 +990,7 @@ def trial_state(
     raw_records = state.get("records")
     records = raw_records if isinstance(raw_records, dict) else {}
     unreadable = state.get("unreadable") is True or records.get("unreadable") is True
-    changes = [
-        cast(
-            StateChange,
-            {**one, "name": AGENT_NAME} if one.get("who") == AGENT else one,
-        )
-        for one in _entries(state.get("state_changes"))
-    ]
+    changes = [_state_change(one) for one in _entries(state.get("state_changes"))]
     decisions = _entries(state.get("decisions"))
     names = {
         one["id"]: one["name"]
@@ -970,10 +1060,107 @@ def trial_state(
         shown["usage_total"] = total
     if isinstance(state.get("limits"), dict):
         shown["limits"] = state["limits"]
+    if isinstance(state.get("shared_records"), list):
+        shared = _entries(state["shared_records"])
+        shown["shared_records"] = [_shared_record(one, names) for one in shared]
+        shown["shared_records_truncated"] = _sealed_flag(
+            state, "shared_records_truncated"
+        )
+    if isinstance(state.get("stopped_workers"), list):
+        shown["stopped_workers"] = stopped_workers_of(state)
     url = _end_state_url(call, metadata, state)
     if url:
         shown["end_state_url"] = url
     return shown
+
+
+def _shared_record(record: Mapping[str, Any], names: Mapping[str, str]) -> SharedRecord:
+    """A record two or more participants named, each call with its participant's name as the state changes give it."""
+    actions = [
+        cast(
+            SharedRecordAction,
+            {
+                **one,
+                "name": names.get(str(one.get("who")), str(one.get("who") or "")),
+                # The door logs every answered call as committed; a read changed nothing, so it reads as a read.
+                **(
+                    {"outcome": "read"}
+                    if one.get("write") is False and one.get("outcome") == "committed"
+                    else {}
+                ),
+            },
+        )
+        for one in _entries(record.get("actions"))
+    ]
+    shared = cast(SharedRecord, {**record, "actions": actions})
+    shared["actions_truncated"] = _sealed_flag(record, "actions_truncated")
+    shared["truncation"] = _shared_record_truncation(
+        shared["actions_truncated"], record.get("truncated") is True
+    )
+    return shared
+
+
+def _shared_record_truncation(
+    actions_truncated: bool | None, truncated: bool
+) -> SharedRecordTruncation | None:
+    """Which bound cut a shared record: its own actions, the trial's list of records, or not known on an older trial."""
+    if actions_truncated:
+        return "actions"
+    if not truncated:
+        return None
+    return "unknown" if actions_truncated is None else "records"
+
+
+def _sealed_flag(sealed: Mapping[str, Any], key: str) -> bool | None:
+    """A truncation flag as the harness sealed it; None when the trial predates it, never guessed from its bounds."""
+    value = sealed.get(key)
+    return value if isinstance(value, bool) else None
+
+
+class EarlierAttempt(TypedDict):
+    """An earlier attempt of the call that a rerun kept; `kept` is false when it was snapshotted before attempts kept
+    their worker record and trial state."""
+
+    attempt: str
+    number: int
+    rerun_at: datetime
+    kept: bool
+    trial_state: TrialState | None
+
+
+def earlier_attempts(call: CallExecution) -> list[EarlierAttempt]:
+    """Each earlier attempt of the call itself, latest first, with its id for `/workers/?attempt=`."""
+    snapshots = sorted(
+        (
+            one
+            for one in call.snapshots.all()
+            if one.rerun_type == CallExecutionSnapshot.RerunType.CALL_AND_EVAL
+        ),
+        key=lambda one: one.snapshot_timestamp,
+        reverse=True,
+    )
+    kept = {str(one.id): attempt_metadata(call, one) for one in snapshots}
+    return [
+        {
+            "attempt": str(one.id),
+            # Counted from the first attempt, 1.
+            "number": len(snapshots) - index,
+            "rerun_at": one.snapshot_timestamp,
+            "kept": kept[str(one.id)] is not None,
+            "trial_state": (
+                trial_state(
+                    call,
+                    calls=tagged_function_calls(
+                        recorded_calls(one.provider_call_data, kept[str(one.id)])
+                    ),
+                    metadata=kept[str(one.id)],
+                )
+                if kept[str(one.id)] is not None
+                else None
+            ),
+        }
+        for index, one in enumerate(snapshots)
+    ]
 
 
 def has_customer(turns: Sequence[Mapping[str, Any]]) -> bool:

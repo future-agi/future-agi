@@ -34,6 +34,17 @@ vi.mock("src/api/agents/agentConnect", () => ({
   useConnectAgent: () => ({ mutate: mockConnect, isPending: false }),
 }));
 
+const checkState = vi.hoisted(() => ({
+  ready: true,
+  status: "idle",
+  result: undefined,
+  error: null,
+  run: vi.fn(),
+  reset: vi.fn(),
+}));
+
+vi.mock("../useConnectPreflight", () => ({ default: () => checkState }));
+
 vi.mock("src/hooks/use-debounce", () => ({ useDebounce: (value) => value }));
 
 vi.mock("src/auth/hooks", async (importOriginal) => ({
@@ -79,6 +90,8 @@ const connectBody = () => {
 
 beforeEach(() => {
   sessionStorage.clear();
+  checkState.ready = true;
+  checkState.run.mockReset();
   mockConnect.mockReset();
   mockStartScan.mockReset();
   scanState.data = null;
@@ -119,6 +132,36 @@ describe("GitHubConnectFlow", () => {
       repository: "acme/one",
       entry: "x.py",
     });
+  });
+
+  it("connects only after preflight passes, checking the values typed", () => {
+    scanState.data = TWO_AGENTS;
+    startAt({
+      mode: "link",
+      link: "acme/one",
+      stage: "agents",
+      scanId: "scan-1",
+      scanSource: SCANNED,
+    });
+    checkState.ready = false;
+    pick("x");
+    next();
+    fireEvent.change(screen.getByTestId("env-value-X_KEY"), {
+      target: { value: "secret-x" },
+    });
+
+    expect(
+      screen.getByRole("button", { name: /^Connect agent/ }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Run preflight" }));
+    expect(checkState.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "repo",
+        value: "acme/one",
+        entry: "x.py",
+        envValues: { X_KEY: "secret-x" },
+      }),
+    );
   });
 
   it("keeps the values and name of one agent away from another", () => {
