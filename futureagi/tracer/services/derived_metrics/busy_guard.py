@@ -141,7 +141,8 @@ def record_yield(lease, before):
     # Keep a non-identifying generation counter as well as resetting on
     # publication. Older workers during a rolling update do not know the
     # new streak column, but their head advance must still break the streak.
-    generation = state.head_manifest.generation if state.head_manifest_id else 0
+    head = state.head_manifest  # select_related above: no extra query
+    generation = head.generation if head is not None else 0
     streak = (
         state.busy_yields + 1
         if state.busy_counts.get("head_generation") == generation

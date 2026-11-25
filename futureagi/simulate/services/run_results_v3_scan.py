@@ -37,6 +37,7 @@ from simulate.services.run_results_v3_expressions import (
 )
 from simulate.services.run_results_v3_queries import UNGROUPED
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
     ERRORED_CALL_STATUSES,
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
@@ -48,6 +49,7 @@ from simulate.services.run_results_v3_scoring import (
     NATIVE_FAILED,
     NATIVE_PASSED,
     QUEUED_CALL_STATUSES,
+    SKIPPED_HARNESS_STATUSES,
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
@@ -55,6 +57,7 @@ from simulate.services.run_results_v3_scoring import (
     score_tokens,
 )
 from simulate.services.scoring_status import SCORING_ROW_FIELDS, scoring_values
+from simulate.types import WORKER_SUBJECT_PREFIX
 
 # The orderings the scan reproduces, as ``apply_run_call_query`` writes them.
 ORDERINGS = {
@@ -466,6 +469,11 @@ def _outcome(
         return "queued"
     if status in IN_PROGRESS_CALL_STATUSES:
         return "in_progress"
+    if (
+        status in CANCELLED_CALL_STATUSES
+        and harness_status not in SKIPPED_HARNESS_STATUSES
+    ):
+        return "cancelled"
     if harness_status in _HARNESS_ERROR or status in ERRORED_CALL_STATUSES:
         return "error"
     if status != "completed":
@@ -647,7 +655,9 @@ SELECT ce.id, ce.status, ce.duration_seconds,
       || COALESCE((e.value -> 'output_type')::text, 'null') || ','
       || COALESCE((e.value -> 'source')::text, 'null') || ']',
       chr(30))
-    FROM jsonb_each(ce.eval_outputs) e), '')
+    FROM jsonb_each(ce.eval_outputs) e
+    -- A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+    WHERE left(COALESCE(e.value ->> 'subject', ''), {worker_prefix_length}) <> '{worker_prefix}'), '')
   ELSE ce.eval_outputs::text END,
   NULLIF(s.metadata ->> 'use_case', ''), NULLIF(s.metadata ->> 'goal', ''), s.name
 FROM (
@@ -779,6 +789,8 @@ def scan_call_values(
                 calls_table=_CALLS_TABLE,
                 scenarios_table=Scenarios._meta.db_table,
                 call_filter="" if call_ids is None else _CALL_FILTER,
+                worker_prefix=WORKER_SUBJECT_PREFIX,
+                worker_prefix_length=len(WORKER_SUBJECT_PREFIX),
             ),
             params,
         )

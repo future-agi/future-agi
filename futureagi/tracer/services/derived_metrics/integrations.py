@@ -259,13 +259,14 @@ def _superseded_for(monitor_id, run: DerivedMetricRun) -> bool:
 
 def monitor_comparison_value(monitor, row: dict) -> float | None:
     """Conservative bound for a fixed-window test, not peeking-safe inference."""
-    value = row.get("value")
+    value: float | None = row.get("value")
     if value is None or not math.isfinite(value):
         return None
     if getattr(monitor, "alert_when", "point") == "point":
         return value
     interval = row.get("uncertainty") or {}
-    low, high = interval.get("ci_low"), interval.get("ci_high")
+    low: float | None = interval.get("ci_low")
+    high: float | None = interval.get("ci_high")
     if (
         getattr(monitor, "alert_when", None) != "confident"
         or interval.get("status") != "ok"

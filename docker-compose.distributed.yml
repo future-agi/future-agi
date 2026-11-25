@@ -312,6 +312,27 @@ services:
       peerdb-flow-snapshot-worker:
         condition: service_started
 
+  # The Metrics ClickHouse schema (packaged files 009, 011 and 028-038), applied
+  # only while METRICS_ENABLED is on in .env; with it off the job exits at once.
+  # Receipts make every rerun a no-op, so turning Metrics on later and running
+  # `docker compose up -d` applies the files before the backend restarts.
+  metrics-schema-bootstrap:
+    <<: *backend-bootstrap
+    entrypoint: ["python", "-m", "tracer.services.derived_metrics.schema_install"]
+    # --advisory: a failure is logged and exits 0, so only Metrics stays
+    # unavailable (metric_schema_not_installed); the rest of the stack starts.
+    command: ["--apply", "--advisory"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: bootstrap
+      FI_MIGRATION_USER: metrics-schema-bootstrap
+    depends_on:
+      clickhouse-cdc-bootstrap:
+        condition: service_completed_successfully
+
   # ==========================================================================
   # Application
   # ==========================================================================
@@ -357,6 +378,8 @@ services:
     depends_on:
       clickhouse-cdc-bootstrap:
         condition: service_completed_successfully
+      metrics-schema-bootstrap:
+        condition: service_completed_successfully
       property-catalog-clickhouse-bootstrap:
         condition: service_completed_successfully
       postgres:
@@ -392,6 +415,8 @@ services:
     depends_on:
       clickhouse-cdc-bootstrap:
         condition: service_completed_successfully
+      metrics-schema-bootstrap:
+        condition: service_completed_successfully
       property-catalog-clickhouse-bootstrap:
         condition: service_completed_successfully
       temporal:
@@ -413,6 +438,8 @@ services:
           required: false
       depends_on:
         clickhouse-cdc-bootstrap:
+          condition: service_completed_successfully
+        metrics-schema-bootstrap:
           condition: service_completed_successfully
         property-catalog-clickhouse-bootstrap:
           condition: service_completed_successfully
@@ -617,8 +644,6 @@ services:
   # (the backend and workers use the compose network).
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
-    environment:
-      LINK_EVAL_ALLOWED_HOSTS: ${LINK_EVAL_ALLOWED_HOSTS:-}
     ports:
       - "127.0.0.1:${CODE_EXECUTOR_PORT:-8060}:8060"
     privileged: true

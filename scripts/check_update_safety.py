@@ -493,6 +493,41 @@ def declaration_only_addition(root, baseline, path):
     return ast.dump(new, include_attributes=False) == ast.dump(old, include_attributes=False)
 
 
+def latest_release_tag(root, head="HEAD"):
+    """The highest plain vX.Y.Z tag reachable from head, by version; None if none.
+
+    Fails closed: a tree git cannot read (no repository, no HEAD) has no release.
+    """
+    try:
+        listed = git(root, "tag", "--merged", head, "--list", "v*")
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    tags = [t for t in listed.split() if RELEASE_TAG.fullmatch(t)]
+    # RELEASE_TAG (module-level, shared with release_span_history) has no groups;
+    # order by numeric version, never lexically (v1.10.0 > v1.9.0).
+    return max(tags, key=lambda t: tuple(int(n) for n in t[1:].split(".")), default=None)
+
+
+def shipped_release_restore(root, path):
+    """Release-tag restoration: name the latest release whose exact blob this
+    migration file now carries.
+
+    The file equals the latest vX.Y.Z tag reachable from HEAD, so it is that
+    release's text, not a new edit. This does not prove what any environment
+    runs; the deploy baseline is verified separately in the release rehearsal
+    and promotion packet. An older release's text is refused, as is any file
+    when no release tag is reachable. Exact bytes, no normalisation.
+    """
+    tag = latest_release_tag(root)
+    current = root / path
+    if tag is None or not current.is_file():
+        return None
+    released = base_bytes(root, tag, path)
+    if released is None or released != current.read_bytes():
+        return None
+    return tag, git(root, "rev-parse", f"{tag}:{path}").strip()
+
+
 def declaration(source, path):
     tree = ast.parse(source)
     values = [n.value for n in tree.body if declaration_assignment(n)]
@@ -1214,6 +1249,12 @@ def main(argv=None):
         migrations = []
         for status, path in changes:
             if not migration_path(path):
+                continue
+            restored = shipped_release_restore(root, path) if status == "M" else None
+            if restored:
+                # Release-tag restoration: the latest release's exact text, nothing new to declare.
+                print(f"update-safety: {path} is a release-tag restoration of {restored[0]} (blob {restored[1]}); "
+                      "the deploy baseline is verified separately", file=sys.stderr)
                 continue
             require(status == "A" or status == "M" and declaration_only_addition(root, baseline, path),
                     "existing migration changed/deleted: deployed histories are immutable", "add a new migration instead of editing the existing migration")

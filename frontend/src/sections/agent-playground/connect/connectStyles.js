@@ -14,3 +14,8 @@ export const focusRing = (theme) => ({
   outline: `2px solid ${alpha(theme.palette.text.primary, 0.5)}`,
   outlineOffset: 2,
 });
+
+export const ACTION_SX = {
+  flexShrink: 0,
+  "& .MuiButton-endIcon": { ml: 0.75, mr: 0 },
+};

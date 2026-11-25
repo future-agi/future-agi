@@ -54,6 +54,7 @@ from simulate.services.scoring_status import (
     TRANSPORT_RUN_STATUSES,
     settle_run_after_commit,
 )
+from simulate.tasks.alk_sim import dispatch_worker_read
 from tracer.services.observability_switch import (
     ObservabilityRefused,
     refusal_body,
@@ -2168,7 +2169,9 @@ def delete_environment(job: HostedHarnessJob) -> None:
                 )
 
                 cancel_job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
-                HostedHarnessGateway().cancel(cancel_job, reason=DELETE_CANCEL_REASON)
+                HostedHarnessGateway(require_provider=False).cancel(
+                    cancel_job, reason=DELETE_CANCEL_REASON
+                )
             except Exception:
                 logger.exception(
                     "hosted_harness_delete_direct_cancel_failed", job_id=job_id
@@ -3283,13 +3286,23 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     calls = CallExecution.no_workspace_objects.filter(
         test_execution_id=job.test_execution_id
     )
-    calls.filter(
+    still_open = calls.filter(
         status__in=(
             CallExecution.CallStatus.PENDING,
             CallExecution.CallStatus.REGISTERED,
             CallExecution.CallStatus.ONGOING,
         )
-    ).update(
+    )
+    # A call under way, or one still reading pending whose start had not arrived, may have workers' evidence to keep.
+    ended = list(
+        still_open.filter(
+            status__in=(
+                CallExecution.CallStatus.PENDING,
+                CallExecution.CallStatus.ONGOING,
+            )
+        ).values_list("id", flat=True)
+    )
+    still_open.update(
         status=(
             CallExecution.CallStatus.CANCELLED
             if job.state == HostedHarnessJob.State.CANCELED
@@ -3298,6 +3311,9 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
         completed_at=now,
         **({"ended_reason": message} if message else {}),
     )
+    # A call cut short keeps what its workers did before the end.
+    for call_id in ended:
+        transaction.on_commit(partial(dispatch_worker_read, call_id), robust=True)
     execution_status = {
         HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,
         HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,

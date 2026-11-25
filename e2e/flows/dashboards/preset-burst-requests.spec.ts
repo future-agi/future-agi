@@ -5,13 +5,13 @@ import { captureAnnotationHttp, type Receipt } from '../../lib/annotation-http';
 import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { authInitScript } from '../../lib/auth';
 
-// DashboardDetailView.jsx: a preset chip sets `datePreset` (the highlight) at
-// once and `appliedDatePreset` (what the widgets query) after 500 ms; custom
-// Done sets both at once. useDashboards.js posts every widget read to QUERY and
-// adds `?refresh=true` only for a manual Refresh.
+// DashboardDetailView highlights a preset immediately and applies it after 500 ms; custom Done sets both at once.
+// useDashboards posts widget reads to QUERY and adds `?refresh=true` only for a manual Refresh.
 const QUERY = '/tracer/dashboard/query/';
 const UI_READY = 60_000; // SPA boot + dashboard detail + each widget's own read.
+const PRESET_DEBOUNCE_MS = 500; // Three trusted clicks must be delivered inside this window.
 const DEBOUNCE_FLOOR_MS = 450; // The 500 ms debounce, less timer slack.
 const CUSTOM_DISPATCH_MS = 450; // Done must not wait out that same debounce.
 const DAY_MS = 86_400_000;
@@ -69,11 +69,8 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
       'Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals; Refreshing returns to Refresh and Last updated shows that completion',
     ],
   }),
-}, async ({ page, actor, probe }, testInfo) => {
-  const PRESET_DEBOUNCE_MS = 500; // Require actual delivery within the debounce window.
-  // Seed ~25 + load 60 + 3 stages × (UI_READY 60 + ASYNC_JOB 60) = 445 s worst case.
+}, async ({ browser, baseURL, timezoneId, actor, probe }, testInfo) => {
   test.setTimeout(480_000);
-  const uiExpect = expect.configure({ timeout: UI_READY });
   const attach = (name: string, body: unknown) =>
     testInfo.attach(name, { contentType: 'application/json', body: JSON.stringify(body, null, 2) });
   const prefix = `e2e-dash18-${testInfo.workerIndex}-${Date.now().toString(36)}`;
@@ -82,8 +79,6 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   // Yesterday at noon UTC (17:30 browser-local): never a future trace or a midnight seed.
   const anchor = new Date(Date.now() - DAY_MS);
   anchor.setUTCHours(12, 0, 0, 0);
-  const bounds30 = { start: anchor.getTime() - 30 * DAY_MS, end: anchor.getTime() };
-  const key30 = `${new Date(bounds30.start).toISOString()}|${anchor.toISOString()}`;
   const ingest = await request.newContext();
   const seeded = [];
   try {
@@ -119,8 +114,32 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   await attach('seeded-ids', { projectName, projectId, traceIds, spanIds, dashboardId, widgetIds,
     organizationId: actor.organizationId, workspaceId: actor.workspaceId });
 
+  // Share only the seeded data. Each input attempt starts a new app, clock,
+  // query cache and network recorder; close its context before opening the next.
+  const maxAttempts = 3, slowSpans: number[] = [];
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const context = await browser.newContext({ baseURL, timezoneId });
+    try {
+      await context.addInitScript(authInitScript, { access: actor.tokens.access, refresh: actor.tokens.refresh,
+        organizationId: actor.organizationId, workspaceId: actor.workspaceId });
+      const slowSpan = await exerciseDashboard(await context.newPage(), { dashboardId, projectId, anchor }, attempt, attach);
+      if (slowSpan === null) return; // The first valid burst ran all assertions. Errors propagate, never retry.
+      slowSpans.push(slowSpan);
+    } finally { await context.close(); }
+  }
+  throw new Error(`No trusted Today → 30D burst delivered in <${PRESET_DEBOUNCE_MS} ms; observed spans (ms): ${slowSpans.join(', ')}`);
+});
+
+/** Returns a duration only for a correctly delivered but too-slow burst; null means the entire flow passed. */
+async function exerciseDashboard(page: Page, { dashboardId, projectId, anchor }: {
+  dashboardId: string; projectId: string; anchor: Date;
+}, attempt: number, attach: (name: string, body: unknown) => Promise<void>): Promise<number | null> {
+  const uiExpect = expect.configure({ timeout: UI_READY });
+  const bounds30 = { start: anchor.getTime() - 30 * DAY_MS, end: anchor.getTime() };
+  const key30 = `${new Date(bounds30.start).toISOString()}|${anchor.toISOString()}`;
+  const attemptAttach = (name: string, body: unknown) => attach(`attempt-${attempt}-${name}`, body);
   // ---- recording: receipts (bodies) plus raw requests (the refresh query param) ----
-  const http = captureAnnotationHttp([page], E2E.apiUrl, attach);
+  const http = captureAnnotationHttp([page], E2E.apiUrl, attemptAttach);
   const seen: Seen[] = [], dispatches: Dispatch[] = [], attributionErrors: string[] = [];
   const pendingRequests = new Map<Request, string>();
   const signature = (url: string, method: string, raw: string) => JSON.stringify([url, method, raw]);
@@ -270,8 +289,8 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     await attach(`dispatch-${metric}-${range === key30 ? 'burst' : 'custom'}`, window);
     return navTime(Math.min(...window.map(d => d.dispatchNavMs)), 'first attributed dispatch');
   };
-  let burstStart = 0, burstNav = NaN, clickedNav30 = NaN, highlightedNav30 = NaN;
-  await test.step('UI: Today, 7D and 30D clicked back to back; 30D highlights before any 30D query', async () => {
+  let burstStart = 0, burstNav = NaN, clickedNav30 = NaN;
+  const spanMs = await test.step(`Input attempt ${attempt}: click Today, 7D and 30D back to back`, async () => {
     const labels = ['Today', '7D', '30D'];
     // Resolve actionability/geometry before starting the burst, not between clicks.
     const points = [];
@@ -296,9 +315,15 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     burstNav = await sinceNav();
     // Browser hit-testing and normal trusted mouse events; setFixedTime fixes only Date.
     // Measure delivery in the capture handler on the real monotonic clock used for CDP.
-    for (const { x, y } of points) await page.mouse.click(x, y);
-    const clicks = await delivery.evaluate(d => d.finish());
-    await attach('burst-click-delivery', clicks);
+    const finish = () => delivery.evaluate(d => d.finish());
+    let clicks: Awaited<ReturnType<typeof finish>>;
+    try {
+      for (const { x, y } of points) await page.mouse.click(x, y);
+    } finally {
+      clicks = await finish();
+      await attemptAttach('burst-click-delivery', { navigationStart, burstNav, clicks,
+        spanMs: clicks.length === labels.length ? clicks[2].at - clicks[0].at : null });
+    }
     expect(clicks.map(c => [c.label, c.trusted]), 'trusted clicks in delivery order')
       .toEqual(labels.map(label => [label, true]));
     const times = clicks.map(c => navTime(c.at, `${c.label} click`));
@@ -306,11 +331,29 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     expect(times[1]).toBeGreaterThanOrEqual(times[0]);
     clickedNav30 = times[2];
     expect(clickedNav30).toBeGreaterThanOrEqual(times[1]);
-    expect(clickedNav30 - times[0], 'delivered Today → 30D burst (ms)').toBeLessThan(PRESET_DEBOUNCE_MS);
+    return clickedNav30 - times[0];
+  });
+  if (spanMs >= PRESET_DEBOUNCE_MS) {
+    // Stop the document (including any unexpired debounce/poll timers). Record
+    // what actually happened, including requests in flight when we closed it.
+    const highlightNavMs = await highlight.evaluate(s => Number.isFinite(s.at) ? s.at : null);
+    const pendingAtClose = [...pendingRequests.values()];
+    await page.close();
+    await Promise.all([...http.pending]);
+    http.stop();
+    await attemptAttach('outside-burst-window', { navigationStart, burstStart, burstNav, spanMs, highlightNavMs,
+      pendingAtClose, dispatches, receipts: http.receipts, attributionErrors, pageErrors });
+    expect(attributionErrors, 'every query has an unambiguous receipt').toEqual([]);
+    expect(pageErrors, 'no page errors').toEqual([]);
+    return spanMs;
+  }
+
+  const highlightedNav30 = await test.step('UI: 30D highlights before any 30D query', async () => {
     await expect(chip30).toHaveClass(PRIMARY);
-    highlightedNav30 = await readNav(() => highlight.evaluate(state => state.at), '30D primary transition');
+    const transition = await readNav(() => highlight.evaluate(state => state.at), '30D primary transition');
     await expect(chip(page, 'Today')).not.toHaveClass(PRIMARY);
     await expect(chip(page, '7D')).not.toHaveClass(PRIMARY);
+    return transition;
   });
 
   await test.step('API: the burst sends only the 30-day range per widget, at least 450 ms after the click', async () => {
@@ -431,4 +474,5 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   await Promise.all([...http.pending]);
   http.stop();
   expect(pageErrors, 'no page errors').toEqual([]);
-});
+  return null;
+}

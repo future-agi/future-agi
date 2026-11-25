@@ -28,6 +28,7 @@ from tracer.services.derived_metrics.publication import (
 )
 from tracer.services.derived_metrics.queries import Scope
 from tracer.services.derived_metrics.storage import FIELD_VALUES
+from tracer.tests._retention_cleanup_probe import CleanupProbe
 from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F401
     live_writer,
     metric_ch,
@@ -136,7 +137,7 @@ def _committed_fields(writer, head):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("mode", ["conversation", "mixed"])
 def test_finite_retention_refresh_over_a_million_retained_fields(
-    live_writer, workspace, observe_project, monkeypatch, mode
+    live_writer, workspace, observe_project, monkeypatch, mode, capsys
 ):
     writer, now = live_writer, timezone.now()
     writer.lease.clock = lambda: now
@@ -170,36 +171,43 @@ def test_finite_retention_refresh_over_a_million_retained_fields(
     dependency = Dependency(str(trace), "fresh", str(session), str(session), "", "", at)
 
     execute = ClickHousePublicationStore.execute
-    largest, slow = [0, ""], []
+    probe = CleanupProbe(writer.store)
+    largest, slow, slow_omitted = [0], [], 0
 
     def observed_execute(self, sql, params=None, **kwargs):
-        # The text plus every substituted parameter value.
+        nonlocal slow_omitted
+        if self is writer.store:
+            probe.tag(sql, params, kwargs)
+        # Measure the text plus substituted parameters; retain only the size.
         size = len(sql) + sum(
             sql.count(f"%({key})s") * len(str(value))
             for key, value in (params or {}).items()
         )
         if size > largest[0]:
-            largest[:] = [size, sql[:160]]
+            largest[0] = size
         started = monotonic()
         try:
             return execute(self, sql, params, **kwargs)
         finally:
             elapsed = monotonic() - started
             if elapsed > 1:
-                slow.append({"seconds": round(elapsed, 2), "query": sql[:160]})
+                if len(slow) < 8:
+                    slow.append({"seconds": round(elapsed, 2)})
+                else:
+                    slow_omitted = min(255, slow_omitted + 1)
 
-    monkeypatch.setattr(ClickHousePublicationStore, "execute", observed_execute)
-    began = monotonic()
-    manifest = writer.refresh(
-        change_for(session, dependencies=(dependency,)),
-        definitions,
-        scope,
-        start=now - timedelta(days=2),
-        end=now,
-        as_of=now,
-    )
-    refresh_seconds = monotonic() - began
-    monkeypatch.setattr(ClickHousePublicationStore, "execute", execute)
+    with probe.after_refresh(mode, capsys), monkeypatch.context() as patch:
+        patch.setattr(ClickHousePublicationStore, "execute", observed_execute)
+        began = monotonic()
+        manifest = writer.refresh(
+            change_for(session, dependencies=(dependency,)),
+            definitions,
+            scope,
+            start=now - timedelta(days=2),
+            end=now,
+            as_of=now,
+        )
+        refresh_seconds = monotonic() - began
     version = writer.store.execute("SELECT version(), getSetting('enable_analyzer')")[0]
     print(
         "RETENTION_SCALE "
@@ -211,8 +219,8 @@ def test_finite_retention_refresh_over_a_million_retained_fields(
                 "seed_seconds": round(seeded_seconds, 2),
                 "refresh_seconds": round(refresh_seconds, 2),
                 "largest_statement_bytes": largest[0],
-                "largest_statement_prefix": largest[1],
                 "slow_statements": slow,
+                "slow_statements_omitted": slow_omitted,
                 "write_settings": WRITE_SETTINGS,
             },
             default=str,

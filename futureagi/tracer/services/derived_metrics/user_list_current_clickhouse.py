@@ -82,7 +82,7 @@ def activity_rows(
         or not read.permits_user_activity(read.manifest.project_id)
     ):
         raise ValueError("user activity requires an active qualified current-fact pin")
-    return committed_rows_select(
+    sql, params = committed_rows_select(
         LIST_USER_ACTIVITY,
         read.manifest,
         org_id=read.org_id,
@@ -90,3 +90,4 @@ def activity_rows(
         key_relation=key_relation,
         param_prefix=param_prefix,
     )
+    return sql, params
