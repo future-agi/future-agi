@@ -136,6 +136,11 @@ export const stoppingStep = ({ events, outputs, designApproved } = {}) =>
     },
   );
 
+export const buildStartTime = (status, { events, approvedAt } = {}) =>
+  (status?.stage !== "queued" && status?.attempt_started_at) ||
+  approvedAt ||
+  events?.[0]?.emitted_at;
+
 const plural = (n, one, many = `${one}s`) =>
   `${n.toLocaleString()} ${n === 1 ? one : many}`;
 

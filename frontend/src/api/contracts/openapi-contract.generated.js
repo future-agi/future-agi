@@ -116523,6 +116523,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Attempt",
           type: "integer",
         },
+        attempt_started_at: {
+          title: "Attempt started at",
+          description:
+            "When the current attempt was created; null before the first one.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         completed_scenarios: {
           title: "Completed scenarios",
           type: "integer",

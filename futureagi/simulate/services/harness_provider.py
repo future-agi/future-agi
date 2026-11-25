@@ -566,6 +566,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "stage": job.current_stage,
             "updated_at": job.updated_at.isoformat(),
             "attempt": attempt.attempt_number if attempt else 0,
+            "attempt_started_at": attempt.created_at.isoformat() if attempt else None,
             "completed_scenarios": job.completed_count,
             "failed_scenarios": job.failed_count,
             "active_scenarios": active,

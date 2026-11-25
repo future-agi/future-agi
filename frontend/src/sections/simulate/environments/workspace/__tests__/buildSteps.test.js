@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildStartTime,
   keptLine,
   landedOf,
   phaseRows,
@@ -57,6 +58,33 @@ describe("stoppedStep", () => {
       { outputs: [{ kind: "contract" }, { kind: "environment" }] },
     );
     expect(step.label).toBe("Generating scenarios");
+  });
+});
+
+describe("buildStartTime", () => {
+  const events = [{ emitted_at: "2026-11-25T09:00:00Z" }];
+  const approvedAt = "2026-11-25T08:00:00Z";
+  const attempt = "2026-11-25T10:00:00Z";
+
+  it("counts from the current attempt once it has left the queue", () => {
+    expect(
+      buildStartTime(
+        { stage: "generating_environment", attempt_started_at: attempt },
+        { events, approvedAt },
+      ),
+    ).toBe(attempt);
+  });
+
+  it("ignores the attempt while queued, when it can still be the last one", () => {
+    expect(
+      buildStartTime(
+        { stage: "queued", attempt_started_at: attempt },
+        { events, approvedAt },
+      ),
+    ).toBe(approvedAt);
+    expect(buildStartTime({ stage: "queued" }, { events })).toBe(
+      events[0].emitted_at,
+    );
   });
 });
 

@@ -59,6 +59,7 @@ import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 import BuildStoppedStrip from "./BuildStoppedStrip";
 import {
+  buildStartTime,
   landedOf,
   stepOfStage,
   stopSentence,
@@ -305,9 +306,12 @@ export default function EnvironmentWorkspace() {
           landed,
         })
       : {};
-  const buildStartedAt = env?.designApproved
-    ? jobQuery.data?.job?.metadata?.design_review?.approved_at
-    : jobEvents?.[0]?.emitted_at;
+  const buildStartedAt = buildStartTime(jobStatus, {
+    events: jobEvents,
+    approvedAt: env?.designApproved
+      ? jobQuery.data?.job?.metadata?.design_review?.approved_at
+      : null,
+  });
   useEffect(() => {
     if (building && buildStage)
       queryClient.invalidateQueries({
