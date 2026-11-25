@@ -138,7 +138,7 @@ function AlignmentTable({ composition }) {
       {["Agent tool", "Admission", "Environment"].map((label) => (
         <Box key={label} sx={{ py: 1, px: 1.5 }}>
           <Typography
-            sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle" }}
+            sx={{ typography: "s3", fontWeight: 600, color: "text.subtitle" }}
           >
             {label}
           </Typography>

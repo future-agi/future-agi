@@ -486,7 +486,7 @@ export default function RunDetail({
             )}
             <Tab value="analytics" label="Analytics" />
             {env?.composition && (
-              <Tab value="report" label="Report" sx={{ minHeight: 38 }} />
+              <Tab value="report" label="Report" />
             )}
           </CustomTabs>
 

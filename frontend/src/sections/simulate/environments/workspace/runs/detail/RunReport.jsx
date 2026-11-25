@@ -110,7 +110,7 @@ function Grid({ columns, header, children }) {
       {header.map((label) => (
         <Box key={label} sx={{ px: 1.5, py: 1 }}>
           <Typography
-            sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle" }}
+            sx={{ typography: "s3", fontWeight: 600, color: "text.subtitle" }}
           >
             {label}
           </Typography>

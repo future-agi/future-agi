@@ -72,7 +72,6 @@ export default function BuildEnvironmentTab() {
                 typography: "s2",
                 fontWeight: "fontWeightBold",
                 letterSpacing: 0.4,
-                textTransform: "uppercase",
               }}
             >
               {ENVIRONMENTS_HEADER.designHeading}
