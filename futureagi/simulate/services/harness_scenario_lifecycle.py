@@ -1196,6 +1196,95 @@ def matched_rule(quote: str, rules: list[str]) -> str | None:
     return next((rule for rule in rules if wanted and wanted in normalise(rule)), None)
 
 
+def _replaced_by(
+    before: str | None,
+    new_rules: list[str],
+    documents: Mapping[str, Any],
+    parent_documents: Mapping[str, Any],
+) -> str | None:
+    """The rule the harness recorded as replacing ``before`` (`amendment_records`: the new record's `previous`, or the
+    old record's `replaced_by`, by rule id), as this version holds it; None when it recorded none."""
+    from simulate.services.harness_versioning.review_items import rule_key
+
+    if not before:
+        return None
+    was = f"rule-{rule_key(before)}"
+    records = [
+        one
+        for side in (documents, parent_documents)
+        for one in ((side.get("contract") or {}).get("amendment_records") or [])
+        if isinstance(one, Mapping) and one.get("kind") == "rule"
+    ]
+    now = next(
+        (
+            str(one.get("key"))
+            for one in records
+            if one.get("previous") == was and one.get("key")
+        ),
+        None,
+    ) or next(
+        (
+            str(one.get("replaced_by"))
+            for one in records
+            if one.get("key") == was and one.get("replaced_by")
+        ),
+        None,
+    )
+    return next((rule for rule in new_rules if f"rule-{rule_key(rule)}" == now), None)
+
+
+def _records(documents: Mapping[str, Any]) -> Any:
+    return (documents.get("contract") or {}).get("amendment_records")
+
+
+def rule_pair(
+    quote: str,
+    old_rules: list[str],
+    new_rules: list[str],
+    documents: Mapping[str, Any],
+    parent_documents: Mapping[str, Any],
+) -> tuple[str | None, str | None]:
+    """The rule a quote names in the parent version and in this one: the rule holding its words, else the rule the
+    recorded rewordings put in its place, so a case citing words older than both still reads the rule it became."""
+    from simulate.services.harness_scenario_sources import replacement
+
+    def held(rules: list[str], side: Mapping[str, Any]) -> str | None:
+        at = replacement(quote, rules, _records(side))
+        return matched_rule(quote, rules) or (rules[at] if at is not None else None)
+
+    before = held(old_rules, parent_documents)
+    # A cited rule this version no longer holds reads its replacement only as the harness declared it.
+    after = held(new_rules, documents) or _replaced_by(
+        before, new_rules, documents, parent_documents
+    )
+    if before is None and after is not None:
+        # Words only this version holds: the parent's rule is the one this version recorded it replaced.
+        before = _replaced(after, old_rules, documents)
+    return before, after
+
+
+def _replaced(rule: str, old_rules: list[str], documents: Mapping[str, Any]) -> str | None:
+    """The parent's rule that ``rule`` replaced, followed back through the rewordings this version recorded."""
+    from simulate.services.harness_versioning.review_items import rule_key
+
+    held = {f"rule-{rule_key(one)}": one for one in old_rules}
+    records = [
+        one
+        for one in (_records(documents) or [])
+        if isinstance(one, Mapping) and one.get("kind") == "rule"
+    ]
+    key, seen = f"rule-{rule_key(rule)}", set()
+    while key and key not in seen:
+        seen.add(key)
+        key = next(
+            (str(one["previous"]) for one in records if one.get("key") == key and one.get("previous")),
+            "",
+        )
+        if key in held:
+            return held[key]
+    return None
+
+
 def _file_digest(path: str, digests: Mapping[str, Any]) -> str | None:
     from simulate.services.harness_scenario_sources import bare_digest
 
@@ -1214,8 +1303,9 @@ def changed_refs(
 ) -> dict[str, list[str]]:
     """For each key, the rule and file refs it cites whose text changed from the parent version.
 
-    A rule changed when no rule of this version holds its quote, or the rule holding it now reads
-    differently; a rule that only moved index is not a change. A file changed when its digest
+    A rule changed when the rule its quote names (`rule_pair`: the rule holding its words, else the one the
+    recorded rewordings put in its place) reads differently in the two versions; a rule that only moved index is not
+    a change. A file changed when its digest
     differs; when either version recorded no digests, both texts are read and compared, and a file
     either side cannot read counts as changed, which errs toward revalidating; given ``unread``, its key is added
     there instead, as unknown.
@@ -1242,12 +1332,10 @@ def changed_refs(
                 continue
             ref = str(source.get("ref") or "")
             if source.get("kind") == "rule":
-                quote = str(source.get("quote") or "")
-                now, before = (
-                    matched_rule(quote, new_rules),
-                    matched_rule(quote, old_rules),
+                before, now = rule_pair(
+                    str(source.get("quote") or ""), old_rules, new_rules, documents, parent
                 )
-                if now is None or now != before:
+                if now != before:
                     refs.append(ref)
             elif source.get("kind") == "file":
                 path = file_path(ref)
