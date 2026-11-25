@@ -10,14 +10,10 @@ export default function BuildEnvironmentButton({
   primary = false,
 }) {
   const [open, setOpen] = useState(false);
-  const isCode = agent?.agentKind === "source";
-  const reason = !agent
-    ? ""
-    : !isCode
-      ? "Only a code agent can be built into an environment here"
-      : !canEdit
-        ? "You don't have permission to build an environment."
-        : "";
+  const reason =
+    agent && !canEdit
+      ? "You don't have permission to build an environment."
+      : "";
   const button = (
     <Button
       size="small"

@@ -6,6 +6,7 @@ import hashlib
 import json
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
+from typing import cast
 from uuid import UUID, uuid4
 
 import structlog
@@ -88,8 +89,9 @@ def conflicting_filter_field(filters: list[dict]) -> str | None:
     """A field pinned to two different exact values can only select nothing."""
     seen: dict[str, str] = {}
     for item in filters:
-        if seen.setdefault(item["field"], item["value"]) != item["value"]:
-            return item["field"]
+        field: str = item["field"]
+        if seen.setdefault(field, item["value"]) != item["value"]:
+            return field
     return None
 
 
@@ -337,7 +339,11 @@ def _requester_can_run(run: DerivedMetricRun) -> bool:
     from tfc.constants.levels import Level
 
     metric = run.definition.metric
-    if not run.requested_by_id or not run.requested_by.is_active:
+    if (
+        not run.requested_by_id
+        or run.requested_by is None
+        or not run.requested_by.is_active
+    ):
         return False
     org = OrganizationMembership.no_workspace_objects.filter(
         user_id=run.requested_by_id,
@@ -607,6 +613,7 @@ def _compute_tracked(run, store):
         if (
             current.deleted_at is not None
             or current.attempt_id != run.attempt_id
+            or current.lease_expires_at is None
             or current.lease_expires_at <= timezone.now()
         ):
             raise RuntimeError("Metric execution lease expired before publication.")
@@ -762,7 +769,7 @@ def _read_results(
 # --- Interactive preview ---------------------------------------------------------
 PREVIEW_ACTOR_SLOTS = 1
 PREVIEW_ORG_SLOTS = 4
-PREVIEW_LEASE_SECONDS = PREVIEW_QUERY_SETTINGS["max_execution_time"] + 15
+PREVIEW_LEASE_SECONDS = cast(int, PREVIEW_QUERY_SETTINGS["max_execution_time"]) + 15
 PREVIEW_MAX_ROWS = 1
 BUDGET_ERROR_CODES = frozenset({158, 159, 160, 241, 307, 396})
 
@@ -1116,7 +1123,9 @@ def _preview_evaluated(
     import time
 
     table = "metric_preview_" + uuid4().hex
-    deadline = time.monotonic() + PREVIEW_QUERY_SETTINGS["max_execution_time"]
+    deadline = time.monotonic() + cast(
+        int, PREVIEW_QUERY_SETTINGS["max_execution_time"]
+    )
 
     def remaining_settings():
         remaining = deadline - time.monotonic()

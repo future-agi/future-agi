@@ -47,7 +47,7 @@ describe("useJevAvailability", () => {
     expect(result.current.available).toBe(false);
     expect(result.current.reason).toMatch(/TypeSafe key/);
     expect(result.current.settingsPath).toBe(
-      "/dashboard/settings/ai-providers",
+      "/dashboard/settings/ai-providers?provider=typesafe",
     );
 
     keys.data = [{ provider: "typesafe", hasKey: true }];
@@ -61,7 +61,7 @@ describe("useJevAvailability", () => {
     expect(result.current.available).toBe(false);
     expect(result.current.reason).toMatch(/TypeSafe key/);
     expect(result.current.settingsPath).toBe(
-      "/dashboard/settings/ai-providers",
+      "/dashboard/settings/ai-providers?provider=typesafe",
     );
   });
 

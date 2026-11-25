@@ -33,16 +33,20 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The distributed harness starts the dedicated `code-executor` and sets
-`CODE_EXECUTOR_LOCAL_FALLBACK=false`; it never executes evaluator code in a worker.
-`EVAL-E2E-016` uses the shipped templates and an owned HTTP listener. The executor
-only joins internal Docker networks, with no default route. `allowed.example`
-resolves to the listener at public-numbered `11.23.0.10` **inside that network**,
-not on the internet. `private.example` resolves to its private interface and is
-operator-listed to prove that admission cannot override the public-IP rule.
-The listener never makes outbound requests. Its loopback-only journal is at
-`http://127.0.0.1:28082/requests?prefix=...` (`E2E_LINK_CANARY_URL` in attach mode).
-Redirects point only to that owned private interface. No real third party is contacted.
+Both harness stacks start the dedicated `code-executor` and set
+`CODE_EXECUTOR_LOCAL_FALLBACK=false`; they never execute evaluator code in a worker.
+`EVAL-E2E-016` uses the shipped templates to check link format entirely offline.
+Owned HTTP listeners remain only as negative witnesses: both complete journals must
+stay empty after every browser submission and the Temporal harness task. The executor
+only joins internal Docker networks, with no default route. `allowed.example` and
+`worker-allowed.example` resolve to the listeners at public-numbered `11.23.0.10`
+and `11.23.0.11` **inside those networks**, not on the internet; `private.example`
+resolves to the first listener's private interface. These aliases and local redirects
+make an accidental destination request observable without contacting a real third party.
+The listeners never make outbound requests. Their loopback-only journals are at
+`http://127.0.0.1:28082/requests` and `http://127.0.0.1:28083/requests`
+(`E2E_LINK_CANARY_URL` and `E2E_LINK_WORKER_CANARY_URL` in attach mode).
+The browser's local-only request guard remains in place as an additional boundary.
 
 Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
 `http://localhost:28081/messages`. They seed issue transitions through the authenticated
@@ -556,6 +560,11 @@ Quarantine lives in `e2e/.quarantine.json`, a flat array whose entry shape match
   not a parking space.
 - The loader **fails open**: if the file is missing or unparseable it warns and quarantines nothing,
   because a broken JSON file must not be able to silently disable the suite.
+- **Check the spec's recent history before adding an entry.** A flow that failed last week may
+  have been fixed since; an entry for a flow that passes only removes coverage. Count failures on
+  unrelated changes only: a flow that fails on the branch that is changing it is not flaky.
+- Quarantine works the same in every shard, and the shard parity check leaves quarantined flows
+  out of both the listing and the results.
 
 Two escape hatches, both environment variables read by `lib/quarantine.ts`:
 
@@ -574,13 +583,15 @@ passing the live-LLM filter on the command line would silently un-quarantine eve
 ## CI
 
 `.github/workflows/e2e-ci.yml` runs on PRs to and pushes on `dev`/`main`, plus merge queue entries.
-A `changes` job decides, per image, whether to build from the PR's code (tagged `:e2e-ci`) or use the
-released `:latest` — so a frontend-only PR does not rebuild the backend. The job then checks the flow
-catalog, boots the stack with `bin/e2e up`, runs `bin/e2e test`, and always uploads the Playwright
-HTML report (7-day retention); on failure it dumps `bin/e2e ps` and the last 200 log lines. The
-`E2E Tests Pass` gate fails closed unless every dependency succeeded or was legitimately skipped.
+The suite runs as six shards per stack (see [Shards](#shards) below). Each shard builds the images
+from the PR's code (tagged `:e2e-ci`) with the registry layer cache, boots its own stack with
+`bin/e2e up` and runs its share of the spec files with `bin/e2e test`; on failure it dumps
+`bin/e2e ps` and the last 200 log lines and uploads its own Playwright report. A `report` job then
+merges every shard's results into the one Playwright HTML report (7-day retention) and proves that
+the shards together ran the whole suite. The `E2E Tests Pass` gate fails closed unless every
+dependency, the report job included, succeeded or was legitimately skipped.
 
-After the Playwright suite, the same job runs the SDK live suites from
+After the Playwright suite, the last shard runs the SDK live suites from
 [futureagi-sdk](https://github.com/future-agi/futureagi-sdk) against the stack it booted, on every
 PR and push: `python/tests/platform` calls every operation of the generated Python client and
 `src/platform/__tests__/live.test.ts` covers the TypeScript transport, so a backend change that
@@ -592,21 +603,146 @@ minute; they are skipped only when the stack never booted.
 
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
-label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
-only if the PR has it when the run starts, so add it and then push: a re-run keeps the labels of
-the run it repeats. The Standalone leg builds the four component images with the layer cache,
-assembles the app image with `bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
+label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. A pull request run
+reads the labels the PR carries when it starts, so a label added together with the PR
+(`gh pr create --label e2e-standalone`, which GitHub delivers after `opened`) counts. A label added
+later takes effect on the next push: adding a label starts no run, on purpose (see below). Only
+E2E CI reads `e2e-standalone` this way (Backend CI and Update CI pass the event's `e2e-standalone`
+to the planner, whose E2E fields they do not use); if the read fails, the labels the run's event
+carried stand, with a warning. The read can add the Standalone leg, never drop it. The
+Standalone leg builds the four component images with the layer cache, assembles the app image with
+`bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
 The `upgrade` job in `.github/workflows/standalone-ci.yml` runs weekly, on demand, and on a pull
-request labelled `upgrade-check` (the same rule: add the label, then push). It installs v1.41.1
+request labelled `upgrade-check` (read from the run's event only, unlike `e2e-standalone`: a label
+added with `gh pr create --label` does not count, so add the label, then push). It installs v1.41.1
 with its own `./bin/install` and sends a trace. Then it re-runs `./bin/install` at the head commit
 and checks four things: the install stays on the Distributed setup
 (`COMPOSE_FILE=docker-compose.distributed.yml` in `.env`), its backend, worker, frontend and gateway
 run the head commit's `:local` images, the first account still signs in, and the trace is still
 there.
 
-**Wall time in CI has not been measured yet** — the job has never run on a real PR. Record it on the
-first run and put the number here; the hard timeout is 90 minutes and the boot budgets above are the
-laptop-measured ones.
+### Shards
+
+`E2E_SHARD=k/N` makes `bin/e2e test` run one of `N` shares of the spec files. CI sets it per matrix
+leg (`E2E_SHARDS` in the workflow, currently 6); it works locally too:
+
+```bash
+E2E_SHARD=2/6 bin/e2e test     # the second of six shares
+```
+
+The split balances **measured time**, not test count (`lib/shard.ts`). Playwright's own `--shard`
+splits by count in file order. Most tests here are harness tests that take almost no time, so
+`--shard=1/4` would keep nearly every flow, and nearly all of the run time, in the first shard.
+The plan gives each spec file its recorded time from `e2e/.test-durations.json`, places the longest
+files first, each into the least loaded shard, and is a pure function of the checkout: every shard
+of a run computes the same split, and a re-run repeats it. A spec without a recorded time (a new
+flow) counts as the median file, so it runs at once. One very long flow fills a shard by itself;
+no number of shards makes a run shorter than its longest flow.
+
+What sets the shard count: every shard pays a fixed cost before its first test (image build, pulls,
+and the stack boot, most of which is the database migrate). Measured on the standard GitHub
+runners in November 2026:
+
+- Unsharded, the suite took about 90 minutes.
+- With four shards a shard took 36 to 48 minutes, because one flow waited out a 30-minute product
+  default.
+- That flow now gives its own project a five-minute settle (`lib/metric-settle.ts`). It asserts
+  that the value is reported as not final while the conversations are open, and that its own poll
+  first observes the final value no earlier than five minutes after their last arrival, less 5
+  seconds of clock tolerance. That is an observation time, not the publication time, which the
+  API does not return. A backend unit test pins the 30-minute default.
+- With six shards a shard takes about 20 to 30 minutes, 11 to 15 of them fixed cost (the boot
+  alone varied from 7 to 11), and `E2E Tests Pass` reports a little over 30 minutes after the push.
+
+**Parity is a gate, not an assumption.** The `report` job lists the suite without `E2E_SHARD` and
+compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
+test has no result in any shard, ran in two shards, never started, or when a shard reported a test
+the listing does not have. Quarantined and `@live-llm` flows are out of both sides.
+
+**Run-time skips.** A test the listing expects to pass but that skips itself while it runs fails
+the gate when the repository variable `E2E_ENFORCE_RUNTIME_SKIPS` is `true`, unless
+`.runtime-skips.json` lists its flow id for that stack: `{ "id": "OBS-E2E-031", "stack":
+"distributed" | "standalone", "reason": "...", "issue": "<ticket>", "owner": "...", "expires":
+"YYYY-MM-DD" }`. The id must equal the id in the test's flow annotation; a title match is not
+enough. An entry that is not by design names the ticket that removes it, an owner, and an expiry
+at most 45 days ahead; after that date it no longer allows the skip. Each listed skip gets a
+warning on the run, and an entry whose test ran and passed is reported as out of date. Expiry is
+judged on the run's date, so re-running only the report job cannot change its verdict. Today the
+list is empty: OBS-E2E-031 and OBS-E2E-032 (TH-10597), whose churn guard once measured no DOM
+mutations in CI, now run and pass on both stacks.
+
+The backend has a stricter rule for its own skips in `futureagi/.ci/runtime-skips.json`
+(`BACKEND_ENFORCE_RUNTIME_SKIPS`). Each rule names the exact test files it covers, each with the
+number of tests measured to skip there, optionally the exact node ids it is limited to, an
+anchored reason, the ticket that removes it, an owner
+and an expiry at most 45 days after the run date; there is no by-design exemption. A skip is
+allowed only for a listed file and a matching reason, for the test path the independent inventory
+recorded, and only up to that file's measured count. An enforced run fails on an unexpected skip
+and on a rule problem: an expired rule that still matches, and, judged on the whole run and only
+when its evidence is complete, a file over its count or a rule file the run scheduled that matched
+nothing. A rule can be limited to oss runs (`"runs": "oss"`: a fork pull request or a merge group,
+without the private package) or internal runs (`"runs": "internal"`).
+
+A skip that depends on data other tests leave behind cannot have an exact count. Its rule says why
+in `"varies"`, and each of its files maps to the number of tests the inventory collects there: an
+upper bound, checked against the inventory on every complete run, and matching nothing is no
+problem. Exact counts stay the default, and no rule varies today. The last one, for
+`tracer/tests/test_hourly_aggregate_state_route_live_ch.py`, went once its tests ran against the
+CI ClickHouse sidecar, which they seed themselves.
+
+Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
+SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
+uploads a record of those steps' outcomes, and the `report` job fails without a record that says
+all of them passed, so they cannot be skipped on every shard unseen. A manual run with
+`host_update_fallibility` stays unsharded.
+
+`E2E Tests Pass` passes in two cases only: every shard and the `report` job succeeded, or the
+`changes` job found nothing that needs the suite. A skipped `report` job does not pass.
+
+**Why edits and labels start no run.** Backend CI, Python lint and E2E CI start only on `opened`,
+`synchronize` and `reopened`. A run for any other activity type becomes the workflow's newest
+suite for the head commit. GitHub then ignores the required check of the older, real suite, so the
+merge queue refuses the PR, although the real run is green. Blacksmith edits every new PR's body
+about 4 s after it opens, which is how #4332 (green run 45070958943, then skipped run 45070969031)
+and #4001 were refused. This is not documented by GitHub, and `gh pr checks --required` cannot
+show it, because it still lists the older green runs. A retarget therefore starts no run of these
+workflows either. The merge queue re-tests every merge into dev. For a retarget, **Retarget proof**
+(`.github/workflows/retarget-proof.yml`) first checks that GitHub delivered the retarget with a
+merge of the head onto the new base's current tip. GitHub often sends a retarget, its automatic
+ones included, with the merge from before it; then that check fails and nothing else runs, and a
+push lets the pull request's own runs test the new base. Otherwise it calls
+Backend CI and E2E CI on that merge. Their jobs appear as `retarget-backend / …` and
+`retarget-e2e / …`, never under a required name, and they never share or cancel the pull request's
+own runs. Like a merge group, its backend leg runs without the private package: no secrets are
+forwarded. A Backend CI or E2E CI run on a pull request whose suite was selected, ran and passed
+records the merge candidate it tested (artifact `ci-candidate-<kind>-attempt-<n>`). The **"CI ran
+on this base"** check (`.github/workflows/ci-base-gate.yml`, not required) passes for a
+retargeted pull request into main only when both a Backend CI and an E2E CI run recorded this pull
+request, this head, this base and its current tip, and the tree of GitHub's current merge
+candidate. It re-reads all of that, and fails closed when anything is missing, skipped, from
+another pull request or stale. A green verdict is **proved against the base tip at its last run**,
+not at merge time: the base can move after it. A receipt is written by the producing run's own
+workflow, which for a pull request comes from that pull request's merge commit, so this check has
+the same trust as the required checks. If `CI_SCOPE_MODE` ever narrows the suites, a retargeted
+pull request whose suite was not selected records no receipt and stays red into main. Until the
+repository owner makes it required on main, push a commit after a retarget into main if it is
+red. Update CI is not required and still starts on edits and labels (`update-rehearsal` starts the
+Real rehearsals).
+
+To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
+artifact of a green run and regenerate the recorded times:
+
+```bash
+node scripts/shard-report.mjs durations --merged merged-report.json   # rewrites .test-durations.json
+```
+
+### Why the E2E stack still migrates from zero
+
+Backend CI restores a cached dump of a migrated database in its pytest shards
+(`futureagi/.ci/db_dump.py`). The E2E stacks do not, on purpose. The stack's Postgres also holds
+Temporal's own tables, and a migration registers Temporal search attributes while it runs. A
+restored database would skip that registration, or carry another job's Temporal state. Every
+shard therefore boots the way an install does: `manage.py migrate` on an empty database.
 
 ---
 

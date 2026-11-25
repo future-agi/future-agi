@@ -12,8 +12,11 @@ from simulate.models import AgentDefinition, AgentVersion, RunTest
 from simulate.services.agent_definition import sync_provider_credentials
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 
-ID = uuid.uuid4()
-OTHER = uuid.uuid4()
+# Fixed, not uuid4(): these values are part of the pytest ids. Every CI shard
+# collects the tests in its own process, and pytest-split runs each case
+# exactly once only when all shards see the same ids.
+ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
+OTHER = uuid.UUID("00000000-0000-4000-8000-000000000002")
 ENVIRONMENT = f"/simulate/api/harness-environments/{ID}/"
 JOBS = "/simulate/api/harness-jobs/"
 AGENT = f"/simulate/agent-definitions/{ID}/"
@@ -286,6 +289,86 @@ def test_a_member_reads_an_agent_with_its_masked_key(
     assert version_response.data["api_key"] == mask_key(RAW_KEY)
     assert RAW_KEY not in str(agent_response.data)
     assert RAW_KEY not in str(version_response.data)
+
+
+LIVEKIT_KEY = "lk-viewer-role-check-123456"
+LIVEKIT_SECRET = "lk-secret-viewer-role-check"
+
+
+@pytest.fixture
+def livekit_agent(organization, workspace):
+    agent = AgentDefinition.objects.create(
+        agent_name="LiveKit agent",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        contact_number="+12345678901",
+        inbound=True,
+        provider="livekit",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+    version = agent.create_version(
+        description="v1",
+        commit_message="v1",
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    sync_provider_credentials(
+        version,
+        ProviderCredentialsInput(
+            provider="livekit",
+            livekit_api_key=LIVEKIT_KEY,
+            livekit_api_secret=LIVEKIT_SECRET,
+            livekit_url="wss://livekit.example.test",
+            livekit_agent_name="viewer-role-check",
+            provider_was_provided=True,
+        ),
+    )
+    return agent, version
+
+
+def _livekit_reads(client, agent, version):
+    agent_response = client.get(f"/simulate/agent-definitions/{agent.id}/")
+    version_response = client.get(
+        f"/simulate/agent-definitions/{agent.id}/versions/{version.id}/"
+    )
+    assert agent_response.status_code == status.HTTP_200_OK, agent_response.data
+    assert version_response.status_code == status.HTTP_200_OK, version_response.data
+    return agent_response.data, version_response.data["configuration_snapshot"]
+
+
+@pytest.mark.django_db
+def test_a_viewer_reads_a_livekit_agent_without_its_keys(
+    organization, workspace, livekit_agent
+):
+    agent, version = livekit_agent
+    viewer = _viewer_client(organization, workspace)
+
+    agent_data, snapshot = _livekit_reads(viewer, agent, version)
+
+    assert agent_data["livekit_api_key"] == ""
+    assert agent_data["api_key"] == ""
+    assert snapshot.get("livekit_api_key", "") == ""
+    assert snapshot.get("livekit_api_secret", "") == ""
+    for raw in (LIVEKIT_KEY[:6], LIVEKIT_SECRET[:6]):
+        assert raw not in str(agent_data)
+        assert raw not in str(snapshot)
+
+
+@pytest.mark.django_db
+def test_a_member_reads_a_livekit_agent_with_its_masked_keys(
+    organization, workspace, livekit_agent
+):
+    agent, version = livekit_agent
+    member = _member_client(organization, workspace)
+
+    agent_data, snapshot = _livekit_reads(member, agent, version)
+
+    assert agent_data["livekit_api_key"] == mask_key(LIVEKIT_KEY)
+    assert snapshot["livekit_api_key"] == mask_key(LIVEKIT_KEY)
+    assert snapshot["livekit_api_secret"] == "********"
+    for raw in (LIVEKIT_KEY, LIVEKIT_SECRET):
+        assert raw not in str(agent_data)
+        assert raw not in str(snapshot)
 
 
 @pytest.fixture(params=["pinned", "latest"])

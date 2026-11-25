@@ -779,7 +779,10 @@ def _store_provider_credentials(
     """The new version's own provider row: a copy of ``template`` (its keys only when
     ``keep_keys``), then any changed keys. The row exists before syncing, so a
     definition's legacy row is never moved."""
-    from simulate.services.agent_definition import sync_provider_credentials
+    from simulate.services.agent_definition import (
+        CredentialsNeedReentry,
+        sync_provider_credentials,
+    )
 
     if template is not None:
         row = ProviderCredentials(
@@ -802,9 +805,14 @@ def _store_provider_credentials(
     row.save()
     if not provider_secrets or dict(provider_secrets) == _row_values(row):
         return
-    sync_provider_credentials(
-        version, _provider_input(family or row.provider_type, provider_secrets)
-    )
+    try:
+        sync_provider_credentials(
+            version, _provider_input(family or row.provider_type, provider_secrets)
+        )
+    except CredentialsNeedReentry as error:
+        raise HostedHarnessError(
+            "credentials_need_reentry", error.message, status_code=422
+        ) from error
 
 
 # --- create -------------------------------------------------------------------------
@@ -1495,6 +1503,7 @@ def _run_preflight(
             list(scan.get("detected_connectors") or []),
             list(scan.get("required_files") or []),
             int(scan.get("scanned_files") or 0),
+            list(scan.get("api_keys") or []),
         )
         if scan is not None
         else None
@@ -1504,7 +1513,7 @@ def _run_preflight(
             organization, secret_payload, analysis, workspace_id=workspace_id
         )
     )
-    detected, required_files, scanned = analysis
+    detected, required_files, scanned, api_keys = analysis
     passed = not any(check["status"] == "failed" for check in secret_checks)
     error = source_error.code if source_error is not None else None
     found = (
@@ -1512,6 +1521,7 @@ def _run_preflight(
             "detected_connectors": sorted(str(name) for name in detected),
             "required_files": sorted(str(name) for name in required_files),
             "scanned_files": int(scanned or 0),
+            "api_keys": sorted(str(name) for name in api_keys),
         }
         if source_error is None
         else None
@@ -2827,17 +2837,21 @@ def check_creation_credentials(
 ) -> CreationCheck:
     """Check a creation's credentials live, reusing its source scan; refused with 422
     when they fail."""
-    from simulate.services.harness_provider import _connector_credential_readiness
+    from simulate.services.harness_provider import (
+        _connector_credential_readiness,
+        scan_parts,
+    )
 
-    detected, required_files, scanned = (
+    detected, required_files, scanned, api_keys = scan_parts(
         source_analysis
-        if isinstance(source_analysis, tuple | list) and len(source_analysis) == 3
-        else ([], [], 0)
+        if isinstance(source_analysis, tuple | list) and len(source_analysis) in (3, 4)
+        else ([], [], 0, [])
     )
     scan = {
         "detected_connectors": sorted(str(name) for name in detected or []),
         "required_files": sorted(str(name) for name in required_files or []),
         "scanned_files": int(scanned or 0),
+        "api_keys": sorted(str(name) for name in api_keys or []),
     }
     try:
         passed, report = _run_preflight(
@@ -2866,6 +2880,7 @@ def check_creation_credentials(
         scan["detected_connectors"],
         scan["scanned_files"],
         scan["required_files"],
+        scan["api_keys"],
     )
     agent = payload["agent"]
     # A name public config meets (a LiveKit URL) is never asked of the credentials.
@@ -3059,13 +3074,9 @@ def _provider_identifiers(connector: str, config: Mapping[str, Any]):
     )
 
 
-def _bind_connected_agent(
-    job: HostedHarnessJob, definition: AgentDefinition, metadata: dict[str, Any]
-) -> AgentVersion:
-    """Pin a new environment to a connected agent's version: the one the creation
-    names, else production. The environment takes the version's source and
-    credential names and writes nothing to the agent; it stays pinned unless the
-    creation asks to follow production."""
+def _named_version(
+    definition: AgentDefinition, metadata: dict[str, Any]
+) -> AgentVersion | None:
     if not (
         AgentDefinition._base_manager.select_for_update()
         .filter(id=definition.id, deleted=False)
@@ -3074,31 +3085,22 @@ def _bind_connected_agent(
         raise HostedHarnessError(
             "agent_not_found", "that agent no longer exists", status_code=404
         )
-    payload = job.payload
-    agent = dict(payload.get("agent") or {})
     requested = metadata.get("agent_version_id")
-    version = None
-    if requested:
-        version = AgentVersion.no_workspace_objects.filter(
-            id=requested, agent_definition=definition
-        ).first()
-        if version is None:
-            raise HostedHarnessError(
-                "version_not_found",
-                "that version is not one of this agent's",
-                status_code=404,
-            )
-    version = version or definition.active_version or definition.latest_version
+    if not requested:
+        return None
+    version = AgentVersion.no_workspace_objects.filter(
+        id=requested, agent_definition=definition
+    ).first()
     if version is None:
         raise HostedHarnessError(
-            "agent_has_no_version",
-            "This agent has no version to build from yet",
-            status_code=409,
+            "version_not_found",
+            "that version is not one of this agent's",
+            status_code=404,
         )
-    from simulate.services.agent_connect import require_found_check
+    return version
 
-    require_found_check(definition)
-    runtime = _side_row(version.id)
+
+def _require_ready(runtime: HarnessAgentVersionRuntime | None) -> None:
     if runtime is not None and runtime.preflight_status not in (
         Status.PASSED,
         Status.LEGACY,
@@ -3109,6 +3111,69 @@ def _bind_connected_agent(
             status_code=409,
             details={"preflight_status": runtime.preflight_status},
         )
+
+
+def _bind_environment_agent(
+    job: HostedHarnessJob, definition: AgentDefinition, metadata: dict[str, Any]
+) -> AgentVersion:
+    version = _named_version(definition, metadata)
+    if version is None:
+        raise HostedHarnessError(
+            "version_not_found",
+            "that version is not one of this agent's",
+            status_code=404,
+        )
+    runtime = _side_row(version.id)
+    if runtime is None:
+        raise HostedHarnessError(
+            "version_not_buildable",
+            "This agent version can't be built from here",
+            status_code=409,
+        )
+    _require_ready(runtime)
+    payload = copy.deepcopy(job.payload)
+    apply_agent_version(payload, runtime)
+    metadata.update(
+        agent_definition_owner="environment",
+        agent_definition_id=str(definition.id),
+        build_agent_version_id=str(version.id),
+    )
+    job.agent_version = version
+    job.payload = {**payload, "metadata": metadata}
+    job.save(update_fields=["agent_version", "payload", "updated_at"])
+    logger.info(
+        "harness_environment_agent_bound job=%s definition=%s version=%s names=%d",
+        job.id,
+        definition.id,
+        version.id,
+        len(payload["agent"]["secret_refs"]),
+    )
+    return version
+
+
+def _bind_connected_agent(
+    job: HostedHarnessJob, definition: AgentDefinition, metadata: dict[str, Any]
+) -> AgentVersion:
+    """Pin a new environment to a connected agent's version: the one the creation
+    names, else production. The environment takes the version's source and
+    credential names and writes nothing to the agent; it stays pinned unless the
+    creation asks to follow production."""
+    payload = job.payload
+    agent = dict(payload.get("agent") or {})
+    version = _named_version(definition, metadata) or (
+        definition.active_version or definition.latest_version
+    )
+    if version is None:
+        raise HostedHarnessError(
+            "agent_has_no_version",
+            "This agent has no version to build from yet",
+            status_code=409,
+        )
+    from simulate.services.agent_connect import require_found_check
+
+    require_found_check(definition)
+    runtime = _side_row(version.id)
+    _require_ready(runtime)
     source = dict(payload.get("source") or {})
     if runtime is not None and runtime.source_kind in (
         HarnessAgentVersionRuntime.SourceKind.GITHUB,
@@ -3185,6 +3250,8 @@ def ensure_environment_agent(
         if found is not None:
             if not environment_owned(found.id):
                 return _bind_connected_agent(job, found, metadata)
+            if metadata.get("agent_version_id"):
+                return _bind_environment_agent(job, found, metadata)
             elif key is not None and key == _definition_key(found):
                 definition = found
             else:

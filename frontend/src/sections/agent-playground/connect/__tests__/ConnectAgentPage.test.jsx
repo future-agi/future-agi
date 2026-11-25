@@ -29,6 +29,17 @@ vi.mock("src/api/agents/agentConnect", () => ({
 
 vi.mock("src/hooks/use-debounce", () => ({ useDebounce: (value) => value }));
 
+vi.mock("../useConnectPreflight", () => ({
+  default: () => ({
+    ready: true,
+    status: "idle",
+    result: undefined,
+    error: null,
+    run: vi.fn(),
+    reset: vi.fn(),
+  }),
+}));
+
 const auth = vi.hoisted(() => ({ role: "Member" }));
 vi.mock("src/auth/hooks", async (importOriginal) => ({
   ...(await importOriginal()),

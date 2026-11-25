@@ -124,6 +124,14 @@ func safeInspectionError(err *models.APIError) *models.APIError {
 	// Do not echo arbitrary upstream code/type/message/param/header strings.
 	safe := &models.APIError{Status: status, Type: models.ErrTypeServer, Code: "request_failed", Message: "Request failed before inspected content could be released"}
 	switch err.Code {
+	case "circuit_open", "all_providers_unavailable":
+		if err.IsLocalAdmission() {
+			safe.Code = err.Code
+			safe.Message = "All providers are unavailable"
+			if err.Code == "circuit_open" {
+				safe.Message = "Provider circuit is open"
+			}
+		}
 	case "input_guardrail_unsupported", "output_guardrail_unsupported", "stream_guardrail_unsupported", "content_blocked", "guardrail_unavailable":
 		safe.Code = err.Code
 		safe.Type = models.ErrTypeGuardrail

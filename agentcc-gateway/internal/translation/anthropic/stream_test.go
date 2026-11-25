@@ -347,6 +347,112 @@ func TestStream_FinishReasonThenUsageChunk(t *testing.T) {
 	}
 }
 
+// ─── usage only at the end of the stream (Gemini, Vertex) ────────────────────
+
+// A Gemini or Vertex stream reports usage only on its last chunk, together
+// with the finish reason, so message_start goes out with zero usage.  The
+// closing message_delta is then the only place the prompt count can reach the
+// client, and an input count of zero there under-reports what the turn cost.
+func TestStream_UsageOnFinalChunkCarriesInputTokens(t *testing.T) {
+	chunks := []models.StreamChunk{
+		{
+			ID:    "gemini-stream",
+			Model: "gemini-3.7-flash",
+			Choices: []models.StreamChoice{
+				{Delta: models.Delta{Content: strPtr("Hello")}},
+			},
+		},
+		{
+			ID:    "gemini-stream",
+			Model: "gemini-3.7-flash",
+			Choices: []models.StreamChoice{
+				{Delta: models.Delta{Content: strPtr(" there")}, FinishReason: strPtr("stop")},
+			},
+			Usage: &models.Usage{PromptTokens: 21000, CompletionTokens: 950, TotalTokens: 21950},
+		},
+	}
+
+	events, errs := tr.StreamEventsFromCanonical(context.Background(), feedChunks(chunks))
+	got := collectEvents(t, events, errs)
+
+	var deltas int
+	for _, e := range got {
+		if e["_event"] != "message_delta" {
+			continue
+		}
+		deltas++
+		usage, _ := e["usage"].(map[string]interface{})
+		if usage["input_tokens"] != float64(21000) {
+			t.Errorf("message_delta input_tokens = %v, want 21000", usage["input_tokens"])
+		}
+		if usage["output_tokens"] != float64(950) {
+			t.Errorf("message_delta output_tokens = %v, want 950", usage["output_tokens"])
+		}
+	}
+	if deltas != 1 {
+		t.Fatalf("want one message_delta, got %d: %v", deltas, getEventNames(got))
+	}
+}
+
+// The same holds when usage arrives in a trailing chunk after the finish
+// reason, the OpenAI shape with stream_options.include_usage.
+func TestStream_TrailingUsageChunkCarriesInputTokens(t *testing.T) {
+	chunks := []models.StreamChunk{
+		{ID: "c", Choices: []models.StreamChoice{{Delta: models.Delta{Content: strPtr("x")}}}},
+		{ID: "c", Choices: []models.StreamChoice{{FinishReason: strPtr("stop")}}},
+		{ID: "c", Usage: &models.Usage{PromptTokens: 10, CompletionTokens: 5}},
+	}
+
+	events, errs := tr.StreamEventsFromCanonical(context.Background(), feedChunks(chunks))
+	for _, e := range collectEvents(t, events, errs) {
+		if e["_event"] == "message_delta" {
+			usage, _ := e["usage"].(map[string]interface{})
+			if usage["input_tokens"] != float64(10) {
+				t.Errorf("message_delta input_tokens = %v, want 10", usage["input_tokens"])
+			}
+		}
+	}
+}
+
+// A provider that sends usage on its first chunk as well puts the input count
+// in both message_start and message_delta. Both must carry the same whole
+// count, as Anthropic's own API does, so a client that takes the closing
+// figure as the total gets it right, and a part-and-rest split would show here.
+func TestStream_UsageOnFirstAndLastChunkCarriesTheWholeInputInBoth(t *testing.T) {
+	chunks := []models.StreamChunk{
+		{
+			ID:      "c",
+			Choices: []models.StreamChoice{{Delta: models.Delta{Content: strPtr("Hi")}}},
+			Usage:   &models.Usage{PromptTokens: 300},
+		},
+		{
+			ID:      "c",
+			Choices: []models.StreamChoice{{FinishReason: strPtr("stop")}},
+			Usage:   &models.Usage{PromptTokens: 300, CompletionTokens: 40},
+		},
+	}
+
+	events, errs := tr.StreamEventsFromCanonical(context.Background(), feedChunks(chunks))
+	inputs := map[string][]interface{}{}
+	for _, e := range collectEvents(t, events, errs) {
+		switch e["_event"] {
+		case "message_start":
+			message, _ := e["message"].(map[string]interface{})
+			usage, _ := message["usage"].(map[string]interface{})
+			inputs["message_start"] = append(inputs["message_start"], usage["input_tokens"])
+		case "message_delta":
+			usage, _ := e["usage"].(map[string]interface{})
+			inputs["message_delta"] = append(inputs["message_delta"], usage["input_tokens"])
+		}
+	}
+	for _, event := range []string{"message_start", "message_delta"} {
+		got := inputs[event]
+		if len(got) != 1 || got[0] != float64(300) {
+			t.Errorf("%s input_tokens = %v, want exactly one event with 300", event, got)
+		}
+	}
+}
+
 // ─── Mid-stream error ─────────────────────────────────────────────────────────
 
 func TestStream_MidStreamError(t *testing.T) {

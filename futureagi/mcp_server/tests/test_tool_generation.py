@@ -36,9 +36,64 @@ def test_committed_catalog_generates_expected_tools():
         "query_dashboard_widget",
         "get_usage_overview",
     }.issubset(tool_names)
-    assert len(manifest["source_contract_sha256"]) == 64
+    assert len(manifest["tool_names_sha256"]) == 64
+    # No field may summarise the whole contract: it would change with every
+    # API pull request and make any two of them conflict.
+    assert "source_contract_sha256" not in manifest
     for tool in manifest["tools"]:
         Draft7Validator.check_schema(tool["inputSchema"])
+
+
+def _catalog_with(tmp_path, *names):
+    path = tmp_path / f"tools-{'-'.join(names)}.json"
+    tools = [
+        {
+            "name": name,
+            "group": "context",
+            "description": "Read the signed-in user",
+            "operation": {"method": "GET", "path": "/accounts/user-info/"},
+        }
+        for name in names
+    ]
+    path.write_text(
+        json.dumps({"expected_tool_count": len(tools), "tools": tools}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_the_fingerprint_follows_the_tool_set_and_not_the_contract(tmp_path):
+    one = generate_tool_manifest(CONTRACT_PATH, _catalog_with(tmp_path, "alpha"))
+    # A contract change that leaves the tools alone must not move the line
+    # two unrelated pull requests would otherwise both rewrite.
+    contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+    contract.setdefault("info", {})["description"] = "edited by another change"
+    edited = tmp_path / "swagger.json"
+    edited.write_text(json.dumps(contract), encoding="utf-8")
+    same_tools = generate_tool_manifest(edited, _catalog_with(tmp_path, "alpha"))
+    assert same_tools["tool_names_sha256"] == one["tool_names_sha256"]
+
+    # Two pull requests that each add a tool both bump the catalog count to
+    # the same number. Their fingerprints differ, so the two edits conflict
+    # instead of merging to a count that is one short.
+    first = generate_tool_manifest(
+        CONTRACT_PATH, _catalog_with(tmp_path, "alpha", "beta")
+    )
+    second = generate_tool_manifest(
+        CONTRACT_PATH, _catalog_with(tmp_path, "alpha", "gamma")
+    )
+    assert first["tool_count"] == second["tool_count"] == 2
+    fingerprints = {
+        one["tool_names_sha256"],
+        first["tool_names_sha256"],
+        second["tool_names_sha256"],
+    }
+    assert len(fingerprints) == 3
+    # The order of the catalog is not part of the fingerprint.
+    reordered = generate_tool_manifest(
+        CONTRACT_PATH, _catalog_with(tmp_path, "beta", "alpha")
+    )
+    assert reordered["tool_names_sha256"] == first["tool_names_sha256"]
 
 
 def test_generator_maps_path_query_and_body_parameters():
@@ -391,3 +446,17 @@ def test_dashboard_tools_follow_the_real_dashboard_contract():
     assert {"property_id", "metric_name", "search", "cursor"} <= tools[
         "get_dashboard_filter_values"
     ]["inputSchema"]["properties"].keys()
+
+
+def test_a_list_query_filter_takes_one_value_a_list_or_null():
+    manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
+    tools = {tool["name"]: tool for tool in manifest["tools"]}
+    agents = Draft7Validator(tools["list_agents"]["inputSchema"])
+
+    assert agents.is_valid({"agent_type": "voice"})
+    assert agents.is_valid({"agent_type": ["voice", "text"]})
+    assert agents.is_valid({"agent_type": None})
+    assert agents.is_valid({"source": "livekit", "environments": ["with"]})
+    assert not agents.is_valid({"agent_type": "fax"})
+    assert not agents.is_valid({"agent_type": ["voice", "fax"]})
+    assert not agents.is_valid({"source": "not-a-source"})

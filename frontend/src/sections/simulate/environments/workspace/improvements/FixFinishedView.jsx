@@ -152,14 +152,14 @@ function WhatToTryNext({ fix, onTab }) {
           onClose={() => setDeciding(false)}
         />
       )}
-      {launching && (
-        <LaunchFixDialog
-          open
-          envId={fix.environment_id}
-          sourceRunId={fix.source_run_id}
-          onClose={() => setLaunching(false)}
-        />
-      )}
+      {/* Kept mounted and toggled, as on the run page, so the drawer slides
+          in and out (MUI skips the transition for a drawer mounted open). */}
+      <LaunchFixDialog
+        open={launching}
+        envId={fix.environment_id}
+        sourceRunId={fix.source_run_id}
+        onClose={() => setLaunching(false)}
+      />
     </Box>
   );
 }
