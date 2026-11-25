@@ -134,13 +134,16 @@ def test_v3_detail_uses_explicit_csat_for_existing_score_fields(csat):
         )
     )
     row["csat"] = csat
-    call = SimpleNamespace(test_execution=SimpleNamespace(), call_metadata={})
+    call = SimpleNamespace(
+        test_execution=SimpleNamespace(), call_metadata={}, simulation_call_type="voice"
+    )
     with (
         patch(
             "simulate.views.run_results_v3.build_call_rows", return_value=([row], [])
         ),
         patch("simulate.views.run_results_v3.build_eval_configs_map", return_value={}),
         patch("simulate.views.run_results_v3.function_calls", return_value=[]),
+        patch("simulate.views.run_results_v3.earlier_attempts", return_value=[]),
         patch(
             "simulate.views.run_results_v3.CallExecutionDetailSerializer"
         ) as serializer,

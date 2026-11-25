@@ -42,8 +42,10 @@ def raise_capability_denied_for_temporal(
     reason_code: str,
     detail: str | None = None,
 ) -> None:
+    """Carry the reason for capture policy without changing type or retry behavior."""
     raise ApplicationError(
         detail or f"'{feature_id}' is not available.",
+        {"feature_id": feature_id, "reason_code": reason_code},
         type="CapabilityDenied",
         non_retryable=True,
     )

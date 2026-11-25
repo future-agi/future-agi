@@ -5,10 +5,27 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from simulate.models import AgentDefinition, HostedHarnessJob
+from accounts.authentication import viewer_denied
+from model_hub.models.develop_dataset import Dataset
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    EvidenceImport,
+    HostedHarnessJob,
+)
+from simulate.pydantic_schemas.evidence_import import DatasetColumns
+from simulate.selectors.agent_fix_issue import issue_scenarios
+from simulate.selectors.evidence_import import (
+    environment_evidence_import,
+    evidence_dataset,
+    evidence_project,
+    import_bundle,
+    open_evidence_imports,
+)
 from simulate.selectors.held_back import (
     coding_agent_key,
     detail_without,
@@ -17,8 +34,34 @@ from simulate.selectors.held_back import (
     verify_run,
 )
 from simulate.selectors.runs import user_executions
+from simulate.serializers.evidence_import import (
+    EvidenceImportAddResponseSerializer,
+    EvidenceImportAddSerializer,
+    EvidenceImportCreateSerializer,
+    EvidenceImportDraftSerializer,
+    EvidenceImportListItemSerializer,
+    EvidenceImportSerializer,
+)
+from simulate.serializers.harness_actors import (
+    HarnessActorChangesSerializer,
+    HarnessActorDeleteQuerySerializer,
+    HarnessActorLimitsSerializer,
+    HarnessActorLimitsWriteSerializer,
+    HarnessActorListSerializer,
+    HarnessActorUnresolvedAcceptSerializer,
+    HarnessActorValidateSerializer,
+    HarnessActorValidationSerializer,
+    HarnessActorViewQuerySerializer,
+    HarnessActorViewSerializer,
+    HarnessActorWriteSerializer,
+    HarnessEnvironmentFileUploadedSerializer,
+    HarnessEnvironmentFileUploadSerializer,
+    editor_problems,
+)
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
+    HarnessAgentPolicyResponseSerializer,
+    HarnessAgentPolicySerializer,
     HarnessAgentVersionCreateSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
@@ -55,11 +98,31 @@ from simulate.serializers.harness_job import (
     HarnessRunCreateSerializer,
 )
 from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
+from simulate.services import (
+    harness_actor_reads,
+    harness_actor_uploads,
+    harness_actor_validation,
+    harness_actor_view,
+    harness_actors,
+)
+from simulate.services.evidence_import import (
+    TranscriptInput,
+    add_to_suite,
+    create_dataset_import,
+    create_evidence_import,
+    create_transcript_import,
+    discard_evidence_import,
+)
+from simulate.services.harness_actor_rules import UPLOAD_MAX_BYTES, ActorLimits
+from simulate.services.harness_actor_validation import Problem
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_detail,
     environment_rows,
     eval_modality,
+    filter_for_list,
+    status_counts,
+    with_version_contract,
 )
 from simulate.services.harness_provider import (
     _usage_limit_response,
@@ -71,10 +134,77 @@ from simulate.services.harness_provider import (
 from simulate.services.harness_verify import require_default_suite, start_verify
 from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
+from simulate.views.harness_starting_records import HarnessStartingRecordsMixin
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
-from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorWithDetailsResponseSerializer,
+    EmptyRequestSerializer,
+)
+from tfc.utils.errors import format_validation_error
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.utils.workspace_scope import (
+    project_queryset_for_request,
+    project_workspace_scope_q,
+)
+
+
+def _refused(code: str, errors: dict) -> Response:
+    """A request its serializer refuses, answered as the service refuses one: `code` (400)."""
+    refused = HostedHarnessError(code, format_validation_error(errors))
+    return Response(refused.as_dict(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _limits_refused(errors: dict) -> Response:
+    """Limits their serializer refuses, as the service refuses them: `limits_invalid` with a problem per limit."""
+    limits = errors.get("limits")
+    if set(errors) != {"limits"} or not isinstance(limits, dict):
+        return _refused("limits_invalid", errors)
+    refused = harness_actor_validation.limits_invalid(
+        editor_problems(HarnessActorLimitsSerializer(), limits)
+    )
+    return Response(refused.as_dict(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _changes_problems(errors: dict) -> list[Problem] | None:
+    """The problems of an actor's `changes` and `id` their serializer refuses, on the editor's fields; none when the
+    request is wrong elsewhere too."""
+    changes = errors.get("changes", {})
+    if not set(errors) <= {"changes", "id"} or not isinstance(changes, dict):
+        return None
+    return editor_problems(HarnessActorChangesSerializer(), changes) + editor_problems(
+        HarnessActorValidateSerializer(),
+        {key: value for key, value in errors.items() if key == "id"},
+    )
+
+
+def _actor_write_refused(errors: dict) -> Response:
+    """An actor write whose `changes` its serializer refuses, answered as the check refuses one: `actor_invalid`
+    (400) with its problems."""
+    problems = _changes_problems(errors)
+    if problems is None:
+        return Response(
+            build_error_envelope(errors), status=status.HTTP_400_BAD_REQUEST
+        )
+    refused = harness_actor_validation.actor_invalid(problems)
+    return Response(refused.as_dict(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _actor_check_refused(errors: dict) -> Response:
+    """An actor check whose `changes` its serializer refuses: a verdict (200) with its problems, as for any other
+    problem with the edit."""
+    problems = _changes_problems(errors)
+    if problems is None:
+        return Response(
+            build_error_envelope(errors), status=status.HTTP_400_BAD_REQUEST
+        )
+    return Response(harness_actors.request_problems_verdict(problems))
+
+
+def _upload_refused(errors: dict) -> Response:
+    return _refused(
+        "upload_kind_unknown" if "kind" in errors else "upload_invalid", errors
+    )
 
 
 def _touch_content(job):
@@ -134,7 +264,23 @@ def _uuid_or_none(value):
         return None
 
 
-class HarnessEnvironmentViewSet(viewsets.ViewSet):
+def _editable_import(job, identifier):
+    """An import this page may draft, add or discard. An Error Feed issue's import
+    belongs to its epoch, whose page finishes it."""
+    evidence_import = environment_evidence_import(job, identifier)
+    if evidence_import is None:
+        raise NotFound("Evidence import not found")
+    if evidence_import.source_issue_id is not None:
+        raise HostedHarnessError(
+            "evidence_import_of_issue",
+            "This import belongs to an epoch from an Error Feed issue. Review it on"
+            " that epoch's page.",
+            status_code=409,
+        )
+    return evidence_import
+
+
+class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     """The environments surface: list, delete, and start a simulation.
 
     An environment is the job that built it (the world itself lives in object
@@ -151,17 +297,18 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
 
-    def _queryset(self, request):
-        return annotate_for_list(
-            scope_jobs(
-                HostedHarnessJob.no_workspace_objects.filter(
-                    organization=request_organization(request),
-                    environment__isnull=True,
-                    deleted=False,
-                ),
-                request,
-            )
+    def _scoped_jobs(self, request):
+        return scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(
+                organization=request_organization(request),
+                environment__isnull=True,
+                deleted=False,
+            ),
+            request,
         )
+
+    def _queryset(self, request):
+        return annotate_for_list(self._scoped_jobs(request))
 
     def _job(self, request, pk):
         identifier = _uuid_or_none(pk)
@@ -171,7 +318,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     def handle_exception(self, exc):
         if isinstance(exc, HostedHarnessError):
-            return Response(exc.as_dict(), status=exc.status_code)
+            return Response(
+                exc.as_dict(), status=exc.status_code, headers=exc.headers()
+            )
         response = _usage_limit_response(exc)
         if response is not None:
             return response
@@ -215,6 +364,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         against = request.validated_query_data.get("against")
         return Response(version_reads.version_diff(job, piece, identifier, against))
 
+    @viewer_denied("change an environment's default version")
     @validated_request(
         request_serializer=HarnessDefaultMoveSerializer,
         responses={200: HarnessVersionsSerializer},
@@ -263,6 +413,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             raise version_reads.version_not_found()
         return found[0]
 
+    @viewer_denied("discard an agent version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={200: HarnessVersionsSerializer},
@@ -288,6 +439,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         discard_agent_version(version, by_environment=job.id)
         return Response(version_reads.list_versions(job))
 
+    @viewer_denied("retry an agent version check")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={202: HarnessVersionsSerializer},
@@ -315,6 +467,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             version_reads.list_versions(job), status=status.HTTP_202_ACCEPTED
         )
 
+    @viewer_denied("create an agent version")
     @validated_request(
         request_serializer=HarnessAgentVersionCreateSerializer,
         responses={202: HarnessAgentCredentialsResponseSerializer},
@@ -354,6 +507,50 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @viewer_denied("change whether an environment follows production")
+    @validated_request(
+        request_serializer=HarnessAgentPolicySerializer,
+        responses={
+            200: HarnessAgentPolicyResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
+            502: ApiErrorWithDetailsResponseSerializer,
+            503: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="agent-policy")
+    def agent_policy(self, request, pk=None):
+        """Follow the agent's production version, or pin this environment to one."""
+        from simulate.services.agent_versions import set_environment_policy
+        from simulate.services.harness_agent_versions import environment_policy
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        locked = set_environment_policy(
+            job, user=request.user, **request.validated_data
+        )
+        version = (
+            AgentVersion.no_workspace_objects.filter(id=locked.agent_version_id).first()
+            if locked.agent_version_id is not None
+            else None
+        )
+        return Response(
+            HarnessAgentPolicyResponseSerializer(
+                {
+                    "policy": environment_policy(locked),
+                    "agent_version": (
+                        version_reads.agent_version_item(locked, version)
+                        if version is not None
+                        else None
+                    ),
+                }
+            ).data
+        )
+
     @validated_request(responses={200: HarnessSuiteMemberSerializer(many=True)})
     @action(
         detail=True,
@@ -361,8 +558,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         url_path=r"versions/suite/(?P<version_id>[0-9a-fA-F-]{36})/members",
     )
     def suite_members(self, request, pk=None, version_id=None):
-        """The scenarios in one suite version, by number; a coding agent's read leaves
-        out the held-back cases."""
+        """The scenarios in one suite version, by number, each with the Error Feed
+        issue it came from, if any; a coding agent's read leaves out the held-back
+        cases."""
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
@@ -371,8 +569,19 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if identifier is None:
             raise version_reads.version_not_found()
         hidden = _held_back_from(request, job, identifier)
-        members = version_reads.suite_members(job, identifier)
-        return Response(members_without(members, hidden))
+        members = members_without(version_reads.suite_members(job, identifier), hidden)
+        issues = issue_scenarios(job, [member["scenario_key"] for member in members])
+        return Response(
+            [
+                {
+                    **member,
+                    "issue_cluster_id": issue.cluster_id if issue else None,
+                    "issue_project_id": issue.project_id if issue else None,
+                }
+                for member in members
+                for issue in [issues.get(member["scenario_key"])]
+            ]
+        )
 
     @validated_request(
         request_serializer=HarnessVerifyCreateSerializer,
@@ -412,6 +621,224 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             raise NotFound("Verify not found")
         return Response(verify_result(run))
 
+    @validated_request(
+        responses={200: HarnessActorListSerializer},
+        operation_id="simulate_api_harness-environments_actors",
+    )
+    @action(detail=True, methods=["get"], url_path="actors")
+    def actors(self, request, pk=None):
+        """The environment's cast as the next run would use it: the draft's when there is one."""
+        version_reads.require_versioning()
+        version_reads.require_actors()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(harness_actor_reads.read_actors(job))
+
+    @validated_request(
+        request_serializer=HarnessActorWriteSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["POST"],
+        reject_unknown_fields=True,
+        validation_error_response=_actor_write_refused,
+        operation_id="simulate_api_harness-environments_create_actor",
+    )
+    @actors.mapping.post
+    def create_actor(self, request, pk=None):
+        """Add one actor to the environment's draft; the saved version is unchanged until the draft is saved."""
+        return self._actor_edit(request, pk, op="create")
+
+    @validated_request(
+        query_serializer=HarnessActorViewQuerySerializer,
+        responses={200: HarnessActorViewSerializer},
+        operation_id="simulate_api_harness-environments_actor_view",
+    )
+    @action(detail=True, methods=["get"], url_path=r"actors/(?P<actor_id>[^/]{1,64})")
+    def actor_detail(self, request, pk=None, actor_id=None):
+        """What one actor sees and may do, optionally in one scenario, and what it never sees."""
+        version_reads.require_versioning()
+        version_reads.require_actors()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            harness_actor_view.actor_view(
+                job,
+                actor_id,
+                scenario_key=request.validated_query_data.get("scenario_key"),
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessActorWriteSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["PUT"],
+        reject_unknown_fields=True,
+        validation_error_response=_actor_write_refused,
+        operation_id="simulate_api_harness-environments_replace_actor",
+    )
+    @actor_detail.mapping.put
+    def replace_actor(self, request, pk=None, actor_id=None):
+        """Replace one actor in the draft, as a whole record or as changes to it; its id never changes."""
+        return self._actor_edit(request, pk, op="replace", actor_id=actor_id)
+
+    @validated_request(
+        query_serializer=HarnessActorDeleteQuerySerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["DELETE"],
+        operation_id="simulate_api_harness-environments_delete_actor",
+    )
+    @actor_detail.mapping.delete
+    def delete_actor(self, request, pk=None, actor_id=None):
+        """Take one actor out of the draft; refused while a scenario includes it."""
+        return self._actor_edit(request, pk, op="delete", actor_id=actor_id)
+
+    @validated_request(
+        request_serializer=HarnessActorValidateSerializer,
+        responses={200: HarnessActorValidationSerializer},
+        request_methods=["POST"],
+        reject_unknown_fields=True,
+        validation_error_response=_actor_check_refused,
+        operation_id="simulate_api_harness-environments_validate_actor",
+    )
+    # Beside `actors/`, not under it: an actor's id may be any word, `validate` included.
+    @action(detail=True, methods=["post"], url_path="actor-validation")
+    def validate_actor(self, request, pk=None):
+        """What a create, replace or removal of one actor would say, writing nothing: its problems, the actions it
+        would share that `share_actions` does not confirm, the id a create gets, and how far it is over the bound."""
+        version_reads.require_versioning()
+        version_reads.require_actors()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        data = request.validated_data
+        changes = data.get("changes")
+        if changes is not None:
+            # Judged against the record's bounds here, so a value out of them is a problem on its field.
+            strict = HarnessActorChangesSerializer(data=request.data.get("changes"))
+            if not strict.is_valid():
+                return _actor_check_refused({"changes": strict.errors})
+            changes = strict.validated_data
+        return Response(
+            harness_actors.check_actor_edit(
+                job,
+                op=data["op"],
+                actor_id=data.get("actor_id"),
+                body=None,
+                changes=changes,
+                new_id=data.get("id"),
+                user=request.user,
+                expected_revision=None,
+                share_actions=data.get("share_actions"),
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessActorLimitsWriteSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["PUT"],
+        reject_unknown_fields=True,
+        validation_error_response=_limits_refused,
+        operation_id="simulate_api_harness-environments_actor_limits",
+    )
+    @action(detail=True, methods=["put"], url_path="actor-limits")
+    def actor_limits(self, request, pk=None):
+        """Set the environment's actor limits in its draft (each a number, or null for no limit) and its actors' model."""
+        version_reads.require_versioning()
+        version_reads.require_actors()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        limits: ActorLimits = request.validated_data.get("limits") or ActorLimits()
+        return Response(
+            harness_actors.write_actor_limits(
+                job,
+                limits=limits,
+                user=request.user,
+                expected_revision=request.validated_data.get("expected_revision"),
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessActorUnresolvedAcceptSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["POST"],
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_accept_unresolved",
+    )
+    @action(detail=True, methods=["post"], url_path="actor-unresolved/accept")
+    def accept_unresolved(self, request, pk=None):
+        """Accept the cast as written for one policy point the builder could not model."""
+        version_reads.require_versioning()
+        version_reads.require_actors()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            harness_actors.accept_unresolved(
+                job,
+                policy=request.validated_data["policy"],
+                user=request.user,
+                expected_revision=request.validated_data.get("expected_revision"),
+            )
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="files",
+        parser_classes=[MultiPartParser],
+    )
+    @validated_request(
+        request_serializer=HarnessEnvironmentFileUploadSerializer,
+        responses={200: HarnessEnvironmentFileUploadedSerializer},
+        validation_error_response=_upload_refused,
+        operation_id="simulate_api_harness-environments_upload_file",
+    )
+    def upload_file(self, request, pk=None):
+        """Put one uploaded file into the environment's draft under its kind; the cast's knowledge sources then list
+        it, for picking per actor."""
+        version_reads.require_versioning()
+        version_reads.require_actors()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        data = request.validated_data
+        upload = data["file"]
+        cast, path = harness_actor_uploads.upload_environment_file(
+            job,
+            kind=data["kind"],
+            name=str(upload.name or ""),
+            # Read one byte past the bound, so a larger file is refused without reading all of it.
+            content=upload.read(UPLOAD_MAX_BYTES + 1),
+            user=request.user,
+            expected_revision=data.get("expected_revision"),
+        )
+        return Response({**cast, "uploaded_path": path})
+
+    def _actor_edit(self, request, pk, *, op, actor_id=None):
+        version_reads.require_versioning()
+        version_reads.require_actors()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        data = (
+            request.validated_query_data if op == "delete" else request.validated_data
+        )
+        return Response(
+            harness_actors.write_actor_edit(
+                job,
+                op=op,
+                actor_id=actor_id,
+                body=data.get("actor"),
+                changes=data.get("changes"),
+                new_id=data.get("id"),
+                user=request.user,
+                expected_revision=data.get("expected_revision"),
+                share_actions=data.get("share_actions"),
+            )
+        )
+
     @validated_request(responses={200: HarnessDraftsSerializer})
     @action(detail=True, methods=["get"], url_path="drafts")
     def drafts(self, request, pk=None):
@@ -424,6 +851,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         return Response(list_drafts(job))
 
+    @viewer_denied("save environment drafts")
     @validated_request(
         request_serializer=HarnessDraftSaveSerializer,
         responses={200: HarnessDraftSaveResponseSerializer},
@@ -455,6 +883,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("discard environment drafts")
     @swagger_auto_schema(
         responses={204: "Discarded"},
         operation_id="simulate_api_harness-environments_discard_draft",
@@ -476,6 +905,205 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @validated_request(
+        request_serializer=EvidenceImportCreateSerializer,
+        responses={201: EvidenceImportSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_evidence_imports",
+    )
+    @action(detail=True, methods=["post"], url_path="evidence-imports")
+    def evidence_imports(self, request, pk=None):
+        """Freeze Observe sessions or calls or dataset rows, or store transcripts
+        a person added, as evidence for this environment's tests; returns what
+        each holds and lacks, and what redaction replaces. Nothing is drafted or
+        run."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        if body["source_kind"] == EvidenceImport.SourceKind.TRANSCRIPT:
+            evidence_import = create_transcript_import(
+                environment=job,
+                transcripts=[
+                    TranscriptInput(one["name"], one["format"], one["text"])
+                    for one in body["transcripts"]
+                ],
+                production=body.get("production", False),
+                user=request.user,
+            )
+            return Response(
+                EvidenceImportSerializer(import_bundle(evidence_import)).data,
+                status=status.HTTP_201_CREATED,
+            )
+        if body["source_kind"] == EvidenceImport.SourceKind.DATASET:
+            # The datasets the caller may read, scoped as Observe's projects are.
+            datasets = Dataset.no_workspace_objects.filter(
+                project_workspace_scope_q(request, project_prefix=""), deleted=False
+            )
+            dataset = evidence_dataset(datasets, job, body["dataset_id"])
+            if dataset is None:
+                raise NotFound("Dataset not found in this environment's workspace")
+            evidence_import, evidence = create_dataset_import(
+                environment=job,
+                dataset=dataset,
+                columns=DatasetColumns(**body["columns"]),
+                row_ids=[str(row_id) for row_id in body["ids"]],
+                production=body.get("production", False),
+                user=request.user,
+            )
+            return Response(
+                EvidenceImportSerializer(import_bundle(evidence_import, evidence)).data,
+                status=status.HTTP_201_CREATED,
+            )
+        project = evidence_project(
+            project_queryset_for_request(request), job, body["project_id"]
+        )
+        if project is None:
+            raise NotFound("Project not found in this environment's workspace")
+        evidence_import, evidence = create_evidence_import(
+            environment=job,
+            project=project,
+            source_kind=body["source_kind"],
+            source_ids=[str(source_id) for source_id in body["ids"]],
+            user=request.user,
+        )
+        return Response(
+            EvidenceImportSerializer(import_bundle(evidence_import, evidence)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @validated_request(
+        responses={200: EvidenceImportListItemSerializer(many=True)},
+        request_methods=["GET"],
+        operation_id="simulate_api_harness-environments_list_evidence_imports",
+    )
+    @evidence_imports.mapping.get
+    def list_evidence_imports(self, request, pk=None):
+        """This environment's imports a person can still finish, newest first.
+        Read from what each import stores: no source is read again."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            EvidenceImportListItemSerializer(open_evidence_imports(job), many=True).data
+        )
+
+    @validated_request(
+        responses={200: EvidenceImportSerializer},
+        operation_id="simulate_api_harness-environments_evidence_import",
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"evidence-imports/(?P<import_id>[0-9a-fA-F-]{36})",
+    )
+    def evidence_import(self, request, pk=None, import_id=None):
+        """One evidence import, read from Observe again: a source deleted since
+        reads as unavailable, and a changed one says so."""
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        return Response(EvidenceImportSerializer(import_bundle(evidence_import)).data)
+
+    @swagger_auto_schema(
+        responses={204: "Discarded"},
+        operation_id="simulate_api_harness-environments_discard_evidence_import",
+    )
+    @evidence_import.mapping.delete
+    def discard_import(self, request, pk=None, import_id=None):
+        """Discard an import never added, and a transcript's stored text with it.
+        Of an import with added cases, only the cases not added are discarded."""
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = _editable_import(job, identifier)
+        discard_evidence_import(evidence_import)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        request_serializer=EvidenceImportDraftSerializer,
+        responses={202: EvidenceImportSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"evidence-imports/(?P<import_id>[0-9a-fA-F-]{36})/draft",
+    )
+    def draft_evidence_cases(self, request, pk=None, import_id=None):
+        """Ask the environment's builder to draft a scenario for each of an import's
+        waiting cases. The turn runs in a chat of the import's own; nothing it does
+        reaches the environment until a person adds the drafted cases."""
+        from simulate.services.evidence_drafts import start_drafting
+        from simulate.services.hosted_harness_ingress import _public_base_url
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = _editable_import(job, identifier)
+        start_drafting(
+            evidence_import,
+            [str(case_id) for case_id in request.validated_data["case_ids"]],
+            endpoint_base_url=_public_base_url(request),
+            user=request.user,
+            shows=request.validated_data.get("shows") or {},
+        )
+        # start_drafting links the drafting job on its own locked copy; the answer
+        # must say drafting has started, or the review never asks again.
+        evidence_import.refresh_from_db()
+        return Response(
+            EvidenceImportSerializer(import_bundle(evidence_import)).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @validated_request(
+        request_serializer=EvidenceImportAddSerializer,
+        responses={200: EvidenceImportAddResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"evidence-imports/(?P<import_id>[0-9a-fA-F-]{36})/add",
+    )
+    def add_evidence_cases(self, request, pk=None, import_id=None):
+        """Add an import's drafted cases to the suite: saved with them when the
+        review saw no unsaved changes, else beside those changes in the draft."""
+        from simulate.services.harness_versioning.drafts import DraftRef
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = _editable_import(job, identifier)
+        body = request.validated_data
+        saved = add_to_suite(
+            evidence_import,
+            [str(case_id) for case_id in body["case_ids"]],
+            expected={
+                piece: DraftRef(str(ref["id"]) if ref["id"] else None, ref["revision"])
+                for piece, ref in body["expected_drafts"].items()
+            },
+            idempotency_key=body["idempotency_key"],
+            user=request.user,
+        )
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        return Response(
+            EvidenceImportAddResponseSerializer(
+                {"saved": saved, "evidence_import": import_bundle(evidence_import)}
+            ).data
+        )
+
+    @validated_request(
         query_serializer=HarnessNudgeListQuerySerializer,
         responses={200: HarnessNudgeSerializer(many=True)},
         reject_unknown_fields=True,
@@ -492,6 +1120,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         states = request.validated_query_data.get("state")
         return Response(list_nudges(job, states=states))
 
+    @viewer_denied("answer a rebuild prompt")
     @validated_request(
         request_serializer=HarnessNudgeAnswerSerializer,
         responses={200: HarnessNudgeSerializer},
@@ -525,6 +1154,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("dismiss a rebuild prompt")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={200: HarnessNudgeSerializer},
@@ -561,23 +1191,28 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["get"], url_path="run-plan")
     def run_plan(self, request, pk=None):
-        """The versions a run of these picks would use and what to warn about; no
-        writes. An absent pick is the environment's default."""
+        """The versions a run of these picks would use, what to warn about and whether
+        it would start; no writes. An absent pick is the environment's default."""
         from simulate.services.harness_versioning.run_warnings import preview_run
 
-        version_reads.require_versioning()
-        job = self._job(request, pk)
-        if job is None:
-            return self._not_found()
         query = request.validated_query_data
-        # A coding agent may plan only on the default suite.
-        _held_back_from(request, job, query.get("suite_version_id"))
         picks = VersionPicks(
             agent_version_id=query.get("agent_version_id"),
             environment_version_id=query.get("environment_version_id"),
             suite_version_id=query.get("suite_version_id"),
         )
-        return Response(preview_run(job, picks))
+        if picks.chosen:
+            version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        # A coding agent may plan only on the default suite, and never reads its held-back cases.
+        hidden = _held_back_from(request, job, query.get("suite_version_id"))
+        return Response(
+            preview_run(
+                job, picks, scenario_keys=query.get("scenario_keys"), hidden=hidden
+            )
+        )
 
     @validated_request(
         query_serializer=HarnessCompareQuerySerializer,
@@ -671,13 +1306,21 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        jobs = self._queryset(request)
-        agent_definition_id = request.validated_query_data.get("agent_definition_id")
+        query = request.validated_query_data
+        jobs = filter_for_list(
+            with_version_contract(self._queryset(request)),
+            search=query.get("search"),
+            status=query.get("status"),
+            agent_type=query.get("agent_type"),
+        )
+        agent_definition_id = query.get("agent_definition_id")
         if agent_definition_id is not None:
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
-        return paginator.get_paginated_response(environment_rows(page))
+        response = paginator.get_paginated_response(environment_rows(page or []))
+        response.data["status_counts"] = status_counts(self._scoped_jobs(request))
+        return response
 
     @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
     def retrieve(self, request, pk=None):
@@ -697,6 +1340,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             detail_without(environment_detail(job), _held_back_from(request, job))
         )
 
+    @viewer_denied("edit an environment")
     @validated_request(
         request_serializer=HarnessEnvironmentRenameSerializer,
         responses={200: HarnessEnvironmentDetailSerializer},
@@ -723,6 +1367,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         job.save(update_fields=["name", "content_updated_at", "updated_at"])
         return Response(environment_detail(job))
 
+    @viewer_denied("delete an environment")
     @swagger_auto_schema(responses={204: "Deleted"})
     def destroy(self, request, pk=None):
         """Soft-delete an environment, cancelling its run first if one is live.
@@ -744,6 +1389,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         delete_environment(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @viewer_denied("start a paid run")
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,
         responses={202: HarnessRunCreateResponseSerializer},
@@ -794,6 +1440,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             {"evaluations": addable_evals(job.run_test, eval_modality(job))}
         )
 
+    @viewer_denied("add evaluations")
     @validated_request(
         request_serializer=HarnessEnvironmentAddEvaluationSerializer,
         responses={201: HarnessEnvironmentDetailSerializer},
@@ -829,6 +1476,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         _touch_content(job)
         return Response(environment_detail(job), status=status.HTTP_201_CREATED)
 
+    @viewer_denied("add evaluations to a run")
     @validated_request(
         request_serializer=HarnessEnvironmentAddEvaluationSerializer,
         responses={202: HarnessEnvironmentRunEvaluationQueuedSerializer},
@@ -977,6 +1625,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             _touch_content(job)
         return Response(counts, status=status.HTTP_202_ACCEPTED)
 
+    @viewer_denied("run evaluations")
     @validated_request(
         request_serializer=HarnessEnvironmentRunEvaluationsSerializer,
         responses={202: HarnessEnvironmentRunEvaluationsQueuedSerializer},
@@ -1123,6 +1772,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     # Pinned: the PATCH below shares this action's path, and DRF names the
     # operations of a two-method action after the path and the method.
+    @viewer_denied("remove evaluations")
     @swagger_auto_schema(
         responses={204: "Removed"},
         operation_id="simulate_api_harness-environments_remove_evaluation",
@@ -1166,6 +1816,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         _touch_content(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @viewer_denied("edit evaluations")
     @validated_request(
         request_serializer=HarnessEnvironmentEvalEditSerializer,
         responses={200: SimulateEvalConfigResponseSerializer},
@@ -1259,6 +1910,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         return Response(SimulateEvalConfigSimpleSerializer(config).data)
 
+    @viewer_denied("change the tool call evaluation")
     @validated_request(
         request_serializer=HarnessEnvironmentToolCallEvaluationSerializer,
         responses={200: HarnessEnvironmentDetailSerializer},

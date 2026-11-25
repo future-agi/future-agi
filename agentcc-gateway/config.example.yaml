@@ -17,6 +17,26 @@ server:
   # only to a response this ceiling does not govern. Unset, it becomes
   # write_timeout. Read at startup, like the rest of this block.
   max_request_timeout: 300s
+  # Native HTTPS, with no proxy in front. Both listeners can run at once on
+  # their own ports; turn http_enabled off once every caller uses HTTPS.
+  # cert_file is PEM, the leaf then any intermediates (all served); both
+  # files are re-read every reload_interval and a changed pair is served
+  # from the next connection on, with no restart. A pair that does not load
+  # is logged and the previous certificate kept. key_file should be readable
+  # by its owner, and at most also by its group (0400, 0600, or 0440 for a
+  # Kubernetes Secret with an fsGroup); a key other users can access, or its
+  # group can write, is still served with a warning naming the file and mode.
+  # Env: AGENTCC_HTTP_ENABLED,
+  # AGENTCC_TLS_ENABLED, AGENTCC_TLS_PORT, AGENTCC_TLS_CERT_FILE,
+  # AGENTCC_TLS_KEY_FILE, AGENTCC_TLS_MIN_VERSION, AGENTCC_TLS_RELOAD_INTERVAL.
+  # http_enabled: true
+  # tls:
+  #   enabled: true
+  #   port: 8443
+  #   cert_file: /var/run/secrets/futureagi/tls/tls.crt
+  #   key_file: /var/run/secrets/futureagi/tls/tls.key
+  #   min_version: "1.2"     # or "1.3"
+  #   reload_interval: 30s   # above 0, at most 1m
 
 providers:
   openai:
@@ -356,18 +376,45 @@ providers:
 #       # no models = unrestricted access to all models
 
 # Load balancing across multiple providers for the same model.
-# routing:
+routing:
 #   default_strategy: "round-robin"   # round-robin, weighted, least-latency, cost-optimized
 #   failover:
 #     enabled: true                    # Auto-failover to next provider on error (default: true)
 #     max_attempts: 3                  # Max providers to try (default: 3)
 #     on_status_codes: [429, 500, 502, 503, 504]  # HTTP codes that trigger failover
 #     on_timeout: true                 # Failover on timeout errors (default: true)
-#   circuit_breaker:
-#     enabled: true                    # Per-provider circuit breaking (default: false)
+  circuit_breaker:
+    enabled: false                    # Turn on explicitly to use breakers
 #     failure_threshold: 5             # Consecutive failures to open circuit (default: 5)
 #     success_threshold: 2             # Successes in half-open to close (default: 2)
 #     cooldown: 30s                    # Time before half-open test (default: 30s)
+    half_open_max_probes: 1            # New-config setting for operator and org recovery
+    gate_direct_calls: true            # Include direct chat and legacy completions
+#     # When editing an existing file, set these explicitly to opt in. Missing
+#     # cap or 0 = unlimited; missing gate = routed failover only, even on reload.
+#     # A negative cap retains its former limit of 1. Closed traffic is not capped.
+#     # Applies to chat JSON/streams and native, translated and streamed legacy
+#     # completions, including direct/no-router calls and configured fallbacks.
+#     # Other modalities and background workers are not covered by this gate.
+#     # One admitted provider attempt holds one slot across sequential retries;
+#     # a stream keeps it until the upstream finishes, not just its first chunk.
+#     # Disconnects and local stream aborts release capacity without recovery;
+#     # actual deadlines and raw transport failures count as provider failures.
+#     # Upstream HTTP errors still follow on_status_codes. Org credentials also
+#     # count 401/403, without changing operator, retry or failover status lists.
+#     # Direct refusals return 503/circuit_open. Selection/all-refused exhaustion
+#     # returns 503/all_providers_unavailable, unless an upstream error came first.
+#     # Requests do not queue: configured eligible alternatives may be selected.
+#     # Changing models on the same provider does not create another probe slot.
+#     # No-router upstream-error fallback eligibility is unchanged.
+#     # Org state uses the bounded (org, configured provider ID) store; rebuilding
+#     # an adapter or rotating credentials does not reset a retained scope.
+#     # State is process-local and resets on reload/restart or scoped eviction.
+#     # Older in-flight work can outlive its generation, reload or eviction, so
+#     # this is not an absolute cap on all live upstream work. Late completions
+#     # and old cooldown callbacks cannot change a newer recovery cycle.
+#     # Shared health filters operator credentials only. An org's own provider
+#     # uses its (org, provider) breaker, even while the operator circuit is open.
 #   retry:
 #     enabled: true                    # Auto-retry on same provider (default: true when routing)
 #     max_retries: 2                   # Max retries per provider (default: 2)
@@ -712,8 +759,16 @@ logging:
 #         Authorization: "Bearer ${ALERT_TOKEN}"
 
 # Override model metadata (pricing, token limits, capabilities, deprecation).
+# Layers, lowest first: bundled catalogue -> fetched catalogue (adds models and
+# wins on matching keys; never removes a bundled model) -> overrides.
 # model_database:
 #   validation_enabled: true                 # reject requests for unknown models
+#   # Newer pricing catalogue, fetched at startup and every sync interval. A
+#   # bad, small or failed fetch keeps the last good one. "" turns the sync off
+#   # (air-gapped). Read at startup; a reload does not change it.
+#   # GET /-/model-catalogue/source shows which catalogue is loaded.
+#   catalogue_url: "https://raw.githubusercontent.com/future-agi/future-agi/main/agentcc-gateway/internal/modeldb/litellm.json"
+#   catalogue_sync_interval: 24h             # minimum 1h
 #   overrides:
 #     gpt-4o:
 #       provider: "openai"

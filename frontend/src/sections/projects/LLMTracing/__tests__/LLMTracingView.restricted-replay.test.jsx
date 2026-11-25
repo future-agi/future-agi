@@ -1,12 +1,19 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LLMTracingView from "../LLMTracingView";
+import {
+  EVIDENCE_ACTION_ID,
+  EVIDENCE_COPY,
+} from "src/sections/simulate/environments/evidence/evidence.constants";
+import { MAX_EVIDENCE_SOURCES } from "src/api/simulate-environments/evidenceImports";
 
 // Replaying calls creates scenarios and a Run Simulation run, which an org
 // restricted to Environments cannot open, so the Voice screen drops its replay
-// actions for such an org. Harness shared with the voice-graph-scope test.
+// actions for such an org. "Create environment test" builds a test through an
+// environment, so every org keeps it. Harness shared with the
+// voice-graph-scope test.
 
 const harness = vi.hoisted(() => ({
   emptyFilters: [],
@@ -202,6 +209,16 @@ vi.mock("src/sections/projects/SessionsView/ReplaySessions/store", () => ({
   useSessionsGridStore: { getState: () => ({ setToggledNodes: vi.fn() }) },
 }));
 
+vi.mock(
+  "src/sections/simulate/environments/evidence/CreateEnvironmentTestDialog",
+  () => ({
+    default: (props) => {
+      harness.evidenceDialogProps = props;
+      return null;
+    },
+  }),
+);
+
 vi.mock("src/api/project/replay-sessions", () => ({
   useCreateReplaySessions: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -301,8 +318,53 @@ describe("LLMTracingView replay for an org restricted to Environments", () => {
     harness.user = { restrict_simulate_to_environments: true };
     renderView();
 
-    expect(await voiceBulkActionIds()).not.toContain("replay");
+    const ids = await voiceBulkActionIds();
+    expect(ids).not.toContain("replay");
+    expect(ids).toContain(EVIDENCE_ACTION_ID);
     expect(screen.queryByText(/Replay Call/)).toBeNull();
+  });
+
+  it("creates an environment test from picked calls, up to one import's limit", async () => {
+    harness.user = { restrict_simulate_to_environments: true };
+    harness.callLogsGridProps = [];
+    renderView();
+    await voiceBulkActionIds();
+    const evidence = () =>
+      harness.toolbarProps
+        .at(-1)
+        .bulkActions.find((action) => action.id === EVIDENCE_ACTION_ID);
+
+    // The calls grid that feeds the selection (a compare grid does not).
+    const pick = (ids) =>
+      act(() =>
+        harness.callLogsGridProps
+          .findLast((props) => props.onSelectionChanged)
+          .onSelectionChanged(ids),
+      );
+    pick(["t1"]);
+    await waitFor(() => expect(evidence().disabled).toBe(false));
+
+    pick(Array.from({ length: MAX_EVIDENCE_SOURCES + 1 }, (_, i) => `t${i}`));
+    await waitFor(() =>
+      expect(evidence()).toMatchObject({
+        disabled: true,
+        disabledReason: EVIDENCE_COPY.actionTooMany,
+      }),
+    );
+
+    // Picked calls are their trace ids; the dialog takes them as calls.
+    pick(["t1", "t2"]);
+    await waitFor(() => expect(evidence().disabled).toBe(false));
+    harness.evidenceDialogProps = null;
+    act(() => harness.toolbarProps.at(-1).onBulkAction(EVIDENCE_ACTION_ID));
+    await waitFor(() =>
+      expect(harness.evidenceDialogProps).toMatchObject({
+        open: true,
+        projectId: "project-1",
+        sourceKind: "call",
+        ids: ["t1", "t2"],
+      }),
+    );
   });
 
   it("keeps Replay Calls for other orgs", async () => {

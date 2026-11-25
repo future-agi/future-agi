@@ -1133,7 +1133,7 @@ save_readiness_diagnostics() {
   if (( DISTRIBUTED == 1 )); then
     $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
       property-catalog-runtime-volume-init property-catalog-topic-init \
-      property-catalog-clickhouse-bootstrap \
+      property-catalog-clickhouse-bootstrap metrics-schema-bootstrap \
       fi-collector fi-property-catalog-consumer \
       backend \
       >&3 2>&1 || true
