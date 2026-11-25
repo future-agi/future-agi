@@ -420,7 +420,9 @@ class TestSubmit:
     ):
         """Still being checked, it may get a verdict, so it holds its attempt: two
         submissions at once never pass the cap. A static refusal is the static check's
-        verdict; a stop after a verdict on the change still counts."""
+        verdict; a stop after a verdict on the change still counts. A still-checking
+        attempt is refused as an Epoch in progress; once it has a verdict, the same tree
+        is refused as already checked."""
         first = _submit(auth_client, source_run)
         attempt = AgentFixRun.no_workspace_objects.get(id=first.json()["id"])
         if how == "static-refusal":
@@ -444,7 +446,6 @@ class TestSubmit:
 
         assert brief["attempts"]["used"] == 1
         assert verdict["counted"] is True
-        # While it is still checked, the environment's one running Epoch refuses first.
         assert (again.status_code, again.json()["error"]) == (
             409,
             "fix_run_active" if how == "checking" else "fix_outside_tree_checked",
