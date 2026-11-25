@@ -56,7 +56,9 @@ vi.mock("src/sections/common/DatapointCard", () => ({
   },
 }));
 
-import CompareDatasetDetailContent from "../CompareDatasetDetailDrawer/CompareDatasetDetailContent";
+import CompareDatasetDetailContent, {
+  StatusCellRenderer,
+} from "../CompareDatasetDetailDrawer/CompareDatasetDetailContent";
 import CustomCompareColumnHeader from "../CustomCompareColumnHeader";
 
 // CompareDatasetsView column_config and GetCompareDatasetRow row (snake_case).
@@ -113,6 +115,20 @@ const row = {
 };
 
 describe("Compare row detail content", () => {
+  it.each([`['Say "hello"']`, `['Yes', "Don't know", 'No']`])(
+    "renders raw choice text when it cannot be decoded: %s",
+    (text) => {
+      render(<StatusCellRenderer value={{ cell_value: text }} />);
+      expect(screen.getByText(text)).toBeInTheDocument();
+    },
+  );
+
+  it("renders a decoded choice list as a label and count", () => {
+    render(<StatusCellRenderer value={{ cell_value: "['Yes', 'No']" }} />);
+    expect(screen.getByText("Yes")).toBeInTheDocument();
+    expect(screen.getByText("+1")).toBeInTheDocument();
+  });
+
   it("maps evaluation IDs and value_infos from their landed row and column locations without rewriting user keys", () => {
     probes.grids.length = 0;
     const evaluation = {

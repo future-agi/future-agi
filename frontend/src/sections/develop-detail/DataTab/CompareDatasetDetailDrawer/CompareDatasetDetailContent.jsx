@@ -23,7 +23,7 @@ import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
 import { getUniqueColorPalette } from "src/utils/utils";
 import ExperimentDescriptionCell from "src/sections/experiment-detail/ExperimentData/ExperimentDescriptionCell";
 import ViewDetailsModal from "src/sections/experiment-detail/ExperimentData/ViewEvalDetailsModal";
-import { getLabel, getStatusColor } from "../common";
+import { getLabel, getStatusColor, parsePythonReprIfNeeded } from "../common";
 import CompareDatasetEvalsAddFeedbackForm from "./CompareDatasetEvalsAddFeedbackForm";
 import { LoadingButton } from "@mui/lab";
 
@@ -43,7 +43,7 @@ const SkeletonLoader = () => (
 export const StatusCellRenderer = (props) => {
   const theme = useTheme();
   const { value } = props;
-  let cellValue = value?.cell_value;
+  const cellValue = parsePythonReprIfNeeded(value?.cell_value);
   const status = value?.status;
 
   if (status === "running") return <SkeletonLoader />;
@@ -61,10 +61,8 @@ export const StatusCellRenderer = (props) => {
     );
   }
 
-  if (cellValue?.startsWith("['") && cellValue?.endsWith("']")) {
-    cellValue = JSON.parse(cellValue.replace(/'/g, '"'));
-  }
   if (
+    (Array.isArray(cellValue) && cellValue.length === 0) ||
     !cellValue ||
     cellValue === "[]" ||
     cellValue === undefined ||
@@ -109,7 +107,7 @@ export const StatusCellRenderer = (props) => {
 };
 
 StatusCellRenderer.propTypes = {
-  value: PropTypes.string,
+  value: PropTypes.object,
   data: PropTypes.any,
 };
 
