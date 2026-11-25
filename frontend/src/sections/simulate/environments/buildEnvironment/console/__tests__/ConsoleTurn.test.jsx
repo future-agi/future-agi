@@ -219,6 +219,35 @@ describe("ConsoleTurn new step kinds", () => {
     expect(screen.getByText(reason)).toBeInTheDocument();
   });
 
+  it("shows a question whose turn ended as closed, with no options to answer", () => {
+    const question = {
+      prompt: "Confirm this change",
+      options: [{ label: "Yes, make this change" }, { label: "No" }],
+      multiSelect: false,
+      step: 1,
+      total: 1,
+    };
+    const reason =
+      "Closed: the turn that asked this ended before it was answered. Send what you want as a new message.";
+    render(
+      <Turn
+        turn={builder([
+          {
+            id: "a1",
+            kind: "ask",
+            question,
+            resolved: false,
+            closed: { reason },
+          },
+        ])}
+      />,
+    );
+    expect(screen.getByTestId("question-closed")).toBeInTheDocument();
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.queryByText("Yes, make this change")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
+  });
+
   it("shows an answer the server did not take as failed with its reason, never with the accepted check", () => {
     const question = {
       prompt: "Confirm this change",
