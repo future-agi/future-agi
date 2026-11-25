@@ -9,7 +9,14 @@ import SideDrawer from "./SideDrawer";
  * pays for checking the attempts. `getText` builds the brief on open — it
  * reads the whole diagnosis, so it isn't built on every render.
  */
-export default function CodingAgentBriefDrawer({ open, onClose, getText }) {
+export default function CodingAgentBriefDrawer({
+  open,
+  onClose,
+  getText,
+  title = "Copy for coding agent",
+  subtitle = "Paste this into your coding agent.",
+  actions = null,
+}) {
   const text = open ? getText() : "";
   return (
     <SideDrawer open={open} onClose={onClose} width={520}>
@@ -29,29 +36,33 @@ export default function CodingAgentBriefDrawer({ open, onClose, getText }) {
         >
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-              Copy for coding agent
+              {title}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              Paste this into your coding agent.
+              {subtitle}
             </Typography>
           </Box>
-          {/* In the header, where the page's floating buttons can't cover it. */}
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            startIcon={<Iconify icon="solar:copy-linear" width={14} />}
-            onClick={() => {
-              navigator.clipboard?.writeText(text);
-              enqueueSnackbar("Copied for your coding agent", {
-                variant: "success",
-              });
-              onClose();
-            }}
-            sx={{ flexShrink: 0 }}
-          >
-            Copy
-          </Button>
+          {actions || (
+            <>
+              {/* In the header, where the page's floating buttons can't cover it. */}
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                startIcon={<Iconify icon="solar:copy-linear" width={14} />}
+                onClick={() => {
+                  navigator.clipboard?.writeText(text);
+                  enqueueSnackbar("Copied for your coding agent", {
+                    variant: "success",
+                  });
+                  onClose();
+                }}
+                sx={{ flexShrink: 0 }}
+              >
+                Copy
+              </Button>
+            </>
+          )}
           <IconButton size="small" aria-label="Close" onClick={onClose}>
             <Iconify icon="solar:close-linear" width={18} />
           </IconButton>
@@ -108,4 +119,8 @@ CodingAgentBriefDrawer.propTypes = {
   onClose: PropTypes.func.isRequired,
   /* () => the brief, as markdown. */
   getText: PropTypes.func.isRequired,
+  title: PropTypes.string,
+  subtitle: PropTypes.string,
+  /* Header actions in place of the plain Copy (e.g. Open in Claude Code). */
+  actions: PropTypes.node,
 };

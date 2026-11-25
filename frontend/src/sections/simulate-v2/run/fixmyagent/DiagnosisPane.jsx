@@ -1620,72 +1620,96 @@ export default function DiagnosisPane({
                 )}
               </>
             ) : (
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Tooltip
-                  arrow
-                  title={
-                    running
-                      ? "Available once every call is read — the epoch searches over the full diagnosis."
-                      : included.length
-                        ? ""
-                        : "The diagnosis found no change to try."
-                  }
-                  placement="top"
-                >
-                  <Box sx={{ flex: 1 }}>
-                    <Button
-                      size="small"
-                      fullWidth
-                      variant={
-                        checksFirst && !running ? "outlined" : "contained"
-                      }
-                      color={checksFirst && !running ? "inherit" : "primary"}
-                      disabled={running || !included.length}
-                      onClick={onOptimize}
-                      startIcon={
-                        <Iconify icon="solar:magic-stick-3-bold" width={16} />
-                      }
-                    >
-                      {`${checksFirst && !running ? "Run Epoch anyway" : "Run Epoch"}${!running && included.length ? ` on ${included.length} ${included.length === 1 ? "fix" : "fixes"}` : ""}`}
-                    </Button>
-                  </Box>
-                </Tooltip>
-                {/*
+              <>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Tooltip
+                    arrow
+                    title={
+                      running
+                        ? "Available once every call is read — the epoch searches over the full diagnosis."
+                        : included.length
+                          ? ""
+                          : "The diagnosis found no change to try."
+                    }
+                    placement="top"
+                  >
+                    <Box sx={{ flex: 1 }}>
+                      <Button
+                        size="small"
+                        fullWidth
+                        variant={
+                          checksFirst && !running ? "outlined" : "contained"
+                        }
+                        color={checksFirst && !running ? "inherit" : "primary"}
+                        disabled={running || !included.length}
+                        onClick={onOptimize}
+                        startIcon={
+                          <Iconify icon="solar:magic-stick-3-bold" width={16} />
+                        }
+                      >
+                        {`${checksFirst && !running ? "Run Epoch anyway" : "Run Epoch"}${!running && included.length ? ` on ${included.length} ${included.length === 1 ? "fix" : "fixes"}` : ""}`}
+                      </Button>
+                    </Box>
+                  </Tooltip>
+                  {/*
                 Fallback link, not a co-equal button. Optimize is the
                 default; hand-off is for teams that would rather see the
                 diff in a review tool before it becomes a version. The
                 earlier full-width outlined button read as an equal
                 alternative, which it isn't.
               */}
-                {/* One hand-off for the ticked fixes: your own coding agent
-                    writes the change. Open in Claude Code when it's connected;
-                    the caret previews and copies the brief (who pays shown). */}
+                  {/* One hand-off for the ticked fixes (Kartik, Chintan): your own
+                    coding agent writes the fix in your repo. The drawer shows
+                    the brief and opens it in Claude Code, or copies it. */}
+                  {!voiceFix && (
+                    <Tooltip
+                      arrow
+                      placement="top"
+                      title={
+                        running
+                          ? "Available once every call is read."
+                          : !included.length
+                            ? "Tick at least one fix."
+                            : ""
+                      }
+                    >
+                      <span>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="inherit"
+                          disabled={running || !included.length}
+                          onClick={() => setBriefOpen(true)}
+                          startIcon={
+                            <Iconify
+                              icon="solar:programming-linear"
+                              width={16}
+                            />
+                          }
+                          sx={{ borderColor: "divider", flexShrink: 0 }}
+                        >
+                          Fix with your coding agent
+                        </Button>
+                      </span>
+                    </Tooltip>
+                  )}
+                  <Button
+                    size="small"
+                    disabled={running || !included.length}
+                    onClick={() => setHandoff((v) => !v)}
+                    sx={{ color: "text.secondary", flexShrink: 0 }}
+                  >
+                    {handoff ? "Hide hand-off" : "Hand over instead"}
+                  </Button>
+                </Stack>
                 {!voiceFix && (
-                  <CopyBriefButton
-                    getBrief={handBrief}
-                    target={{ kind: "run", envId: env?.id, runId }}
-                    onOpened={onHandToAgent}
-                    onPreview={() => setBriefOpen(true)}
-                    openText={(l) => `Open ${included.length} in ${l}`}
-                    label="Copy brief for your coding agent"
-                    disabledReason={
-                      running
-                        ? "Available once every call is read."
-                        : !included.length
-                          ? "Tick at least one fix."
-                          : null
-                    }
-                  />
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    Your coding agent (Claude Code, Codex) gets a brief, writes
+                    the fix in your repo, and sends each attempt back. We check
+                    every attempt and give a verdict.
+                  </Typography>
                 )}
-                <Button
-                  size="small"
-                  disabled={running || !included.length}
-                  onClick={() => setHandoff((v) => !v)}
-                  sx={{ color: "text.secondary", flexShrink: 0 }}
-                >
-                  {handoff ? "Hide hand-off" : "Hand over instead"}
-                </Button>
-              </Stack>
+              </>
             )}
           </Stack>
         </>
@@ -1694,6 +1718,17 @@ export default function DiagnosisPane({
         open={briefOpen}
         onClose={() => setBriefOpen(false)}
         getText={handBrief}
+        title="Fix with your coding agent"
+        subtitle={`The brief for ${included.length} ticked ${included.length === 1 ? "fix" : "fixes"}. Your coding agent writes the fix and sends each attempt back.`}
+        actions={
+          <CopyBriefButton
+            size="small"
+            getBrief={handBrief}
+            target={{ kind: "run", envId: env?.id, runId }}
+            onOpened={onHandToAgent}
+            label="Copy brief"
+          />
+        }
       />
     </Stack>
   );

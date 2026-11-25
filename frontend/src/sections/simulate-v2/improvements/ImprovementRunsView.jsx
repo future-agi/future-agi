@@ -2074,8 +2074,10 @@ function NextSteps({ issueId, onOpenIssue, onOpenRules }) {
       },
     },
     issueId && {
-      title: "It needs a change in the code",
-      body: "Tools, orchestration and data aren't changed here. Hand it to your coding agent from the issue.",
+      /* Not "an Epoch can't touch code" — it can (Kartik, 25 Nov). This is
+         the other way in: the team's own agent writes the fix. */
+      title: "Fix it with your coding agent",
+      body: "Your coding agent (Claude Code, Codex) gets the brief, writes the fix in your repo and sends each attempt back. We check every attempt. Start it from the issue.",
       action: onOpenIssue && { label: `Open ${issueId}`, onClick: onOpenIssue },
     },
     issueId && {

@@ -50,6 +50,7 @@ import {
 import { fixDepthOf } from "../../_mock/rsiModel";
 import { goalWords, improvementRunName } from "../../_mock/optimizer";
 import { optimisable } from "../../_mock/optimize";
+import { subTasksFor } from "../../_mock/contract";
 import {
   baseRunOf,
   budgetsWithin,
@@ -90,10 +91,9 @@ import { casesForSkillOf, loadedVOf, skillSetOf } from "../../_mock/skills";
 import ClosableDialog from "../../components/ClosableDialog";
 
 /* "Raise the pass rate", "Raise booking success rate", "Raise Policy adherence". */
-const goalText = (g) =>
-  g.id === "pass-rate"
-    ? "Raise the pass rate"
-    : `Raise ${g.group === "outcome" ? `${g.label.charAt(0).toLowerCase()}${g.label.slice(1)}` : g.label}`;
+/* Said as what it improves — the same words as the Improve row (Kartik,
+   25 Nov: no "Goal: Raise the pass rate"; goal is a scenario's word). */
+const goalText = (g) => (g.id === "pass-rate" ? "All failing cases" : g.label);
 /* The Improve row: which of the run's failing cases an epoch aims at. */
 const MIN_TARGETS = 12;
 const MIN_FAILING = 3;
@@ -120,13 +120,28 @@ const spreadOf = (tasks, n) => {
 };
 
 /* The options of the Improve select, each with the failing case ids it means. */
-const scopeMenuOf = (failing, es, includedList) => {
+/* The sub-goal a failing case broke at — the run table's "Failure sub-goal". */
+const failSubGoalOf = (task, env) => {
+  const subs = subTasksFor(task, env);
+  if (!subs.length) return null;
+  const stepCount = (task.steps || []).length;
+  const failAt = typeof task.failStep === "number" ? task.failStep : null;
+  if (failAt == null || stepCount === 0) return subs[subs.length - 1].label;
+  return subs[
+    Math.min(subs.length - 1, Math.floor((failAt / stepCount) * subs.length))
+  ].label;
+};
+
+const scopeMenuOf = (failing, es, includedList, env) => {
   const ids = (list) => list.map((t) => t.id);
   const count = (map, k, t) => map.set(k, [...(map.get(k) || []), t]);
   const goalMap = new Map();
+  const subGoalMap = new Map();
   const evalMap = new Map();
   failing.forEach((t) => {
     count(goalMap, deriveUseCaseLabel(t), t);
+    const sub = env ? failSubGoalOf(t, env) : null;
+    if (sub) count(subGoalMap, sub, t);
     (t.evalResults || []).forEach((r) => {
       if (r.passed === false) count(evalMap, r.id, t);
     });
@@ -175,6 +190,14 @@ const scopeMenuOf = (failing, es, includedList) => {
       label,
       ids: ids(list),
       group: "Goals",
+      noun: "failing",
+    })),
+    ...[...subGoalMap].map(([label, list]) => ({
+      key: `sub:${label}`,
+      kind: "subgoal",
+      label,
+      ids: ids(list),
+      group: "Sub-goals",
       noun: "failing",
     })),
     ...[...evalMap].map(([id, list]) => ({
@@ -485,8 +508,8 @@ export default function ImprovementSetup({
     [searchTasks],
   );
   const scopeMenu = useMemo(
-    () => scopeMenuOf(failing, es, included),
-    [failing, es, included],
+    () => scopeMenuOf(failing, es, included, main),
+    [failing, es, included, main],
   );
   const describeWords = wordsOf(describe);
   const describeIds = describeWords.length
@@ -744,10 +767,10 @@ export default function ImprovementSetup({
   });
   /* Under the goal: why there's nothing to do, or what it targets. */
   const goalLine = nothing
-    ? `Nothing to improve — every scenario already meets ${goalWords(goalOf)}. Pick another goal.`
+    ? `Nothing to improve — every scenario already meets ${goalWords(goalOf)}. Pick something else to improve.`
     : [
         preview?.goal
-          ? `${preview.goalTargets} ${preview.goalTargets === 1 ? "scenario is" : "scenarios are"} short of it today.`
+          ? `${preview.goalTargets} ${preview.goalTargets === 1 ? "scenario falls" : "scenarios fall"} short today.`
           : null,
         SHOW_RUN_COST && overBudget
           ? `May reach the limit before all ${candidatesWord} — you'll get the best it found by then.`
@@ -1080,6 +1103,10 @@ export default function ImprovementSetup({
                     ["", scopeMenu.filter((o) => !o.group)],
                     ["Goals", scopeMenu.filter((o) => o.group === "Goals")],
                     [
+                      "Sub-goals",
+                      scopeMenu.filter((o) => o.group === "Sub-goals"),
+                    ],
+                    [
                       "Evaluations",
                       scopeMenu.filter((o) => o.group === "Evaluations"),
                     ],
@@ -1154,7 +1181,7 @@ export default function ImprovementSetup({
               </ConfirmRow>
             )}
             {preset?.fromGoal && (
-              <ConfirmRow k="Goal">
+              <ConfirmRow k="Improve">
                 {goalSelect}
                 {goalNotes}
               </ConfirmRow>
@@ -1441,59 +1468,16 @@ export default function ImprovementSetup({
                   />
                 </Box>
 
-                {/* Started from a run: the goal is chosen here (from a goal,
-                    it's the first row above). */}
-                {!preset?.fromGoal && (
-                  <Box>
-                    <Typography sx={fieldLabel}>Goal</Typography>
-                    {goalSelect}
-                    {goalNotes}
-                  </Box>
+                {/* No Goal or "How far it goes" here (Kartik, 25 Nov): Improve
+                    above decides what it works on, and every Epoch searches
+                    and then proves on held-back cases. An agent we can only
+                    call still ends in a suggestion, said in one line. */}
+                {onlySuggests && (
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    We can only call this agent, so an Epoch ends in a suggested
+                    change.
+                  </Typography>
                 )}
-
-                {/* How far it goes — the approval mode. */}
-                <Box>
-                  <Typography sx={fieldLabel}>How far it goes</Typography>
-                  <Select
-                    size="small"
-                    fullWidth
-                    value={
-                      onlySuggests || suggestOnly
-                        ? "suggest"
-                        : reviewFirst
-                          ? "review"
-                          : "search"
-                    }
-                    disabled={onlySuggests}
-                    onChange={(e) => {
-                      setSuggestOnly(e.target.value === "suggest");
-                      setReviewFirst(e.target.value === "review");
-                    }}
-                    sx={selectSx}
-                  >
-                    <MenuItem value="search">
-                      Search and prove — tries changes, proves the best on
-                      held-back scenarios
-                    </MenuItem>
-                    <MenuItem value="suggest">
-                      Suggest only — diagnoses and suggests a change, no
-                      candidates
-                    </MenuItem>
-                  </Select>
-                  {(onlySuggests || suggestOnly) && (
-                    <Typography
-                      sx={{
-                        typography: "s3",
-                        color: "text.tertiary",
-                        mt: 0.5,
-                      }}
-                    >
-                      {onlySuggests
-                        ? "We can only call this agent, so an epoch ends in a suggested change."
-                        : "Nothing is tried or proven. Apply the suggestion yourself; a run on the new version proves it."}
-                    </Typography>
-                  )}
-                </Box>
 
                 {/* Where else it must hold, and whether to try earlier versions' changes. */}
                 {(others.length > 0 || lineageVersions.length > 0) && (
