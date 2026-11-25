@@ -99,7 +99,8 @@ def _in_one_form(value: Any) -> list[str]:
             status_code=400,
             details={"positions": wrong},
         )
-    sites = sorted(set(forms))
+    # Every form is a site here: a wrong one was refused above.
+    sites = sorted({form for form in forms if form is not None})
     if len(sites) > MAX_BROWSER_SITES:
         raise HostedHarnessError(
             "browser_sites_limit_exceeded",
