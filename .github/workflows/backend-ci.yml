@@ -317,7 +317,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.backend_cold_fanout && 45 || 5 }}
+    # 12, not 5: room for the bounded Temporal (180 s) and lock wheel (4 min
+    # step cap) fetches on a cold cache when GitHub is failing.
+    timeout-minutes: ${{ inputs.backend_cold_fanout && 45 || 12 }}
     outputs:
       cold_control: ${{ steps.cold.outcome }}
       db_artifact: ${{ steps.cold.outputs.artifact }}
@@ -370,6 +372,30 @@ jobs:
           key: temporal-test-server-linux-x64-${{ hashFiles('futureagi/.ci/temporal-test-server.sh') }}
       - name: Prefetch and verify Temporal test server once per run
         run: bash futureagi/.ci/temporal-test-server.sh fetch "$RUNNER_TEMP/temporal-archive"
+      # The URL-pinned wheels of uv.lock (en-core-web-sm), once per run instead
+      # of once per job: every `uv sync` that selects one skips it with
+      # --no-install-package and installs this copy offline (lock-wheels action).
+      # The sha256 uv.lock records at this commit is the only trust anchor.
+      - name: Key the lock wheels by their uv.lock hashes
+        id: lock-wheels
+        run: python3 -I futureagi/.ci/lock_wheels.py key futureagi/uv.lock >> "$GITHUB_OUTPUT"
+      - name: Restore lock wheels (verified against uv.lock before use)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/lock-wheels-cache
+          key: ${{ steps.lock-wheels.outputs.key }}
+      - name: Prefetch and verify lock wheels once per run
+        # The script stops retrying after 180 s; this caps a stalled transfer.
+        timeout-minutes: 4
+        run: python3 -I futureagi/.ci/lock_wheels.py fetch futureagi/uv.lock "$RUNNER_TEMP/lock-wheels-cache" "$RUNNER_TEMP/lock-wheels"
+      # Before the cold trial: its environment action downloads this artifact.
+      - name: Distribute verified lock wheels to backend jobs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backend-lock-wheels
+          path: ${{ runner.temp }}/lock-wheels/*.whl
+          if-no-files-found: error
+          compression-level: 0
       # The opt-in cold trial reuses this prerequisite runner. The normal and
       # warm paths never depend on the independent fresh-migration control.
       - name: Checkout EE package (internal runs only)
@@ -682,7 +708,8 @@ jobs:
     # sharing one database, so the shards deselect them. This job runs them
     # against two Granian workers on the test database pytest creates.
     name: SAML multiworker races
-    needs: changes
+    # plan: this run's verified lock wheels (en-core-web-sm).
+    needs: [changes, plan]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -704,7 +731,9 @@ jobs:
       - uses: ./.github/actions/backend-test-packages
 
       - name: Install dependencies
-        run: uv sync --frozen --all-extras
+        run: uv sync --frozen --all-extras --no-install-package en-core-web-sm
+
+      - uses: ./.github/actions/backend-test-packages/lock-wheels
 
       - name: Start test services
         run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
@@ -784,7 +813,8 @@ jobs:
   agentic-eval:
     # This suite has its own pytest root and is excluded from the backend shards.
     name: Evaluator test setup and offline suite
-    needs: changes
+    # plan: this run's verified lock wheels (en-core-web-sm).
+    needs: [changes, plan]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -808,7 +838,8 @@ jobs:
           cache-dependency-glob: futureagi/uv.lock
       - uses: ./.github/actions/backend-test-packages
       - name: Install frozen backend and test dependencies
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen --extra dev --no-install-package en-core-web-sm
+      - uses: ./.github/actions/backend-test-packages/lock-wheels
       - name: Start test dependencies
         run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
       - name: Run evaluator suite from the backend working directory
