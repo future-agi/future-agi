@@ -280,6 +280,80 @@ class HarnessSuiteValidation(BaseModel):
         ]
 
 
+class TaskSplit(models.TextChoices):
+    TRAIN = "train", "Train"
+    TEST = "test", "Test"
+
+
+class HarnessRelease(BaseModel):
+    """An environment's default environment and suite versions, locked so scores on them
+    stay comparable. Unlocking keeps the row: the versions and splits never change."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    environment = models.ForeignKey(
+        "simulate.HostedHarnessJob", on_delete=models.CASCADE, related_name="+"
+    )
+    # RESTRICT, not PROTECT, so a cascade from the job removes the release too.
+    environment_version = models.ForeignKey(
+        HarnessEnvironmentVersion, on_delete=models.RESTRICT, related_name="+"
+    )
+    suite_version = models.ForeignKey(
+        HarnessSuiteVersion, on_delete=models.RESTRICT, related_name="+"
+    )
+    # "2026.11.1": the month it was locked in, then its count in that month.
+    label = models.CharField(max_length=32)
+    locked_at = models.DateTimeField()
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    unlocked_at = models.DateTimeField(null=True, blank=True)
+    unlocked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        db_table = "simulate_harness_release"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["environment_version", "suite_version"],
+                condition=Q(unlocked_at__isnull=True),
+                name="uniq_harness_release_locked_pair",
+            ),
+            models.UniqueConstraint(
+                fields=["environment", "label"], name="uniq_harness_release_label"
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["environment", "-locked_at"], name="idx_hrelease_env_locked"
+            ),
+        ]
+
+
+class HarnessTaskSplit(BaseModel):
+    """The split a scenario got at the first lock that included it. Never changed."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scenario = models.OneToOneField(
+        "simulate.HostedHarnessScenario", on_delete=models.CASCADE, related_name="+"
+    )
+    split = models.CharField(max_length=8, choices=TaskSplit.choices)
+    first_release = models.ForeignKey(
+        HarnessRelease, on_delete=models.CASCADE, related_name="+"
+    )
+
+    class Meta:
+        db_table = "simulate_harness_task_split"
+
+
 class HarnessAgentVersionRuntime(BaseModel):
     """Harness-side facts of one agent version: source, payload and credential set."""
 

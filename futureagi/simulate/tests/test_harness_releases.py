@@ -1,0 +1,515 @@
+"""Locking an environment's versions into a release with train and test splits."""
+
+import pytest
+from django.db.models import RestrictedError
+from django.utils import timezone
+
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.workspace import WorkspaceMembership
+from simulate.models import (
+    HarnessRelease,
+    HarnessSuiteMember,
+    HarnessSuiteVersion,
+    HarnessTaskSplit,
+    HostedHarnessJob,
+    HostedHarnessScenario,
+)
+from simulate.services.harness_versioning.backfill import backfill_environment
+from simulate.services.harness_versioning.releases import (
+    Task,
+    lock_release,
+    plan_splits,
+    target_test_size,
+)
+from simulate.services.hosted_harness import HostedHarnessError
+from simulate.tests.test_harness_versioning_backfill import _legacy, _RealisticStorage
+from tfc.constants.levels import Level
+
+pytestmark = pytest.mark.django_db
+
+BASE = "/simulate/api/harness-environments"
+
+
+@pytest.fixture(autouse=True)
+def versioning_on(settings):
+    settings.HARNESS_VERSIONING_ENABLED = True
+
+
+@pytest.fixture
+def storage(monkeypatch):
+    from tfc.utils import storage_client
+
+    fake = _RealisticStorage()
+    monkeypatch.setattr(storage_client, "_client", fake)
+    return fake
+
+
+def _environment(user, workspace, storage, key="rel"):
+    environment = _legacy(user, workspace, key, storage)
+    backfill_environment(environment.id)
+    environment.refresh_from_db()
+    return environment
+
+
+def _scenarios(count, *, prefix="s", use_case="refunds", scorable=True):
+    return [(f"{prefix}{index}", use_case, scorable) for index in range(count)]
+
+
+def _suite(environment, scenarios):
+    """A new active suite version of ``scenarios`` ((key, use case, scorable)), made the
+    environment's default."""
+    number = (
+        HarnessSuiteVersion.no_workspace_objects.filter(job=environment).count() + 1
+    )
+    suite = HarnessSuiteVersion.no_workspace_objects.create(
+        job=environment,
+        organization=environment.organization,
+        workspace=environment.workspace,
+        version_number=number,
+        status="active",
+        origin="manual",
+        hash=f"sha256:{number:064x}",
+        archive_object_key=f"suite-{number}",
+        archive_sha256="0" * 64,
+        archive_size=1,
+        parent=environment.suite_version,
+        scenario_count=len(scenarios),
+    )
+    for index, (key, use_case, scorable) in enumerate(scenarios, start=1):
+        row, _ = HostedHarnessScenario.all_objects.update_or_create(
+            job=environment,
+            scenario_key=key,
+            defaults={"deleted": False, "number": index, "use_case": use_case},
+        )
+        HarnessSuiteMember.no_workspace_objects.create(
+            suite_version=suite,
+            scenario=row,
+            scenario_key=key,
+            number=index,
+            content={
+                "name": key,
+                "use_case": use_case,
+                "sub_goals": [{"name": "resolved"}] if scorable else [],
+            },
+        )
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        suite_version=suite
+    )
+    environment.refresh_from_db()
+    return suite
+
+
+def _lock_body(environment):
+    return {
+        "environment_version_id": str(environment.environment_version_id),
+        "suite_version_id": str(environment.suite_version_id),
+    }
+
+
+def _lock(auth_client, environment):
+    return auth_client.post(
+        f"{BASE}/{environment.id}/versions/lock/",
+        _lock_body(environment),
+        format="json",
+    )
+
+
+def _splits(environment):
+    return dict(
+        HarnessTaskSplit.no_workspace_objects.filter(
+            scenario__job=environment
+        ).values_list("scenario__scenario_key", "split")
+    )
+
+
+def _as_member(user):
+    OrganizationMembership.no_workspace_objects.filter(user=user).update(
+        level=Level.MEMBER, role="Member"
+    )
+    WorkspaceMembership.no_workspace_objects.filter(user=user).update(
+        level=Level.WORKSPACE_MEMBER, role="Workspace Member"
+    )
+    user.organization_role = "Member"
+    user.save(update_fields=["organization_role"])
+
+
+def _tasks(sizes):
+    return [
+        Task(f"{name}-{index}", f"{name}-{index}", name)
+        for name, size in sizes.items()
+        for index in range(size)
+    ]
+
+
+class TestTestTarget:
+    @pytest.mark.parametrize(
+        ("scorable", "expected"),
+        [(10, 3), (11, 4), (20, 6), (100, 30), (200, 60), (300, 60), (500, 100)],
+    )
+    def test_thirty_percent_small_twenty_percent_large(self, scorable, expected):
+        assert target_test_size(scorable) == expected
+
+
+class TestPlanSplits:
+    def test_first_lock_follows_category_sizes(self):
+        plan = plan_splits(_tasks({"a": 20, "b": 15, "c": 4, "d": 1}), {}, "env")
+
+        tests = {
+            name: sum(
+                1
+                for key, split in plan.assign.items()
+                if key.startswith(f"{name}-") and split == "test"
+            )
+            for name in "abcd"
+        }
+        assert plan.test_target == 12
+        assert (plan.train, plan.test) == (28, 12)
+        assert tests == {"a": 6, "b": 5, "c": 1, "d": 0}
+
+    def test_a_category_of_one_stays_in_train(self):
+        plan = plan_splits(_tasks({"a": 14, "lonely": 1}), {}, "env")
+
+        assert plan.assign["lonely-0"] == "train"
+        assert plan.test == target_test_size(15)
+
+    def test_every_category_keeps_a_train_task(self):
+        plan = plan_splits(_tasks({"a": 2, "b": 2, "c": 2, "d": 2, "e": 2}), {}, "env")
+
+        for name in "abcde":
+            assert "train" in {
+                plan.assign[f"{name}-0"],
+                plan.assign[f"{name}-1"],
+            }
+
+    def test_the_same_tasks_always_get_the_same_splits(self):
+        tasks = _tasks({"a": 30, "b": 10})
+
+        assert (
+            plan_splits(tasks, {}, "env").assign
+            == plan_splits(list(reversed(tasks)), {}, "env").assign
+        )
+
+    def test_growth_keeps_old_splits_and_only_new_tasks_fill_seats(self):
+        first = plan_splits(_tasks({"a": 40}), {}, "env")
+        grown = _tasks({"a": 60})
+
+        second = plan_splits(grown, dict(first.assign), "env")
+
+        assert set(second.assign) == {f"a-{index}" for index in range(40, 60)}
+        assert second.test == target_test_size(60)
+        assert sum(1 for split in second.assign.values() if split == "test") == (
+            target_test_size(60) - first.test
+        )
+
+    def test_a_test_task_never_moves_to_train(self):
+        first = plan_splits(_tasks({"a": 40}), {}, "env")
+        tested = {key for key, split in first.assign.items() if split == "test"}
+
+        # Every train task is removed; the test tasks stay in test.
+        kept = [task for task in _tasks({"a": 40}) if task.key in tested]
+        second = plan_splits(kept, dict(first.assign), "env")
+
+        assert second.assign == {}
+        assert (second.train, second.test) == (0, len(tested))
+
+
+class TestLock:
+    def test_locks_the_default_pair_with_its_splits(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(
+            environment,
+            _scenarios(30) + _scenarios(12, prefix="b", use_case="billing"),
+        )
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 200, response.json()
+        [release] = response.json()["releases"]
+        now = timezone.now()
+        assert release["label"] == f"{now.year}.{now.month}.1"
+        assert (release["train"], release["test"]) == (29, 13)
+        assert release["environment_version_id"] == str(
+            environment.environment_version_id
+        )
+        assert release["suite_version_id"] == str(environment.suite_version_id)
+        assert release["locked_by"]["id"] == str(user.id)
+        assert release["unlocked_at"] is None
+        assert release["suite_label"] == "v2"
+        assert response.json()["lock"]["refusal"]["code"] == "release_already_locked"
+        assert len(_splits(environment)) == 42
+
+    def test_the_read_previews_the_splits_before_a_lock(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+
+        body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+
+        assert body["releases"] == []
+        assert body["lock"]["can_lock"] is True
+        assert (body["lock"]["train"], body["lock"]["test"]) == (14, 6)
+        assert body["lock"]["proved"] is False
+        assert body["lock"]["suite_version_id"] == str(environment.suite_version_id)
+
+    def test_unscorable_scenarios_get_no_split(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(
+            environment,
+            _scenarios(20) + _scenarios(5, prefix="x", scorable=False),
+        )
+
+        _lock(auth_client, environment)
+
+        assert not any(key.startswith("x") for key in _splits(environment))
+
+    def test_too_few_test_tasks_is_refused(self, auth_client, user, workspace, storage):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(10))
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "release_too_few_test"
+        assert response.json()["message"] == (
+            "Add scenarios to lock: a test split needs at least 4."
+        )
+        assert not HarnessRelease.no_workspace_objects.exists()
+        assert _splits(environment) == {}
+
+    def test_a_shrunken_suite_below_four_test_tasks_is_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        assert _lock(auth_client, environment).status_code == 200
+        tested = [key for key, split in _splits(environment).items() if split == "test"]
+        # The next version drops all but three of the test tasks.
+        kept = [
+            scenario for scenario in _scenarios(20) if scenario[0] not in tested[3:]
+        ]
+        _suite(environment, kept)
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "release_too_few_test"
+
+    def test_locking_twice_is_refused(self, auth_client, user, workspace, storage):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        assert _lock(auth_client, environment).status_code == 200
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "release_already_locked"
+        assert HarnessRelease.no_workspace_objects.count() == 1
+
+    def test_a_default_that_moved_since_the_page_loaded_is_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        seen = _lock_body(environment)
+        _suite(environment, _scenarios(20))
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/lock/", seen, format="json"
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "version_conflict"
+
+    def test_a_building_environment_is_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            state=HostedHarnessJob.State.RUNNING
+        )
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "release_not_ready"
+
+    def test_a_second_lock_after_growth_keeps_old_splits(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        _lock(auth_client, environment)
+        before = _splits(environment)
+        _suite(environment, _scenarios(40))
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 200
+        after = _splits(environment)
+        assert {key: after[key] for key in before} == before
+        newer, older = response.json()["releases"]
+        assert (older["train"], older["test"]) == (14, 6)
+        assert newer["test"] == target_test_size(40)
+        assert newer["label"].endswith(".2")
+
+
+class TestUnlockAndDelete:
+    def test_delete_is_refused_while_a_release_is_locked(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        label = _lock(auth_client, environment).json()["releases"][0]["label"]
+
+        response = auth_client.delete(f"{BASE}/{environment.id}/")
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "release_locked"
+        assert response.json()["message"] == f"Unlock release {label} first."
+        environment.refresh_from_db()
+        assert environment.deleted is False
+
+    def test_a_member_may_not_unlock(self, auth_client, user, workspace, storage):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [release] = _lock(auth_client, environment).json()["releases"]
+        _as_member(user)
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/",
+            {"release_id": release["id"]},
+            format="json",
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"] == "release_admin_only"
+        assert HarnessRelease.no_workspace_objects.get().unlocked_at is None
+
+    def test_a_member_may_lock(self, auth_client, user, workspace, storage):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        _as_member(user)
+
+        assert _lock(auth_client, environment).status_code == 200
+
+    def test_unlock_keeps_the_release_readable_then_delete_works(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [release] = _lock(auth_client, environment).json()["releases"]
+        splits = _splits(environment)
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/",
+            {"release_id": release["id"]},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        [unlocked] = response.json()["releases"]
+        assert unlocked["id"] == release["id"]
+        assert unlocked["unlocked_at"] is not None
+        assert unlocked["unlocked_by"]["id"] == str(user.id)
+        assert (unlocked["train"], unlocked["test"]) == (14, 6)
+        assert _splits(environment) == splits
+        assert auth_client.delete(f"{BASE}/{environment.id}/").status_code == 204
+
+    def test_relocking_makes_a_new_release_with_the_same_splits(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [first] = _lock(auth_client, environment).json()["releases"]
+        splits = _splits(environment)
+        auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/",
+            {"release_id": first["id"]},
+            format="json",
+        )
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 200
+        second, older = response.json()["releases"]
+        assert older["id"] == first["id"]
+        assert second["label"] != first["label"]
+        assert second["label"].endswith(".2")
+        assert (second["train"], second["test"]) == (first["train"], first["test"])
+        assert _splits(environment) == splits
+        assert HarnessTaskSplit.no_workspace_objects.count() == len(splits)
+
+
+class TestLockedVersionsStay:
+    def test_a_locked_version_cannot_be_hard_deleted(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        suite = _suite(environment, _scenarios(20))
+        _lock(auth_client, environment)
+
+        with pytest.raises(RestrictedError):
+            HarnessSuiteVersion._base_manager.filter(id=suite.id).delete()
+
+    def test_a_new_default_leaves_the_release_as_it_was(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        locked_suite = _suite(environment, _scenarios(20))
+        [release] = _lock(auth_client, environment).json()["releases"]
+
+        # An edit makes a new, unlocked version and moves the default to it.
+        _suite(environment, _scenarios(25))
+        body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+
+        [kept] = body["releases"]
+        assert kept == release
+        locked_suite.refresh_from_db()
+        assert locked_suite.status == "active"
+        assert body["lock"]["suite_version_id"] == str(environment.suite_version_id)
+        assert body["lock"]["can_lock"] is True
+
+    def test_the_whole_job_can_still_be_removed(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        _lock(auth_client, environment)
+
+        HostedHarnessJob._base_manager.filter(environment=environment).delete()
+        HostedHarnessJob._base_manager.filter(id=environment.id).delete()
+
+        assert not HarnessRelease._base_manager.exists()
+        assert not HarnessTaskSplit._base_manager.exists()
+
+
+def test_lock_release_records_who_locked(user, workspace, storage):
+    environment = _environment(user, workspace, storage)
+    _suite(environment, _scenarios(20))
+
+    lock_release(
+        environment,
+        environment_version_id=environment.environment_version_id,
+        suite_version_id=environment.suite_version_id,
+        user=user,
+    )
+
+    release = HarnessRelease.no_workspace_objects.get()
+    assert release.locked_by == user
+    assert release.environment == environment
+
+
+def test_unlock_of_an_unknown_release_is_not_found(user, workspace, storage):
+    from simulate.services.harness_versioning.releases import unlock_release
+
+    environment = _environment(user, workspace, storage)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        unlock_release(environment, "00000000-0000-0000-0000-000000000000", user=user)
+
+    assert refused.value.code == "release_not_found"

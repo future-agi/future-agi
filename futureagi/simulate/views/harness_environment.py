@@ -80,12 +80,14 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRunEvaluationsQueuedSerializer,
     HarnessEnvironmentRunEvaluationsSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
+    HarnessLockReleaseSerializer,
     HarnessNudgeAnswerSerializer,
     HarnessNudgeListQuerySerializer,
     HarnessNudgeSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
     HarnessSuiteMemberSerializer,
+    HarnessUnlockReleaseSerializer,
     HarnessVerifyCreateResponseSerializer,
     HarnessVerifyCreateSerializer,
     HarnessVerifyResultSerializer,
@@ -400,6 +402,51 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             user=request.user,
         )
         return Response(version_reads.list_versions(moved))
+
+    @viewer_denied("lock a release")
+    @validated_request(
+        request_serializer=HarnessLockReleaseSerializer,
+        responses={200: HarnessVersionsSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="versions/lock")
+    def lock_release(self, request, pk=None):
+        """Lock the default environment and suite versions into a release with train and
+        test splits; returns every version and release."""
+        from simulate.services.harness_versioning.releases import lock_release
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        locked = lock_release(
+            job,
+            environment_version_id=request.validated_data["environment_version_id"],
+            suite_version_id=request.validated_data["suite_version_id"],
+            user=request.user,
+        )
+        return Response(version_reads.list_versions(locked))
+
+    @viewer_denied("unlock a release")
+    @validated_request(
+        request_serializer=HarnessUnlockReleaseSerializer,
+        responses={200: HarnessVersionsSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="versions/unlock")
+    def unlock_release(self, request, pk=None):
+        """Unlock a release, as a workspace admin or owner. Its versions, splits and
+        scores stay; returns every version and release."""
+        from simulate.services.harness_versioning.releases import unlock_release
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        unlocked = unlock_release(
+            job, request.validated_data["release_id"], user=request.user
+        )
+        return Response(version_reads.list_versions(unlocked))
 
     def _agent_version(self, job, version_id):
         """One agent version of this environment's agent, or a 404."""
@@ -1368,7 +1415,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         return Response(environment_detail(job))
 
     @viewer_denied("delete an environment")
-    @swagger_auto_schema(responses={204: "Deleted"})
+    @swagger_auto_schema(
+        responses={204: "Deleted", 409: "A release of this environment is locked"}
+    )
     def destroy(self, request, pk=None):
         """Soft-delete an environment, cancelling its run first if one is live.
 

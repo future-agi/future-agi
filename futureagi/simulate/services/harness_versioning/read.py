@@ -518,7 +518,7 @@ def agent_version_item(job: HostedHarnessJob, version: AgentVersion) -> dict[str
     )
 
 
-def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
+def list_versions(job: HostedHarnessJob) -> dict[str, Any]:
     environments = _newest_first(
         HarnessEnvironmentVersion.no_workspace_objects.filter(job=job)
         .select_related("created_by")
@@ -531,6 +531,7 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         .defer(*_PIECE_DEFERRED)
     )
     from simulate.services.harness_agent_versions import _default_lineage
+    from simulate.services.harness_versioning import releases
 
     agents = _agent_versions(job)
     runtimes = _runtimes(job, agents)
@@ -555,6 +556,8 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         "suite": [
             _piece_item(version, job.suite_version_id, suite=True) for version in suites
         ],
+        "releases": releases.release_items(job),
+        "lock": releases.lock_preview(job),
     }
 
 

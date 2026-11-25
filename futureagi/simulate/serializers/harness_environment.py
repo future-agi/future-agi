@@ -1291,12 +1291,64 @@ class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
     agent_version = HarnessVersionSerializer(read_only=True, allow_null=True)
 
 
+class HarnessReleaseSerializer(serializers.Serializer):
+    """A locked environment and suite version pair, with its split counts."""
+
+    id = serializers.UUIDField()
+    label = serializers.CharField()
+    environment_version_id = serializers.UUIDField()
+    environment_label = serializers.CharField(allow_null=True)
+    suite_version_id = serializers.UUIDField()
+    suite_label = serializers.CharField(allow_null=True)
+    locked_at = serializers.DateTimeField()
+    locked_by = HarnessVersionPersonSerializer(allow_null=True)
+    unlocked_at = serializers.DateTimeField(allow_null=True)
+    unlocked_by = HarnessVersionPersonSerializer(allow_null=True)
+    train = serializers.IntegerField()
+    test = serializers.IntegerField()
+
+
+class HarnessRefusalSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    message = serializers.CharField()
+
+
+class HarnessLockPreviewSerializer(serializers.Serializer):
+    """Whether the default pair can be locked now, and the splits it would get."""
+
+    environment_version_id = serializers.UUIDField(allow_null=True)
+    suite_version_id = serializers.UUIDField(allow_null=True)
+    proved = serializers.BooleanField(
+        help_text="The suite version passed its proofs against this environment version."
+    )
+    can_lock = serializers.BooleanField()
+    refusal = HarnessRefusalSerializer(allow_null=True)
+    train = serializers.IntegerField(allow_null=True)
+    test = serializers.IntegerField(allow_null=True)
+    test_target = serializers.IntegerField(allow_null=True)
+
+
 class HarnessVersionsSerializer(serializers.Serializer):
     """Every version of an environment's three pieces, newest first."""
 
     agent = HarnessVersionSerializer(many=True)
     environment = HarnessVersionSerializer(many=True)
     suite = HarnessVersionSerializer(many=True)
+    releases = HarnessReleaseSerializer(many=True)
+    lock = HarnessLockPreviewSerializer()
+
+
+class HarnessLockReleaseSerializer(serializers.Serializer):
+    environment_version_id = serializers.UUIDField(
+        help_text="The default environment version the caller saw."
+    )
+    suite_version_id = serializers.UUIDField(
+        help_text="The default suite version the caller saw."
+    )
+
+
+class HarnessUnlockReleaseSerializer(serializers.Serializer):
+    release_id = serializers.UUIDField()
 
 
 class HarnessDraftItemSerializer(HarnessVersionSerializer):

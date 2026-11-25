@@ -2122,6 +2122,11 @@ def delete_environment(job: HostedHarnessJob) -> None:
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=job.id
         )
+        from simulate.services.harness_versioning.releases import (
+            require_no_locked_release,
+        )
+
+        require_no_locked_release(locked)
         from simulate.services.harness_versioning.nudges import (
             close_environment_nudges,
         )

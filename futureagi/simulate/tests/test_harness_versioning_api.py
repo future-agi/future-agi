@@ -76,7 +76,7 @@ class TestVersionsList:
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body) == {"agent", "environment", "suite"}
+        assert set(body) == {"agent", "environment", "suite", "releases", "lock"}
         suites = body["suite"]
         assert [one["label"] for one in suites] == ["v2", "v1"]
         assert [one["is_default"] for one in suites] == [True, False]
