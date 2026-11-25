@@ -1350,3 +1350,652 @@ class TestProcessSpansChunkTask:
         }
         assert "Input 0" in values[str(dataset_columns[0].id)]
         assert "Output 0" in values[str(dataset_columns[1].id)]
+
+
+# ---------------------------------------------------------------------------
+# Select-all carries the grid's filters, so the dataset receives exactly the
+# rows the grid counted (not every root span in the project). The grid always
+# sends its ``created_at`` window, so the payloads below include it.
+# ---------------------------------------------------------------------------
+
+
+def _filter(column_id, filter_type, filter_op, filter_value):
+    return {
+        "column_id": column_id,
+        "filter_config": {
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+        },
+    }
+
+
+def _seed_ch_traces(ch_seed, project, count, *, child_on_first=False, age=None):
+    """Seed ``count`` CH-only traces with one root span each.
+
+    Returns ``[(trace_id, root_span_id), ...]``. ``child_on_first`` adds a
+    child span under the first root (fan-out must still give one row);
+    ``age`` backdates every seeded span by that timedelta.
+    """
+    rows = []
+    traces = []
+    for i in range(count):
+        trace_id = str(uuid.uuid4())
+        root_id = f"ch_root_{i}_{uuid.uuid4().hex[:12]}"
+        rows.append(ch_only_span_row(project, trace_id, root_id))
+        traces.append((trace_id, root_id))
+    if child_on_first and traces:
+        trace_id, root_id = traces[0]
+        rows.append(
+            ch_only_span_row(
+                project,
+                trace_id,
+                f"ch_child_{uuid.uuid4().hex[:12]}",
+                parent_span_id=root_id,
+            )
+        )
+    if age is not None:
+        for row in rows:
+            for key in ("start_time", "end_time", "created_at", "updated_at"):
+                row[key] = row[key] - age
+    ch_seed(rows)
+    return traces
+
+
+def _dispatched_span_ids(mock_task):
+    return [
+        span_id for call in mock_task.delay.call_args_list for span_id in call.args[0]
+    ]
+
+
+def _grid_iso(value):
+    """Format like the grid's ``Date.toISOString()``: ms precision, ``Z``."""
+    return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _recent_window_filter():
+    """The ``created_at`` window the grid sends with every list request."""
+    now = timezone.now()
+    return _filter(
+        "created_at",
+        "datetime",
+        "between",
+        [
+            _grid_iso(now - timedelta(days=7)),
+            _grid_iso(now + timedelta(minutes=5)),
+        ],
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestFilteredSelectAllAddsExactSelection:
+    """Select-all with the grid's filters adds exactly the selected rows."""
+
+    NEW_URL = "/tracer/dataset/add_to_new_dataset/"
+    EXISTING_URL = "/tracer/dataset/add_to_existing_dataset/"
+    MAPPING = [{"col_name": "input", "span_field": "input", "data_type": "text"}]
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_filter_narrows_select_all_to_matching_trace(
+        self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
+    ):
+        """Reproduction: the project holds 3 traces, the filter matches 1."""
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        mock_task.delay.return_value = None
+        traces = _seed_ch_traces(ch_seed, observe_project, 3)
+        target_trace_id, target_root_id = traces[1]
+
+        response = auth_client.post(
+            self.NEW_URL,
+            {
+                "new_dataset_name": "Filtered Select All",
+                "project": str(observe_project.id),
+                "select_all": True,
+                "trace_ids": [],
+                "filters": [
+                    _recent_window_filter(),
+                    _filter("trace_id", "text", "equals", target_trace_id),
+                ],
+                "mapping_config": self.MAPPING,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        assert _dispatched_span_ids(mock_task) == [target_root_id]
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_time_window_excludes_rows_outside_it(
+        self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
+    ):
+        """The grid's time window bounds select-all; older traces stay out."""
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        mock_task.delay.return_value = None
+        recent = _seed_ch_traces(ch_seed, observe_project, 2)
+        _seed_ch_traces(ch_seed, observe_project, 3, age=timedelta(days=40))
+
+        response = auth_client.post(
+            self.NEW_URL,
+            {
+                "new_dataset_name": "Windowed Select All",
+                "project": str(observe_project.id),
+                "select_all": True,
+                "trace_ids": [],
+                "filters": [_recent_window_filter()],
+                "mapping_config": self.MAPPING,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        dispatched = _dispatched_span_ids(mock_task)
+        assert len(dispatched) == 2
+        assert set(dispatched) == {root_id for _trace_id, root_id in recent}
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_deselected_traces_are_subtracted_and_one_row_per_trace(
+        self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
+    ):
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        mock_task.delay.return_value = None
+        traces = _seed_ch_traces(ch_seed, observe_project, 4, child_on_first=True)
+        deselected_trace_id, _deselected_root = traces[3]
+
+        response = auth_client.post(
+            self.NEW_URL,
+            {
+                "new_dataset_name": "Select All Minus One",
+                "project": str(observe_project.id),
+                "select_all": True,
+                "trace_ids": [deselected_trace_id],
+                "filters": [],
+                "mapping_config": self.MAPPING,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        dispatched = _dispatched_span_ids(mock_task)
+        # 3 traces selected -> exactly 3 rows: the child span of the first
+        # trace does not add a row, and the deselected trace is left out.
+        assert len(dispatched) == 3
+        assert set(dispatched) == {root_id for _trace_id, root_id in traces[:3]}
+
+    @pytest.mark.parametrize(
+        "with_window", [False, True], ids=["no_filters", "created_at_window"]
+    )
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_selection_spanning_several_resolver_pages(
+        self,
+        mock_check_allowed,
+        mock_task,
+        auth_client,
+        observe_project,
+        ch_seed,
+        monkeypatch,
+        with_window,
+    ):
+        """Resolver continuations are followed until the selection is complete.
+
+        The ``created_at_window`` case is the shape the grid always sends: page
+        2 onwards resumes under the time window, and older traces stay out.
+        """
+        import tracer.views.dataset as dataset_views
+
+        monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_PAGE_SIZE", 2)
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        mock_task.delay.return_value = None
+        traces = _seed_ch_traces(ch_seed, observe_project, 5)
+        if with_window:
+            _seed_ch_traces(ch_seed, observe_project, 3, age=timedelta(days=40))
+
+        response = auth_client.post(
+            self.NEW_URL,
+            {
+                "new_dataset_name": "Paged Select All",
+                "project": str(observe_project.id),
+                "select_all": True,
+                "trace_ids": [],
+                "filters": [_recent_window_filter()] if with_window else [],
+                "mapping_config": self.MAPPING,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        dispatched = _dispatched_span_ids(mock_task)
+        assert len(dispatched) == 5
+        assert set(dispatched) == {root_id for _trace_id, root_id in traces}
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_selection_over_page_ceiling_fails_closed(
+        self,
+        mock_check_allowed,
+        mock_task,
+        auth_client,
+        observe_project,
+        ch_seed,
+        monkeypatch,
+    ):
+        import tracer.views.dataset as dataset_views
+
+        monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_PAGE_SIZE", 1)
+        monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_MAX_PAGES", 2)
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        _seed_ch_traces(ch_seed, observe_project, 3)
+
+        response = auth_client.post(
+            self.NEW_URL,
+            {
+                "new_dataset_name": "Too Large Select All",
+                "project": str(observe_project.id),
+                "select_all": True,
+                "trace_ids": [],
+                "filters": [],
+                "mapping_config": self.MAPPING,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "too large" in str(response.json())
+        mock_task.delay.assert_not_called()
+        assert not Dataset.no_workspace_objects.filter(
+            name="Too Large Select All"
+        ).exists()
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_short_pages_at_ceiling_are_not_reported_as_too_large(
+        self, mock_check_allowed, mock_task, auth_client, observe_project, monkeypatch
+    ):
+        """Checkpoint pages (fewer ids than the page size) that use up the page
+        ceiling mean the read did not finish, not that the selection is big."""
+        import tracer.views.dataset as dataset_views
+        from model_hub.services.bulk_selection import ResolveResult
+
+        monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_PAGE_SIZE", 5)
+        monkeypatch.setattr(dataset_views, "_FILTERED_SELECT_ALL_MAX_PAGES", 2)
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+
+        def checkpoint_page(**_kwargs):
+            # A fresh continuation each call: progress, but no ids.
+            return ResolveResult(
+                ids=[], total_matching=0, truncated=True, continuation=object()
+            )
+
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            side_effect=checkpoint_page,
+        ):
+            response = auth_client.post(
+                self.NEW_URL,
+                {
+                    "new_dataset_name": "Checkpointed Select All",
+                    "project": str(observe_project.id),
+                    "select_all": True,
+                    "trace_ids": [],
+                    "filters": [],
+                    "mapping_config": self.MAPPING,
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        body = str(response.json())
+        assert "could not be read completely" in body
+        assert "too large" not in body
+        mock_task.delay.assert_not_called()
+        assert not Dataset.no_workspace_objects.filter(
+            name="Checkpointed Select All"
+        ).exists()
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_every_resolver_page_shares_one_request_deadline(
+        self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
+    ):
+        from model_hub.services.bulk_selection import ResolveResult
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        mock_task.delay.return_value = None
+        traces = _seed_ch_traces(ch_seed, observe_project, 2)
+        deadlines = []
+        next_page = object()
+
+        def two_pages(**kwargs):
+            deadlines.append(kwargs.get("deadline"))
+            if kwargs.get("cursor") is None:
+                return ResolveResult(
+                    ids=[traces[0][0]],
+                    total_matching=1,
+                    truncated=True,
+                    continuation=next_page,
+                )
+            return ResolveResult(ids=[traces[1][0]], total_matching=2, truncated=False)
+
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            side_effect=two_pages,
+        ):
+            response = auth_client.post(
+                self.NEW_URL,
+                {
+                    "new_dataset_name": "Deadline Select All",
+                    "project": str(observe_project.id),
+                    "select_all": True,
+                    "trace_ids": [],
+                    "filters": [],
+                    "mapping_config": self.MAPPING,
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        assert len(deadlines) == 2
+        assert isinstance(deadlines[0], ReadDeadline)
+        assert deadlines[1] is deadlines[0]
+        assert set(_dispatched_span_ids(mock_task)) == {
+            root_id for _trace_id, root_id in traces
+        }
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_request_deadline_exceeded_fails_closed_without_creating_dataset(
+        self, mock_check_allowed, mock_task, auth_client, observe_project
+    ):
+        from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            side_effect=ReadDeadlineExceeded("read deadline exceeded"),
+        ):
+            response = auth_client.post(
+                self.NEW_URL,
+                {
+                    "new_dataset_name": "Slow Select All",
+                    "project": str(observe_project.id),
+                    "select_all": True,
+                    "trace_ids": [],
+                    "filters": [],
+                    "mapping_config": self.MAPPING,
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_task.delay.assert_not_called()
+        assert not Dataset.no_workspace_objects.filter(name="Slow Select All").exists()
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_select_all_matching_nothing_creates_no_dataset(
+        self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
+    ):
+        """A filtered select-all that resolves to 0 rows leaves no empty dataset."""
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        _seed_ch_traces(ch_seed, observe_project, 2)
+
+        response = auth_client.post(
+            self.NEW_URL,
+            {
+                "new_dataset_name": "Empty Select All",
+                "project": str(observe_project.id),
+                "select_all": True,
+                "trace_ids": [],
+                "filters": [
+                    _recent_window_filter(),
+                    _filter("trace_id", "text", "equals", str(uuid.uuid4())),
+                ],
+                "mapping_config": self.MAPPING,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "No rows match the selection" in str(response.json())
+        mock_task.delay.assert_not_called()
+        assert not Dataset.no_workspace_objects.filter(name="Empty Select All").exists()
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_incomplete_resolve_fails_closed_without_creating_dataset(
+        self, mock_check_allowed, mock_task, auth_client, observe_project
+    ):
+        from model_hub.services.bulk_selection import BulkSelectionReadIncomplete
+
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            side_effect=BulkSelectionReadIncomplete("scan_budget_exceeded"),
+        ):
+            response = auth_client.post(
+                self.NEW_URL,
+                {
+                    "new_dataset_name": "Unreadable Select All",
+                    "project": str(observe_project.id),
+                    "select_all": True,
+                    "trace_ids": [],
+                    "filters": [],
+                    "mapping_config": self.MAPPING,
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_task.delay.assert_not_called()
+        assert not Dataset.no_workspace_objects.filter(
+            name="Unreadable Select All"
+        ).exists()
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_spans_tab_select_all_adds_exact_span_set(
+        self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
+    ):
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        mock_task.delay.return_value = None
+        trace_id = str(uuid.uuid4())
+        root_id = f"ch_root_{uuid.uuid4().hex[:12]}"
+        child_ids = [f"ch_child_{i}_{uuid.uuid4().hex[:12]}" for i in range(3)]
+        ch_seed(
+            [ch_only_span_row(observe_project, trace_id, root_id)]
+            + [
+                ch_only_span_row(
+                    observe_project, trace_id, child_id, parent_span_id=root_id
+                )
+                for child_id in child_ids
+            ]
+        )
+
+        response = auth_client.post(
+            self.NEW_URL,
+            {
+                "new_dataset_name": "Span Select All",
+                "project": str(observe_project.id),
+                "select_all": True,
+                "span_ids": [child_ids[0]],
+                "filters": [_recent_window_filter()],
+                "mapping_config": self.MAPPING,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        dispatched = _dispatched_span_ids(mock_task)
+        assert len(dispatched) == 3
+        assert set(dispatched) == {root_id, child_ids[1], child_ids[2]}
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_spans_tab_select_all_honours_time_window(
+        self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
+    ):
+        """The span resolver applies the grid's window: old spans stay out."""
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        mock_task.delay.return_value = None
+        trace_id = str(uuid.uuid4())
+        root_id = f"ch_root_{uuid.uuid4().hex[:12]}"
+        child_ids = [f"ch_child_{i}_{uuid.uuid4().hex[:12]}" for i in range(2)]
+        ch_seed(
+            [ch_only_span_row(observe_project, trace_id, root_id)]
+            + [
+                ch_only_span_row(
+                    observe_project, trace_id, child_id, parent_span_id=root_id
+                )
+                for child_id in child_ids
+            ]
+        )
+        old_trace_id = str(uuid.uuid4())
+        old_root_id = f"ch_old_root_{uuid.uuid4().hex[:12]}"
+        old_rows = [
+            ch_only_span_row(observe_project, old_trace_id, old_root_id),
+            ch_only_span_row(
+                observe_project,
+                old_trace_id,
+                f"ch_old_child_{uuid.uuid4().hex[:12]}",
+                parent_span_id=old_root_id,
+            ),
+        ]
+        for row in old_rows:
+            for key in ("start_time", "end_time", "created_at", "updated_at"):
+                row[key] = row[key] - timedelta(days=40)
+        ch_seed(old_rows)
+
+        response = auth_client.post(
+            self.NEW_URL,
+            {
+                "new_dataset_name": "Windowed Span Select All",
+                "project": str(observe_project.id),
+                "select_all": True,
+                "span_ids": [child_ids[0]],
+                "filters": [_recent_window_filter()],
+                "mapping_config": self.MAPPING,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        dispatched = _dispatched_span_ids(mock_task)
+        assert len(dispatched) == 2
+        assert set(dispatched) == {root_id, child_ids[1]}
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    def test_existing_dataset_select_all_honours_filters(
+        self,
+        mock_task,
+        auth_client,
+        dataset,
+        dataset_columns,
+        observe_project,
+        ch_seed,
+    ):
+        mock_task.delay.return_value = None
+        traces = _seed_ch_traces(ch_seed, observe_project, 3)
+        target_trace_id, target_root_id = traces[0]
+
+        response = auth_client.post(
+            self.EXISTING_URL,
+            {
+                "dataset_id": str(dataset.id),
+                "project": str(observe_project.id),
+                "select_all": True,
+                "trace_ids": [],
+                "filters": [
+                    _recent_window_filter(),
+                    _filter("trace_id", "text", "equals", target_trace_id),
+                ],
+                "mapping_config": [{"col_name": "input", "span_field": "input"}],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        assert _dispatched_span_ids(mock_task) == [target_root_id]
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_select_all_without_filters_keeps_legacy_project_scope(
+        self, mock_check_allowed, mock_task, auth_client, observe_project, ch_seed
+    ):
+        """Old clients that send no ``filters`` keep the whole-project path."""
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        mock_task.delay.return_value = None
+        traces = _seed_ch_traces(ch_seed, observe_project, 3)
+
+        response = auth_client.post(
+            self.NEW_URL,
+            {
+                "new_dataset_name": "Legacy Select All",
+                "project": str(observe_project.id),
+                "select_all": True,
+                "trace_ids": [],
+                "mapping_config": self.MAPPING,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        assert set(_dispatched_span_ids(mock_task)) == {
+            root_id for _trace_id, root_id in traces
+        }
+
+
+@pytest.mark.integration
+@pytest.mark.django_db(transaction=True)
+class TestFilteredSelectAllInsertedRows:
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_new_dataset_gets_exactly_the_selected_row_count(
+        self, mock_check_allowed, auth_client, observe_project, ch_seed
+    ):
+        """Seed 6 recent traces and 3 older ones, select all minus 2 under the
+        grid's 7-day window: exactly 4 Rows land (the whole-project path
+        would insert 7)."""
+        from model_hub.models.develop_dataset import Row
+        from tracer.tasks.dataset import process_spans_chunk_task
+
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
+        traces = _seed_ch_traces(ch_seed, observe_project, 6, child_on_first=True)
+        _seed_ch_traces(ch_seed, observe_project, 3, age=timedelta(days=40))
+        deselected = [traces[4][0], traces[5][0]]
+
+        with patch("tracer.views.dataset.process_spans_chunk_task") as mock_task:
+            mock_task.delay.return_value = None
+            response = auth_client.post(
+                "/tracer/dataset/add_to_new_dataset/",
+                {
+                    "new_dataset_name": "Exact Row Count",
+                    "project": str(observe_project.id),
+                    "select_all": True,
+                    "trace_ids": deselected,
+                    "filters": [_recent_window_filter()],
+                    "mapping_config": [
+                        {
+                            "col_name": "input",
+                            "span_field": "input",
+                            "data_type": "text",
+                        }
+                    ],
+                },
+                format="json",
+            )
+            assert response.status_code == status.HTTP_200_OK, response.json()
+            dispatched_calls = [call.args for call in mock_task.delay.call_args_list]
+
+        # Run the dispatched chunks the way the worker receives them
+        # (serialized, so the project and org ids arrive as strings).
+        for span_ids, dataset_id, mapping, project_id, org_id in dispatched_calls:
+            process_spans_chunk_task.run_sync(
+                span_ids, dataset_id, mapping, str(project_id), str(org_id)
+            )
+
+        dataset_id = get_result(response)["dataset_id"]
+        assert Row.objects.filter(dataset_id=dataset_id, deleted=False).count() == 4
