@@ -32,6 +32,7 @@ from tfc.utils.storage_client import (
     PrivateBucketRefused,
     ensure_private_bucket,
     get_storage_client,
+    invalidate_private_bucket,
 )
 
 logger = structlog.get_logger(__name__)
@@ -81,13 +82,19 @@ def write_compare_json(compare_id, name: str, data) -> None:
     """Store one comparison object. Raises when the bucket did not take it."""
     client, bucket = _client_and_bucket()
     payload = json.dumps(data).encode("utf-8")
-    client.put_object(
-        bucket_name=bucket,
-        object_name=compare_object_key(compare_id, name),
-        data=io.BytesIO(payload),
-        length=len(payload),
-        content_type="application/json",
-    )
+    try:
+        client.put_object(
+            bucket_name=bucket,
+            object_name=compare_object_key(compare_id, name),
+            data=io.BytesIO(payload),
+            length=len(payload),
+            content_type="application/json",
+        )
+    except S3Error as exc:
+        if exc.code != "NoSuchBucket":
+            raise
+        invalidate_private_bucket(bucket)
+        raise PrivateBucketMissing(bucket) from exc
 
 
 def read_compare_json(compare_id, name: str):

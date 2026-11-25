@@ -488,7 +488,8 @@ _private_bucket_refusals: dict[str, int] = {}
 _private_bucket_lock = threading.Lock()
 
 
-def _refuse_private_bucket(bucket_name: str) -> None:
+def invalidate_private_bucket(bucket_name: str) -> None:
+    """Discard a cached check and prevent in-flight checks from restoring it."""
     with _private_bucket_lock:
         _private_bucket_refusals[bucket_name] = (
             _private_bucket_refusals.get(bucket_name, 0) + 1
@@ -566,7 +567,7 @@ def ensure_private_bucket(
     except Exception:
         # Any check that does not find the bucket private counts as a refusal,
         # so that a slower check that started earlier is not used either.
-        _refuse_private_bucket(bucket_name)
+        invalidate_private_bucket(bucket_name)
         raise
     if not _remember_private_bucket(bucket_name, refusals_before):
         # Another check refused the bucket while this one ran, so this check

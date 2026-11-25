@@ -819,7 +819,7 @@ def test_compare_own_datasets_returns_rows(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("storage_error_code", ["NoSuchBucket", "AccessDenied"])
-def test_compare_build_write_failure_is_bad_request_not_empty_success(
+def test_compare_build_write_failure_is_error_not_empty_success(
     auth_client,
     organization,
     workspace,
@@ -869,15 +869,25 @@ def test_compare_build_write_failure_is_bad_request_not_empty_success(
         format="json",
     )
 
-    # _prepare_compare_dataset_impl logs the write exception and leaves local
-    # metadata processing; the view must not return 200 with zero rows. Pin its
-    # actual 400 wire envelope, also consumed by CompareData's Axios regression.
-    message = "Unable to compare datasets. Please try again."
-    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+    # The view must not mistake a failed upload for a successful empty join.
+    if storage_error_code == "NoSuchBucket":
+        message = (
+            "The private dataset comparison bucket does not exist. "
+            "Create it and configure COMPARE_BUCKET_NAME "
+            "(Helm: objectStorage.compareBucket)."
+        )
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE, (
+            response.content
+        )
+        error_type, code = "service_unavailable", "compare_bucket_missing"
+    else:
+        message = "Unable to compare datasets. Please try again."
+        assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+        error_type, code = "validation_error", "invalid"
     assert response.json() == {
         "status": False,
-        "type": "validation_error",
-        "code": "invalid",
+        "type": error_type,
+        "code": code,
         "detail": message,
         "message": message,
         "error": message,
