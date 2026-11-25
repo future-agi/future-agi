@@ -33,9 +33,7 @@ class TestProcessRawLogsOverlay:
         )
 
         assert result["recording_url"] == span_attributes["recording_url"]
-        assert result["stereo_recording_url"] == span_attributes[
-            "stereo_recording_url"
-        ]
+        assert result["stereo_recording_url"] == span_attributes["stereo_recording_url"]
 
     def test_vapi_overlay_new_shape_before_legacy(self):
         """New shape (artifact.recording.mono.combinedUrl) beats legacy recordingUrl."""
@@ -43,14 +41,14 @@ class TestProcessRawLogsOverlay:
             "id": "vapi-call-1",
             "recordingUrl": "https://storage.vapi.ai/legacy.mp3",
             "artifact": {
-                "recording": {"mono": {"combinedUrl": "https://storage.vapi.ai/new-shape.mp3"}}
+                "recording": {
+                    "mono": {"combinedUrl": "https://storage.vapi.ai/new-shape.mp3"}
+                }
             },
             "messages": [],
         }
 
-        result = ObservabilityService.process_raw_logs(
-            raw_log, ProviderChoices.VAPI
-        )
+        result = ObservabilityService.process_raw_logs(raw_log, ProviderChoices.VAPI)
 
         assert result["recording_url"] == "https://storage.vapi.ai/new-shape.mp3"
 
@@ -63,14 +61,10 @@ class TestProcessRawLogsOverlay:
             "messages": [],
         }
 
-        result = ObservabilityService.process_raw_logs(
-            raw_log, ProviderChoices.VAPI
-        )
+        result = ObservabilityService.process_raw_logs(raw_log, ProviderChoices.VAPI)
 
         assert result["recording_url"] == "https://storage.vapi.ai/combined.mp3"
-        assert (
-            result["stereo_recording_url"] == "https://storage.vapi.ai/stereo.mp3"
-        )
+        assert result["stereo_recording_url"] == "https://storage.vapi.ai/stereo.mp3"
 
     def test_retell_overlay_prefers_durable_span_urls(self):
         """ClickHouse span attributes override Retell's expiring provider URLs."""
@@ -93,9 +87,11 @@ class TestProcessRawLogsOverlay:
             raw_log, ProviderChoices.RETELL, span_attributes=span_attributes
         )
 
-        assert result["recording_url"] == span_attributes[
-            "conversation.recording.mono.combined"
-        ]
-        assert result["stereo_recording_url"] == span_attributes[
-            "conversation.recording.stereo"
-        ]
+        assert (
+            result["recording_url"]
+            == span_attributes["conversation.recording.mono.combined"]
+        )
+        assert (
+            result["stereo_recording_url"]
+            == span_attributes["conversation.recording.stereo"]
+        )

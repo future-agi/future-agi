@@ -1,5 +1,9 @@
 import { useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import { TRACE_COLUMNS } from "src/sections/simulate/environments/workspace/runs/detail/trace/traceTable.constants";
@@ -113,6 +117,7 @@ export function mapCallRow(row, evalColumns = []) {
     // The key a re-run sends; null on calls the harness never tagged.
     sourceScenarioKey: row?.source_scenario_key ?? null,
     harnessOutcomeStatus: row?.harness_outcome_status ?? outcome ?? null,
+    outcomeReason: row?.outcome_reason ?? null,
     trialIndex,
     scenarioDetails: row?.scenario_details ?? null,
     idealOutcome: row?.ideal_outcome ?? null,
@@ -281,9 +286,11 @@ export function runCallsQueryOptions(executionId, opts = {}) {
  *   isLoading: boolean }}
  */
 export function useRunCalls(executionId, opts = {}) {
-  const { enabled = true, ...listOpts } = opts;
+  // `keepPrevious` keeps the last page's facets and columns visible while the next loads.
+  const { enabled = true, keepPrevious = false, ...listOpts } = opts;
   const query = useQuery({
     ...runCallsQueryOptions(executionId, listOpts),
+    ...(keepPrevious ? { placeholderData: keepPreviousData } : {}),
     enabled: !!executionId && enabled,
     // A finished run can still have calls scoring (an eval added later, a
     // failed run's late verdicts), so keep polling until none are pending.
@@ -381,7 +388,7 @@ export function useRunCalls(executionId, opts = {}) {
     totalPages,
     agentType: data?.execution?.agent_type ?? null,
     runActive: ACTIVE_EXECUTION_STATUSES.has(data?.execution?.status),
-    isLoading: !!executionId && query.isPending,
+    isLoading: !!executionId && (query.isPending || query.isPlaceholderData),
     error: query.error,
   };
 }

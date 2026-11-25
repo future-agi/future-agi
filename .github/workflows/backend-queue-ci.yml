@@ -1,0 +1,29 @@
+name: Backend merge queue
+
+on:
+  merge_group:
+
+permissions:
+  contents: read
+  actions: read # terminal parity reads job attempts and artifact digests
+
+jobs:
+  backend:
+    # The receipt verifier looks up these jobs as backend / <shard>.
+    name: backend
+    # A queue can mix internal and fork PRs. Run the whole candidate suite
+    # without forwarding repository secrets into the reusable workflow.
+    uses: ./.github/workflows/backend-ci.yml
+
+  backend-tests:
+    # Reusable workflow checks are prefixed with the caller's job name.
+    # Keep the queue's required check name identical to a direct run's.
+    name: Backend Tests Pass
+    needs: backend
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          VERDICT: ${{ needs.backend.outputs.verdict }}
+        run: test "$BACKEND_RESULT" = success && test "$VERDICT" = success

@@ -13,6 +13,10 @@ class RunDashboardMetricSerializer(serializers.Serializer):
     measured = serializers.IntegerField(allow_null=True)
     total = serializers.IntegerField()
     note = serializers.CharField(allow_blank=True)
+    no_score = serializers.BooleanField(
+        help_text="True when the value is null because the calls ran with no pass or fail: no score, not missing "
+        "data. Set only on the pass rates (calls and trials)."
+    )
 
 
 class RunDashboardSegmentSerializer(serializers.Serializer):
@@ -154,7 +158,9 @@ class RunDashboardRiskSerializer(serializers.Serializer):
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
+    cancelled = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
+    no_score = serializers.IntegerField()
 
 
 class RunDashboardHealthSerializer(serializers.Serializer):

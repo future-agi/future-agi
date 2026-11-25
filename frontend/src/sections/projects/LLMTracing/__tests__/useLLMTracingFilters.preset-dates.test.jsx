@@ -107,6 +107,30 @@ describe("useLLMTracingFilters preset dates (TH-8634)", () => {
     expect(window.location.search).toBe(search);
   });
 
+  it.each([
+    ["2026-11-02T00:00:00.000Z", "2026-11-03T00:00:00.000Z"],
+    ["2026-11-01T18:30:00.000Z", "2026-11-02T18:30:00.000Z"],
+    ["2026-11-02T08:00:00.000Z", "2026-11-03T08:00:00.000Z"],
+    ["2026-03-08T08:00:00.000Z", "2026-03-09T07:00:00.000Z"],
+    ["2026-11-01T07:00:00.000Z", "2026-11-02T08:00:00.000Z"],
+    ["2026-11-02T12:13:14.567Z", "2026-11-02T13:14:15.678Z"],
+  ])(
+    "preserves custom ISO bounds through bookmarks and saved-view application: %s",
+    async (start, end) => {
+      const custom = { dateOption: "Custom", dateFilter: [start, end] };
+      const search = `?primaryTraceDateFilter=${dateParam(custom)}`;
+      const linked = openWithUrl(search);
+      expect(isoBounds(linked.result)).toEqual(custom.dateFilter);
+      expect(window.location.search).toBe(search);
+      linked.unmount();
+
+      const { result } = openWithUrl("");
+      act(() => result.current.setDateFilter(custom));
+      await waitFor(() => expect(urlDate()).toEqual(custom));
+      expect(isoBounds(result)).toEqual(custom.dateFilter);
+    },
+  );
+
   it("does not add a date to a URL that has none", async () => {
     const { result } = openWithUrl("");
     await act(async () => {});

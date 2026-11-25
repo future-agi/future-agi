@@ -187,21 +187,40 @@ def engine(tmp_path):
         get_timezone=lambda: "UTC"
     )
 
-    def execute(sql, params=None):
+    def execute(sql, params=None, *, with_stats=False):
         if params:
             sql = formatter.substitute_params(sql, params, formatter.connection.context)
-        result = str(session.query(sql, "JSONEachRow"))
-        rows = [json.loads(line) for line in result.splitlines() if line]
+        if with_stats:
+            envelope = json.loads(str(session.query(sql, "JSON")))
+            rows = envelope["data"]
+        else:
+            result = str(session.query(sql, "JSONEachRow"))
+            rows = [json.loads(line) for line in result.splitlines() if line]
         for value in rows:
             if isinstance(value.get("start_time"), str):
                 value["start_time"] = datetime.fromisoformat(value["start_time"])
+        if with_stats:
+            stats = envelope["statistics"]
+            return QueryResult(
+                rows,
+                len(rows),
+                "clickhouse",
+                stats["elapsed"] * 1000,
+                columns=[column["name"] for column in envelope["meta"]],
+                read_rows=stats["rows_read"],
+                read_bytes=stats["bytes_read"],
+            )
         return rows
 
+    execute("SET output_format_json_quote_64bit_integers = 0")
     execute("""CREATE TABLE spans (
         project_id UUID, observation_type LowCardinality(String),
         service_name LowCardinality(String), start_time DateTime64(6, 'UTC'),
         trace_id String, id String, parent_span_id Nullable(String),
         name String DEFAULT '', status Nullable(String),
+        -- Deployed by v2 schema 012/015; explicitly projected after SELECT *.
+        -- These identity fixtures do not exercise the trace-dictionary lookup.
+        trace_name String MATERIALIZED '',
         end_time Nullable(DateTime64(6, 'UTC')), latency_ms Nullable(Int64),
         cost Float64 DEFAULT 0, total_tokens Int64 DEFAULT 0,
         prompt_tokens Int64 DEFAULT 0, completion_tokens Int64 DEFAULT 0,

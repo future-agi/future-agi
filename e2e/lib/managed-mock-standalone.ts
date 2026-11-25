@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 // temporal:7233 and agentcc-gateway:8080). evalBackground therefore adds only
 // the environment pins Distributed's backend and worker carry (requiredMockValues).
 import { E2E } from './env';
-import { containerEnvironment, gatewayFile, mockFile, requiredMockValues, requireSafe, validateEnvironmentEntries,
+import { containerEnvironment, gatewayFile, mockFile, requiredMockValues, requireSafe, validateEnvironmentEntries, validateGoogleFixtureMounts,
   type MockStack, type MockTopology } from './managed-mock';
 
 // docker-compose.yml app: the gateway, the API it syncs from and Temporal share the container.
@@ -37,19 +37,23 @@ export function validateStandaloneAppEnvironment(env: Record<string, string>, ev
 export function standaloneMockStack(evalBackground: boolean): MockStack {
   return {
     project: 'futureagi-e2e-standalone',
-    services: ['app', 'mock-llm', 'postgres', 'clickhouse'],
+    extraNetworks: { app: ['link-public'] },
+    services: ['app', 'mock-llm', 'mock-google', 'postgres', 'clickhouse'],
     // docker-compose.yml maps code-executor to the in-app sandbox; the overlay adds
     // the agentcc-gateway alias for flows that register the Distributed gateway URL.
     extraHosts: { app: ['agentcc-gateway:127.0.0.1', 'code-executor:127.0.0.1'] },
     endpoints: [
+      ['mock-google', '28443/tcp', E2E.googleMockUrl],
       ['app', '3000/tcp', E2E.appUrl], ['app', '8000/tcp', E2E.apiUrl], ['app', '8080/tcp', E2E.gatewayUrl],
       ['postgres', '5432/tcp', E2E.pgUrl], ['clickhouse', '8123/tcp', E2E.chUrl],
     ],
     sources: [
+      ['mock-google', '/srv/server.py', fileURLToPath(new URL('../stack/mock-google/server.py', import.meta.url)), ['/srv/server.py']],
       ...([
         ['settings_e2e.py', '/app/backend/tfc/settings/e2e.py'],
         ['urls_e2e.py', '/app/backend/tfc/urls_e2e.py'],
         ['e2e_clean_signup.py', '/app/backend/accounts/views/e2e_clean_signup.py'],
+        ['e2e_google.py', '/app/backend/tfc/views/e2e_google.py'],
         ['e2e_feed_issue.py', '/app/backend/tracer/views/e2e_feed_issue.py'],
       ] as [string, string][]).map(([source, destination]): [string, string, string] =>
         ['app', destination, fileURLToPath(new URL(`../stack/backend/${source}`, import.meta.url))]),
@@ -57,6 +61,7 @@ export function standaloneMockStack(evalBackground: boolean): MockStack {
       ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
     ],
     check: ({ selected }) => {
+      validateGoogleFixtureMounts(selected.app, selected['mock-google']);
       const vertex = selected.app.Mounts.filter(m => m.Destination === '/etc/futureagi/secrets/vertex.json');
       requireSafe(vertex.length === 1 && vertex[0].Source === '/dev/null' && !vertex[0].RW,
         'app Google credential mount must be the read-only /dev/null suppression');

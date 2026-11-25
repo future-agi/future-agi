@@ -79,7 +79,7 @@ const DeleteKnowledgeBase = ({ open, onClose, refreshGrid, selected }) => {
               <Typography
                 variant="s2"
                 fontWeight={"fontWeightSemiBold"}
-                fontSize={"13px"}
+                fontSize={"12px"}
               >
                 Cancel
               </Typography>
@@ -99,7 +99,7 @@ const DeleteKnowledgeBase = ({ open, onClose, refreshGrid, selected }) => {
               <Typography
                 variant="s2"
                 fontWeight={"fontWeightSemiBold"}
-                fontSize={"13px"}
+                fontSize={"12px"}
               >
                 Delete
               </Typography>

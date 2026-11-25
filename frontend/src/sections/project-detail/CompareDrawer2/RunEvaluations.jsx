@@ -39,7 +39,7 @@ const StatusCellRenderer = (data) => {
         sx={{
           marginLeft: "10px",
           color: statusColors(theme, "danger").fg,
-          fontSize: "13px",
+          fontSize: "12px",
         }}
       >
         Error

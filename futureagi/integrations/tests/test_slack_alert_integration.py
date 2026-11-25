@@ -89,7 +89,9 @@ class TestSlackOAuthState:
             "team": {"id": "T1", "name": "Team"},
             "scope": "channels:read,channels:join,groups:read,chat:write",
         }
-        with patch("integrations.services.slack_oauth.requests.post", return_value=response) as post:
+        with patch(
+            "integrations.services.slack_oauth.requests.post", return_value=response
+        ) as post:
             slack_oauth.exchange_slack_code("code")
         assert post.call_args.args[0] == "http://mock-slack:8080/api/oauth.v2.access"
 
@@ -190,12 +192,16 @@ class TestSlackIntegrationAPI:
 
 
 class TestSlackWebClient:
-    def test_web_api_uses_configured_endpoint_for_local_slack_test_server(self, settings):
+    def test_web_api_uses_configured_endpoint_for_local_slack_test_server(
+        self, settings
+    ):
         settings.SLACK_API_URL = "http://mock-slack:8080/api/"
         response = MagicMock(status_code=200)
         response.raise_for_status.return_value = None
         response.json.return_value = {"ok": True, "team_id": "T1"}
-        with patch("integrations.services.slack_service.requests.get", return_value=response) as get:
+        with patch(
+            "integrations.services.slack_service.requests.get", return_value=response
+        ) as get:
             assert slack_api("auth.test", "xoxb-test")["team_id"] == "T1"
         assert get.call_args.args[0] == "http://mock-slack:8080/api/auth.test"
 
@@ -247,8 +253,18 @@ class TestSlackWebClient:
         assert result == {
             "channels": [
                 {"id": "C1", "name": "alerts", "is_private": False, "is_member": True},
-                {"id": "C3", "name": "public-not-joined", "is_private": False, "is_member": False},
-                {"id": "G4", "name": "joined-private", "is_private": True, "is_member": True},
+                {
+                    "id": "C3",
+                    "name": "public-not-joined",
+                    "is_private": False,
+                    "is_member": False,
+                },
+                {
+                    "id": "G4",
+                    "name": "joined-private",
+                    "is_private": True,
+                    "is_member": True,
+                },
             ],
             "next_cursor": "next",
         }
@@ -259,24 +275,54 @@ class TestSlackWebClient:
 
         def respond(method, token, **kwargs):
             if method == "conversations.info":
-                return {"channel": {"id": "C123", "name": "alerts", "is_private": False, "is_member": False}}
+                return {
+                    "channel": {
+                        "id": "C123",
+                        "name": "alerts",
+                        "is_private": False,
+                        "is_member": False,
+                    }
+                }
             assert method == "conversations.join"
             assert kwargs["payload"] == {"channel": "C123"}
-            return {"channel": {"id": "C123", "name": "alerts", "is_private": False, "is_member": True}}
+            return {
+                "channel": {
+                    "id": "C123",
+                    "name": "alerts",
+                    "is_private": False,
+                    "is_member": True,
+                }
+            }
 
-        with patch("integrations.services.slack_service.slack_api", side_effect=respond) as api:
-            result = client.validate_channel({"bot_token": "xoxb-test"}, "C123", join_public=True)
+        with patch(
+            "integrations.services.slack_service.slack_api", side_effect=respond
+        ) as api:
+            result = client.validate_channel(
+                {"bot_token": "xoxb-test"}, "C123", join_public=True
+            )
         assert result == {"id": "C123", "name": "alerts", "is_private": False}
-        assert [call.args[0] for call in api.call_args_list] == ["conversations.info", "conversations.join"]
+        assert [call.args[0] for call in api.call_args_list] == [
+            "conversations.info",
+            "conversations.join",
+        ]
 
     def test_validate_channel_never_joins_private_channel(self):
         client = SlackService()
         with patch(
             "integrations.services.slack_service.slack_api",
-            return_value={"channel": {"id": "G123", "name": "private", "is_private": True, "is_member": False}},
+            return_value={
+                "channel": {
+                    "id": "G123",
+                    "name": "private",
+                    "is_private": True,
+                    "is_member": False,
+                }
+            },
         ) as api:
             with pytest.raises(SlackApiError, match="not_in_channel"):
-                client.validate_channel({"bot_token": "xoxb-test"}, "G123", join_public=True)
+                client.validate_channel(
+                    {"bot_token": "xoxb-test"}, "G123", join_public=True
+                )
         api.assert_called_once()
 
     def test_post_message_does_not_send_to_a_channel_without_bot_membership(self):

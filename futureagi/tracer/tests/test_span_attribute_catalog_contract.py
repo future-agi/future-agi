@@ -111,9 +111,7 @@ def test_catalog_checkpoint_contract_is_restartable_and_gap_explicit() -> None:
     assert re.search(r"\berror\s+String\b", checkpoint)
     assert re.search(r"\bstarted_at\s+DateTime64\(6, 'UTC'\)", checkpoint)
     assert re.search(r"\bupdated_at\s+DateTime64\(6, 'UTC'\)", checkpoint)
-    assert re.search(
-        r"\bfinished_at\s+Nullable\(DateTime64\(6, 'UTC'\)\)", checkpoint
-    )
+    assert re.search(r"\bfinished_at\s+Nullable\(DateTime64\(6, 'UTC'\)\)", checkpoint)
     assert re.search(r"\b_version\s+UInt64\b", checkpoint)
     assert all(
         f"'{status}'" in checkpoint

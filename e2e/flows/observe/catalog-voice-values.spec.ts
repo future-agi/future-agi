@@ -1,12 +1,12 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { request as playwrightRequest, type Request, type Response } from '@playwright/test';
+import type { Request, Response } from '@playwright/test';
+import { newBackendRequest } from '../../lib/backend-request';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace, type OtlpAttributes } from '../../lib/otlp';
 import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
-
 // Public routes: tracer/urls.py; ProjectSerializer; TraceVoiceCallListQuerySerializer;
 // dashboard serializers. CallLogs/helper.jsx uses readQuery on this same list.
 const PROJECT = '/tracer/project/';
@@ -173,7 +173,7 @@ test('OBS-E2E-008: native and custom voice filters select only the current proje
   };
   page.on('request', started); page.on('requestfailed', failed);
   page.on('response', listener);
-  const req = await playwrightRequest.newContext();
+  const req = await newBackendRequest();
   let outcome = 'running', failure: string | undefined;
   try {
     const headers = { Authorization: `Bearer ${actor.tokens.access}`,
@@ -339,16 +339,29 @@ test('OBS-E2E-008: native and custom voice filters select only the current proje
     await test.step('native/custom catalog identity, types and role eligibility', async () => {
       // Readiness polling is only for the newly ingested custom keys. HTTP
       // contract errors are thrown immediately; they are not retried as empty.
-      let ready: Value[] = [];
+      // Custom values come from the observed property catalog, which the
+      // collector fills asynchronously one spool/Kafka record per OTLP flush
+      // (fi-collector observedcatalog spool -> consumer). A, B and S are four
+      // separate exports, so "spans FINAL is complete" does not mean the catalog
+      // is, and one root's value can be indexed before another's. Readiness is
+      // therefore EVERY custom value this step later reads, not the first one.
+      const typed = (rows: Value[]) => sorted(rows.map(v => ({ value: v.value, type: v.type })));
+      const string = (...names: string[]) => sorted(names.map(value => ({ value, type: 'string' })));
+      const indexed = async () => ({
+        primaryRoute: typed(await values(primary, `custom_attribute:${routeKey}`, 'traces')),
+        primaryChild: typed(await values(primary, `custom_attribute:${childKey}`, 'traces')),
+        siblingRoute: typed(await values(sibling, `custom_attribute:${routeKey}`, 'traces')),
+      });
+      const complete = { primaryRoute: string('alpha', 'beta'), primaryChild: string(childValue),
+        siblingRoute: string(`${prefix}-sibling-only`) };
+      let ready = await indexed();
       const until = Date.now() + POLL.ASYNC_JOB.timeout;
-      do {
-        ready = await values(primary, `custom_attribute:${routeKey}`, 'traces');
-        if (ready.length) break;
+      while (!(ready.primaryRoute.length >= 2 && ready.primaryChild.length && ready.siblingRoute.length)) {
         expect(Date.now()).toBeLessThan(until);
         await new Promise(resolve => setTimeout(resolve, 500));
-      } while (true);
-      expect(sorted(ready.map(v => ({ value: v.value, type: v.type })))).toStrictEqual([
-        { value: 'alpha', type: 'string' }, { value: 'beta', type: 'string' }]);
+        ready = await indexed();
+      }
+      expect(ready).toStrictEqual(complete);
       for (const role of ['', 'metric', 'dimension']) {
         const rows = await catalog(primary, 'system_metric', role), voice = rows.filter(m => m.property_id.startsWith(VOICE_ID));
         const expected = [...(role !== 'metric' ? DIMENSIONS.map(name => ({ property_id: VOICE_ID + name, type: 'string', role: 'dimension' })) : []),
@@ -581,7 +594,37 @@ test('OBS-E2E-008: native and custom voice filters select only the current proje
       await page.getByRole('button', { name: 'Filter', exact: true }).click();
       await page.getByRole('button', { name: 'Property', exact: true }).first().click();
       const field = c.leaf.column_id, config = c.leaf.filter_config;
+      const propertyMark = captures.length;
       await page.getByPlaceholder('Search properties...').fill(field);
+      // Load-bearing sync: unifiedCatalogSearchLoading in
+      // frontend/src/sections/projects/LLMTracing/TraceFilterPanel.jsx:1968-1974,2074
+      // and isRemoteCatalogSearchPending in frontend/src/hooks/useDashboards.js:769
+      // cover debounce + background fetching. readCapture's cache path alone can
+      // precede a replacement request; closing the picker would then abort it.
+      // Wait for the SETTLED search, never for the transient indicator to be
+      // seen: the status is derived from `search !== debounced search`, so it
+      // is committed by the fill's input event itself, and on a cached search it
+      // can appear and vanish between two polls. Settled = no search/page
+      // loading and the searched option rendered (the same contract as UI 1b's
+      // completePropertySearch).
+      await expect(page.getByPlaceholder('Search properties...')).toHaveValue(field);
+      await expect(page.getByRole('status').filter({ hasText: 'Searching property catalog' })).toBeHidden({ timeout: UI_READY });
+      await expect(page.getByRole('status').filter({ hasText: 'Loading properties' })).toBeHidden({ timeout: UI_READY });
+      await expect(page.locator('[data-filter-property-page-sentinel]')).toHaveCount(0, { timeout: UI_READY });
+      // Same captured All-search wire as UI 1b's checkPropertySearch below;
+      // frontend/src/hooks/useDashboards.js:656-670 builds it from
+      // frontend/src/sections/projects/LLMTracing/TraceFilterPanel.jsx:1838-1844
+      // at dev a07b523ac (All category, search page size 20).
+      const propertyQuery = { cursor_mode: true, page_size: 20, source: 'voice_calls',
+        project_ids: currentProject.id, per_eval_config: true, search: field };
+      const cachedProperty = [...provenReads].find(x => x.document === document && x.path === METRICS
+        && isDeepStrictEqual(x.query, propertyQuery));
+      const property = await readCapture(propertyMark, METRICS,
+        x => x.query.category === undefined && (x.query.search ?? '') === field, cachedProperty);
+      expect([property.method, property.credential]).toStrictEqual(['POST', openScope.credential]);
+      expect(property.query).toStrictEqual(propertyQuery);
+      expect((property.body as MetricPage).result)
+        .toMatchObject({ query_complete: true, query_status: 'complete', has_more: false, next_cursor: null });
       await page.locator(`[data-filter-property-option=${JSON.stringify(field)}][data-filter-property-category="${config.col_type === 'SPAN_ATTRIBUTE' ? 'attribute' : 'system'}"]`).click();
       const mark = captures.length;
       const panel = page.locator('.MuiPopover-paper:visible').filter({ has: page.getByRole('tab', { name: 'Basic', exact: true }) });

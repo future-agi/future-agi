@@ -1,11 +1,12 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography, CircularProgress } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { fToNow } from "src/utils/format-time";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import EmptyState from "../../../../components/EmptyState";
+import { LoadingScreen } from "src/components/loading-screen";
 
 /**
  * Past self-improvement (optimization) runs for this execution — the Trials tab.
@@ -32,11 +33,7 @@ const STATUS_TONE = {
 
 export default function OptimizationRunsList({ runs = [], isLoading, onOpen }) {
   if (isLoading) {
-    return (
-      <Stack alignItems="center" sx={{ py: 8 }}>
-        <CircularProgress size={22} thickness={5} />
-      </Stack>
-    );
+    return <LoadingScreen compact />;
   }
 
   if (!runs.length) {
@@ -50,8 +47,19 @@ export default function OptimizationRunsList({ runs = [], isLoading, onOpen }) {
   }
 
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden" }}>
-      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        overflow: "hidden",
+      }}
+    >
+      <Stack
+        divider={
+          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+        }
+      >
         {runs.map((r) => {
           const st = STATUS_TONE[r.status];
           return (
@@ -61,21 +69,44 @@ export default function OptimizationRunsList({ runs = [], isLoading, onOpen }) {
               alignItems="center"
               spacing={2}
               onClick={() => onOpen?.(r)}
-              sx={{ px: 2, py: 0.5, minHeight: ROW_HEIGHT.twoLine, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}
+              sx={{
+                px: 2,
+                py: 0.5,
+                minHeight: ROW_HEIGHT.twoLine,
+                cursor: "pointer",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
             >
               <Box flex={1} minWidth={0}>
-                <Stack direction="row" alignItems="center" spacing={0.875} flexWrap="wrap" rowGap={0.5}>
-                  <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>{r.name}</Typography>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.875}
+                  flexWrap="wrap"
+                  rowGap={0.5}
+                >
+                  <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>
+                    {r.name}
+                  </Typography>
                   {st && (
-                    <StatusBadge status={r.status} label={st.label} role={st.role} />
+                    <StatusBadge
+                      status={r.status}
+                      label={st.label}
+                      role={st.role}
+                    />
                   )}
                 </Stack>
                 <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  {r.optimiserLabel} · {r.trials} trial{r.trials === 1 ? "" : "s"}
+                  {r.optimiserLabel} · {r.trials} trial
+                  {r.trials === 1 ? "" : "s"}
                   {r.startedAt ? ` · started ${fToNow(r.startedAt)}` : ""}
                 </Typography>
               </Box>
-              <Iconify icon="solar:alt-arrow-right-linear" width={15} sx={{ color: "text.disabled", flexShrink: 0 }} />
+              <Iconify
+                icon="solar:alt-arrow-right-linear"
+                width={15}
+                sx={{ color: "text.disabled", flexShrink: 0 }}
+              />
             </Stack>
           );
         })}

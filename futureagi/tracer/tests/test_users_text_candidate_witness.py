@@ -70,7 +70,12 @@ def builder(items, days=7):
         (["Alpha", "Beta"], "in"),
         (["123456"], "typed_in"),
     ],
-    ids=["digit-string", "long-text", "multi-value", "picker"],
+    ids=[
+        "digit-string",
+        "long-text",
+        "multi-value",
+        "picker",
+    ],
 )
 def test_plain_text_witness_prunes_groups_not_latest_activity(value, op):
     sql, params = builder([leaf(value, op)]).build_dimension_candidate_query(limit=65)
@@ -97,7 +102,7 @@ def test_plain_text_witness_prunes_groups_not_latest_activity(value, op):
         (None, "is_null"),
         ("value", "contains"),
         (["safe", "true"], "in"),
-        (["true"], "typed_in"),
+        (["\u0130"], "typed_in"),
     ],
 )
 def test_unproven_text_shapes_keep_existing_complete_path(value, op):
@@ -223,7 +228,8 @@ def execute(
         CONTEXT,
     )
     query = f"""WITH spans AS (
-        SELECT *, id AS trace_id, mapFromArrays(fixture_keys, fixture_values) AS attrs_string,
+        SELECT *, id AS trace_id, '' AS name, '' AS parent_span_id,
+            mapFromArrays(fixture_keys, fixture_values) AS attrs_string,
             CAST(map(), 'Map(String, Float64)') AS attrs_number,
             CAST(map(), 'Map(String, UInt8)') AS attrs_bool,
             toUInt64(1) AS total_tokens, toUInt64(1) AS prompt_tokens,

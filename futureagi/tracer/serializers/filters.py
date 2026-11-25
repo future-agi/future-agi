@@ -10,6 +10,7 @@ from tfc.utils.api_serializers import (
     StrictInputSerializer,
 )
 from tfc.utils.serializer_fields import JSON_VALUE_SCHEMA, JsonValueField  # noqa: F401
+from tracer.serializers.usage_coverage import CostCoverageSerializer
 from tracer.services.clickhouse.graph_metric_statistic import (
     METRIC_STATISTIC_CHOICES as OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
 )
@@ -28,6 +29,7 @@ from tracer.utils.filter_operators import (
     STRUCTURED_SPAN_ATTR_ALLOWED_OPS,
     filter_op_is_allowed,
     load_filter_contract,
+    normalize_col_type,
     normalize_filter_type,
     normalize_span_attribute_filter_type,
     split_comma_joined_uuid_members,
@@ -37,6 +39,9 @@ from tracer.utils.property_registry import (
     validate_property_filter_binding,
     validate_property_graph_binding,
 )
+
+# Serializer context key set only by validate_persisted_filter_list.
+PERSISTED_METRIC_FILTER_CONTEXT_KEY = "metric_filter_persistence"
 
 FILTER_CONFIG_SCHEMA = {
     "type": "object",
@@ -54,7 +59,7 @@ FILTER_CONFIG_SCHEMA = {
         },
         "col_type": {
             "type": "string",
-            "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+            "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
         },
         "attribute_value_types": {
             "type": "array",
@@ -76,7 +81,7 @@ FILTER_ITEM_SCHEMA = {
     "properties": {
         "column_id": {
             "type": "string",
-            "description": "Column or attribute id to filter on.",
+            "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
         },
         "property_id": {
             "type": "string",
@@ -616,6 +621,31 @@ class FilterItemField(serializers.JSONField):
                 f"Unknown filter config keys: {', '.join(extra_config_keys)}"
             )
 
+        # Metric identity and context are authoritative. Do not send a new
+        # family through the older property codec or trust chip metadata.
+        is_metric = normalize_col_type(config.get("col_type")) == "METRIC_FIELD"
+        has_metric_identity = any(
+            isinstance(value.get(key), str) and value[key].startswith("metric_field:")
+            for key in ("column_id", "property_id")
+        )
+        if is_metric or has_metric_identity:
+            from tracer.services.derived_metrics.predicates import (
+                MetricFilterError,
+                validate_metric_filter_structure,
+                validate_scoped_metric_filter,
+            )
+
+            config["col_type"] = normalize_col_type(config.get("col_type"))
+            config["filter_type"] = normalize_filter_type(config.get("filter_type"))
+            try:
+                # Stored filters opt in explicitly (validate_persisted_filter_list);
+                # their definition and scope are rechecked when a list reads them.
+                if self.context.get(PERSISTED_METRIC_FILTER_CONTEXT_KEY) is True:
+                    return validate_metric_filter_structure(value)
+                return validate_scoped_metric_filter(value, context=self.context)
+            except MetricFilterError as exc:
+                raise serializers.ValidationError(str(exc), code=exc.code) from exc
+
         property_id = value.get("property_id")
         if property_id is not None:
             if not isinstance(property_id, str) or not property_id.strip():
@@ -993,13 +1023,20 @@ class FilterListQueryParamField(serializers.CharField):
     class Meta:
         swagger_schema_fields = FILTER_LIST_QUERY_PARAM_SCHEMA
 
+    def _validate_list(self, field_class, data):
+        field = field_class()
+        # A detached Field has no serializer root. Preserve the authorized
+        # context instead of losing it at this query-string adapter boundary.
+        field._context = self.context
+        return field.run_validation(data)
+
     def to_internal_value(self, data):
-        return FilterListField().run_validation(data)
+        return self._validate_list(FilterListField, data)
 
 
 class SessionFilterListQueryParamField(FilterListQueryParamField):
     def to_internal_value(self, data):
-        return SessionFilterListField().run_validation(data)
+        return self._validate_list(SessionFilterListField, data)
 
 
 class BoundedFilterListQueryParamField(FilterListQueryParamField):
@@ -1009,15 +1046,17 @@ class BoundedFilterListQueryParamField(FilterListQueryParamField):
         swagger_schema_fields = BOUNDED_FILTER_LIST_QUERY_PARAM_SCHEMA
 
     def to_internal_value(self, data):
-        return BoundedFilterListField().run_validation(data)
+        return self._validate_list(BoundedFilterListField, data)
 
 
 class SessionBoundedFilterListQueryParamField(BoundedFilterListQueryParamField):
     def to_internal_value(self, data):
-        return SessionBoundedFilterListField().run_validation(data)
+        return self._validate_list(SessionBoundedFilterListField, data)
 
 
 class JsonObjectQueryParamField(serializers.Field):
+    swagger_empty_input_default = "{}"
+
     class Meta:
         swagger_schema_fields = JSON_OBJECT_QUERY_PARAM_SCHEMA
 
@@ -1194,6 +1233,7 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
     timestamp = serializers.CharField()
     value = serializers.FloatField(allow_null=True)
     primary_traffic = serializers.FloatField(required=False, allow_null=True)
+    cost_coverage = CostCoverageSerializer(required=False)
 
 
 class ObserveGraphDataResultSerializer(serializers.Serializer):
@@ -1431,15 +1471,34 @@ class EvalTaskFiltersField(serializers.JSONField):
 
         for filter_list_key in ("filters", "span_attributes_filters"):
             if filter_list_key in value:
-                value[filter_list_key] = BoundedFilterListField().run_validation(
-                    value[filter_list_key]
-                )
+                field = BoundedFilterListField()
+                task_context = self.context.get("metric_filter_context", "task")
+                if not str(task_context).startswith("task"):
+                    task_context = "task"
+                field._context = {  # type: ignore[attr-defined]  # Field.context reads root._context
+                    **self.context,
+                    "project_id": self.context.get("project_id"),
+                    "metric_filter_context": task_context,
+                }
+                value[filter_list_key] = field.run_validation(value[filter_list_key])
 
         return value
 
 
 def filter_list_field(**kwargs):
     return FilterListField(**kwargs)
+
+
+def validate_persisted_filter_list(value):
+    """Validate a filter list for storage (saved views), outside any list request.
+
+    Metric fields are checked for identity, family, operator and value shape
+    only; the list that later reads the stored filter resolves the active
+    definition and authorized scope again. List requests must not use this.
+    """
+    field = FilterListField()
+    field._context = {PERSISTED_METRIC_FILTER_CONTEXT_KEY: True}  # type: ignore[attr-defined]  # Field.context reads root._context
+    return field.run_validation(value)
 
 
 def filter_list_query_param_field(**kwargs):

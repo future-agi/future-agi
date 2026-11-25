@@ -44,7 +44,7 @@ const SlideNumber = ({
           alignItems: "center",
         }}
       >
-        <Typography variant="body1" sx={{ fontWeight: "medium", fontSize: 13 }}>
+        <Typography variant="body1" sx={{ fontWeight: "medium", fontSize: 12 }}>
           {label ? label + ": " : ""}
         </Typography>
       </Box>
@@ -87,7 +87,7 @@ const SlideNumber = ({
             border: "1px solid var(--border-default)",
             padding: "5px 20px",
             borderRadius: "6px",
-            fontSize: 13,
+            fontSize: 12,
           }}
         >
           {sliderValue.toFixed(decimalPlaces)}

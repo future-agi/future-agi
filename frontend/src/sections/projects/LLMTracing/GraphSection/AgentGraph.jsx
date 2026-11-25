@@ -1,4 +1,5 @@
 /* eslint-disable no-restricted-syntax -- ds: data colours (span-type encodings) */
+import { isIncompleteCost, monetaryCostLabel } from "./common";
 /**
  * AgentGraph — Aggregate agent DAG visualization
  *
@@ -246,7 +247,7 @@ const AgentNode = ({ data }) => {
       </Box>
 
       {/* Cost */}
-      {(data.total_cost > 0 || data.avg_cost > 0) && (
+      {(data.cost_coverage || data.total_cost > 0 || data.avg_cost > 0) && (
         <Box sx={{ px: 1.25, pt: 0.25 }}>
           <Typography
             sx={{
@@ -258,7 +259,10 @@ const AgentNode = ({ data }) => {
             Estimated LLM cost
           </Typography>
           <Typography sx={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
-            ${(data.total_cost || data.avg_cost || 0).toFixed(4)}
+            {monetaryCostLabel(
+              (data.total_cost || data.avg_cost || 0).toFixed(4),
+              data.cost_coverage,
+            )}
           </Typography>
         </Box>
       )}
@@ -843,8 +847,10 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
         strokeWidth: Math.round(thickness * 10) / 10,
       },
       // Show transition count on edges with > 1 transition
-      ...(count > 1 && {
-        label: `×${count}`,
+      ...((count > 1 || isIncompleteCost(edge.cost_coverage)) && {
+        label: isIncompleteCost(edge.cost_coverage)
+          ? `×${count} · ${monetaryCostLabel(null, edge.cost_coverage)}`
+          : `×${count}`,
         labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
         labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
         labelBgPadding: [3, 2],
@@ -976,7 +982,7 @@ const AgentGraphInner = ({
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ fontSize: 13 }}
+          sx={{ fontSize: 12 }}
         >
           {GRAPH_LOADING_MESSAGE}
         </Typography>
@@ -995,7 +1001,7 @@ const AgentGraphInner = ({
           color: "text.disabled",
         }}
       >
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ fontSize: 12 }}>
           We couldn&apos;t load the agent graph. Please retry in a moment.
         </Typography>
       </Box>
@@ -1013,7 +1019,7 @@ const AgentGraphInner = ({
           color: "text.disabled",
         }}
       >
-        <Typography role="status" variant="body2" sx={{ fontSize: 13 }}>
+        <Typography role="status" variant="body2" sx={{ fontSize: 12 }}>
           {AGGREGATION_POLLING_PAUSED_MESSAGE}
         </Typography>
       </Box>
@@ -1031,7 +1037,7 @@ const AgentGraphInner = ({
           color: "text.disabled",
         }}
       >
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ fontSize: 12 }}>
           No agent graph data available
         </Typography>
       </Box>

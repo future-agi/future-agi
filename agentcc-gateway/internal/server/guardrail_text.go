@@ -31,13 +31,40 @@ func guardrailRequest(dialect string, body []byte) *models.ChatCompletionRequest
 // responsesGuardrailRequest is the text of a Responses request: its
 // instructions, then each input item, a plain string input included.
 func responsesGuardrailRequest(req *models.ResponsesRequest) *models.ChatCompletionRequest {
+	return responsesTextView(req, false)
+}
+
+func selectedResponsesGuardrailRequest(req *models.ResponsesRequest) *models.ChatCompletionRequest {
+	return responsesTextView(req, true)
+}
+
+func responsesTextView(req *models.ResponsesRequest, selected bool) *models.ChatCompletionRequest {
 	out := &models.ChatCompletionRequest{Model: req.Model}
+	if selected {
+		out.User, out.Stream = req.User, req.Stream
+		out.Temperature, out.TopP = req.Temperature, req.TopP
+		// Keep evaluator context and empty messages only in the selected view.
+		// Legacy org/static checks retain the dev projection, not this envelope.
+		out.Extra = make(map[string]json.RawMessage)
+		if len(req.Metadata) > 0 {
+			out.Extra["metadata"] = req.Metadata
+		}
+		if req.MaxOutputTokens != nil {
+			out.Extra["max_output_tokens"], _ = json.Marshal(req.MaxOutputTokens)
+		}
+		if req.Store != nil {
+			out.Extra["store"], _ = json.Marshal(req.Store)
+		}
+		if req.PreviousResponseID != "" {
+			out.Extra["previous_response_id"], _ = json.Marshal(req.PreviousResponseID)
+		}
+	}
 	if req.Instructions != "" {
 		out.Messages = append(out.Messages, textMessage("system", req.Instructions))
 	}
 	var input string
 	if json.Unmarshal(req.Input, &input) == nil {
-		if input != "" {
+		if input != "" || selected {
 			out.Messages = append(out.Messages, textMessage("user", input))
 		}
 		return out
@@ -63,11 +90,48 @@ func responsesGuardrailRequest(req *models.ResponsesRequest) *models.ChatComplet
 		if role == "" {
 			role = "user"
 		}
-		if text != "" {
+		if text != "" || (selected && (item.Type == "" || item.Type == "message")) {
 			out.Messages = append(out.Messages, textMessage(role, text))
 		}
 	}
 	return out
+}
+
+// textInputMessages projects only actual text, never token IDs as imaginary
+// words. Empty strings are inspectable text; empty arrays, null, numeric token
+// vectors/batches and malformed forms have no text projection. Their existing
+// provider validation/forwarding is unchanged unless a selected policy requires
+// blocking input inspection.
+func textInputMessages(raw json.RawMessage) ([]models.Message, bool) {
+	trimmed := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(trimmed, `"`) {
+		var text string
+		if json.Unmarshal(raw, &text) == nil {
+			return []models.Message{textMessage("user", text)}, true
+		}
+	}
+	var parts []json.RawMessage
+	if json.Unmarshal(raw, &parts) != nil || len(parts) == 0 {
+		return nil, false
+	}
+	messages := make([]models.Message, 0, len(parts))
+	for _, part := range parts {
+		var text string
+		if !strings.HasPrefix(strings.TrimSpace(string(part)), `"`) || json.Unmarshal(part, &text) != nil {
+			return nil, false
+		}
+		messages = append(messages, textMessage("user", text))
+	}
+	return messages, true
+}
+
+func embeddingGuardrailRequest(req *models.EmbeddingRequest) (*models.ChatCompletionRequest, bool) {
+	messages, inspectable := textInputMessages(req.Input)
+	return &models.ChatCompletionRequest{Model: req.Model, User: req.User, Messages: messages}, inspectable
+}
+
+func speechGuardrailRequest(req *models.SpeechRequest) *models.ChatCompletionRequest {
+	return &models.ChatCompletionRequest{Model: req.Model, Messages: []models.Message{textMessage("user", req.Input)}}
 }
 
 // contentText is the text of a content value: a string, or parts that carry

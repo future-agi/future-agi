@@ -112,7 +112,7 @@ const ChooseProjectExperimentWinnerDrawerChild = ({
       <Typography
         sx={{
           fontWeight: 400,
-          fontSize: "13px",
+          fontSize: "12px",
           color: "text.disabled",
           padding: theme.spacing(0, 2, 0),
         }}

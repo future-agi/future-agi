@@ -67,7 +67,8 @@ def test_exact_candidate_population_window_order_and_scope(workspace, days):
     assert "ORDER BY last_active DESC NULLS LAST, end_user_id DESC" in sql
     assert "end_user_id < toUUID(%(before_end_user_id)s)" in sql
     assert "last_active IS NULL OR last_active <" in sql
-    assert "max(latest_end_time) AS last_active" in cte(sql, "exact_usage")
+    assert "max(latest_end_time) AS last_active" in cte(sql, "user_trace_usage")
+    assert "max(last_active) AS last_active" in cte(sql, "exact_usage")
     assert "GROUP BY end_user_id" in cte(sql, "filtered_end_users")
     assert "positionCaseInsensitive(user_id" in cte(sql, "searched_end_users")
     assert "organization_id = toUUID(%(org_id)s)" in sql
@@ -183,7 +184,8 @@ def test_scalar_witness_narrows_groups_not_activity_or_replacement(workspace):
     assert "ifNull(aliases.present, 0) = 1" in aliases
     usage = cte(sql, "exact_usage")
     assert "attrs_number" not in usage
-    assert "max(latest_end_time) AS last_active" in usage
+    assert "max(latest_end_time) AS last_active" in cte(sql, "user_trace_usage")
+    assert "max(last_active) AS last_active" in usage
     assert_window_replay(sql, params)
 
 
@@ -872,7 +874,9 @@ def test_cursor_keyset_does_not_discard_native_output_predicate():
     )
     sql, _ = b.build_candidate_page_query(cursor_mode=True, cursor_before=(START, USER))
     page = cte(sql, "candidate_users")
-    assert "total_cost" in page and "AND (last_active IS NULL OR last_active <" in page
+    assert "isNotNull(complete_cost)" in page
+    assert "complete_cost > %(user_filter_0)s" in page
+    assert "AND (last_active IS NULL OR last_active <" in page
 
 
 def test_gap_text_witness_preserves_microsecond_window():

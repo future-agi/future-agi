@@ -72,6 +72,13 @@ EVALUATOR_CALLS = [
     APICallTypeChoices.PROTECT_FLASH_EVALUATOR.value,
 ]
 
+# Evaluators that run on the org's own provider key. The provider enforces its
+# own limits on that key, so these get no per-call rate limit on any plan; free
+# plans are still capped by credits (ee.usage.services.metering.check_usage).
+BYOK_EVALUATOR_CALLS = [
+    APICallTypeChoices.JEV_EVALUATOR.value,
+]
+
 subscription_tier_entries = [
     {
         "name": SubscriptionTierChoices.FREE.value,
@@ -210,6 +217,10 @@ api_call_type_entries = [
     {
         "name": APICallTypeChoices.TURING_LARGE_EVALUATOR.value,
         "description": "This is the API for turing large evaluator",
+    },
+    {
+        "name": APICallTypeChoices.JEV_EVALUATOR.value,
+        "description": "This is the API for Jev evaluators on the org's own TypeSafe key",
     },
     {
         "name": APICallTypeChoices.TURING_SMALL_EVALUATOR.value,
@@ -1076,8 +1087,9 @@ def create_organization_subscription_if_not_exists(organization):
 
 
 def check_if_api_call_is_rate_limited(organization, api_call_type, source=None):
-    if source == FIX_CHECK_RUN_EVAL_SOURCE:
+    if api_call_type in BYOK_EVALUATOR_CALLS or source == FIX_CHECK_RUN_EVAL_SOURCE:
         return False, {}
+
     # get the subscription tier of the organization
     try:
         create_organization_subscription_if_not_exists(organization)
@@ -1240,24 +1252,24 @@ def check_if_api_call_is_rate_limited(organization, api_call_type, source=None):
         # check if the number of api calls made in the last minute, hour, day,
         # month is greater than the limit
 
-        if api_calls_made_in_last_minute >= minute_limit:
+        if minute_limit is not None and api_calls_made_in_last_minute >= minute_limit:
             config["time"] = "minutely"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "minute"
             return True, config
-        if api_calls_made_in_last_hour >= hour_limit:
+        if hour_limit is not None and api_calls_made_in_last_hour >= hour_limit:
             config["time"] = "hourly"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "hour"
             config["limit"] = hour_limit
             return True, config
-        if api_calls_made_in_last_day >= day_limit:
+        if day_limit is not None and api_calls_made_in_last_day >= day_limit:
             config["time"] = "daily"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "day"
             config["limit"] = day_limit
             return True, config
-        if api_calls_made_in_last_month >= month_limit:
+        if month_limit is not None and api_calls_made_in_last_month >= month_limit:
             config["time"] = "monthly"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "month"
@@ -1392,6 +1404,8 @@ def log_and_deduct_cost_for_api_request(
     source_id=None,
     workspace=None,
 ):
+    from tfc.utils.evaluation_denials import EvaluationDenied
+
     if config is None:
         config = {}
 
@@ -1478,6 +1492,8 @@ def log_and_deduct_cost_for_api_request(
             source_id,
             workspace,
         )
+    except EvaluationDenied:
+        raise
     except Exception as e:
         traceback.print_exc()
         logger.exception(f"Error logging and deducting cost for api call: {str(e)}")

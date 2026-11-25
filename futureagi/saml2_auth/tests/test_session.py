@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.core.management import call_command
 from django.utils import timezone
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from rest_framework.test import APIClient
 
 from accounts.authentication import generate_encrypted_message
@@ -14,13 +16,26 @@ from accounts.models.webauthn_credential import WebAuthnCredential
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 
+@pytest.fixture(params=[False, True], ids=["healthy-cache", "token-cache-outage"])
+def token_cache_outage(request):
+    if not request.param:
+        yield
+        return
+    with patch("accounts.authentication.cache") as cache:
+        cache.get.side_effect = RedisTimeoutError("transport unavailable")
+        yield
+        cache.set.assert_not_called()
+
+
 def _bearer_client(token: str) -> APIClient:
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
     return client
 
 
-def test_saml_token_explicit_b_selector_denied(idp_a, make_saml_token, saml_tenants):
+def test_saml_token_explicit_b_selector_denied(
+    idp_a, make_saml_token, saml_tenants, token_cache_outage
+):
     """A token issued for A cannot choose B through request selectors."""
 
     _row, token = make_saml_token(saml_tenants.ab, saml_tenants.org_a, idp_a)
@@ -68,7 +83,9 @@ def test_saml_session_cannot_mint_user_api_key(idp_a, make_saml_token, saml_tena
     assert "saml_scoped_session" in response.content.decode()
 
 
-def test_revocation_after_issuance(idp_a, make_saml_token, saml_tenants):
+def test_revocation_after_issuance(
+    idp_a, make_saml_token, saml_tenants, token_cache_outage
+):
     """Warm cache state must not revive an inactive SAML credential."""
 
     row, token = make_saml_token(saml_tenants.a1, saml_tenants.org_a, idp_a)

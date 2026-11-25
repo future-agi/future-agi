@@ -105,7 +105,7 @@ export default function ViewDetailsModal({
           </Typography>
           <Box>
             {evalDetail?.status === "error" ? (
-              <Box sx={{ color: theme.palette.error.main, fontSize: "13px" }}>
+              <Box sx={{ color: theme.palette.error.main, fontSize: "12px" }}>
                 Error
               </Box>
             ) : (

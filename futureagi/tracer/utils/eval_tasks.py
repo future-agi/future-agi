@@ -332,6 +332,7 @@ def _bridge_retired_dispatcher(eval_task: EvalTask) -> bool:
         return True
 
     from temporalio.exceptions import WorkflowAlreadyStartedError
+
     from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
 
     try:
@@ -741,7 +742,7 @@ def process_eval_task(eval_task_id: str):
     except Exception as e:
         logger.exception(f"{e}")
         eval_task.status = EvalTaskStatus.FAILED
-        eval_task.save()
+        eval_task.save(update_fields=["status", "updated_at"])
 
 
 @temporal_activity(max_retries=0, time_limit=3600, queue="tasks_s")

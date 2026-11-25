@@ -17,6 +17,7 @@ import {
   usageDefaultColDef,
 } from "./common";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { ShowComponent } from "src/components/show";
 import axiosInstance, { endpoints } from "../../../utils/axios";

@@ -8,11 +8,14 @@ import { useFixScenarioRows } from "src/api/simulate-environments/fixRuns";
 
 import {
   checksLine,
+  describeChecks,
   headline,
   pct,
+  provenOnTargetsOnly,
   verdictCards,
   winnerOf,
 } from "./fixRunView";
+import CheckLine from "./CheckLine";
 import { heldBackTally } from "./scenarioOutcomes";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
@@ -53,14 +56,6 @@ function Card({ card }) {
 }
 Card.propTypes = { card: PropTypes.object.isRequired };
 
-const tierIcon = (status) =>
-  ({
-    passed: "solar:check-circle-linear",
-    failed: "solar:close-circle-bold",
-    pending: "solar:clock-circle-linear",
-    skipped: "solar:minus-circle-linear",
-  })[status] || "solar:question-circle-linear";
-
 function Checks({ tiers }) {
   const [all, setAll] = useState(false);
   const failed = tiers.filter((t) => t.status === "failed");
@@ -99,7 +94,7 @@ function Checks({ tiers }) {
             minWidth: 0,
           }}
         >
-          {failed.map((t) => t.name).join(" · ")}
+          {failed.map((t) => t.label || t.name).join(" · ")}
         </Typography>
         <Button
           size="small"
@@ -132,32 +127,20 @@ function Checks({ tiers }) {
           }}
         >
           {tiers.map((t) => (
-            <Stack
-              key={t.name}
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              sx={{ minWidth: 0 }}
-            >
-              <Iconify
-                icon={tierIcon(t.status)}
-                width={14}
-                sx={{
-                  color:
-                    t.status === "failed" ? BUILD_TONES.red : "text.secondary",
-                  flexShrink: 0,
-                }}
-              />
-              <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
-                {t.name}
-              </Typography>
-              <Typography
-                noWrap
-                sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
-              >
-                {t.detail}
-              </Typography>
-            </Stack>
+            <Box key={t.name} sx={{ minWidth: 0 }}>
+              <CheckLine check={t} variant="s2" noWrap />
+              {/* A tier that holds several checks, such as each ceiling,
+                  shows what each one verified. */}
+              {(t.parts || []).map((part) => (
+                <CheckLine
+                  key={part.name}
+                  check={part}
+                  variant="s2"
+                  noWrap
+                  sx={{ pl: 2.75 }}
+                />
+              ))}
+            </Box>
           ))}
         </Box>
       )}
@@ -243,6 +226,10 @@ function EvalWarnings({ warnings }) {
 }
 EvalWarnings.propTypes = { warnings: PropTypes.array.isRequired };
 
+// The held-back cases a fix needs to be called verified. The read does not
+// carry it: mirrors HELD_BACK_VERIFIED_MIN in simulate/pydantic_schemas/agent_fix.py.
+const HELD_BACK_VERIFIED_MIN = 4;
+
 // How many held-back scenarios the winner fixed, scenario by scenario as on
 // the Per scenario tab, for a fix held back on too few cases to call it proven.
 function HeldBackTally({ fix, winner }) {
@@ -261,9 +248,15 @@ function HeldBackTally({ fix, winner }) {
   const scenarios = failing === 1 ? "scenario" : "scenarios";
   return (
     <Typography
-      sx={{ px: 2, mt: -0.75, pb: 1, typography: "s2", color: "text.secondary" }}
+      sx={{
+        px: 2,
+        mt: -0.75,
+        pb: 1,
+        typography: "s2",
+        color: "text.secondary",
+      }}
     >
-      {`Too few to tell · Fixed ${fixed} of ${failing} failing ${scenarios} it never saw`}
+      {`Too few to tell · Fixed ${fixed} of ${failing} failing ${scenarios} it never saw — it takes ${HELD_BACK_VERIFIED_MIN} or more to tell.`}
     </Typography>
   );
 }
@@ -281,8 +274,7 @@ export default function FixVerdict({ fix }) {
   const cards = verdictCards(fix);
   // Too few held back to call it verified, whatever the verdict says.
   const limited = !!fix.limited_validation;
-  const provenOnTargets = !limited && !winner.verdict.held_back_pass_rate;
-  const heldBack = (fix.request?.held_back_scenario_keys || []).length > 0;
+  const provenOnTargets = provenOnTargetsOnly(fix);
   return (
     <Box
       sx={{
@@ -294,7 +286,12 @@ export default function FixVerdict({ fix }) {
         overflow: "hidden",
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 2, py: 1 }}
+      >
         {limited && (
           <Box
             component="span"
@@ -312,11 +309,13 @@ export default function FixVerdict({ fix }) {
             Limited validation
           </Box>
         )}
-        <Typography sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.45 }}>
+        <Typography
+          sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.45 }}
+        >
           {text}
         </Typography>
       </Stack>
-      {limited && heldBack && <HeldBackTally fix={fix} winner={winner} />}
+      {limited && <HeldBackTally fix={fix} winner={winner} />}
       {provenOnTargets && (
         <Typography
           sx={{
@@ -353,7 +352,14 @@ export default function FixVerdict({ fix }) {
         ))}
       </Box>
       {winner.verdict.tiers?.length > 0 && (
-        <Checks tiers={winner.verdict.tiers} />
+        <Checks
+          tiers={describeChecks(
+            winner.verdict.tiers,
+            fix.request,
+            winner.verdict,
+            fix.plan,
+          )}
+        />
       )}
       <MustPassBreaks verdict={winner.verdict} />
       {fix.eval_warnings?.length > 0 && (

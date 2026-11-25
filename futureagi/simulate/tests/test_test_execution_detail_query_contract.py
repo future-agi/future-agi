@@ -35,9 +35,7 @@ def test_test_execution_detail_query_accepts_canonical_filters():
 
 
 def test_test_execution_detail_query_rejects_bad_filter_json():
-    serializer = ExecutionDetailQuerySerializer(
-        data={"filters": "[not-valid-json"}
-    )
+    serializer = ExecutionDetailQuerySerializer(data={"filters": "[not-valid-json"})
 
     assert not serializer.is_valid()
     assert "filters" in serializer.errors

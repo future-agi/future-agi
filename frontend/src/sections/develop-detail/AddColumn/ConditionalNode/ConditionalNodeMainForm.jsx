@@ -91,7 +91,7 @@ const ConditionalNodeBranch = ({ index, setOpenForm, handleDeleteBranch }) => {
         }}
       >
         {index === 0 ? (
-          <Typography fontSize="13px" fontWeight={600}>
+          <Typography fontSize="12px" fontWeight={600}>
             If
           </Typography>
         ) : (

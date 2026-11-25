@@ -11,6 +11,8 @@ import { LoadingScreen } from "src/components/loading-screen";
 import EmptyContent from "src/components/empty-content";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
 import HarnessToEnvironment from "../components/harness-to-environment";
+import LegacyMetricsRedirect from "../components/legacy_metrics_redirect";
+import MetricsGate from "src/sections/derived-metrics/MetricsGate";
 import RoleProtection from "../components/role-protection";
 import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
@@ -96,6 +98,9 @@ const UserManagementV2 = lazyWithRetry(
 );
 const BillingPageV2 = lazyWithRetry(
   () => import("src/sections/settings/BillingV2/BillingPage"),
+);
+const HostUpdatesPage = lazyWithRetry(
+  () => import("src/sections/settings/Updates/HostUpdatesPage"),
 );
 const LicensePage = lazyWithRetry(
   () => import("src/sections/settings/License/LicensePage"),
@@ -223,6 +228,9 @@ const IndividualExperimentSummary = lazyWithRetry(
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
 );
+const SQLQueryView = lazyWithRetry(
+  () => import("src/sections/projects/SQLQuery/SQLQueryView"),
+);
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
 );
@@ -237,6 +245,12 @@ const VoiceFullPage = lazyWithRetry(
 // );
 const SessionsView = lazyWithRetry(
   () => import("src/sections/projects/SessionsView/Sessions-view"),
+);
+const InsightsView = lazyWithRetry(
+  () => import("src/sections/projects/Insights/InsightsView"),
+);
+const AskPage = lazyWithRetry(
+  () => import("src/sections/projects/LLMTracing/InstantEval/page/AskPage"),
 );
 const LLMTracingView = lazyWithRetry(
   () => import("src/sections/projects/LLMTracing/LLMTracingView"),
@@ -442,6 +456,16 @@ const AnnotateWorkspacePage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/annotate-workspace"),
 );
 
+const MetricsListPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricsListPage"),
+);
+const MetricDetailPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricDetailPage"),
+);
+const MetricBuilderPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricBuilderPage"),
+);
+
 const DashboardsListView = lazyWithRetry(
   () => import("src/sections/dashboards/DashboardsListView"),
 );
@@ -474,6 +498,9 @@ const AgentsIndexRedirect = lazyWithRetry(
 );
 const ConnectedAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/ConnectedAgentsTab"),
+);
+const ConnectAgentPage = lazyWithRetry(
+  () => import("src/sections/agent-playground/connect/ConnectAgentPage"),
 );
 const PlaygroundAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/PlaygroundAgentsTab"),
@@ -590,6 +617,9 @@ export const dashboardRoutes = (
       ),
     },
 
+    // The page owns the strict organization/deployment gate, including direct
+    // navigation; workspace-inclusive RoleProtection is not sufficient here.
+    { path: "updates", element: <HostUpdatesPage /> },
     {
       path: "org-settings",
       element: (
@@ -730,8 +760,13 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
+    // Old address of Connectors (was "Falcon AI Connectors"); keeps saved links working.
     {
       path: "falcon-ai-connectors",
+      element: <Navigate to="/dashboard/settings/connectors" replace />,
+    },
+    {
+      path: "connectors",
       element: (
         <RoleProtection
           allowedRoles={[
@@ -1160,14 +1195,16 @@ export const dashboardRoutes = (
         //   element: <LogsView />,
         // },
         {
+          path: "query",
+          element: <SQLQueryView />,
+        },
+        {
           path: "llm-tracing",
           element: <LLMTracingView />,
         },
         {
           path: "voice",
-          element: (
-            <EmptyContent title="Voice observability coming soon" />
-          ),
+          element: <EmptyContent title="Voice observability coming soon" />,
         },
         {
           path: "sessions",
@@ -1176,6 +1213,25 @@ export const dashboardRoutes = (
         {
           path: "users",
           element: <UsersView />,
+        },
+        // Insights and Instant eval are Enterprise: without the capability
+        // (e.g. open source) the route shows the upgrade gate, as Error Feed.
+        {
+          path: "insights",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSIGHTS}>
+              <InsightsView />
+            </CapabilityGate>
+          ),
+        },
+        // Instant eval: a question answered for every row of a view.
+        {
+          path: "ask",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSTANT_EVAL}>
+              <AskPage />
+            </CapabilityGate>
+          ),
         },
       ],
     },
@@ -1314,6 +1370,7 @@ export const dashboardRoutes = (
             { path: "playground", element: <PlaygroundAgentsTab /> },
           ],
         },
+        { path: "connect", element: <ConnectAgentPage /> },
         {
           path: "connected/:agentId",
           element: <AgentDetailLayout />,
@@ -1666,6 +1723,28 @@ export const dashboardRoutes = (
           ],
         },
       ],
+    },
+    {
+      path: "metrics",
+      element: (
+        <MetricsGate>
+          <Outlet />
+        </MetricsGate>
+      ),
+      children: [
+        { index: true, element: <MetricsListPage /> },
+        { path: "new", element: <MetricBuilderPage /> },
+        { path: ":metricId", element: <MetricDetailPage /> },
+        { path: ":metricId/edit", element: <MetricBuilderPage /> },
+      ],
+    },
+    {
+      path: "derived-metrics/*",
+      element: (
+        <MetricsGate>
+          <LegacyMetricsRedirect />
+        </MetricsGate>
+      ),
     },
     {
       path: "dashboards",

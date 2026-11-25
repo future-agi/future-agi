@@ -1,6 +1,7 @@
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";

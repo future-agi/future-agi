@@ -58,9 +58,7 @@ def _ch_stub():
     db = MagicMock()
     db.client.execute.return_value = []
     db.execute_read.return_value = []
-    with patch(
-        "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
-    ):
+    with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db):
         yield
 
 
@@ -68,7 +66,11 @@ def _issue(project, brief="Queried the wrong period"):
     """A real TraceScanIssue row plus the clustering view of it. Assignment
     writes to both, so a fabricated id would make the test pass without
     exercising the membership writes that sit beside the status field."""
-    from tracer.models.trace_scan import TraceScanIssue, TraceScanResult, TraceScanStatus
+    from tracer.models.trace_scan import (
+        TraceScanIssue,
+        TraceScanResult,
+        TraceScanStatus,
+    )
     from tracer.types.scan_types import ClusterableIssue
 
     trace_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -100,9 +102,7 @@ def _issue(project, brief="Queried the wrong period"):
 
 def _graded(severity):
     """Pin the cheap-LLM grade so only the volume floor is under test."""
-    return patch(
-        "tracer.queries.scan_clustering._seed_severity", return_value=severity
-    )
+    return patch("tracer.queries.scan_clustering._seed_severity", return_value=severity)
 
 
 @pytest.mark.django_db
@@ -242,9 +242,11 @@ class TestStatusIsEscalatingAndOtherwiseHuman:
         with the downgrade restored."""
         from tracer.queries.scan_clustering import create_cluster
 
-        with _ch_stub(), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             _graded("medium"):
+        with (
+            _ch_stub(),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            _graded("medium"),
+        ):
             cluster_id = create_cluster(str(project.id), _issue(project), _EMBEDDING)
 
         created = TraceErrorGroup.objects.get(
@@ -272,11 +274,8 @@ class TestStatusIsEscalatingAndOtherwiseHuman:
         cluster = _cluster(project, traces=50, status=human)
         issue = _issue(project)
 
-        with _ch_stub(), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"):
-            assign_to_cluster(
-                cluster.cluster_id, str(project.id), issue, _EMBEDDING
-            )
+        with _ch_stub(), patch("tracer.queries.scan_clustering.ensure_centroid_table"):
+            assign_to_cluster(cluster.cluster_id, str(project.id), issue, _EMBEDDING)
 
         cluster.refresh_from_db()
         assert cluster.status == human, (

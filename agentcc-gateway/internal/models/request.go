@@ -9,6 +9,18 @@ import (
 
 // ChatCompletionRequest represents an OpenAI-compatible chat completion request.
 type ChatCompletionRequest struct {
+	// TranslatedFrom names the dialect a gateway route translated this
+	// request from ("anthropic" for /v1/messages, "google" for the GenAI
+	// routes); empty for a caller's own chat request. It is never sent.
+	TranslatedFrom string `json:"-"`
+	// CallerModel is the model the caller chose (after the caller's own
+	// aliases and model map), recorded before the gateway may send the
+	// request under another one: complexity routing, a routing target's or
+	// conditional route's model_override, a model fallback, a failover
+	// target, the traffic mirror. Empty when nothing recorded it. It is
+	// never sent.
+	CallerModel string `json:"-"`
+
 	Model               string          `json:"model"`
 	Messages            []Message       `json:"messages"`
 	Temperature         *float64        `json:"temperature,omitempty"`

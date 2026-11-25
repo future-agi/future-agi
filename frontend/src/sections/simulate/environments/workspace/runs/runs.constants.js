@@ -50,6 +50,8 @@ export const PULSING_DOT_CLASS = "sim-status-dot--pulse";
 export const STATUS_META = {
   in_progress: { role: "info", label: "In progress" },
   inconclusive: { role: "neutral", label: "Inconclusive" },
+  no_score: { role: "neutral", label: "No score" },
+  not_applicable: { role: "neutral", label: "Not applicable" },
   queued: { role: "neutral", label: "Queued" },
   booting: { role: "info", label: "Provisioning" },
   running: { role: "info", label: "Running" },

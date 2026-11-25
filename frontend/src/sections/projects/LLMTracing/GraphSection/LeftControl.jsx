@@ -581,7 +581,7 @@ const LeftControl = ({
               width: "100%",
               px: 2,
               py: 1,
-              fontSize: 13,
+              fontSize: 12,
               cursor: "default",
             }}
           >

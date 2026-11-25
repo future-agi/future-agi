@@ -49,6 +49,9 @@ export const SHARED_ISSUE = {
       external_issue_id: null,
     },
     description: "Agent promises refunds outside the 30 day policy window",
+    // An eval issue has no grouping state, so nothing beyond its description is stored.
+    fix_hypothesis: null,
+    falsifier: null,
     success_trace: null,
     representative_trace: {
       trace_id: "b0e32f3d-8033-c8b4-e1dc-dc8533a3237d",

@@ -19,7 +19,9 @@ MIGRATION = importlib.import_module("simulate.migrations.0098_agent_version_setu
 def test_migration_only_creates_the_four_tables():
     operations = MIGRATION.Migration.operations
 
-    assert all(isinstance(operation, migrations.CreateModel) for operation in operations)
+    assert all(
+        isinstance(operation, migrations.CreateModel) for operation in operations
+    )
     assert sorted(operation.name for operation in operations) == [
         "AgentBehaviourUnit",
         "AgentTelephony",
@@ -34,7 +36,9 @@ def test_migration_only_creates_the_four_tables():
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
 
-@pytest.mark.parametrize("script", ["setup_pg_replication.sql", "setup_peerdb_mirrors.sql"])
+@pytest.mark.parametrize(
+    "script", ["setup_pg_replication.sql", "setup_peerdb_mirrors.sql"]
+)
 def test_setup_tables_are_in_no_mirror_list(script):
     tables = [
         model._meta.db_table
@@ -44,5 +48,9 @@ def test_setup_tables_are_in_no_mirror_list(script):
 
     assert [table for table in tables if re.search(rf"\b{table}\b", text)] == []
     assert [table for table in tables if table in LANDING] == []
-    assert [table for table in tables if table in landing_tables(include_usage_schema=True)] == []
-    assert [table for table in tables if table in landing_tables(include_usage_schema=False)] == []
+    assert [
+        table for table in tables if table in landing_tables(include_usage_schema=True)
+    ] == []
+    assert [
+        table for table in tables if table in landing_tables(include_usage_schema=False)
+    ] == []

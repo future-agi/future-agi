@@ -4,13 +4,10 @@ from datetime import datetime, timedelta
 import structlog
 from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
-from django.db import DatabaseError, InterfaceError
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.crypto import constant_time_compare
-from django_redis.exceptions import ConnectionInterrupted
 from drf_yasg.utils import swagger_auto_schema
-from redis.exceptions import RedisError
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -19,6 +16,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from accounts.authentication import (
+    INFRASTRUCTURE_ERRORS,
     decrypt_message,
     generate_encrypted_message,
     get_client_ip,
@@ -70,15 +68,6 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project
 
 logger = structlog.get_logger(__name__)
-
-# Postgres or Redis being slow or down says nothing about the password, so a
-# login that fails with one of these must not count towards the lockout.
-LOGIN_INFRASTRUCTURE_ERRORS = (
-    DatabaseError,
-    InterfaceError,
-    ConnectionInterrupted,
-    RedisError,
-)
 
 
 @swagger_auto_schema(
@@ -451,7 +440,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
             return response
 
-        except LOGIN_INFRASTRUCTURE_ERRORS as exc:
+        except INFRASTRUCTURE_ERRORS as exc:
             # The cache may be what is down, so don't touch the attempt counter.
             logger.exception(
                 "login_infrastructure_unavailable",

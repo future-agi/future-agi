@@ -108,7 +108,14 @@ def test_session_graph_excludes_corrected_physical_versions(
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "path", ["structured_trace", "trace_match", "span_match", "annotation_span_owner", "span_partition"]
+    "path",
+    [
+        "structured_trace",
+        "trace_match",
+        "span_match",
+        "annotation_span_owner",
+        "span_partition",
+    ],
 )
 @pytest.mark.parametrize(
     "replacement",
@@ -149,12 +156,23 @@ def test_graph_membership_uses_complete_physical_winners(engine, path, replaceme
             if path == "span_partition":
                 # Each high-version tombstone differs in exactly one key coordinate.
                 for collision in (
-                    {"project_id": OTHER_PROJECT}, {"observation_type": ""},
-                    {"service_name": ""}, {"start_time": START + timedelta(hours=1, minutes=20)},
-                    {"trace_id": "collision"}, {"id": "collision"},
+                    {"project_id": OTHER_PROJECT},
+                    {"observation_type": ""},
+                    {"service_name": ""},
+                    {"start_time": START + timedelta(hours=1, minutes=20)},
+                    {"trace_id": "collision"},
+                    {"id": "collision"},
                 ):
-                    insert(**{**original, "id": "stable", "trace_id": "trace-stable",
-                              "_version": 99, "is_deleted": 1, **collision})
+                    insert(
+                        **{
+                            **original,
+                            "id": "stable",
+                            "trace_id": "trace-stable",
+                            "_version": 99,
+                            "is_deleted": 1,
+                            **collision,
+                        }
+                    )
         # Independent materialization: no candidate time/value/deletion filter
         # can discard a physical version before this whole-table FINAL read.
         winners = run(
@@ -180,19 +198,45 @@ def test_graph_membership_uses_complete_physical_winners(engine, path, replaceme
                 )
             if matches:
                 expected.add(
-                    row["id" if path in {"span_match", "span_partition"} else "trace_id"]
+                    row[
+                        "id" if path in {"span_match", "span_partition"} else "trace_id"
+                    ]
                 )
         if path == "span_partition":
-            leaf = {"column_id": "score", "filter_config": {
-                "col_type": "SPAN_ATTRIBUTE", "filter_type": "number",
-                "filter_op": "equals", "filter_value": 1}}
-            builder = TimeSeriesQueryBuilder(project_id=PROJECT, filters=[leaf], interval="day",
-                observe_type="span", exact_snapshot=True, start_date=start, end_date=end)
+            leaf = {
+                "column_id": "score",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "number",
+                    "filter_op": "equals",
+                    "filter_value": 1,
+                },
+            }
+            builder = TimeSeriesQueryBuilder(
+                project_id=PROJECT,
+                filters=[leaf],
+                interval="day",
+                observe_type="span",
+                exact_snapshot=True,
+                start_date=start,
+                end_date=end,
+            )
             sql, params = builder.build_exact_span_partition(
-                partition_start=START, partition_end=START + timedelta(hours=2))
+                partition_start=START, partition_end=START + timedelta(hours=2)
+            )
             key = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
-            assert f"AND ({key}) IN (" in sql and f"SELECT {key}" in sql
-            assert sum(int(row["traffic_count"]) for row in run(sql, params)) == len(expected)
+            compact = " ".join(sql.split())
+            # Acquire the whole trace so unselected children remain available
+            # for summary proof; collapse every row by the full physical key.
+            assert "AND (project_id, trace_id) IN (" in compact
+            assert "SELECT project_id, trace_id FROM spans" in compact
+            assert f"GROUP BY {key}" in compact
+            assert compact.count(f"PREWHERE {builder.project_filter_sql()}") == 2
+            assert params["project_id"] == PROJECT
+            assert "graph_row_match_0 = 1" in sql
+            assert sum(int(row["traffic_count"]) for row in run(sql, params)) == len(
+                expected
+            )
             continue
         common = {
             "analytics": Reader(),
@@ -338,76 +382,169 @@ def test_nested_graph_membership_keeps_cross_type_leaf_semantics(
         )
         assert actual == {"all"}
     if scalar_seed and observe_type == "span":
-        builder = TimeSeriesQueryBuilder(project_id=PROJECT, filters=leaves, interval="day",
-            observe_type="span", exact_snapshot=True, start_date=common["start_date"],
-            end_date=common["end_date"])
+        builder = TimeSeriesQueryBuilder(
+            project_id=PROJECT,
+            filters=leaves,
+            interval="day",
+            observe_type="span",
+            exact_snapshot=True,
+            start_date=common["start_date"],
+            end_date=common["end_date"],
+        )
         assert builder._exact_span_candidate_plan() is not None
-        data = run(*builder.build_exact_span_partition(
-            partition_start=START, partition_end=START + timedelta(hours=1)))
+        data = run(
+            *builder.build_exact_span_partition(
+                partition_start=START, partition_end=START + timedelta(hours=1)
+            )
+        )
         assert sum(int(row["traffic_count"]) for row in data) == 1
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("operation,values,types,expected", [
-    ("equals", 0, None, {"zero", "to-zero"}),
-    ("in", [0, 2], ["number", "number"], {"zero", "two", "to-zero"}),
-    ("in", [0, 2, False, "ALPHA"], ["number", "number", "boolean", "string"],
-     {"zero", "two", "to-zero", "false", "text", "conflict", "type-change"}),
-    ("not_in", [0, 2, False, "ALPHA"], ["number", "number", "boolean", "string"],
-     {"string-zero", "true", "other", "changed"}),
-])
-def test_span_graph_typed_defaults_match_independent_latest_domain(engine, operation, values, types, expected):
+@pytest.mark.parametrize(
+    "operation,values,types,expected",
+    [
+        ("equals", 0, None, {"zero", "to-zero"}),
+        ("in", [0, 2], ["number", "number"], {"zero", "two", "to-zero"}),
+        (
+            "in",
+            [0, 2, False, "ALPHA"],
+            ["number", "number", "boolean", "string"],
+            {"zero", "two", "to-zero", "false", "text", "conflict", "type-change"},
+        ),
+        (
+            "not_in",
+            [0, 2, False, "ALPHA"],
+            ["number", "number", "boolean", "string"],
+            {"string-zero", "true", "other", "changed"},
+        ),
+    ],
+)
+def test_span_graph_typed_defaults_match_independent_latest_domain(
+    engine, operation, values, types, expected
+):
     run, insert = engine
-    start, end = START + timedelta(minutes=15, microseconds=123456), START + timedelta(minutes=30, microseconds=123456)
+    start, end = (
+        START + timedelta(minutes=15, microseconds=123456),
+        START + timedelta(minutes=30, microseconds=123456),
+    )
     states = [
-        ("absent", {}, {}), ("zero", {"attrs_number": {"score": 0}}, {}),
+        ("absent", {}, {}),
+        ("zero", {"attrs_number": {"score": 0}}, {}),
         ("two", {"attrs_number": {"score": 2}}, {}),
         ("string-zero", {"attrs_string": {"score": "0"}}, {}),
-        ("false", {"attrs_bool": {"score": 0}}, {}), ("true", {"attrs_bool": {"score": 1}}, {}),
+        ("false", {"attrs_bool": {"score": 0}}, {}),
+        ("true", {"attrs_bool": {"score": 1}}, {}),
         ("text", {"attrs_string": {"score": "alpha"}}, {}),
         ("other", {"attrs_number": {"score": 9}}, {}),
         ("conflict", {"attrs_number": {"score": 9}, "attrs_bool": {"score": 0}}, {}),
         ("cleared", {"attrs_number": {"score": 0}}, {"attrs_number": {}}),
         ("deleted", {"attrs_number": {"score": 0}}, {"is_deleted": 1}),
-        ("type-change", {"attrs_number": {"score": 0}}, {"attrs_number": {}, "attrs_string": {"score": "alpha"}}),
+        (
+            "type-change",
+            {"attrs_number": {"score": 0}},
+            {"attrs_number": {}, "attrs_string": {"score": "alpha"}},
+        ),
         ("to-zero", {"attrs_number": {"score": 9}}, {"attrs_number": {"score": 0}}),
         ("changed", {"attrs_number": {"score": 0}}, {"attrs_number": {"score": 9}}),
-        ("outside", {"attrs_number": {"score": 0}}, {"start_time": START + timedelta(minutes=40, microseconds=123456)}),
+        (
+            "outside",
+            {"attrs_number": {"score": 0}},
+            {"start_time": START + timedelta(minutes=40, microseconds=123456)},
+        ),
         ("foreign", {"attrs_number": {"score": 0}, "project_id": OTHER_PROJECT}, {}),
     ]
     for index, (name, initial, correction) in enumerate(states):
-        weight = 2 ** index  # Independent identity-weighted metrics expose wrong same-trace members.
-        row = {"id": name, "attrs_number": {}, "attrs_string": {}, "attrs_bool": {},
-               "latency_ms": weight, "total_tokens": 2 * weight, "cost": weight / 8,
-               "prompt_tokens": weight, "completion_tokens": weight, "status": "ERROR", **initial}
+        weight = (
+            2**index
+        )  # Independent identity-weighted metrics expose wrong same-trace members.
+        row = {
+            "id": name,
+            "attrs_number": {},
+            "attrs_string": {},
+            "attrs_bool": {},
+            "latency_ms": weight,
+            "total_tokens": 2 * weight,
+            "cost": weight / 8,
+            "prompt_tokens": weight,
+            "completion_tokens": weight,
+            "status": "ERROR",
+            **initial,
+        }
         insert(**row)
         if correction:
             insert(**{**row, **correction, "_version": 2})
-    assert int(run("SELECT count() AS n FROM spans")[0]["n"]) == len(states) + sum(bool(s[2]) for s in states)
+    assert int(run("SELECT count() AS n FROM spans")[0]["n"]) == len(states) + sum(
+        bool(s[2]) for s in states
+    )
     # Complete FINAL first; no candidate/value/date filter decides oracle membership.
     winners = run("SELECT * FROM spans FINAL")
-    domains = {"number": "attrs_number", "boolean": "attrs_bool", "string": "attrs_string"}
+    domains = {
+        "number": "attrs_number",
+        "boolean": "attrs_bool",
+        "string": "attrs_string",
+    }
     choices = list(zip(types, values, strict=True)) if types else [("number", values)]
     truth = []
     for row in winners:
-        if row["project_id"] != PROJECT or row["is_deleted"] or not start <= row["start_time"] < end:
+        if (
+            row["project_id"] != PROJECT
+            or row["is_deleted"]
+            or not start <= row["start_time"] < end
+        ):
             continue
         present = any("score" in row[domains[t]] for t, _ in choices)
-        matches = any("score" in row[domains[t]] and
-                      (row[domains[t]]["score"].lower() == v.lower() if t == "string"
-                       else row[domains[t]]["score"] == v) for t, v in choices)
+        matches = any(
+            "score" in row[domains[t]]
+            and (
+                row[domains[t]]["score"].lower() == v.lower()
+                if t == "string"
+                else row[domains[t]]["score"] == v
+            )
+            for t, v in choices
+        )
         if (present and not matches) if operation == "not_in" else matches:
             truth.append(row)
     assert {row["id"] for row in truth} == expected
-    config = {"col_type": "SPAN_ATTRIBUTE", "filter_type": "text" if types else "number",
-              "filter_op": operation, "filter_value": values}
+    config = {
+        "col_type": "SPAN_ATTRIBUTE",
+        "filter_type": "text" if types else "number",
+        "filter_op": operation,
+        "filter_value": values,
+    }
     if types:
         config["attribute_value_types"] = types
-    builder = TimeSeriesQueryBuilder(project_id=PROJECT, filters=[{"column_id": "score", "filter_config": config}],
-        interval="day", observe_type="span", exact_snapshot=True, start_date=start, end_date=end)
+    builder = TimeSeriesQueryBuilder(
+        project_id=PROJECT,
+        filters=[{"column_id": "score", "filter_config": config}],
+        interval="day",
+        observe_type="span",
+        exact_snapshot=True,
+        start_date=start,
+        end_date=end,
+    )
     assert (builder._exact_span_candidate_plan() is not None) == (operation == "in")
-    data = run(*builder.build_exact_span_partition(partition_start=START, partition_end=START + timedelta(hours=1)))
-    fields = ("latency_sum", "total_tokens", "cost_sum", "traffic_count", "prompt_tokens", "completion_tokens", "error_count")
+    data = run(
+        *builder.build_exact_span_partition(
+            partition_start=START, partition_end=START + timedelta(hours=1)
+        )
+    )
+    fields = (
+        "latency_sum",
+        "total_tokens",
+        "cost_sum",
+        "traffic_count",
+        "prompt_tokens",
+        "completion_tokens",
+        "error_count",
+    )
     weight = sum(row["latency_ms"] for row in truth)
     assert tuple(sum(float(row[k]) for row in data) for k in fields) == (
-        weight, 2 * weight, weight / 8, len(truth), weight, weight, len(truth))
+        weight,
+        2 * weight,
+        weight / 8,
+        len(truth),
+        weight,
+        weight,
+        len(truth),
+    )

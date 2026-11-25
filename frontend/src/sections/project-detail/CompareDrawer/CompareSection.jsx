@@ -123,7 +123,7 @@ const CompareSection = ({
           <Typography
             color="text.primary"
             lineHeight={"22px"}
-            fontSize="13px"
+            fontSize="12px"
             fontWeight={600}
           >
             {traceData?.projectVersionName}
@@ -189,7 +189,7 @@ const CompareSection = ({
           <Typography
             color="text.primary"
             lineHeight={"22px"}
-            fontSize="13px"
+            fontSize="12px"
             fontWeight={500}
           >
             System Metrics:
@@ -280,7 +280,7 @@ const CompareSection = ({
               >
                 <Typography
                   color="text.primary"
-                  fontSize="13px"
+                  fontSize="12px"
                   lineHeight={"22px"}
                   fontWeight={500}
                 >
@@ -293,7 +293,7 @@ const CompareSection = ({
                     size="small"
                     variant="outlined"
                     sx={{
-                      fontSize: "13px",
+                      fontSize: "12px",
                       borderRadius: "4px",
                       backgroundColor: isTraceOpen ? "divider" : "",
                     }}
@@ -312,7 +312,7 @@ const CompareSection = ({
                     size="small"
                     variant="outlined"
                     sx={{
-                      fontSize: "13px",
+                      fontSize: "12px",
                       borderRadius: "4px",
                       backgroundColor: isAnnotateOpen ? "divider" : "",
                     }}

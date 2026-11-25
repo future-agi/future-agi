@@ -31,11 +31,17 @@ const environmentEvaluationPath = (id, evalConfigId) =>
 export const listHarnessEnvironments = async ({
   page,
   limit,
+  search,
+  status,
+  agentType,
   agentDefinitionId,
 } = {}) => {
   const params = {};
   if (page != null) params.page = page;
   if (limit != null) params.limit = limit;
+  if (search) params.search = search;
+  if (status) params.status = status;
+  if (agentType) params.agent_type = agentType;
   if (agentDefinitionId) params.agent_definition_id = agentDefinitionId;
   return (await axios.get(environmentsPath(), { params })).data;
 };
@@ -57,11 +63,18 @@ export const runHarnessEnvironment = async (
   trials,
   idempotencyKey,
   picks,
+  seed,
 ) =>
   (
     await axios.post(
       environmentRunPath(id),
-      { scenario_ids: scenarioIds, trials, ...versionPickFields(picks) },
+      {
+        scenario_ids: scenarioIds,
+        trials,
+        ...versionPickFields(picks),
+        // Omitted so the run keeps the environment's seed.
+        ...(seed != null ? { seed } : {}),
+      },
       { headers: { "Idempotency-Key": idempotencyKey } },
     )
   ).data;

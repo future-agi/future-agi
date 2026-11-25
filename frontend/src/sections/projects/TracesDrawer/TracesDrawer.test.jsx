@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   scroll: null,
   fetchNext: vi.fn(),
   totalCost: undefined,
+  captureCoverage: undefined,
 }));
 vi.mock("@tanstack/react-query", async (importOriginal) => {
   const actual = await importOriginal();
@@ -29,6 +30,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
               data: {
                 result: {
                   response: [{ id: "cached-row" }],
+                  capture_coverage: state.captureCoverage,
                   session_metadata: {
                     next_session_id: "session-2",
                     previous_session_id: "session-0",
@@ -122,6 +124,7 @@ describe("Session drawer navigation request", () => {
     state.history = null;
     state.fetchNext.mockReset();
     state.totalCost = undefined;
+    state.captureCoverage = undefined;
   });
   it.each([
     [0.000029999999999999997, "$0.00003"],
@@ -140,6 +143,26 @@ describe("Session drawer navigation request", () => {
       />,
     );
     expect(screen.getByText(`Total Cost: ${display}`, { exact: true })).toBeVisible();
+  });
+  it("keeps a parent-only session zero scoped to observed requests as children arrive", () => {
+    state.totalCost = 0;
+    state.captureCoverage = {
+      scope: "observed_requests", source_summary_present: true,
+      request_count: 0, coverage_unknown: true,
+    };
+    const props = { open: true, onClose: vi.fn(), rowData: { session_id: "session-1" } };
+    const view = render(<TracesDrawer {...props} />);
+    expect(screen.getByText("Observed Cost: $0.00", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Total Cost: $0.00", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByRole("note", { name: "Capture coverage" })).toHaveTextContent("0 observed requests");
+    state.captureCoverage = { ...state.captureCoverage, request_count: 3 };
+    state.totalCost = null;
+    view.rerender(<TracesDrawer {...props} />);
+    expect(screen.getByText("Observed Cost: N/A", { exact: true })).toBeVisible();
+    const note = screen.getByRole("note", { name: "Capture coverage" });
+    expect(note).toHaveTextContent("3 observed requests");
+    expect(note).toHaveTextContent("Capture coverage unknown");
+    expect(note).toHaveTextContent("Source summaries are not added to request usage");
   });
   it.each(["project-1", null])(
     "loads the same-workspace %s session using the provider contract",

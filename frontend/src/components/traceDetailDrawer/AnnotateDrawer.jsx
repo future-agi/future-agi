@@ -28,6 +28,7 @@ import FormTextFieldV2 from "../FormTextField/FormTextFieldV2";
 import { createFormSchema } from "./validation/validation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import CreateEditLabel from "src/sections/develop-detail/Annotations/CreateEditLabel/CreateEditLabel";
+import { annotationLabelEventFields } from "src/sections/develop-detail/Annotations/CreateEditLabel/annotationLabelEventFields";
 import { PropertyName } from "src/utils/Mixpanel";
 import { Events } from "src/utils/Mixpanel";
 import { trackEvent } from "src/utils/Mixpanel/mixpanel";
@@ -89,7 +90,7 @@ const AnnotateDrawerChild = ({
             queryKey: ["project-annotations-labels-paginated", projectId],
           });
           trackEvent(Events.projectAnnotation[variables.type], {
-            [PropertyName.click]: variables,
+            [PropertyName.click]: annotationLabelEventFields(variables),
           });
           setOpenCreateEditLabel(null);
           onAnnotationChanges?.();

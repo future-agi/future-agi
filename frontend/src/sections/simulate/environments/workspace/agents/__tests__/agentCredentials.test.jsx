@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "src/utils/test-utils";
+import { render, screen, waitFor, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 import { toVersions } from "src/api/simulate-environments/versions";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import {
   agentItem,
   mutations,
@@ -71,6 +73,12 @@ const save = (user) =>
   user.click(screen.getByRole("button", { name: "Save values" }));
 const passwordInputs = () =>
   Array.from(document.querySelectorAll('input[type="password"]'));
+const hoverShows = async (user, element, text) => {
+  await user.hover(element.closest("span") ?? element);
+  await waitFor(() =>
+    expect(screen.getByRole("tooltip")).toHaveTextContent(text),
+  );
+};
 // No field holds the value and no rendered text shows it.
 const expectNoValue = (value) => {
   expect(screen.queryByDisplayValue(value)).toBeNull();
@@ -78,6 +86,10 @@ const expectNoValue = (value) => {
 };
 
 beforeEach(() => {
+  vi.mocked(useSimulationAccess).mockReturnValue({
+    canEdit: true,
+    canRun: true,
+  });
   resetMutations();
   mutations.change.data = { agent_version: { id: "a8", label: "v8" } };
   mutations.upload.data = {
@@ -397,6 +409,37 @@ describe("AgentCredentials", () => {
       expectNoValue(SECRET);
     },
   );
+
+  it("won't let a Viewer change values, and says why", async () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
+    });
+    const user = userEvent.setup();
+    renderCredentials();
+
+    const change = screen.getByRole("button", { name: "Change values" });
+    expect(change).toBeDisabled();
+    await hoverShows(user, change, WORKSPACE_COPY.viewer.secrets);
+    expect(passwordInputs()).toHaveLength(0);
+  });
+
+  it("locks Save once the role drops to Viewer with the form open", async () => {
+    const user = userEvent.setup();
+    const { update } = renderCredentials();
+    await openForm(user);
+    await user.type(valueInput(1), SECRET);
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
+    });
+    update([DEFAULT]);
+
+    const saveButton = screen.getByRole("button", { name: "Save values" });
+    expect(saveButton).toBeDisabled();
+    await hoverShows(user, saveButton, WORKSPACE_COPY.viewer.secrets);
+    expect(mutations.change.calls).toEqual([]);
+  });
 
   it("closes the form on cancel without sending", async () => {
     const user = userEvent.setup();

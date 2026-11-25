@@ -31,6 +31,8 @@ class TraceAnnotationSerializer(serializers.ModelSerializer):
 
 
 class UUIDListQueryParamField(serializers.Field):
+    swagger_empty_input_default = "[]"
+
     class Meta:
         swagger_schema_fields = {
             "type": "string",

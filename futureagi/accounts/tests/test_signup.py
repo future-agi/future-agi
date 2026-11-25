@@ -112,9 +112,7 @@ class TestSignupAPI:
 
     @patch.dict("os.environ", {"ENV_TYPE": "local"})
     @patch("tfc.temporal.drop_in.start_activity")
-    def test_signup_with_valid_data(
-        self, mock_start_activity, api_client, db
-    ):
+    def test_signup_with_valid_data(self, mock_start_activity, api_client, db):
         """User can register with valid data."""
         from accounts.models import User
 
@@ -995,6 +993,18 @@ class TestActivateAccountAPI:
         user.refresh_from_db()
         assert user.is_active is False
 
+    @pytest.mark.parametrize("bad_uid", ["a", "_w", "bm90LWEtdXVpZA", "4piD", "bnVsbA"])
+    def test_activate_account_malformed_uid_returns_bad_request(
+        self, api_client, db, bad_uid
+    ):
+        """Malformed base64, UTF-8 or UUID identifiers return 400, not 500."""
+        from django.core.cache import cache
+
+        cache.clear()
+        response = api_client.get(f"/accounts/activate/{bad_uid}/any-token/")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Activation link is invalid or has expired." in response.json()["result"]
+
     def test_activate_account_unknown_user(self, api_client, db):
         """Unknown uid returns bad request."""
         from django.core.cache import cache
@@ -1246,6 +1256,19 @@ class TestActivateAccountReplay:
 @pytest.mark.api
 class TestPasswordResetConfirmEdgeCases:
     """Edge-case tests for POST /accounts/password-reset-confirm/<uidb64>/<token>/."""
+
+    @pytest.mark.parametrize("bad_uid", ["a", "_w", "bm90LWEtdXVpZA", "4piD", "bnVsbA"])
+    def test_password_reset_confirm_malformed_uid_returns_bad_request(
+        self, api_client, db, bad_uid
+    ):
+        """Malformed base64, UTF-8 or UUID identifiers return 400, not 500."""
+        response = api_client.post(
+            f"/accounts/password-reset-confirm/{bad_uid}/any-token/",
+            {"new_password": "BrandNewPass123!", "repeat_password": "BrandNewPass123!"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Invalid reset link." in response.json()["result"]
 
     def test_inactive_auth_token_rejected(self, api_client, user):
         """Reset confirm rejects when the AuthToken is inactive."""
@@ -1607,7 +1630,6 @@ class TestInitiatePasswordResetSSO:
         assert "sso" in response.json()["message"].lower()
 
 
-
 OSS_SIGNUP_PASSWORD = "Futureagi@45xyz"
 
 
@@ -1815,8 +1837,9 @@ class TestCloudSignupUnchanged:
     def test_cloud_returns_the_check_your_email_message(
         self, db, api_client, no_outbound_email
     ):
-        with _oss(False), patch(
-            "accounts.views.signup.verify_recaptcha", return_value=True
+        with (
+            _oss(False),
+            patch("accounts.views.signup.verify_recaptcha", return_value=True),
         ):
             response = api_client.post(
                 "/accounts/signup/",
@@ -1829,8 +1852,9 @@ class TestCloudSignupUnchanged:
 
     def test_cloud_never_returns_a_session(self, db, api_client, no_outbound_email):
         """Tokens before verification would skip the verification entirely."""
-        with _oss(False), patch(
-            "accounts.views.signup.verify_recaptcha", return_value=True
+        with (
+            _oss(False),
+            patch("accounts.views.signup.verify_recaptcha", return_value=True),
         ):
             response = api_client.post(
                 "/accounts/signup/",
@@ -1842,13 +1866,12 @@ class TestCloudSignupUnchanged:
         assert "access" not in result
         assert "refresh" not in result
 
-    def test_cloud_ignores_a_posted_password(
-        self, db, api_client, no_outbound_email
-    ):
+    def test_cloud_ignores_a_posted_password(self, db, api_client, no_outbound_email):
         """password is allowlisted on OSS only, so a cloud caller cannot set one."""
         email = "cloud-c@futureagi.com"
-        with _oss(False), patch(
-            "accounts.views.signup.verify_recaptcha", return_value=True
+        with (
+            _oss(False),
+            patch("accounts.views.signup.verify_recaptcha", return_value=True),
         ):
             api_client.post(
                 "/accounts/signup/", _oss_signup_payload(email), format="json"
@@ -1894,9 +1917,7 @@ class TestOssPasswordResetLink:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"]["reset_link"]
 
-    def test_link_points_at_the_verify_route(
-        self, api_client, user, no_outbound_email
-    ):
+    def test_link_points_at_the_verify_route(self, api_client, user, no_outbound_email):
         """Same URL the email would have carried, so the existing confirm screen
         handles it unchanged."""
         with _oss():
@@ -2418,9 +2439,7 @@ def _member_rows(client):
 class TestInviteLinkOnMemberList:
     """Without SMTP the invite mail never lands, so an admin needs the link."""
 
-    def test_oss_exposes_the_link_on_pending_invites(
-        self, auth_client, pending_invite
-    ):
+    def test_oss_exposes_the_link_on_pending_invites(self, auth_client, pending_invite):
         with _oss_gate(True):
             rows = _member_rows(auth_client)
 

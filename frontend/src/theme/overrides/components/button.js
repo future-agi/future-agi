@@ -192,7 +192,7 @@ export function button(theme) {
       },
     };
 
-    // Sizes: 28 / 32 / 36 (design-system controls), 13px label at 500.
+    // Sizes: 28 / 32 / 36 (design-system controls), 12px label at 500.
     const size = {
       fontWeight: 500,
       boxShadow: "none",

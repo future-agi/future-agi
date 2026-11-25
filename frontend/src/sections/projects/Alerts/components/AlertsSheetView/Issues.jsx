@@ -1,6 +1,7 @@
 import SelectionBar from "src/components/selection-bar";
 import { Badge, Box, IconButton, Stack } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, {
   useCallback,
   useEffect,

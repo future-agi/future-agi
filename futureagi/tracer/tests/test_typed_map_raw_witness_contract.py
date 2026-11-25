@@ -499,22 +499,31 @@ def test_negative_typed_map_value_filters_use_only_necessary_presence(
     assert plan.raw_graph_value_witness_predicate is None
 
 
-@pytest.mark.parametrize("compiler", [compile_trace_filter_plans, compile_span_filter_plans])
+@pytest.mark.parametrize(
+    "compiler", [compile_trace_filter_plans, compile_span_filter_plans]
+)
 @pytest.mark.parametrize(
     ("values", "types", "indexed_maps"),
     [
         (["K", "Approved"], ["string", "string"], ["span_attr_str"]),
         (["İstanbul"], ["string"], ["span_attr_str"]),
         ([7, 9], ["number", "number"], ["span_attr_num"]),
-        (["K", 7, True], ["string", "number", "boolean"], ["span_attr_str", "span_attr_num"]),
+        (
+            ["K", 7, True],
+            ["string", "number", "boolean"],
+            ["span_attr_str", "span_attr_num"],
+        ),
     ],
 )
 def test_picker_in_reuses_value_indexes_without_changing_typed_membership(
-    compiler, values, types, indexed_maps,
+    compiler,
+    values,
+    types,
+    indexed_maps,
 ) -> None:
     leaf = _attribute_filter(filter_type="text", operation="in", value=values)
     leaf["filter_config"]["attribute_value_types"] = types
-    plan, = compiler([leaf])
+    (plan,) = compiler([leaf])
     raw = plan.raw_witness_predicate
     assert raw is not None
     for map_column in indexed_maps:
@@ -527,28 +536,34 @@ def test_picker_in_reuses_value_indexes_without_changing_typed_membership(
     for storage_type in set(types):
         assert f"latest_filter_param_0_{storage_type}" in plan.params
         assert f"latest_attr_exists_0_{storage_type}" in plan.predicate
-    legacy = {v for k, v in plan.params.items() if k.startswith("latest_filter_legacy_index_")}
+    legacy = {
+        v for k, v in plan.params.items() if k.startswith("latest_filter_legacy_index_")
+    }
     if "K" in values:
         assert {"k", "\N{KELVIN SIGN}"} <= legacy
     else:
         assert not legacy
 
 
-@pytest.mark.parametrize("compiler", [compile_trace_filter_plans, compile_span_filter_plans])
+@pytest.mark.parametrize(
+    "compiler", [compile_trace_filter_plans, compile_span_filter_plans]
+)
 @pytest.mark.parametrize(("value", "storage_type"), [(0, "number"), (False, "boolean")])
 def test_picker_default_values_keep_graph_key_presence(compiler, value, storage_type):
     leaf = _attribute_filter(filter_type="text", operation="in", value=[value])
     leaf["filter_config"]["attribute_value_types"] = [storage_type]
-    plan, = compiler([leaf])
+    (plan,) = compiler([leaf])
     assert plan.raw_graph_value_witness_predicate == plan.raw_key_witness_predicate
     assert "mapValues(" not in plan.raw_graph_value_witness_predicate
     assert "latest_filter_param_0" in plan.seed_predicate
 
 
 def test_picker_not_in_does_not_use_positive_value_index_hints():
-    leaf = _attribute_filter(filter_type="text", operation="not_in", value=["K", 7, False])
+    leaf = _attribute_filter(
+        filter_type="text", operation="not_in", value=["K", 7, False]
+    )
     leaf["filter_config"]["attribute_value_types"] = ["string", "number", "boolean"]
-    plan, = compile_span_filter_plans([leaf])
+    (plan,) = compile_span_filter_plans([leaf])
     assert plan.raw_witness_predicate == plan.raw_key_witness_predicate
     assert "mapValues(" not in plan.raw_witness_predicate
     assert plan.raw_graph_value_witness_predicate is None

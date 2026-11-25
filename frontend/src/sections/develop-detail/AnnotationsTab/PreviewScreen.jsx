@@ -407,7 +407,7 @@ export default function PreviewScreen() {
                     mb: 1,
                     cursor: "pointer",
                   }}
-                  fontSize={13}
+                  fontSize={12}
                   fontWeight={600}
                 >
                   Annotations
@@ -552,7 +552,7 @@ export default function PreviewScreen() {
                   sx={{
                     color: "text.primary",
                   }}
-                  fontSize={13}
+                  fontSize={12}
                   fontWeight={600}
                 >
                   Row {currentRowNumber} of {totalRows}

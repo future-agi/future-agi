@@ -43,9 +43,7 @@ class TestGetRateLimitTier:
 
         mock_sub = MagicMock()
         mock_sub.subscription_tier.name = "basic"
-        OrganizationSubscription.objects.select_related.return_value.get.return_value = (
-            mock_sub
-        )
+        OrganizationSubscription.objects.select_related.return_value.get.return_value = mock_sub
         org = MagicMock()
         assert get_rate_limit_tier(org) == "pro"
 
@@ -59,9 +57,7 @@ class TestGetRateLimitTier:
 
         mock_sub = MagicMock()
         mock_sub.subscription_tier.name = "basic_yearly"
-        OrganizationSubscription.objects.select_related.return_value.get.return_value = (
-            mock_sub
-        )
+        OrganizationSubscription.objects.select_related.return_value.get.return_value = mock_sub
         org = MagicMock()
         assert get_rate_limit_tier(org) == "pro"
 
@@ -75,9 +71,7 @@ class TestGetRateLimitTier:
 
         mock_sub = MagicMock()
         mock_sub.subscription_tier.name = "custom"
-        OrganizationSubscription.objects.select_related.return_value.get.return_value = (
-            mock_sub
-        )
+        OrganizationSubscription.objects.select_related.return_value.get.return_value = mock_sub
         org = MagicMock()
         assert get_rate_limit_tier(org) == "enterprise"
 
@@ -91,9 +85,7 @@ class TestGetRateLimitTier:
 
         mock_sub = MagicMock()
         mock_sub.subscription_tier.name = "unknown_tier"
-        OrganizationSubscription.objects.select_related.return_value.get.return_value = (
-            mock_sub
-        )
+        OrganizationSubscription.objects.select_related.return_value.get.return_value = mock_sub
         org = MagicMock()
         assert get_rate_limit_tier(org) == "free"
 
@@ -351,15 +343,11 @@ class TestConcurrentLimitBoundary:
             check_rate_limit(organization_id, "free")
             assert cache.get(day_key) == 1
 
-            with patch.object(
-                rate_limiter, "cache", wraps=cache
-            ) as spied:
+            with patch.object(rate_limiter, "cache", wraps=cache) as spied:
                 check_rate_limit(organization_id, "free")
 
         assert spied.incr.call_args_list == [((day_key,),)]
-        assert not [
-            call for call in spied.set.call_args_list if call[0][0] == day_key
-        ]
+        assert not [call for call in spied.set.call_args_list if call[0][0] == day_key]
         assert cache.get(day_key) == 2
 
 

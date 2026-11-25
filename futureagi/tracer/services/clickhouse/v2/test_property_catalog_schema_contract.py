@@ -151,6 +151,38 @@ def test_definition_catalog_pins_identity_scope_search_and_tombstones() -> None:
     )
 
 
+def test_current_metric_field_identity_is_additive_to_the_catalog_contract() -> None:
+    from tracer.services.clickhouse.v2.property_catalog.models import (
+        PropertyCategory,
+        PropertyDefinition,
+        PropertyKind,
+        PropertyRole,
+    )
+
+    definition = PropertyDefinition(
+        property_kind=PropertyKind.METRIC_FIELD,
+        source_key="82e4bdfc-fb55-482d-a7a0-28e8755bf66a",
+        category=PropertyCategory.METRIC,
+        category_rank=5,
+        source_rank=0,
+        definition_source="derived_metric",
+        primary_source="sessions",
+        source_tokens=("metric", "sessions"),
+        value_adapter="metric_field",
+        name="82e4bdfc-fb55-482d-a7a0-28e8755bf66a",
+        display_name="Resolution rate",
+        value_type="boolean",
+        output_type="boolean",
+        role=PropertyRole.METRIC,
+        details={"level": "conversation", "filterable": True},
+    )
+    assert definition.property_id == "metric_field:82e4bdfc-fb55-482d-a7a0-28e8755bf66a"
+    assert definition.category == "metric"
+    # Current metric definitions are read from scoped Postgres active versions;
+    # registering their identity must not rewrite the deployed 025-027 schema.
+    assert len(EXPECTED_TABLES) == 6
+
+
 def test_value_catalog_is_native_tenant_project_and_epoch_scoped() -> None:
     value = _normalized(_statements(SCHEMA_DIR / SCHEMA_FILES[0])[1])
     for fragment in (

@@ -147,6 +147,7 @@ from model_hub.utils.annotation_queue_helpers import (
 )
 from model_hub.utils.utils import send_message_to_channel
 from simulate.models.test_execution import CallTranscript
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
@@ -283,9 +284,11 @@ def _queue_item_export_prefetches():
     return (
         Prefetch(
             "call_execution__transcripts",
-            queryset=CallTranscript.objects.filter(
-                speaker_role__in=get_displayable_transcript_roles(),
-                deleted=False,
+            queryset=with_speakers(
+                CallTranscript.objects.filter(
+                    speaker_role__in=get_displayable_transcript_roles(),
+                    deleted=False,
+                )
             ).order_by("start_time_ms"),
             to_attr="_displayable_transcripts",
         ),

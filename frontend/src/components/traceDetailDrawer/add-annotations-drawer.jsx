@@ -12,6 +12,7 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import PropTypes from "prop-types";
 import Iconify from "../iconify";
 import CreateEditLabel from "src/sections/develop-detail/Annotations/CreateEditLabel/CreateEditLabel";
+import { annotationLabelEventFields } from "src/sections/develop-detail/Annotations/CreateEditLabel/annotationLabelEventFields";
 import AnnotationFieldWrapper from "src/sections/develop-detail/Annotations/CreateEditLabel/AnnotationFieldWrapper";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDeleteAnnotationLabel } from "./useDeleteAnnotationLabel";
@@ -72,7 +73,7 @@ const AddAnnotationsDrawerChild = ({
             queryKey: ["project-annotations-labels-paginated", projectId],
           });
           trackEvent(Events.projectAnnotation[variables.type], {
-            [PropertyName.click]: variables,
+            [PropertyName.click]: annotationLabelEventFields(variables),
           });
           onAnnotationChanges?.();
         }}

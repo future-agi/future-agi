@@ -21,6 +21,13 @@ var sensitiveQueryParams = map[string]bool{
 	"signature":        true,
 	"x-goog-api-key":   true,
 	"subscription-key": true,
+
+	// Signed URLs: the signature, the credential it names and the session token.
+	"x-amz-signature":      true,
+	"x-amz-credential":     true,
+	"x-amz-security-token": true,
+	"x-goog-signature":     true,
+	"x-goog-credential":    true,
 }
 
 // trailingPunctuation ends a sentence rather than a URL.
@@ -87,11 +94,7 @@ func redactURL(raw string) string {
 
 	u, err := url.Parse(raw)
 	if err != nil {
-		// Unreadable, so there is no telling which part is the credential.
-		if i := strings.IndexByte(raw, '?'); i >= 0 {
-			return raw[:i+1] + redacted + trailing
-		}
-		return raw + trailing
+		return redactUnparseable(raw) + trailing
 	}
 
 	if u.User != nil {
@@ -117,4 +120,24 @@ func redactURL(raw string) string {
 	}
 
 	return u.String() + trailing
+}
+
+// redactUnparseable removes what a URL that does not parse may hold. There is
+// no telling which part of the userinfo or the query is the credential, so
+// both go whole.
+func redactUnparseable(raw string) string {
+	if i := strings.Index(raw, "://"); i >= 0 {
+		authority := raw[i+len("://"):]
+		end := strings.IndexAny(authority, "/?#")
+		if end < 0 {
+			end = len(authority)
+		}
+		if at := strings.LastIndexByte(authority[:end], '@'); at >= 0 {
+			raw = raw[:i+len("://")] + redacted + authority[at:]
+		}
+	}
+	if i := strings.IndexByte(raw, '?'); i >= 0 {
+		return raw[:i+1] + redacted
+	}
+	return raw
 }

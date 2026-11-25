@@ -1,6 +1,30 @@
 from django.db import migrations
 
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:accounts_demotracepublication",
+        "postgres:tracer_observation_span",
+        "postgres:tracer_project",
+        "postgres:tracer_trace",
+    ],
+    "mitigation": (
+        "Read existing live session-linked demo traces through the project join and "
+        "a correlated span-existence query, streaming IDs in chunks of 500. Insert "
+        "publication intents in batches of at most 500 with ignore_conflicts=True. "
+        "atomic=False allows committed batches; reruns tolerate existing intents and "
+        "the reverse is a noop. Qualification must measure the trace/span reference "
+        "workload, normal migration bootstrap, storage/WAL/temp growth and restore. "
+        "This migration does not directly publish to ClickHouse or dispatch workflows."
+    ),
+    "reviewer": "Tanmaycode1",
+    "review": "https://github.com/future-agi/future-agi/pull/3623#discussion_r4460578890",
+    "large_volume_rehearsal": True,
+}
+
+
 def queue_existing_demo_traces(apps, schema_editor):
     # Includes demo traces repaired by 0020, before this outbox existed.
     from django.db.models import Exists, OuterRef

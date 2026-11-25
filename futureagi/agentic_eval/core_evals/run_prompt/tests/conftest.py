@@ -14,6 +14,7 @@ from uuid import uuid4
 # Pytest Configuration - Register Custom Markers
 # =============================================================================
 
+
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "unit: Unit tests (no external dependencies)")
@@ -26,6 +27,7 @@ def pytest_configure(config):
 # =============================================================================
 # Environment Configuration
 # =============================================================================
+
 
 @pytest.fixture(scope="session")
 def api_keys():
@@ -62,6 +64,7 @@ def available_providers(api_keys):
 # =============================================================================
 # Mock Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def mock_organization_id():
@@ -114,6 +117,7 @@ def mock_litellm_response():
 @pytest.fixture
 def mock_litellm_stream_response():
     """Returns a mock LiteLLM streaming response."""
+
     def stream_generator():
         chunks = [
             {"choices": [{"delta": {"content": "Hello"}}]},
@@ -124,8 +128,11 @@ def mock_litellm_stream_response():
             mock_chunk = Mock()
             mock_chunk.choices = [Mock()]
             mock_chunk.choices[0].delta = Mock()
-            mock_chunk.choices[0].delta.content = chunk["choices"][0]["delta"]["content"]
+            mock_chunk.choices[0].delta.content = chunk["choices"][0]["delta"][
+                "content"
+            ]
             yield mock_chunk
+
     return stream_generator()
 
 
@@ -141,12 +148,13 @@ def mock_websocket_manager():
 # Message Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def simple_messages():
     """Simple text messages for testing."""
     return [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hello, how are you?"}
+        {"role": "user", "content": "Hello, how are you?"},
     ]
 
 
@@ -159,9 +167,12 @@ def multimodal_messages():
             "role": "user",
             "content": [
                 {"type": "text", "text": "What is in this image?"},
-                {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
-            ]
-        }
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/image.jpg"},
+                },
+            ],
+        },
     ]
 
 
@@ -169,8 +180,11 @@ def multimodal_messages():
 def json_format_messages():
     """Messages requesting JSON output."""
     return [
-        {"role": "system", "content": "You are a helpful assistant that outputs valid JSON."},
-        {"role": "user", "content": "Return a JSON object with name and age fields."}
+        {
+            "role": "system",
+            "content": "You are a helpful assistant that outputs valid JSON.",
+        },
+        {"role": "user", "content": "Return a JSON object with name and age fields."},
     ]
 
 
@@ -179,7 +193,7 @@ def tool_messages():
     """Messages with tool/function calling."""
     return [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "What is the weather in San Francisco?"}
+        {"role": "user", "content": "What is the weather in San Francisco?"},
     ]
 
 
@@ -197,12 +211,12 @@ def sample_tools():
                     "properties": {
                         "location": {
                             "type": "string",
-                            "description": "The city and state, e.g. San Francisco, CA"
+                            "description": "The city and state, e.g. San Francisco, CA",
                         }
                     },
-                    "required": ["location"]
-                }
-            }
+                    "required": ["location"],
+                },
+            },
         }
     ]
 
@@ -210,9 +224,7 @@ def sample_tools():
 @pytest.fixture
 def tts_messages():
     """Messages for text-to-speech testing."""
-    return [
-        {"role": "user", "content": "Hello, this is a test of text to speech."}
-    ]
+    return [{"role": "user", "content": "Hello, this is a test of text to speech."}]
 
 
 @pytest.fixture
@@ -221,13 +233,14 @@ def long_messages():
     long_text = "This is a test sentence. " * 100
     return [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": long_text}
+        {"role": "user", "content": long_text},
     ]
 
 
 # =============================================================================
 # Model Configuration Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def openai_chat_models():
@@ -290,24 +303,49 @@ def all_reasoning_models():
     """Complete list of reasoning models requiring special handling."""
     return [
         # o1 series
-        "o1", "o1-2024-12-17", "o1-mini", "o1-mini-2024-09-12",
-        "o1-preview", "o1-preview-2024-09-12",
-        "o1-pro", "o1-pro-2025-03-19",
+        "o1",
+        "o1-2024-12-17",
+        "o1-mini",
+        "o1-mini-2024-09-12",
+        "o1-preview",
+        "o1-preview-2024-09-12",
+        "o1-pro",
+        "o1-pro-2025-03-19",
         # o3 series
-        "o3", "o3-2025-04-16", "o3-mini", "o3-mini-2025-01-31",
-        "o3-pro", "o3-pro-2025-06-10",
+        "o3",
+        "o3-2025-04-16",
+        "o3-mini",
+        "o3-mini-2025-01-31",
+        "o3-pro",
+        "o3-pro-2025-06-10",
         # o4 series
-        "o4-mini", "o4-mini-2025-04-16",
+        "o4-mini",
+        "o4-mini-2025-04-16",
         # GPT-5 series
-        "gpt-5", "gpt-5-2025-08-07", "gpt-5-mini", "gpt-5-mini-2025-08-07",
-        "gpt-5-nano", "gpt-5-nano-2025-08-07", "gpt-5-chat-latest",
-        "gpt-5-pro", "gpt-5-pro-2025-10-06", "gpt-5-codex", "gpt-5-codex-2025-09-01",
+        "gpt-5",
+        "gpt-5-2025-08-07",
+        "gpt-5-mini",
+        "gpt-5-mini-2025-08-07",
+        "gpt-5-nano",
+        "gpt-5-nano-2025-08-07",
+        "gpt-5-chat-latest",
+        "gpt-5-pro",
+        "gpt-5-pro-2025-10-06",
+        "gpt-5-codex",
+        "gpt-5-codex-2025-09-01",
         # GPT-5.1 series
-        "gpt-5.1", "gpt-5.1-2025-11-13", "gpt-5.1-chat-latest",
-        "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
+        "gpt-5.1",
+        "gpt-5.1-2025-11-13",
+        "gpt-5.1-chat-latest",
+        "gpt-5.1-codex",
+        "gpt-5.1-codex-mini",
+        "gpt-5.1-codex-max",
         # GPT-5.2 series
-        "gpt-5.2", "gpt-5.2-2025-12-11", "gpt-5.2-chat-latest",
-        "gpt-5.2-pro", "gpt-5.2-pro-2025-12-11",
+        "gpt-5.2",
+        "gpt-5.2-2025-12-11",
+        "gpt-5.2-chat-latest",
+        "gpt-5.2-pro",
+        "gpt-5.2-pro-2025-12-11",
     ]
 
 
@@ -357,6 +395,7 @@ def run_prompt_config_json():
 # Database Mock Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def mock_api_key_objects():
     """Mock ApiKey.objects for database queries."""
@@ -373,7 +412,9 @@ def mock_api_key_objects():
 @pytest.fixture
 def mock_custom_model_objects():
     """Mock CustomAIModel.objects for database queries."""
-    with patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel") as mock:
+    with patch(
+        "agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel"
+    ) as mock:
         mock.objects.filter.return_value.values.return_value = []
         mock.objects.get.side_effect = mock.DoesNotExist
         mock.DoesNotExist = Exception
@@ -383,6 +424,7 @@ def mock_custom_model_objects():
 # =============================================================================
 # Provider-Specific Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def openai_config():
@@ -451,6 +493,7 @@ def openrouter_config():
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
 
 def skip_if_no_api_key(provider: str, api_keys: dict):
     """Skip test if API key for provider is not available."""

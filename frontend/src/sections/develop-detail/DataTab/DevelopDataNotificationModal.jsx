@@ -69,7 +69,7 @@ const DevelopDataNotificationModal = ({ open, onClose, onClick, data }) => {
                   key={index}
                   variant="body2"
                   color="text.secondary"
-                  fontSize={"13px"}
+                  fontSize={"12px"}
                   sx={{
                     margin: 0,
                     padding: 0,

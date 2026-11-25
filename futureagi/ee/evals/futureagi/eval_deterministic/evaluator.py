@@ -394,9 +394,7 @@ class DeterministicEvaluator(LLM):
         # what each <variable_N> tag represents by its actual key name and description.
         # The {{variable_N}} placeholders are preserved because _get_prompt()
         # substitutes them with $variable_N$ markers via .replace().
-        variable_parts = [
-            f"{{{{variable_{i + 1}}}}}" for i in range(len(self.input))
-        ]
+        variable_parts = [f"{{{{variable_{i + 1}}}}}" for i in range(len(self.input))]
 
         # Build mapping lines using <variable_N> tags (matching the actual
         # content block tags the LLM sees). Include description only when available.
@@ -407,11 +405,11 @@ class DeterministicEvaluator(LLM):
             key_desc = config_params_desc.get(key_name) if has_descriptions else None
             if key_desc:
                 variable_mapping_lines.append(
-                    f"- {var_tag} contains the input field \"{key_name}\" - {key_desc}"
+                    f'- {var_tag} contains the input field "{key_name}" - {key_desc}'
                 )
             else:
                 variable_mapping_lines.append(
-                    f"- {var_tag} contains the input field \"{key_name}\""
+                    f'- {var_tag} contains the input field "{key_name}"'
                 )
 
         # Only append the variable context block when we have key names to map.
@@ -422,12 +420,10 @@ class DeterministicEvaluator(LLM):
             self.rule_prompt = (
                 f"{self.rule_prompt}\n\n"
                 f"Variable Reference:\n{variable_mapping_block}\n"
-                f"Refer to inputs by their field name, not as \"variable_1\" etc.\n\n"
+                f'Refer to inputs by their field name, not as "variable_1" etc.\n\n'
             )
         else:
-            self.rule_prompt = (
-                f"{self.rule_prompt} -- " + " -- ".join(variable_parts)
-            )
+            self.rule_prompt = f"{self.rule_prompt} -- " + " -- ".join(variable_parts)
 
     def _build_protect_flash_result(
         self, score_results: dict, eval_runtime_ms: int, kwargs: dict
@@ -530,7 +526,9 @@ class DeterministicEvaluator(LLM):
             if agent.is_turing_model:
                 agent_usage = agent.token_usage
                 self.token_usage["prompt_tokens"] += agent_usage.get("prompt_tokens", 0)
-                self.token_usage["completion_tokens"] += agent_usage.get("completion_tokens", 0)
+                self.token_usage["completion_tokens"] += agent_usage.get(
+                    "completion_tokens", 0
+                )
                 self.token_usage["total_tokens"] += agent_usage.get("total_tokens", 0)
                 agent_cost = agent.cost
                 self.cost["prompt_cost"] += agent_cost.get("prompt_cost", 0.0)

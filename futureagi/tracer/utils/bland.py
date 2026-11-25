@@ -21,9 +21,16 @@ _BLAND_COMBINED_RECORDING_KEY = (
 
 def normalize_bland_data(log: dict, *, project_id: str | None = None) -> dict:
     """Normalizes a single detailed Bland call into the standard log shape."""
-    status_map = {"completed": "ok", "complete": "ok", "failed": "error", "error": "error"}
+    status_map = {
+        "completed": "ok",
+        "complete": "ok",
+        "failed": "error",
+        "error": "error",
+    }
     raw_status = (log.get("status") or "") if isinstance(log.get("status"), str) else ""
-    status = status_map.get(raw_status.lower(), "ok" if log.get("completed") else "unset")
+    status = status_map.get(
+        raw_status.lower(), "ok" if log.get("completed") else "unset"
+    )
 
     eval_attributes = _extract_eval_attributes(log)
 
@@ -34,7 +41,11 @@ def normalize_bland_data(log: dict, *, project_id: str | None = None) -> dict:
     # later poll can retry, and must not drop the whole span.
     rehost_uploads: dict[str, int] = {}
     source_url = eval_attributes.get(_BLAND_COMBINED_RECORDING_KEY)
-    if project_id and source_url and not VapiRecordingService.is_fagi_s3_url(source_url):
+    if (
+        project_id
+        and source_url
+        and not VapiRecordingService.is_fagi_s3_url(source_url)
+    ):
         try:
             durable_url, artifact_bytes = convert_audio_url_to_s3_sync(
                 call_id=log.get("call_id") or log.get("c_id"),

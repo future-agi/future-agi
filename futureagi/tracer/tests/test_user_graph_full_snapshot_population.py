@@ -52,10 +52,32 @@ REPLACEMENT_KEY = (
     "GROUP BY project_id, observation_type, service_name, "
     "toStartOfHour(start_time), trace_id, id"
 )
-REPLAYED_STATE = (
-    "argMax(tuple(start_time, is_deleted, end_user_id, latency_ms, total_tokens, "
-    "cost, prompt_tokens, completion_tokens, status), _version) AS latest_state"
-)
+
+
+def assert_replayed_state(population):
+    assert (
+        "argMax(tuple(start_time, is_deleted, end_user_id, latency_ms, total_tokens, "
+        "cost, prompt_tokens, completion_tokens, status, parent_span_id, name, "
+    ) in population
+    assert "), _version) AS latest_state" in population
+    fields = (
+        "start_time",
+        "is_deleted",
+        "end_user_id",
+        "latency_ms",
+        "total_tokens",
+        "cost",
+        "prompt_tokens",
+        "completion_tokens",
+        "status",
+        "parent_span_id",
+        "name",
+        "graph_cost_flags",
+    )
+    for position, column in enumerate(fields, 1):
+        assert f"latest_state.{position} AS {column}" in population
+    assert "attrs_string['fi.cost.kind']" in population
+    assert "attrs_string['fi.usage.contribution']" in population
 
 
 def _spans_reads(sql):
@@ -100,7 +122,7 @@ def test_exact_reader_replays_latest_state_in_one_ordered_pass_without_final():
     # candidate-derived remap) were three scans of the same window.
     assert _cte_references(sql, "latest_spans") == 1
     population = _cte(sql, "latest_spans")
-    assert REPLAYED_STATE in population
+    assert_replayed_state(population)
     assert REPLACEMENT_KEY in population
     assert "ARRAY JOIN" not in population
 
@@ -196,19 +218,31 @@ def test_narrow_output_partition_keeps_entity_safe_trace_ownership(edge):
     assert "candidate_trace_ids AS" in sql
     candidates = _cte(sql, "candidate_trace_ids")
     assert "FROM snapshot_spans GROUP BY trace_id" in candidates
-    assert "HAVING min(start_time) >= fromUnixTimestamp64Micro(%(user_partition_start_us)s, 'UTC')" in candidates
-    assert "min(start_time) < fromUnixTimestamp64Micro(%(user_partition_end_us)s, 'UTC')" in candidates
+    assert (
+        "HAVING min(start_time) >= fromUnixTimestamp64Micro(%(user_partition_start_us)s, 'UTC')"
+        in candidates
+    )
+    assert (
+        "min(start_time) < fromUnixTimestamp64Micro(%(user_partition_end_us)s, 'UTC')"
+        in candidates
+    )
     assert "trace_id IN (SELECT trace_id FROM candidate_trace_ids)" in sql
     assert "FROM spans FINAL" not in sql
     assert _spans_reads(sql) == 1
     assert "FROM snapshot_spans" in _cte(sql, "latest_spans")
-    assert params["user_snapshot_scan_start"] == START.replace(minute=0, second=0, microsecond=0)
-    assert params["user_snapshot_scan_end"] == END.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    assert params["user_snapshot_scan_start"] == START.replace(
+        minute=0, second=0, microsecond=0
+    )
+    assert params["user_snapshot_scan_end"] == END.replace(
+        minute=0, second=0, microsecond=0
+    ) + timedelta(hours=1)
     epoch = datetime(1970, 1, 1)
-    assert params["user_partition_start_us"] == (start - epoch) // timedelta(microseconds=1)
+    assert params["user_partition_start_us"] == (start - epoch) // timedelta(
+        microseconds=1
+    )
     assert params["user_partition_end_us"] == (end - epoch) // timedelta(microseconds=1)
     population = _cte(sql, "snapshot_spans")
-    assert REPLAYED_STATE in population
+    assert_replayed_state(population)
     assert REPLACEMENT_KEY in population
     assert "latest_state.2 = 0" in population.split("HAVING", 1)[1]
     assert "ARRAY JOIN [old_id, new_id]" not in sql
@@ -218,7 +252,12 @@ def test_legacy_non_snapshot_path_uses_full_physical_snapshot_replay():
     sql, params = _build(snapshot_start=None, snapshot_end=None)
     full_sql, full_params = _build()
     assert _cte(sql, "latest_spans") == _cte(full_sql, "latest_spans")
-    for key in ("user_snapshot_scan_start", "user_snapshot_scan_end", "user_snapshot_start_us", "user_snapshot_end_us"):
+    for key in (
+        "user_snapshot_scan_start",
+        "user_snapshot_scan_end",
+        "user_snapshot_start_us",
+        "user_snapshot_end_us",
+    ):
         assert params[key] == full_params[key]
     assert "LIMIT 1 BY" not in sql
     assert _spans_reads(sql) == 1
@@ -267,7 +306,7 @@ def test_remap_fixture_expands_complete_touched_group_before_choosing_survivor(
 def test_fixture_full_hour_replacement_does_not_revive_old_timestamp(outcome):
     """Model the SQL's scan->replacement->exact-window order; not live SQL."""
     sql, params = _build()
-    assert REPLAYED_STATE in _cte(sql, "latest_spans")
+    assert_replayed_state(_cte(sql, "latest_spans"))
     old = {
         "project_id": PROJECT,
         "observation_type": "span",

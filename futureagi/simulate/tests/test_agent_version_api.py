@@ -6,7 +6,6 @@ Tests cover:
 - CreateAgentVersionView: POST /simulate/agent-definitions/{id}/versions/create/
 - AgentVersionDetailView: GET /simulate/agent-definitions/{id}/versions/{id}/
 - ActivateAgentVersionView: POST /simulate/agent-definitions/{id}/versions/{id}/activate/
-- DeleteAgentVersionView: DELETE /simulate/agent-definitions/{id}/versions/{id}/delete/
 - RestoreAgentVersionView: POST /simulate/agent-definitions/{id}/versions/{id}/restore/
 - AgentVersionEvalSummaryView: GET .../eval-summary/
 - AgentVersionCallExecutionView: GET .../call-executions/
@@ -478,58 +477,6 @@ class TestActivateAgentVersion:
     def test_unauthenticated(self, api_client, agent_definition, agent_version):
         response = api_client.post(
             _version_url(agent_definition.id, agent_version.id, "activate/")
-        )
-        assert response.status_code in [
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        ]
-
-
-# ============================================================================
-# TestDeleteAgentVersion
-# ============================================================================
-
-
-@pytest.mark.integration
-@pytest.mark.api
-class TestDeleteAgentVersion:
-    """Tests for DELETE /simulate/agent-definitions/{id}/versions/{id}/delete/"""
-
-    def test_delete_success(
-        self, auth_client, agent_definition, agent_version, second_version
-    ):
-        # Delete the archived version (not the only active one)
-        response = auth_client.delete(
-            _version_url(agent_definition.id, second_version.id, "delete/")
-        )
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert data["message"] == "Agent version deleted successfully"
-
-    def test_cannot_delete_only_active(
-        self, auth_client, agent_definition, agent_version
-    ):
-        response = auth_client.delete(
-            _version_url(agent_definition.id, agent_version.id, "delete/")
-        )
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "Cannot delete the only active version" in response.json()["error"]
-
-    def test_agent_not_found(self, auth_client, agent_version):
-        response = auth_client.delete(
-            _version_url(uuid.uuid4(), agent_version.id, "delete/")
-        )
-        assert response.status_code == status.HTTP_404_NOT_FOUND
-
-    def test_version_not_found(self, auth_client, agent_definition):
-        response = auth_client.delete(
-            _version_url(agent_definition.id, uuid.uuid4(), "delete/")
-        )
-        assert response.status_code == status.HTTP_404_NOT_FOUND
-
-    def test_unauthenticated(self, api_client, agent_definition, agent_version):
-        response = api_client.delete(
-            _version_url(agent_definition.id, agent_version.id, "delete/")
         )
         assert response.status_code in [
             status.HTTP_401_UNAUTHORIZED,

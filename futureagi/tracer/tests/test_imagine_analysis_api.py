@@ -62,9 +62,7 @@ def test_imagine_analysis_trigger_poll_and_cached_result(
             "saved_view_id": str(saved_view.id),
             "trace_id": trace_id,
             "project_id": str(observe_project.id),
-            "widgets": [
-                {"widget_id": "summary", "prompt": "Summarize this trace."}
-            ],
+            "widgets": [{"widget_id": "summary", "prompt": "Summarize this trace."}],
         },
         format="json",
     )

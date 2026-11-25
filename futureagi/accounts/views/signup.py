@@ -276,7 +276,9 @@ def user_signup(request):
                     organization_id=user.organization_id,
                 )
             except Exception:
-                logger.debug("deployment_telemetry_signup_login_event_failed", exc_info=True)
+                logger.debug(
+                    "deployment_telemetry_signup_login_event_failed", exc_info=True
+                )
             return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(
@@ -374,9 +376,18 @@ def activate_account(request, uidb64, token):
         cache.set(rate_key, attempts + 1, timeout=60)
 
     try:
-        # Decode the uidb64 to the user ID
-        uid = force_str(urlsafe_base64_decode(uidb64))
-        user = User.objects.get(pk=uid)
+        # Malformed base64, UTF-8 or UUID identifiers are an invalid link.
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            user = User.objects.get(pk=uid)
+        except (
+            binascii.Error,
+            TypeError,
+            UnicodeDecodeError,
+            ValueError,
+            ValidationError,
+        ):
+            return _gm.bad_request("Activation link is invalid or has expired.")
 
         # Check if the token is valid
         if account_activation_token.check_token(user, token):
@@ -574,9 +585,18 @@ def reset_password_confirm(request, uidb64, token):
     repeat_password = request.validated_data.get("repeat_password")
 
     try:
-        # Decode the uidb64 to the user ID
-        uid = force_str(urlsafe_base64_decode(uidb64))
-        user = User.objects.get(pk=uid)
+        # Malformed base64, UTF-8 or UUID identifiers are an invalid link.
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            user = User.objects.get(pk=uid)
+        except (
+            binascii.Error,
+            TypeError,
+            UnicodeDecodeError,
+            ValueError,
+            ValidationError,
+        ):
+            return _gm.bad_request("Invalid reset link.")
 
         # Check if the token is valid
         decrypted_token_obj = decrypt_message(str(token))

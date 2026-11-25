@@ -425,6 +425,46 @@ func signTestLicenseToken(t *testing.T, privateKey *rsa.PrivateKey, claims licen
 	return header + "." + payload + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
+// Third-party decision models are never a managed service: no licence token
+// reaches a decision route, whatever services and models it claims. The
+// handler is never called, so no Future AGI-held key can be used.
+func TestDecisionRoutesAreNotManaged(t *testing.T) {
+	privateKey, publicPEM := testRSAKeyPair(t)
+	token := signTestLicenseToken(t, privateKey, licenseClaims{
+		LicenseID:  "lic_test",
+		InstanceID: "inst_test",
+		Scope:      "enterprise",
+		Services:   []string{"turing", "jev", "typesafe", "decision"},
+		Models:     []string{"jev-1.13.0", "typesafe/jev-1.13.0", "gpt-6-luna", "turing_small"},
+		ExpiresAt:  time.Now().Add(time.Hour).Unix(),
+		JTI:        "tok_test",
+	})
+	handler := LicenseAuth(config.LicenseAuthConfig{Enabled: true, PublicKey: publicPEM}, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("%s %s reached the handler with a licence token", r.Method, r.URL.Path)
+	}))
+
+	for _, tt := range []struct{ method, path, body string }{
+		{http.MethodPost, "/v1/systemone", `{"model":"jev-1.13.0","state":"s","questions":{"q":{"type":"noul"}}}`},
+		{http.MethodPost, "/v1/systemone", `{"model":"typesafe/jev-1.13.0","state":"s","questions":{"q":{"type":"noul"}}}`},
+		{http.MethodPost, "/v1/decisions", `{"model":"gpt-6-luna","input":"x","questions":[{"type":"predicate"}]}`},
+		{http.MethodPost, "/v1/decisions", `{"model":"turing_small","state":"s","questions":{"q":{"type":"noul"}}}`},
+		{http.MethodGet, "/v1/decisions/models", ""},
+	} {
+		req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("%s %s: status %d, want 403", tt.method, tt.path, rr.Code)
+		}
+	}
+	for _, model := range []string{"jev-1.13.0", "jev-latest", "pplx-decider-v1.1-27b", "gpt-6-luna", "typesafe/jev-1.13.0"} {
+		if service := serviceForModel(model); service != "" {
+			t.Errorf("serviceForModel(%q) = %q; decision models have no managed service", model, service)
+		}
+	}
+}
+
 // The usage meter wraps the ResponseWriter, so it has to stay transparent to
 // http.ResponseController: the timeout middleware runs inside it and sets the
 // response write deadline through it.

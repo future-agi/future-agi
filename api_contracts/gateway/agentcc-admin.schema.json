@@ -11,7 +11,10 @@
       "properties": {
         "api_key": { "type": "string" },
         "base_url": { "type": "string" },
-        "api_format": { "type": "string" },
+        "api_format": {
+          "type": "string",
+          "description": "The upstream's wire protocol: openai, anthropic, gemini, bedrock, cohere or azure for model calls, or systemone for a structured-decision provider (TypeSafe, Perplexity Decider, a custom System One endpoint), with typesafe accepted as its alias. Empty lets the gateway infer it from the provider ID, which maps typesafe to systemone. A free string, so a format the gateway adds needs no contract change."
+        },
         "api_path_prefix": { "type": "string" },
         "models": { "type": "array", "items": { "type": "string" } },
         "timeout": { "type": "integer" },
@@ -33,6 +36,11 @@
         "enabled": { "type": "boolean" },
         "action": { "type": "string" },
         "confidence_threshold": { "type": "number" },
+        "configuration_error": {
+          "type": "string",
+          "enum": ["invalid_config"],
+          "description": "Preserves a selected-key check whose malformed legacy configuration cannot fit this wire shape. It remains an unavailable check, not a valid empty default; omit after correction. No raw configuration or error details."
+        },
         "config": { "type": "object", "additionalProperties": true }
       }
     },
@@ -43,6 +51,26 @@
         "pipeline_mode": { "type": "string" },
         "fail_open": { "type": "boolean" },
         "timeout_ms": { "type": "integer" },
+        "checks": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/GuardrailCheck" }
+        },
+        "key_policies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/KeyGuardrailPolicy" }
+        }
+      }
+    },
+    "KeyGuardrailPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "key_ids"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "mode": { "type": "string" },
+        "priority": { "type": "integer" },
+        "key_ids": { "type": "array", "items": { "type": "string" } },
         "checks": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/GuardrailCheck" }

@@ -257,9 +257,8 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 {"script_url": "script_url is required for script kind."}
             )
 
-        if (
-            source_type == Scenarios.SourceTypes.AGENT_DEFINITION
-            and not data.get("agent_definition_id")
+        if source_type == Scenarios.SourceTypes.AGENT_DEFINITION and not data.get(
+            "agent_definition_id"
         ):
             raise serializers.ValidationError(
                 {

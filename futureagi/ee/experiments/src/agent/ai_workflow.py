@@ -60,8 +60,8 @@ class AgentTask:
     def check_condition(self, conversation):
         prompt = f"""
         Analyze the following conversation based on this metric:
-        Property: {self.parsed_metric['property']}
-        Filter: {self.parsed_metric['filter']}
+        Property: {self.parsed_metric["property"]}
+        Filter: {self.parsed_metric["filter"]}
         Conversation:
         {format_conversation(conversation)}
 

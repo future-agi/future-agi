@@ -109,6 +109,8 @@ func TestAzure_HighSeverity(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"categoriesAnalysis": []map[string]interface{}{
 				{"category": "Hate", "severity": 0},
+				{"category": "SelfHarm", "severity": 0},
+				{"category": "Sexual", "severity": 0},
 				{"category": "Violence", "severity": 4},
 			},
 		})
@@ -137,6 +139,8 @@ func TestAzure_LowSeverity(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"categoriesAnalysis": []map[string]interface{}{
 				{"category": "Hate", "severity": 0},
+				{"category": "SelfHarm", "severity": 0},
+				{"category": "Sexual", "severity": 0},
 				{"category": "Violence", "severity": 1},
 			},
 		})
@@ -304,8 +308,8 @@ func TestLlamaGuard_EmptyChoices(t *testing.T) {
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("expected pass for empty choices")
+	if result.Pass || result.Err == nil {
+		t.Fatal("empty choices must be a typed execution failure")
 	}
 }
 
@@ -323,13 +327,13 @@ func TestBedrock_Intervened(t *testing.T) {
 	defer srv.Close()
 
 	g := New("test-bedrock", map[string]interface{}{
-		"provider":           "bedrock_guardrails",
-		"endpoint":           srv.URL,
-		"guardrail_id":       "abc123",
-		"guardrail_version":  "1",
-		"access_key":         "ak",
-		"secret_key":         "sk",
-		"region":             "us-east-1",
+		"provider":          "bedrock_guardrails",
+		"endpoint":          srv.URL,
+		"guardrail_id":      "abc123",
+		"guardrail_version": "1",
+		"access_key":        "ak",
+		"secret_key":        "sk",
+		"region":            "us-east-1",
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "attack")}))
@@ -382,8 +386,8 @@ func TestExternal_EmptyMessages(t *testing.T) {
 func TestExternal_NoAdapter(t *testing.T) {
 	g := New("test", nil)
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("no adapter should pass")
+	if result.Pass || result.Err == nil {
+		t.Fatal("missing adapter must be a typed execution failure")
 	}
 }
 
@@ -688,6 +692,9 @@ func TestEnkrypt_ArraySummary(t *testing.T) {
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "insult")}))
+	if result.Err != nil {
+		t.Fatalf("summary without the untriggered default detector is a verdict, got execution failure: %v", result.Err)
+	}
 	if result.Pass {
 		t.Fatal("expected fail for array toxicity summary")
 	}
@@ -832,8 +839,8 @@ func TestLasso_Safe(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"violations_detected": false,
-			"deputies":           map[string]bool{},
-			"findings":           map[string]interface{}{},
+			"deputies":            map[string]bool{},
+			"findings":            map[string]interface{}{},
 		})
 	}))
 	defer srv.Close()
@@ -855,8 +862,8 @@ func TestLasso_EndpointAppendClassify(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"violations_detected": false,
-			"deputies":           map[string]bool{},
-			"findings":           map[string]interface{}{},
+			"deputies":            map[string]bool{},
+			"findings":            map[string]interface{}{},
 		})
 	}))
 	defer srv.Close()

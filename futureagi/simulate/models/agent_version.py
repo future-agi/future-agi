@@ -183,8 +183,7 @@ class AgentVersion(BaseModel):
                 # retell), so the snapshot mirrors the live credential column
                 # regardless of provider — the runner reads it generically.
                 livekit_max_concurrency = (
-                    creds.max_concurrency
-                    or settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
+                    creds.max_concurrency or settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
                 )
                 if creds.provider_type == "livekit":
                     livekit_url = creds.server_url or ""

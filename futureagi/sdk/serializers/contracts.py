@@ -1,4 +1,3 @@
-from drf_yasg import openapi
 from rest_framework import serializers
 
 from sdk.serializers.analytics import (
@@ -21,6 +20,21 @@ class SDKErrorResponseSerializer(serializers.Serializer):
     )
 
 
+class SDKEvaluationDenialResponseSerializer(SDKErrorResponseSerializer):
+    """Usage refusal; completed_results must not be rerun after a batch denial."""
+
+    code = serializers.CharField()
+    error_code = serializers.CharField(required=False, allow_blank=True)
+    dimension = serializers.CharField(required=False, allow_blank=True)
+    current_usage = serializers.FloatField(required=False)
+    limit = serializers.FloatField(required=False)
+    upgrade_cta = serializers.JSONField(required=False)
+    completed_results = serializers.ListField(
+        child=serializers.JSONField(), required=False
+    )
+    failed_index = serializers.IntegerField(required=False, min_value=0)
+
+
 class ConfigureEvaluationsRequestSerializer(serializers.Serializer):
     eval_config = ConfigureEvaluationsSerializer()
     platform = serializers.CharField()
@@ -30,11 +44,19 @@ class ConfigureEvaluationsRequestSerializer(serializers.Serializer):
 
     class Meta:
         ref_name = "SDKConfigureEvaluationsRequest"
+        # The view forwards undeclared JSON values from request.data as provider
+        # credentials (including scalar strings); they are not object-only.
+        # Swagger UI shows nothing for additionalProperties: true, so the
+        # description is what tells SDK users where the credentials go.
         swagger_schema_fields = {
-            "additional_properties": openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                description="Provider-specific credential fields accepted at top level.",
-            )
+            "description": (
+                "Provider credential fields go at the top level of this request, "
+                "next to eval_config and platform. The langfuse platform requires "
+                "non-empty langfuse_secret_key, langfuse_public_key and "
+                "langfuse_host. Every undeclared top-level field is stored as a "
+                "credential."
+            ),
+            "additional_properties": True,
         }
 
 
@@ -53,8 +75,14 @@ class SDKStandaloneEvalInputSerializer(serializers.Serializer):
 
     class Meta:
         ref_name = "SDKStandaloneEvalInput"
+        # DRF ignores undeclared nested input fields regardless of JSON type.
+        # Keep their existing acceptance without claiming object-only values.
         swagger_schema_fields = {
-            "additional_properties": openapi.Schema(type=openapi.TYPE_OBJECT)
+            "description": (
+                "One evaluation input. Only input and max_tokens are read; extra "
+                "fields of any JSON type in this object are accepted and ignored."
+            ),
+            "additional_properties": True,
         }
 
 

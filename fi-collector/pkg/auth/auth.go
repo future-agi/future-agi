@@ -27,8 +27,16 @@ const (
 
 var (
 	ErrUnauthenticated = errors.New("invalid or missing API key")
+	// ErrKeyExpired also matches generic unauthenticated handling.
+	ErrKeyExpired = fmt.Errorf("%w: API key has expired", ErrUnauthenticated)
 	// ErrProjectResolutionUnavailable must be retried, not acknowledged as a drop.
 	ErrProjectResolutionUnavailable = errors.New("project resolution temporarily unavailable")
+)
+
+// Match the Django API expiry error across transports.
+const (
+	ExpiredKeyMessage = "API key has expired"
+	ExpiredKeyCode    = "api_key_expired"
 )
 
 // ProjectAuthChangedError means the authenticated cache entry disappeared or
@@ -219,6 +227,10 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 			return nil, err
 		}
 		entry, status := a.cache.get(ck)
+		if entry != nil && entry.result.Expired(time.Now()) {
+			a.cache.invalidateKey(ck)
+			return nil, ErrKeyExpired
+		}
 		switch status {
 		case "fresh":
 			return entry.result, nil
@@ -250,6 +262,9 @@ func (a *Authenticator) authenticateUncached(ctx context.Context, apiKey, secret
 		if err != nil {
 			return nil, err
 		}
+		if result.Expired(time.Now()) {
+			return nil, ErrKeyExpired
+		}
 		if !a.cache.publishValidated(ck, result, epoch) {
 			return nil, &ProjectAuthChangedError{}
 		}
@@ -273,6 +288,10 @@ func (a *Authenticator) authenticateUncached(ctx context.Context, apiKey, secret
 		return nil, fmt.Errorf("auth resolve: %w", resolved.Err)
 	}
 	result, _ := resolved.Val.(*ResolveResult)
+	if result.Expired(time.Now()) {
+		a.cache.invalidateGeneration(ck, epoch)
+		return nil, ErrKeyExpired
+	}
 	entry, _ := a.cache.peek(ck)
 	if entry == nil || entry.result != result {
 		return nil, &ProjectAuthChangedError{}
@@ -427,6 +446,10 @@ func (a *Authenticator) refreshKey(ctx context.Context, apiKey, secretKey string
 	epoch := a.cache.keyGeneration(ck)
 
 	result, err := a.keyResolver().ValidateKey(ctx, apiKey, secretKey)
+	if errors.Is(err, ErrKeyExpired) || result.Expired(time.Now()) {
+		a.cache.invalidateGeneration(ck, epoch)
+		return
+	}
 	if err != nil {
 		a.log.Debug("background key refresh failed", "err", err)
 		return

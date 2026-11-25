@@ -92,9 +92,8 @@ class TuringClient:
 
         # Step 2: validate the effective model supports the modality
         config = ModelConfigs.get_config(effective)
-        supports = (
-            (not has_audio or (config and config.supports_audio))
-            and (not has_pdf or (config and config.supports_pdf))
+        supports = (not has_audio or (config and config.supports_audio)) and (
+            not has_pdf or (config and config.supports_pdf)
         )
         if supports:
             return effective
@@ -141,22 +140,27 @@ class TuringClient:
         """Accumulate token usage and cost from the LLM instance."""
         usage = llm.token_usage
         self._usage = {
-            "prompt_tokens": self._usage["prompt_tokens"] + usage.get("prompt_tokens", 0),
-            "completion_tokens": self._usage["completion_tokens"] + usage.get("completion_tokens", 0),
+            "prompt_tokens": self._usage["prompt_tokens"]
+            + usage.get("prompt_tokens", 0),
+            "completion_tokens": self._usage["completion_tokens"]
+            + usage.get("completion_tokens", 0),
             "total_tokens": self._usage["total_tokens"] + usage.get("total_tokens", 0),
         }
         cost = llm.cost
         self._cost = {
             "prompt_cost": self._cost["prompt_cost"] + cost.get("prompt_cost", 0.0),
-            "completion_cost": self._cost["completion_cost"] + cost.get("completion_cost", 0.0),
+            "completion_cost": self._cost["completion_cost"]
+            + cost.get("completion_cost", 0.0),
             "total_cost": self._cost["total_cost"] + cost.get("total_cost", 0.0),
         }
 
     def _accumulate_response_usage(self, response: Dict[str, Any]) -> None:
         usage = response.get("usage") or {}
         self._usage = {
-            "prompt_tokens": self._usage["prompt_tokens"] + usage.get("prompt_tokens", 0),
-            "completion_tokens": self._usage["completion_tokens"] + usage.get("completion_tokens", 0),
+            "prompt_tokens": self._usage["prompt_tokens"]
+            + usage.get("prompt_tokens", 0),
+            "completion_tokens": self._usage["completion_tokens"]
+            + usage.get("completion_tokens", 0),
             "total_tokens": self._usage["total_tokens"] + usage.get("total_tokens", 0),
         }
 
@@ -289,9 +293,13 @@ class TuringClient:
         logger.debug(
             "turing_client_tool_response",
             model=effective_model,
-            finish_reason=data["choices"][0].get("finish_reason") if data["choices"] else None,
+            finish_reason=data["choices"][0].get("finish_reason")
+            if data["choices"]
+            else None,
             has_tool_calls=bool(
-                data["choices"][0].get("message", {}).get("tool_calls") if data["choices"] else False
+                data["choices"][0].get("message", {}).get("tool_calls")
+                if data["choices"]
+                else False
             ),
         )
 

@@ -970,7 +970,7 @@ export const useFixMyAgentBlocked = (executionId) => {
     return {
       disabled: true,
       reason:
-        "The test run is still running, you can optimize your agent after the test run is completed",
+        "The test run is still running. You can debug its failures once it finishes.",
     };
   } else if (
     status === TestRunExecutionStatus.COMPLETED ||
@@ -979,7 +979,7 @@ export const useFixMyAgentBlocked = (executionId) => {
     if (callDetails.connectedCalls < 15) {
       return {
         disabled: true,
-        reason: "You need at least 15 connected calls to optimize your agent",
+        reason: "You need at least 15 connected calls to debug failures.",
       };
     }
   }

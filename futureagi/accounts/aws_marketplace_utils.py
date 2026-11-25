@@ -19,13 +19,19 @@ from tfc.constants.roles import OrganizationRoles
 
 logger = structlog.get_logger(__name__)
 try:
-    from ee.usage.models.usage import OrganizationSubscription, SubscriptionTier, SubscriptionTierChoices
+    from ee.usage.models.usage import (
+        OrganizationSubscription,
+        SubscriptionTier,
+        SubscriptionTierChoices,
+    )
 except ImportError:
     OrganizationSubscription = None
     SubscriptionTier = None
     SubscriptionTierChoices = None
 try:
-    from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+    from ee.usage.utils.usage_entries import (
+        create_organization_subscription_if_not_exists,
+    )
 except ImportError:
     create_organization_subscription_if_not_exists = None
 

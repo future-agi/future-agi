@@ -126,7 +126,7 @@ const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
           determine which experiment performed the best"
           />
         </Stack>
-        <Typography fontWeight={600} fontSize="13px" color="text.primary">
+        <Typography fontWeight={600} fontSize="12px" color="text.primary">
           Variables
         </Typography>
         <Box

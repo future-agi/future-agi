@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
@@ -23,6 +24,9 @@ vi.mock("src/sections/common/simulation/hooks/useCancelExecution", () => ({
 }));
 
 const { default: StopRunControl } = await import("../StopRunControl");
+const { default: useSimulationAccess } = await import(
+  "../../../hooks/useSimulationAccess"
+);
 
 let client;
 const renderControl = (props, wrap = (node) => node) => {
@@ -38,6 +42,7 @@ beforeEach(() => {
   cancelMutate.mockClear();
   useCancelExecution.mockClear();
   enqueueSnackbar.mockClear();
+  vi.mocked(useSimulationAccess).mockReturnValue({ canEdit: true, canRun: true });
 });
 
 describe("StopRunControl", () => {
@@ -103,6 +108,26 @@ describe("StopRunControl", () => {
       "Couldn't stop the run. Try again",
       { variant: "error" },
     );
+  });
+
+  it("is locked for a Viewer, says why, and never cancels", async () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
+    });
+    const user = userEvent.setup();
+    renderControl({ executionId: "ex-1", stoppable: true });
+
+    const stop = screen.getByRole("button", { name: "Stop simulation" });
+    expect(stop).toBeDisabled();
+    await user.tab();
+    expect(stop.parentElement).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "You don't have permission to stop runs.",
+    );
+    fireEvent.click(stop);
+    expect(screen.queryByText("Stop this run?")).not.toBeInTheDocument();
+    expect(cancelMutate).not.toHaveBeenCalled();
   });
 
   it("does not open the surrounding row when clicked", () => {

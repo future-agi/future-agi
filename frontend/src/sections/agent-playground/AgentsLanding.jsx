@@ -2,11 +2,11 @@ import React, { Suspense } from "react";
 import { Helmet } from "react-helmet-async";
 import { Outlet, useMatch, useNavigate } from "react-router-dom";
 import { Box, Tab, Tabs } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import PageHeader from "src/components/page-header";
 import CreateAgentsButton from "./components/CreateAgentsButton";
 import useCanEditAgent from "./hooks/useCanEditAgent";
 import { agentsTabPath, resolveAgentsTab } from "./agentsTabs";
-import ContentSkeleton from "src/components/content-skeleton";
 
 /**
  * Agents — the ones built here in the Playground, and the ones that live
@@ -66,13 +66,9 @@ export default function AgentsLanding() {
             px: 3,
           }}
         >
-          <Suspense
-            fallback={
-              <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
-                <ContentSkeleton variant="panel" />
-              </Box>
-            }
-          >
+          {/* Hover preload usually has the tab's code ready; a refresh, deep
+              link or tab switch shows the one loader until it arrives. */}
+          <Suspense fallback={<LoadingScreen compact />}>
             <Outlet />
           </Suspense>
         </Box>

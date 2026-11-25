@@ -249,4 +249,3 @@ Failed tool call:
     "summary": "Tool called without user request or context. Phone number and message were set arbitrarily without user input. Should only call SMS tool after explicit user request with validated parameters. Add user consent check before sending messages."
 }}
 """
-

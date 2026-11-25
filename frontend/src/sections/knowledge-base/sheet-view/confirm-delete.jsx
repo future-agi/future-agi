@@ -198,7 +198,7 @@ export default function ConfirmDelete({
           <Typography
             variant="s2"
             fontWeight={"fontWeightMedium"}
-            fontSize={"13px"}
+            fontSize={"12px"}
           >
             Cancel
           </Typography>
@@ -218,7 +218,7 @@ export default function ConfirmDelete({
           <Typography
             variant="s2"
             fontWeight={"fontWeightSemiBold"}
-            fontSize={"13px"}
+            fontSize={"12px"}
           >
             Delete
           </Typography>

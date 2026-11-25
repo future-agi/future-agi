@@ -91,6 +91,7 @@ def _update_recording_payload(
         if target and url:
             target[0][target[1]] = url
 
+
 # User-facing error messages for VAPI API HTTP status codes.
 # 429 is deliberately excluded -- it is handled by _make_api_request_with_retry in the base class.
 VAPI_STATUS_MESSAGES: dict[int, str] = {
@@ -2527,7 +2528,9 @@ class VapiService(VoiceServiceBlueprint):
         if main_recording_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, main_recording_url, "recording",
+                    call_id_str,
+                    main_recording_url,
+                    "recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
@@ -2548,7 +2551,9 @@ class VapiService(VoiceServiceBlueprint):
         if stereo_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, stereo_url, "stereo_recording",
+                    call_id_str,
+                    stereo_url,
+                    "stereo_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
@@ -2569,7 +2574,9 @@ class VapiService(VoiceServiceBlueprint):
         if assistant_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, assistant_url, "assistant_recording",
+                    call_id_str,
+                    assistant_url,
+                    "assistant_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
@@ -2590,7 +2597,9 @@ class VapiService(VoiceServiceBlueprint):
         if customer_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, customer_url, "customer_recording",
+                    call_id_str,
+                    customer_url,
+                    "customer_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
@@ -2786,9 +2795,7 @@ class VapiService(VoiceServiceBlueprint):
                 for msg in messages:
                     raw_role = msg.get("speaker_role") or msg.get("role", "unknown")
                     content = msg.get("content") or msg.get("message", "")
-                    role = raw_role_to_db_role.get(
-                        (raw_role or "").lower(), raw_role
-                    )
+                    role = raw_role_to_db_role.get((raw_role or "").lower(), raw_role)
 
                     role_lower = role.lower()
                     has_content = bool(content and content.strip())

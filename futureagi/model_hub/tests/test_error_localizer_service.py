@@ -49,7 +49,8 @@ class TestFailClosedForUnscorableValues:
     """
 
     @pytest.mark.parametrize(
-        "output_type", [None, "percentage", "unknown"],
+        "output_type",
+        [None, "percentage", "unknown"],
     )
     def test_bare_list_does_not_trigger(self, output_type):
         template = _template(output_type_normalized=output_type)
@@ -58,7 +59,8 @@ class TestFailClosedForUnscorableValues:
         assert "not eligible for localization" in reason
 
     @pytest.mark.parametrize(
-        "output_type", [None, "percentage", "unknown"],
+        "output_type",
+        [None, "percentage", "unknown"],
     )
     def test_non_numeric_string_does_not_trigger(self, output_type):
         template = _template(output_type_normalized=output_type)
@@ -77,9 +79,7 @@ class TestFailClosedForUnscorableValues:
     def test_deterministic_eval_with_empty_choice_scores_skips(self):
         # Choices eval where choice_scores wasn't populated → can't rank
         # the output → fail closed instead of treating as 0.0.
-        template = _template(
-            output_type_normalized="deterministic", choice_scores={}
-        )
+        template = _template(output_type_normalized="deterministic", choice_scores={})
         run, reason = should_run_error_localizer("Yes", template)
         assert run is False
         assert "not eligible for localization" in reason
@@ -97,17 +97,13 @@ class TestFailClosedForUnscorableValues:
 
 class TestScoringPathsStillBehave:
     def test_low_percentage_score_triggers(self):
-        template = _template(
-            output_type_normalized="percentage", pass_threshold=0.5
-        )
+        template = _template(output_type_normalized="percentage", pass_threshold=0.5)
         run, reason = should_run_error_localizer(0.2, template)
         assert run is True
         assert "evaluation failed" in reason.lower()
 
     def test_high_percentage_score_skips(self):
-        template = _template(
-            output_type_normalized="percentage", pass_threshold=0.5
-        )
+        template = _template(output_type_normalized="percentage", pass_threshold=0.5)
         run, reason = should_run_error_localizer(0.9, template)
         assert run is False
         assert "evaluation passed" in reason.lower()
@@ -164,26 +160,18 @@ class TestEarlyExits:
 
 class TestRuntimeThresholdOverride:
     def test_runtime_threshold_takes_precedence_over_template(self):
-        template = _template(
-            output_type_normalized="percentage", pass_threshold=0.5
-        )
-        run, reason = should_run_error_localizer(
-            0.6, template, runtime_threshold=0.8
-        )
+        template = _template(output_type_normalized="percentage", pass_threshold=0.5)
+        run, reason = should_run_error_localizer(0.6, template, runtime_threshold=0.8)
         assert run is True
         assert "0.80" in reason
 
     def test_runtime_threshold_flips_high_score_to_pass(self):
-        template = _template(
-            output_type_normalized="percentage", pass_threshold=0.5
-        )
+        template = _template(output_type_normalized="percentage", pass_threshold=0.5)
         run, _ = should_run_error_localizer(0.4, template, runtime_threshold=0.3)
         assert run is False
 
     def test_runtime_threshold_none_falls_back_to_template(self):
-        template = _template(
-            output_type_normalized="percentage", pass_threshold=0.5
-        )
+        template = _template(output_type_normalized="percentage", pass_threshold=0.5)
         run, _ = should_run_error_localizer(0.2, template, runtime_threshold=None)
         assert run is True
 
@@ -213,9 +201,7 @@ class TestIsNumericallyScorable:
     def test_deterministic_needs_choice_scores(self):
         assert is_numerically_scorable("Yes", "deterministic", {}) is False
         assert (
-            is_numerically_scorable(
-                "Yes", "deterministic", {"Yes": 1.0, "No": 0.0}
-            )
+            is_numerically_scorable("Yes", "deterministic", {"Yes": 1.0, "No": 0.0})
             is True
         )
 

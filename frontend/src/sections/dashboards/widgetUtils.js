@@ -47,6 +47,16 @@ export const getDashboardMetricSeriesState = (metrics = []) => {
         data: (metricSeries.data || []).map((point) => ({
           x: new Date(point.timestamp).getTime(),
           y: point.value != null ? Number(point.value) : null,
+          // Preserve advisory metadata only when present. Ordinary chart point
+          // shapes stay unchanged; persisted metric cards use the same series.
+          ...(Object.hasOwn(point, "ci_low") ||
+          Object.hasOwn(point, "ci_reason")
+            ? {
+                ci_low: point.ci_low,
+                ci_high: point.ci_high,
+                ci_reason: point.ci_reason,
+              }
+            : {}),
         })),
       });
     }

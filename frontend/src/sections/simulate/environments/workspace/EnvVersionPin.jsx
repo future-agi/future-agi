@@ -13,6 +13,8 @@ import {
 import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 import { refusalText } from "./evals/refusalText";
 import MakeDefaultConfirm from "./versions/MakeDefaultConfirm";
+import ViewerLock from "../components/ViewerLock";
+import useSimulationAccess from "../hooks/useSimulationAccess";
 
 // The environment-version pin: the header names the default environment version,
 // and clicking it lists every version of the world, where an earlier active one
@@ -24,6 +26,7 @@ export default function EnvVersionPin({ env }) {
   // The version waiting on the user's confirmation.
   const [confirming, setConfirming] = useState(null);
   const move = useMoveDefault(env?.id);
+  const { canEdit } = useSimulationAccess();
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, error } = useEnvironmentVersions(env?.id, {
     enabled,
@@ -121,8 +124,6 @@ export default function EnvVersionPin({ env }) {
               mt: 0.5,
               p: 0.75,
               borderRadius: "8px",
-              border: "1px solid",
-              borderColor: "divider",
             },
           },
         }}
@@ -138,7 +139,9 @@ export default function EnvVersionPin({ env }) {
           >
             {pin.heading}
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
+          >
             {pin.subtitle}
           </Typography>
           {move.isError && (
@@ -169,7 +172,13 @@ export default function EnvVersionPin({ env }) {
                 bgcolor: v.isDefault ? "action.selected" : "transparent",
               }}
             >
-              <Stack direction="row" alignItems="center" spacing={0.625} flexWrap="wrap" rowGap={0.375}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.625}
+                flexWrap="wrap"
+                rowGap={0.375}
+              >
                 <Typography
                   sx={{
                     typography: "s1",
@@ -185,7 +194,9 @@ export default function EnvVersionPin({ env }) {
                 )}
               </Stack>
               {v.summary && (
-                <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.375 }}>
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.375 }}
+                >
                   {v.summary}
                 </Typography>
               )}
@@ -197,21 +208,29 @@ export default function EnvVersionPin({ env }) {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {[fDateTime(v.createdAt), v.createdBy && VERSIONS_COPY.by(v.createdBy)]
+                {[
+                  fDateTime(v.createdAt),
+                  v.createdBy && VERSIONS_COPY.by(v.createdBy),
+                ]
                   .filter(Boolean)
                   .join(" · ")}
               </Typography>
               {canMakeDefault("environment", v) && (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="inherit"
-                  disabled={move.isPending}
-                  onClick={() => setConfirming(v)}
-                  sx={{ mt: 0.75 }}
+                <ViewerLock
+                  locked={!canEdit}
+                  title={WORKSPACE_COPY.viewer.versions}
                 >
-                  {actionLabel(v, index)}
-                </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
+                    disabled={!canEdit || move.isPending}
+                    onClick={() => setConfirming(v)}
+                    sx={{ mt: 0.75 }}
+                  >
+                    {actionLabel(v, index)}
+                  </Button>
+                </ViewerLock>
               )}
             </Box>
           ))}
@@ -251,7 +270,9 @@ export function VersionBadge({ label, tone, role }) {
         bgcolor: statusRole ? `status.${statusRole}.bg` : "action.selected",
       }}
     >
-      <Typography sx={{ typography: "s3", fontWeight: 500 }}>{label}</Typography>
+      <Typography sx={{ typography: "s3", fontWeight: 500 }}>
+        {label}
+      </Typography>
     </Box>
   );
 }

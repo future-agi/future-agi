@@ -1,5 +1,6 @@
 """A page's slim call load renders the same rows as loading whole calls."""
 
+import csv
 import json
 import uuid
 from collections import defaultdict
@@ -17,6 +18,7 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
+    AgentVersion,
     CallExecution,
     RunTest,
     Scenarios,
@@ -28,6 +30,11 @@ from simulate.models.hosted_harness import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.services.call_provider import (
+    call_agent_provider,
+    call_agent_provider_expression,
+)
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3 import (
     CALL_ROW_METADATA_KEYS,
@@ -36,6 +43,11 @@ from simulate.services.run_results_v3 import (
     build_evaluation_catalog,
 )
 from simulate.services.run_results_v3_page import page_calls
+from simulate.services.run_results_v3_queries import (
+    _breakdown_run_calls,
+    run_calls_queryset,
+)
+from simulate.views.run_results_v3 import _csv_rows_from_queryset
 
 DIMENSION_COLUMNS = (
     "persona",
@@ -442,7 +454,7 @@ def test_slim_page_renders_the_same_rows_and_columns(run, goals):
     assert len(old_rows) == len(calls)
     by_id = {row["id"]: row for row in new_rows}
     assert by_id[str(calls[0].id)]["provider"] == "vapi"
-    assert by_id[str(calls[4].id)]["provider"] == "retell"
+    assert by_id[str(calls[4].id)]["provider"] == "vapi"
     assert by_id[str(calls[2].id)]["provider"] == "vapi"
     assert by_id[str(calls[1].id)]["goal"] == goals.get(1, "Row-data goal")
     # Dataset cells fill what call metadata leaves out.
@@ -453,9 +465,133 @@ def test_slim_page_renders_the_same_rows_and_columns(run, goals):
     assert by_id[str(calls[0].id)]["sub_goal_results"][1] == {
         "name": "Verifies",
         "passed": None,
+        "subject_kind": "task",
+        "display_name": "Verifies",
     }
     assert by_id[str(calls[0].id)]["conversation_branch"] == "Own branch"
     assert by_id[str(calls[1].id)]["conversation_branch"] == "Environment branch"
+
+
+@pytest.mark.django_db
+def test_provider_tracks_the_called_version_across_results_analytics_and_csv(run):
+    execution, calls, _, _ = run
+    agent = execution.agent_definition
+
+    def version(provider):
+        return AgentVersion.objects.create(
+            agent_definition=agent,
+            organization=agent.organization,
+            workspace=agent.workspace,
+            configuration_snapshot={"provider": provider},
+        )
+
+    # The first two calls used the run's pinned Vapi agent, despite different
+    # transport artifacts. The third call was rerun against another version.
+    execution.agent_version = version("vapi")
+    execution.save(update_fields=["agent_version"])
+    agent.provider = "retell"
+    agent.save(update_fields=["provider"])
+    calls = calls[:3]
+    calls[2].agent_version = version("livekit")
+    for call, transport in zip(calls, ["livekit", "vapi", "vapi"], strict=True):
+        call.provider_call_data = {transport: {"id": "artifact"}}
+        call.save(update_fields=["provider_call_data", "agent_version"])
+
+    expected = dict(
+        zip((str(c.id) for c in calls), ["vapi", "vapi", "livekit"], strict=True)
+    )
+    query = run_calls_queryset(execution).filter(pk__in=expected)
+    rows, _ = build_call_rows(execution, page_calls(_page(calls), execution))
+    assert {r["id"]: r["provider"] for r in rows} == expected
+    detail = CallExecutionDetailSerializer()
+    assert {str(c.id): detail.get_provider(c) for c in calls} == expected
+    assert {
+        r["call_id"]: r["provider"]
+        for r in csv.DictReader(_csv_rows_from_queryset(execution, query))
+    } == expected
+    assert {
+        r["provider"]: r["total"] for r in _breakdown_run_calls(query, "provider")
+    } == {"vapi": 2, "livekit": 1}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "second_provider,expected_header", [("vapi", "vapi"), ("livekit", None)]
+)
+def test_run_header_resolves_unstamped_call_versions(
+    run, auth_client, second_provider, expected_header
+):
+    execution, calls, _, _ = run
+    agent = execution.agent_definition
+    agent.provider = "retell"
+    agent.save(update_fields=["provider"])
+
+    def version(snapshot):
+        return AgentVersion.objects.create(
+            agent_definition=agent,
+            organization=agent.organization,
+            workspace=agent.workspace,
+            configuration_snapshot=snapshot,
+        )
+
+    execution.agent_version = version({"agent_type": agent.agent_type})
+    execution.save(update_fields=["agent_version"])
+    first, second = calls[:2]
+    selected = execution.calls.filter(pk__in=[first.pk, second.pk])
+    execution.calls.exclude(pk__in=[first.pk, second.pk]).update(deleted=True)
+    for call, provider in [(first, "vapi"), (second, second_provider)]:
+        call.agent_version = version({"provider": provider})
+        call.call_metadata = {}
+        call.save(update_fields=["agent_version", "call_metadata"])
+        assert call_agent_provider(call) == provider
+    assert dict(
+        selected.annotate(result_provider=call_agent_provider_expression()).values_list(
+            "pk", "result_provider"
+        )
+    ) == {first.pk: "vapi", second.pk: second_provider}
+
+    response = auth_client.get(f"/simulate/test-executions/{execution.pk}/")
+    assert response.status_code == 200, response.data
+    assert response.data["provider"] == expected_header
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"vapi": {"id": 1}}, "vapi"),
+        ({"retell": {"id": 1}, "vapi": {"id": 2}}, "vapi"),
+        ({"livekit": {"id": 1}, "retell": {"id": 2}, "vapi": {}}, "retell"),
+        ({"retell": [1], "livekit": {"id": 1}, "eleven_labs": {"id": 2}}, "livekit"),
+        ({"others": {"id": 1}, "eleven_labs": {"id": 2}}, "eleven_labs"),
+        ({"custom": {"id": 1}, "others": {"id": 2}}, "others"),
+        ({"vapi": None, "custom": {"id": 1}}, "custom"),
+        ({"vapi": {}, "custom": "not an object"}, None),
+        ({"vendor_long": {"id": 1}, "x": {"id": 2}}, "vendor_long"),
+        ({"x": {"id": 2}, "vendor_long": {"id": 1}}, "vendor_long"),
+    ],
+)
+def test_unconfigured_call_provider_payload_fallback_in_python_and_sql(
+    run, payload, expected
+):
+    execution, calls, _, _ = run
+    agent = execution.agent_definition
+    agent.provider = None
+    agent.save(update_fields=["provider"])
+    # Fetch after clearing the definition's provider so the just-saved
+    # assertion cannot see the old related object from the fixture call.
+    call = execution.calls.get(pk=calls[0].pk)
+    call.provider_call_data = payload
+    call.save(update_fields=["provider_call_data"])
+    assert call_agent_provider(call) == expected
+    call.refresh_from_db()
+    assert call_agent_provider(call) == expected
+    assert (
+        execution.calls.annotate(result_provider=call_agent_provider_expression())
+        .values_list("result_provider", flat=True)
+        .get(pk=call.pk)
+        == expected
+    )
 
 
 @pytest.mark.django_db

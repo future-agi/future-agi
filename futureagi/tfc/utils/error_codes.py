@@ -107,6 +107,10 @@ err_dict = {
     "DATASET_LIMIT_CHECK_FAILED": [
         "Could not verify your plan's dataset limit. Please try again in a moment."
     ],
+    "VIEWER_READ_ONLY": [
+        "Viewers can't make changes in this workspace. "
+        "Ask a workspace admin for the Member role."
+    ],
     "DATASET_NAME_MISSING": ["Dataset name is required for Hugging Face datasets."],
     "DATASET_EXIST_IN_ORG": [
         "A dataset with this name already exists in your organization."
@@ -828,6 +832,11 @@ err_dict = {
     "SECRET_KEY_NOT_DISABLED": ["Keys not disabled. Please try again."],
     "API_KEY_DISABLED": ["Keys already disabled."],
     "API_KEY_ENABLED": ["Keys already enabled."],
+    "API_KEY_EXPIRED": ["API key has expired"],
+    "API_KEY_EXPIRY_IN_PAST": ["Expiry must be in the future."],
+    "API_KEY_EXPIRED_CANNOT_ENABLE": [
+        "This key has expired and can't be re-enabled. Generate a new key."
+    ],
     "SECRET_KEY_NOT_ENABLED": ["Keys not enabled. Please try again."],
     "FAILED_TO_GET_KEYS": ["Unable to fetch keys. Please try again."],
     "KEY_NAME_EXISTS": ["Keys with this already name exists."],
@@ -850,7 +859,6 @@ err_dict = {
     "MEMBER_ALREADY_ACTIVE": ["Cannot Update Role of Active User."],
     "ROLE_NOT_MENTIONED": ["Please mention the updated role of the user."],
     "USER_CANNOT_CHANGE_ROLE": ["You cannot change your own role."],
-    "MEMBER_NOT_IN_ORG": ["User not found in the organization."],
     "UNABLE_TO_UPDATE_ROLE": ["Unable to update role. Please try again."],
     "FAILED_TO_RUN_EVAL": ["Unable to run evaluation. Please try again."],
     "ERROR_AUDIO_UPLOAD": ["Audio upload failed. Try again."],
@@ -1140,6 +1148,14 @@ def get_specific_error_message(error, is_llm_error=None):
     Returns:
     - A user-friendly error message string
     """
+    from tfc.ee_gates import jev_error_message
+
+    # A failed Jev run gets its own fixed text: its codes (JEV_RATE_LIMITED,
+    # say) would otherwise match the generic checks below.
+    jev_message = jev_error_message(error)
+    if jev_message is not None:
+        return jev_message
+
     error_message = str(error)
     error_message_lower = error_message.lower()
     error_status = None
@@ -1230,6 +1246,11 @@ def get_usage_error_code(error):
     recognises (see ErrorCellRenderer USAGE_LIMIT_CTA). Returns codes from the
     same taxonomy as the usage pre-check (CheckResult.error_code).
     """
+    from tfc.ee_gates import describe_jev_error
+
+    # TypeSafe's rate limit is the org's own, not a Future AGI plan limit.
+    if describe_jev_error(error) is not None:
+        return None
     error_message = str(error)
     error_status = ""
     if (

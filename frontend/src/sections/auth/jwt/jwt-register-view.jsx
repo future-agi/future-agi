@@ -16,9 +16,12 @@ import { useAuthContext } from "src/auth/hooks";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
-import { trackSignupConversion } from "src/utils/googleAds";
-import { trackRedditSignup } from "src/utils/redditAds";
-import { trackTwitterSignup } from "src/utils/twitterAds";
+// Ad-platform signup conversions are disabled; Google Analytics runs through
+// Google Tag Manager. To restore them, uncomment these imports and the calls
+// below (see src/utils/googleAds.js).
+// import { trackSignupConversion } from "src/utils/googleAds";
+// import { trackRedditSignup } from "src/utils/redditAds";
+// import { trackTwitterSignup } from "src/utils/twitterAds";
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
 import "./register.css";
@@ -215,24 +218,25 @@ export default function JwtRegisterView() {
           [PropertyName.email]: data.email,
           [PropertyName.name]: data.fullName,
         });
-        if (typeof window.gtag === "function") {
-          trackSignupConversion({
-            email: data.email,
-            method: "email",
-            userId: response?.result?.user_id,
-          });
-        }
-        if (typeof window.rdt === "function") {
-          trackRedditSignup({
-            email: data.email,
-            userId: response?.result?.user_id,
-          });
-        }
-        trackTwitterSignup({
-          email: data.email,
-          method: "email",
-          userId: response?.result?.user_id,
-        });
+        // Disabled ad-platform signup conversions (see the imports above):
+        // if (typeof window.gtag === "function") {
+        //   trackSignupConversion({
+        //     email: data.email,
+        //     method: "email",
+        //     userId: response?.result?.user_id,
+        //   });
+        // }
+        // if (typeof window.rdt === "function") {
+        //   trackRedditSignup({
+        //     email: data.email,
+        //     userId: response?.result?.user_id,
+        //   });
+        // }
+        // trackTwitterSignup({
+        //   email: data.email,
+        //   method: "email",
+        //   userId: response?.result?.user_id,
+        // });
 
         if (isOSS) {
           try {
@@ -583,7 +587,7 @@ export default function JwtRegisterView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "13px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Continue with Google
               </Typography>
@@ -611,7 +615,7 @@ export default function JwtRegisterView() {
           sx={{
             fontWeight: 500,
             paddingLeft: "10px",
-            fontSize: "13px",
+            fontSize: "12px",
             marginRight: -1.5,
           }}
         >
@@ -633,7 +637,7 @@ export default function JwtRegisterView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "13px", color: "text.primary" }}
+                sx={{ fontSize: "12px", color: "text.primary" }}
               >
                 Continue with Github
               </Typography>
@@ -653,7 +657,7 @@ export default function JwtRegisterView() {
               >
                 <Typography
                   fontWeight={"fontWeightMedium"}
-                  sx={{ fontSize: "13px", marginRight: -1.5 }}
+                  sx={{ fontSize: "12px", marginRight: -1.5 }}
                 >
                   Continue with SSO/SAML
                 </Typography>
@@ -663,7 +667,7 @@ export default function JwtRegisterView() {
         )}
 
         <Typography
-          fontSize={"13px"}
+          fontSize={"12px"}
           fontWeight={"fontWeightMedium"}
           color="text.secondary"
           sx={{ textAlign: "center" }}

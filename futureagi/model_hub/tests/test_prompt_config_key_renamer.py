@@ -35,4 +35,3 @@ def test_rename_is_idempotent():
 
     assert changed is False
     assert out is data
-

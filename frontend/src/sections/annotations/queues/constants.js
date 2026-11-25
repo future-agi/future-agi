@@ -6,6 +6,12 @@ export const QUEUE_ROLES = {
   MANAGER: "manager",
 };
 
+export function shortId(value) {
+  if (!value) return "";
+  const text = String(value);
+  return text.length > 8 ? text.slice(0, 8) : text;
+}
+
 export const ROLE_PRIORITY = [
   QUEUE_ROLES.MANAGER,
   QUEUE_ROLES.REVIEWER,

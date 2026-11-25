@@ -11,6 +11,7 @@ describe("workspace tab constants", () => {
     expect(WORKSPACE_TABS.map((t) => t.id)).toEqual([
       "overview",
       "contract",
+      "actors",
       "scenarios",
       "evals",
       "runs",

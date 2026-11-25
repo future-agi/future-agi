@@ -141,6 +141,10 @@ class FeedDetailCore:
 
     row: FeedListRow
     description: str | None = None
+    # Stored by grouping beside the mechanism (``description``); None for
+    # issues without grouping state (eval, older scan).
+    fix_hypothesis: str | None = None
+    falsifier: str | None = None
     success_trace: TracePreview | None = None
     representative_trace: TracePreview | None = None
     rca: RcaSummary | None = None

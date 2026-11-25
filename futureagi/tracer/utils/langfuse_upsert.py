@@ -75,7 +75,8 @@ def upsert_langfuse_trace(
             "tags": trace_data.get("tags", []),
         }
         trace = (
-            Trace.no_workspace_objects.filter(
+            Trace.no_workspace_objects.using("default")
+            .filter(
                 project_id=project_id,
                 external_id=trace_data["external_id"],
             )
@@ -215,7 +216,8 @@ def upsert_langfuse_trace(
         # spans are written directly to CH at request time and the lag
         # disappears; only then can this be safely migrated.
         timing = (
-            ObservationSpan.no_workspace_objects.filter(trace=trace)
+            ObservationSpan.no_workspace_objects.using("default")
+            .filter(trace=trace)
             .exclude(id=root_span_id)
             .aggregate(earliest=Min("start_time"), latest=Max("end_time"))
         )
@@ -275,9 +277,9 @@ def upsert_langfuse_trace(
                 # return a Django model instance — CHSpan cannot stand in here.
                 # CH-side lag mechanism: PeerDB CDC replication from PG.
                 try:
-                    obs_span = ObservationSpan.no_workspace_objects.get(
-                        id=observation_id
-                    )
+                    obs_span = ObservationSpan.no_workspace_objects.using(
+                        "default"
+                    ).get(id=observation_id)
                 except ObservationSpan.DoesNotExist:
                     logger.warning(
                         "langfuse_score_observation_not_found",
@@ -291,7 +293,8 @@ def upsert_langfuse_trace(
                 # aggregate above, plus the EvalLogger FK requirement that
                 # keeps obs_span as a Django ObservationSpan instance.
                 obs_span = (
-                    ObservationSpan.no_workspace_objects.filter(trace=trace)
+                    ObservationSpan.no_workspace_objects.using("default")
+                    .filter(trace=trace)
                     .order_by("start_time")
                     .first()
                 )

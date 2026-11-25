@@ -7,6 +7,7 @@ build_content_query) hold ONE ShadowedQueryBuilder instance and call
 
 Fakes again so tests run without a CH cluster.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -47,6 +48,7 @@ class _FakeV2(_FakeV1):
 @pytest.fixture(autouse=True)
 def register_fake_dispatch_entry():
     from tracer.services.clickhouse.v2.dispatch import _BuilderEntry, _REGISTRY
+
     _REGISTRY["FAKE_MULTI"] = _BuilderEntry(
         v1_module="tracer.tests.test_ch25_shadowed_builder",
         v1_class="_FakeV1",
@@ -60,9 +62,9 @@ def register_fake_dispatch_entry():
 def _override_routing(**kw):
     base = {
         "QUERY_TYPES_V2_PRIMARY": "",
-        "QUERY_TYPES_V2_ONLY":    "",
-        "QUERY_TYPES_SHADOW":     "",
-        "QUERY_TYPES_DISABLED":   "",
+        "QUERY_TYPES_V2_ONLY": "",
+        "QUERY_TYPES_SHADOW": "",
+        "QUERY_TYPES_DISABLED": "",
     }
     base.update(kw)
     return override_settings(CLICKHOUSE_V2=base)
@@ -79,10 +81,13 @@ class _FakeAnalytics:
 
 def test_multi_phase_v1_only_uses_v1_for_every_phase():
     from tracer.services.clickhouse.v2.shadowed_builder import ShadowedQueryBuilder
+
     a = _FakeAnalytics()
     with _override_routing():  # default V1_ONLY
         ctx = ShadowedQueryBuilder(
-            query_type="FAKE_MULTI", builder_kwargs={}, analytics=a,
+            query_type="FAKE_MULTI",
+            builder_kwargs={},
+            analytics=a,
         )
         r1 = ctx.run("build")
         r2 = ctx.run("build_count_query")
@@ -97,10 +102,13 @@ def test_multi_phase_v1_only_uses_v1_for_every_phase():
 
 def test_multi_phase_v2_only_uses_v2_for_every_phase():
     from tracer.services.clickhouse.v2.shadowed_builder import ShadowedQueryBuilder
+
     a = _FakeAnalytics()
     with _override_routing(QUERY_TYPES_V2_ONLY="FAKE_MULTI"):
         ctx = ShadowedQueryBuilder(
-            query_type="FAKE_MULTI", builder_kwargs={}, analytics=a,
+            query_type="FAKE_MULTI",
+            builder_kwargs={},
+            analytics=a,
         )
         r1 = ctx.run("build")
         r2 = ctx.run("build_count_query")
@@ -111,10 +119,13 @@ def test_multi_phase_v2_only_uses_v2_for_every_phase():
 
 def test_multi_phase_shadow_runs_both_returns_v1_per_call():
     from tracer.services.clickhouse.v2.shadowed_builder import ShadowedQueryBuilder
+
     a = _FakeAnalytics()
     with _override_routing(QUERY_TYPES_SHADOW="FAKE_MULTI"):
         ctx = ShadowedQueryBuilder(
-            query_type="FAKE_MULTI", builder_kwargs={}, analytics=a,
+            query_type="FAKE_MULTI",
+            builder_kwargs={},
+            analytics=a,
         )
         r = ctx.run("build")
     # User-facing return is v1
@@ -127,10 +138,13 @@ def test_multi_phase_shadow_runs_both_returns_v1_per_call():
 
 def test_multi_phase_v2_primary_returns_v2():
     from tracer.services.clickhouse.v2.shadowed_builder import ShadowedQueryBuilder
+
     a = _FakeAnalytics()
     with _override_routing(QUERY_TYPES_V2_PRIMARY="FAKE_MULTI"):
         ctx = ShadowedQueryBuilder(
-            query_type="FAKE_MULTI", builder_kwargs={}, analytics=a,
+            query_type="FAKE_MULTI",
+            builder_kwargs={},
+            analytics=a,
         )
         r = ctx.run("build")
     assert "v2_main" in r
@@ -141,10 +155,13 @@ def test_multi_phase_v2_primary_returns_v2():
 def test_classmethod_passthrough():
     """Static helpers (pivot_eval_results etc.) work via classmethod_call."""
     from tracer.services.clickhouse.v2.shadowed_builder import ShadowedQueryBuilder
+
     a = _FakeAnalytics()
     with _override_routing():
         ctx = ShadowedQueryBuilder(
-            query_type="FAKE_MULTI", builder_kwargs={}, analytics=a,
+            query_type="FAKE_MULTI",
+            builder_kwargs={},
+            analytics=a,
         )
         result = ctx.classmethod_call("pivot_eval", [1, 2, 3, 4])
     assert result == "v1_pivoted_4"
@@ -152,10 +169,13 @@ def test_classmethod_passthrough():
 
 def test_disabled_mode_returns_none():
     from tracer.services.clickhouse.v2.shadowed_builder import ShadowedQueryBuilder
+
     a = _FakeAnalytics()
     with _override_routing(QUERY_TYPES_DISABLED="FAKE_MULTI"):
         ctx = ShadowedQueryBuilder(
-            query_type="FAKE_MULTI", builder_kwargs={}, analytics=a,
+            query_type="FAKE_MULTI",
+            builder_kwargs={},
+            analytics=a,
         )
         assert ctx.run("build") is None
     assert a.executed == []
@@ -165,7 +185,9 @@ def test_shadow_fails_loudly_if_v1_raises():
     from tracer.services.clickhouse.v2.shadowed_builder import ShadowedQueryBuilder
 
     class _AnalyticsRaisesOnV1:
-        def __init__(self): self.calls = 0
+        def __init__(self):
+            self.calls = 0
+
         def execute_ch_query(self, sql, params, timeout_ms=None):
             self.calls += 1
             if "v1_" in sql:
@@ -175,7 +197,9 @@ def test_shadow_fails_loudly_if_v1_raises():
     a = _AnalyticsRaisesOnV1()
     with _override_routing(QUERY_TYPES_SHADOW="FAKE_MULTI"):
         ctx = ShadowedQueryBuilder(
-            query_type="FAKE_MULTI", builder_kwargs={}, analytics=a,
+            query_type="FAKE_MULTI",
+            builder_kwargs={},
+            analytics=a,
         )
         with pytest.raises(RuntimeError, match="v1 failed"):
             ctx.run("build")
@@ -185,7 +209,9 @@ def test_v2_primary_falls_back_to_v1_on_v2_failure():
     from tracer.services.clickhouse.v2.shadowed_builder import ShadowedQueryBuilder
 
     class _AnalyticsRaisesOnV2:
-        def __init__(self): self.calls = 0
+        def __init__(self):
+            self.calls = 0
+
         def execute_ch_query(self, sql, params, timeout_ms=None):
             self.calls += 1
             if "v2_" in sql:
@@ -195,7 +221,9 @@ def test_v2_primary_falls_back_to_v1_on_v2_failure():
     a = _AnalyticsRaisesOnV2()
     with _override_routing(QUERY_TYPES_V2_PRIMARY="FAKE_MULTI"):
         ctx = ShadowedQueryBuilder(
-            query_type="FAKE_MULTI", builder_kwargs={}, analytics=a,
+            query_type="FAKE_MULTI",
+            builder_kwargs={},
+            analytics=a,
         )
         r = ctx.run("build")
     assert r == "v1_result"

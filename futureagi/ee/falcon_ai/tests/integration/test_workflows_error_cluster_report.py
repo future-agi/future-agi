@@ -121,9 +121,9 @@ def run_falcon(
 
 
 def print_report(label, query, result, collector, context_info=None):
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"  {label}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"\n📝 USER QUERY: {query}")
     if context_info:
         print(f"📍 CONTEXT: {context_info}")
@@ -203,9 +203,9 @@ def main():
     )
     print_report("WORKFLOW 3: Context-Only ('analyze this')", q3, r3, c3, ci3)
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("  ALL DONE")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
 
 if __name__ == "__main__":

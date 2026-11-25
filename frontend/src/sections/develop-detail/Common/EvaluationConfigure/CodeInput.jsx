@@ -6,7 +6,10 @@ import { camelCaseToTitleCase } from "src/utils/utils";
 import { useController } from "react-hook-form";
 import _ from "lodash";
 import HelperText from "../HelperText";
-import SyntaxHighlighter from "react-syntax-highlighter";
+import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/light";
+import python from "react-syntax-highlighter/dist/esm/languages/hljs/python";
+
+SyntaxHighlighter.registerLanguage("python", python);
 
 const CodeInput = ({
   control,

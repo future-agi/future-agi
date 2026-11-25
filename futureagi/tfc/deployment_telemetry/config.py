@@ -85,7 +85,6 @@ def get_event_flush_seconds() -> int:
     return value
 
 
-
 def get_telemetry_url() -> str:
     return os.getenv(
         "FUTURE_AGI_TELEMETRY_URL",
@@ -131,9 +130,7 @@ def is_cloud_deployment() -> bool:
     try:
         from tfc.ee_loader import has_ee
     except (ImportError, AttributeError):
-        logger.warning(
-            "deployment_telemetry_ee_detection_failed", exc_info=True
-        )
+        logger.warning("deployment_telemetry_ee_detection_failed", exc_info=True)
         return False
 
     if not has_ee("ee.usage"):
@@ -144,9 +141,7 @@ def is_cloud_deployment() -> bool:
 
         return DeploymentMode.is_cloud()
     except (ImportError, AttributeError):
-        logger.warning(
-            "deployment_telemetry_mode_detection_failed", exc_info=True
-        )
+        logger.warning("deployment_telemetry_mode_detection_failed", exc_info=True)
         return False
 
 

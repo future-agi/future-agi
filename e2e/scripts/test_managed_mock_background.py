@@ -9,7 +9,7 @@ import sys
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("background_probe", ROOT / "e2e/lib/managed-mock-background.py")
@@ -134,13 +134,24 @@ class BackgroundSafety(unittest.TestCase):
 
     def test_actual_serving_client_scalar_unwrap_and_batch_contract(self):
         source = (ROOT / "futureagi/agentic_eval/core/embeddings/serving_client.py").read_text()
-        cls = next(node for node in ast.parse(source).body if isinstance(node, ast.ClassDef) and node.name == "ModelServingClient")
+        tree = ast.parse(source)
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "ModelServingClient")
         cls.body = [node for node in cls.body if isinstance(node, ast.FunctionDef)
-                    and node.name in {"_make_request", "embed_text", "embed_text_batch"}]
+                    and node.name in {"_require_serving", "_make_request", "embed_text", "embed_text_batch"}]
+        # Retain the real guard, exception and message dependencies. Double only
+        # availability: the real probe/session constructor could perform network I/O.
+        dependencies = [node for node in tree.body
+                        if (isinstance(node, ast.ClassDef) and node.name == "ServingUnavailableError")
+                        or (isinstance(node, ast.Assign) and any(
+                            isinstance(target, ast.Name) and target.id in {
+                                "SERVING_START_HINT", "SERVING_UNAVAILABLE_MESSAGE"}
+                            for target in node.targets))]
+        available = Mock(return_value=True)
         calls = []
         noop = lambda *args, **kwargs: None
-        scope = {"Any": object, "time": time, "logger": SimpleNamespace(debug=noop, error=noop)}
-        exec(compile(ast.Module(body=[cls], type_ignores=[]), "serving-client-contract", "exec"), scope)
+        scope = {"Any": object, "time": time, "logger": SimpleNamespace(debug=noop, error=noop),
+                 "serving_available": available}
+        exec(compile(ast.Module(body=[*dependencies, cls], type_ignores=[]), "serving-client-contract", "exec"), scope)
         client = scope["ModelServingClient"]()
         client.base_url, client.default_timeout = "http://mock-llm:8080", 120
 
@@ -154,6 +165,18 @@ class BackgroundSafety(unittest.TestCase):
         self.assertEqual(client.embed_text_batch(["one", "two"]), [[0.125] * 8, [0.125] * 8])
         self.assertEqual(calls, [("http://mock-llm:8080/model/v1/embed", {"text": texts, "input_type": "text"}, 120)
                                  for texts in (["one"], ["one", "two"])])
+        self.assertEqual(available.call_args_list, [call(client.base_url), call(client.base_url)])
+
+        available.return_value = False
+        for method, value in ((client.embed_text, "one"), (client.embed_text_batch, ["one", "two"])):
+            with self.subTest(unavailable_method=method.__name__):
+                calls.clear()
+                available.reset_mock()
+                with self.assertRaises(scope["ServingUnavailableError"]) as caught:
+                    method(value)
+                self.assertEqual(str(caught.exception), scope["SERVING_UNAVAILABLE_MESSAGE"])
+                available.assert_called_once_with(client.base_url)
+                self.assertEqual(calls, [])
 
     def test_process_environment_rejects_missing_changed_and_hidden_overrides(self):
         probe.validate_process_environment({**ENV, "PWD": "/app/backend"}, ENV)

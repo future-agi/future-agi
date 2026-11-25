@@ -37,8 +37,12 @@ class TestWSVariableNamesPersistence:
         return org, template, execution
 
     @patch("sockets.prompt_stream_consumer.run_template_async")
-    @patch("sockets.prompt_stream_consumer.PromptStreamConsumer._resolve_workspace_and_org")
-    @patch("sockets.prompt_stream_consumer.PromptStreamConsumer._fetch_template_for_run")
+    @patch(
+        "sockets.prompt_stream_consumer.PromptStreamConsumer._resolve_workspace_and_org"
+    )
+    @patch(
+        "sockets.prompt_stream_consumer.PromptStreamConsumer._fetch_template_for_run"
+    )
     async def test_variable_names_persisted_from_ws_content(
         self, mock_fetch_template, mock_resolve, mock_run_template
     ):
@@ -90,8 +94,12 @@ class TestWSVariableNamesPersistence:
         )
 
     @patch("sockets.prompt_stream_consumer.run_template_async")
-    @patch("sockets.prompt_stream_consumer.PromptStreamConsumer._resolve_workspace_and_org")
-    @patch("sockets.prompt_stream_consumer.PromptStreamConsumer._fetch_template_for_run")
+    @patch(
+        "sockets.prompt_stream_consumer.PromptStreamConsumer._resolve_workspace_and_org"
+    )
+    @patch(
+        "sockets.prompt_stream_consumer.PromptStreamConsumer._fetch_template_for_run"
+    )
     async def test_no_variable_names_does_not_overwrite(
         self, mock_fetch_template, mock_resolve, mock_run_template
     ):
@@ -136,8 +144,12 @@ class TestWSVariableNamesPersistence:
         assert execution_refreshed.variable_names == existing_vars
 
     @patch("sockets.prompt_stream_consumer.run_template_async")
-    @patch("sockets.prompt_stream_consumer.PromptStreamConsumer._resolve_workspace_and_org")
-    @patch("sockets.prompt_stream_consumer.PromptStreamConsumer._fetch_template_for_run")
+    @patch(
+        "sockets.prompt_stream_consumer.PromptStreamConsumer._resolve_workspace_and_org"
+    )
+    @patch(
+        "sockets.prompt_stream_consumer.PromptStreamConsumer._fetch_template_for_run"
+    )
     async def test_empty_variable_names_does_not_overwrite(
         self, mock_fetch_template, mock_resolve, mock_run_template
     ):

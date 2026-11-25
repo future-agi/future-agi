@@ -79,6 +79,52 @@ describe("CallTracesPanel", () => {
     });
   });
 
+  it("opens the trace a Participants step asked for", () => {
+    renderPanel({
+      testExecutionId: "run-1",
+      openTrace: { traceId: "trace-1" },
+    });
+    expect(mocks.store.setTraceDetailDrawerOpen).toHaveBeenCalledWith({
+      traceId: "trace-1",
+      projectId: "hidden-project",
+      testExecutionId: "run-1",
+    });
+  });
+
+  it("opens the asked-for trace at the step's span when it has one", () => {
+    renderPanel({
+      testExecutionId: "run-1",
+      openTrace: { traceId: "trace-1", spanId: "span-7" },
+    });
+    expect(mocks.store.setTraceDetailDrawerOpen).toHaveBeenCalledWith({
+      traceId: "trace-1",
+      projectId: "hidden-project",
+      testExecutionId: "run-1",
+      spanId: "span-7",
+    });
+  });
+
+  it("does not reopen the asked-for trace when the call's traces refresh", () => {
+    const { rerender } = renderPanel({
+      testExecutionId: "run-1",
+      openTrace: { traceId: "trace-1" },
+    });
+    rerender(
+      <CallTracesPanel
+        traces={[...TRACES]}
+        projectId="hidden-project"
+        testExecutionId="run-1"
+        openTrace={{ traceId: "trace-1" }}
+      />,
+    );
+    expect(mocks.store.setTraceDetailDrawerOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens nothing when no trace was asked for", () => {
+    renderPanel({ testExecutionId: "run-1" });
+    expect(mocks.store.setTraceDetailDrawerOpen).not.toHaveBeenCalled();
+  });
+
   it("clears the trace drawer state and its URL key when it unmounts", () => {
     const { unmount } = renderPanel();
     expect(mocks.store.resetStates).not.toHaveBeenCalled();

@@ -116,8 +116,6 @@ const RoleSelection = ({
             borderRadius: "8px !important",
             padding: 1,
             minWidth: "200px",
-            border: "1px solid",
-            borderColor: "divider",
           },
         }}
       >

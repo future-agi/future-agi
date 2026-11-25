@@ -511,7 +511,11 @@ export default function QueueDetailView() {
         <Tabs
           value={activeTab}
           onChange={(_, v) => setActiveTab(v)}
-          sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
+          sx={{
+            boxShadow: "none",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
         >
           <Tab label="Items" />
           {isManager && <Tab label="Settings" />}
@@ -537,7 +541,10 @@ export default function QueueDetailView() {
       )}
       {currentTab === "agreement" && (
         <Box sx={{ px: 3, overflow: "auto", flex: 1 }}>
-          <QueueAgreementTab queueId={queueId} />
+          <QueueAgreementTab
+            queueId={queueId}
+            canViewSubmissions={canViewSubmissions}
+          />
         </Box>
       )}
       {currentTab === "rules" && (

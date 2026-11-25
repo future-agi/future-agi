@@ -66,7 +66,8 @@ services:
       - CH25_EVAL_LOGGER_TABLE=${CH25_EVAL_LOGGER_TABLE:-tracer_eval_logger}
       # Read replica: uncomment to test read/write split locally (points to same DB).
       # Both PGBOUNCER_READ_HOST and READ_REPLICA_OPT_IN must be set for any
-      # routing to happen. See .env.example for the full list of feature keys.
+      # routing to happen. See .env.example for the feature keys and for the
+      # model names that are safe to list (others read stale rows).
       # - PGBOUNCER_READ_HOST=pgbouncer
       # - PGBOUNCER_READ_PORT=6432
       # - READ_REPLICA_OPT_IN=feature:org_config_bulk
@@ -444,7 +445,7 @@ services:
   # ===========================================
 
   temporal:
-    image: temporalio/auto-setup:1.29.1
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     container_name: temporal
     ports:
       - "${TEMPORAL_PORT:-7233}:7233"
@@ -738,7 +739,7 @@ services:
       retries: 5
 
   peerdb-temporal:
-    image: temporalio/auto-setup:1.29
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     container_name: peerdb-temporal
     restart: unless-stopped
     depends_on:

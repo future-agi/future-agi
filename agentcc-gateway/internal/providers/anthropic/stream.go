@@ -168,7 +168,7 @@ func (s *streamState) handleContentBlockStart(event streamEvent) (*models.Stream
 								Index: idx,
 								ID:    block.ID,
 								Type:  "function",
-								Function: &models.FunctionCall{
+								Function: &models.FunctionCallDelta{
 									Name:      block.Name,
 									Arguments: "",
 								},
@@ -242,7 +242,7 @@ func (s *streamState) handleContentBlockDelta(event streamEvent) (*models.Stream
 						ToolCalls: []models.ToolCallDelta{
 							{
 								Index: tcIdx,
-								Function: &models.FunctionCall{
+								Function: &models.FunctionCallDelta{
 									Arguments: ijd.PartialJSON,
 								},
 							},
@@ -284,6 +284,11 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 
 	// Include usage if available.
 	if event.Usage != nil {
+		// Compatible providers can defer the input count until message_delta.
+		// Native streams report it in message_start and omit it here.
+		if event.Usage.InputTokens > 0 {
+			s.inputTokens = event.Usage.InputTokens
+		}
 		chunk.Usage = &models.Usage{
 			PromptTokens:     s.inputTokens,
 			CompletionTokens: event.Usage.OutputTokens,

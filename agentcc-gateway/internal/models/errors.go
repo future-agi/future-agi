@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 )
 
 // Error types matching OpenAI's error format.
@@ -41,10 +42,41 @@ type APIError struct {
 	Code    string
 	Message string
 	Param   *string
+
+	// RetryAfter, when set, is sent as the Retry-After header: an upstream's
+	// own value, passed on so the caller waits as long as the vendor asked.
+	RetryAfter string
+
+	// UpstreamStatus, when set, is the status the upstream answered with,
+	// sent as x-agentcc-upstream-status so a caller can tell the gateway's
+	// refusal from the vendor's.
+	UpstreamStatus int
+
+	// Set only by the gateway's provider admission constructors, never from the wire.
+	localAdmission bool
 }
+
+// IsLocalAdmission distinguishes a routing refusal from an identically coded upstream error.
+func (e *APIError) IsLocalAdmission() bool { return e.localAdmission }
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+// LoggedError is the text a log, span or audit event records for err. A
+// decision vendor's error text can quote the content being judged back, so a
+// decision call's API error is recorded as its code and status only
+// ("provider_error: Bad Gateway"); any other error as itself. Every sink that
+// records a request's error goes through this.
+func LoggedError(endpointType string, err error) string {
+	if err == nil {
+		return ""
+	}
+	var apiErr *APIError
+	if endpointType == "decision" && errors.As(err, &apiErr) {
+		return apiErr.Code + ": " + http.StatusText(apiErr.Status)
+	}
+	return err.Error()
 }
 
 // Common error constructors.
@@ -85,6 +117,20 @@ func ErrServiceUnavailable(message string) *APIError {
 	return newAPIError(http.StatusServiceUnavailable, ErrTypeServer, "all_providers_unavailable", message)
 }
 
+// ErrProviderCircuitOpen reports a local circuit breaker's refusal to dispatch.
+func ErrProviderCircuitOpen() *APIError {
+	err := newAPIError(http.StatusServiceUnavailable, ErrTypeServer, "circuit_open", "Provider circuit is open or at its probe limit")
+	err.localAdmission = true
+	return err
+}
+
+// ErrProvidersUnavailable reports that local selection exhausted the available providers.
+func ErrProvidersUnavailable(message string) *APIError {
+	err := ErrServiceUnavailable(message)
+	err.localAdmission = true
+	return err
+}
+
 func ErrInternal(message string) *APIError {
 	return newAPIError(http.StatusInternalServerError, ErrTypeServer, "internal_error", message)
 }
@@ -101,6 +147,11 @@ func ErrGuardrailBlocked(code, message string) *APIError {
 	return newAPIError(http.StatusForbidden, ErrTypeGuardrail, code, message)
 }
 
+// ErrGuardrailUnavailable distinguishes execution failures from content decisions.
+func ErrGuardrailUnavailable(message string) *APIError {
+	return newAPIError(http.StatusServiceUnavailable, "guardrail", "guardrail_unavailable", message)
+}
+
 // WriteError writes an OpenAI-compatible error JSON response.
 //
 // The message is redacted here as well as at construction. Most of this
@@ -109,6 +160,16 @@ func ErrGuardrailBlocked(code, message string) *APIError {
 // those never pass through newAPIError. Redacting at the boundary every
 // response leaves through needs no site to remember.
 func WriteError(w http.ResponseWriter, err *APIError) {
+	// Explicitly notify a guarded release boundary. It may replace an upstream
+	// error (which can quote uninspected content) with a safe terminal envelope.
+	// A raw WriteHeader(4xx/5xx) must never grant the same exemption.
+	if guarded, ok := w.(interface{ GuardrailError(*APIError) *APIError }); ok {
+		err = guarded.GuardrailError(err)
+	}
+	// A post-stage refusal must not replay the already completed provider call.
+	if err.Code == "guardrail_unavailable" {
+		w.Header().Set("x-should-retry", "false")
+	}
 	resp := ErrorResponse{
 		Error: ErrorDetail{
 			Message: RedactCredentials(err.Message),
@@ -118,6 +179,12 @@ func WriteError(w http.ResponseWriter, err *APIError) {
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if err.RetryAfter != "" {
+		w.Header().Set("Retry-After", err.RetryAfter)
+	}
+	if err.UpstreamStatus > 0 {
+		w.Header().Set("x-agentcc-upstream-status", strconv.Itoa(err.UpstreamStatus))
+	}
 	w.WriteHeader(err.Status)
 	json.NewEncoder(w).Encode(resp)
 }

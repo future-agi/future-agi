@@ -144,11 +144,14 @@ class SlackService(BaseIntegrationService):
         if not channel.get("is_member"):
             if channel.get("is_private") or not join_public:
                 raise SlackApiError("not_in_channel")
-            joined = slack_api(
-                "conversations.join",
-                credentials.get("bot_token", ""),
-                payload={"channel": channel_id},
-            ).get("channel") or {}
+            joined = (
+                slack_api(
+                    "conversations.join",
+                    credentials.get("bot_token", ""),
+                    payload={"channel": channel_id},
+                ).get("channel")
+                or {}
+            )
             if not joined.get("is_member"):
                 raise SlackApiError("not_in_channel")
             channel = joined

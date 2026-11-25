@@ -1,5 +1,5 @@
-"""An unfiltered LATENCY graph takes the exact path; every other metric keeps
-the fast unfiltered path.
+"""Latency and monetary series use qualified raw sources; other metrics keep
+the fast unfiltered aggregate-state path.
 
 The fast path reads ``spans``'s hourly aggregate states. They hold latency
 only as t-digest states over every physically inserted row (no latency sum,
@@ -9,7 +9,8 @@ path's own statement with an empty filter set - including its cost gate,
 background hand-off, snapshot cache and pending envelope - so a chart with no
 filter equals the same chart with a filter that matches everything. Graph
 requests are per metric (``metric_id`` is part of the exact-snapshot
-identity), so only latency requests move.
+identity). Cost independently requires latest-live monetary flags, which the
+hourly states cannot supply.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ ALWAYS_TRUE = {
 
 # Every id the trace dispatcher publishes as the latency series.
 LATENCY_IDS = ["latency", " Latency ", "", None, "time_to_first_token"]
-FAST_PATH_IDS = [
+NON_LATENCY_IDS = [
     "tokens",
     "total_tokens",
     "prompt_tokens",
@@ -130,16 +131,20 @@ def test_unfiltered_latency_runs_the_raw_span_statement(observe_type, metric_id)
 
 
 @pytest.mark.parametrize("observe_type", ["trace", "span"])
-@pytest.mark.parametrize("metric_id", FAST_PATH_IDS)
-def test_unfiltered_other_metrics_keep_the_hourly_state_statement(
-    observe_type, metric_id
-):
+@pytest.mark.parametrize("metric_id", NON_LATENCY_IDS)
+def test_unfiltered_metrics_use_their_qualified_source(observe_type, metric_id):
     response, analytics = _trace_graph(metric_id, [WINDOW], observe_type=observe_type)
 
     assert response["query_status"] == "complete", response
     assert len(analytics.statements) == 1
-    assert _is_hourly_state_statement(analytics.statements[0])
-    assert response["query_provenance"] == "materialized_rollup"
+    if metric_id == "cost":
+        assert _is_raw_span_statement(analytics.statements[0])
+        assert "AS graph_monetary_spans" in analytics.statements[0]
+        assert "AS graph_cost_flags" in analytics.statements[0]
+        assert response["query_provenance"] == "bounded_candidates"
+    else:
+        assert _is_hourly_state_statement(analytics.statements[0])
+        assert response["query_provenance"] == "materialized_rollup"
 
 
 @pytest.mark.parametrize("observe_type", ["trace", "span"])

@@ -1,0 +1,58 @@
+# The private EE package, for internal runs only (a fork has no token). One
+# definition, so every job that needs the package resolves the same branch and
+# none can forget to drop the token.
+name: Check out the EE package
+description: Checks out the EE package into futureagi/ee/cloud at the branch that matches this run, then removes the token from the checkout.
+inputs:
+  token:
+    description: A token that can read the EE repository.
+    required: true
+  branch:
+    description: The run's head branch. Tried first.
+    required: true
+  base-ref:
+    description: The run's base branch. Tried second.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Checkout EE package
+      uses: actions/checkout@v4
+      with:
+        repository: future-agi/ee
+        path: futureagi/ee/cloud
+        token: ${{ inputs.token }}
+        persist-credentials: true
+        fetch-depth: 1
+
+    - name: Resolve the EE branch to test against
+      shell: bash
+      working-directory: futureagi/ee/cloud
+      env:
+        EE_REPO_BRANCH: ${{ inputs.branch }}
+        EE_BASE_REF: ${{ inputs.base-ref }}
+      run: |
+        # EE's default branch trails its own dev, so never settle for whatever
+        # the checkout landed on: walk the same candidate chain the SDK
+        # compatibility workflow uses and take the first branch that exists.
+        for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
+          if [ -z "${candidate}" ]; then
+            continue
+          fi
+          if git ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "${candidate}"
+            git checkout --detach FETCH_HEAD
+            echo "::notice::Using EE branch ${candidate}"
+            exit 0
+          fi
+        done
+        echo "::error::No EE branch found among ${EE_REPO_BRANCH}, ${EE_BASE_REF}, dev, main"
+        exit 1
+
+    - name: Drop EE checkout credentials
+      # always(): the branch-resolution step above hard-fails when no
+      # candidate branch exists, and the token must be scrubbed regardless.
+      if: always()
+      shell: bash
+      working-directory: futureagi/ee/cloud
+      run: git config --unset-all http.https://github.com/.extraheader || true

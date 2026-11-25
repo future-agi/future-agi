@@ -18,11 +18,13 @@ export default function Section({
   disabled,
   children,
   sx,
+  ...other
 }) {
   const panel = variant === "panel";
   const clickable = Boolean(onClick) && !disabled;
   return (
     <Box
+      {...other}
       {...(onClick && {
         role: "button",
         tabIndex: disabled ? -1 : 0,
@@ -76,7 +78,7 @@ export default function Section({
             {description && (
               <Typography
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   lineHeight: "20px",
                   color: "text.tertiary",
                 }}

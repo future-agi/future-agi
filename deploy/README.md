@@ -60,7 +60,8 @@ If any required value is empty, compose exits with `must be set for production` 
 
 ## Prerequisites
 
-- Docker Engine 24.0+ and Docker Compose v2.24+
+- Docker Engine 24.0+ and Docker Compose v2.24+, except v2.24.1 (it rejects the
+  production overlay) and, for `bin/update`, v2.25.0
 - A reverse proxy that terminates TLS in front of the frontend (Caddy / nginx / Traefik / ALB)
 - (Optional) Managed Postgres and S3-compatible object store if you don't want the bundled `postgres` / `minio` containers
 - 4+ vCPU and 12–16 GB RAM on the host (ClickHouse and the worker each hold ~1 GB); the stack boots in 6 GB, which is enough for a smoke test only
@@ -89,8 +90,8 @@ all. A first install has to run these jobs once, deliberately, one at a time,
 reviewing each before the next.
 
 Run them against the production env file, overriding only the command so each job
-applies instead of checking. `run --rm` starts one job and nothing else; it never
-brings up the application.
+applies instead of checking. `run --rm` starts that one job (and any datastore it
+depends on that is not running yet); it never brings up the application.
 
 ```bash
 cd <repo root>
@@ -135,6 +136,14 @@ $COMPOSE run --rm \
   -e CLICKHOUSE_PASSWORD=<clickhouse admin password> \
   --entrypoint /bin/sh property-catalog-clickhouse-bootstrap \
   /bootstrap/bootstrap_clickhouse.sh
+
+# 6. The Metrics ClickHouse schema (packaged files 009, 011 and 028-038).
+#    Only while METRICS_ENABLED=1; with it off this exits without a change.
+#    Run it again whenever you turn Metrics on. The overlay's advisory --check
+#    only logs a missing schema: the product starts, and Metrics answers
+#    metric_schema_not_installed until this ran. Each file has a receipt, so a
+#    rerun applies only what is missing.
+$COMPOSE run --rm metrics-schema-bootstrap --apply
 ```
 
 The writer and reader passwords this step installs come from
@@ -268,6 +277,27 @@ short authoring run before moving full suites. The simulated caller's model is c
 separately by `SIMULATOR_LLM_PROVIDER` and `SIMULATOR_LLM_MODEL`; `SIMULATOR_LLM_THINKING`
 optionally lowers its deliberation (for example `minimal`) where the model supports it.
 
+## Jev evals, Instant eval and Insights
+
+Jev evals work on every edition, on each organization's own TypeSafe key. Instant
+eval and Insights need an Enterprise licence that lists `instant_eval` and
+`insights`; Future AGI Cloud plans include them.
+
+The gateway calls TypeSafe for every Jev eval, so `agentcc-gateway` needs egress to
+`api.typesafe.ai`. Behind an outbound proxy, set `HTTPS_PROXY` (and `NO_PROXY` for
+the internal hosts) on the gateway service through a compose override; the Helm
+chart's `global.proxy` already sets them. Every decision call honours them:
+System One and OpenAI-format decision models, from `config.yaml` providers,
+organization-owned providers and calls made with the caller's own key, and so
+does the speech relay. An organization's own `base_url` is still checked for
+internal and metadata addresses before the call goes to the proxy; that check
+resolves DNS before every HTTP/1.1 request, so a transient DNS failure refuses
+the request even on a live pooled connection, and the proxy's own egress policy
+should restrict destinations too. Chat providers still connect directly: allow
+that egress. As a fallback, `JEV_TRANSPORT=direct` on the backend
+and workers calls TypeSafe from there instead. Instant eval limits, Jev concurrency and the Insights models are in
+the [Configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference#jev-evals-instant-eval-and-insights).
+
 ## 1. Generate secrets
 
 ```bash
@@ -309,15 +339,15 @@ topology stops the consumer without committing the Kafka record.
 
 Each image is independently versioned. Include the collector release in `.env.production`:
 
-| Variable                    | Image                                                                |
-| --------------------------- | -------------------------------------------------------------------- |
-| `FUTURE_AGI_VERSION`        | `futureagi/future-agi` (backend + worker)                            |
-| `FRONTEND_VERSION`          | `futureagi/frontend`                                                 |
-| `FI_COLLECTOR_VERSION`      | `futureagi/fi-collector` (collector, consumer and packaged backfill) |
-| `AGENTCC_GATEWAY_VERSION`   | `futureagi/agentcc-gateway`                                          |
+| Variable                    | Image                                                                    |
+| --------------------------- | ------------------------------------------------------------------------ |
+| `FUTURE_AGI_VERSION`        | `futureagi/future-agi` (backend + worker)                                |
+| `FRONTEND_VERSION`          | `futureagi/frontend`                                                     |
+| `FI_COLLECTOR_VERSION`      | `futureagi/fi-collector` (collector, consumer and packaged backfill)     |
+| `AGENTCC_GATEWAY_VERSION`   | `futureagi/agentcc-gateway`                                              |
 | `SERVING_VERSION`           | `futureagi/serving` (CPU; `<version>-gpu` is the CUDA build, amd64 only) |
-| `CODE_EXECUTOR_VERSION`     | `futureagi/code-executor`                                            |
-| `SIMULATION_RUNNER_VERSION` | `futureagi/future-agi-simulation-runner` (separate SDK worker image) |
+| `CODE_EXECUTOR_VERSION`     | `futureagi/code-executor`                                                |
+| `SIMULATION_RUNNER_VERSION` | `futureagi/future-agi-simulation-runner` (separate SDK worker image)     |
 
 Use reviewed release tags and record their verified registry digests, source SHAs
 and CPU architecture manifests; a version-looking tag alone is not immutable proof.
@@ -343,6 +373,12 @@ variables, which are also reported as the version in telemetry and licence activ
 No example tag or digest here is a qualified release. Backend, all applicable
 workers and frontend must match the reviewed source; unchanged dependencies need
 not be rebuilt. Keep these receipts for both fresh and retained-volume rehearsals.
+
+From this release, upgrade the gateway first: `AGENTCC_GATEWAY_VERSION` must be
+at this release (or later) before `FUTURE_AGI_VERSION` is. The backend calls Jev
+evaluators through the gateway's `/v1/systemone`; an older gateway answers 404,
+which every Jev eval reports as a final `JEV_PROVIDER_ERROR`. A newer gateway
+with an older backend is fine.
 
 The existing `FI_OBSERVED_CATALOG_MAX_KEYS_PER_SPAN` (default 128) and
 `FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN` (default 256) apply equally to
@@ -395,6 +431,145 @@ TLS proxy (Caddy/nginx)
 Set `VITE_HOST_API=/api` and let the proxy do the routing. Backend doesn't need CORS for cross-origin since SPA calls same origin.
 
 On Kubernetes, use the [Helm chart](helm/futureagi/README.md) instead (`helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z`, signed and published with every release): it covers the Gateway API and Ingress, TLS, external datastores, secrets, upgrades and backups.
+
+## Native HTTPS for the gateway and dashboard (Compose)
+
+The Distributed `agentcc-gateway` and `frontend` images can serve HTTPS
+without a proxy. Keep their existing HTTP ports during migration, then turn
+HTTP off after clients move. The dashboard still calls the **API separately**:
+serve the API over HTTPS yourself and set `VITE_HOST_API=https://api.example.com`
+and `AGENTCC_GATEWAY_PUBLIC_URL=https://gateway.example.com` on the backend,
+`serving` and every worker service. Native backend TLS and an API proxy inside
+nginx are not supplied.
+
+Create a **local override** alongside the root Distributed Compose file
+(do not change that file). Mount each certificate **directory**, not individual
+files: replacing a file atomically or kubelet swapping Secret symlinks will
+not update a single-file bind mount. Put a full chain in `tls.crt` and the
+matching key in `tls.key`; protect the private key, but keep it readable by
+the user each image reads it as: the gateway runs as uid and gid 65532
+(`chown 65532:65532 certs/gateway/tls.key; chmod 0400 certs/gateway/tls.key`),
+and the frontend's nginx master reads its key as root before it starts the
+workers. Both images expect a key readable by its owner and at most also by
+its group (`0400` or `0600`, or `0440` from a Kubernetes Secret mounted with
+an `fsGroup`); a key that its group can write or anyone else can read or write
+still loads, but the image logs a warning naming the file and its mode (never
+the key) at startup and on each certificate rotation (a mode change alone is
+checked at the next rotation). Neither image refuses a key for its mode.
+Kubernetes mounts Secret files `0644` unless the volume sets `defaultMode` (or
+the item a `mode`), so in your own manifests set `0440` there together with
+an `fsGroup` the container runs in. The Helm chart does this for both images
+whenever the pod has an `fsGroup`, as it does by default, so a default Helm
+install logs no warning; without one (OpenShift security-context adaptation,
+or the `fsGroup` removed) the chart keeps the Secret default `0644` so the key
+stays readable, and the warning is expected. A missing, empty or unreadable
+key still fails startup. For example:
+
+```yaml
+# docker-compose.native-tls.yml, next to docker-compose.distributed.yml
+x-gateway-urls: &gateway-urls
+  environment:
+    AGENTCC_GATEWAY_PUBLIC_URL: https://gateway.example.com
+services:
+  agentcc-gateway:
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./certs/gateway:/run/futureagi-tls:ro
+    environment:
+      AGENTCC_HTTP_ENABLED: "true"
+      AGENTCC_TLS_ENABLED: "true"
+      AGENTCC_TLS_PORT: "8443"
+      AGENTCC_TLS_CERT_FILE: /run/futureagi-tls/tls.crt
+      AGENTCC_TLS_KEY_FILE: /run/futureagi-tls/tls.key
+      AGENTCC_TLS_MIN_VERSION: "1.2"
+      AGENTCC_TLS_RELOAD_INTERVAL: 30s
+  frontend:
+    ports:
+      - "443:443"
+    volumes:
+      - ./certs/dashboard:/run/futureagi-tls:ro
+    environment:
+      FRONTEND_HTTP_ENABLED: "true"
+      FRONTEND_HTTP_PORT: "80"
+      FRONTEND_TLS_ENABLED: "true"
+      FRONTEND_TLS_PORT: "443"
+      FRONTEND_TLS_CERT_FILE: /run/futureagi-tls/tls.crt
+      FRONTEND_TLS_KEY_FILE: /run/futureagi-tls/tls.key
+      FRONTEND_TLS_RELOAD_INTERVAL: "30"
+      VITE_HOST_API: https://api.example.com
+  # Every service of docker-compose.distributed.yml that calls the gateway.
+  backend: *gateway-urls
+  serving: *gateway-urls
+  worker: *gateway-urls
+  worker-default: *gateway-urls
+  worker-tasks-s: *gateway-urls
+  worker-tasks-l: *gateway-urls
+  worker-tasks-xl: *gateway-urls
+  worker-sql-workbench: *gateway-urls
+  worker-exact-aggregation: *gateway-urls
+  worker-trace-ingestion: *gateway-urls
+  worker-agent-compass: *gateway-urls
+  worker-simulation-runner: *gateway-urls
+```
+
+Run `docker compose -f docker-compose.distributed.yml -f docker-compose.native-tls.yml up -d`
+from the repository root. The existing Compose ports still publish HTTP; to
+remove them later, use a dedicated override that replaces the `ports` list
+(`!override` requires Docker Compose v2.24.4 or newer), set the two
+`*_HTTP_ENABLED` variables to `false`, and add `AGENTCC_INTERNAL_URL` and
+`AGENTCC_GATEWAY_INTERNAL_URL` set to `https://agentcc-gateway:8443` to the
+`x-gateway-urls` environment, so every service above calls the gateway over
+HTTPS (they all set the HTTP URLs through `x-backend-env`). Mount a CA bundle directory and set
+`SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` to the bundle file for in-cluster
+trust; it replaces the image's trust store, so include the public roots
+(e.g. append the issuing CA to the system bundle) when the backend also
+calls public providers;
+the gateway certificate needs the `agentcc-gateway` DNS name. For an HTTPS-only
+gateway set `HEALTHCHECK_URL=https://127.0.0.1:8443/healthz` in the override;
+the frontend image healthcheck selects HTTPS automatically. Both services
+refuse an expired certificate at startup, retain their last good certificate
+on a bad or expired renewal and poll for replacements (every 30s by default);
+confirm rotation with no container restart.
+
+### Read-only root filesystem (frontend image outside Helm)
+
+The Helm chart already runs the frontend on a read-only root with its own
+nginx configuration. To run the `frontend` image with its built-in
+configuration on a read-only root (Compose, `docker run` or another
+orchestrator), keep these paths writable; the same mounts serve plain HTTP and
+native HTTPS:
+
+| Path | Written by | Mount |
+|---|---|---|
+| `/tmp` | the entrypoint, on every start: `/tmp/futureagi-nginx/listen.conf` holds the HTTP and HTTPS `listen` directives | tmpfs |
+| `/var/cache/nginx` | nginx temporary files | tmpfs |
+| `/run` | `nginx.pid` | tmpfs |
+| `/usr/share/nginx/html/config.js` | the entrypoint, on every start: the browser settings (`VITE_*`) | a writable bind mount of that one file; a mount over `/usr/share/nginx/html` would hide the app |
+
+```yaml
+# docker-compose.read-only.yml, next to docker-compose.distributed.yml
+services:
+  frontend:
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /run
+    volumes:
+      - ./frontend-runtime/config.js:/usr/share/nginx/html/config.js
+```
+
+Create the file before the first start (`mkdir -p frontend-runtime && touch
+frontend-runtime/config.js`): for a missing source Docker creates a directory
+instead. For HTTPS, add the certificate directory mount and `FRONTEND_TLS_*`
+settings above. Without a writable `/tmp` the container exits with
+`[entrypoint] cannot write /tmp/futureagi-nginx/listen.conf`. Without a
+writable `config.js` it still starts, but logs `[entrypoint] warning: cannot
+write /usr/share/nginx/html/config.js` and serves the image's empty placeholder,
+so the browser gets none of the `VITE_*` settings. Moving `config.js` elsewhere with
+`CONFIG_PATH` needs your own nginx configuration that serves `/config.js` from
+that path, as the Helm chart does.
 
 ## Reverse proxy + TLS
 
@@ -462,20 +637,79 @@ For internal MinIO, configure `mc mirror` to an off-host bucket, or replace the 
 > image bump: read [Upgrading an existing install: backfill before you cut over](#upgrading-an-existing-install-backfill-before-you-cut-over)
 > first, or every custom-attribute picker is empty for all history until you backfill.
 
+### Upgrading a production install
+
+The overlay's bootstrap jobs only check the schema, so a release's
+initialization jobs have to run on the **new** images before those images
+start. The jobs take their images from the pins in `deploy/.env.production`,
+so the order is: check out the release, pin it, pull, initialize, start.
+
 ```bash
+COMPOSE="docker compose --env-file deploy/.env.production \
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml"
+
+git fetch --tags && git checkout vX.Y.Z
 # bump the relevant version variable(s) in deploy/.env.production
 # (FUTURE_AGI_VERSION / FRONTEND_VERSION / FI_COLLECTOR_VERSION / AGENTCC_GATEWAY_VERSION /
-#  SERVING_VERSION / CODE_EXECUTOR_VERSION / SIMULATION_RUNNER_VERSION)
-docker compose --env-file deploy/.env.production \
-  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml pull
-docker compose --env-file deploy/.env.production \
-  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml up -d --no-build --wait --wait-timeout 1200
+#  SERVING_VERSION / CODE_EXECUTOR_VERSION / SIMULATION_RUNNER_VERSION);
+# AGENTCC_GATEWAY_VERSION first, then FUTURE_AGI_VERSION (see "2. Pin a release")
+$COMPOSE pull
+# run the release's initialization jobs: the commands of "Performing that
+# initialization" above that its release notes call for (every release with
+# database migrations needs step 1, and step 6 is a no-op unless
+# METRICS_ENABLED=1); `run --rm` starts nothing else
+$COMPOSE up -d --no-build --wait --wait-timeout 1200
 ```
+
+Do not run `up` (or `deploy/setup.sh`) between the pin and the initialization:
+it would start the new images on the old schema, and the check-only bootstrap
+job stops it.
 
 Only use a separately rehearsed, compatible predecessor for rollback; restore its
 exact image/configuration receipt after approval. Changing tags alone does not
 undo schema/mirror changes or establish a healthy recovery. Preserve old data,
 topics, volumes and obsolete workloads until their explicit retirement is approved.
+
+### Signed updates with bin/update
+
+**This is a manual upgrade flow, not automatic apply.** One-time
+[automatic-update setup](update/README.md#automatic-updates-standalone) supports
+only the qualified base Standalone layout. Production and Distributed upgrades
+remain operator-run; Helm uses its [own upgrade flow](helm/futureagi/README.md#upgrading).
+
+`./bin/update --production` does the same upgrade with a signed release, in
+two steps around your initialization jobs. `apply --stage` runs your backup
+hook, writes only the seven version pins in `deploy/.env.production`, pulls the
+images and verifies each against the release's signed digest, and restarts
+nothing. You then run the release's initialization jobs exactly as above; they
+use the staged, verified images. `apply` then starts the stack with the same
+`--env-file`, compose files and `up -d --no-build --wait` as above, with the
+file authoritative over shell exports. Check out the release tag first:
+bin/update refuses to start new images with another release's compose files.
+
+```bash
+git fetch --tags && git checkout vX.Y.Z
+./bin/update --production check
+./bin/update --production apply --stage
+# the release's initialization jobs, run with the Compose command apply --stage
+# prints (this install's env file and compose files), as above
+./bin/update --production apply
+```
+
+A plain `--production apply` with nothing staged is refused before the backup.
+`apply --stage` prints the Compose command to run the jobs with; use it rather
+than the `$COMPOSE` above when your env file is not `deploy/.env.production`.
+Run the jobs from a shell that does not export any key of the env file
+(Compose prefers your shell over the env file), and soon after `apply --stage`:
+its backup is the one to restore from, so take a fresh one first if the old
+release kept writing data in between.
+It never reverts migrations: `./bin/update --production rollback --yes` puts
+the previous pins back and verifies the previous digests (a staged update that
+was never started can be rolled back the same way), and a backup restore is
+the way back from a migration the old release cannot run on. A production
+install whose env file is not `deploy/.env.production` passes
+`--env-file PATH` to every one of these commands. See
+[`update/README.md`](update/README.md).
 
 **Retiring RabbitMQ and the catalog sequencer.** The stack no longer runs
 RabbitMQ: Redis carries live updates (the channel layer), and

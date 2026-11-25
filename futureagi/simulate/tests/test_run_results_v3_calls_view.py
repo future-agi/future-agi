@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -15,9 +16,16 @@ from rest_framework import status
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.evals_metric import EvalTemplate
-from simulate.models import CallExecution, Scenarios, SimulateEvalConfig, TestExecution
+from simulate.models import (
+    AgentFixRun,
+    CallExecution,
+    Scenarios,
+    SimulateEvalConfig,
+    TestExecution,
+)
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.run_test import RunTest
+from simulate.tests.test_harness_versioning_backfill import _agent_version, _definition
 
 URL = "/simulate/v3/test-executions/{}/calls/"
 
@@ -598,3 +606,57 @@ class TestRunCallsV3StatusCounts:
 
         assert body["status_counts"] == body["execution"]["summary"]["outcomes"]
         assert sum(body["status_counts"].values()) == len(calls)
+
+
+def test_the_contract_takes_any_eval_value_and_blank_end_texts():
+    """The run page validates every call against this contract: an eval's value is a
+    string, a number or an object, and a call that ended cleanly has blank end texts."""
+    path = Path(__file__).resolve().parents[3] / "api_contracts/openapi/swagger.json"
+    definitions = json.loads(path.read_text())["definitions"]
+
+    value = definitions["SimulateRunV3EvaluationResult"]["properties"]["value"]
+    assert value["x-json-value"] is True
+    call = definitions["RunCall"]["properties"]
+    assert "minLength" not in call["ended_reason"]
+    assert "minLength" not in call["error_message"]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+def test_a_check_run_names_its_fix_and_a_user_run_does_not(
+    auth_client, execution, user, organization, workspace
+):
+    job = HostedHarnessJob.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        run_id=uuid.uuid4(),
+        idempotency_key=uuid.uuid4().hex,
+        request_digest="digest",
+        schema_version="1.6",
+        seed=1,
+        artifact_level="standard",
+        max_artifact_bytes=1024,
+        deadline_at=timezone.now() + timedelta(hours=1),
+        scenario_count=1,
+        payload={},
+        run_test=execution.run_test,
+        test_execution=execution,
+    )
+    # The check run's own job stands in for the fix's environment.
+    fix = AgentFixRun.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        environment=job,
+        base_agent_version=_agent_version(_definition(user, workspace)),
+        request={},
+    )
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        fix_run=fix, fix_label="c2-target"
+    )
+
+    check_run = _get(auth_client, execution).json()["execution"]
+    user_run = _get(auth_client, _run(organization, workspace)).json()["execution"]
+
+    assert check_run["fix_run"] == {"id": str(fix.id), "label": "c2-target"}
+    assert user_run["fix_run"] is None

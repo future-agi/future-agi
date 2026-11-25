@@ -30,7 +30,8 @@ def spy(monkeypatch):
     # transaction, so an actual on_commit callback would be discarded. Execute
     # it here; the real commit-order contract has dedicated transaction tests.
     monkeypatch.setattr(
-        "tracer.views.eval_task.transaction.on_commit", lambda callback: callback()
+        "tracer.views.eval_task.transaction.on_commit",
+        lambda callback, **kwargs: callback(),
     )
     return calls
 

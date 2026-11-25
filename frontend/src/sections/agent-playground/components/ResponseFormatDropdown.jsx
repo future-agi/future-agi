@@ -120,8 +120,6 @@ export default function ResponseFormatDropdown({
           "& .MuiPopover-paper": {
             borderRadius: "4px",
             minWidth: anchorRef.current?.offsetWidth || 150,
-            border: "1px solid",
-            borderColor: "divider",
             mt: 0.5,
           },
         }}

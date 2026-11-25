@@ -37,6 +37,12 @@ class GatewaySummaryResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     base_url = serializers.URLField()
     status = serializers.CharField()
+    last_health_check = serializers.DateTimeField(
+        help_text=(
+            "Completion time of this request's live health probe, including "
+            "unreachable results."
+        )
+    )
     provider_count = serializers.IntegerField(required=False)
     model_count = serializers.IntegerField(required=False)
 
@@ -69,6 +75,9 @@ class GatewayConfiguredProvidersSerializer(serializers.Serializer):
 
 class GatewayHealthResultSerializer(serializers.Serializer):
     status = serializers.CharField()
+    last_health_check = serializers.DateTimeField(
+        help_text="Completion time of this request's live health probe."
+    )
     health = serializers.JSONField(required=False)
     providers = GatewayConfiguredProvidersSerializer()
     provider_count = serializers.IntegerField()
@@ -78,6 +87,43 @@ class GatewayHealthResultSerializer(serializers.Serializer):
 class GatewayHealthResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = GatewayHealthResultSerializer()
+
+
+class GatewayHealthErrorResultSerializer(serializers.Serializer):
+    """Legacy string error or the typed result of a failed live probe."""
+
+    status = serializers.ChoiceField(choices=["unreachable"])
+    error = serializers.CharField(allow_blank=True)
+    last_health_check = serializers.DateTimeField(
+        help_text="Completion time of this request's failed live health probe."
+    )
+
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            return data
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        if isinstance(instance, str):
+            return instance
+        return super().to_representation(instance)
+
+    class Meta:
+        swagger_schema_fields = {"x-string-or-object": True}
+
+
+class GatewayHealthErrorResponseSerializer(AgentccErrorResponseSerializer):
+    result = GatewayHealthErrorResultSerializer()
+
+    class Meta:
+        swagger_schema_fields = {
+            "description": (
+                "Failed probes return a result object with status (unreachable), "
+                "error, and last_health_check (ISO 8601 completion time). Request "
+                "validation and other errors return a string result without a "
+                "probe timestamp."
+            )
+        }
 
 
 class GatewayConfigProviderSerializer(serializers.Serializer):

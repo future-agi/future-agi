@@ -461,9 +461,7 @@ class TestBooleanFeatureEnforcement:
         # queryset out so the entitlement gate is reachable.
         scenario_id = "11111111-1111-1111-1111-111111111111"
         with patch("simulate.views.scenarios.Scenarios.objects") as mock_qs:
-            mock_qs.filter.return_value.select_related.return_value.first.return_value = (
-                None
-            )
+            mock_qs.filter.return_value.select_related.return_value.first.return_value = None
             response = view.post(request, scenario_id=scenario_id)
         assert response.status_code == 403
         mock_check.assert_called_once_with("org-1", "has_agentic_eval")

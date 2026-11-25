@@ -6,9 +6,11 @@ in-memory Temporal server used by the workflow e2e tests.
 """
 
 import uuid
+from datetime import timedelta
 
 import pytest
 import pytest_asyncio
+from django.utils import timezone
 from temporalio.testing import WorkflowEnvironment
 
 from model_hub.models.ai_model import AIModel
@@ -109,9 +111,36 @@ def make_pending_entries(db, custom_eval_config):
     return _make
 
 
+@pytest.fixture
+def closed_task(eval_task):
+    t = eval_task.created_at
+    eval_task.sampling_policy = {
+        "version": 1,
+        "sampling_unit": "session",
+        "mode": "closed",
+        "window": {
+            "start": (t - timedelta(hours=2)).isoformat(),
+            "end": (t - timedelta(hours=1)).isoformat(),
+        },
+    }
+    eval_task.save(update_fields=["sampling_policy"])
+    return eval_task
+
+
+@pytest.fixture
+def stale_running_entry(closed_task, make_pending_entries):
+    (entry,) = make_pending_entries(closed_task, 1, status=EvalEntryStatus.RUNNING)
+    EvalLogger.objects.filter(pk=entry.pk).update(
+        updated_at=timezone.now() - timedelta(days=2), attempts=0
+    )
+    return closed_task, entry
+
+
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def workflow_environment():
     """In-memory Temporal server for the whole test session."""
-    env = await WorkflowEnvironment.start_local()
+    from tfc.temporal.eval_tasks.search_attributes import ALL_KEYS
+
+    env = await WorkflowEnvironment.start_local(search_attributes=ALL_KEYS)
     yield env
     await env.shutdown()

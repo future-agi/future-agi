@@ -1485,9 +1485,7 @@ class TestExperimentDeleteV2:
             eval_column_base,
             base_reason,
         ]
-        previous_column_updates = {
-            column.id: column.updated_at for column in columns
-        }
+        previous_column_updates = {column.id: column.updated_at for column in columns}
         previous_edt_updated_at = experiment_dataset.updated_at
         previous_experiment_updated_at = experiment_with_evals.updated_at
 

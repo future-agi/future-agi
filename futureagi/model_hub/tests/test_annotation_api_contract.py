@@ -408,9 +408,7 @@ class TestAnnotationApiContract:
         assert validation_error.data["type"] == "validation_error"
         assert validation_error.data["code"] == "invalid"
         assert validation_error.data["attr"] == "name"
-        assert validation_error.data["details"] == {
-            "name": ["This field is required."]
-        }
+        assert validation_error.data["details"] == {"name": ["This field is required."]}
 
         custom_error = gm.custom_error_response(409, "Already running")
         assert custom_error.data["status"] is False
@@ -430,9 +428,7 @@ class TestAnnotationApiContract:
         assert custom_validation_error.data["error"] == "Already running"
         assert custom_validation_error.data["type"] == "conflict"
         assert custom_validation_error.data["code"] == "conflict"
-        assert custom_validation_error.data["details"] == {
-            "error": ["Already running"]
-        }
+        assert custom_validation_error.data["details"] == {"error": ["Already running"]}
 
     def test_empty_request_contract_rejects_surprise_payloads(self):
         empty = EmptyRequestSerializer(data={})
@@ -505,9 +501,7 @@ class TestAnnotationApiContract:
 
         legacy_nested_alias = QueueForSourceQuerySerializer(
             data={
-                "sources": json.dumps(
-                    [{"sourceType": "trace", "sourceId": source_id}]
-                )
+                "sources": json.dumps([{"sourceType": "trace", "sourceId": source_id}])
             }
         )
         assert not legacy_nested_alias.is_valid()

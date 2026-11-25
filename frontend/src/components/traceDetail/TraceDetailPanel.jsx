@@ -15,6 +15,42 @@ import ContentSkeleton from "src/components/content-skeleton";
 
 const PANEL_WIDTH = "60vw";
 
+// Shared by trace and session drawers. Keep scope separate from monetary price
+// availability: even a known zero says nothing about missing source requests.
+export function CaptureCoverageNotice({ coverage }) {
+  if (!coverage?.coverage_unknown) return null;
+  return (
+    <Box
+      role="note"
+      aria-label="Capture coverage"
+      sx={{ px: 2, py: 1, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
+    >
+      <Typography
+        variant="caption"
+        component="div"
+        color="text.primary"
+        sx={{ fontWeight: 500 }}
+      >
+        Observed requests only · {coverage.request_count}{" "}
+        {coverage.request_count === 1 ? "observed request" : "observed requests"}
+      </Typography>
+      <Typography variant="caption" component="div" color="text.secondary">
+        Capture coverage unknown. Source summaries are not added to request usage;
+        matching totals do not prove complete capture.
+      </Typography>
+    </Box>
+  );
+}
+
+CaptureCoverageNotice.propTypes = {
+  coverage: PropTypes.shape({
+    scope: PropTypes.oneOf(["observed_requests"]).isRequired,
+    source_summary_present: PropTypes.bool.isRequired,
+    request_count: PropTypes.number.isRequired,
+    coverage_unknown: PropTypes.bool.isRequired,
+  }),
+};
+
 const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
   const [selectedSpanId, setSelectedSpanId] = useState(null);
 
@@ -88,13 +124,13 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
         <Stack direction="row" alignItems="center" spacing={1}>
           <Typography
             variant="body2"
-            sx={{ fontSize: 13, color: "text.secondary" }}
+            sx={{ fontSize: 12, color: "text.secondary" }}
           >
             Trace ID :
           </Typography>
           <Typography
             variant="body2"
-            sx={{ fontSize: 13, fontWeight: 500, fontFamily: "monospace" }}
+            sx={{ fontSize: 12, fontWeight: 500, fontFamily: "monospace" }}
           >
             {traceId?.substring(0, 20)}...
           </Typography>
@@ -142,7 +178,7 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
           <Iconify icon="solar:link-linear" width={16} color="primary.main" />
           <Typography
             variant="body2"
-            sx={{ fontSize: 13, fontWeight: 600, color: "primary.main" }}
+            sx={{ fontSize: 12, fontWeight: 600, color: "primary.main" }}
           >
             Trace
           </Typography>
@@ -157,14 +193,18 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
               {formatLatency(summary.total_duration_ms)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              {formatTokenCount(summary.total_tokens)} tokens
+              {formatTokenCount(summary.total_tokens)}{" "}
+              {data?.capture_coverage ? "observed tokens" : "tokens"}
             </Typography>
             <Typography variant="caption" color="text.secondary">
+              {data?.capture_coverage && "Observed cost: "}
               {formatCost(summary.total_cost)}
             </Typography>
           </Stack>
         )}
       </Stack>
+
+      <CaptureCoverageNotice coverage={data?.capture_coverage} />
 
       {/* Search bar */}
       <Box
@@ -195,7 +235,7 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
           />
           <Typography
             variant="body2"
-            sx={{ fontSize: 13, color: "text.disabled" }}
+            sx={{ fontSize: 12, color: "text.disabled" }}
           >
             Search
           </Typography>

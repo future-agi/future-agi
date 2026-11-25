@@ -80,7 +80,7 @@ const AttributeKeyList = ({
                   : "Recent attribute"
               }
               primaryTypographyProps={{
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: selectedKey === key ? 500 : 400,
                 noWrap: true,
               }}

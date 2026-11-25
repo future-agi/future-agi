@@ -54,12 +54,12 @@ type Result struct {
 
 // Summary holds aggregated batch metrics.
 type Summary struct {
-	TotalCost        float64 `json:"total_cost"`
-	TotalInputTokens int     `json:"total_input_tokens"`
-	TotalOutputTokens int    `json:"total_output_tokens"`
-	Completed        int     `json:"completed"`
-	Failed           int     `json:"failed"`
-	Cancelled        int     `json:"cancelled"`
+	TotalCost         float64 `json:"total_cost"`
+	TotalInputTokens  int     `json:"total_input_tokens"`
+	TotalOutputTokens int     `json:"total_output_tokens"`
+	Completed         int     `json:"completed"`
+	Failed            int     `json:"failed"`
+	Cancelled         int     `json:"cancelled"`
 }
 
 const defaultBatchRetention = 1 * time.Hour
@@ -150,13 +150,15 @@ func (p *Processor) Cancel(batchID string) (*Batch, bool) {
 		return nil, false
 	}
 	b := raw.(*Batch)
-	b.cancel()
 
+	// Publish cancellation before waking workers that may finalize the batch.
 	b.mu.Lock()
 	if b.Status == "processing" {
 		b.Status = "cancelled"
 	}
 	b.mu.Unlock()
+
+	b.cancel()
 
 	return b, true
 }

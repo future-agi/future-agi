@@ -8,6 +8,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/payloads"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/privacy"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
@@ -84,6 +85,13 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	// Check per-org privacy config from tenant store for richer redaction (custom patterns).
 	orgRedactor := p.tenantStore.Redactor(rc.Metadata[tenant.MetadataKeyOrgID])
+
+	// A decision's full bodies are JSON the redactor cannot walk. Where it
+	// would redact, the log keeps the decision's summary instead.
+	if rc.EndpointType == "decision" &&
+		((orgRedactor != nil && orgRedactor.ShouldRedact()) || (p.redactor != nil && p.redactor.ShouldRedact())) {
+		record.RequestBodyJSON, record.ResponseBodyJSON = payloads.ForEndpoint(rc)
+	}
 
 	// Apply redaction: org redactor (with org patterns) takes priority over global.
 	// The flag goes on the record, not on rc: this runs inside the parallel

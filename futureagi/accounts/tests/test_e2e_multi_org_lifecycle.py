@@ -385,7 +385,6 @@ class TestOrgSwitching:
 
 @pytest.mark.django_db
 class TestCrossOrgIsolation:
-
     @pytest.fixture
     def two_orgs(self, user, organization, workspace):
         """User is Owner in org A, Viewer in org B."""

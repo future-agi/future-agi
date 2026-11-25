@@ -9,7 +9,7 @@ const ConnectorRow = ({ title, connectors }) => {
     <Box
       sx={{ padding: 3, display: "flex", flexDirection: "column", gap: 1.5 }}
     >
-      <Typography fontWeight={600} fontSize={13} color="text.primary">
+      <Typography fontWeight={600} fontSize={12} color="text.primary">
         {title}
       </Typography>
       <Box sx={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>

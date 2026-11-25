@@ -119,7 +119,7 @@ def download_audio_from_url(audio_url, max_retries=5, timeout=200):
 
             elif 500 <= response.status_code < 600:
                 logger.error(
-                    f"Server error (status {response.status_code}). Retrying in {2 ** attempt} seconds..."
+                    f"Server error (status {response.status_code}). Retrying in {2**attempt} seconds..."
                 )
                 time.sleep(2**attempt)
             else:

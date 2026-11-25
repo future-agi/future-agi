@@ -29,6 +29,7 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:

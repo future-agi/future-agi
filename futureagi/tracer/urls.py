@@ -16,6 +16,7 @@ from tracer.views.charts import ChartsView
 from tracer.views.custom_eval_config import CustomEvalConfigView
 from tracer.views.dashboard import DashboardViewSet, DashboardWidgetViewSet
 from tracer.views.dataset import DatasetView
+from tracer.views.derived_metric import DerivedMetricRunViewSet, DerivedMetricViewSet
 from tracer.views.error_analysis import (
     TraceErrorAnalysisView,
     TraceErrorTaskView,
@@ -36,6 +37,29 @@ from tracer.views.feed import (
     LinearTeamsView,
 )
 from tracer.views.imagine_analysis import ImagineAnalysisView
+from tracer.views.insights import (
+    InsightConfigDetailView,
+    InsightConfigListView,
+    InsightDraftView,
+    InsightEstimateView,
+    InsightPreviewView,
+    InsightRunAskView,
+    InsightRunCreateView,
+    InsightRunDetailView,
+    InsightRunMediaView,
+    InsightRunStopView,
+    InsightRunUnitsView,
+)
+from tracer.views.insights_evidence import InsightEvidenceView
+from tracer.views.instant_eval import InstantEvalRunsView
+from tracer.views.instant_eval_scale import (
+    InstantEvalControlView,
+    InstantEvalEstimateView,
+    InstantEvalExportView,
+    InstantEvalRowsView,
+    InstantEvalStartView,
+    InstantEvalSummaryView,
+)
 from tracer.views.monitor import UserAlertMonitorLogView, UserAlertMonitorView
 from tracer.views.observability_provider import ObservabilityProviderViewSet
 from tracer.views.observation_span import ObservationSpanView
@@ -50,6 +74,7 @@ from tracer.views.shared_link import (
     resolve_shared_issue_trace,
     resolve_shared_link,
 )
+from tracer.views.sql_query import SavedSQLQueryViewSet, SQLQueryViewSet
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
 from tracer.views.trace_grouping import (
     AcknowledgeGroupingOutboxView,
@@ -83,6 +108,9 @@ from tracer.views.trace_severity import (
 
 router = DefaultRouter()
 
+router.register(r"sql-query", SQLQueryViewSet, basename="sql-query")
+router.register(r"saved-sql-query", SavedSQLQueryViewSet, basename="saved-sql-query")
+
 router.register(r"project", ProjectView, basename="project")
 router.register(r"project-version", ProjectVersionView, basename="project-version")
 router.register(r"trace", TraceView, basename="trace")
@@ -106,6 +134,10 @@ router.register(r"replay-session", ReplaySessionView, basename="replay-session")
 router.register(r"saved-views", SavedViewViewSet, basename="saved-view")
 router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
+router.register(r"derived-metrics", DerivedMetricViewSet, basename="derived-metric")
+router.register(
+    r"derived-metric-runs", DerivedMetricRunViewSet, basename="derived-metric-run"
+)
 
 urlpatterns = [
     path("alerts/", AlertView.as_view(), name="alerts"),
@@ -232,6 +264,90 @@ urlpatterns = [
     ),
     # Imagine analysis — trigger + poll for dynamic analysis results
     path("imagine-analysis/", ImagineAnalysisView.as_view(), name="imagine-analysis"),
+    path(
+        "insights/configs/",
+        InsightConfigListView.as_view(),
+        name="insight-configs",
+    ),
+    path(
+        "insights/configs/<uuid:config_id>/",
+        InsightConfigDetailView.as_view(),
+        name="insight-config-detail",
+    ),
+    path("insights/draft/", InsightDraftView.as_view(), name="insight-draft"),
+    path("insights/preview/", InsightPreviewView.as_view(), name="insight-preview"),
+    path("insights/estimate/", InsightEstimateView.as_view(), name="insight-estimate"),
+    path("insights/runs/", InsightRunCreateView.as_view(), name="insight-runs"),
+    path(
+        "insights/runs/<uuid:run_id>/",
+        InsightRunDetailView.as_view(),
+        name="insight-run-detail",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/stop/",
+        InsightRunStopView.as_view(),
+        name="insight-run-stop",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/units/",
+        InsightRunUnitsView.as_view(),
+        name="insight-run-units",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/media/",
+        InsightRunMediaView.as_view(),
+        name="insight-run-media",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/ask/",
+        InsightRunAskView.as_view(),
+        name="insight-run-ask",
+    ),
+    # The Insights agent's evidence broker (PROTOCOL_V2): no trailing slash,
+    # the agent posts to <base>/<op>.
+    *(
+        path(
+            f"internal/insights/evidence/{op}",
+            InsightEvidenceView.as_view(op=op),
+            name=f"insight-evidence-{op}",
+        )
+        for op in ("manifest", "fields", "media")
+    ),
+    path(
+        "instant-eval/runs/",
+        InstantEvalRunsView.as_view(),
+        name="instant-eval-runs",
+    ),
+    path(
+        "instant-eval/estimate/",
+        InstantEvalEstimateView.as_view(),
+        name="instant-eval-estimate",
+    ),
+    path(
+        "instant-eval/start/",
+        InstantEvalStartView.as_view(),
+        name="instant-eval-start",
+    ),
+    path(
+        "instant-eval/summary/",
+        InstantEvalSummaryView.as_view(),
+        name="instant-eval-summary",
+    ),
+    path(
+        "instant-eval/rows/",
+        InstantEvalRowsView.as_view(),
+        name="instant-eval-rows",
+    ),
+    path(
+        "instant-eval/export/",
+        InstantEvalExportView.as_view(),
+        name="instant-eval-export",
+    ),
+    path(
+        "instant-eval/control/",
+        InstantEvalControlView.as_view(),
+        name="instant-eval-control",
+    ),
     # Agent graph — explicit path because @action doesn't register reliably with Granian reload
     path(
         "trace/agent_graph/",

@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
 import React, {
@@ -279,6 +280,7 @@ const TraceGrid = React.forwardRef(
     const filterRequestKey = useMemo(
       () =>
         JSON.stringify({
+          responseVersion: "capture-coverage-v1",
           selectionQueryKey,
           requestedAttributeKeys: requestedAttributeKeysKey,
           pageSize,

@@ -256,7 +256,7 @@ const AddEvalsFeedbackForm = ({
             overflowWrap: "break-word",
           }}
         >
-          <Typography fontWeight={500} fontSize={13} color="text.primary">
+          <Typography fontWeight={500} fontSize={12} color="text.primary">
             Explanation
           </Typography>
           <Box
@@ -268,7 +268,7 @@ const AddEvalsFeedbackForm = ({
               overflowY: "auto",
             }}
           >
-            <Typography fontWeight={400} fontSize={13} color="text.primary">
+            <Typography fontWeight={400} fontSize={12} color="text.primary">
               {typeof explanation === "string" ? (
                 explanation?.trim() ? (
                   <CellMarkdown spacing={0} text={explanation} />

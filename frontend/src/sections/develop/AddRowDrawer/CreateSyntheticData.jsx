@@ -28,6 +28,10 @@ import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import {
+  syntheticDataColumnEventFields,
+  syntheticDataEventFields,
+} from "./syntheticDataEventFields";
 
 const createValidationSchema = (datasetId, openDescription) =>
   z.object({
@@ -207,24 +211,6 @@ const SyntheticDataDrawer = ({
       return incomingText;
     };
 
-    trackEvent(Events.syntheticDatasetCreationSuccessful, {
-      [PropertyName.name]: formData.name,
-      [PropertyName.description]: formData.description,
-      [PropertyName.pattern]: formData.pattern,
-      [PropertyName.useCase]: formData.useCase,
-    });
-
-    const formattedColumns = formData.columns.map((col) => ({
-      Column_Name: col.name,
-      Column_Type: col.data_type,
-      Property: col.property,
-      Property_Value: col.description,
-    }));
-
-    trackEvent(Events.syntheticDatasetCreationSuccessfulColumn, {
-      [PropertyName.column]: formattedColumns,
-    });
-
     const payload = {
       dataset: {
         name: formData.name,
@@ -255,6 +241,14 @@ const SyntheticDataDrawer = ({
     if (!formData?.kb_id) {
       delete payload.kb_id;
     }
+
+    trackEvent(
+      Events.syntheticDatasetCreationSuccessful,
+      syntheticDataEventFields(payload, { datasetId }),
+    );
+    trackEvent(Events.syntheticDatasetCreationSuccessfulColumn, {
+      [PropertyName.column]: syntheticDataColumnEventFields(payload.columns),
+    });
     // console.log("formData", formData, payload);
     createSyntheticData(payload);
   };

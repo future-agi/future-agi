@@ -1,7 +1,10 @@
 from rest_framework import serializers
 
 from tracer.models.saved_view import SavedView
-from tracer.serializers.filters import StrictInputSerializer, filter_list_field
+from tracer.serializers.filters import (
+    StrictInputSerializer,
+    validate_persisted_filter_list,
+)
 
 
 class SavedViewCreatorSerializer(serializers.Serializer):
@@ -131,7 +134,9 @@ def validate_saved_view_config(value):
     validated = dict(value)
     for key in FILTER_CONFIG_KEYS:
         if key in validated and validated[key] is not None:
-            validated[key] = filter_list_field().run_validation(validated[key])
+            # Storage validates shape only. Native list reads must revalidate
+            # the active metric definition and authorized scope before use.
+            validated[key] = validate_persisted_filter_list(validated[key])
     return validated
 
 

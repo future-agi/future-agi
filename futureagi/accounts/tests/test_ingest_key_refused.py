@@ -169,9 +169,7 @@ def test_one_ingest_key_per_organisation_workspace_and_agent(
 
 @pytest.mark.integration
 @pytest.mark.django_db
-def test_ingest_keys_without_an_agent_do_not_block_each_other(
-    organization, workspace
-):
+def test_ingest_keys_without_an_agent_do_not_block_each_other(organization, workspace):
     # Keys from before the column existed carry no agent; NULLs never collide.
     first = OrgApiKey.no_workspace_objects.create(
         organization=organization, workspace=workspace, type="ingest"

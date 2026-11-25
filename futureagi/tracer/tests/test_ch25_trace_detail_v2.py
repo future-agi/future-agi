@@ -655,6 +655,8 @@ def test_eval_detail_keeps_organization_gate_without_workspace_context():
         user=SimpleNamespace(organization=organization),
     )
     config_manager = MagicMock()
+    # The view reads the config on the primary: .using("default").filter(...)
+    config_manager.using.return_value = config_manager
     config_manager.filter.return_value.values.return_value.first.return_value = None
     view = ObservationSpanView()
     view.request = request
@@ -666,6 +668,7 @@ def test_eval_detail_keeps_organization_gate_without_workspace_context():
         response = unwrap(ObservationSpanView.get_evaluation_details)(view, request)
 
     assert response.status_code == 400
+    config_manager.using.assert_called_once_with("default")
     _, filter_kwargs = config_manager.filter.call_args
     assert filter_kwargs["project__organization"] is organization
 

@@ -207,7 +207,7 @@ const ImportDatasetDrawerChild = ({ onClose, variables, setVariableData }) => {
             }}
           >
             <Box sx={{ p: theme.spacing(2), pt: theme.spacing(1) }}>
-              <Typography fontSize={13} fontWeight={600} color={"text.primary"}>
+              <Typography fontSize={12} fontWeight={600} color={"text.primary"}>
                 Map columns to variable
               </Typography>
               <ShowComponent condition={datasetValue && isLoadingDatasetDetail}>

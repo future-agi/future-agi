@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Button, ButtonGroup } from "@mui/material";
 import { formatDate } from "src/utils/report-utils";
@@ -134,7 +135,7 @@ const UsersDetailDateTimePicker = ({
 
   const getDateOptionTitle = (option, isSelected) => {
     if (option === "Custom" && isSelected) {
-      return `${format(new Date(dateFilter.dateFilter[0]), "dd/MM/yyyy")} - ${format(new Date(dateFilter.dateFilter[1]), "dd/MM/yyyy")}`;
+      return `${format(new Date(dateFilter.dateFilter[0]), "dd/MM/yyyy")} - ${format(getDateRangeDisplayEnd(dateFilter.dateFilter), "dd/MM/yyyy")}`;
     }
 
     return option;
@@ -284,6 +285,7 @@ const UsersDetailDateTimePicker = ({
           open={isDatePickerOpen}
           onClose={() => setIsDatePickerOpen(false)}
           anchorEl={customDatePickerAnc?.current}
+          value={dateFilter?.dateFilter}
           setDateFilter={(range) => {
             setDateFilter((prev) => ({
               ...prev,

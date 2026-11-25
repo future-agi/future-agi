@@ -13,6 +13,7 @@ from typing import Any
 
 from simulate.models.test_execution import CallExecution
 from simulate.services.harness_environment import sub_goal_catalogue
+from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
 from simulate.services.run_results_v3 import call_outcome
 
 # A finding about our own test caller is our bug, not the user's agent.
@@ -68,14 +69,13 @@ def build_diagnosis(
         if call.id in infra:
             continue
         receipt = (call.call_metadata or {}).get("hosted_harness_receipt") or {}
-        # Same reading as the harness ingestion: `judged` is only the kind (a judge
-        # or a code checkpoint), and a sub-goal nothing decided was not tested.
+        # As ingestion reads it: `judged` is only the kind; undecided, not applicable or inconclusive was not tested.
         verdicts[call.id] = [
-            (str(goal["name"]), goal["held"])
+            (str(goal["name"]), SUB_GOAL_PASSED[result])
             for goal in receipt.get("sub_goals") or []
             if isinstance(goal, dict)
             and goal.get("name")
-            and goal.get("held") is not None
+            and (result := sub_goal_result(goal)) in SUB_GOAL_PASSED
         ]
     broken: dict[str, list] = defaultdict(list)
     passed: dict = defaultdict(set)

@@ -41,10 +41,18 @@ def test_attribution_explanation_is_optional_and_only_for_supported_roles():
         }
     )
     assert explained.is_valid(), explained.errors
-    assert explained.validated_data["explanation"] == "This call returned the wrong amount."
+    assert (
+        explained.validated_data["explanation"]
+        == "This call returned the wrong amount."
+    )
 
     unsupported = FindingAttributionRoleSerializer(
-        data={"status": "unknown", "span_id": None, "evidence_ids": [], "explanation": "Guess"}
+        data={
+            "status": "unknown",
+            "span_id": None,
+            "evidence_ids": [],
+            "explanation": "Guess",
+        }
     )
     assert not unsupported.is_valid()
 

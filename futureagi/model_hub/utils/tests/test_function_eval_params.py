@@ -44,17 +44,23 @@ def _schema_word_count():
 
 def test_empty_string_for_optional_integer_becomes_none():
     """The original repro: max_words='' previously triggered int('') crash."""
-    out = normalize_function_params(_schema_word_count(), {"min_words": 5, "max_words": ""})
+    out = normalize_function_params(
+        _schema_word_count(), {"min_words": 5, "max_words": ""}
+    )
     assert out == {"min_words": 5, "max_words": None}
 
 
 def test_both_empty_strings_both_become_none():
-    out = normalize_function_params(_schema_word_count(), {"min_words": "", "max_words": ""})
+    out = normalize_function_params(
+        _schema_word_count(), {"min_words": "", "max_words": ""}
+    )
     assert out == {"min_words": None, "max_words": None}
 
 
 def test_whitespace_only_string_treated_as_empty():
-    out = normalize_function_params(_schema_word_count(), {"min_words": "   ", "max_words": "\t"})
+    out = normalize_function_params(
+        _schema_word_count(), {"min_words": "   ", "max_words": "\t"}
+    )
     assert out == {"min_words": None, "max_words": None}
 
 
@@ -64,23 +70,31 @@ def test_whitespace_only_string_treated_as_empty():
 
 
 def test_real_integer_values_preserved():
-    out = normalize_function_params(_schema_word_count(), {"min_words": 3, "max_words": 10})
+    out = normalize_function_params(
+        _schema_word_count(), {"min_words": 3, "max_words": 10}
+    )
     assert out == {"min_words": 3, "max_words": 10}
 
 
 def test_stringified_integer_still_coerces():
     """FE sometimes sends '5' instead of 5; existing coercion must still work."""
-    out = normalize_function_params(_schema_word_count(), {"min_words": "5", "max_words": "10"})
+    out = normalize_function_params(
+        _schema_word_count(), {"min_words": "5", "max_words": "10"}
+    )
     assert out == {"min_words": 5, "max_words": 10}
 
 
 def test_mixed_empty_and_real():
-    out = normalize_function_params(_schema_word_count(), {"min_words": 5, "max_words": ""})
+    out = normalize_function_params(
+        _schema_word_count(), {"min_words": 5, "max_words": ""}
+    )
     assert out == {"min_words": 5, "max_words": None}
 
 
 def test_none_explicit_treated_as_not_provided():
-    out = normalize_function_params(_schema_word_count(), {"min_words": None, "max_words": None})
+    out = normalize_function_params(
+        _schema_word_count(), {"min_words": None, "max_words": None}
+    )
     assert out == {"min_words": None, "max_words": None}
 
 
@@ -163,12 +177,29 @@ def test_step_count_blank_min_max_repro():
     """Second repro from the ticket: step_count with blank min_steps/max_steps."""
     schema = {
         "function_params_schema": {
-            "expected_steps": {"type": "integer", "default": None, "nullable": True, "minimum": 0},
-            "min_steps":      {"type": "integer", "default": None, "nullable": True, "minimum": 0},
-            "max_steps":      {"type": "integer", "default": None, "nullable": True, "minimum": 1},
+            "expected_steps": {
+                "type": "integer",
+                "default": None,
+                "nullable": True,
+                "minimum": 0,
+            },
+            "min_steps": {
+                "type": "integer",
+                "default": None,
+                "nullable": True,
+                "minimum": 0,
+            },
+            "max_steps": {
+                "type": "integer",
+                "default": None,
+                "nullable": True,
+                "minimum": 1,
+            },
         }
     }
-    out = normalize_function_params(schema, {"expected_steps": 3, "min_steps": "", "max_steps": ""})
+    out = normalize_function_params(
+        schema, {"expected_steps": 3, "min_steps": "", "max_steps": ""}
+    )
     assert out == {"expected_steps": 3, "min_steps": None, "max_steps": None}
 
 
@@ -231,9 +262,9 @@ def _schema_max_latency():
 
 
 def test_number_accepts_native_int():
-    assert normalize_function_params(_schema_max_latency(), {"max_latency_ms": 1000}) == {
-        "max_latency_ms": 1000.0
-    }
+    assert normalize_function_params(
+        _schema_max_latency(), {"max_latency_ms": 1000}
+    ) == {"max_latency_ms": 1000.0}
 
 
 def test_number_accepts_native_float():
