@@ -100,7 +100,7 @@ class CertificationCampaign(BaseModel):
 
 
 class CertificationCase(BaseModel):
-    """One manifest case inside a campaign — exactly one HostedHarnessJob."""
+    """One manifest case with an authored environment and selected child run."""
 
     class State(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -142,6 +142,13 @@ class CertificationCase(BaseModel):
         null=True,
         blank=True,
     )
+    run_job = models.ForeignKey(
+        "simulate.HostedHarnessJob",
+        on_delete=models.SET_NULL,
+        related_name="certification_run_cases",
+        null=True,
+        blank=True,
+    )
 
     # The expanded manifest case spec (agent, target, interactions, seeds,
     # authorization) used to build the HostedHarnessJob payload.
@@ -166,6 +173,7 @@ class CertificationCase(BaseModel):
 
     class Meta:
         db_table = "simulate_certification_case"
+        ordering = ["sequence"]
         constraints = [
             models.UniqueConstraint(
                 fields=["campaign", "case_key"],

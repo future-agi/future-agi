@@ -131,6 +131,7 @@ from .views.agent_versions import (
     RemovedAgentVersionDeleteView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
+from .views.certification import CertificationCampaignViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_github_webhook import HarnessGitHubWebhookView
 from .views.harness_job import HarnessJobViewSet
@@ -196,6 +197,11 @@ router.register(
     r"harness/conversations",
     HostedHarnessConversationViewSet,
     basename="hosted-harness-conversation",
+)
+router.register(
+    r"certification-campaigns",
+    CertificationCampaignViewSet,
+    basename="certification-campaign",
 )
 
 urlpatterns = [

@@ -139,6 +139,7 @@ class HarnessSourceSerializer(serializers.Serializer):
     visibility = serializers.ChoiceField(
         choices=("public", "private"), default="public"
     )
+    path = serializers.CharField(max_length=1024, required=False, allow_null=True)
     # Inline plaintext environment values (C4 §7 Channel 1). The most
     # platform-visible literal-endpoint channel: scanned at submit for W>1
     # requests (HarnessJobCreateSerializer.validate).
@@ -158,6 +159,15 @@ class HarnessSourceSerializer(serializers.Serializer):
         ):
             raise serializers.ValidationError(
                 {"subfolder": "not supported yet; builds use the repository root"}
+            )
+        path = str(attrs.get("path") or "")
+        if path and (
+            path.startswith("/")
+            or path.startswith("~")
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+        ):
+            raise serializers.ValidationError(
+                {"path": "must be a repository-relative directory path"}
             )
         if kind == "github":
             if not attrs.get("repository"):
