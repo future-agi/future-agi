@@ -1315,6 +1315,12 @@ interactive scans always run on the separate bounded `sql_workbench` queue.
     text = "Optional estimator secret on the backend only. At least 24 characters when provisioning; never reuse the execution account."
 
     [[part.section.row]]
+    keys = ["METRICS_ENABLED"]
+    default = "0"
+    setups = ["S", "D", "H"]
+    text = "Backend and workers. 1 turns on Metrics; while it is 1, install and update apply the Metrics ClickHouse schema (Distributed production: deploy/README.md step 6)."
+
+    [[part.section.row]]
     keys = ["SQL_WORKBENCH_DERIVED_METRICS_ENABLED"]
     default = "false"
     setups = ["S", "D", "H"]

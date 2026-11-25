@@ -1,4 +1,7 @@
+from datetime import timedelta
+
 import structlog
+from django.utils import timezone
 
 from tfc.ee_stub import _ee_stub
 
@@ -330,14 +333,15 @@ def prepare_simulation_analysis_input(test_execution_id: str) -> dict | None:
             )
             return None
 
-        # A run with no summary yet stores None here; the queued optimiser job
-        # makes the summary first. No model runs while preparing, which
+        # The summary is resolved by the queued optimiser job when it starts,
+        # from the run as it is then: a current one is used, and a missing or
+        # out-of-date one is made first. No model runs while preparing, which
         # happens inside a web request.
         input_data = {
             "test_execution_id": test_execution_id,
             "scenarios": scenarios,
             "aggregate_metrics": aggregate_metrics,
-            "cluster_dict_by_eval": test_execution.eval_explanation_summary,
+            "cluster_dict_by_eval": None,
             # Global, deduplicated eval templates/metadata (avoid repeating per scenario).
             "eval_templates": eval_templates_list,
             "metadata": {
@@ -599,6 +603,28 @@ def get_or_create_optimiser_for_test_execution(
     )
 
     return optimiser
+
+
+# The optimiser job's time limit. A run still pending or running past it, with
+# room for a wait in the queue, was killed with its job and is not waited for.
+OPTIMISER_RUN_TIME_LIMIT_SECONDS = 3600
+_OPTIMISER_RUN_GIVE_UP = timedelta(
+    seconds=OPTIMISER_RUN_TIME_LIMIT_SECONDS
+) + timedelta(minutes=30)
+
+
+def analysis_on_its_way(optimiser: AgentOptimiser | None) -> AgentOptimiserRun | None:
+    """The optimiser's latest run when it is still pending or running and has
+    not outlived its job, else None."""
+    latest_run = optimiser.latest_run if optimiser is not None else None
+    if latest_run is None or latest_run.status not in (
+        AgentOptimiserRun.OptimiserStatus.PENDING,
+        AgentOptimiserRun.OptimiserStatus.RUNNING,
+    ):
+        return None
+    if latest_run.created_at < timezone.now() - _OPTIMISER_RUN_GIVE_UP:
+        return None
+    return latest_run
 
 
 def get_latest_optimiser_result(optimiser: AgentOptimiser | None) -> dict:

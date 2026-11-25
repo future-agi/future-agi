@@ -21,7 +21,7 @@ import {
   uploadErrorText,
   uploadSourceFolder,
 } from "src/pages/dashboard/harness/sourceUpload";
-import { FolderInput } from "../../panels/PanelCodeUpload";
+import FolderInput from "../../components/FolderInput";
 import { AGENT_VERSIONS_COPY, WORKSPACE_COPY } from "../workspace.constants";
 import ViewerLock from "../../components/ViewerLock";
 import useSimulationAccess from "../../hooks/useSimulationAccess";

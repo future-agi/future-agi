@@ -1,11 +1,11 @@
 import { request, type APIResponse, type Page } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { newBackendRequest } from '../../lib/backend-request';
 import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { authInitScript } from '../../lib/auth';
 import { provisionActor } from '../../lib/provisioning';
-
 // GuardrailManagementSection.jsx TAB_SLUGS ("policies") and paths.dashboard.gateway.guardrails.policies.
 const POLICIES_ROUTE = '/dashboard/gateway/guardrails/policies';
 // agentcc/urls.py: AgentccGuardrailPolicyViewSet and AgentccOrgConfigViewSet.
@@ -295,7 +295,7 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
     ]);
 
     // 7. The documented API body works as written; an unknown key ID is refused and saves nothing.
-    const docsApi = await request.newContext({
+    const docsApi = await newBackendRequest({
       baseURL: E2E.apiUrl,
       extraHTTPHeaders: { 'X-Api-Key': actor.apiKey, 'X-Secret-Key': actor.secretKey },
     });

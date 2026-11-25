@@ -1,7 +1,11 @@
 import structlog
 
 from simulate.models import AgentOptimiserRun, AgentPromptOptimiserRun, TestExecution
-from simulate.utils.agent_optimiser import execute_simulation_analysis
+from simulate.models.test_execution import EvalExplanationSummaryStatus
+from simulate.utils.agent_optimiser import (
+    OPTIMISER_RUN_TIME_LIMIT_SECONDS,
+    execute_simulation_analysis,
+)
 from simulate.utils.agent_prompt_optimiser import run_agent_prompt_optimiser
 from tfc.temporal.drop_in import temporal_activity
 from tfc.utils.error_codes import get_error_message
@@ -9,16 +13,33 @@ from tfc.utils.error_codes import get_error_message
 logger = structlog.get_logger(__name__)
 
 
-def _with_run_summary(run: AgentOptimiserRun) -> dict:
-    """The run's input, with the test run's summary in it.
+def _current_summary(test_execution_id):
+    """The test run's summary if it is current (completed), else None."""
+    return (
+        TestExecution.objects.filter(
+            id=test_execution_id,
+            eval_explanation_summary_status=EvalExplanationSummaryStatus.COMPLETED,
+        )
+        .values_list("eval_explanation_summary", flat=True)
+        .first()
+    )
 
-    The analysis reads the summary. A refresh made in a web request stores
-    the input without one when the test run has none, and the summary is made
-    here, inside the job the person started, never inside the request.
+
+def _with_run_summary(run: AgentOptimiserRun) -> dict:
+    """The run's input, with the test run's current summary in it.
+
+    The analysis reads the summary. Whether it is current is read here, when
+    the job starts, never from what was queued: a current one is used as it
+    is, and a missing or out-of-date one is made first, inside the job the
+    person started, never inside a web request.
     """
     input_data = dict(run.input_data or {})
     test_execution_id = input_data.get("test_execution_id")
-    if input_data.get("cluster_dict_by_eval") is not None or not test_execution_id:
+    if not test_execution_id:
+        return input_data
+    current = _current_summary(test_execution_id)
+    if current is not None:
+        input_data["cluster_dict_by_eval"] = current
         return input_data
 
     from simulate.tasks.eval_summary_tasks import run_eval_summary_task
@@ -40,7 +61,7 @@ def _with_run_summary(run: AgentOptimiserRun) -> dict:
 
 
 @temporal_activity(
-    time_limit=3600,
+    time_limit=OPTIMISER_RUN_TIME_LIMIT_SECONDS,
     max_retries=0,
     queue="tasks_l",
 )
