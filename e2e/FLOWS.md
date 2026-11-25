@@ -3730,7 +3730,7 @@
 
 - after the stop the Run offers no Stop control
 - the Cancelled chip counts 1 and the Error chip counts 1
-- the donut legend entry for Cancelled calls opens the calls list on the stopped call alone
+- the donut legend entry for Cancelled calls opens the calls list on the stopped call alone, with no Error chip
 
 ### SIM-E2E-036 — an environment-only org imports Observe sessions only into its own workspace's environments, and no other org or workspace reaches them
 

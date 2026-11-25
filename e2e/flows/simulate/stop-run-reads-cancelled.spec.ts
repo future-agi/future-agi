@@ -42,7 +42,7 @@ test('SIM-E2E-035: a user stops a running Run, and its call reads Cancelled in t
     browserChecks: [
       'after the stop the Run offers no Stop control',
       'the Cancelled chip counts 1 and the Error chip counts 1',
-      'the donut legend entry for Cancelled calls opens the calls list on the stopped call alone',
+      'the donut legend entry for Cancelled calls opens the calls list on the stopped call alone, with no Error chip',
     ],
   }),
 }, async ({ page, actor }, testInfo) => {
@@ -85,6 +85,7 @@ test('SIM-E2E-035: a user stops a running Run, and its call reads Cancelled in t
     await goalOutcome.getByRole('button', { name: 'Show Cancelled calls' }).click({ timeout: UI_READY });
     await expect(page.getByText(seed.ongoingScenarioName, { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText(seed.skippedScenarioName, { exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Error', exact: true })).toHaveText(/^Error\s*0$/);
+    await expect(page.getByRole('button', { name: 'Cancelled', exact: true })).toHaveText(/^Cancelled\s*1$/);
+    await expect(page.getByRole('button', { name: 'Error', exact: true })).toHaveCount(0);
   });
 });
