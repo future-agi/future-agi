@@ -2,7 +2,10 @@
 
 Rows sit one microsecond either side of a whole second. Every exact system
 graph route must count exactly the latest live rows in the half-open request
-window, including when a bound has a fractional second.
+window, including when a bound has a fractional second. The raw interactive
+lane (``resolve_span_versions=False``) counts live physical rows instead, so
+an unmerged older version still counts there; it must still use the exact
+window.
 """
 
 from __future__ import annotations
@@ -42,15 +45,27 @@ BOUNDARY_ROWS = [
     ("h", T + timedelta(milliseconds=1250), PROD),
 ]
 
-# (window, filtered traffic, unfiltered traffic).
+# (window, filtered traffic, unfiltered traffic, raw-lane filtered traffic,
+# filtered trace ids). Traffic and trace ids count the latest version of each
+# span. The raw lane counts live physical rows, so both unmerged versions of
+# ``r`` count wherever they fall inside the window: v1 alone in the
+# one-microsecond window, v1 and v2 in the whole second.
 WINDOWS = {
-    "one-microsecond": ((T, T + US), 1, 1),
+    "one-microsecond": ((T, T + US), 1, 1, 2, ["b"]),
     "fractional-both-edges": (
         (T + timedelta(milliseconds=500), T + timedelta(milliseconds=1500)),
         4,
         5,
+        4,
+        ["d", "e", "f", "h"],
     ),
-    "whole-second": ((T, T + timedelta(seconds=1)), 5, 6),
+    "whole-second": (
+        (T, T + timedelta(seconds=1)),
+        5,
+        6,
+        6,
+        ["b", "c", "d", "e", "r"],
+    ),
 }
 
 
@@ -117,10 +132,29 @@ def test_every_exact_route_counts_the_exact_window(
     client = native_graph_db
     try:
         _seed_boundary_rows(client)
-        (start, end), filtered_traffic, unfiltered_traffic = WINDOWS[window]
+        (
+            (start, end),
+            filtered_traffic,
+            unfiltered_traffic,
+            raw_filtered_traffic,
+            filtered_trace_ids,
+        ) = WINDOWS[window]
         analytics = NativeAnalytics(client)
         unfiltered = [_window_filter(start, end)]
         filtered = [*unfiltered, _stage_filter()]
+        enumerated_trace_ids = []
+        enumerate_trace_ids = exact_graph_reads._enumerate_exact_trace_ids
+
+        def record_enumerated_trace_ids(**kwargs):
+            result = enumerate_trace_ids(**kwargs)
+            enumerated_trace_ids.append(sorted(result[0]))
+            return result
+
+        monkeypatch.setattr(
+            exact_graph_reads,
+            "_enumerate_exact_trace_ids",
+            record_enumerated_trace_ids,
+        )
 
         bundle = exact_graph_reads.read_exact_all_system_metrics(
             analytics=analytics, project_id=PROJECT, filters=unfiltered, interval="hour"
@@ -139,17 +173,38 @@ def test_every_exact_route_counts_the_exact_window(
             assert graph["query_complete"] is True
             assert _graph_traffic(graph) == unfiltered_traffic, observe_type
 
-            for resolve in (True, False):
+            # The filtered readers: trace enumeration then contribution
+            # batches, and the span reader's adaptive partitions.
+            graph = exact_graph_reads.read_exact_system_graph(
+                analytics=analytics,
+                project_id=PROJECT,
+                filters=filtered,
+                interval="hour",
+                metric_id="latency",
+                observe_type=observe_type,
+            )
+            assert graph["query_complete"] is True, observe_type
+            assert _graph_traffic(graph) == filtered_traffic, observe_type
+
+            for resolve, expected in (
+                (True, filtered_traffic),
+                (False, raw_filtered_traffic),
+            ):
                 builder = _builder(
                     filtered, observe_type, resolve_span_versions=resolve
                 )
                 query, params = builder.build()
                 result = analytics.execute_ch_query(query, params)
                 metrics = builder.format_result(result.data, result.columns)
-                assert _bundle_traffic(metrics) == filtered_traffic, (
+                assert _bundle_traffic(metrics) == expected, (
                     observe_type,
                     resolve,
                 )
+
+        # Only the filtered trace graph enumerates trace ids. Its classifier
+        # applies the window to each trace's latest root, so the stale ``r``
+        # version inside the one-microsecond window does not make ``r`` a member.
+        assert enumerated_trace_ids == [filtered_trace_ids]
 
         # The trace reader passes only fully classified member traces.
         builder = _builder(filtered, "trace")
@@ -178,7 +233,8 @@ def test_every_exact_route_counts_the_exact_window(
             filtered_traffic
         )
 
-        # Interactive direct lane: cost resolves versions, traffic does not.
+        # Interactive direct lane: cost resolves versions, traffic reads the
+        # raw lane's physical rows.
         monkeypatch.setattr(
             graph_dispatch, "_read_or_refresh_exact_graph", lambda **_: None
         )
@@ -186,7 +242,10 @@ def test_every_exact_route_counts_the_exact_window(
             graph_dispatch, "_affordable_raw_graph_seed", lambda **_: (None, 0)
         )
         for observe_type in ("span", "trace"):
-            for metric_id in ("traffic", "cost"):
+            for metric_id, expected in (
+                ("traffic", raw_filtered_traffic),
+                ("cost", filtered_traffic),
+            ):
                 graph = graph_dispatch.fetch_system_metric_graph_ch(
                     analytics=analytics,
                     project_id=PROJECT,
@@ -195,7 +254,7 @@ def test_every_exact_route_counts_the_exact_window(
                     metric_id=metric_id,
                     observe_type=observe_type,
                 )
-                assert _graph_traffic(graph) == filtered_traffic, (
+                assert _graph_traffic(graph) == expected, (
                     observe_type,
                     metric_id,
                 )

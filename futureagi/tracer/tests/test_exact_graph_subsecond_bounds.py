@@ -18,7 +18,6 @@ from tracer.services.clickhouse.query_builders import base as base_query_module
 from tracer.services.clickhouse.query_builders.base import (
     BaseQueryBuilder,
     _unix_microseconds,
-    exact_datetime_bound_sql,
 )
 from tracer.services.clickhouse.query_builders.time_series import TimeSeriesQueryBuilder
 from tracer.services.exact_aggregation_cache import normalize_exact_observe_identity
@@ -85,6 +84,17 @@ def _prewhere_blocks(query: str) -> list[str]:
     return [
         block.split("WHERE", 1)[0] for block in query.split("PREWHERE")[1:] if block
     ]
+
+
+def exact_datetime_bound_sql(params: dict, name: str) -> str:
+    # Imported per call so the module still collects on a tree without the
+    # helper: the VM probe runs the parity cases of this file on dev, where
+    # only the four helper tests below fail.
+    from tracer.services.clickhouse.query_builders.base import (
+        exact_datetime_bound_sql as bound_sql,
+    )
+
+    return bound_sql(params, name)
 
 
 class _CapturingAnalytics:
