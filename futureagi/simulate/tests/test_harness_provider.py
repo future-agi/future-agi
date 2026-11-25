@@ -679,6 +679,7 @@ def test_e2b_serializer_rejects_impossible_configured_lifetime(settings):
 
 
 def test_daytona_preflight_rejects_known_egress_overflow(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "daytona"
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
         f"base-{index}.example.com" for index in range(19)
     ]
@@ -998,6 +999,7 @@ def test_daytona_create_rejects_known_egress_overflow_before_persisting(
     user, workspace, settings
 ):
     settings.HARNESS_PROVIDER = "daytona"
+    settings.HOSTED_SANDBOX_PROVIDER = "daytona"
     settings.HARNESS_PUBLIC_BASE_URL = "https://harness.example.test"
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
         f"base-{index}.example.com" for index in range(19)
@@ -1201,7 +1203,11 @@ def test_sandbox_source_upload_is_forwarded(user):
 
 
 @pytest.mark.django_db
-@override_settings(HARNESS_PROVIDER="daytona")
+@override_settings(
+    HARNESS_PROVIDER="daytona",
+    HOSTED_SANDBOX_PROVIDER="daytona",
+    HARNESS_VERSIONING_ENABLED=False,
+)
 def test_daytona_create_starts_gateway_workflow(user, workspace):
     client = APIClient()
     client.force_authenticate(user=user)
