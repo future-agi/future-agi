@@ -12,12 +12,15 @@ Its rules:
 - An empty record is present, sent as a plain statement, never as an empty value.
 - World changes always say they were cut when they were taken in.
 - Who spoke each turn is decided here, once.
-- A call outside the caller's organisation and workspace is refused.
+- Secrets are masked in everything but recording links, and masked content
+  carries the ``secrets_masked`` mark. The digest is of the masked content.
+- A call outside the caller's organisation and workspace, or deleted, is refused.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -40,6 +43,7 @@ from simulate.services.hosted_harness_ingestion import _ALLOWED_ARTIFACTS
 from simulate.services.run_traces_v3 import read_run_traces, run_traces_source
 from simulate.utils.speaker_roles import SpeakerRoleResolver
 from simulate.utils.stored_transcript_roles import call_actor_label
+from tfc.utils.redaction import redact_url_credentials
 from tracer.models.observability_provider import ProviderChoices
 
 READER_VERSION = 1
@@ -96,8 +100,13 @@ CUT_AT_INGESTION = "cut_at_ingestion"
 # The kit's mark on a contract whose prompt its save copied by code: from the source as
 # written, or a provider's whole prompt. Without it the excerpt is a quote.
 SYSTEM_PROMPT_COPIED = "system_prompt_copied"
+# Content a secret was masked in, so it differs from what is stored.
+SECRETS_MASKED = "secrets_masked"
 # Hosted connectors whose run is configured with the whole prompt a person typed.
 _STATED_CONNECTORS = frozenset({"phone", "livekit"})
+# The one file of a seed the reader hands over, and the most of it it reads.
+_SEED_STORE = "store.json"
+_SEED_STORE_MAX_BYTES = 32 * 1024 * 1024
 _RETELL_TOOL_ROLES = frozenset({"tool_call_invocation", "tool_call_result"})
 _VOICE_TOOL_ROLES = (
     CallTranscript.SpeakerRole.TOOL_CALLS,
@@ -111,8 +120,16 @@ _KNOWN_PROVIDERS = (
 )
 
 
-class CallNotInWorkspace(Exception):
+class CallRefused(Exception):
+    """The reader will not read this call."""
+
+
+class CallNotInWorkspace(CallRefused):
     """The call belongs to another organisation or workspace."""
+
+
+class CallDeleted(CallRefused):
+    """The call, its run or its run test was deleted."""
 
 
 @dataclass(frozen=True)
@@ -197,12 +214,16 @@ def read_call_evidence(
     max_chars: int | None = None,
     shared: dict[Any, Any] | None = None,
 ) -> dict[Kind, Evidence]:
-    """Each asked kind of evidence for one call. Refuses a call from elsewhere.
+    """Each asked kind of evidence for one call. Refuses a call from elsewhere, or
+    one that was deleted (or whose run or run test was).
 
     ``shared`` keeps what calls of one run read alike (a saved contract, a seed) for
     the next call, when one caller reads many calls."""
-    if not in_workspace(call.test_execution.run_test, organization_id, workspace_id):
+    run = call.test_execution
+    if not in_workspace(run.run_test, organization_id, workspace_id):
         raise CallNotInWorkspace(str(call.id))
+    if call.deleted or run.deleted or run.run_test.deleted:
+        raise CallDeleted(str(call.id))
     trial = hosted_trial(call)
     read = _Read(
         call=call,
@@ -291,11 +312,16 @@ def manifest_lists(
 
 
 def environment_files(environment_version_id: Any) -> dict[str, bytes] | None:
-    """The files of a saved environment version, ``None`` when its archive is gone."""
+    """The seed's store file of a saved environment version, read alone from its
+    archive; ``None`` when the archive is gone. A store over the size cap, or an
+    archive that can't be read, gives no file."""
+    import tarfile
+
     from minio.error import S3Error
 
     from simulate.models.harness_versioning import HarnessEnvironmentVersion
     from simulate.services.harness_versioning import archives
+    from simulate.services.hosted_harness import HostedHarnessError
 
     version = HarnessEnvironmentVersion.objects.filter(
         id=environment_version_id
@@ -308,7 +334,10 @@ def environment_files(environment_version_id: Any) -> dict[str, bytes] | None:
         if exc.code in {"NoSuchKey", "NoSuchBucket"}:
             return None
         raise
-    return archives.read_archive(body)
+    try:
+        return archives.read_members(body, {_SEED_STORE}, _SEED_STORE_MAX_BYTES)
+    except (tarfile.TarError, HostedHarnessError):
+        return {}
 
 
 def stored_artifact(read: _Read, digest: str, artifact_kind: str) -> bytes | None:
@@ -361,8 +390,9 @@ def _transcript(read: _Read) -> Evidence:
         source = "call_transcript"
     if not turns:
         return _missing(Kind.TRANSCRIPT, Cause.NO_RECORD)
+    turns, marks = _masked(turns)
     kept, cut = _cut_turns(turns, read.max_chars)
-    return _present(Kind.TRANSCRIPT, source, kept, cut=cut)
+    return _present(Kind.TRANSCRIPT, source, kept, cut=cut, marks=marks)
 
 
 def _agent_instructions(read: _Read) -> Evidence:
@@ -370,13 +400,14 @@ def _agent_instructions(read: _Read) -> Evidence:
     if whole is None:
         return _missing(Kind.AGENT_INSTRUCTIONS, Cause.NO_WHOLE_INSTRUCTIONS)
     text, source = whole
+    text, marks = _masked(text)
     if read.max_chars is not None and len(text) > read.max_chars:
         return _missing(
             Kind.AGENT_INSTRUCTIONS,
             Cause.TOO_LARGE,
             note=f"{len(text)} characters; instructions are never cut.",
         )
-    return _present(Kind.AGENT_INSTRUCTIONS, source, text)
+    return _present(Kind.AGENT_INSTRUCTIONS, source, text, marks=marks)
 
 
 def _scenario(read: _Read) -> Evidence:
@@ -456,7 +487,7 @@ def _world_state_start(read: _Read) -> Evidence:
     files = read.once(("seed", version_id), lambda: environment_files(version_id))
     if files is None:
         return _missing(kind, Cause.NO_LONGER_KEPT)
-    store = _json(files.get("store.json"))
+    store = _json(files.get(_SEED_STORE))
     rows = store.get("rows") if isinstance(store, dict) else None
     if not isinstance(rows, dict):
         # The seed is a database file, or nothing the reader can hand over yet.
@@ -547,9 +578,9 @@ def _agent_traces(read: _Read) -> Evidence:
     traces = read_run_traces(source, call_execution_id=str(read.call.id))
     if not traces:
         return _present(kind, "agent_traces", EMPTY_TRACE_RECORD)
-    content = [_trace_row(trace) for trace in traces]
+    content, marks = _masked([_trace_row(trace) for trace in traces])
     kept, cut = _cut_list(content, read.max_chars)
-    return _present(kind, "agent_traces", kept, cut=cut)
+    return _present(kind, "agent_traces", kept, cut=cut, marks=marks)
 
 
 _READERS = {
@@ -748,8 +779,9 @@ def _tool_record(
 ) -> Evidence:
     if not tools:
         return _present(kind, source, EMPTY_TOOL_RECORD, marks=marks)
+    tools, masked = _masked(tools)
     kept, cut = _cut_list(tools, max_chars)
-    return _present(kind, source, kept, cut=cut, marks=marks)
+    return _present(kind, source, kept, cut=cut, marks=marks + masked)
 
 
 def _hosted_cause(trial: HostedTrial | None, artifact_kind: str) -> Cause:
@@ -835,10 +867,91 @@ def _sized(
     marks: tuple[str, ...] = (),
 ) -> Evidence:
     """A record the reader hands over whole or not at all."""
+    content, masked = _masked(content)
     size = len(json.dumps(content, default=str))
     if max_chars is not None and size > max_chars:
         return _missing(kind, Cause.TOO_LARGE, note=f"{size} characters.")
-    return _present(kind, source, content, marks=marks)
+    return _present(kind, source, content, marks=marks + masked)
+
+
+# --- secrets ---------------------------------------------------------------------------
+
+_MASK = "[REDACTED]"
+# A value kept under one of these names is masked whole.
+_SECRET_NAMES = frozenset(
+    {
+        "authorization",
+        "password",
+        "passwd",
+        "secret",
+        "client_secret",
+        "api_key",
+        "apikey",
+        "x_api_key",
+        "token",
+        "access_token",
+        "refresh_token",
+        "auth_token",
+        "private_key",
+    }
+)
+_SECRET_ASSIGNMENT = re.compile(
+    r"""(?ix)
+    (["']?(?:authorization|api[_-]?key|secret|token|password)["']?\s*[:=]\s*["']?)
+    (?!bearer\s|\[REDACTED\])
+    [^"',}\s]+
+    """
+)
+# (pattern, replacement): secrets by their shape, wherever they sit in text.
+_SECRET_SHAPES = (
+    (
+        re.compile(
+            r"-----BEGIN [^-\n]*PRIVATE KEY-----.*?-----END [^-\n]*PRIVATE KEY-----",
+            re.DOTALL,
+        ),
+        _MASK,
+    ),
+    (re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}"), rf"\1{_MASK}"),
+    (re.compile(r"(?i)([?&](?:access_)?token=)[^&\s]+"), rf"\1{_MASK}"),
+    (re.compile(r"\b(?:sk|pk|rk)-(?=[A-Za-z_-]*\d)[A-Za-z0-9_-]{16,}"), _MASK),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), _MASK),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{35}"), _MASK),
+    (re.compile(r"\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}"), _MASK),
+    (re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}"), _MASK),
+    (re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"), _MASK),
+    (_SECRET_ASSIGNMENT, rf"\1{_MASK}"),
+)
+
+
+def _masked(content: Any) -> tuple[Any, tuple[str, ...]]:
+    """``content`` with its secrets masked, and the mark when any was."""
+    masked = _mask(content)
+    return masked, ((SECRETS_MASKED,) if masked != content else ())
+
+
+def _mask(value: Any) -> Any:
+    if isinstance(value, str):
+        text = redact_url_credentials(value)
+        for pattern, replacement in _SECRET_SHAPES:
+            text = pattern.sub(replacement, text)
+        return text
+    if isinstance(value, Mapping):
+        return {
+            key: _MASK if _secret_value(key, item) else _mask(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_mask(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_mask(item) for item in value)
+    return value
+
+
+def _secret_value(key: Any, value: Any) -> bool:
+    name = str(key).strip().lower().replace("-", "_")
+    if name not in _SECRET_NAMES or isinstance(value, bool):
+        return False
+    return isinstance(value, int) or (isinstance(value, str) and bool(value))
 
 
 def _present(

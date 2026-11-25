@@ -1322,3 +1322,165 @@ def test_the_reader_allows_what_ingestion_allows_and_nothing_at_an_unknown_level
             assert trial.allows(kind) is (kind in allowed), (level, kind)
     unknown = replace(HOSTED, artifact_level="no-such-level")
     assert not any(unknown.allows(kind) for kind in _ARTIFACT_KINDS)
+
+
+# --- secrets are masked before a judge sees them --------------------------------
+
+# Built at run time so no key-shaped text sits in the source.
+FAKE_KEY = "sk-" + "a1b2" * 6
+FAKE_TOKEN = "eyJ" + "x9" * 10
+
+
+@pytest.mark.django_db
+def test_secrets_in_instructions_are_masked_and_the_digest_is_of_what_is_sent(
+    voice_call, agent_version
+):
+    agent_version.configuration_snapshot = {
+        **agent_version.configuration_snapshot,
+        "description": (
+            f"You are a refunds agent. Use {FAKE_KEY} for refunds.\n"
+            "password: hunter22-pass\n"
+            f"Send Authorization: Bearer {FAKE_TOKEN} to the bank."
+        ),
+    }
+    agent_version.save(update_fields=["configuration_snapshot"])
+
+    evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert evidence.state == State.PRESENT
+    for secret in (FAKE_KEY, "hunter22-pass", FAKE_TOKEN):
+        assert secret not in evidence.content
+    assert evidence.content.startswith("You are a refunds agent. Use [REDACTED]")
+    assert reader.SECRETS_MASKED in evidence.marks
+    assert evidence.digest == canonical_digest(evidence.content)
+
+
+@pytest.mark.django_db
+def test_secrets_in_a_tool_record_are_masked_by_name_and_by_shape(execution, scenario):
+    trace = [
+        {
+            "name": "lookup_order",
+            "arguments": {"order": 7, "api_key": "plain-1234", "note": FAKE_KEY},
+            "headers": {"Authorization": f"Bearer {FAKE_TOKEN}"},
+            "url": "postgres://refunds:pw-98765@db:5432/orders",
+        }
+    ]
+    call = _call(
+        execution, scenario, provider_call_data={"livekit": {"tool_calls": trace}}
+    )
+    with _hosted():
+        evidence = _one(call, Kind.TOOL_CALLS)
+
+    (entry,) = evidence.content
+    assert entry["name"] == "lookup_order"
+    assert entry["arguments"] == {
+        "order": 7,
+        "api_key": "[REDACTED]",
+        "note": "[REDACTED]",
+    }
+    assert entry["headers"] == {"Authorization": "[REDACTED]"}
+    assert entry["url"] == "postgres://refunds:***@db:5432/orders"
+    assert evidence.marks == (reader.SECRETS_MASKED,)
+    assert call.provider_call_data["livekit"]["tool_calls"] == trace
+
+
+@pytest.mark.django_db
+def test_secrets_in_the_world_records_are_masked(execution, scenario):
+    body = {
+        "schema": "futureagi.world-state.v1",
+        "tables": {"users": [{"id": 1, "password": "p-123456", "note": FAKE_KEY}]},
+        "skipped": [],
+        "action_log": [],
+    }
+    call = _call(
+        execution,
+        scenario,
+        call_metadata={"harness_trial_state": {"end_state_artifact": END}},
+    )
+    with (
+        _hosted(),
+        patch.object(reader, "stored_artifact", return_value=json.dumps(body).encode()),
+    ):
+        evidence = _one(call, Kind.WORLD_STATE_END)
+
+    assert evidence.content["tables"]["users"] == [
+        {"id": 1, "password": "[REDACTED]", "note": "[REDACTED]"}
+    ]
+
+
+@pytest.mark.django_db
+def test_secrets_said_in_a_transcript_are_masked(voice_call):
+    _turn(voice_call, "user", f"My key is {FAKE_KEY}, thanks.", 0)
+
+    evidence = _one(voice_call, Kind.TRANSCRIPT)
+
+    assert FAKE_KEY not in json.dumps(evidence.content)
+    assert "[REDACTED]" in json.dumps(evidence.content)
+
+
+@pytest.mark.django_db
+def test_ordinary_text_is_not_masked(voice_call):
+    _turn(voice_call, "user", "I used 1500 tokens and my order is 12345678.", 0)
+
+    evidence = _one(voice_call, Kind.TRANSCRIPT)
+
+    assert "1500 tokens and my order is 12345678" in json.dumps(evidence.content)
+    assert evidence.marks == ()
+
+
+@pytest.mark.django_db
+def test_recording_links_are_handed_over_as_stored(execution, scenario):
+    url = "https://example.com/r.mp3?token=signed-123456"
+    call = _call(execution, scenario, recording_url=url)
+
+    assert _one(call, Kind.AUDIO).content == {"recording_url": url}
+
+
+# --- deleted calls --------------------------------------------------------------
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("deleted", ["call", "run", "run_test"])
+def test_a_deleted_call_run_or_run_test_is_refused(voice_call, deleted):
+    row = {
+        "call": voice_call,
+        "run": voice_call.test_execution,
+        "run_test": voice_call.test_execution.run_test,
+    }[deleted]
+    type(row)._base_manager.filter(id=row.id).update(deleted=True)
+    call = CallExecution._base_manager.select_related("test_execution__run_test").get(
+        id=voice_call.id
+    )
+
+    with pytest.raises(reader.CallDeleted):
+        _read(call, Kind.TRANSCRIPT)
+
+
+# --- the seed is read alone from its archive ---------------------------------------
+
+
+@pytest.mark.django_db
+def test_only_the_seed_store_is_read_from_the_environment_archive():
+    import io
+    import tarfile
+
+    from simulate.services.harness_versioning import archives
+
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w:gz") as archive:
+        for name, data in (("store.json", b'{"rows": {}}'), ("big.bin", b"0" * 4096)):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    version = SimpleNamespace(archive_object_key="envs/v1.tar.gz")
+    with (
+        patch(
+            "simulate.models.harness_versioning.HarnessEnvironmentVersion.objects"
+        ) as versions,
+        patch.object(archives, "get_archive", return_value=raw.getvalue()),
+        patch.object(archives, "read_archive", side_effect=AssertionError("whole")),
+    ):
+        versions.filter.return_value.first.return_value = version
+        files = reader.environment_files(uuid.uuid4())
+
+    assert files == {"store.json": b'{"rows": {}}'}
