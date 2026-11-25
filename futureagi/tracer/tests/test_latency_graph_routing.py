@@ -254,13 +254,24 @@ def test_trace_traffic_cost_probe_prices_root_projection_columns():
 
     analytics = mock.Mock()
     analytics.execute_ch_query.return_value = SimpleNamespace(
-        data=[{"database": "default", "table": "spans", "parts": 1, "rows": 100, "marks": 1}],
+        data=[
+            {
+                "database": "default",
+                "table": "spans",
+                "parts": 1,
+                "rows": 100,
+                "marks": 1,
+            }
+        ],
         columns=["database", "table", "parts", "rows", "marks"],
     )
     rows = estimate_raw_graph_scan_rows(
-        analytics=analytics, project_id=PROJECT_ID,
-        scan_start=datetime(2026, 8, 5), scan_end=datetime(2026, 8, 12),
-        timeout_ms=1_000, root_only=True,
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        scan_start=datetime(2026, 8, 5),
+        scan_end=datetime(2026, 8, 12),
+        timeout_ms=1_000,
+        root_only=True,
     )
 
     assert rows == 100
@@ -275,8 +286,12 @@ def test_trace_traffic_cost_probe_prices_root_projection_columns():
 def test_background_trace_traffic_without_saved_scope_counts_roots():
     analytics = _RecordingAnalytics()
     response = graph_dispatch.fetch_background_raw_system_metric_graph(
-        analytics=analytics, project_id=PROJECT_ID, filters=[WINDOW],
-        interval="day", metric_id="traffic", observe_type="trace",
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=[WINDOW],
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
     )
 
     assert response["query_status"] == "complete"

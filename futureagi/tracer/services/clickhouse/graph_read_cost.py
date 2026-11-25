@@ -317,7 +317,8 @@ def _explain_raw_graph_scan(
     }
     root_predicate = (
         "AND is_deleted = 0 AND (parent_span_id IS NULL OR parent_span_id = '')"
-        if root_only else ""
+        if root_only
+        else ""
     )
     query = f"""
         EXPLAIN ESTIMATE

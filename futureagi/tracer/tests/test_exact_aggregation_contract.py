@@ -6340,7 +6340,10 @@ def test_public_filtered_graph_runs_direct_raw_reader_inline_without_scheduling(
     assert result["query_sampled"] is False
     assert result["query_exact"] is False
     assert result["query_provenance"] == "bounded_candidates"
-    assert exact_calls[0]["filters"] == _exact_multi_filters(start, end)
+    assert exact_calls[0]["filters"] == [
+        *_exact_multi_filters(start, end),
+        graph_dispatch._TRACE_TRAFFIC_ROOT_FILTER,
+    ]
 
 
 @pytest.mark.unit

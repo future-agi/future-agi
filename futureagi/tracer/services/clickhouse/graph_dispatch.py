@@ -252,7 +252,10 @@ _TRACE_TRAFFIC_ROOT_FILTER = {
 
 
 def _trace_traffic_filters(
-    filters: list[dict[str, Any]], *, metric_id: str, observe_type: str,
+    filters: list[dict[str, Any]],
+    *,
+    metric_id: str,
+    observe_type: str,
 ) -> list[dict[str, Any]]:
     if (
         str(observe_type or "").strip().lower() != "trace"
@@ -1592,12 +1595,15 @@ def _fetch_direct_raw_system_metric_graph(
 
     started = monotonic()
     filters = _trace_traffic_filters(
-        filters, metric_id=metric_id, observe_type=observe_type,
+        filters,
+        metric_id=metric_id,
+        observe_type=observe_type,
     )
-    root_traffic_only = (
-        str(metric_id or "").strip().lower() == "traffic"
-        and _active_filters(filters) == [_TRACE_TRAFFIC_ROOT_FILTER]
-    )
+    root_traffic_only = str(
+        metric_id or ""
+    ).strip().lower() == "traffic" and _active_filters(filters) == [
+        _TRACE_TRAFFIC_ROOT_FILTER
+    ]
     start_date, end_date = BaseQueryBuilder.parse_time_range(filters, strict=True)
     if start_date is None or end_date is None:
         raise ValueError("filtered graph requires a bounded time range")
@@ -2013,7 +2019,9 @@ def fetch_background_raw_system_metric_graph(
     """
 
     filters = _trace_traffic_filters(
-        filters, metric_id=metric_id, observe_type=observe_type,
+        filters,
+        metric_id=metric_id,
+        observe_type=observe_type,
     )
     bounded_analytics = _BackgroundWallGraphAnalytics(
         analytics,
@@ -2090,7 +2098,9 @@ def fetch_system_metric_graph_ch(
     # span-grained snapshots must not satisfy a root-grained Traffic request;
     # existing workers understand this private leaf during rolling deploys.
     filters = _trace_traffic_filters(
-        filters, metric_id=metric_id, observe_type=normalized_observe_type,
+        filters,
+        metric_id=metric_id,
+        observe_type=normalized_observe_type,
     )
     # Hourly states contain neither current-row cost flags nor a latest winner.
     # Monetary series use the existing bounded/cached path, just like latency.
