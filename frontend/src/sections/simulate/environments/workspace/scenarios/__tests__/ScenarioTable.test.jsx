@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "src/utils/test-utils";
+import { render, screen, fireEvent, within } from "src/utils/test-utils";
 
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
@@ -233,6 +233,19 @@ describe("ScenarioTable batch row", () => {
       screen.getByText(`${rows.length - 1} of ${rows.length} can run`, {
         exact: false,
       }),
+    ).toBeVisible();
+  });
+
+  it("keeps the toggle beside the title in a head pinned to the left edge", () => {
+    renderTable({
+      groups,
+      total: rows.length,
+      batch: { version, latest: true, only: true },
+    });
+    const head = screen.getByTestId("scenario-batch-head");
+    expect(head).toHaveStyle({ position: "sticky" });
+    expect(
+      within(head).getByRole("button", { name: `Hide ${rows.length}` }),
     ).toBeVisible();
   });
 

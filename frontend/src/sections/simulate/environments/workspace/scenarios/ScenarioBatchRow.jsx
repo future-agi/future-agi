@@ -61,39 +61,44 @@ export default function ScenarioBatchRow({
           px: 1.5,
         }}
       >
-        <Stack direction="row" alignItems="center" spacing={1.5}>
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography
-                noWrap
-                sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
-              >
-                {headline}
-              </Typography>
-              {latest && <VersionBadge label={SCENARIOS_COPY.latest} />}
-            </Stack>
-            {details && (
-              <Typography
-                noWrap
-                sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
-              >
-                {details}
-              </Typography>
-            )}
-          </Box>
-          <Button
-            size="small"
-            variant="text"
-            color="inherit"
-            aria-expanded={open}
-            onClick={onToggle}
-            sx={{ flexShrink: 0 }}
-          >
-            {open
-              ? SCENARIOS_COPY.hideBatch(total)
-              : SCENARIOS_COPY.showBatch(total)}
-          </Button>
-        </Stack>
+        <Box
+          data-testid="scenario-batch-head"
+          sx={{
+            position: "sticky",
+            left: (theme) => theme.spacing(1.5),
+            width: "fit-content",
+          }}
+        >
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography
+              noWrap
+              sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
+            >
+              {headline}
+            </Typography>
+            {latest && <VersionBadge label={SCENARIOS_COPY.latest} />}
+            <Button
+              size="small"
+              variant="text"
+              color="inherit"
+              aria-expanded={open}
+              onClick={onToggle}
+              sx={{ flexShrink: 0 }}
+            >
+              {open
+                ? SCENARIOS_COPY.hideBatch(total)
+                : SCENARIOS_COPY.showBatch(total)}
+            </Button>
+          </Stack>
+          {details && (
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+            >
+              {details}
+            </Typography>
+          )}
+        </Box>
       </TableCell>
     </TableRow>
   );
