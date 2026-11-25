@@ -18,6 +18,9 @@ export default function MyEnvironmentsTable({
   onPageChange,
   onPageSizeChange,
   isLoading = false,
+  // The first page is still on its way: no "No environments yet" in the
+  // moment before the loader shows.
+  pending = false,
   onOpen,
   onRun,
   onDelete,
@@ -43,7 +46,7 @@ export default function MyEnvironmentsTable({
         getRowId={(row) => row.id}
         onRowClick={(row) => onOpen?.(row)}
         rowHeight={ROW_HEIGHT.default}
-        emptyMessage={EMPTY_MESSAGE}
+        emptyMessage={pending ? "" : EMPTY_MESSAGE}
       />
       {total > 0 && (
         <DataTablePagination
@@ -83,6 +86,7 @@ MyEnvironmentsTable.propTypes = {
   onPageChange: PropTypes.func,
   onPageSizeChange: PropTypes.func,
   isLoading: PropTypes.bool,
+  pending: PropTypes.bool,
   onOpen: PropTypes.func,
   onRun: PropTypes.func,
   onDelete: PropTypes.func,

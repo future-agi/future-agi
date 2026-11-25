@@ -1,6 +1,6 @@
+import type { Request } from '@playwright/test';
 import { test, expect } from '../../lib/scope-actors';
 import { flowAnnotation } from '../../lib/flow-meta';
-
 // UserAlertMonitorSerializer and ProjectSerializer define these wire bodies.
 const MONITORS = '/tracer/user-alerts/';
 const PROJECTS = '/tracer/project/';
@@ -65,13 +65,79 @@ test('ALERT-E2E-003: alert owners configure webhooks without private destination
     return route.continue();
   });
   const page = await context.newPage();
+  const openEditor = async (opening: 'first-open' | 'reopen') => {
+    // AlertsListView debounces search_text. Even the unfiltered list can show the seed.
+    const listSearch = (request: Request) => {
+      const url = new URL(request.url());
+      return request.method() === 'GET' && url.pathname === `${MONITORS}list_monitors/`
+        ? url.searchParams.get('search_text') : undefined;
+    };
+    const requests: Request[] = [];
+    const started = performance.now();
+    const remaining = () => {
+      const ms = UI_READY - (performance.now() - started);
+      if (ms <= 0) throw new Error(`${opening}: editor readiness deadline exceeded`);
+      return { timeout: Math.ceil(ms) };
+    };
+    const events: { event: string; ms: number; request: number }[] = [];
+    const mark = (event: string, request = requests.length) => {
+      events.push({ event, ms: Math.round(performance.now() - started), request });
+    };
+    const onRequest = (request: Request) => {
+      const search = listSearch(request);
+      if (search === undefined) return;
+      requests.push(request);
+      if (!search) mark('unfiltered');
+      else if (search === name) mark('full');
+      else mark(name.startsWith(search) ? 'prefix' : 'other');
+    };
+    const responseAbort = new AbortController();
+    page.on('request', onRequest);
+    try {
+      // One absolute budget covers navigation through the populated editor, including body reads.
+      await test.step(`Open the seeded alert editor (${opening})`, async () => {
+        await page.goto(ALERTS, { waitUntil: 'domcontentloaded', ...remaining() });
+        const beforeFill = requests.length;
+        const searchOptions = remaining();
+        const search = page.getByPlaceholder('Search').first();
+        const [response] = await Promise.all([
+          page.waitForResponse(
+            r => listSearch(r.request()) === name && requests.indexOf(r.request()) >= beforeFill,
+            { ...searchOptions, signal: responseAbort.signal },
+          ),
+          search.fill(name, searchOptions),
+        ]);
+        expect(response.status()).toBe(200);
+        expect(await response.finished()).toBeNull();
+        // UserAlertMonitorView.list_monitors returns result.table; match the entire row set.
+        expect((await response.json()).result.table).toMatchObject([{ id, name }]);
+        const searched = response.request();
+        mark('validated-full-response', requests.indexOf(searched) + 1);
+
+        await expect(page.getByRole('progressbar', { name: 'Loading', exact: true })).toBeHidden(remaining());
+        const row = page.locator(`[data-alert-row-id="${id}"][data-alert-row-name="${name}"]`);
+        await expect(row).toBeVisible(remaining());
+        // Compare request identity, not URL or response arrival order. A newer request
+        // can still be in flight while the previous row remains visible and actionable.
+        expect(requests.at(-1) === searched, 'validated search is the last list request before click').toBe(true);
+        mark('row-click-start');
+        await row.click(remaining());
+        mark('row-click-end');
+        expect(requests.at(-1) === searched, 'no list request started before the row click completed').toBe(true);
+        const edit = page.getByRole('button', { name: 'Edit Rule', exact: true });
+        await expect(edit).toBeEnabled(remaining());
+        await edit.click(remaining());
+        await expect(page.getByPlaceholder('Enter alert name', { exact: true })).toHaveValue(name, remaining());
+        mark('editor-verified');
+      }, remaining());
+    } finally {
+      responseAbort.abort();
+      page.off('request', onRequest);
+      await testInfo.attach(`editor-readiness-${opening}`, { contentType: 'application/json', body: JSON.stringify(events) });
+    }
+  };
   try {
-    await page.goto(ALERTS, { waitUntil: 'domcontentloaded' });
-    await page.getByPlaceholder('Search').first().fill(name);
-    const row = page.locator(`[data-alert-row-name="${name}"]`);
-    await expect(row).toBeVisible({ timeout: UI_READY });
-    await row.click();
-    await page.getByRole('button', { name: 'Edit Rule', exact: true }).click({ timeout: UI_READY });
+    await openEditor('first-open');
     await page.getByRole('radio', { name: 'Webhook', exact: true }).check({ timeout: UI_READY });
     const input = page.getByPlaceholder('Enter webhook URL (e.g. https://example.com/webhook)');
     await input.fill(destination);
@@ -88,10 +154,7 @@ test('ALERT-E2E-003: alert owners configure webhooks without private destination
     expect(stored).toEqual([{ webhook_url: destination, is_mute: true }]);
     await page.screenshot({ path: testInfo.outputPath('configured.png'), fullPage: true });
 
-    await page.goto(ALERTS, { waitUntil: 'domcontentloaded' });
-    await page.getByPlaceholder('Search').first().fill(name);
-    await page.locator(`[data-alert-row-name="${name}"]`).click({ timeout: UI_READY });
-    await page.getByRole('button', { name: 'Edit Rule', exact: true }).click({ timeout: UI_READY });
+    await openEditor('reopen');
     await input.fill('http://127.0.0.1:9/private');
     const refused = page.waitForResponse(response => new URL(response.url()).pathname === updatePath && ['PUT', 'PATCH'].includes(response.request().method()), { timeout: UI_READY });
     await page.getByRole('button', { name: /Update.*Alert/i }).click();

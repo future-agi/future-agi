@@ -116,7 +116,7 @@ class RehearsalWorkflowTest(unittest.TestCase):
             )
             self.assertEqual(
                 condition,
-                "if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal' && github.event.label.name != 'e2e-standalone')) && (needs.changes.outputs."
+                "if: ${{ !cancelled() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && (needs.changes.outputs."
                 + output
                 + " == 'true' || "
                 + fail_open

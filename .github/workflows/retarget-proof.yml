@@ -1,0 +1,81 @@
+name: Retarget proof
+
+# Not a required check. Backend CI and E2E CI start only on opened,
+# synchronize and reopened (an edit run would hide their required checks), so
+# a retarget starts neither. When a pull request's base really changes, this
+# calls both on the edit's merge commit, but only after checking that GitHub
+# delivered the edit with a merge of the head onto the base's current tip.
+# GitHub often sends a retarget, its automatic ones included, with the merge
+# from before it; then the "candidate" job fails and nothing else runs: push a
+# commit, so the pull request's own runs test the new base.
+#
+# Their jobs appear as "retarget-backend / ..." and "retarget-e2e / ...",
+# never as a required check name, and each records the candidate it tested for
+# the "CI ran on this base" check (ci-base-gate.yml). Like a merge group, the
+# backend leg runs without the private package (scope "oss"): no secrets are
+# forwarded, and the internal EE suites are not re-run. It never runs for a
+# fork's pull request.
+#
+# A title or body edit starts this workflow with every job skipped: it is not
+# required, so that skipped run hides nothing, and it cancels nothing. The
+# called runs never join a pull request's "candidate" concurrency group (see
+# the called workflows' concurrency), so they neither cancel nor get cancelled
+# by the pull request's real runs. Successive retargets each run in full.
+
+on:
+  pull_request:
+    types: [edited]
+
+permissions:
+  contents: read
+  # The called workflows read job attempts and artifacts of their own run.
+  actions: read
+  # The E2E shards pull the build cache from GHCR.
+  packages: read
+  # The called E2E CI reads the pull request's current labels (e2e-standalone).
+  issues: read
+
+jobs:
+  candidate:
+    name: retarget candidate is current
+    if: ${{ github.event.changes.base }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: The edit's merge commit is the head on the base's current tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          # No proof for a fork's pull request: nothing here may pass for it.
+          if [[ $HEAD_REPO != "$GITHUB_REPOSITORY" ]]; then
+            echo "::error::Retarget proof does not run for pull requests from forks. Push a commit so its own Backend CI and E2E CI test the new base."
+            exit 1
+          fi
+          parents=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '[.parents[].sha] | join(" ")')
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/branches/$(jq -rn --arg b "$BASE_REF" '$b | @uri')" --jq .commit.sha)
+          if [[ $parents == "$tip $HEAD_SHA" ]]; then
+            echo "This edit's merge commit $GITHUB_SHA is $HEAD_SHA onto $BASE_REF at $tip."
+            exit 0
+          fi
+          echo "::error::GitHub sent this retarget with merge commit $GITHUB_SHA (parents $parents), not the head $HEAD_SHA on $BASE_REF at $tip. Push a commit so its own Backend CI and E2E CI test the new base."
+          exit 1
+
+  retarget-backend:
+    name: retarget-backend
+    needs: candidate
+    if: ${{ github.event.changes.base }}
+    uses: ./.github/workflows/backend-ci.yml
+    with:
+      job_prefix: "retarget-backend / "
+
+  retarget-e2e:
+    name: retarget-e2e
+    needs: candidate
+    if: ${{ github.event.changes.base }}
+    uses: ./.github/workflows/e2e-ci.yml
+    with:
+      job_prefix: "retarget-e2e / "

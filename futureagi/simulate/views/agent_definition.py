@@ -42,9 +42,11 @@ from simulate.serializers.response.agent_version import (
 )
 from simulate.services.agent_connect import found_check_required
 from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
     delete_agent,
     delete_agents,
     is_masked,
+    merge_websocket_secrets,
     resolve_api_key_for_version,
     resolve_stored_api_key,
     sync_provider_credentials,
@@ -828,6 +830,15 @@ class EditAgentDefinitionView(APIView):
             # Only what this request set: a full save of this copy could undo an
             # observability link another request wrote meanwhile.
             with transaction.atomic():
+                current = (
+                    AgentDefinition.objects.select_for_update(of=("self",))
+                    .only("id", "websocket_url", "websocket_headers")
+                    .get(pk=agent.pk)
+                )
+                for field, value in merge_websocket_secrets(
+                    validated, current.websocket_url, current.websocket_headers
+                ).items():
+                    setattr(agent, field, value)
                 agent.save(update_fields=[*changed_fields, "updated_at"])
 
                 # Route livekit_* fields to ProviderCredentials so they
@@ -904,6 +915,8 @@ class EditAgentDefinitionView(APIView):
             return self._gm.not_found("Agent definition not found")
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except CredentialsNeedReentry as error:
+            return self._gm.bad_request(error.message)
         except ProductionProjectError as error:
             return self._gm.bad_request(str(error))
         except Exception as e:
