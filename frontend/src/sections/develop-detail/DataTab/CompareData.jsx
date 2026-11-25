@@ -90,6 +90,7 @@ const CompareData = ({
   const [columnData, setColumnData] = useState([]);
   const [hasData, setHasData] = useState(true);
   const isRefreshingColumns = useRef(null);
+  const publishedColumnDefs = useRef(false);
 
   preventHeaderSelection();
   const [expandRow, setExpandRow] = useState(null);
@@ -298,7 +299,10 @@ const CompareData = ({
     gridApiRef.current?.api?.deselectAll?.();
     setColumnConfig([]);
     setColumns([]);
-    setCompareColumnDefs([]);
+    if (publishedColumnDefs.current) {
+      setCompareColumnDefs([]);
+      publishedColumnDefs.current = false;
+    }
     setColumnData([]);
     setColumnDefs([]);
     setPinnedBottomRowData([]);
@@ -615,6 +619,7 @@ const CompareData = ({
           setColumnData(columnMap);
           setColumnDefs(columnWithHeadAndIndex);
           setCompareColumnDefs(columnMap);
+          publishedColumnDefs.current = true;
           const rows = data?.result?.table;
           rows.forEach((row) => {
             rowGenerationsRef.current.set(row, generationRef.current);
