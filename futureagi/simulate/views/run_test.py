@@ -187,7 +187,6 @@ from simulate.services.run_regrade import (
 from simulate.services.run_reliability_v3 import trial_passes
 from simulate.services.test_executor import (
     TestExecutor,
-    _run_simulate_evaluations_task,
     build_eval_configs_map,
     run_new_evals_on_call_executions_task,
 )
@@ -6719,11 +6718,6 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
             )
 
 
-def _save_eval_snapshot(call_execution):
-    """Save a snapshot of evaluation data only (for eval_only reruns)"""
-    eval_snapshot(call_execution).save()
-
-
 def _restore_eval_only_rerun_state(
     call_execution_ids, dispatch_error_message, replacement_id=None
 ):
@@ -6829,64 +6823,6 @@ def _create_rerun_call_execution(call_execution):
         metadata=metadata,
         voice_settings=voice_settings,
     )
-
-
-def _rerun_call_executions(call_executions, rerun_type):
-    """
-    Process rerun for a list of call executions.
-    Returns (successful_reruns, failed_reruns, has_pending_calls, has_pending_evals)
-    """
-    successful_reruns = []
-    failed_reruns = []
-    has_pending_calls = False
-    has_pending_evals = False
-    # Each verdict cleared here is kept as the run's own score, replaced.
-    cleared = ClearedVerdicts()
-
-    for call_execution in call_executions:
-        try:
-            if rerun_type == "eval_only":
-                _save_eval_snapshot(call_execution)
-
-                cleared_slots = call_execution.eval_outputs
-                call_execution.eval_outputs = {}
-                call_execution.call_metadata = call_execution.call_metadata or {}
-                call_execution.call_metadata["eval_started"] = False
-                call_execution.call_metadata["eval_completed"] = False
-                with transaction.atomic():
-                    cleared.add(call_execution, slots=cleared_slots)
-                    cleared.keep()
-                    call_execution.save()
-
-                _run_simulate_evaluations_task.apply_async(
-                    args=(str(call_execution.id),)
-                )
-
-                has_pending_evals = True
-                logger.info(
-                    f"Rerunning evaluations for call execution {call_execution.id}"
-                )
-
-            else:  # call_and_eval
-                clear_call_for_rerun(call_execution)
-                _create_rerun_call_execution(call_execution)
-
-                has_pending_calls = True
-                logger.info(
-                    f"Rerunning call and evaluations for call execution {call_execution.id}"
-                )
-
-            successful_reruns.append(str(call_execution.id))
-
-        except Exception as e:
-            logger.error(
-                f"Error rerunning call execution {call_execution.id}: {str(e)}"
-            )
-            failed_reruns.append(
-                {"call_execution_id": str(call_execution.id), "error": str(e)}
-            )
-
-    return successful_reruns, failed_reruns, has_pending_calls, has_pending_evals
 
 
 def _hosted_execution_eligible(

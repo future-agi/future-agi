@@ -84,11 +84,6 @@ WRITERS = {
     f"{_VIEWS}::UpdateEvalConfigView.post": Filed(
         KEEPS, "editing an eval with run set: its slot goes pending on every call"
     ),
-    f"{_VIEWS}::_rerun_call_executions": Filed(
-        KEEPS,
-        "eval-only rerun called from code: empties each call's slots. No "
-        "production caller today, only tests; kept so a new caller keeps too",
-    ),
     f"{_VIEWS}::CallExecutionRerunView.post": Filed(
         KEEPS, "eval-only rerun of chosen calls: empties each call's slots"
     ),

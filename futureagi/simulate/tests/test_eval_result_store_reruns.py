@@ -14,7 +14,6 @@ import pytest
 from simulate.models import SimulateEvalResult, TestExecution
 from simulate.tests import test_scoring_status as scoring
 from simulate.tests.test_scoring_status import CLOSED, _call, _config, _run
-from simulate.views.run_test import _rerun_call_executions
 
 # The scoring tests' run test, eval template and hand-off spies.
 agent_definition = scoring.agent_definition
@@ -117,25 +116,6 @@ def test_an_eval_only_rerun_of_whole_runs_keeps_every_verdict_it_clears(
         "not-a-config-id",
     }
     assert {row.replaced_by_id for row in rows} == {user.id}
-
-
-@pytest.mark.django_db
-def test_the_module_rerun_keeps_what_it_clears_with_nobody_named(
-    run_test, eval_template
-):
-    config, _, _, call = _graded_call(run_test, eval_template)
-
-    with patch("simulate.views.run_test._run_simulate_evaluations_task.apply_async"):
-        successful, failed, _, has_pending_evals = _rerun_call_executions(
-            [call], "eval_only"
-        )
-
-    assert failed == []
-    assert successful == [str(call.id)]
-    assert has_pending_evals is True
-    rows = _kept_rows(call)
-    assert len(rows) == 3
-    assert {row.replaced_by_id for row in rows} == {None}
 
 
 @pytest.mark.django_db
@@ -355,7 +335,7 @@ def test_a_put_back_forgets_only_the_rows_of_calls_it_restored(run_test, eval_te
 
     _, _, execution, restored = _graded_call(run_test, eval_template)
     no_snapshot = _call(execution, metadata=dict(CLOSED), eval_outputs={"k": VERDICT})
-    views._save_eval_snapshot(restored)
+    views.eval_snapshot(restored).save()
     cleared = ClearedVerdicts()
     for call in (restored, no_snapshot):
         cleared.add(call)
