@@ -896,18 +896,21 @@ def build_preflight(
         check("version", False, "This agent has no version to build from yet")
         return {"ok": False, "version_id": None, "checks": checks}
     runtime = _runtime(version)
-    ready = runtime is None or runtime.preflight_status in (
-        Status.PASSED,
-        Status.LEGACY,
-    )
-    check(
-        "version",
-        ready,
-        f"v{version.version_number} "
-        + (
-            "is ready" if ready or runtime is None else f"is {runtime.preflight_status}"
-        ),
-    )
+    label = f"v{version.version_number}"
+    if runtime is None:
+        check(
+            "version",
+            False,
+            f"{label} can't be built from here: it was made before agent versions"
+            " were checked. Sync the agent to make a version that can be built",
+        )
+    else:
+        ready = runtime.preflight_status in (Status.PASSED, Status.LEGACY)
+        check(
+            "version",
+            ready,
+            f"{label} is ready" if ready else f"{label} is {runtime.preflight_status}",
+        )
     if runtime is not None and runtime.source_kind == SourceKind.GITHUB:
         source = runtime.source or {}
         stored = CodeArchive.no_workspace_objects.filter(
@@ -939,7 +942,11 @@ def build_preflight(
     check(
         "credentials",
         True,
-        f"{len(names)} credential name{'s' if len(names) != 1 else ''} come from the version",
+        (
+            "1 credential name comes from the version"
+            if len(names) == 1
+            else f"{len(names)} credential names come from the version"
+        ),
     )
     from simulate.services.agent_connect import found_check_required
 
