@@ -87,7 +87,9 @@ def _headers(capability):
 
 
 @pytest.mark.django_db
-def test_consumption_groups_frozen_turn_records_once_per_page(organization):
+def test_consumption_groups_frozen_turn_records_once_per_page(
+    organization, django_capture_on_commit_callbacks
+):
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
 
@@ -110,8 +112,19 @@ def test_consumption_groups_frozen_turn_records_once_per_page(organization):
                 job, content="change", client_request_id=str(j)
             )
             HostedHarnessBuilderTurnUsage.no_workspace_objects.create(
-                job=job, organization=organization, command_message=command, report=report
+                job=job, organization=organization, command_message=command,
+                usage={"tokens_in": 10}, report=report,
             )
+            if len(reports) > 1 and j == 0:
+                with django_capture_on_commit_callbacks() as queued:
+                    harness_usage.bill_builder_turn(
+                        str(command.conversation_id),
+                        {"command_message_id": str(command.id), "usage": {"tokens_in": 999}},
+                    )
+                assert len(queued) == 1  # Replay scheduled the frozen report for delivery.
+                frozen = HostedHarnessBuilderTurnUsage.no_workspace_objects.get(command_message=command)
+                assert frozen.usage == {"tokens_in": 10}
+                assert frozen.report == report
         expected[str(job.id)] = credits
         with CaptureQueriesContext(connection) as captured:
             used = harness_usage.harness_consumption(job)
