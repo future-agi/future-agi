@@ -444,9 +444,10 @@ class TestSubmit:
 
         assert brief["attempts"]["used"] == 1
         assert verdict["counted"] is True
+        # While it is still checked, the environment's one running Epoch refuses first.
         assert (again.status_code, again.json()["error"]) == (
             409,
-            "fix_outside_tree_checked",
+            "fix_run_active" if how == "checking" else "fix_outside_tree_checked",
         )
 
     def test_an_engine_epoch_reads_as_no_attempt(self, auth_client, source_run):
@@ -1215,7 +1216,12 @@ class TestVerdict:
                 patch_object_key="k",
             )
         AgentFixRun.no_workspace_objects.filter(id=attempt.id).update(
-            report={"ending": state, "summary": "", "winner_candidate_id": None}
+            # A Stop is the platform's: the engine reports no ending for it.
+            report={
+                "ending": None if state == State.STOPPED else state,
+                "summary": "",
+                "winner_candidate_id": None,
+            }
         )
         close_fix_run(
             attempt.id,
