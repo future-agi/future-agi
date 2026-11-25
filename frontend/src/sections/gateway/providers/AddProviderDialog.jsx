@@ -339,6 +339,7 @@ const AddProviderDialog = ({
   const [apiFormat, setApiFormat] = useState("openai");
   const [apiPathPrefix, setApiPathPrefix] = useState(DEFAULT_API_PATH_PREFIX);
   const [models, setModels] = useState([]);
+  const [modelInput, setModelInput] = useState("");
   const [timeoutVal, setTimeoutVal] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState("");
 
@@ -467,6 +468,7 @@ const AddProviderDialog = ({
       const storedPrefix = getApiPathPrefix(c);
       setApiPathPrefix(storedPrefix);
       setModels(normalizeModels(c.models));
+      setModelInput("");
       const timeoutRaw = c.default_timeout ?? c.defaultTimeout;
       setTimeoutVal(timeoutRaw != null ? String(timeoutRaw) : "");
       setMaxConcurrent(
@@ -644,6 +646,7 @@ const AddProviderDialog = ({
     setApiFormat(defaultPreset.apiFormat);
     setApiPathPrefix(DEFAULT_API_PATH_PREFIX);
     setModels([]);
+    setModelInput("");
     setModelOptions([]);
     setFetchError("");
     setKeyFetchError("");
@@ -701,6 +704,7 @@ const AddProviderDialog = ({
     // list, offered and selected, since nothing will fetch one.
     const builtIn = systemOneModelsFor(newName);
     setModels(builtIn);
+    setModelInput("");
     setModelOptions(builtIn);
     setFetchError("");
     setKeyFetchError("");
@@ -1291,7 +1295,6 @@ const AddProviderDialog = ({
             <Autocomplete
               multiple
               freeSolo
-              autoSelect
               disableCloseOnSelect
               size="small"
               sx={{
@@ -1300,6 +1303,18 @@ const AddProviderDialog = ({
               }}
               options={pickerOptions}
               value={models}
+              inputValue={modelInput}
+              onInputChange={(_, value) => setModelInput(value)}
+              onBlur={() => {
+                // Commit only typed text, never the option highlighted by hover.
+                const typedModel = modelInput.trim();
+                if (typedModel) {
+                  setModels((prev) =>
+                    Array.from(new Set([...prev, typedModel])),
+                  );
+                }
+                setModelInput("");
+              }}
               onChange={(_, val) => {
                 setModels(normalizeModels(val));
               }}

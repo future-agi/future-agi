@@ -1115,7 +1115,7 @@ evals_template = [
     },
     {
         "name": "contains_valid_link",
-        "description": "Checks for presence of valid URLs",
+        "description": "Checks for a valid http or https URL format; no DNS lookup or network request is made",
         "eval_tags": [FUNCTION],
         "config": {
             "required_keys": ["text"],
@@ -1161,7 +1161,7 @@ evals_template = [
     },
     {
         "name": "no_invalid_links",
-        "description": "Checks if the text contains no invalid URLs",
+        "description": "Checks that every detected link has valid http or https URL format; no DNS lookup or network request is made",
         "eval_tags": [FUNCTION],
         "config": {
             "required_keys": ["text"],

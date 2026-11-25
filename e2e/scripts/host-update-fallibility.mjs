@@ -10,10 +10,10 @@ import { stripVTControlCharacters } from 'node:util';
 export const SPEC = 'flows/settings/host-update-status.spec.ts';
 export const TITLE = 'SET-E2E-002: admin reads fresh host update reports and missing reporting stays unknown';
 // Deliberately fail closed on flow drift; review this driver again if the approved flow changes.
-// Reviewed restore-state wire/text update: all five checks and all six one-sided
-// mutation anchors are unchanged. This pin permits proof execution, not a claim
+// Moving the topology check to declaration time leaves all five checks and all six
+// mutation anchors unchanged. This pin permits proof execution, not a claim
 // that the managed browser flow or its assertion-fallibility proof has passed.
-export const ORIGINAL_SHA256 = '46c81c9b7c1ac234ba797145de3e6b8bcc7c7ccb05acd3dbb9f7abce4d6271c7';
+export const ORIGINAL_SHA256 = 'd82a070f7450ed47cfccbd78ce12298946272186d5c4d177c4d5ebb6a711e5fd';
 export const BUDGET = Object.freeze({ childMs: 360_000, overallMs: 1_200_000, termGraceMs: 5_000, killGraceMs: 2_000 });
 export const STEPS = [
   '1 API: fresh sanitized projection contains the first minted candidate',

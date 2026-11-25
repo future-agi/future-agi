@@ -11,6 +11,12 @@ from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_dataset import Column, Dataset
 from tfc.utils.base_model import BaseModel
 from tracer.models.project import Project
+from tracer.services.derived_metrics.pg_response_hooks import (
+    PgResponseAllManager,
+    PgResponseBaseManager,
+    PgResponseNoWorkspaceManager,
+    pg_response_save,
+)
 
 
 class Annotations(BaseModel):
@@ -179,6 +185,12 @@ def validate_annotation_type_choice(value):
 
 
 class AnnotationsLabels(BaseModel):
+    # Django managers are class attributes; mypy reads these unannotated
+    # overrides of BaseModel's managers as instance variables.
+    objects = PgResponseBaseManager()  # type: ignore[misc]
+    all_objects = PgResponseAllManager()  # type: ignore[misc]
+    no_workspace_objects = PgResponseNoWorkspaceManager()  # type: ignore[misc]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     type = models.CharField(
@@ -345,6 +357,7 @@ class AnnotationsLabels(BaseModel):
         validate_annotation_type_choice(self.type)
         self.validate_settings()
 
+    @pg_response_save
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)

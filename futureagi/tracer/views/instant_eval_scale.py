@@ -60,6 +60,7 @@ from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
 from tracer.services import instant_eval_users as users_service
+from tracer.services.instant_eval_rows import is_instant_task as _is_instant_task
 from tracer.services.instant_eval_run import (
     ACTIVE,
     DEFAULT_SAMPLE,
@@ -1179,18 +1180,6 @@ def _load(request, params, gm):
         # a continuous one would then count against the org's runs forever.
         return None, gm.not_found("Eval task not found")
     return task, None
-
-
-def _is_instant_task(task) -> bool:
-    """A task the Ask page started (it carries RUN_MARKER), or a one-off task
-    whose questions are all Instant eval questions (asked through the plain
-    eval-task API)."""
-    if (task.filters or {}).get(rows_service.RUN_MARKER):
-        return True
-    if task.run_type != RunType.HISTORICAL:
-        return False
-    configs = list(task.evals.all())
-    return bool(configs) and all((c.config or {}).get("instant_eval") for c in configs)
 
 
 def ensure_rows(task, unit: str) -> None:

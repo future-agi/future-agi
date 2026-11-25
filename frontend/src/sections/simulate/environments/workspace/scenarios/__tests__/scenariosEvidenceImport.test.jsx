@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { configure } from "@testing-library/react";
 import { screen, fireEvent, waitFor } from "src/utils/test-utils";
 
+import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
 import ScenariosStep from "../ScenariosStep";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import {
   TEST_ENV,
   SERVER_ROWS,
@@ -99,5 +101,26 @@ describe("ScenariosStep evidence import", () => {
       await screen.findByRole("button", { name: "Import evidence" }),
     ).toBeInTheDocument();
     expect(drawer.props).toBeNull();
+  });
+
+  it("shows a Viewer the way in, locked, with the reason", async () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
+    });
+    renderAt("?tab=scenarios");
+
+    const button = await screen.findByRole("button", {
+      name: "Import evidence",
+    });
+    expect(button).toBeDisabled();
+    fireEvent.mouseOver(button.closest("span"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      WORKSPACE_COPY.viewer.scenarios,
+    );
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: true,
+      canRun: true,
+    });
   });
 });

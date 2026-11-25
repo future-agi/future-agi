@@ -26,6 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -144,6 +145,7 @@ from simulate.services.call_provider import (
 from simulate.services.call_rerun import (
     call_snapshot,
     clear_call_for_rerun,
+    closed_attempt_metadata,
     eval_snapshot,
 )
 from simulate.services.eval_config_edit import (
@@ -159,6 +161,7 @@ from simulate.services.harness_evals import (
 )
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.harness_workers import attempt_end
 from simulate.services.run_outcome import hosted_receipt_outcomes, outcome_fields
 from simulate.services.run_regrade import (
     RegradeAlreadyRunning,
@@ -637,6 +640,7 @@ class CreateRunTestView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("create a test run")
     @validated_request(
         request_serializer=CreateRunTestSerializer,
         responses={
@@ -982,6 +986,7 @@ class RunTestExecutionView(APIView):
             self._test_executor = TestExecutor()
         return self._test_executor
 
+    @viewer_denied("start a paid run")
     @validated_request(
         request_serializer=ExecuteRunTestSerializer,
         responses={
@@ -1360,6 +1365,7 @@ class TestExecutionCancelView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("cancel a run")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
@@ -1488,7 +1494,9 @@ class TestExecutionCancelView(APIView):
                     HostedHarnessGateway,
                 )
 
-                HostedHarnessGateway().cancel(hosted_job, reason=reason)
+                HostedHarnessGateway(require_provider=False).cancel(
+                    hosted_job, reason=reason
+                )
             return {
                 "success": True,
                 "message": "Cancellation signal sent to hosted simulation",
@@ -1876,13 +1884,16 @@ def _flat_kpi_evals(
     values: dict[tuple[str, str, str], object], system_keys: set[str]
 ) -> dict[str, object]:
     """Keep each binding's preferred key unless a system KPI or another eval owns it."""
-    natural = {name for name, _, _ in values}
-    if len(natural) == len(values) and natural.isdisjoint(system_keys):
-        return {name: value for (name, _, _), value in values.items()}
 
     def project(key: str) -> str:
         # Run detail's canonicalKeys hides the underscore-to-camel projection of each key.
         return re.sub(r"_([a-z0-9])", lambda match: match[1].upper(), key)
+
+    natural = {name for name, _, _ in values}
+    # A name equal to another name's projection (tier1 for tier_1) would be hidden.
+    hidden = {project(key) for key in natural if project(key) != key} & natural
+    if len(natural) == len(values) and natural.isdisjoint(system_keys) and not hidden:
+        return {name: value for (name, _, _), value in values.items()}
 
     reserved = natural | system_keys
     reserved_projections = {project(key) for key in reserved}
@@ -1892,7 +1903,7 @@ def _flat_kpi_evals(
     for metric in sorted(values, key=lambda m: (priority[m[2]], m[1], m[0])):
         name, binding_id, _ = metric
         key = name
-        if key in used:
+        if key in used or key in hidden:
             key = f"{name}__{binding_id}"
             while (
                 key in reserved
@@ -2927,15 +2938,28 @@ class TestExecutionDetailView(APIView):
                 start = (page - 1) * page_size
                 end = start + page_size
                 paginated_calls = call_executions[start:end]
+                # Mirrors the dispatch in _apply_grouping. Basic groups keep the
+                # request in their links; scenario dataset groups keep bare links.
+                basic_grouping = not any(
+                    field.startswith("scenario_") and "dataset" in field
+                    for field in row_groups
+                )
+
+                def page_link(number):
+                    if not basic_grouping:
+                        return f"?page={number}"
+                    params = request.query_params.copy()
+                    params["page"] = str(number)
+                    return f"?{params.urlencode()}"
 
                 # Create a custom paginated response for grouped results
                 return Response(
                     {
                         "count": len(call_executions),
                         "next": (
-                            f"?page={page + 1}" if end < len(call_executions) else None
+                            page_link(page + 1) if end < len(call_executions) else None
                         ),
-                        "previous": f"?page={page - 1}" if page > 1 else None,
+                        "previous": page_link(page - 1) if page > 1 else None,
                         "results": paginated_calls,
                         "total_pages": (len(call_executions) + page_size - 1)
                         // page_size,
@@ -7515,6 +7539,8 @@ class TestExecutionRerunView(APIView):
         snapshots_to_create = []
         call_executions_to_update = []
         call_ids_to_delete_transcripts = []
+        # Each call_and_eval call's closing attempt: its snapshot's id and how it ended, read before the reset.
+        closing: dict[Any, tuple[Any, Any]] = {}
 
         # First pass: prepare all objects in memory
         rerun_eval_ids = {}
@@ -7545,7 +7571,12 @@ class TestExecutionRerunView(APIView):
                     call_executions_to_update.append(call_execution)
                 else:
                     # call_and_eval: the same snapshot every rerun keeps, before the transcripts go
-                    snapshots_to_create.append(call_snapshot(call_execution))
+                    snapshot = call_snapshot(call_execution)
+                    snapshots_to_create.append(snapshot)
+                    closing[call_execution.id] = (
+                        snapshot.id,
+                        attempt_end(call_execution),
+                    )
 
                     # Mark for transcript deletion
                     call_ids_to_delete_transcripts.append(call_execution.id)
@@ -7584,6 +7615,25 @@ class TestExecutionRerunView(APIView):
 
                 # Bulk update all call executions
                 if call_executions_to_update:
+                    if rerun_type != "eval_only":
+                        # A worker read or a receipt may have written a call's metadata since it was loaded: lock the
+                        # rows and close each attempt from what they hold now, as a single rerun does.
+                        current = dict(
+                            CallExecution.objects.select_for_update()
+                            .filter(
+                                id__in=[one.id for one in call_executions_to_update]
+                            )
+                            .order_by("id")
+                            .values_list("id", "call_metadata")
+                        )
+                        for one in call_executions_to_update:
+                            snapshot_id, ending = closing[one.id]
+                            one.call_metadata = closed_attempt_metadata(
+                                current.get(one.id),
+                                call_id=one.id,
+                                snapshot_id=snapshot_id,
+                                ending=ending,
+                            )
                     if rerun_type == "eval_only":
                         CallExecution.objects.bulk_update(
                             call_executions_to_update,
@@ -7593,7 +7643,8 @@ class TestExecutionRerunView(APIView):
                     else:
                         CallExecution.objects.bulk_update(
                             call_executions_to_update,
-                            CallExecution.RESET_FIELDS,
+                            # With each closed attempt kept and its record gone (`closed_attempt_metadata`).
+                            [*CallExecution.RESET_FIELDS, "call_metadata"],
                             batch_size=BATCH_SIZE,
                         )
 

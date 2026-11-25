@@ -83,11 +83,18 @@ class ReconcileActivityInput:
 
 
 @dataclass
+class CheckedReconcileInput(ReconcileActivityInput):
+    # Missing on historical commands. Only a patched first pass sends True.
+    require_running: bool = False
+
+
+@dataclass
 class ReconcileActivityOutput:
     task_id: str
     created: int
     requeued: int
     dropped: int
+    inactive_status: str | None = None
 
 
 @dataclass
@@ -130,9 +137,15 @@ class ReapInput:
 
 
 @dataclass
+class CheckedReapInput(ReapInput):
+    require_running: bool = False
+
+
+@dataclass
 class ReapOutput:
     requeued: int
     failed: int
+    inactive_status: str | None = None
 
 
 @dataclass
@@ -176,6 +189,7 @@ class SetStatusOutput:
     task_id: str
     changed: bool
     status: str
+    first_reconcile_at: str | None = None
 
 
 @dataclass
@@ -216,12 +230,14 @@ __all__ = [
     "EvalTaskWorkflowInput",
     "EvalTaskWorkflowOutput",
     "ContinuousDrainState",
+    "CheckedReconcileInput",
     "ReconcileActivityInput",
     "ReconcileActivityOutput",
     "ClaimBatchInput",
     "ClaimBatchOutput",
     "RunEntryInput",
     "RunEntryOutput",
+    "CheckedReapInput",
     "ReapInput",
     "ReapOutput",
     "TaskStateInput",
