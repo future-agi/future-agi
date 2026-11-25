@@ -43,7 +43,8 @@ def _is_oss_mode() -> bool:
     Mirrors ee.usage.deployment.DeploymentMode precedence but doesn't go
     through django.conf.settings (which isn't fully populated while
     settings.py is still executing). Runtime code should use
-    DeploymentMode.is_oss() instead — this is for the app-registration gate.
+    DeploymentMode.is_oss() when that module is available. This also lets
+    package-loading fallbacks distinguish OSS from an incomplete EE install.
     """
     if is_cloud_env():
         return False

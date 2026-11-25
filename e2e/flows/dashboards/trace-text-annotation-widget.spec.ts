@@ -7,7 +7,7 @@ import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { captureAnnotationHttp, type Receipt } from '../../lib/annotation-http';
-
+import { waitForScoreOutbox } from '../../lib/score-outbox-barrier';
 // Pins: AnnotationSidebarContent/scores.js, annotation_queues.py, WidgetEditorView.
 // Endpoints: api/scores/scores.js, hooks/useDashboards.js and the scoped DRF views.
 // Native Count + Is only. Text aggregation-menu and presence-control gaps remain
@@ -609,6 +609,7 @@ test('DASH-E2E-012: a saved trace annotation widget retains exact text membershi
           call_execution_id: null, prototype_run_id: null, dataset_row_id: null, organization_id: actors[seed.project].organizationId,
           workspace_id: actors[seed.project].workspaceId, deleted: false }))));
         try {
+          await waitForScoreOutbox(probe, submissions.map(({ receipt }) => receipt.body!.result.scores[0].id), attach);
           await expect.poll(async () => {
             initialCHScores = await readCH();
             return { scores: initialCHScores.map(semanticScore), labels: await probe.pg(labelSql, [labelName, labelIds]),

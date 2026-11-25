@@ -36,6 +36,7 @@ const listedKeys = (expiresAt) => ({
         type: "user",
         expires_at: expiresAt,
         is_expired: false,
+        can_switch: true,
       },
     ],
   },

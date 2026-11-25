@@ -53325,6 +53325,35 @@
                         "required": false,
                         "type": "string",
                         "format": "uuid"
+                    },
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "building",
+                            "running",
+                            "completed",
+                            "failed"
+                        ]
+                    },
+                    {
+                        "name": "agent_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "voice",
+                            "chat"
+                        ]
                     }
                 ],
                 "responses": {
@@ -91180,6 +91209,7 @@
                 "created_at",
                 "enabled",
                 "type",
+                "can_switch",
                 "expires_at",
                 "is_expired"
             ],
@@ -91224,6 +91254,10 @@
                     "title": "Type",
                     "type": "string",
                     "minLength": 1
+                },
+                "can_switch": {
+                    "title": "Can switch",
+                    "type": "boolean"
                 },
                 "expires_at": {
                     "title": "Expires at",
@@ -148169,6 +148203,27 @@
                 }
             }
         },
+        "HarnessEnvironmentAgentRef": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessEnvironment": {
             "required": [
                 "id",
@@ -148184,9 +148239,11 @@
                 "tools_count",
                 "runs_count",
                 "agent_version",
+                "environment_version",
                 "agent_policy",
                 "last_updated",
                 "created_at",
+                "agent",
                 "last_run"
             ],
             "type": "object",
@@ -148262,6 +148319,9 @@
                 "agent_version": {
                     "$ref": "#/definitions/AgentVersionRef"
                 },
+                "environment_version": {
+                    "$ref": "#/definitions/EnvironmentVersionRef"
+                },
                 "agent_policy": {
                     "title": "Agent policy",
                     "type": "string",
@@ -148281,8 +148341,38 @@
                     "type": "string",
                     "format": "date-time"
                 },
+                "agent": {
+                    "$ref": "#/definitions/HarnessEnvironmentAgentRef"
+                },
                 "last_run": {
                     "$ref": "#/definitions/HarnessRunSummary"
+                }
+            }
+        },
+        "HarnessEnvironmentStatusCounts": {
+            "required": [
+                "building",
+                "running",
+                "completed",
+                "failed"
+            ],
+            "type": "object",
+            "properties": {
+                "building": {
+                    "title": "Building",
+                    "type": "integer"
+                },
+                "running": {
+                    "title": "Running",
+                    "type": "integer"
+                },
+                "completed": {
+                    "title": "Completed",
+                    "type": "integer"
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "integer"
                 }
             }
         },
@@ -148293,7 +148383,8 @@
                 "previous",
                 "total_pages",
                 "current_page",
-                "results"
+                "results",
+                "status_counts"
             ],
             "type": "object",
             "properties": {
@@ -148326,6 +148417,9 @@
                     "items": {
                         "$ref": "#/definitions/HarnessEnvironment"
                     }
+                },
+                "status_counts": {
+                    "$ref": "#/definitions/HarnessEnvironmentStatusCounts"
                 }
             }
         },
@@ -148412,6 +148506,7 @@
                 "tools_count",
                 "runs_count",
                 "agent_version",
+                "environment_version",
                 "agent_policy",
                 "last_updated",
                 "created_at",
@@ -148494,6 +148589,9 @@
                 },
                 "agent_version": {
                     "$ref": "#/definitions/AgentVersionRef"
+                },
+                "environment_version": {
+                    "$ref": "#/definitions/EnvironmentVersionRef"
                 },
                 "agent_policy": {
                     "title": "Agent policy",
