@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   render,
@@ -119,6 +119,11 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
       },
   };
 });
+
+const access = { canEdit: true, canRun: true };
+vi.mock("../../../hooks/useSimulationAccess", () => ({
+  default: () => access,
+}));
 
 const { default: axios } = await import("src/utils/axios");
 const { actorsKey } = await import("src/api/simulate-environments/versions");
@@ -1739,5 +1744,37 @@ describe("WorldActorsPanel", () => {
   it("shows no decision block when nothing is waiting", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.queryByTestId("needs-decision")).toBeNull();
+  });
+});
+
+describe("WorldActorsPanel for a viewer", () => {
+  beforeEach(() => {
+    access.canEdit = false;
+    realHooks = false;
+    editState = { isPending: false };
+    actorsState = { isPending: false, isError: false };
+    actorsData = cast([MANAGER]);
+    envDetail = undefined;
+  });
+
+  afterEach(() => {
+    access.canEdit = true;
+  });
+
+  it("keeps Add, Edit and Remove off and says why", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+
+    expect(screen.getByRole("button", { name: "Add actor" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Edit Priya Raman/ }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Remove Priya Raman/ }),
+    ).toBeDisabled();
+    expect(
+      screen.getAllByLabelText("You don't have permission to change actors.")
+        .length,
+    ).toBeGreaterThan(0);
+    expect(mutate).not.toHaveBeenCalled();
   });
 });

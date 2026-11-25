@@ -23,6 +23,8 @@ import ActorsSkeleton from "./ActorsSkeleton";
 import CustomTooltip from "src/components/tooltip";
 import AddActorMenu from "./AddActorMenu";
 import { ACTORS_COPY } from "./actors.constants";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
 
 const C = ACTORS_COPY.worldActors;
 const CALLER_ID = "caller";
@@ -38,7 +40,9 @@ export default function WorldActorsPanel({
   locked = false,
   lockReason = null,
 }) {
-  const held = Boolean(lockReason);
+  const { canEdit } = useSimulationAccess();
+  const reason = lockReason || (canEdit ? null : WORKSPACE_COPY.viewer.actors);
+  const held = Boolean(reason);
   const { data, isPending, isError, refetch } = useActors(envId);
   const { data: detail } = useQuery(harnessEnvironmentQuery(envId));
   const personas = detail?.overview?.personas_count;
@@ -159,7 +163,7 @@ export default function WorldActorsPanel({
         loudChannels={loudChannels}
         deleting={actor.id === deletingId}
         busy={edit.isPending || held}
-        busyReason={lockReason}
+        busyReason={reason}
       />
     ));
 
@@ -194,7 +198,7 @@ export default function WorldActorsPanel({
           {C.intro}
         </Typography>
         {!locked && (
-          <CustomTooltip show arrow size="small" title={lockReason || ""}>
+          <CustomTooltip show arrow size="small" title={reason || ""}>
             <Box component="span" sx={{ display: "inline-flex" }}>
               <AddActorMenu
                 label={C.add}
@@ -261,12 +265,17 @@ export default function WorldActorsPanel({
                             size="small"
                             variant="outlined"
                             sx={OUTLINED}
+                            disabled={held}
                             onClick={() => openForm(about)}
                           >
                             {C.unresolved.edit}
                           </Button>
                         ) : (
-                          <AddActorMenu label={C.add} onPick={addOn} />
+                          <AddActorMenu
+                            label={C.add}
+                            disabled={held}
+                            onPick={addOn}
+                          />
                         )}
                       </Stack>
                     )}
@@ -316,7 +325,7 @@ export default function WorldActorsPanel({
             limits={data.limits}
             fields={data.limit_fields}
             models={data.actor_models}
-            locked={locked}
+            locked={locked || !canEdit}
             busy={limits.isPending || held}
             error={limits.error}
             onSave={(next, done) =>

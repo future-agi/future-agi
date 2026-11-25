@@ -74,6 +74,9 @@ export const WORKSPACE_COPY = {
   awaitingApprovalLabel: "Awaiting approval",
   awaitingApprovalTooltip:
     "The design is waiting for your approval. Nothing is built until you approve it.",
+  readingLabel: "Reading the agent",
+  readingTooltip:
+    "Reading the agent to plan its environment. Nothing is built yet.",
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",
   failedLabel: "Build stopped",
@@ -140,6 +143,7 @@ export const WORKSPACE_COPY = {
     rebuild: "You don't have permission to answer rebuild prompts.",
     drafts: "You don't have permission to save or discard drafts.",
     scenarios: "You don't have permission to change scenarios.",
+    actors: "You don't have permission to change actors.",
     evals: "You don't have permission to change evaluations.",
     runEvals: "You don't have permission to run evaluations.",
   },
@@ -668,6 +672,13 @@ export const BUILD_STOPPED_COPY = {
   showDetails: "Show details",
   hideDetails: "Hide details",
   retryFailed: "Couldn't start the build again. Try again.",
+};
+
+export const TAB_UNAVAILABLE_COPY = {
+  runs: "Runs opens once this environment has a run. Showing the Overview.",
+  improvements: "Epochs opens once a fix has run here. Showing the Overview.",
+  versions: "Versions is off for this environment. Showing the Overview.",
+  actors: "This environment has no actors to show. Showing the Overview.",
 };
 
 export const TAB_WAITING_COPY = {
