@@ -3785,3 +3785,34 @@
 - the environment opens on its workspace with its name
 - Run simulation is disabled and its tooltip says "You don't have permission to start runs."
 - Rename environment is disabled
+
+### SIM-E2E-038 — an author locks an environment's default versions into a release and sees its label with the train and test split
+
+**Goal:** An author whose environment has enough scorable scenarios opens its Overview, sees the release is ready, locks it, and reads the release label with the train and test task counts; the environment then cannot be deleted until the release is unlocked
+
+**Spec:** `flows/simulate/lock-release-splits.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment with 12 scorable scenarios (e2e/lib/harness_environment_seed.py)
+2. read the environment's versions: nothing is locked and the default pair can be locked
+3. open the Overview tab and read the Release card as Ready
+4. choose Lock this release and confirm Lock release in the dialog
+5. read the card as Release <label>, Locked, with the Train and Test line
+6. delete the environment through the API
+
+**Backend state verified:**
+
+- before the lock the versions read has no release, lock.can_lock is true and lock names 8 train and 4 test tasks
+- from the confirm click on, the only mutating /simulate/ request is one POST to the versions/lock route, naming the default environment and suite version ids, answered 200 with one release
+- simulate_harness_release has one row for the environment, unlocked_at NULL, with the default environment and suite version ids and a YYYY.M.N label
+- simulate_harness_task_split has one row per seeded scenario, each first released by that release, and the test rows number what target_test_size gives (4 of 12)
+- the versions read lists that release with the same label and the 8 train and 4 test counts
+- deleting the environment answers 409 release_locked, "Unlock release <label> first.", and the environment is still readable
+
+**Browser observations:**
+
+- the card reads Release and Ready, with "Lock this release" enabled
+- the dialog reads "Lock this release?"; after confirming the card title is "Release <label>", its badge is Locked and its line reads "Locked <d Mon> · Train 8 · Test 4 tasks · scorer environment <vN>."
