@@ -2244,6 +2244,26 @@ def test_an_index_entry_keeps_its_own_spelling_of_the_folder_it_names():
     assert _member_content(scenario)["folder"] == "scenarios/refund"
 
 
+def test_a_suite_without_an_index_reads_the_same_folder_in_both_readers():
+    """The backfill and a later Save read an index-less suite to the same member."""
+    from simulate.services.harness_versioning.versions import (
+        _member_content,
+        suite_documents,
+    )
+
+    suite = {
+        "scenarios/refund/scenario.json": json.dumps(
+            {"name": "Refund", "instruction": "x"}
+        ).encode()
+    }
+
+    [archived] = _archive_scenarios(suite)
+    [read] = suite_documents(suite)
+
+    assert archived["folder"] == "scenarios/refund"
+    assert _member_content(archived) == _member_content(read)
+
+
 class TestReReviewFindings:
     def test_a_run_pinned_earlier_takes_its_environment_versions_agent(
         self, user, workspace, storage

@@ -254,7 +254,7 @@ def _archive_scenarios(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
     entries = (
         [one for one in index if isinstance(one, dict)]
         if isinstance(index, list)
-        else [{"folder": folder} for folder in documents]
+        else [{"folder": f"scenarios/{folder}"} for folder in documents]
     )
     scenarios = []
     for entry in entries:
