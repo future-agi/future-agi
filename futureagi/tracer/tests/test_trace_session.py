@@ -731,8 +731,9 @@ class TestTraceSessionGraphAPI:
             "filters": filters,
             "interval": "day",
             "metric_id": "cost",
-            # Retires snapshots without latest-live monetary coverage.
-            "payload_version": 3,
+            # 3 retired snapshots without latest-live monetary coverage; 4
+            # retires those read with whole-second window bounds.
+            "payload_version": 4,
         }
         assert exact_read.call_args.kwargs["refresh"] is False
         pending = exact_read.call_args.kwargs["pending_payload"]

@@ -3241,8 +3241,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             except (DatabaseError, MetricsCatalogUnavailable, ReadDeadlineExceeded):
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
 
         try:
@@ -3276,8 +3276,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
             logger.exception(
@@ -3362,8 +3362,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 except ReadDeadlineExceeded:
                     return self._gm.custom_error_response(
                         status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "Filter values are temporarily unavailable. Please retry.",
-                        code="service_unavailable",
+                        get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                        code=ApiErrorCode.SERVICE_UNAVAILABLE,
                     )
             if dataset_id is None:
                 return self._gm.success_response({"values": []})
@@ -3416,8 +3416,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.warning("filter_values_project_scope_deadline_exceeded")
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         project_ids = list(project_scope.project_ids)
 
@@ -4304,8 +4304,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             )
                             return self._gm.custom_error_response(
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "Filter values are temporarily unavailable. Please retry.",
-                                code="service_unavailable",
+                                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                                code=ApiErrorCode.SERVICE_UNAVAILABLE,
                             )
                         logger.exception(
                             "filter_values_programming_error",
@@ -4363,8 +4363,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         )
                         return self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "Filter values are temporarily unavailable. Please retry.",
-                            code="service_unavailable",
+                            get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                            code=ApiErrorCode.SERVICE_UNAVAILABLE,
                         )
                     logger.exception(
                         "filter_values_programming_error",
@@ -4961,8 +4961,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 )
                                 return self._gm.custom_error_response(
                                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                                    "Filter values are temporarily unavailable. Please retry.",
-                                    code="service_unavailable",
+                                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                                 )
                             appended_digests = (
                                 page_read.appended_value_digests
@@ -5209,8 +5209,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             )
                             return self._gm.custom_error_response(
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "Filter values are temporarily unavailable. Please retry.",
-                                code="service_unavailable",
+                                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                                code=ApiErrorCode.SERVICE_UNAVAILABLE,
                             )
                         values = [
                             {
@@ -5334,8 +5334,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             )
                             return self._gm.custom_error_response(
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "Filter values are temporarily unavailable. Please retry.",
-                                code="service_unavailable",
+                                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                                code=ApiErrorCode.SERVICE_UNAVAILABLE,
                             )
                     payload = _legacy_filter_value_scope_metadata(
                         {
@@ -5374,8 +5374,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         )
                         return self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "Filter values are temporarily unavailable. Please retry.",
-                            code="service_unavailable",
+                            get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                            code=ApiErrorCode.SERVICE_UNAVAILABLE,
                         )
                     logger.exception(
                         "filter_values_programming_error",
@@ -5395,7 +5395,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.warning("fetch_annotation_filter_values_unavailable")
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except AttributeCursorStateError as exc:
@@ -5424,7 +5424,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
                     code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
             logger.exception(
@@ -5547,7 +5547,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 if not is_clickhouse_enabled():
                     return self._gm.custom_error_response(
                         status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "Filter values are temporarily unavailable. Please retry.",
+                        get_error_message("FILTER_VALUES_UNAVAILABLE"),
                         code=ApiErrorCode.SERVICE_UNAVAILABLE,
                     )
                 sql = (
@@ -5613,7 +5613,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
@@ -5624,7 +5624,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
                     code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
             logger.exception(
@@ -5688,7 +5688,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         except ReadDeadlineExceeded:
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
 
@@ -5732,7 +5732,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
@@ -5815,7 +5815,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         except (ReadDeadlineExceeded, InvalidChoiceCell):
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         values.sort(key=lambda s: s.lower())
@@ -5903,8 +5903,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             if not is_clickhouse_enabled():
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
 
             analytics = AnalyticsQueryService()
@@ -5977,8 +5977,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         except ReadDeadlineExceeded:
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):
@@ -5988,8 +5988,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
             logger.exception(
                 "fetch_simulation_filter_values_failed",
