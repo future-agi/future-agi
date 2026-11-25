@@ -9,7 +9,12 @@ from uuid import uuid4
 import pytest
 from clickhouse_driver import Client
 
-from tracer.services.derived_metrics.retention import _span_owner_cleanup_required
+from tracer.models.derived_metric import MetricStateConflict
+from tracer.services.derived_metrics.retention import (
+    ProposalCaptures,
+    _span_owner_cleanup_required,
+)
+from tracer.services.derived_metrics.storage import FIELD_VALUES
 from tracer.tests import _retention_cleanup_probe as observer
 
 
@@ -19,7 +24,84 @@ def _check_owners(execute):
         org_id=uuid4(),
         lease=SimpleNamespace(project_id=uuid4()),
     )
-    return _span_owner_cleanup_required(writer, None, "private-field-source", {}, None)
+    captures = ProposalCaptures(writer, None, None)
+    captures.overlay = Mock(return_value=("private-overlay-source", {}))
+    return _span_owner_cleanup_required(
+        writer,
+        None,
+        "private-field-source",
+        {},
+        None,
+        span_fields=captures.span_owner_fields,
+    )
+
+
+def test_span_projection_has_one_winner_and_two_exact_physical_fences():
+    project, checkpoint, delta = uuid4(), uuid4(), uuid4()
+    writer = SimpleNamespace(org_id=uuid4(), lease=SimpleNamespace(project_id=project))
+    head = SimpleNamespace(
+        project_id=project,
+        checkpoint_attempt_id=checkpoint,
+        allowed_attempts=lambda: [(1, checkpoint), (2, delta)],
+    )
+    captures = ProposalCaptures(writer, None, head)
+    captures.overlay = Mock(return_value=("SELECT * FROM private_frozen_draft", {}))
+    sql, bindings = captures.span_owner_fields()
+    columns = (
+        *FIELD_VALUES.logical_key,
+        "generation",
+        "_version",
+        "session_id",
+        "user_id",
+    )
+    assert sql.count("SELECT " + ", ".join(columns) + " FROM ") == 4
+    assert sql.count("ORDER BY generation DESC, _version DESC LIMIT 1 BY ") == 1
+    assert sql.endswith(", ".join(FIELD_VALUES.logical_key))
+    assert sql.count("WHERE (generation, attempt_id) IN ") == 2
+    assert "private_frozen_draft) WHERE level = 'span'" in sql
+    assert bindings["span_owner_fields_base"] == ((1, checkpoint),)
+    assert bindings["span_owner_fields_deltas"] == ((2, delta),)
+    assert bindings["span_owner_fields_kin_0"] == ("span",)
+    assert not any(word in sql for word in ("notEmpty", "is_deleted", "unit_start"))
+    captures.overlay.assert_called_once_with(FIELD_VALUES)
+    head.project_id = uuid4()
+    with pytest.raises(MetricStateConflict, match="manifest project mismatch"):
+        captures.span_owner_fields()
+    captures.overlay.assert_called_once()
+
+
+def test_lazy_span_input_and_binding_conflicts_fail_closed():
+    execute = Mock(return_value=[(1,)])
+    writer = SimpleNamespace(
+        store=SimpleNamespace(execute=execute),
+        org_id=uuid4(),
+        lease=SimpleNamespace(project_id=uuid4()),
+    )
+    select = Mock(return_value=("other source", {"retire_cutoff": 2}))
+    args = (writer, None, "full proposal", {"retire_cutoff": 1}, None)
+    assert _span_owner_cleanup_required(*args, span_fields=select)
+    select.assert_not_called()
+    execute.return_value = [(0,)]
+    with pytest.raises(ValueError, match="conflicting metric query bindings"):
+        _span_owner_cleanup_required(*args, span_fields=select)
+    select.side_effect = RuntimeError("frozen input unavailable")
+    with pytest.raises(RuntimeError, match="frozen input unavailable"):
+        _span_owner_cleanup_required(*args, span_fields=select)
+    assert execute.call_count == 3  # Only the dependency checks ran.
+
+
+def test_observer_does_not_attribute_the_old_field_query():
+    probe = _probe()
+    writer = SimpleNamespace(org_id=uuid4(), lease=SimpleNamespace(project_id=uuid4()))
+
+    def execute(sql, params, **kwargs):
+        probe.tag(sql, params, kwargs)
+        return [(0,)]
+
+    writer.store = SimpleNamespace(execute=execute)
+    assert not _span_owner_cleanup_required(writer, None, "old full fields", {}, None)
+    assert probe.unclassified == 1
+    assert probe.statements["fields"] == {"status": "not_executed"}
 
 
 def _probe():
