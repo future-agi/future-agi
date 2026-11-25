@@ -39,21 +39,22 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - run: scripts/reclaim-runner-disk.sh
-      # The backend builds place the verified URL-pinned lock wheels
-      # (en-core-web-sm) in their context exactly as E2E CI's shards do, so the
-      # extras layer they write is the one the shards look up.
+      # The standard backend build places the verified URL-pinned lock wheels
+      # (en-core-web-sm) in its context exactly as E2E CI's Distributed shards
+      # do, so the extras layer it writes is the one they look up. The slim
+      # build installs no extras and, like Standalone's shards, places none.
       - name: Key the lock wheels by their uv.lock hashes
-        if: matrix.context == 'futureagi'
+        if: matrix.tag == 'backend'
         id: lock-wheels
         run: python3 -I futureagi/.ci/lock_wheels.py key futureagi/uv.lock >> "$GITHUB_OUTPUT"
       - name: Restore lock wheels (verified against uv.lock before use)
-        if: matrix.context == 'futureagi'
+        if: matrix.tag == 'backend'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/lock-wheels-cache
           key: ${{ steps.lock-wheels.outputs.key }}
       - name: Fetch, verify and place the lock wheels in the build context
-        if: matrix.context == 'futureagi'
+        if: matrix.tag == 'backend'
         timeout-minutes: 4
         run: |
           python3 -I futureagi/.ci/lock_wheels.py fetch futureagi/uv.lock "$RUNNER_TEMP/lock-wheels-cache" "$RUNNER_TEMP/lock-wheels"

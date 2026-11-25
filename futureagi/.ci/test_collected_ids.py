@@ -1297,6 +1297,17 @@ class ProducerIdentityTest(unittest.TestCase):
             self.assertNotIn(21, downloaded)
             self.assertNotIn(24, downloaded)
 
+            # One listed artifact is taken as the leg's (no clock comparison
+            # can fail it), so a lone stale one is read: its receipt names
+            # attempt 1, not the producing attempt 2, and the leg fails closed.
+            listed = [artifacts[0], artifacts[1]]
+            slept.reset_mock()
+            with self.assertRaisesRegex(
+                ValueError, "main/2: absent or superseded producer for main/2"
+            ):
+                checker.verify_run()
+            self.assertFalse(slept.called)
+
     def test_an_artifact_belongs_to_the_job_that_ran_when_it_was_created(self):
         job = {
             "started_at": "2026-11-25T02:57:55Z",

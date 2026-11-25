@@ -416,6 +416,15 @@ class ImageWiringTest(unittest.TestCase):
         self.assertNotIn("\n    needs:", fetch)  # beside changes, not after it
         shard = self.e2e["e2e"]
         self.assertIn("\n    needs: [changes, lock-wheels]\n", shard)
+        # Required only when the plan has a Distributed stack.
+        self.assertIn("needs.lock-wheels.result == 'success'", shard)
+        self.assertIn(
+            "!contains(fromJSON(needs.changes.outputs.stacks), 'distributed')", shard
+        )
+        self.assertIn(
+            "if: env.BUILD_BACKEND == 'true' && matrix.stack == 'distributed'", shard
+        )
+        self.assertNotIn("\n    permissions:", fetch)  # the workflow's read only
         place = shard.index("name: e2e-lock-wheels\n")
         self.assertIn("path: futureagi/docker/lock-wheels\n", shard[place:])
         self.assertLess(place, shard.index("name: Build backend image from PR code"))
@@ -430,7 +439,9 @@ class ImageWiringTest(unittest.TestCase):
             steps.index("lock_wheels.py fetch"),
             steps.index("uses: docker/build-push-action"),
         )
-        self.assertEqual(steps.count("if: matrix.context == 'futureagi'"), 3)
+        # The standard build only: slim installs no extras.
+        self.assertEqual(steps.count("if: matrix.tag == 'backend'"), 3)
+        self.assertNotIn("matrix.context == 'futureagi'", steps)
 
     def test_e2e_lock_wheel_actions_are_pinned_by_sha(self):
         refs = re.findall(

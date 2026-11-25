@@ -244,8 +244,8 @@ jobs:
     # The script stops retrying after 180 s; the step below caps a stalled
     # transfer at 4 minutes.
     timeout-minutes: 6
-    permissions:
-      contents: read
+    # The workflow's contents: read is all it needs (cache and artifacts use
+    # the runner's own token).
     steps:
       - uses: actions/checkout@v4
         with:
@@ -272,14 +272,20 @@ jobs:
           path: ${{ runner.temp }}/lock-wheels/*.whl
           if-no-files-found: error
           compression-level: 0
-          retention-days: 3
+          retention-days: 14
 
   e2e:
     name: e2e (${{ matrix.stack }}, ${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }})
-    # lock-wheels: the verified wheels the backend build installs. If it
-    # fails, the shards are skipped and E2E Tests Pass fails closed.
+    # lock-wheels: the verified wheels the Distributed (standard) backend
+    # build installs. A plan with a Distributed stack needs it: if it failed,
+    # every leg is skipped and E2E Tests Pass fails closed. A Standalone-only
+    # plan builds the slim variant, which installs no extras, so it never
+    # waits on it.
     needs: [changes, lock-wheels]
-    if: needs.changes.outputs.any == 'true'
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.any == 'true'
+      && (needs.lock-wheels.result == 'success'
+      || !contains(fromJSON(needs.changes.outputs.stacks), 'distributed')) }}
     strategy:
       # One failing leg must not cancel the others: a labelled PR runs both
       # stacks, and every shard's result is part of the report job's proof.
@@ -364,7 +370,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Place this run's verified lock wheels in the backend build context
-        if: env.BUILD_BACKEND == 'true'
+        # Distributed only: the slim (Standalone) build installs no extras and,
+        # like its caches, never has the wheel in its context.
+        if: env.BUILD_BACKEND == 'true' && matrix.stack == 'distributed'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: e2e-lock-wheels
