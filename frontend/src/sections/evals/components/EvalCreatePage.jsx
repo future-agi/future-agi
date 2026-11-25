@@ -55,6 +55,7 @@ import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys
 import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import CustomTagInput from "./CustomTagInput";
+import { getEvalTags } from "./evalTags";
 import { withPendingTag } from "./tagUtils";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
@@ -403,7 +404,7 @@ const EvalCreatePage = () => {
                 config.error_localizer_enabled ||
                 false,
             );
-            setTags(d.tags);
+            setTags(getEvalTags(d));
             setTemplateFormat(
               d.template_format || config.template_format || "mustache",
             );

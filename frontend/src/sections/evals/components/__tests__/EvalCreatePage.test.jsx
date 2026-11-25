@@ -201,6 +201,26 @@ describe("Unit: EvalCreatePage custom tags", () => {
     ).toHaveLength(0);
   });
 
+  it.each([{}, { eval_tags: ["legacy-tag"] }])(
+    "loads and edits a draft without a tags field: %j",
+    async (fields) => {
+      const user = userEvent.setup();
+      mocks.axiosGet.mockResolvedValueOnce({
+        data: { result: { id: "draft-1", eval_type: "agent", ...fields } },
+      });
+      render(<EvalCreatePage />);
+
+      if (fields.eval_tags) {
+        expect(await screen.findByText("legacy-tag")).toBeInTheDocument();
+      }
+      await user.type(
+        screen.getByRole("textbox", { name: "Add custom tag" }),
+        "new-tag{Enter}",
+      );
+      expect(await screen.findByText("new-tag")).toBeInTheDocument();
+    },
+  );
+
   it("shows custom tags loaded from an existing evaluation", async () => {
     mocks.axiosGet.mockResolvedValueOnce({
       data: {
