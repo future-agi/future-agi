@@ -5086,13 +5086,18 @@ def test_observe_trace_list_uses_v2_builder_when_routing_is_disabled() -> None:
     CLICKHOUSE_V2={"QUERY_TYPES_V2_ONLY": "TRACE_LIST"},
 )
 @pytest.mark.parametrize("row_count", [1, 201])
-def test_trace_list_nonempty_page_enrichments_share_wall_budget(row_count: int) -> None:
-    _check_page_enrichments(row_count, expect_offer=row_count == 1)
+def test_trace_list_nonempty_page_enrichments_share_wall_budget(
+    row_count: int, monkeypatch
+) -> None:
+    _check_page_enrichments(
+        row_count, monkeypatch=monkeypatch, expect_offer=row_count == 1
+    )
 
 
 def _check_page_enrichments(
-    row_count, *, expect_offer, offer_query=None, time_filters=None
+    row_count, *, monkeypatch, expect_offer, offer_query=None, time_filters=None
 ):
+    from tracer.tests.test_skill_probe_deadline import _record_native_probe
     from tracer.views.trace import (
         TRACE_LIST_CANDIDATE_DEADLINE_MS,
         TRACE_LIST_ENRICHMENT_CHUNK_SIZE,
@@ -5137,16 +5142,30 @@ def _check_page_enrichments(
     )
 
     class RecordingAnalytics:
+        supports_per_query_read_settings = True
+
         def __init__(self):
             self.calls = []
+            self.ch_client = _record_native_probe(
+                monkeypatch, self.send_probe
+            ).ch_client
+            # Record the same caller-side settings and timeout as the ordinary
+            # enrichments; the native client separately clamps the packet cap.
+            dispatch = self.ch_client.execute_read_with_progress
 
-        def execute_ch_query(self, query, params, *, timeout_ms, settings):
-            self.calls.append((params, timeout_ms, settings))
+            def record(query, params, **kwargs):
+                self.calls.append((params, kwargs["timeout_ms"], kwargs["settings"]))
+                return dispatch(query, params, **kwargs)
+
+            monkeypatch.setattr(self.ch_client, "execute_read_with_progress", record)
+
+        def send_probe(self, query, params, server_cap_seconds):
+            assert 0 < server_cap_seconds * 1000 <= TRACE_LIST_ENRICHMENT_TIMEOUT_MS
             if "skill_page_size" in params:
                 assert params["skill_window_start_us"] == _unix_microseconds(lower)
                 assert params["skill_window_end_us"] == _unix_microseconds(upper)
                 data = (
-                    offer_query(query, params)
+                    offer_query(query, params, server_cap_seconds)
                     if offer_query
                     else (
                         [
@@ -5172,11 +5191,17 @@ def _check_page_enrichments(
                 assert params["skill_window_end_us"] == _unix_microseconds(upper)
                 assert "LIMIT 1" in query
                 data = (
-                    offer_query(query, params)
+                    offer_query(query, params, server_cap_seconds)
                     if offer_query
                     else ([{"1": 1}] if expect_offer else [])
                 )
-            elif "content_trace_ids" in params:
+            else:
+                raise AssertionError("Unexpected skill probe statement")
+            return data
+
+        def execute_ch_query(self, query, params, *, timeout_ms, settings):
+            self.calls.append((params, timeout_ms, settings))
+            if "content_trace_ids" in params:
                 data = [
                     {
                         "trace_id": trace_id,

@@ -4,8 +4,6 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from clickhouse_driver.errors import ServerException
-
 from model_hub.models.skills_hub import HubSkillVersion
 from model_hub.selectors.skills_hub_v12 import resources_for_scope
 from model_hub.services.skills_hub.errors import SkillsHubError
@@ -32,10 +30,9 @@ from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
 
 class _TraceProjectionSession(RuntimeReadSession):
-    def execute(self, statement):
-        sql, params = statement
+    def _read(self, sql, params):
         if not isinstance(params, ServerBoundCohort):
-            return super().execute(statement)
+            return super()._read(sql, params)
         # The locked replica path strips even driver-only query settings. Do
         # not submit unbound SQL there or silently return a partial population.
         if not getattr(self.service, "supports_per_query_read_settings", False):
@@ -161,13 +158,7 @@ def trace_skills_projection(*, principal, workspace, query):
                 ),
                 max_rows=1,
             )[0]
-        except (CohortStatementTooLarge, ServerException) as exc:
-            # The aggregate cannot return a partial page. Only the compiler's
-            # deliberate throwIf is a size limit; don't hide unrelated CH errors.
-            if isinstance(exc, ServerException) and not (
-                exc.code == 395 and "Skill load replay key budget exceeded" in str(exc)
-            ):
-                raise
+        except CohortStatementTooLarge as exc:
             raise SkillsHubError(
                 "runtime_read_too_large",
                 "Narrow the time window or the filters for this cohort read.",

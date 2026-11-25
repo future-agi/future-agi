@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -626,6 +627,7 @@ def compile_exact_graph_row_predicates(
     observe_type: str,
     annotation_label_ids: list[str] | tuple[str, ...] | None = None,
     skill_window: SkillEvidenceWindow | None = None,
+    skill_window_bounds: tuple[datetime, datetime] | None = None,
 ) -> ExactGraphRowPredicatePlan:
     """Compile graph filters without adding another physical ``spans`` read.
 
@@ -660,6 +662,12 @@ def compile_exact_graph_row_predicates(
     # Splitting them here would turn same-load correlation into sibling matches.
     skill_filters = [item for item in filters or [] if is_skill_filter(item)]
     if skill_filters:
+        # Only SKILL leaves belong to the correlated predicate. Admission still
+        # uses the enclosing graph's frozen endpoints and every time exclusion.
+        if skill_window is None and skill_window_bounds is not None:
+            skill_window = SkillEvidenceWindow.from_bounds(
+                *skill_window_bounds, filters
+            )
         skill_builder = ClickHouseFilterBuilderV2(
             project_id=project_id,
             query_mode=normalized_observe_type,

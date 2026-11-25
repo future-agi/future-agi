@@ -6,10 +6,13 @@ Project permissions and catalogue identities are resolved by the caller.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from itertools import product
+from operator import itemgetter
 from uuid import UUID
 
+from model_hub.services.skills_hub.errors import SkillsHubError
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.filters import (
     SKILL_REPLAY_BATCH_SIZE,
@@ -22,6 +25,7 @@ from tracer.services.clickhouse.read_budget import (
     ReadDeadlineExceeded,
     WallCappedAnalytics,
 )
+from tracer.services.clickhouse.skill_replay_errors import is_skill_replay_overflow
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -30,6 +34,7 @@ from tracer.services.clickhouse.v2.query_builders.filters import (
 
 # A runtime fact statement returns this extra row solely to signal overflow.
 _FACT_SENTINEL = 20_001
+_TRACE_LOAD_SENTINEL = 10_001
 # The native driver renders %(...)s before sending the SQL, even for an array.
 # At most two arrays per replay, leaving 64 KiB of the 256 KiB query budget
 # for the fixed statement, settings, and up to 50 authorized project IDs.
@@ -39,9 +44,11 @@ _ARRAY_SQL_BYTES = 96 * 1024
 class _FactPages(dict):
     """Ordinary statement binds, plus disjoint pages for RuntimeReadSession."""
 
-    def __init__(self, values, statements):
+    def __init__(self, values, statements, *, sentinel=_FACT_SENTINEL, order_key=None):
         super().__init__(values)
         self.statements = statements
+        self.sentinel = sentinel
+        self.order_key = order_key
 
     @classmethod
     def for_arrays(cls, params, *names):
@@ -111,20 +118,19 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             project_ids=list(projects), skill_window=self.skill_window
         )
 
-    def _live_source(self, *, failed=False, trace_batch=False, skill_window=None):
-        compiler = self.compiler
-        if trace_batch or skill_window is not None:
-            compiler = ClickHouseFilterBuilderV2(
-                project_ids=list(self.project_ids),
-                candidate_ids_param="trace_ids" if trace_batch else None,
-                skill_window=skill_window or self.skill_window,
-            )
-        method = getattr(compiler, "skill_live_rows_sql", None)
+    def _live_source(
+        self, *, failed=False, skill_window=None, verified_identities_param=None
+    ):
+        method = getattr(self.compiler, "skill_live_rows_sql", None)
         if method is None:
             raise RuntimeDependencyUnavailable(
                 "Runtime reads require the shared SKILL filter compiler"
             )
-        return method(failed=failed)
+        return method(
+            failed=failed,
+            skill_window=skill_window,
+            verified_identities_param=verified_identities_param,
+        )
 
     def build_filter_values(
         self,
@@ -164,30 +170,45 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             "page_limit": limit + 1,
             "skill_name": skill_name,
         }
-        if failed:
-            scope = "skill_name = %(skill_name)s" if skill_name is not None else "1 = 1"
-        else:
-            scope = (
-                "(skill_id, skill_version_id, skill_digest) IN %(verified_identities)s"
-                if verified_identities
-                else "0 = 1"
-            )
-            scope += " AND status != 'ERROR'"
+        # Failures have no verified identity. For successes the compiler uses
+        # the same catalogue to nominate keys and to recheck the elected row.
+        # Preserve the existing tuple bind for callers inspecting the statement;
+        # only the array bind is rendered into the SQL, once.
+        identity_param = None
+        if not failed:
+            identity_param = "picker_identities"
+            params[identity_param] = list(params["verified_identities"])
+        # The raw attribute can nominate a key, but never restrict its replay:
+        # a newer revision can change that attribute or delete the span.
+        window = self.skill_window
+        candidate, scope = [], []
+        context_cte = ""
+        if failed and skill_name is not None:
+            candidate.append("attrs_string['fi.skill.name'] = %(skill_name)s")
+            scope.append("skill_name = %(skill_name)s")
         if field == "skill.context_id":
-            scope += (
-                " AND toString(context_id) IN %(context_ids)s"
-                if context_ids
-                else " AND 0 = 1"
-            )
+            # Bind even an empty shortlist once (no IN (), no duplicate array
+            # on the wire alongside a potentially full identity catalogue).
+            params["picker_context_ids"] = list(params["context_ids"])
+            context_cte = "WITH picker_contexts AS (SELECT arrayJoin(CAST(%(picker_context_ids)s AS Array(String))) AS context_key)"
+            in_contexts = " IN (SELECT context_key FROM picker_contexts)"
+            candidate.append("attrs_string['fi.context.id']" + in_contexts)
+            scope.append("context_id" + in_contexts)
+        if candidate:
+            window = replace(window, bounds=" AND ".join([window.bounds, *candidate]))
+        source = self._live_source(
+            failed=failed, skill_window=window, verified_identities_param=identity_param
+        )
         # Only the allowlisted column expression is interpolated. All values,
         # including blank agent names, are bound; no SQL is accepted from HTTP.
         expression = columns[field]
         cursor = " AND value > %(after)s" if after is not None else ""
         return (
             f"""
+            {context_cte}
             SELECT DISTINCT {expression} AS value
-            FROM ({self._live_source(failed=failed)})
-            WHERE {scope} AND positionCaseInsensitiveUTF8(value, %(search)s) > 0 {cursor}
+            FROM ({source})
+            WHERE {" AND ".join(scope) or "1 = 1"} AND positionCaseInsensitiveUTF8(value, %(search)s) > 0 {cursor}
             ORDER BY value LIMIT %(page_limit)s
         """,
             params,
@@ -210,40 +231,72 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             "identities": tuple(identities),
             "skill_names": tuple(skill_names),
         }
-        predicate = (
-            "skill_name IN %(skill_names)s"
-            if failed
-            else "(skill_id, skill_version_id, skill_digest) IN %(identities)s AND status != 'ERROR'"
-        )
-        if mismatch:
-            params["skill_ids"] = tuple(
-                sorted({identity[0] for identity in identities})
-            )
-            predicate = "skill_id IN %(skill_ids)s AND (skill_id, skill_version_id, skill_digest) NOT IN %(identities)s AND status != 'ERROR'"
-        if not (skill_names if failed else identities):
-            predicate = "0 = 1"
+        # Use the same request scope on the physical witness and on the elected
+        # load, never on the intervening revisions. Bind the catalogue only
+        # once per native statement (including the unpaged compatibility SQL).
+        if failed:
+            params["usage_catalogue"] = list(params["skill_names"])
+            catalogue = "WITH usage_names AS (SELECT arrayJoin(CAST(%(usage_catalogue)s AS Array(String))) AS reported_name) "
+            membership = " IN (SELECT reported_name FROM usage_names)"
+            candidate = ["attrs_string['fi.skill.name']" + membership]
+            winner = ["skill_name" + membership]
+        else:
+            params["usage_catalogue"] = list(params["identities"])
+            catalogue = self.compiler._skill_identity_cte("usage_catalogue")
+            membership = (
+                " NOT IN " if mismatch else " IN "
+            ) + "(SELECT identity.1, identity.2, identity.3 FROM skill_identity_set)"
+            candidate = [
+                "(attrs_string['fi.skill.id'], attrs_string['fi.skill.version_id'], attrs_string['fi.skill.digest'])"
+                + membership
+            ]
+            winner = ["(skill_id, skill_version_id, skill_digest)" + membership]
+            if mismatch:
+                requested = " IN (SELECT identity.1 FROM skill_identity_set)"
+                candidate.append("attrs_string['fi.skill.id']" + requested)
+                winner.append("skill_id" + requested)
         if label is not None:
             params["label"] = label
-            predicate += " AND requested_label = %(label)s"
+            candidate.append("attrs_string['fi.skill.requested_label'] = %(label)s")
+            winner.append("requested_label = %(label)s")
         if context_id is not None:
             params["context_id"] = str(context_id)
-            predicate += " AND context_id = %(context_id)s"
+            candidate.append("attrs_string['fi.context.id'] = %(context_id)s")
+            winner.append("context_id = %(context_id)s")
         if agent is not None:
             params.update(agent_project=str(agent[0]), service=agent[1], agent=agent[2])
-            predicate += " AND toString(project_id) = %(agent_project)s AND service_name = %(service)s AND agent_name = %(agent)s"
+            location = "toString(project_id) = %(agent_project)s AND service_name = %(service)s"
+            candidate.extend(
+                [
+                    location,
+                    "if(attrs_string['gen_ai.agent.name'] != '', attrs_string['gen_ai.agent.name'], attrs_string['fi.context.name']) = %(agent)s",
+                ]
+            )
+            winner.extend([location, "agent_name = %(agent)s"])
+
+        window = replace(
+            self.skill_window,
+            bounds=" AND ".join([self.skill_window.bounds, *candidate]),
+        )
 
         def facts(source):
-            return f"SELECT * FROM ({source}) WHERE {predicate} LIMIT {_FACT_SENTINEL}"
+            return f"{catalogue}SELECT * FROM ({source}) WHERE {' AND '.join(winner)} LIMIT {_FACT_SENTINEL}"
 
         def statements(_sql, read_keys):
-            if not (params["skill_names"] if failed else params["identities"]):
+            if not params["usage_catalogue"]:
                 return
+
+            def nominate(sql, binds):
+                return read_keys(catalogue + sql, {**params, **binds})
+
             for source, binds in iter_runtime_load_replays(
-                self.compiler, read_keys, skill_window=self.skill_window, failed=failed
+                self.compiler, nominate, skill_window=window, failed=failed
             ):
                 yield _append_v2_settings(facts(source)), {**params, **binds}
 
-        return facts(self._live_source(failed=failed)), _FactPages(params, statements)
+        return facts(self._live_source(failed=failed, skill_window=window)), _FactPages(
+            params, statements
+        )
 
     def build_context_members(self, *, resource_id, identities):
         """Context cohorts include stamped spans even without a leaf skill load.
@@ -411,13 +464,29 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             "evidence, cached, context_id, context_version_id, via_context_version_id, binding_id"
         )
         params = {**self.params, "trace_ids": trace_ids}
-        return (
-            f"""
-            SELECT project_id, trace_id, span_id, start_time, service_name, agent_name, {fields}
-            FROM ({self._live_source(failed=failed, trace_batch=True)})
-            ORDER BY start_time, span_id LIMIT 10001
-        """,
+        compiler = ClickHouseFilterBuilderV2(
+            project_ids=list(self.project_ids),
+            candidate_ids_param="trace_ids",
+            skill_window=self.skill_window,
+        )
+
+        def loads(source):
+            return f"""
+                SELECT project_id, trace_id, span_id, start_time, service_name, agent_name, {fields}
+                FROM ({source}) ORDER BY start_time, span_id LIMIT {_TRACE_LOAD_SENTINEL}
+            """
+
+        def statements(_sql, read_keys):
+            for source, binds in compiler.iter_skill_load_replays(
+                read_keys, skill_window=self.skill_window, failed=failed, params=params
+            ):
+                yield _append_v2_settings(loads(source)), binds
+
+        return loads(compiler.skill_live_rows_sql(failed=failed)), _FactPages(
             params,
+            statements,
+            sentinel=_TRACE_LOAD_SENTINEL,
+            order_key=itemgetter("start_time", "span_id"),
         )
 
     def build_latest_load(self, *, resource_id, kind, version_ids):
@@ -578,7 +647,20 @@ class RuntimeReadSession:
         )
 
     def execute(self, statement):
-        sql, params = statement
+        # This boundary covers both driver calls and refusals from the replay
+        # iterator between calls. Unrelated driver errors retain their type.
+        try:
+            return self._execute(*statement)
+        except Exception as exc:
+            if not is_skill_replay_overflow(exc):
+                raise
+            raise SkillsHubError(
+                "runtime_read_too_large",
+                "Runtime data exceeds this read's limit.",
+                status=503,
+            ) from exc
+
+    def _execute(self, sql, params):
         if not isinstance(params, _FactPages):
             return self._read(sql, params)
 
@@ -591,10 +673,13 @@ class RuntimeReadSession:
         started_ms = self.deadline.elapsed_ms()
         for page_sql, page_binds in params.statements(sql, read_keys):
             page = self._read(page_sql, page_binds)
-            rows.extend(page.data[: _FACT_SENTINEL - len(rows)])
-            if len(rows) == _FACT_SENTINEL:
+            rows.extend(page.data[: params.sentinel - len(rows)])
+            if len(rows) == params.sentinel:
                 # The consumer rejects the sentinel; do not start another read.
                 break
+        if len(rows) < params.sentinel and params.order_key is not None:
+            # Physical discovery order is not the public trace load order.
+            rows.sort(key=params.order_key)
         return QueryResult(
             rows, len(rows), "clickhouse", self.deadline.elapsed_ms() - started_ms
         )

@@ -1978,6 +1978,7 @@ def read_exact_system_graph(
         project_id=str(project_id),
         observe_type=observe_type,
         annotation_label_ids=annotation_label_ids,
+        skill_window_bounds=(start_date, end_date),
     )
     normalized_observe_type = str(observe_type or "").strip().lower()
     if normalized_observe_type == "trace" and exact_filter_plan.predicates:

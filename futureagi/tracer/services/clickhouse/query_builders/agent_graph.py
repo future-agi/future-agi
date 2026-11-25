@@ -163,6 +163,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             # every contributing child of each matched trace.
             observe_type="trace",
             annotation_label_ids=self.annotation_label_ids,
+            skill_window_bounds=(self.start_date, self.end_date),
         )
         self.params.update(plan.params)
 

@@ -99,6 +99,87 @@ def test_usage_replay_4000_verified_members_under_native_sql_limit(skill_query_c
             } == expected
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize("failed", [False, True])
+def test_unrelated_loads_cannot_overflow_runtime_picker(
+    skill_query_client, monkeypatch, failed
+):
+    from tracer.services.clickhouse.query_builders import filters
+
+    project = str(uuid4())
+    loads = [
+        evidence.span_row(project, f"other-{i}", version=evidence.OTHER_VERSION)
+        for i in range(3)
+    ]
+    good = evidence.span_row(project, "selected")
+    evidence.insert_rows(skill_query_client, [*loads, good])
+    monkeypatch.setattr(filters, "SKILL_REPLAY_BATCH_SIZE", 1)
+    builder = SkillRuntimeQueryBuilder(
+        project_ids=[project], start=evidence.START, end=evidence.END
+    )
+    sql, binds = builder.build_filter_values(
+        field="skill.name" if failed else "skill.version_id",
+        failed=failed,
+        verified_identities=[(evidence.SKILL, evidence.VERSION, evidence.DIGEST)],
+    )
+    assert skill_query_client.query(sql, parameters=binds).result_rows == (
+        [] if failed else [(evidence.VERSION,)]
+    )
+
+
+@pytest.mark.parametrize(
+    "driver,code,diagnostic,overflow",
+    [
+        ("native", 395, "Skill load replay key budget exceeded", True),
+        ("native", 395, "a different throwIf", False),
+        ("http", 395, "Skill load replay key budget exceeded", True),
+        ("http", None, "Skill load replay key budget exceeded", True),
+        (
+            "native",
+            395,
+            "other failure: while executing throwIf(x, 'Skill load replay key budget exceeded')",
+            False,
+        ),
+        ("http", 395, "a different throwIf", False),
+        ("http", 62, "Skill load replay key budget exceeded", False),
+        ("other", None, "Skill load replay key budget exceeded", False),
+    ],
+)
+def test_runtime_read_exposes_only_the_specific_replay_size_error(
+    driver, code, diagnostic, overflow
+):
+    from clickhouse_connect.driver.exceptions import DatabaseError
+    from clickhouse_driver.errors import ServerException
+
+    message = f"{diagnostic} (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)"
+    if driver == "native":
+        error = ServerException(diagnostic, code=code)
+    elif driver == "http":
+        prefix = f"Code: {code}. DB::Exception: " if code is not None else ""
+        error = DatabaseError(prefix + message)
+    else:
+        error = RuntimeError(message)
+
+    def execute(*args, **kwargs):
+        raise error
+
+    service = SimpleNamespace(
+        execute_ch_query=execute, supports_per_query_read_settings=True
+    )
+    session = RuntimeReadSession(service, deadline=ReadDeadline.start(1000))
+    if overflow:
+        with pytest.raises(SkillsHubError) as denial:
+            read_runtime_statement(session, ("SELECT 1", {}))
+        assert (denial.value.code, denial.value.status) == (
+            "runtime_read_too_large",
+            503,
+        )
+    else:
+        with pytest.raises(type(error)) as unrelated:
+            read_runtime_statement(session, ("SELECT 1", {}))
+        assert unrelated.value is error
+
+
 @pytest.mark.parametrize("per_query_settings", [True, False])
 def test_replay_uses_one_cumulative_fact_sentinel(per_query_settings):
     project = str(uuid4())
@@ -186,8 +267,10 @@ def test_native_eval_replay_bounds_both_identifier_sets(
 
 @pytest.mark.integration
 def test_page_zero_skips_excluded_winners_but_checks_the_next_key_page(
-    skill_query_client,
+    skill_query_client, monkeypatch
 ):
+    from tracer.tests.test_skill_probe_deadline import _record_native_probe
+
     when = (PAGE_END - timedelta(minutes=2)).replace(tzinfo=UTC, microsecond=123456)
     until = when + timedelta(microseconds=1)
     filters = [
@@ -202,16 +285,37 @@ def test_page_zero_skips_excluded_winners_but_checks_the_next_key_page(
         },
         _attribute_filter("final_status", "Rejected"),
     ]
+    # Each old, in-window revision nominates a key, but its winner moved to
+    # the excluded instant. Change the physical sort key so merges cannot
+    # replace the old row and turn this into a single-page discovery test.
     rows = [
-        evidence.span_row(PROJECT_ID, "probe-pages", id=f"{i:016x}", start_time=when)
+        evidence.span_row(PROJECT_ID, "probe-pages", id=f"{i:016x}", start_time=until)
         for i in range(1024)
     ]
-    evidence.insert_rows(skill_query_client, rows)
+    corrections = [
+        {
+            **row,
+            "observation_type": "corrected",
+            "start_time": when,
+            "created_at": evidence.END,
+        }
+        for row in rows
+    ]
+    evidence.insert_rows(skill_query_client, [*rows, *corrections])
+    replay_sizes = []
 
-    def execute(sql, params, *, settings, **kwargs):
-        result = skill_query_client.query(sql, parameters=params, settings=settings)
-        data = list(result.named_results())
-        return QueryResult(data, len(data), "clickhouse", 0.0)
+    def send_probe(sql, params, server_cap_seconds):
+        assert server_cap_seconds > 0
+        if "skill_replay_keys" in params:
+            replay_sizes.append(len(params["skill_replay_keys"]))
+        result = skill_query_client.query(
+            sql,
+            parameters=params,
+            settings={"max_execution_time": server_cap_seconds},
+        )
+        return list(result.named_results())
+
+    analytics = _record_native_probe(monkeypatch, send_probe)
 
     def skill_links_exist():
         # An empty root page needs no other CH enrichments. Execute the actual
@@ -224,7 +328,7 @@ def test_page_zero_skips_excluded_winners_but_checks_the_next_key_page(
                 "page_size": 1,
                 "include_skill_links": True,
             },
-            analytics=SimpleNamespace(execute_ch_query=execute),
+            analytics=analytics,
         )
         assert response[0] == "ok"
         return response[1]["metadata"]["skill_links_exist"]
@@ -241,3 +345,5 @@ def test_page_zero_skips_excluded_winners_but_checks_the_next_key_page(
         ],
     )
     assert skill_links_exist() is True
+    assert sum(replay_sizes) == 2 * len(rows) + 1
+    assert replay_sizes[-1] == 1

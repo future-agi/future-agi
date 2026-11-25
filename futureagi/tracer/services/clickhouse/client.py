@@ -117,10 +117,14 @@ def _guard_retained_dispatch(client, deadline):
         if remaining_ms < 25 or not connection.connected or connection.socket is None:
             raise TimeoutError("ClickHouse read deadline exhausted")
         remaining = remaining_ms / 1000
-        # send_query serializes context.settings, not execute's input dict.
+        # Never enlarge a tighter explicit application execution cap. send_query
+        # serializes context.settings, not execute's input dict.
+        server_cap = connection.context.settings.get("max_execution_time")
         connection.context.settings = {
             **connection.context.settings,
-            "max_execution_time": remaining,
+            "max_execution_time": min(remaining, float(server_cap))
+            if server_cap
+            else remaining,
         }
         if connection.send_receive_timeout is not None:
             remaining = min(connection.send_receive_timeout, remaining)
@@ -502,10 +506,12 @@ class ClickHouseClient:
             by native read_rows and read_bytes progress.
         """
         retained_lookup = retained_until is not None
-        application_read = is_application_read() and not retained_lookup
+        # Retained dispatch needs a wall for admission and the socket even in
+        # application mode. It does not change the statement resource policy.
+        application_read = is_application_read()
         timeout_ms = (
             None
-            if application_read
+            if application_read and not retained_lookup
             else _bounded_read_timeout_ms(
                 timeout_ms, ceiling_ms=self.read_timeout_ceiling_ms
             )

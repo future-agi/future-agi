@@ -1309,7 +1309,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "ClickHouseFilterBuilder._build_skill_conditions": _FILTER_LEAF,
         "ClickHouseFilterBuilder._skill_candidate_filter": _FILTER_LEAF,
         "ClickHouseFilterBuilder._skill_replay_sql": _FILTER_LEAF,
-        "ClickHouseFilterBuilder.iter_skill_load_replays": _FILTER_LEAF,
+        "ClickHouseFilterBuilder._skill_key_page_sql": _FILTER_LEAF,
         "ClickHouseFilterBuilder.skill_live_rows_sql": _FILTER_LEAF,
         "ClickHouseFilterBuilder._candidate_trace_filter": _FILTER_LEAF,
         "ClickHouseFilterBuilder._enduser_dimension_id_subquery": filed(

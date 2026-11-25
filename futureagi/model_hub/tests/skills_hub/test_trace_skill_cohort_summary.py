@@ -353,6 +353,139 @@ def test_summary_replay_cap_counts_candidate_keys_for_selected_version(
     assert "summary" not in response.data.get("result", {})
 
 
+@pytest.fixture
+def excluded_version_attrs(seeded, publish_skill, make_skill_files):
+    version = publish_skill(
+        seeded.skill,
+        files=make_skill_files(seeded.skill.name, body="Excluded version."),
+    ).version
+    return {
+        **seeded.attrs,
+        "fi.skill.version_id": str(version.pk),
+        "fi.skill.version": version.number,
+        "fi.skill.digest": version.digest,
+    }
+
+
+@pytest.mark.parametrize("op", ["not_equals", "not_in"])
+def test_negative_version_only_replays_the_named_witness(
+    native_summary, ch, seeded, excluded_version_attrs, op
+):
+    # 1,025 verified loads of B across 199 traces, and one trace with no load.
+    loaded = [seeded.trace, *(str(uuid4()) for _ in range(198))]
+    seed(
+        ch,
+        seeded.span("no-load", trace_id=str(uuid4()), parent_span_id=""),
+        *(
+            seeded.span(
+                f"other-{i}",
+                trace_id=loaded[i % len(loaded)],
+                name="skill.load",
+                span_attributes=seeded.attrs,
+            )
+            for i in range(1024)
+        ),
+    )
+    excluded = excluded_version_attrs["fi.skill.version_id"]
+    filters = [skill("version_id", [excluded] if op == "not_in" else excluded, op)]
+    assert native_summary(filters)["traces"] == 200
+
+    # A live A disqualifies its entire trace, but a corrected A does not.
+    stale = seeded.span(
+        "stale",
+        trace_id=loaded[1],
+        name="skill.load",
+        span_attributes=excluded_version_attrs,
+    )
+    seed(
+        ch,
+        {**stale, "id": "live", "trace_id": loaded[0]},
+        stale,
+        {
+            **stale,
+            "resource_attributes": {"service.name": "corrected"},
+            "span_attributes": seeded.attrs,
+            "created_at": START + timedelta(minutes=1),
+        },
+    )
+    assert native_summary(filters)["traces"] == 199
+
+
+def test_negative_group_cannot_widen_positive_version_replay(
+    native_summary, ch, seeded, excluded_version_attrs
+):
+    # B has exactly 1,024 keys on two traces; a single sibling A excludes one.
+    # Even the union of the two *named* versions exceeds the per-replay cap.
+    mixed = str(uuid4())
+    seed(
+        ch,
+        *(
+            seeded.span(
+                f"positive-{i}", name="skill.load", span_attributes=seeded.attrs
+            )
+            for i in range(1022)
+        ),
+        seeded.span(
+            "positive", trace_id=mixed, name="skill.load", span_attributes=seeded.attrs
+        ),
+        seeded.span(
+            "excluded",
+            trace_id=mixed,
+            name="skill.load",
+            span_attributes=excluded_version_attrs,
+        ),
+        seeded.span("unattributed", trace_id=str(uuid4()), parent_span_id=""),
+    )
+    result = native_summary(
+        [
+            skill("version_id", str(seeded.version.pk)),
+            skill(
+                "version_id",
+                excluded_version_attrs["fi.skill.version_id"],
+                "not_equals",
+                group=1,
+            ),
+        ]
+    )
+    assert result["traces"] == 1 and result["cost"]["per_trace_mean"] == 13
+
+
+def test_same_group_version_exclusions_have_independent_replay_budgets(
+    native_summary, http, ch, seeded, excluded_version_attrs
+):
+    # The fixture already has one A load. Put the single B load on a different
+    # trace so forgetting either exclusion changes the count.
+    seed(
+        ch,
+        *(
+            seeded.span(f"a-{i}", name="skill.load", span_attributes=seeded.attrs)
+            for i in range(1023)
+        ),
+        seeded.span(
+            "b",
+            trace_id=str(uuid4()),
+            name="skill.load",
+            span_attributes=excluded_version_attrs,
+        ),
+        seeded.span("no-load", trace_id=str(uuid4()), parent_span_id="", cost=19),
+    )
+    a, b = str(seeded.version.pk), excluded_version_attrs["fi.skill.version_id"]
+    result = native_summary(
+        [skill("version_id", a, "not_equals"), skill("version_id", b, "not_equals")]
+    )
+    assert result["traces"] == 1 and result["cost"]["per_trace_mean"] == 19
+
+    # Unlike two leaves, one not_in witness must admit all its named versions
+    # in the same replay. Its 1,025 distinct keys exceed that replay's budget.
+    response = http(
+        projection="cohort",
+        filters=[skill("version_id", [a, b], "not_in")],
+        **{"from": START.isoformat(), "to": (START + timedelta(hours=1)).isoformat()},
+    )
+    assert response.status_code == 503, response.data
+    assert response.data["code"] == "runtime_read_too_large"
+
+
 def test_large_stored_handle_fits_native_parser(native_summary, seeded, project):
     ids = [str(uuid4()) for _ in range(7000)] + [seeded.trace]
     result = native_summary([cohort_filter(project.pk, ids)])

@@ -65,6 +65,7 @@ from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
     is_read_budget_error,
 )
+from tracer.services.clickhouse.skill_replay_errors import is_skill_replay_overflow
 from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
 )
@@ -489,6 +490,10 @@ def degraded_graph_response(
         error_code = "read_budget_exceeded"
     elif explicit_code == "sample_limit":
         error_code = "sample_limit"
+    elif explicit_code == "runtime_read_too_large" or is_skill_replay_overflow(exc):
+        # The contract's code for "this read is too large; narrow it". The
+        # Skills key budget is a fixed size, so retrying cannot help either.
+        error_code = "read_budget_exceeded"
     elif is_read_budget_error(exc):
         error_code = "read_budget_exceeded"
     else:
@@ -1633,12 +1638,18 @@ def _fetch_direct_raw_system_metric_graph(
             if seed_probe_count and not shard_cluster
             else 1
         )
-        result = analytics.execute_ch_query(
-            query,
-            params,
-            timeout_ms=max(1, seed_probe_floor_ms, int(timeout_ms) - elapsed_ms),
-            settings=GRAPH_READ_SETTINGS,
-        )
+        try:
+            result = analytics.execute_ch_query(
+                query,
+                params,
+                timeout_ms=max(1, seed_probe_floor_ms, int(timeout_ms) - elapsed_ms),
+                settings=GRAPH_READ_SETTINGS,
+            )
+        except Exception as exc:
+            if not is_skill_replay_overflow(exc):
+                raise
+            # A larger wall (or the background lane) cannot change a key cap.
+            raise BoundedGraphReadError("runtime_read_too_large") from exc
         rows = list(result.data or [])
         columns = list(result.columns or [])
         _require_rollup_result_shape(
@@ -2253,7 +2264,13 @@ def fetch_all_system_metrics_ch(
             provenance="exact_snapshot",
         )
     except Exception as exc:
-        if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
+        if not (
+            is_read_budget_error(exc)
+            or is_clickhouse_query_error(exc)
+            # A Skills filter over more load keys than one exact replay admits
+            # is a size refusal, not a server error: degrade like a budget.
+            or is_skill_replay_overflow(exc)
+        ):
             raise
         degraded = degraded_graph_response(
             "",

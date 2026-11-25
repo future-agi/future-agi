@@ -896,7 +896,7 @@ def test_live_span_scope_and_legacy_array_filter(skill_query_client):
 
 
 @pytest.mark.integration
-def test_column_offer_uses_current_successful_sources(skill_query_client):
+def test_column_offer_uses_current_successful_sources(skill_query_client, monkeypatch):
     from tracer.tests.test_bounded_trace_filter_reads import END as page_end
     from tracer.tests.test_bounded_trace_filter_reads import (
         PROJECT_ID,
@@ -906,13 +906,19 @@ def test_column_offer_uses_current_successful_sources(skill_query_client):
 
     client = skill_query_client
 
-    def probe(sql, params):
+    def probe(sql, params, server_cap_seconds):
         # The native driver renders Python datetimes at second precision.
         params = {
             k: v.replace(microsecond=0) if isinstance(v, datetime) else v
             for k, v in params.items()
         }
-        return list(client.query(sql, parameters=params).named_results())
+        return list(
+            client.query(
+                sql,
+                parameters=params,
+                settings={"max_execution_time": server_cap_seconds},
+            ).named_results()
+        )
 
     # A normal root remains visible throughout; a failed-only load must not
     # trigger the offer. Unverified successes are shown (not linked) by hydration.
@@ -936,14 +942,19 @@ def test_column_offer_uses_current_successful_sources(skill_query_client):
         PROJECT_ID, "column-offer", start_time=start, status="ERROR"
     )
     insert_rows(client, [ordinary, failed, error_with_version])
-    _check_page_enrichments(1, expect_offer=False, offer_query=probe)
+    _check_page_enrichments(
+        1, monkeypatch=monkeypatch, expect_offer=False, offer_query=probe
+    )
     exact = start + timedelta(microseconds=123456)
     load = span_row(PROJECT_ID, "column-offer", start_time=exact)
     load["span_attributes"]["fi.skill.digest"] = "unverified"
     insert_rows(client, [load])
-    _check_page_enrichments(1, expect_offer=True, offer_query=probe)
+    _check_page_enrichments(
+        1, monkeypatch=monkeypatch, expect_offer=True, offer_query=probe
+    )
     _check_page_enrichments(
         1,
+        monkeypatch=monkeypatch,
         expect_offer=True,
         offer_query=probe,
         time_filters=[_date_filter("equals", exact.isoformat())],
@@ -951,6 +962,7 @@ def test_column_offer_uses_current_successful_sources(skill_query_client):
     # The ordinary root remains allowed, but no successful load does.
     _check_page_enrichments(
         1,
+        monkeypatch=monkeypatch,
         expect_offer=False,
         offer_query=probe,
         time_filters=[
@@ -974,7 +986,9 @@ def test_column_offer_uses_current_successful_sources(skill_query_client):
         "SELECT count() FROM spans FINAL WHERE id = %(id)s AND is_deleted = 0",
         parameters={"id": ordinary["id"]},
     ).result_rows == [(1,)]
-    _check_page_enrichments(1, expect_offer=False, offer_query=probe)
+    _check_page_enrichments(
+        1, monkeypatch=monkeypatch, expect_offer=False, offer_query=probe
+    )
 
 
 def _date_filter(op, value):
@@ -1443,6 +1457,135 @@ def test_excluded_load_keys_do_not_consume_replay_budget(
     assert not skill_query_client.query(sql, parameters=params).result_rows
 
 
+@pytest.mark.integration
+def test_span_scope_charges_exact_window_keys_before_replay(
+    skill_query_client, monkeypatch
+):
+    from tracer.services.clickhouse.query_builders import filters as compiler_module
+
+    project = str(uuid4())
+    spans = [
+        span_row(
+            project, "stamps", name="llm.chat", start_time=START + timedelta(minutes=m)
+        )
+        for m in (15, 20, 30)
+    ]
+    deleted_only = {**spans[-1], "id": uuid4().hex[:16], "deleted": True}
+    insert_rows(skill_query_client, [*spans, deleted_only])
+    monkeypatch.setattr(compiler_module, "SKILL_REPLAY_BATCH_SIZE", 1)
+    exact = SkillEvidenceWindow.from_bounds(
+        START,
+        END,
+        [
+            _date_filter(
+                "not_between",
+                [(START + timedelta(minutes=m)).isoformat() for m in (15, 30)],
+            )
+        ],
+    )
+    broad = SkillEvidenceWindow.from_bounds(START, END)
+    compiler = ClickHouseFilterBuilderV2(
+        project_id=project, query_mode="span", skill_window=exact
+    )
+    # Observe the actual input to historical partition discovery. Testing only
+    # the final result would not detect replay of a million excluded stamps.
+    nomination = []
+    replay = compiler._skill_replay_sql
+
+    def record(keys_sql, *, span_keys):
+        nomination.append(keys_sql)
+        return replay(keys_sql, span_keys=span_keys)
+
+    monkeypatch.setattr(compiler, "_skill_replay_sql", record)
+    predicate, params = compiler.translate([skill("in_scope", VERSION)])
+    params = {**params, "project_id": project}
+    assert [
+        row[2]
+        for row in skill_query_client.query(
+            nomination[0], parameters=params
+        ).result_rows
+    ] == [spans[-1]["id"]]
+    sql = "SELECT id FROM spans WHERE project_id = %(project_id)s AND " + predicate
+    assert skill_query_client.query(sql, parameters=params).result_rows == [
+        (spans[-1]["id"],)
+    ]
+
+    # Nominate the older live revision, but still elect the later deletion.
+    insert_rows(
+        skill_query_client,
+        [
+            {
+                **spans[-1],
+                "deleted": True,
+                "created_at": END,
+                "resource_attributes": {"service.name": "delete"},
+            }
+        ],
+    )
+    assert not skill_query_client.query(sql, parameters=params).result_rows
+
+    # With the exclusion removed the two other live stamps qualify too. Scope
+    # stamps are as numerous as spans, so there is no load-style key cap (the
+    # batch size is patched to 1 above): the membership stays exact.
+    predicate, params = compile_filters(
+        [skill("in_scope", VERSION)], project=project, mode="span", skill_window=broad
+    )
+    assert {
+        row[0]
+        for row in skill_query_client.query(
+            "SELECT id FROM spans WHERE project_id = %(project_id)s AND " + predicate,
+            parameters={**params, "project_id": project},
+        ).result_rows
+    } == {spans[0]["id"], spans[1]["id"]}
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_sampling_preview_elects_all_stamps_or_returns_its_read_ceiling(
+    auth_client, project, ch_seed, monkeypatch
+):
+    from tracer.services.clickhouse.query_builders import filters as compiler_module
+    from tracer.services.eval_tasks.sampling.query import READ_SETTINGS
+
+    start = datetime.now(UTC) - timedelta(hours=1)
+    end = start + timedelta(minutes=30)
+    ch_seed(
+        [
+            span_row(
+                str(project.id),
+                f"preview-{i}",
+                name="llm.chat",
+                start_time=start,
+                created_at=start,
+                updated_at=start,
+                end_time=start + timedelta(seconds=1),
+            )
+            for i in range(2)
+        ]
+    )
+    monkeypatch.setattr(compiler_module, "SKILL_REPLAY_BATCH_SIZE", 1)
+    body = {
+        "project": str(project.id),
+        "row_type": "spans",
+        "filters": {"filters": [skill("in_scope", VERSION)]},
+        "sampling_policy": {
+            "version": 1,
+            "mode": "closed",
+            "sampling_unit": "span",
+            "window": {"start": start.isoformat(), "end": end.isoformat()},
+        },
+    }
+    url = "/tracer/eval-task/sampling_preview/"
+    preview = auth_client.post(url, body, format="json")
+    assert preview.status_code == 200, preview.data
+    assert sum(cell["eligible_rows"] for cell in preview.data["result"]["strata"]) == 2
+    # Historical key admission is not a sampling limit. The *sampling* input
+    # limit still refuses exactly at its public boundary, never a 500/prefix.
+    monkeypatch.setitem(READ_SETTINGS, "max_rows_to_read", 1)
+    refused = auth_client.post(url, body, format="json")
+    assert refused.status_code == 400 and "row/byte ceiling" in refused.content.decode()
+
+
 def _closed_row_ids(client, project, items, *, row_type):
     from tracer.models.eval_task import EvalTask
     from tracer.services.eval_tasks.sampling.policy import validate_policy
@@ -1609,3 +1752,94 @@ def test_fractional_window_in_raw_runtime_and_verified_summary(skill_query_clien
         filters=[skill("version_id", VERSION)], verified_identities=identities
     )
     assert native_rows(summary)[0]["traces"] == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_mounted_span_graph_charges_admissible_stamps_only(
+    auth_client, observe_project, skill_query_client, settings, monkeypatch
+):
+    from clickhouse_driver.errors import ServerException
+
+    from conftest import _ch_test_native_client
+    from tracer.services.clickhouse import graph_dispatch
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.views import observation_span
+
+    project = str(observe_project.pk)
+    excluded_start = START + timedelta(minutes=10)
+    allowed_start = START + timedelta(minutes=20)
+    template = span_row(project, "scope", name="llm.chat", start_time=excluded_start)
+    allowed = span_row(project, "allowed", name="llm.chat", start_time=allowed_start)
+    excluded = [{**template, "id": f"{i:016x}"} for i in range(1025)]
+    # A stale allowed stamp can nominate this key. Even after a parts merge,
+    # replay must see the newer revision inside the excluded interval.
+    stale = {
+        **excluded[1],
+        "resource_attributes": {"service.name": "earlier-writer"},
+        "start_time": allowed_start,
+        "created_at": START - timedelta(seconds=1),
+    }
+    insert_rows(skill_query_client, [*excluded, stale, allowed])
+    settings.DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER = ""
+    # Exercise the mounted inline read. Neither a warm cache nor the cost
+    # estimate should keep the graph statement from reaching the test DB.
+    cache_calls = []
+
+    def cold(**kwargs):
+        cache_calls.append(kwargs.get("schedule_on_miss", True))
+        return None
+
+    monkeypatch.setattr(graph_dispatch, "_read_or_refresh_exact_graph", cold)
+    monkeypatch.setattr(
+        graph_dispatch, "estimate_raw_graph_scan_rows", lambda **kwargs: 1026
+    )
+    filters = [
+        _date_filter("between", [START.isoformat(), END.isoformat()]),
+        skill("in_scope", VERSION),
+    ]
+    exclusion = _date_filter(
+        "not_between", [excluded_start.isoformat(), allowed_start.isoformat()]
+    )
+
+    def post(items):
+        return auth_client.post(
+            "/tracer/observation-span/get_graph_methods/",
+            {
+                "project_id": project,
+                "interval": "hour",
+                "req_data_config": {"id": "traffic", "type": "SYSTEM_METRIC"},
+                "filters": items,
+            },
+            format="json",
+        )
+
+    with _ch_test_native_client(database=skill_query_client.database) as native:
+        client = ClickHouseClient(host="unused.invalid", pool_size=1)
+        monkeypatch.setattr(client, "_create_client", lambda: native)
+        service = AnalyticsQueryService(ch_client=client)
+        monkeypatch.setattr(
+            observation_span, "V2AnalyticsQueryService", lambda: service
+        )
+        narrow = post([*filters, exclusion])
+        assert narrow.status_code == 200, narrow.data
+        assert sum(point["value"] for point in narrow.data["result"]["data"]) == 1
+        broad = post(filters)
+        assert (broad.status_code, broad.data.get("code")) == (
+            503,
+            "runtime_read_too_large",
+        )
+        assert not broad.data.get("result")
+
+        def unrelated(*args, **kwargs):
+            raise ServerException(
+                "other throwIf: while executing throwIf(x, 'Skill load replay key budget exceeded')",
+                code=395,
+            )
+
+        monkeypatch.setattr(service, "execute_ch_query", unrelated)
+        broken = post(filters)
+        assert (broken.status_code, broken.data.get("code")) == (500, "server_error")
+    # Only the cold-cache probes ran; no background retry of the same input.
+    assert cache_calls == [False] * 3

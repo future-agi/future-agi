@@ -13,11 +13,16 @@ import uuid
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from datetime import datetime
+from itertools import islice
 from typing import Any, NamedTuple
 
 from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
     VOICE_NORMALIZED_ROOT_SYSTEM_METRIC_EXPRS,
     voice_conversation_root_expression,
+)
+from tracer.services.clickhouse.skill_replay_errors import (
+    SKILL_REPLAY_OVERFLOW_MESSAGE,
+    SkillReplayBudgetExceeded,
 )
 from tracer.utils.constants import (
     LIST_OPS,
@@ -80,6 +85,16 @@ SKILL_FILTER_COLUMNS = {
 }
 # Bound the ID sets used to discover historical partitions, not the result rows.
 SKILL_REPLAY_BATCH_SIZE = 1024
+# A corrected span can reappear under another service/type/hour long after its
+# first nomination. Bound request-local dedup state independently of a single
+# replay page and above the largest runtime fact rejection sentinel (20,001).
+_SKILL_PAGED_KEY_BUDGET = 50_000
+_SKILL_PAGED_KEY_BYTES = 16 * 1024 * 1024
+# The native driver escapes text into SQL (at most 2x). Leave room for caller
+# binds and fixed SQL; never truncate a key to manufacture a smaller cursor.
+_SKILL_CURSOR_TEXT_BYTES = 8 * 1024
+_SKILL_REPLAY_ARRAY_BYTES = 96 * 1024
+_SKILL_SPAN_ORDER = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
 
 _SKILL_FAILED_COLUMNS = frozenset(
     {
@@ -1897,33 +1912,96 @@ class ClickHouseFilterBuilder:
             f"AND toDate(rev.start_time) IN (SELECT revision_day FROM {days})",
         )
 
-    def _skill_load_key_predicate(
-        self, failed: bool, window: SkillEvidenceWindow | None
-    ) -> str:
-        # Never require a reported name. Only successful loads necessarily
-        # carry this key; neither predicate is valid during revision replay.
-        witness = (
-            ""
-            if failed
-            else (
-                " AND indexHint(has(mapKeys(attrs_string), 'fi.skill.version_id'))"
-                " AND has(attrs_string.keys, 'fi.skill.version_id')"
-            )
-        )
-        # A winning load must itself have an admissible revision. Nominate
-        # only such keys before charging the cap; replay every revision of them.
-        # `bounds` can carry a caller's nomination narrowing (the cohort
-        # summary's selected versions); `condition` carries the exact time
-        # admission (datetime complements). Nomination needs both.
-        admission = (
-            f"{window.bounds} AND ({window.condition})"
-            if window
-            else self._skill_window_bounds()
-        )
+    def _skill_key_window(self, window: SkillEvidenceWindow | None) -> str:
+        # `bounds` can carry additional candidate constraints; `condition`
+        # includes exact datetime exclusions. Neither restricts revision replay.
+        if window and window.bounds != window.condition:
+            return f"{window.bounds} AND ({window.condition})"
+        return self._skill_window_bounds(window)
+
+    @staticmethod
+    def _skill_identity_cte(verified_identities_param: str | None) -> str:
+        if verified_identities_param is None:
+            return ""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", verified_identities_param):
+            raise ValueError("verified_identities_param must be an internal identifier")
+        # One bound array per statement, including when the caller's catalogue
+        # is empty. Avoid IN () and duplicating the array in native wire SQL.
         return (
-            f"{self._project_scope_predicate()} AND {admission}"
-            f"{self._skill_candidate_filter()}{witness} AND name = 'skill.load'"
+            "WITH skill_identity_set AS (SELECT arrayJoin("
+            f"CAST(%({verified_identities_param})s AS Array(Tuple(String, String, String)))) AS identity) "
         )
+
+    def _skill_load_key_predicate(
+        self,
+        failed: bool,
+        window: SkillEvidenceWindow | None,
+        *,
+        verified: bool = False,
+    ) -> str:
+        if failed:
+            witness = "status = 'ERROR' AND attrs_string['fi.skill.version_id'] = ''"
+        else:
+            witness = (
+                "indexHint(has(mapKeys(attrs_string), 'fi.skill.version_id'))"
+                " AND has(attrs_string.keys, 'fi.skill.version_id')"
+                " AND attrs_string['fi.skill.version_id'] != '' AND status != 'ERROR'"
+            )
+            if verified:
+                witness += (
+                    " AND (attrs_string['fi.skill.id'], attrs_string['fi.skill.version_id'], "
+                    "attrs_string['fi.skill.digest']) IN (SELECT identity.1, identity.2, identity.3 FROM skill_identity_set)"
+                )
+        return (
+            f"{self._project_scope_predicate()} AND {self._skill_key_window(window)}"
+            f"{self._skill_candidate_filter()} AND is_deleted = 0 AND {witness} AND name = 'skill.load'"
+        )
+
+    @staticmethod
+    def _capped_skill_keys(distinct_keys_sql: str) -> str:
+        # Limit distinct keys (not evidence rows) without ordering: admission
+        # can stop after the first excess key, and never returns a prefix.
+        cap = SKILL_REPLAY_BATCH_SIZE
+        return (
+            "SELECT project_id, trace_id, id FROM (SELECT *, count() OVER () AS key_count "
+            f"FROM ({distinct_keys_sql} LIMIT {cap + 1})) "
+            f"WHERE throwIf(key_count > {cap}, '{SKILL_REPLAY_OVERFLOW_MESSAGE}') = 0"
+        )
+
+    @staticmethod
+    def _skill_key_page_sql(
+        identity_cte: str, condition: str, *, continued: bool
+    ) -> str:
+        cursor = (
+            f" AND ({_SKILL_SPAN_ORDER}) > "
+            "(toUUID(%(skill_after_project)s), %(skill_after_type)s, %(skill_after_service)s, "
+            "toDateTime(%(skill_after_hour)s, 'UTC'), %(skill_after_trace)s, %(skill_after_id)s)"
+            if continued
+            else ""
+        )
+        # Rank only the already limited, storage-ordered page. Only its last
+        # row needs to carry the two variable-width sort dimensions back to the
+        # client. NULL explicitly refuses a required oversized key/cursor.
+        key_bytes = "length(p.trace_id) + length(p.id)"
+        cursor_ok = (
+            f"p.pos = %(skill_page_size)s AND length(p.observation_type) + "
+            f"length(p.service_name) + {key_bytes} <= {_SKILL_CURSOR_TEXT_BYTES}"
+        )
+        return f"""{identity_cte}SELECT p.project_id AS project_id, p.skill_hour AS skill_hour,
+                if({key_bytes} <= {_SKILL_CURSOR_TEXT_BYTES}, p.trace_id, NULL) AS trace_id,
+                if({key_bytes} <= {_SKILL_CURSOR_TEXT_BYTES}, p.id, NULL) AS id,
+                CAST(if({cursor_ok}, p.observation_type, NULL) AS Nullable(String)) AS observation_type,
+                CAST(if({cursor_ok}, p.service_name, NULL) AS Nullable(String)) AS service_name
+            FROM (
+                SELECT *, row_number() OVER (ORDER BY project_id, observation_type, service_name,
+                                                    skill_hour, trace_id, id) AS pos
+                FROM (
+                    SELECT project_id, observation_type, service_name,
+                           toUnixTimestamp(toStartOfHour(start_time)) AS skill_hour, trace_id, id
+                    FROM spans WHERE {condition}{cursor}
+                    ORDER BY {_SKILL_SPAN_ORDER} LIMIT %(skill_page_limit)s
+                )
+            ) AS p ORDER BY p.pos"""
 
     def iter_skill_load_replays(
         self,
@@ -1933,13 +2011,16 @@ class ClickHouseFilterBuilder:
         failed: bool = False,
         batch_size: int = SKILL_REPLAY_BATCH_SIZE,
         params: dict | None = None,
+        verified_identities_param: str | None = None,
     ) -> Iterator[tuple[str, dict]]:
-        """Yield one exact evidence SELECT per keyset page, in candidate order.
+        """Yield each admitted logical key once, in physical discovery order.
 
         ``read_keys`` must use the caller's deadline and return every row or
         raise. Existence readers may stop on a verified winner. Exact readers
         must exhaust the iterator (an empty *winner* page is not EOF) or fail
-        their read budget. ``params`` can carry a caller's candidate trace IDs.
+        their read budget. ``params`` carries caller binds, including the list
+        of (skill, version, digest) triples named by ``verified_identities_param``
+        when provided. Catalogue matching only applies to successful loads.
         No value obtained from ClickHouse is interpolated back into SQL.
         """
         if not self.project_ids or self.table != "spans":
@@ -1955,35 +2036,85 @@ class ClickHouseFilterBuilder:
             else {"project_id": self.project_ids[0]}
         )
         binds = {**(params or {}), **scope, **skill_window.params}
-        condition = self._skill_load_key_predicate(failed, skill_window)
-        after = None
-        replay = self.skill_live_rows_sql(
-            failed=failed, skill_window=skill_window, bound_load_keys=True
+        identity_cte = self._skill_identity_cte(
+            None if failed else verified_identities_param
         )
+        condition = self._skill_load_key_predicate(
+            failed, skill_window, verified=bool(identity_cte)
+        )
+        replay = self.skill_live_rows_sql(
+            failed=failed,
+            skill_window=skill_window,
+            bound_load_keys=True,
+            verified_identities_param=verified_identities_param,
+        )
+        limit = batch_size + 1
+        seen = set()
+        seen_bytes = 0
+        after = {}
         while True:
-            cursor = (
-                ""
-                if after is None
-                else (" AND (toString(project_id), trace_id, id) > %(skill_after_key)s")
+            sql = self._skill_key_page_sql(
+                identity_cte, condition, continued=bool(after)
             )
-            sql = (
-                f"SELECT DISTINCT project_id, trace_id, id FROM spans WHERE {condition}{cursor} "
-                "ORDER BY toString(project_id), trace_id, id LIMIT %(skill_page_size)s"
+            # One lookahead row proves there is more to read, but is neither
+            # charged nor replayed until the next page. A full final page
+            # doesn't need another statement (or a bindable cursor) to prove EOF.
+            raw_rows = read_keys(
+                sql,
+                {
+                    **binds,
+                    **after,
+                    "skill_page_size": batch_size,
+                    "skill_page_limit": limit,
+                },
             )
-            page_params = {**binds, "skill_page_size": batch_size}
-            if after is not None:
-                page_params["skill_after_key"] = after
-            keys = [
-                (str(row["project_id"]), row["trace_id"], row["id"])
-                for row in read_keys(sql, page_params)
-            ]
-            if len(keys) > batch_size:
+            page = list(islice(raw_rows, limit + 1))
+            if len(page) > limit:
                 raise ValueError("Skill load key page exceeds its bound")
+            continued = len(page) == limit
+            if continued:
+                page.pop()
+            keys = []
+            array_bytes = 2
+            for row in page:
+                if row["trace_id"] is None or row["id"] is None:
+                    raise SkillReplayBudgetExceeded(SKILL_REPLAY_OVERFLOW_MESSAGE)
+                key = (str(row["project_id"]), row["trace_id"], row["id"])
+                if key not in seen:
+                    raw_bytes = sum(len(field.encode("utf-8")) for field in key)
+                    seen_bytes += raw_bytes
+                    if (
+                        len(seen) >= _SKILL_PAGED_KEY_BUDGET
+                        or seen_bytes > _SKILL_PAGED_KEY_BYTES
+                    ):
+                        raise SkillReplayBudgetExceeded(SKILL_REPLAY_OVERFLOW_MESSAGE)
+                    seen.add(key)
+                    # Native binds inline escaped strings; 3 quoted fields plus
+                    # delimiters cost at most 16 + 2x the UTF-8 byte count.
+                    cost = 16 + 2 * raw_bytes
+                    if keys and array_bytes + cost > _SKILL_REPLAY_ARRAY_BYTES:
+                        yield replay, {**binds, "skill_replay_keys": keys}
+                        keys, array_bytes = [], 2
+                    array_bytes += cost
+                    keys.append(key)
             if keys:
                 yield replay, {**binds, "skill_replay_keys": keys}
-            if len(keys) < batch_size:
+            if not continued:
                 return
-            after = keys[-1]
+            # A strict cursor skips any remaining revisions tied at the last
+            # physical key: all have the same logical identity, already replayed.
+            # Advance even if every row in this raw page was previously seen.
+            last = page[-1]
+            if last["observation_type"] is None or last["service_name"] is None:
+                raise SkillReplayBudgetExceeded(SKILL_REPLAY_OVERFLOW_MESSAGE)
+            after = {
+                "skill_after_project": str(last["project_id"]),
+                "skill_after_type": last["observation_type"],
+                "skill_after_service": last["service_name"],
+                "skill_after_hour": last["skill_hour"],
+                "skill_after_trace": last["trace_id"],
+                "skill_after_id": last["id"],
+            }
 
     def skill_live_rows_sql(
         self,
@@ -1991,13 +2122,17 @@ class ClickHouseFilterBuilder:
         failed: bool = False,
         skill_window: SkillEvidenceWindow | None = None,
         bound_load_keys: bool = False,
+        verified_identities_param: str | None = None,
     ) -> str:
         """Live load evidence from the latest eligible revision of each logical span.
 
         Raw SQL callers bind ``skill_window.params`` on the containing query.
         ``translate`` binds them itself. Only legacy callers with no window
         object defer the integer bounds to the enclosing statement, where
-        ``bind_outer_skill_bounds`` can use its frozen dates.
+        ``bind_outer_skill_bounds`` can use its frozen dates. For a catalogue-
+        restricted successful load, bind ``verified_identities_param`` to a
+        list of (skill_id, version_id, digest) triples. An empty list matches
+        nothing; None means no catalogue constraint. Replay is unrestricted.
         """
         if not self.project_ids:
             raise _unsupported_filter_shape("SKILL filters require a project scope")
@@ -2008,6 +2143,9 @@ class ClickHouseFilterBuilder:
         project = self._project_scope_predicate()
         skill_window = skill_window or self.skill_window
         window = skill_window.condition if skill_window else self._skill_window_bounds()
+        identity_cte = self._skill_identity_cte(
+            None if failed else verified_identities_param
+        )
         admitted_version = ""
         if self.table == ResolvedSpanSource.SAMPLING.value:
             # SamplingQuery's dependency_source has already applied its arrival
@@ -2042,12 +2180,11 @@ class ClickHouseFilterBuilder:
                 # Embedded membership/aggregate statements cannot page. Admit
                 # one full batch, or fail explicitly *before* historical replay.
                 # A LIMIT on the evidence itself could silently undercount.
-                cap = SKILL_REPLAY_BATCH_SIZE
-                keys_sql = (
-                    "SELECT project_id, trace_id, id FROM (SELECT *, count() OVER () AS key_count "
-                    "FROM (SELECT DISTINCT project_id, trace_id, id FROM spans WHERE "
-                    f"{self._skill_load_key_predicate(failed, skill_window)} LIMIT {cap + 1})) "
-                    f"WHERE throwIf(key_count > {cap}, 'Skill load replay key budget exceeded') = 0"
+                keys_sql = self._capped_skill_keys(
+                    "SELECT DISTINCT project_id, trace_id, id FROM spans WHERE "
+                    + self._skill_load_key_predicate(
+                        failed, skill_window, verified=bool(identity_cte)
+                    )
                 )
             ctes, replay = self._skill_replay_sql(keys_sql, span_keys=True)
         if failed:
@@ -2079,8 +2216,10 @@ class ClickHouseFilterBuilder:
             outcome = "skill_version_id != '' AND status != 'ERROR'"
             if skill_window and skill_window.loaded_identity_condition:
                 outcome += f" AND ({skill_window.loaded_identity_condition})"
+            if identity_cte:
+                outcome += " AND (skill_id, skill_version_id, skill_digest) IN (SELECT identity.1, identity.2, identity.3 FROM skill_identity_set)"
         return f"""
-            SELECT {projection}, latest_deleted AS is_deleted, live_version AS _version
+            {identity_cte}SELECT {projection}, latest_deleted AS is_deleted, live_version AS _version
             FROM (
                 {ctes}
                 SELECT project_id, trace_id, id AS span_id,
@@ -2295,35 +2434,39 @@ class ClickHouseFilterBuilder:
                     # The stamp/time on an old revision only nominates its
                     # identity. Never let a sibling, removed stamp, moved span,
                     # or an out-of-window tombstone supply the final witness.
-                    source = "sampling_source" if sampled else "spans"
-                    keys = (
-                        f"SELECT DISTINCT project_id, trace_id, id FROM {source} "
-                        f"WHERE {self._project_scope_predicate()} AND {self._skill_window_bounds(window)}"
-                        f"{self._candidate_span_entity_filter('trace_id', 'id')} "
-                        f"AND hasAny({SKILL_VERSION_IDS_SQL}, %({param})s)"
-                    )
+                    candidate = self._candidate_span_entity_filter("trace_id", "id")
                     if sampled:
+                        # The sampling engine already owns this snapshot's rows,
+                        # including deletes, and its own typed read ceiling. Elect
+                        # directly from that relation: no nomination across spans,
+                        # historical replay, or 1,024-key truncation/refusal.
+                        # sampling_source is exactly dependency_source minus deletes;
+                        # a nondeleted winner therefore satisfies the snapshot fence.
                         ctes = ""
-                        replay = (
-                            f"FROM dependency_source AS rev WHERE {self._project_scope_predicate()} "
-                            f"AND (project_id, trace_id, id) IN ({keys})"
-                        )
-                        fence = (
-                            " AND (project_id, trace_id, id, live_version) IN "
-                            "(SELECT project_id, trace_id, id, _version FROM sampling_source)"
-                        )
+                        replay = f"FROM dependency_source AS rev WHERE {self._project_scope_predicate()}{candidate}"
                     else:
+                        # Nominate with the exact window (datetime complements
+                        # included), so stamps from excluded intervals never reach
+                        # historical replay. No key cap: every in-scope span is in
+                        # the exact result, and scope stamps are as numerous as the
+                        # spans themselves, so a load-style 1,024-key refusal would
+                        # fail ordinary span lists and graphs. Replay cost is bounded
+                        # by the admitted keys, i.e. by the answer.
+                        keys = (
+                            "SELECT DISTINCT project_id, trace_id, id FROM spans "
+                            f"WHERE {self._project_scope_predicate()} AND {self._skill_key_window(window)}"
+                            f"{candidate} AND is_deleted = 0 AND hasAny({SKILL_VERSION_IDS_SQL}, %({param})s)"
+                        )
                         ctes, replay = self._skill_replay_sql(keys, span_keys=True)
-                        fence = ""
                     condition = (
                         window.condition if window else self._skill_window_bounds()
                     )
                     span_conditions.append(
                         f"{span_identity} IN (SELECT project_id, trace_id, id FROM ("
-                        f"{ctes} SELECT project_id, trace_id, id, max(_version) AS live_version, "
+                        f"{ctes} SELECT project_id, trace_id, id, "
                         f"argMax(tuple({SKILL_VERSION_IDS_SQL}, is_deleted, rev.start_time), _version) AS scope_state, "
                         f"scope_state.3 AS start_time {replay} GROUP BY project_id, trace_id, id) "
-                        f"WHERE scope_state.2 = 0 AND ({condition}) AND hasAny(scope_state.1, %({param})s){fence})"
+                        f"WHERE scope_state.2 = 0 AND ({condition}) AND hasAny(scope_state.1, %({param})s))"
                     )
                 else:
                     predicate = self._skill_row_predicate(item, failed=failed)

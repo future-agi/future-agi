@@ -3032,6 +3032,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     )
                 return finish(self._gm.success_response(graph))
             except Exception as exc:
+                if (
+                    isinstance(exc, BoundedGraphReadError)
+                    and exc.error_code == "runtime_read_too_large"
+                ):
+                    return finish(
+                        self._gm.custom_error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "Too many skill matches. Narrow the graph's time range or filters.",
+                            code=exc.error_code,
+                        )
+                    )
                 if not (
                     isinstance(exc, BoundedGraphReadError)
                     or is_clickhouse_api_read_unavailable_error(exc)
@@ -5324,11 +5335,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         tasks: dict[str, Any] = {}
 
-        def _probe_skill_links():
+        def _probe_skill_links(client):
             # Discover across the project, not just this page's traces. Only an
             # elected load inside the *full* time filter proves availability.
+            from tracer.services.clickhouse.application_read_policy import (
+                application_read_context,
+            )
             from tracer.services.clickhouse.query_builders.filters import (
                 SkillEvidenceWindow,
+            )
+            from tracer.services.clickhouse.query_service import QueryResult
+            from tracer.services.clickhouse.skill_replay_errors import (
+                SkillReplayBudgetExceeded,
             )
             from tracer.services.clickhouse.v2.query_builders.filters import (
                 ClickHouseFilterBuilderV2,
@@ -5341,11 +5359,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             window = SkillEvidenceWindow.from_bounds(start, end, filters)
             compiler = ClickHouseFilterBuilderV2(project_id=str(project_id))
             calls = rows = payload_bytes = 0
+            expires_at = read_deadline.started + read_deadline.total_ms / 1000
 
             def read_rows(sql, params):
                 nonlocal calls, rows, payload_bytes
-                data = _execute_enrichment(sql, params).data
+                # The optional native lane takes a permit without waiting or
+                # retrying. It clamps max_execution_time at send_query, after
+                # connection setup, to the lesser of timeout_ms and the wall.
+                remaining = read_deadline.remaining_ms(TRACE_LIST_ENRICHMENT_TIMEOUT_MS)
                 calls += 1
+                with application_read_context(execution_cap_ms=remaining):
+                    raw, columns, elapsed, _, _ = client.execute_read_with_progress(
+                        sql,
+                        params,
+                        timeout_ms=remaining,
+                        settings=page_read_settings,
+                        retained_until=expires_at,
+                    )
+                data = QueryResult.from_clickhouse_rows(raw, columns, elapsed).data
                 rows += len(data)
                 payload_bytes += len(
                     json.dumps(
@@ -5354,14 +5385,27 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 )
                 return data
 
-            for replay, params in iter_runtime_load_replays(
-                compiler,
-                read_rows,
-                skill_window=window,
-                max_keys=page_read_settings["max_result_rows"],
-            ):
-                if read_rows(f"SELECT 1 FROM ({replay}) LIMIT 1", params):
-                    return True, calls, rows, payload_bytes
+            try:
+                for replay, params in iter_runtime_load_replays(
+                    compiler,
+                    read_rows,
+                    skill_window=window,
+                    max_keys=page_read_settings["max_result_rows"],
+                ):
+                    if read_rows(f"SELECT 1 FROM ({replay}) LIMIT 1", params):
+                        return True, calls, rows, payload_bytes
+            except Exception as exc:
+                if not (
+                    isinstance(
+                        exc, (SkillReplayBudgetExceeded, TimeoutError, ConnectionError)
+                    )
+                    or is_read_budget_error(exc)
+                    or is_clickhouse_query_error(exc)
+                ):
+                    raise
+                # A local admission refusal, server limit, or incomplete scan
+                # establishes no negative. Keep the page without the hint.
+                return None, calls, rows, payload_bytes
             return False, calls, rows, payload_bytes
 
         content_task_names: list[str] = []
@@ -5435,12 +5479,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         )
         future_names: dict[concurrent.futures.Future, str] = {}
         try:
-            if (
-                project_id
-                and validated_data.get("include_skill_links")
-                and page_number == 0
-            ):
-                future_names[pool.submit(_probe_skill_links)] = "skill_links"
             for task_name, (task_query, task_params) in tasks.items():
                 future = pool.submit(_execute_enrichment, task_query, task_params)
                 future_names[future] = task_name
@@ -5526,13 +5564,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return rows
 
         query_count += len(future_names)
-        skill_links_exist = None
-        probe = enrichment_results.pop("skill_links", None)
-        if probe is not None:
-            skill_links_exist, calls, rows, payload_bytes = probe
-            query_count += calls - 1  # one future, possibly several key/winner reads
-            query_rows_returned += rows
-            query_result_payload_bytes += payload_bytes
         resolved_users = enrichment_results.get("users")
         query_count += max(0, getattr(resolved_users, "query_count", 1) - 1)
         for task_result in enrichment_results.values():
@@ -5973,8 +6004,42 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             metadata_total_rows = cursor_seen_rows
 
         metadata = {"total_rows": metadata_total_rows}
-        if skill_links_exist is not None:
-            metadata["skill_links_exist"] = skill_links_exist
+        # Only spend the remaining wall on the optional project-wide scan once
+        # the required page is complete. A stalled probe must neither occupy a
+        # required worker slot nor make a later required deadline check fail.
+        if (
+            project_id
+            and validated_data.get("include_skill_links")
+            and page_number == 0
+        ):
+            from tracer.services.clickhouse.client import ClickHouseClient
+
+            client = getattr(analytics, "ch_client", None)
+            if getattr(
+                analytics, "supports_per_query_read_settings", False
+            ) and isinstance(client, ClickHouseClient):
+                probe_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
+                    read_deadline.remaining_ms()
+                    future = probe_pool.submit(_probe_skill_links, client)
+                    wait_ms = max(
+                        0, read_deadline.total_ms - read_deadline.elapsed_ms()
+                    )
+                    verdict, calls, rows, payload_bytes = future.result(
+                        timeout=wait_ms / 1000
+                    )
+                    query_count += calls
+                    query_rows_returned += rows
+                    query_result_payload_bytes += payload_bytes
+                    if (
+                        verdict is not None
+                        and read_deadline.elapsed_ms() < read_deadline.total_ms
+                    ):
+                        metadata["skill_links_exist"] = verdict
+                except TimeoutError:
+                    pass  # A pending probe is unknown, not a failed trace page.
+                finally:
+                    probe_pool.shutdown(wait=False, cancel_futures=True)
         if bounded_page is not None:
             published_has_more = (
                 bool(bounded_page.complete and bounded_page.has_more) or cursor_has_more

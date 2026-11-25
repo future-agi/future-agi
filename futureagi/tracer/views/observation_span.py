@@ -3733,6 +3733,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     )
                 return finish(self._gm.success_response(graph))
             except Exception as exc:
+                if (
+                    isinstance(exc, BoundedGraphReadError)
+                    and exc.error_code == "runtime_read_too_large"
+                ):
+                    return finish(
+                        self._gm.custom_error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "Too many skill matches. Narrow the graph's time range or filters.",
+                            code=exc.error_code,
+                        )
+                    )
                 if not (
                     isinstance(exc, BoundedGraphReadError)
                     or is_clickhouse_api_read_unavailable_error(exc)

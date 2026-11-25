@@ -29,10 +29,14 @@ from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
 # Leave room for the v2 wrapper's final SETTINGS under CH's default 256 KiB.
 _SUMMARY_SQL_BYTES = 248 * 1024
 _BIND = re.compile(r"%\(([a-zA-Z_][a-zA-Z_0-9]*)\)s")
-_ARRAY_TYPES = {
-    "summary_verified_identities": "Array(Tuple(String, String, String))",
-    "summary_trace_ids": "Array(String)",
-}
+
+
+def _array_type(name):
+    if name.startswith("summary_verified_identities"):
+        return "Array(Tuple(String, String, String))"
+    if name == "summary_trace_ids":
+        return "Array(String)"
+    return None
 
 
 class ServerBoundCohort(dict):
@@ -56,16 +60,16 @@ def _bounded_statement(sql, params):
 
     # Native binding mode is statement-wide. Preserve the compiler's ordinary
     # tuple/list literal shapes, replacing scalar leaves with bind markers, not
-    # values. The two large relations each travel as ONE protocol parameter.
+    # values. Each bound relation travels as ONE protocol parameter.
     binds = ServerBoundCohort()
 
     def marker(name, value):
-        if name in _ARRAY_TYPES:
+        if array_type := _array_type(name):
             # Send the entire array in one protocol field. Decode a typed data
             # relation on the server instead of relying on nested tuple/string
             # literal quoting (which differs between native driver versions).
             binds[name] = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-            return "JSONExtract({" + name + ":String}, '" + _ARRAY_TYPES[name] + "')"
+            return "JSONExtract({" + name + ":String}, '" + array_type + "')"
         if isinstance(value, (list, tuple)):
             left, right = ("[", "]") if isinstance(value, list) else ("(", ")")
             return (
@@ -98,7 +102,7 @@ def _bounded_statement(sql, params):
     # The template is compiler-owned. User values are sent separately by the
     # driver; never insert the byte measurement's escaped literals in the query.
     refs = {
-        name: marker(name if name in _ARRAY_TYPES else f"bind_{i}", value)
+        name: marker(name if _array_type(name) else f"bind_{i}", value)
         for i, (name, value) in enumerate(used.items())
     }
     typed_sql = sql % refs
@@ -119,32 +123,53 @@ def _selects_failed_load(group):
     )
 
 
+def _identity_constraint(item):
+    value = item["filter_config"]["filter_value"]
+    return _IDENTITY_FIELDS[item["column_id"]], frozenset(
+        value if isinstance(value, list) else [value]
+    )
+
+
 def _catalog_for_groups(identities, groups):
-    """Keep the union of possible successful-load witnesses, not their intersection."""
-    alternatives = []
-    for group in groups.values():
+    """Separate positive load witnesses from identities that can exclude a trace."""
+    positives, excluded, exclusion_groups = [], {}, set()
+    for key, group in groups.items():
         loads = [item for item in group if item["column_id"] not in _TRACE_SELECTORS]
         if not loads or _selects_failed_load(group):
             continue  # Failed rows have no verified identity.
-        constraints = []
-        for item in loads:
-            field = _IDENTITY_FIELDS.get(item["column_id"])
-            config = item["filter_config"]
-            if field is not None and config["filter_op"] in {"equals", "in"}:
-                value = config["filter_value"]
-                constraints.append(
-                    (field, set(value if isinstance(value, list) else [value]))
-                )
-        if not constraints:
-            return list(identities)  # Includes unrestricted anti-membership witnesses.
-        alternatives.append(constraints)
-    if not alternatives:
-        return []
-    return [
-        identity
-        for identity in identities
-        if any(all(identity[i] in values for i, values in arm) for arm in alternatives)
-    ]
+        if all(
+            item["column_id"] in _IDENTITY_FIELDS
+            and item["filter_config"]["filter_op"] in {"not_equals", "not_in"}
+            for item in loads
+        ):
+            # Each NOT EXISTS leaf has its own key budget, regardless of group.
+            # Keep a not_in list together; identical leaves can share a replay.
+            exclusion_groups.add(key)
+            for item in loads:
+                excluded.setdefault(_identity_constraint(item), [])
+        else:
+            # A mixed group needs a positive load even if none of its negative
+            # leaves match. Its other selectors still correlate on that load.
+            positives.append(
+                [
+                    _identity_constraint(item)
+                    for item in loads
+                    if item["column_id"] in _IDENTITY_FIELDS
+                    and item["filter_config"]["filter_op"] in {"equals", "in"}
+                ]
+            )
+
+    verified = []
+    if positives or excluded:  # Handle-only cohorts never read the catalogue.
+        for identity in identities:
+            if any(
+                all(identity[i] in values for i, values in arm) for arm in positives
+            ):
+                verified.append(identity)
+            for (field, values), targets in excluded.items():
+                if identity[field] in values:
+                    targets.append(identity)
+    return verified, excluded.values(), exclusion_groups
 
 
 class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
@@ -206,7 +231,24 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
                 + " AND trace_id IN (SELECT trace_id FROM stored_members)",
             )
 
-        verified = _catalog_for_groups(verified_identities, groups)
+        verified, excluded, exclusion_groups = _catalog_for_groups(
+            verified_identities, groups
+        )
+        absence = []
+        for index, targets in enumerate(excluded):
+            if not targets:
+                continue  # No verified identity can witness this leaf.
+            bind = f"summary_verified_identities_excluded_{index}"
+            params[bind] = targets
+            # Give each exclusion its own key budget, independent of the
+            # population seed. The compiler checks these same triples both
+            # before the cap and after replaying every revision of admitted keys.
+            source = self.compiler.skill_live_rows_sql(
+                skill_window=scope, verified_identities_param=bind
+            )
+            absence.append(
+                f"(project_id, trace_id) NOT IN (SELECT project_id, trace_id FROM ({source}))"
+            )
         if verified:
             # Keep the catalogue in one relation, even when several groups use it.
             params["summary_verified_identities"] = verified
@@ -238,12 +280,18 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
                 else "0 = 1"
             ),
         )
-        # Handle membership is the seed; the canonical root below already has
-        # the status. Only actual load selectors belong in the load compiler.
+        # Handles, canonical roots and identity-only exclusions are evaluated
+        # against the trace. Preserve same-load correlation for all other groups.
         residuals = [
             item
             for item in filters
-            if not (is_skill_filter(item) and item["column_id"] in _TRACE_SELECTORS)
+            if not (
+                is_skill_filter(item)
+                and (
+                    item["column_id"] in _TRACE_SELECTORS
+                    or item.get("group", 0) in exclusion_groups
+                )
+            )
         ]
         plan = compile_exact_graph_row_predicates(
             residuals,
@@ -278,8 +326,7 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
             "is_deleted",
         ]
         values += [f"toUInt8(ifNull(({predicate}), 0))" for predicate in predicates]
-        # At most one load group is needed to seed the population. The shared
-        # compiler still enforces ALL groups (including absence) against winners.
+        # At most one positive load group is needed to seed the population.
         witness_group = next(
             (
                 group
@@ -332,6 +379,8 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
         if witness_group is None:
             values.append(f"toUInt8({in_window})")
             having += f" AND max(state.{len(values)}) = 1"
+        if absence:
+            members = f"SELECT project_id, trace_id FROM ({members}) WHERE {' AND '.join(absence)}"
         ctes.append(f"members AS ({members})")
         return _bounded_statement(
             f"""
