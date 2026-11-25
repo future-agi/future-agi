@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { fetchRoute } from '../../lib/backend-request';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { exactPath } from '../../lib/url';
 import { SHARED_ISSUE } from './shared-issue.payload';
@@ -17,7 +18,6 @@ import {
   type Ids,
   type IssuePhase,
 } from './run-epoch-from-issue.payload';
-
 // The isolated E2E stack has no Enterprise license (fix_my_agent is
 // requires_license), no Error Feed seeder, no builder and no simulation runner,
 // so it cannot hold an issue, a drafted import, a baseline or an epoch. Stub only
@@ -55,7 +55,7 @@ async function stubApi(page: Page, ids: Ids) {
 
   // The real capabilities, with the Error Feed and Epoch switched on.
   await page.route(endsWith('/api/capabilities/'), async (route: Route) => {
-    const response = await route.fetch();
+    const response = await fetchRoute(route);
     const json = await response.json();
     json.features = {
       ...json.features,

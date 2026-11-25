@@ -3,17 +3,15 @@ import { useMemo, useState } from "react";
 import {
   Alert,
   Box,
-  Button,
   CircularProgress,
   Radio,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import ErrorState from "src/components/error-state";
-import Iconify from "src/components/iconify";
 import Field from "src/sections/simulate/environments/components/Field";
+import CodeEnvValues from "src/sections/simulate/environments/buildDrawer/forms/CodeEnvValues";
 import { TextLink } from "./connectBits";
 import { frameworkLabel } from "./frameworkLabels";
 import { MONO } from "./connectStyles";
@@ -236,13 +234,13 @@ export function AgentDetails({
   extra,
   onExtra,
 }) {
-  const names = [...envNames, ...extra.filter((n) => !envNames.includes(n))];
-  const [draft, setDraft] = useState("");
-  const addName = () => {
-    const trimmed = draft.trim().toUpperCase();
-    if (!trimmed || names.includes(trimmed)) return;
-    onExtra([...extra, trimmed]);
-    setDraft("");
+  const onValues = (next) => {
+    Object.entries(next).forEach(([envName, value]) => {
+      if ((values[envName] ?? "") !== value) onValue(envName, value);
+    });
+    Object.keys(values)
+      .filter((envName) => !(envName in next))
+      .forEach((envName) => onValue(envName, ""));
   };
   return (
     <Stack spacing={1.5}>
@@ -253,62 +251,13 @@ export function AgentDetails({
         onChange={onName}
         placeholder="Support agent"
       />
-      <Box>
-        <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>
-          Environment values
-        </Typography>
-        <Typography sx={{ typography: "s3", color: "text.secondary", mb: 1 }}>
-          {names.length
-            ? "The code reads these names. Values are stored as the agent's credentials and never shown again."
-            : "The scan found no environment variable; add any the code needs."}
-        </Typography>
-        <Stack spacing={1}>
-          {names.map((envName) => (
-            <TextField
-              key={envName}
-              size="small"
-              fullWidth
-              type="password"
-              label={envName}
-              value={values[envName] ?? ""}
-              onChange={(e) => onValue(envName, e.target.value)}
-              autoComplete="new-password"
-              inputProps={{
-                "data-testid": `env-value-${envName}`,
-                style: { fontFamily: MONO },
-              }}
-            />
-          ))}
-          <Stack direction="row" spacing={1} alignItems="center">
-            <TextField
-              size="small"
-              placeholder="ANOTHER_NAME"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addName();
-                }
-              }}
-              inputProps={{
-                style: { fontFamily: MONO },
-                "data-testid": "env-name-draft",
-              }}
-              sx={{ maxWidth: 260 }}
-            />
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              onClick={addName}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
-            >
-              Add a value
-            </Button>
-          </Stack>
-        </Stack>
-      </Box>
+      <CodeEnvValues
+        names={envNames}
+        values={values}
+        onValues={onValues}
+        extra={extra}
+        onExtra={onExtra}
+      />
     </Stack>
   );
 }

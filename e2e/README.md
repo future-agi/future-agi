@@ -603,13 +603,18 @@ minute; they are skipped only when the stack never booted.
 
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
-label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
-only if the PR has it when a run starts, so add it, then push or close and reopen the PR: a re-run
-keeps the labels of the run it repeats. Adding a label starts no run, on purpose (see below). The
+label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. A pull request run
+reads the labels the PR carries when it starts, so a label added together with the PR
+(`gh pr create --label e2e-standalone`, which GitHub delivers after `opened`) counts. A label added
+later takes effect on the next push: adding a label starts no run, on purpose (see below). Only
+E2E CI reads `e2e-standalone` this way (Backend CI and Update CI pass the event's `e2e-standalone`
+to the planner, whose E2E fields they do not use); if the read fails, the labels the run's event
+carried stand, with a warning. The read can add the Standalone leg, never drop it. The
 Standalone leg builds the four component images with the layer cache, assembles the app image with
 `bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
 The `upgrade` job in `.github/workflows/standalone-ci.yml` runs weekly, on demand, and on a pull
-request labelled `upgrade-check` (the same rule: add the label, then push). It installs v1.41.1
+request labelled `upgrade-check` (read from the run's event only, unlike `e2e-standalone`: a label
+added with `gh pr create --label` does not count, so add the label, then push). It installs v1.41.1
 with its own `./bin/install` and sends a trace. Then it re-runs `./bin/install` at the head commit
 and checks four things: the install stays on the Distributed setup
 (`COMPOSE_FILE=docker-compose.distributed.yml` in `.env`), its backend, worker, frontend and gateway
@@ -705,7 +710,7 @@ workflows either. The merge queue re-tests every merge into dev. For a retarget,
 (`.github/workflows/retarget-proof.yml`) first checks that GitHub delivered the retarget with a
 merge of the head onto the new base's current tip. GitHub often sends a retarget, its automatic
 ones included, with the merge from before it; then that check fails and nothing else runs, and a
-push or a close and reopen lets the pull request's own runs test the new base. Otherwise it calls
+push lets the pull request's own runs test the new base. Otherwise it calls
 Backend CI and E2E CI on that merge. Their jobs appear as `retarget-backend / …` and
 `retarget-e2e / …`, never under a required name, and they never share or cancel the pull request's
 own runs. Like a merge group, its backend leg runs without the private package: no secrets are
@@ -720,7 +725,7 @@ not at merge time: the base can move after it. A receipt is written by the produ
 workflow, which for a pull request comes from that pull request's merge commit, so this check has
 the same trust as the required checks. If `CI_SCOPE_MODE` ever narrows the suites, a retargeted
 pull request whose suite was not selected records no receipt and stays red into main. Until the
-repository owner makes it required on main, push or reopen after a retarget into main if it is
+repository owner makes it required on main, push a commit after a retarget into main if it is
 red. Update CI is not required and still starts on edits and labels (`update-rehearsal` starts the
 Real rehearsals).
 

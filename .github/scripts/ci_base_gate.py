@@ -347,9 +347,8 @@ def evidence(gh, repo, pr, now):
 
 
 FIX = (
-    "Push a commit, or close and reopen the pull request, to run Backend CI and"
-    " E2E CI on the new base (a push dismisses approvals; closing turns auto-merge"
-    " off and takes the pull request out of the queue)."
+    "Push a commit to run Backend CI and E2E CI on the new base"
+    " (a push dismisses approvals)."
 )
 
 

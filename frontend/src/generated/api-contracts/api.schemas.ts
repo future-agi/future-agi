@@ -20554,6 +20554,12 @@ export const HarnessEnvironmentApiAgentPolicy = {
   pinned: "pinned",
 } as const;
 
+export interface HarnessEnvironmentAgentRefApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
 export interface HarnessEnvironmentApi {
   id: string;
   /** @minLength 1 */
@@ -20573,10 +20579,19 @@ export interface HarnessEnvironmentApi {
   tools_count: number;
   runs_count: number;
   agent_version: AgentVersionRefApi | null;
+  environment_version: EnvironmentVersionRefApi;
   agent_policy: HarnessEnvironmentApiAgentPolicy;
   last_updated: string;
   created_at: string;
+  agent: HarnessEnvironmentAgentRefApi;
   last_run: HarnessRunSummaryApi;
+}
+
+export interface HarnessEnvironmentStatusCountsApi {
+  building: number;
+  running: number;
+  completed: number;
+  failed: number;
 }
 
 export interface HarnessEnvironmentListResponseApi {
@@ -20588,6 +20603,7 @@ export interface HarnessEnvironmentListResponseApi {
   total_pages: number;
   current_page: number;
   results: HarnessEnvironmentApi[];
+  status_counts: HarnessEnvironmentStatusCountsApi;
 }
 
 /**
@@ -20664,6 +20680,7 @@ export interface HarnessEnvironmentOverviewApi {
   tools_count: number;
   runs_count: number;
   agent_version: AgentVersionRefApi | null;
+  environment_version: EnvironmentVersionRefApi;
   agent_policy: HarnessEnvironmentOverviewApiAgentPolicy;
   last_updated: string;
   created_at: string;
@@ -47070,7 +47087,31 @@ export type SimulateApiHarnessEnvironmentsListParams = {
    */
   limit?: number;
   agent_definition_id?: string;
+  /**
+   * @maxLength 255
+   */
+  search?: string;
+  status?: SimulateApiHarnessEnvironmentsListStatus;
+  agent_type?: SimulateApiHarnessEnvironmentsListAgentType;
 };
+
+export type SimulateApiHarnessEnvironmentsListStatus =
+  (typeof SimulateApiHarnessEnvironmentsListStatus)[keyof typeof SimulateApiHarnessEnvironmentsListStatus];
+
+export const SimulateApiHarnessEnvironmentsListStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type SimulateApiHarnessEnvironmentsListAgentType =
+  (typeof SimulateApiHarnessEnvironmentsListAgentType)[keyof typeof SimulateApiHarnessEnvironmentsListAgentType];
+
+export const SimulateApiHarnessEnvironmentsListAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
 
 export type SimulateApiHarnessEnvironmentsActorViewParams = {
   /**

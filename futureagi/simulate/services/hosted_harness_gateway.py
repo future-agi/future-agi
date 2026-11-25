@@ -16,9 +16,10 @@ import subprocess
 import tarfile
 import tempfile
 import time
+import tokenize
 import uuid
 import zlib
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -798,6 +799,31 @@ def _in_agent_reach(member_name: str, subfolder: str | None) -> bool:
     return parent in {"/".join(parts[:depth]) for depth in range(len(parts))}
 
 
+def _source_texts(archive: bytes, subfolder: str | None) -> Iterator[tuple[str, str]]:
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
+        scanned = 0
+        for member in tar:
+            if not member.isfile() or member.size > _SOURCE_SCAN_MAX_FILE_BYTES:
+                continue
+            if not _in_agent_reach(member.name, subfolder):
+                continue
+            path = "/" + member.name.lower()
+            if any(skip in path for skip in _SOURCE_SCAN_SKIP_DIRS):
+                continue
+            name = path.rsplit("/", 1)[-1]
+            if name not in _SOURCE_SCAN_NAMES and not name.endswith(
+                _SOURCE_SCAN_SUFFIXES
+            ):
+                continue
+            handle = tar.extractfile(member)
+            if handle is None:
+                continue
+            scanned += 1
+            yield name, handle.read().decode("utf-8", "ignore")
+            if scanned >= _SOURCE_SCAN_MAX_FILES:
+                return
+
+
 def detect_source_credentials(
     archive: bytes, *, subfolder: str | None = None
 ) -> tuple[list[str], list[str], int]:
@@ -807,35 +833,126 @@ def detect_source_credentials(
     required_files: set[str] = set()
     scanned = 0
     try:
-        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
-            for member in tar:
-                if not member.isfile() or member.size > _SOURCE_SCAN_MAX_FILE_BYTES:
-                    continue
-                if not _in_agent_reach(member.name, subfolder):
-                    continue
-                path = "/" + member.name.lower()
-                if any(skip in path for skip in _SOURCE_SCAN_SKIP_DIRS):
-                    continue
-                name = path.rsplit("/", 1)[-1]
-                if name not in _SOURCE_SCAN_NAMES and not name.endswith(
-                    _SOURCE_SCAN_SUFFIXES
-                ):
-                    continue
-                handle = tar.extractfile(member)
-                if handle is None:
-                    continue
-                text = handle.read().decode("utf-8", "ignore")
-                scanned += 1
-                for connector, signature in _CONNECTOR_SIGNATURES.items():
-                    if connector not in found and signature.search(text):
-                        found.add(connector)
-                if any(signature.search(text) for signature in _VERTEX_ADC_SIGNATURES):
-                    required_files.add(TARGET_GOOGLE_ADC_ALIAS)
-                if scanned >= _SOURCE_SCAN_MAX_FILES:
-                    break
+        for _name, text in _source_texts(archive, subfolder):
+            scanned += 1
+            for connector, signature in _CONNECTOR_SIGNATURES.items():
+                if connector not in found and signature.search(text):
+                    found.add(connector)
+            if any(signature.search(text) for signature in _VERTEX_ADC_SIGNATURES):
+                required_files.add(TARGET_GOOGLE_ADC_ALIAS)
     except (tarfile.TarError, OSError, EOFError):
         return [], [], scanned
     return sorted(found), sorted(required_files), scanned
+
+
+_API_KEY = r"([A-Z][A-Z0-9_]*_API_KEY)"
+_API_KEY_READS = (
+    re.compile(
+        r"""\b(?:environ(?:\.get\s*\(|\s*\[)|getenv\s*\()\s*["']"""
+        + _API_KEY
+        + r"""["']"""
+    ),
+    re.compile(r"""\bprocess\.env\.""" + _API_KEY + r"\b"),
+    re.compile(r"""\bprocess\.env\[\s*["'`]""" + _API_KEY + r"""["'`]\s*\]"""),
+)
+_SCRIPT_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx")
+_STATEMENT_STARTS = frozenset({tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT})
+_STATEMENT_ENDS = frozenset({tokenize.NEWLINE, tokenize.ENDMARKER})
+_LAYOUT_TOKENS = frozenset({tokenize.NL, tokenize.COMMENT, tokenize.ENCODING})
+
+
+def _code_only(name: str, text: str) -> str:
+    if name.endswith(".py"):
+        return _python_code_only(text)
+    if name.endswith(_SCRIPT_SUFFIXES):
+        return _script_code_only(text)
+    return text
+
+
+def _python_code_only(text: str) -> str:
+    lines = io.StringIO(text).readlines()
+    try:
+        tokens = list(tokenize.generate_tokens(iter(lines).__next__))
+    except (tokenize.TokenError, SyntaxError):
+        return text
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    chars = list(text)
+
+    def blank(token: tokenize.TokenInfo) -> None:
+        start = offsets[token.start[0] - 1] + token.start[1]
+        end = offsets[token.end[0] - 1] + token.end[1]
+        for index in range(start, end):
+            if chars[index] != "\n":
+                chars[index] = " "
+
+    significant = [token for token in tokens if token.type not in _LAYOUT_TOKENS]
+    for token in tokens:
+        if token.type == tokenize.COMMENT:
+            blank(token)
+    index = 0
+    while index < len(significant):
+        previous = significant[index - 1].type if index else tokenize.NEWLINE
+        if significant[index].type != tokenize.STRING or (
+            previous not in _STATEMENT_STARTS
+        ):
+            index += 1
+            continue
+        end = index
+        while end < len(significant) and significant[end].type == tokenize.STRING:
+            end += 1
+        if end == len(significant) or significant[end].type in _STATEMENT_ENDS:
+            for token in significant[index:end]:
+                blank(token)
+        index = end
+    return "".join(chars)
+
+
+def _script_code_only(text: str) -> str:
+    kept: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            kept.append(char)
+            if char == "\\" and index + 1 < len(text):
+                kept.append(text[index + 1])
+                index += 2
+                continue
+            if char == quote or (char == "\n" and quote != "`"):
+                quote = ""
+            index += 1
+            continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = len(text) if newline == -1 else newline
+            continue
+        if text.startswith("/*", index):
+            close = text.find("*/", index + 2)
+            kept.append(" ")
+            index = len(text) if close == -1 else close + 2
+            continue
+        if char in "'\"`":
+            quote = char
+        kept.append(char)
+        index += 1
+    return "".join(kept)
+
+
+def detect_source_api_keys(
+    archive: bytes, *, subfolder: str | None = None
+) -> list[str]:
+    names: set[str] = set()
+    try:
+        for name, text in _source_texts(archive, subfolder):
+            code = _code_only(name, text)
+            for read in _API_KEY_READS:
+                names.update(read.findall(code))
+    except (tarfile.TarError, OSError, EOFError):
+        return []
+    return sorted(names)
 
 
 def detect_source_connectors(archive: bytes) -> tuple[list[str], int]:
