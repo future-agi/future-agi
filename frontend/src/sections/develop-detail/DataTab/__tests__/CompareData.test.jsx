@@ -1396,6 +1396,29 @@ describe("CompareData real Axios build-failure envelope", () => {
     },
   );
 
+  it.each([
+    [
+      "compare_bucket_missing",
+      "Create the private bucket and configure COMPARE_BUCKET_NAME.",
+    ],
+    [
+      "compare_storage_permission_missing",
+      "Grant s3:GetBucketAcl to the comparison storage role.",
+    ],
+  ])("shows the server's storage configuration guidance for %s", async (code, message) => {
+    setup();
+    rejectWith(503, { status: false, code, detail: message, result: message });
+    const failed = startPage();
+    await act(async () => {
+      await failed.pending;
+    });
+    expect(failed.fail).toHaveBeenCalledOnce();
+    expect(failed.success).not.toHaveBeenCalled();
+    expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(message, {
+      variant: "error",
+    });
+  });
+
   it("keeps a real metadata-only 200 as a legitimate empty comparison", async () => {
     replyWith({
       status: true,

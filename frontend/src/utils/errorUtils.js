@@ -19,6 +19,8 @@ const SAFE_VALIDATION_STATUS_CODES = new Set([400, 404, 409, 422]);
 const USER_FACING_ERROR_CODES = new Set([
   ...Object.values(DatasetLimitCheckFailedErrorApiCode),
   VIEWER_READ_ONLY_CODE,
+  "compare_bucket_missing",
+  "compare_storage_permission_missing",
 ]);
 const INTERNAL_ERROR_MARKERS =
   /DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|maximum:\s*\d+|elapsed\s+\d+/i;
