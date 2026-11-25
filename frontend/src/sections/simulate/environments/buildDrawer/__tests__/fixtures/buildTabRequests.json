@@ -1,0 +1,286 @@
+{
+  "github": {
+    "preflight": [
+      {
+        "schema_version": "futureagi.harness-job.v1",
+        "scenario_count": 25,
+        "artifacts": {
+          "level": "full",
+          "retention_days": 30,
+          "allow_bundle_download": false
+        },
+        "metadata": {
+          "name": "agent",
+          "authoring_key": "agent",
+          "observability_enabled": true
+        },
+        "runtime": {
+          "parallelism": 3
+        },
+        "security": {
+          "untrusted_source": true,
+          "read_only_source": true,
+          "allow_privileged": false,
+          "allow_host_runtime_control": false,
+          "allowed_egress_domains": [
+            "api.example.com"
+          ]
+        },
+        "source": {
+          "kind": "github",
+          "repository": "acme/agent",
+          "visibility": "private",
+          "ref": "release",
+          "installation_id": "42"
+        },
+        "agent": {
+          "connector": "auto",
+          "config": {},
+          "secret_refs": {}
+        },
+        "credential_values": {
+          "OPENAI_API_KEY": "sk-test",
+          "LOG_LEVEL": "info"
+        }
+      }
+    ],
+    "secrets": [],
+    "create": [
+      {
+        "schema_version": "futureagi.harness-job.v1",
+        "scenario_count": 25,
+        "artifacts": {
+          "level": "full",
+          "retention_days": 30,
+          "allow_bundle_download": false
+        },
+        "metadata": {
+          "name": "agent",
+          "authoring_key": "agent",
+          "observability_enabled": true
+        },
+        "runtime": {
+          "parallelism": 3
+        },
+        "security": {
+          "untrusted_source": true,
+          "read_only_source": true,
+          "allow_privileged": false,
+          "allow_host_runtime_control": false,
+          "allowed_egress_domains": [
+            "api.example.com"
+          ]
+        },
+        "source": {
+          "kind": "github",
+          "repository": "acme/agent",
+          "visibility": "private",
+          "ref": "release",
+          "installation_id": "42"
+        },
+        "agent": {
+          "connector": "auto",
+          "config": {},
+          "secret_refs": {}
+        },
+        "credential_values": {
+          "OPENAI_API_KEY": "sk-test",
+          "LOG_LEVEL": "info"
+        }
+      },
+      "idem-test"
+    ]
+  },
+  "upload": {
+    "preflight": [
+      {
+        "schema_version": "futureagi.harness-job.v1",
+        "scenario_count": 10,
+        "artifacts": {
+          "level": "full",
+          "retention_days": 30,
+          "allow_bundle_download": false
+        },
+        "metadata": {
+          "name": "agent",
+          "authoring_key": "agent"
+        },
+        "security": {
+          "untrusted_source": true,
+          "read_only_source": true,
+          "allow_privileged": false,
+          "allow_host_runtime_control": false,
+          "allowed_egress_domains": [
+            "api.example.com"
+          ]
+        },
+        "source": {
+          "kind": "archive",
+          "archive_artifact_id": "src-1"
+        },
+        "agent": {
+          "connector": "auto",
+          "config": {},
+          "secret_refs": {}
+        }
+      }
+    ]
+  },
+  "vapi": {
+    "preflight": [
+      {
+        "schema_version": "futureagi.harness-job.v1",
+        "scenario_count": 10,
+        "artifacts": {
+          "level": "full",
+          "retention_days": 30,
+          "allow_bundle_download": false
+        },
+        "metadata": {
+          "name": "asst_1",
+          "authoring_key": "asst_1"
+        },
+        "agent": {
+          "connector": "vapi",
+          "mode": "connect_only",
+          "config": {
+            "assistant_id": "asst_1",
+            "phone_number": "+14155550142",
+            "inbound": false,
+            "target_speaks_first": true
+          },
+          "secret_refs": {},
+          "call_direction": "outbound"
+        },
+        "credential_values": {
+          "VAPI_API_KEY": "vk-1"
+        }
+      }
+    ],
+    "secrets": []
+  },
+  "retellVoice": {
+    "preflight": [
+      {
+        "schema_version": "futureagi.harness-job.v1",
+        "scenario_count": 10,
+        "artifacts": {
+          "level": "full",
+          "retention_days": 30,
+          "allow_bundle_download": false
+        },
+        "metadata": {
+          "name": "agent_1",
+          "authoring_key": "agent_1"
+        },
+        "agent": {
+          "connector": "retell",
+          "mode": "connect_only",
+          "config": {
+            "agent_id": "agent_1",
+            "inbound": true,
+            "target_speaks_first": false
+          },
+          "secret_refs": {},
+          "call_direction": "inbound"
+        },
+        "credential_values": {
+          "RETELL_API_KEY": "rk-1"
+        }
+      }
+    ],
+    "secrets": []
+  },
+  "retellChat": {
+    "preflight": [
+      {
+        "schema_version": "futureagi.harness-job.v1",
+        "scenario_count": 10,
+        "artifacts": {
+          "level": "full",
+          "retention_days": 30,
+          "allow_bundle_download": false
+        },
+        "metadata": {
+          "name": "agent_2",
+          "authoring_key": "agent_2"
+        },
+        "agent": {
+          "connector": "retell_chat",
+          "mode": "connect_only",
+          "config": {
+            "agent_id": "agent_2"
+          },
+          "secret_refs": {}
+        },
+        "credential_values": {
+          "RETELL_API_KEY": "rk-2"
+        }
+      }
+    ]
+  },
+  "livekit": {
+    "preflight": [
+      {
+        "schema_version": "futureagi.harness-job.v1",
+        "scenario_count": 10,
+        "artifacts": {
+          "level": "full",
+          "retention_days": 30,
+          "allow_bundle_download": false
+        },
+        "metadata": {
+          "name": "returns-agent",
+          "authoring_key": "returns-agent"
+        },
+        "agent": {
+          "connector": "livekit",
+          "mode": "connect_only",
+          "config": {
+            "agent_name": "returns-agent",
+            "livekit_url": "wss://demo.livekit.cloud",
+            "target_system_prompt": "You handle returns.",
+            "inbound": true,
+            "target_speaks_first": true
+          },
+          "secret_refs": {},
+          "call_direction": "inbound"
+        },
+        "credential_values": {
+          "LIVEKIT_API_KEY": "lk-key",
+          "LIVEKIT_API_SECRET": "lk-secret"
+        }
+      }
+    ],
+    "secrets": []
+  },
+  "phone": {
+    "preflight": [
+      {
+        "schema_version": "futureagi.harness-job.v1",
+        "scenario_count": 10,
+        "artifacts": {
+          "level": "full",
+          "retention_days": 30,
+          "allow_bundle_download": false
+        },
+        "metadata": {
+          "name": "phone-agent",
+          "authoring_key": "phone-agent"
+        },
+        "agent": {
+          "connector": "phone",
+          "mode": "connect_only",
+          "config": {
+            "phone_number": "+14155550142",
+            "target_system_prompt": "You book tables.",
+            "inbound": true,
+            "target_speaks_first": true
+          },
+          "secret_refs": {},
+          "call_direction": "inbound"
+        }
+      }
+    ]
+  }
+}

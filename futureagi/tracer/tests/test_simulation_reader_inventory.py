@@ -1698,7 +1698,9 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
     },
     "tracer.services.clickhouse.v2.query_builders.session_detail": {
-        "_LIVE_SESSION_SPANS": filed(BY_ID_ALONE, why="session detail by session id"),
+        "_LIVE_SESSION_SPANS_TEMPLATE": filed(
+            BY_ID_ALONE, why="session detail by session id"
+        ),
     },
     "tracer.services.clickhouse.v2.query_builders.session_list": {
         (

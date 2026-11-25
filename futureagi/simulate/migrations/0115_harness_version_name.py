@@ -4,20 +4,23 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('simulate', '0114_harness_certification_files'),
+        ("simulate", "0114_harness_certification_files"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='harnessenvironmentversion',
-            name='name',
-            field=models.CharField(blank=True, db_default='', default='', max_length=80),
+            model_name="harnessenvironmentversion",
+            name="name",
+            field=models.CharField(
+                blank=True, db_default="", default="", max_length=80
+            ),
         ),
         migrations.AddField(
-            model_name='harnesssuiteversion',
-            name='name',
-            field=models.CharField(blank=True, db_default='', default='', max_length=80),
+            model_name="harnesssuiteversion",
+            name="name",
+            field=models.CharField(
+                blank=True, db_default="", default="", max_length=80
+            ),
         ),
     ]

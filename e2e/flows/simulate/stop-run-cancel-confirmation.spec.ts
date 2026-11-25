@@ -36,10 +36,10 @@ interface JobRow {
   cancel_confirmed_by: string;
 }
 
-test('SIM-E2E-037: a stopped Run reads Stop requested while its agent is unconfirmed, and Stopped once the stop is confirmed', {
+test('SIM-E2E-039: a stopped Run reads Stop requested while its agent is unconfirmed, and Stopped once the stop is confirmed', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-037', area: 'simulate',
+    id: 'SIM-E2E-039', area: 'simulate',
     userGoal: "A developer stops a Run and is told Stop requested while the agent's side has not confirmed it stopped, and Stopped only once it has",
     steps: [
       'seed two running Runs in one environment: one whose agent runs at its own URL, one whose agent ran in our sandbox',

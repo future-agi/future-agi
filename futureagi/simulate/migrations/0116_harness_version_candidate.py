@@ -4,30 +4,69 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('simulate', '0115_harness_version_name'),
+        ("simulate", "0115_harness_version_name"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='harnessenvironmentversion',
-            name='discard_reason',
-            field=models.CharField(blank=True, choices=[('user', 'User'), ('set_aside_by_rebuild', 'Set aside by rebuild'), ('rebuild_restored', 'Rebuild restored'), ('superseded', 'Superseded'), ('expired', 'Expired')], max_length=24, null=True),
+            model_name="harnessenvironmentversion",
+            name="discard_reason",
+            field=models.CharField(
+                blank=True,
+                choices=[
+                    ("user", "User"),
+                    ("set_aside_by_rebuild", "Set aside by rebuild"),
+                    ("rebuild_restored", "Rebuild restored"),
+                    ("superseded", "Superseded"),
+                    ("expired", "Expired"),
+                ],
+                max_length=24,
+                null=True,
+            ),
         ),
         migrations.AlterField(
-            model_name='harnessenvironmentversion',
-            name='status',
-            field=models.CharField(choices=[('draft', 'Draft'), ('candidate', 'Candidate'), ('active', 'Active'), ('discarded', 'Discarded')], db_index=True, max_length=16),
+            model_name="harnessenvironmentversion",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("draft", "Draft"),
+                    ("candidate", "Candidate"),
+                    ("active", "Active"),
+                    ("discarded", "Discarded"),
+                ],
+                db_index=True,
+                max_length=16,
+            ),
         ),
         migrations.AlterField(
-            model_name='harnesssuiteversion',
-            name='discard_reason',
-            field=models.CharField(blank=True, choices=[('user', 'User'), ('set_aside_by_rebuild', 'Set aside by rebuild'), ('rebuild_restored', 'Rebuild restored'), ('superseded', 'Superseded'), ('expired', 'Expired')], max_length=24, null=True),
+            model_name="harnesssuiteversion",
+            name="discard_reason",
+            field=models.CharField(
+                blank=True,
+                choices=[
+                    ("user", "User"),
+                    ("set_aside_by_rebuild", "Set aside by rebuild"),
+                    ("rebuild_restored", "Rebuild restored"),
+                    ("superseded", "Superseded"),
+                    ("expired", "Expired"),
+                ],
+                max_length=24,
+                null=True,
+            ),
         ),
         migrations.AlterField(
-            model_name='harnesssuiteversion',
-            name='status',
-            field=models.CharField(choices=[('draft', 'Draft'), ('candidate', 'Candidate'), ('active', 'Active'), ('discarded', 'Discarded')], db_index=True, max_length=16),
+            model_name="harnesssuiteversion",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("draft", "Draft"),
+                    ("candidate", "Candidate"),
+                    ("active", "Active"),
+                    ("discarded", "Discarded"),
+                ],
+                db_index=True,
+                max_length=16,
+            ),
         ),
     ]

@@ -1468,6 +1468,10 @@ func TestTranslateResponse_FinishReasonMapping(t *testing.T) {
 		{"MAX_TOKENS", "length"},
 		{"SAFETY", "content_filter"},
 		{"RECITATION", "content_filter"},
+		{"BLOCKLIST", "content_filter"},
+		{"PROHIBITED_CONTENT", "content_filter"},
+		{"SPII", "content_filter"},
+		{"IMAGE_SAFETY", "content_filter"},
 		{"OTHER", "stop"},
 		{"UNKNOWN_VALUE", "stop"},
 		{"", "stop"},
@@ -1489,6 +1493,70 @@ func TestTranslateResponse_FinishReasonMapping(t *testing.T) {
 					tt.gemini, result.Choices[0].FinishReason, tt.openai)
 			}
 		})
+	}
+}
+
+func TestParseStreamData_FinishReasonMapping(t *testing.T) {
+	tests := []struct {
+		gemini string
+		openai string
+	}{
+		{"STOP", "stop"},
+		{"MAX_TOKENS", "length"},
+		{"SAFETY", "content_filter"},
+		{"RECITATION", "content_filter"},
+		{"BLOCKLIST", "content_filter"},
+		{"PROHIBITED_CONTENT", "content_filter"},
+		{"SPII", "content_filter"},
+		{"IMAGE_SAFETY", "content_filter"},
+		{"OTHER", "stop"},
+		{"UNKNOWN_VALUE", "stop"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.gemini, func(t *testing.T) {
+			state := newStreamState("test-model")
+			data := `{"candidates":[{"content":{"role":"model","parts":[{"text":"test"}]},"finishReason":"` + tt.gemini + `"}]}`
+			chunk, err := state.parseStreamData(data)
+			if err != nil {
+				t.Fatalf("parseStreamData: %v", err)
+			}
+			got := chunk.Choices[0].FinishReason
+			if got == nil || *got != tt.openai {
+				t.Errorf("stream finish reason for %q = %v, want %q", tt.gemini, got, tt.openai)
+			}
+		})
+	}
+}
+
+// A tool call still wins over a safety finish reason, in both paths. This
+// pins the current behaviour; it is not changed here.
+func TestFinishReason_ToolCallWinsOverSafety(t *testing.T) {
+	resp := &geminiResponse{
+		Candidates: []geminiCandidate{
+			{
+				Content: geminiContent{Parts: []geminiPart{
+					{FunctionCall: &geminiFunctionCall{Name: "f", Args: json.RawMessage(`{}`)}},
+				}},
+				FinishReason: "SAFETY",
+			},
+		},
+	}
+	result := translateResponse(resp, "test-model")
+	if got := result.Choices[0].FinishReason; got != "tool_calls" {
+		t.Errorf("non-stream finish reason = %q, want tool_calls", got)
+	}
+
+	state := newStreamState("test-model")
+	if _, err := state.parseStreamData(`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"f","args":{}}}]}}]}`); err != nil {
+		t.Fatalf("parseStreamData: %v", err)
+	}
+	chunk, err := state.parseStreamData(`{"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}`)
+	if err != nil {
+		t.Fatalf("parseStreamData: %v", err)
+	}
+	if got := chunk.Choices[0].FinishReason; got == nil || *got != "tool_calls" {
+		t.Errorf("stream finish reason = %v, want tool_calls", got)
 	}
 }
 

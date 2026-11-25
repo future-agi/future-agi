@@ -79,6 +79,7 @@ def _agent(result):
     agent.findings = []
     agent.synthesis = None
     agent._investigation_complete = False
+    agent._synthesis_is_last_resort = False
     agent._stop_event = None
     agent._converged_at_turn = None
     agent._dominant_dims = {}
