@@ -370,7 +370,9 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     return {k: v for k, v in metadata.items() if k != "observability_refusal"}
 
 
-def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
+def serialize_job(
+    job: HostedHarnessJob, *, turn_totals: dict[uuid.UUID, float] | None = None
+) -> dict[str, Any]:
     from simulate.services.harness_usage import harness_consumption
     from simulate.services.harness_versioning.read import versioning_flags
 
@@ -567,7 +569,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
         "scenarios": scenarios,
         "receipts": receipts,
         "runtime": runtime,
-        "consumption": harness_consumption(job),
+        "consumption": harness_consumption(job, turn_totals=turn_totals),
         "usage_limit": (job.payload.get("metadata") or {}).get("usage_limit"),
         "adjustments": list(
             (job.payload.get("metadata") or {}).get("adjustments") or []
@@ -1744,6 +1746,8 @@ class HostedHarnessProvider:
         return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
 
     def list(self, request) -> Response:
+        from simulate.services.harness_usage import builder_turn_credit_totals
+
         organization = request_organization(request)
         jobs = scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
@@ -1751,7 +1755,8 @@ class HostedHarnessProvider:
             ),
             request,
         ).order_by("-created_at")[:100]
-        return Response([serialize_job(job) for job in jobs])
+        turn_totals = builder_turn_credit_totals([job.id for job in jobs])
+        return Response([serialize_job(job, turn_totals=turn_totals) for job in jobs])
 
     def preflight(self, request) -> Response:
         from simulate.services.hosted_harness import HostedHarnessError
@@ -2166,19 +2171,6 @@ class HostedHarnessProvider:
                     status=status.HTTP_409_CONFLICT,
                 )
         data = request.validated_data
-        if job.state in terminal_states and data["kind"] == "user_message":
-            # After the build, a message starts a builder turn of its own, billed as authoring, so
-            # it is admitted like a build. A running build was admitted already; an answer feeds a
-            # turn already running, and a stop runs none.
-            from simulate.services.harness_usage import require_harness_authoring
-
-            try:
-                require_harness_authoring(str(job.organization_id))
-            except Exception as exc:
-                response = _usage_limit_response(exc)
-                if response is not None:
-                    return response
-                raise
         # Checked before queueing, so a message never waits on a runtime that cannot call back.
         try:
             base_url = _public_base_url(request)
@@ -2197,9 +2189,17 @@ class HostedHarnessProvider:
                     if key != "from_platform"
                 },
                 server_payload={"_author_id": str(request.user.id)},
+                admit_authoring=(
+                    job.state in terminal_states and data["kind"] == "user_message"
+                ),
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
+        except Exception as exc:
+            response = _usage_limit_response(exc)
+            if response is not None:
+                return response
+            raise
         try:
             schedule_conversation_runtime(str(conversation.id), base_url)
         except Exception:
