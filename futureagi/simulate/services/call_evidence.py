@@ -101,8 +101,8 @@ _LEVEL_ALLOWS = {
 # The kit's mark on a contract whose prompt its save copied by code: from the source as
 # written, or a provider's whole prompt. Without it the excerpt is a quote.
 SYSTEM_PROMPT_COPIED = "system_prompt_copied"
-# Hosted connectors whose stored prompt may be the contract's excerpt, not the whole prompt.
-_EXCERPT_CONNECTORS = frozenset({"vapi", "retell", "retell_chat"})
+# Hosted connectors whose run is configured with the whole prompt a person typed.
+_STATED_CONNECTORS = frozenset({"phone", "livekit"})
 _RETELL_TOOL_ROLES = frozenset({"tool_call_invocation", "tool_call_result"})
 _VOICE_TOOL_ROLES = (
     CallTranscript.SpeakerRole.TOOL_CALLS,
@@ -146,6 +146,7 @@ class HostedTrial:
     execution_key: str | None = None
     scenario_key: str | None = None
     contract: Mapping[str, Any] | None = None
+    configured_prompt: str | None = None
 
     def allows(self, artifact_kind: str) -> bool:
         allowed = _LEVEL_ALLOWS.get(self.artifact_level)
@@ -240,6 +241,9 @@ def hosted_trial(call: CallExecution) -> HostedTrial | None:
         execution_key=execution.execution_key,
         scenario_key=execution.source_scenario.scenario_key,
         contract=_job_contract(job.stage_outputs),
+        configured_prompt=_text_or_none(
+            _mapping(agent.get("config")).get("target_system_prompt")
+        ),
     )
 
 
@@ -580,7 +584,12 @@ def _whole_instructions(read: _Read) -> tuple[str, str] | None:
         copied = _copied_prompt(stored_version_contract(version.id))
     if copied is not None:
         return copied
-    if read.trial is not None and read.trial.connector in _EXCERPT_CONNECTORS:
+    if read.trial is not None:
+        # Only a phone or LiveKit run keeps the prompt a person typed. Any other
+        # hosted agent's stored prompt may be the contract's excerpt.
+        text = read.trial.configured_prompt
+        if read.trial.connector in _STATED_CONNECTORS and text and text.strip():
+            return text, "stated_by_the_user"
         return None
     if version is None:
         return None
@@ -832,6 +841,10 @@ def _missing(kind: Kind, cause: Cause, *, note: str | None = None) -> Evidence:
 
 def _not_applicable(kind: Kind) -> Evidence:
     return Evidence(kind=kind, state=State.NOT_APPLICABLE)
+
+
+def _text_or_none(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:

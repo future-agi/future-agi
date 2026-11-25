@@ -13,6 +13,7 @@ import json
 import uuid
 from dataclasses import replace
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -24,9 +25,12 @@ from simulate.models import AgentDefinition, Scenarios
 from simulate.models.agent_setup import AgentVersionSetup
 from simulate.models.chat_message import ChatMessageModel
 from simulate.models.hosted_harness import (
+    HostedHarnessArtifact,
     HostedHarnessAttempt,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessManifest,
+    HostedHarnessScenario,
 )
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
@@ -211,6 +215,7 @@ HOSTED = reader.HostedTrial(
     execution_key="exec-key-trial-0",
     scenario_key="refund-over-limit",
     contract=None,
+    configured_prompt="You are a refunds agent. Never refund over 100.",
 )
 
 
@@ -406,6 +411,33 @@ def _source_agent(agent_version, kind="source"):
         status=AgentVersionSetup.Status.STORED,
         agent_kind=kind,
     )
+
+
+@pytest.mark.django_db
+def test_a_hosted_phone_prompt_is_the_one_its_run_was_configured_with(voice_call):
+    with _hosted(configured_prompt="The prompt the person typed for this run."):
+        evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert evidence.content == "The prompt the person typed for this run."
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("connector", "configured"),
+    [
+        (None, "You are a refunds agent."),
+        ("bland", "You are a refunds agent."),
+        ("phone", ""),
+        ("livekit", None),
+    ],
+)
+def test_a_hosted_prompt_from_an_origin_not_shown_whole_is_not_read(
+    voice_call, connector, configured
+):
+    with _hosted(connector=connector, configured_prompt=configured):
+        evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert evidence.cause == Cause.NO_WHOLE_INSTRUCTIONS
 
 
 @pytest.mark.django_db
@@ -751,8 +783,8 @@ def test_with_no_receipt_attempt_or_trace_digest_the_mark_stays(
     assert evidence.marks == ("may_be_from_another_attempt_or_trial",)
 
 
-def _attempt(organization, workspace):
-    job = HostedHarnessJob.no_workspace_objects.create(
+def _job(organization, workspace, **fields):
+    return HostedHarnessJob.no_workspace_objects.create(
         organization=organization,
         workspace=workspace,
         run_id=uuid.uuid4(),
@@ -764,11 +796,15 @@ def _attempt(organization, workspace):
         max_artifact_bytes=1024,
         deadline_at=timezone.now() + timedelta(hours=1),
         scenario_count=1,
-        payload={},
+        **{"payload": {}, **fields},
     )
+
+
+def _attempt(organization, workspace, job=None, number=1):
+    job = job or _job(organization, workspace)
     return HostedHarnessAttempt.objects.create(
         job=job,
-        attempt_number=1,
+        attempt_number=number,
         token_hash="t" * 64,
         fence_hash="f" * 64,
         expires_at=timezone.now() + timedelta(hours=1),
@@ -1103,3 +1139,115 @@ def test_every_kind_gets_an_answer_and_only_present_ones_carry_content(voice_cal
         else:
             assert one.content is None and one.digest is None
         assert (one.cause is None) == (one.state != State.NOT_CAPTURED)
+
+
+# --- the hosted lookups, on real rows -------------------------------------------
+
+
+@pytest.mark.django_db
+def test_a_hosted_trial_is_read_from_the_calls_own_job(
+    organization, workspace, execution, scenario
+):
+    contract = {"system_prompt_excerpt": "A quote.", "system_prompt_copied": True}
+    job = _job(
+        organization,
+        workspace,
+        payload={
+            "agent": {
+                "connector": "phone",
+                "config": {"target_system_prompt": "The typed prompt."},
+            }
+        },
+        stage_outputs=[{"kind": "build"}, {"kind": "contract", "data": contract}],
+    )
+    _attempt(organization, workspace, job, 1)
+    _attempt(organization, workspace, job, 2)
+    source = HostedHarnessScenario.no_workspace_objects.create(
+        job=job, scenario_key="refund-over-limit", name="Refund over the limit"
+    )
+    calls = [_call(execution, scenario) for _ in range(2)]
+    for index, call in enumerate(calls):
+        HostedHarnessExecution.objects.create(
+            job=job,
+            source_scenario=source,
+            execution_key=f"exec-{index}",
+            trial_index=index,
+            call_execution=call,
+        )
+    # Another scenario's trial is not one of this scenario's.
+    HostedHarnessExecution.objects.create(
+        job=job,
+        source_scenario=HostedHarnessScenario.no_workspace_objects.create(
+            job=job, scenario_key="another", name="Another"
+        ),
+        execution_key="exec-another",
+        trial_index=0,
+        call_execution=_call(execution, scenario),
+    )
+
+    trial = reader.hosted_trial(calls[1])
+
+    assert trial == reader.HostedTrial(
+        job_id=job.id,
+        connector="phone",
+        artifact_level="traces",
+        attempts=2,
+        trials=2,
+        environment_version_id=None,
+        execution_key="exec-1",
+        scenario_key="refund-over-limit",
+        contract=contract,
+        configured_prompt="The typed prompt.",
+    )
+    assert reader.hosted_trial(_call(execution, scenario)) is None
+
+
+class _Stored:
+    def __init__(self, body):
+        self.body = body
+
+    def read(self):
+        return self.body
+
+    def close(self):
+        pass
+
+    def release_conn(self):
+        pass
+
+
+@pytest.mark.django_db
+def test_an_artifact_is_read_only_from_the_calls_job_and_tenant(
+    organization, workspace, execution, scenario
+):
+    own = _job(organization, workspace)
+    other = _job(organization, workspace)
+    for job, key in ((own, "own/key"), (other, "other/key")):
+        HostedHarnessArtifact.no_workspace_objects.create(
+            job=job,
+            sha256=TRACE,
+            kind="world_state",
+            size=2,
+            content_type="application/json",
+            object_key=key,
+        )
+    storage = SimpleNamespace(get_object=lambda bucket, key: _Stored(key.encode()))
+    call = _call(execution, scenario)
+
+    def stored(job, organization_id, workspace_id, kind="world_state"):
+        read = reader._Read(
+            call=call,
+            trial=replace(HOSTED, job_id=job.id),
+            run_kind=RunKind.HOSTED_VOICE,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            max_chars=None,
+        )
+        return reader.stored_artifact(read, f"sha256:{TRACE}", kind)
+
+    with patch("tfc.utils.storage_client.get_storage_client", return_value=storage):
+        assert stored(own, organization.id, workspace.id) == b"own/key"
+        assert stored(other, organization.id, workspace.id) == b"other/key"
+        assert stored(own, organization.id, uuid.uuid4()) is None
+        assert stored(own, uuid.uuid4(), workspace.id) is None
+        assert stored(own, organization.id, workspace.id, kind="log") is None
