@@ -175,13 +175,16 @@ def values_gate(
     *,
     extra_names: Iterable[str] = (),
     generated: set[str] | None = None,
+    required: bool = True,
 ) -> None:
     """Before a build, rebuild or run spends anything: refuse a version with a value
-    under a name the test environment makes itself, or one missing a value the
-    reading lists as required. ``extra_names`` are values the request itself brings;
-    ``generated``, the names the environment makes when the caller read them before
-    taking a lock (else they are read here). The kit's own refusal stays behind this
-    one."""
+    under a name the test environment makes itself, or (with ``required``) one missing
+    a value the reading lists as required. ``extra_names`` are values the request
+    itself brings; ``generated``, the names the environment makes when the caller read
+    them before taking a lock (else they are read here). A run passes
+    ``required=False``: a missing required value only warns there (``variable_missing``
+    on the preview) until runs refuse it too (TH-10773). The kit's own refusal stays
+    behind this one."""
     if runtime is None:
         return
     extra = {str(name) for name in extra_names}
@@ -191,6 +194,8 @@ def values_gate(
         if generated is not None
         else generated_value_names(runtime.agent_version_id),
     )
+    if not required:
+        return
     if not own_credential_set(runtime):
         # A legacy row's values are an environment's refs, not its names.
         return

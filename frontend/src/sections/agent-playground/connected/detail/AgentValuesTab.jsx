@@ -102,8 +102,8 @@ function ValueRow({ row, pending, canEdit, onChange, onRemove, onUndo }) {
         <Typography
           sx={{ typography: "s2", color: "status.warning.fg", mt: 0.5 }}
         >
-          The agent needs this value: builds and runs are refused until it has
-          one again.
+          The agent needs this value: builds are refused until it has one again,
+          and runs warn that it is missing.
         </Typography>
       )}
       {editing && (
@@ -280,7 +280,7 @@ export default function AgentValuesTab() {
         const stillMissing = data?.missing_required_names ?? [];
         if (stillMissing.length) {
           enqueueSnackbar(
-            `Builds and runs are refused until ${stillMissing.join(", ")} ${
+            `Builds are refused until ${stillMissing.join(", ")} ${
               stillMissing.length === 1 ? "has a value" : "have values"
             }`,
             { variant: "warning" },
@@ -323,8 +323,9 @@ export default function AgentValuesTab() {
       )}
       {missing.length > 0 && (
         <Alert severity="warning">
-          The agent needs a value for {missing.join(", ")}. Builds and runs are
-          refused until {missing.length === 1 ? "it has one" : "each has one"}.
+          The agent needs a value for {missing.join(", ")}. Builds are refused
+          until {missing.length === 1 ? "it has one" : "each has one"}, and runs
+          warn that {missing.length === 1 ? "it is" : "they are"} missing.
         </Alert>
       )}
       {values.isError && (

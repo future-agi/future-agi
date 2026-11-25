@@ -462,6 +462,8 @@ def create_selected_harness_run(
                     if runtime is not None
                     else None
                 ),
+                # Until TH-10773, a missing required value warns on a run, not refuses.
+                required=False,
             )
         pins = _pinned_versions(environment, resolved)
         if pins is None:

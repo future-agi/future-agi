@@ -339,7 +339,7 @@ class AgentVersionChangeResponseSerializer(serializers.Serializer):
     created = serializers.BooleanField(read_only=True)
     up_to_date = serializers.BooleanField(read_only=True)
     # Names the reading lists as required that the version has no value for: a
-    # build or run is refused until each has one.
+    # build is refused until each has one; a run warns (until TH-10773).
     missing_required_names = serializers.ListField(
         child=serializers.CharField(), read_only=True
     )

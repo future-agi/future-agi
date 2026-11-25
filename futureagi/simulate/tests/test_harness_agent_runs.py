@@ -493,30 +493,31 @@ class TestWarnings:
 
         assert warning == {
             "code": "variable_missing",
-            "message": (
-                "Runs of this agent version are refused until it has a value for "
-                "API_BASE, DB_URL. Add them in the agent's values."
-            ),
+            "message": "This agent version has no value for API_BASE, DB_URL",
             "piece": "agent",
         }
 
-    def test_the_run_the_preview_warns_of_is_refused_with_the_same_names(
+    def test_a_run_missing_a_required_value_is_created_and_the_preview_warns(
         self, user, workspace, storage, scheduled
     ):
+        # Until TH-10773 a missing required value warns on a run; builds refuse it.
         environment = _cached(user, workspace, "ar-w-var-run", storage)
         a2 = _a2(environment)
         HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=a2).update(
             required_variable_names=["OPENAI_API_KEY", "DB_URL", "API_BASE"]
         )
-        assert "variable_missing" in _codes(self._picked(environment, a2))
-        before = HostedHarnessJob.no_workspace_objects.count()
+        [warning] = [
+            one
+            for one in self._picked(environment, a2)
+            if one["code"] == "variable_missing"
+        ]
+        assert warning["message"] == (
+            "This agent version has no value for API_BASE, DB_URL"
+        )
 
-        with pytest.raises(HostedHarnessError) as refused:
-            _run(environment, VersionPicks(agent_version_id=a2.id), key="w-var")
+        run = _run(environment, VersionPicks(agent_version_id=a2.id), key="w-var")
 
-        assert refused.value.code == "required_values_missing"
-        assert refused.value.details == {"names": ["API_BASE", "DB_URL"]}
-        assert HostedHarnessJob.no_workspace_objects.count() == before
+        assert run.agent_version_id == a2.id
 
     def test_a_missing_provider_key(self, user, workspace, storage, scheduled):
         environment = _cached(user, workspace, "ar-w-provider", storage)

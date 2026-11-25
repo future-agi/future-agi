@@ -265,6 +265,27 @@ def test_the_gate_refuses_a_missing_required_value(agent, production):
     values_gate(runtime, extra_names=["KEY"])
 
 
+def test_a_run_gate_lets_a_missing_required_value_through_but_not_a_made_one(
+    agent, production
+):
+    # Until TH-10773 a run only warns of a missing required value (required=False).
+    values_gate(
+        _runtime(
+            production,
+            credential_names=["DB_URL"],
+            required_variable_names=["DB_URL", "KEY"],
+        ),
+        required=False,
+    )
+    runtime = _runtime(production, credential_names=["AGENT_API_TOKEN", "DB_URL"])
+
+    with patch(CONTRACT, return_value=LOCAL_AUTH):
+        with pytest.raises(HostedHarnessError) as caught:
+            values_gate(runtime, required=False)
+
+    assert caught.value.code == "value_made_by_environment"
+
+
 def test_the_gate_lets_through_what_it_cannot_judge(agent, production):
     # No reading's list, no stored contract: the kit stays the last line.
     values_gate(_runtime(production, required_variable_names=None))

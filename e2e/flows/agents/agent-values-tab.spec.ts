@@ -10,7 +10,7 @@ const valuesPath = (agentId: string, versionId: string) =>
 // frontend/src/sections/agent-playground/connected/detail/AgentValuesTab.jsx ValueRow: one row per name.
 const ROW_PREFIX = 'agent-value-';
 // AgentValuesTab.jsx ValueRow: shown under a required name marked for removal.
-const REQUIRED_WARNING = 'The agent needs this value: builds and runs are refused until it has one again.';
+const REQUIRED_WARNING = 'The agent needs this value: builds are refused until it has one again, and runs warn that it is missing.';
 const UI_READY = 60_000;
 
 // futureagi/simulate/serializers/response/agent_version.py AgentVersionValuesResponseSerializer.
@@ -33,7 +33,7 @@ test(
         'open the agent page on its Values tab',
         'see exactly the two names, the required one marked Required',
         'mark the required name for removal',
-        'see the warning that builds and runs are refused until it has a value again, without saving',
+        'see the warning that builds are refused until it has a value again, without saving',
       ],
       backendChecks: [
         'the values response the page received lists exactly the two names, required only on the first, and holds neither secret',

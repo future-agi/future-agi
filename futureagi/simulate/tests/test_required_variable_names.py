@@ -98,10 +98,8 @@ def test_a_stored_reading_lists_what_the_agent_needs_and_a_run_warns(agent):
 
     assert outcome.status == "stored"
     assert _names(version) == BOTH
-    # The version holds its own values, so the run itself refuses this; the preview says so.
     assert _missing(version) == [
-        "Runs of this agent version are refused until it has a value for "
-        "OPENAI_API_KEY, OPENAI_BASE_URL. Add them in the agent's values."
+        "This agent version has no value for OPENAI_API_KEY, OPENAI_BASE_URL"
     ]
 
 

@@ -1,7 +1,6 @@
 """What a run of the picked versions should be warned about, read without writing.
 
-A warning never blocks a run itself; one that names a refusal says the run's own
-check will refuse it (a required value missing, for a version with its own values). They come in a fixed order: the suite, the agent, then the
+Warnings never block a run. They come in a fixed order: the suite, the agent, then the
 bundle. A failed cache row reads as failed rather than as a miss: the run that meets it
 prepares it again. Cache warnings concern only a run that prepares its bundle; one of the
 defaults without a cached bundle runs as before.
@@ -84,24 +83,10 @@ def _credential_warnings(runtime: HarnessAgentVersionRuntime) -> list[dict[str, 
 
     warnings = []
     names = set(version_credential_names(runtime))
-    own = own_credential_set(runtime)
     required = runtime.required_variable_names
     if required is not None:
         missing = sorted({str(name) for name in required} - names)
-        if missing and own:
-            # The run itself refuses this (values_gate); say so here, so the preview
-            # and the run agree.
-            warnings.append(
-                _warning(
-                    "variable_missing",
-                    "Runs of this agent version are refused until it has a value "
-                    f"for {_names(missing)}. Add "
-                    + ("it" if len(missing) == 1 else "them")
-                    + " in the agent's values.",
-                    "agent",
-                )
-            )
-        elif missing:
+        if missing:
             warnings.append(
                 _warning(
                     "variable_missing",
@@ -109,7 +94,7 @@ def _credential_warnings(runtime: HarnessAgentVersionRuntime) -> list[dict[str, 
                     "agent",
                 )
             )
-    if not own:
+    if not own_credential_set(runtime):
         return warnings
     agent_payload = runtime.agent_payload or {}
     config = agent_payload.get("config") or {}

@@ -89,7 +89,7 @@
 2. open the agent page on its Values tab
 3. see exactly the two names, the required one marked Required
 4. mark the required name for removal
-5. see the warning that builds and runs are refused until it has a value again, without saving
+5. see the warning that builds are refused until it has a value again, without saving
 
 **Backend state verified:**
 

@@ -92,7 +92,9 @@ describe("AgentValuesTab", () => {
     const row = screen.getByTestId("agent-value-DB_URL");
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
 
-    expect(row).toHaveTextContent("builds and runs are refused");
+    expect(row).toHaveTextContent(
+      "builds are refused until it has one again, and runs warn",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Save values" }));
     act(() =>
       mutate.mock.calls[0][1].onSuccess({
@@ -103,7 +105,7 @@ describe("AgentValuesTab", () => {
     );
 
     expect(snackbar).toHaveBeenCalledWith(
-      "Builds and runs are refused until DB_URL has a value",
+      "Builds are refused until DB_URL has a value",
       { variant: "warning" },
     );
   });
