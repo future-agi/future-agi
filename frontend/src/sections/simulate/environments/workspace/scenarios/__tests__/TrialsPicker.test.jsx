@@ -36,3 +36,71 @@ describe("TrialsPicker — which value is chosen", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("TrialsPicker — a custom value out of range", () => {
+  const openCustom = async (
+    user,
+    { scenarioCount = 3, onChange = vi.fn() } = {},
+  ) => {
+    render(
+      <TrialsPicker
+        trials={1}
+        onChange={onChange}
+        scenarioCount={scenarioCount}
+      />,
+    );
+    await user.click(screen.getByText("Repeats: 1"));
+    await user.click(screen.getByRole("menuitemradio", { name: /Custom/ }));
+    const input = screen.getByRole("spinbutton", {
+      name: "Repeats per scenario",
+    });
+    await user.clear(input);
+    return input;
+  };
+
+  it("shows the allowed range while the value fits", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const input = await openCustom(user, { onChange });
+    await user.type(input, "12");
+
+    expect(screen.getByText("1 to 20 repeats")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Set" }));
+    expect(onChange).toHaveBeenCalledWith(12);
+  });
+
+  it("says so and keeps Set off instead of changing 25 to 20", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const input = await openCustom(user, { onChange });
+    await user.type(input, "25{Enter}");
+
+    expect(screen.getByText("Up to 20 repeats")).toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Set" })).toBeDisabled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("refuses 0 rather than changing it to 1", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const input = await openCustom(user, { onChange });
+    await user.type(input, "0{Enter}");
+
+    expect(
+      screen.getByText("Use a whole number from 1 to 20"),
+    ).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("names the 200-run limit when the scenarios times the repeats pass it", async () => {
+    const user = userEvent.setup();
+    const input = await openCustom(user, { scenarioCount: 30 });
+    await user.type(input, "8");
+
+    expect(
+      screen.getByText("Up to 200 runs at once: 30 × 8 is 240"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set" })).toBeDisabled();
+  });
+});

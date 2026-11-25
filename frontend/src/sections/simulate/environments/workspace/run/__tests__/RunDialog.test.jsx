@@ -716,6 +716,24 @@ describe("RunDialog", () => {
     expect(screen.queryByTestId("run-drafts-note")).toBeNull();
   });
 
+  it("keeps Run off and says why when the scenarios times the repeats pass 200", () => {
+    const keys = Array.from({ length: 11 }, (_, i) => `k${i + 1}`);
+    state.members.s3 = members(...keys);
+    renderDialog({ scenarioIds: keys, trials: 20 });
+    expect(screen.getByTestId("run-blocked")).toHaveTextContent(
+      "Up to 200 runs at once: 11 × 20 is 220",
+    );
+    expect(runButton()).toBeDisabled();
+  });
+
+  it("lets a run of exactly 200 start", () => {
+    const keys = Array.from({ length: 10 }, (_, i) => `k${i + 1}`);
+    state.members.s3 = members(...keys);
+    renderDialog({ scenarioIds: keys, trials: 20 });
+    expect(screen.queryByTestId("run-blocked")).not.toBeInTheDocument();
+    expect(runButton()).toBeEnabled();
+  });
+
   it("says why Run is off when the picked suite has no scenarios", async () => {
     const user = userEvent.setup();
     state.members.s2 = [];

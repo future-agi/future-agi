@@ -4,6 +4,7 @@ import {
   Box, Stack, Typography, Button, Tooltip, Popover, TextField,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { MAX_TRIALS, MIN_TRIALS, TRIALS_COPY, trialsProblem } from "./trialsLimits";
 
 // Reliability dial — pick how many times each scenario should run. 1 is the
 // single-shot; 3/5/8 are the common repeat counts; Custom covers anything else
@@ -17,7 +18,7 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0 }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState(String(trials || 1));
 
-  const k = Math.max(1, Math.min(20, Number(trials) || 1));
+  const k = Math.max(MIN_TRIALS, Math.min(MAX_TRIALS, Number(trials) || 1));
   const totalRuns = scenarioCount * k;
   // A value no preset matches was set through Custom, so Custom is the row
   // that shows as chosen.
@@ -29,9 +30,10 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0 }) {
     setCustomOpen(false);
     setCustomValue(String(v));
   };
+  const customProblem = trialsProblem(customValue, scenarioCount);
   const commitCustom = () => {
-    const n = Math.max(1, Math.min(20, Math.floor(Number(customValue) || 1)));
-    apply(n);
+    if (customProblem) return;
+    apply(Number(customValue));
   };
 
   return (
@@ -141,15 +143,26 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0 }) {
                 value={customValue}
                 onChange={(e) => setCustomValue(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") commitCustom(); }}
-                inputProps={{ min: 1, max: 20, style: { width: 56 } }}
+                error={Boolean(customProblem)}
+                inputProps={{
+                  min: MIN_TRIALS,
+                  max: MAX_TRIALS,
+                  "aria-label": "Repeats per scenario",
+                  "aria-describedby": "trials-custom-help",
+                  style: { width: 56 },
+                }}
                 sx={{ "& .MuiOutlinedInput-root": { fontVariantNumeric: "tabular-nums" } }}
               />
-              <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-                1 – 20 repeats
+              <Typography
+                id="trials-custom-help"
+                sx={{ typography: "s3", color: customProblem ? "error.main" : "text.subtitle", flex: 1 }}
+              >
+                {customProblem || TRIALS_COPY.range}
               </Typography>
               <Button
                 size="small" variant="contained"
                 onClick={commitCustom}
+                disabled={Boolean(customProblem)}
               >
                 Set
               </Button>
