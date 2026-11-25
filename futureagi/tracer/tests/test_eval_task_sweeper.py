@@ -450,6 +450,35 @@ class TestRecoverTask:
         assert outcome["restarted"] is True
         assert task.status == EvalTaskStatus.PENDING
 
+    def test_a_restart_whose_run_ended_before_the_handoff_committed_is_swept_again(
+        self, make_task, make_entry, temporal, settings
+    ):
+        """The restart is started inside the handoff transaction. A worker that
+        predates the generation can run it before that commits: its
+        pending -> running write misses the still-FAILED row and it ends at its
+        first state check. The task is then PENDING with undrained work and no
+        live run, which the next tick restarts, opted in to failed tasks or
+        not."""
+        settings.EVAL_TASK_SWEEP_RECOVER_FAILED = True
+        task = make_task(status=EvalTaskStatus.FAILED)
+        make_entry(task)
+
+        assert sweeper.recover_task(task, stale_running_seconds=7_200)["restarted"]
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.PENDING
+        first = task.workflow_generation
+
+        # That run has ended (``temporal`` still describes it as closed).
+        settings.EVAL_TASK_SWEEP_RECOVER_FAILED = False
+        [again] = sweeper.find_stranded_tasks()
+        assert again.pk == task.pk
+
+        assert sweeper.recover_task(again, stale_running_seconds=7_200)["restarted"]
+        again.refresh_from_db()
+        assert temporal["started"] == [str(task.id)] * 2
+        assert again.status == EvalTaskStatus.PENDING
+        assert again.workflow_generation != first
+
 
 @pytest.mark.django_db
 class TestSweepActivity:
