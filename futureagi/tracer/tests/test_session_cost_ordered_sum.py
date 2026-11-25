@@ -1,4 +1,4 @@
-"""Session cost sums render one ordered, compensated reducer.
+"""Session and trace cost sums render one ordered, compensated reducer.
 
 Offline SQL-text checks only; test_session_cost_ordered_sum_ch25.py runs the
 same SQL on ClickHouse. Every expected fragment is a literal, never a call to
@@ -77,6 +77,13 @@ AGGREGATE_SELECT: Final[str] = (
     "uniqExact(trace_id) AS traces_count"
 )
 PLAIN_PER_TRACE_COST: Final[str] = "arraySum(s -> s.5, billable_usage_spans)"
+ORDERED_PER_TRACE_COST: Final[str] = (
+    "arrayMap(ordered_cost_values -> arrayMap(compensated_cost -> "
+    "if(isFinite(compensated_cost), compensated_cost, "
+    "arraySum(ordered_cost_values)), "
+    "[arrayReduce('sumKahan', ordered_cost_values)])[1], "
+    "[arraySort(arrayMap(s -> s.5, billable_usage_spans))])[1]"
+)
 # The user list's known-cost reducer, rendered on the base commit. It must stay
 # byte-identical: user totals keep their own definition.
 KNOWN_COST_REDUCER: Final[str] = "\n".join(
@@ -351,3 +358,44 @@ def test_trace_typed_cost_filter_reads_the_root_span_cost() -> None:
         assert PLAIN_PER_TRACE_COST not in sql
         assert "billable_usage_spans" not in sql
         assert "sumKahan" not in sql
+
+
+# Per-trace cost. These checks belong with the per-trace reducer change.
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param(
+            {
+                "prefix": "latest_",
+                "coverage": "latest_usage_coverage",
+                "source_summary": "latest_source_summary_present",
+                "materialized": True,
+            },
+            id="materialized",
+        ),
+        pytest.param(
+            {
+                "prefix": "live_session_spans.",
+                "coverage": "live_session_spans.usage_coverage",
+                "materialized": True,
+            },
+            id="materialized-without-summary",
+        ),
+        pytest.param({"coverage": "usage_coverage"}, id="projection"),
+        pytest.param(
+            {"prefix": "live.", "coverage": "live.usage_coverage"},
+            id="projection-prefixed",
+        ),
+    ],
+)
+def test_per_trace_cost_uses_the_ordered_sum_in_both_reducer_forms(
+    options: dict[str, Any],
+) -> None:
+    sql = usage_aggregate_sql(**options)
+    assert sql.count(ORDERED_PER_TRACE_COST) == 1
+    assert PLAIN_PER_TRACE_COST not in sql
+    # Token sums are integers and stay plain.
+    for index in (6, 7, 8):
+        assert f"arraySum(s -> s.{index}, billable_usage_spans)" in sql

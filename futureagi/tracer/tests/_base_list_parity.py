@@ -185,7 +185,7 @@ def assert_sql_and_parameters_equal(actual, expected):
 
 # (old literal in the vendored native SQL, new literal), written out in full.
 # Each new side is a literal, never an import of the installed helper, so a
-# later helper change is detected here.
+# later helper change is detected here. The per-trace pair is last.
 NATIVE_DELTA_PAIRS: Final[tuple[tuple[str, str], ...]] = (
     (
         "CAST(NULL, 'Nullable(Float64)'), sum(cost))",
@@ -205,14 +205,22 @@ NATIVE_DELTA_PAIRS: Final[tuple[tuple[str, str], ...]] = (
         "[arrayReduce('sumKahan', ordered_cost_values)])[1], "
         "[arraySort(groupArray(usage_cost))])[1])) AS member_total_cost",
     ),
+    (
+        "arraySum(s -> s.5, billable_usage_spans))",
+        "arrayMap(ordered_cost_values -> arrayMap(compensated_cost -> "
+        "if(isFinite(compensated_cost), compensated_cost, "
+        "arraySum(ordered_cost_values)), "
+        "[arrayReduce('sumKahan', ordered_cost_values)])[1], "
+        "[arraySort(arrayMap(s -> s.5, billable_usage_spans))])[1])",
+    ),
 )
 # Statement name -> occurrences of each old literal in the native statement,
 # one count per NATIVE_DELTA_PAIRS entry. Zeros are asserted, not skipped.
 NATIVE_DELTA_COUNTS: Final[dict[str, tuple[int, ...]]] = {
-    "build_candidate_page_query": (0, 0),
-    "build_candidate_count_query": (0, 0),
-    "build_candidate_cursor_page_query": (0, 0),
-    "build_page_hydration_query": (1, 1),
+    "build_candidate_page_query": (0, 0, 0),
+    "build_candidate_count_query": (0, 0, 0),
+    "build_candidate_cursor_page_query": (0, 0, 0),
+    "build_page_hydration_query": (1, 1, 1),
 }
 
 

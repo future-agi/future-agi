@@ -37,12 +37,18 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
     deterministic_sum_sql,
     ordered_float_sum_sql,
 )
+from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+    ObserveTraceListQueryBuilderV2,
+)
 from tracer.services.clickhouse.v2.query_builders.session_detail import (
     build_session_detail_aggregate_query,
     build_session_detail_traces_query,
 )
 from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_builders.trace_list import (
+    TraceListQueryBuilderV2,
 )
 from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (
     _REMAP_DDL,
@@ -57,6 +63,8 @@ UNIT_ROUNDOFF: Final[float] = 2.0**-53
 PRICES: Final[tuple[float, ...]] = (1.5e-07, 2e-06, 3e-06, 1e-05, 6e-05)
 THREADS: Final[tuple[int, ...]] = (1, 8)
 QueryAndParams = tuple[str, dict[str, Any]]
+# (project, trace, root span, start us, type, service, hour us, version)
+RootIdentity = tuple[str, str, str, int, str, str, int, int]
 
 # Chosen offline: for each array, a plain (unsorted) Kahan pass over the ten
 # rotations used below gives at least two distinct results, both for a
@@ -533,3 +541,93 @@ def test_session_total_contract_for_empty_unknown_one_and_two_traces(
     pair = _insert_session(ch, project, (0.1, 0.2), first_offset=20)
     # Two terms: the compensated sum is the plain IEEE sum, 0.30000000000000004.
     assert _bits(_detail_total(ch, project, pair)) == _bits(0.1 + 0.2)
+
+
+# ---------------------------------------------------------------------------
+# Per-trace cost: one trace whose spans sit in separate parts. This belongs
+# with the per-trace reducer change: without it, the trace's own cost is a
+# plain sum in read order.
+# ---------------------------------------------------------------------------
+
+
+def _root_identity(
+    project: UUID, trace: str, span: str, start: datetime
+) -> RootIdentity:
+    start_us = int(start.timestamp()) * 1_000_000 + start.microsecond
+    hour_us = start_us // 3_600_000_000 * 3_600_000_000
+    return (str(project), trace, span, start_us, "llm", "", hour_us, 1)
+
+
+def test_one_trace_cost_is_one_value_on_every_surface(ch: Any) -> None:
+    project, session, trace = uuid4(), uuid4(), str(uuid4())
+    for index, cost in enumerate((0.1, 0.2, 0.3)):
+        _insert_span(
+            ch,
+            project=project,
+            session=session,
+            trace=trace,
+            span=f"span-{index}",
+            parent="" if index == 0 else "span-0",
+            cost=cost,
+            offset_seconds=index,
+        )
+    # The exact 0.6 below is pinned only because the trace's billable array has
+    # exactly three elements: three live LLM spans, the root among them, each
+    # with a nonzero cost, and nothing else in the trace.
+    assert ch.execute(
+        "SELECT count(), countIf(observation_type = 'llm'), countIf(cost != 0), "
+        "countIf(parent_span_id = '') "
+        "FROM spans FINAL WHERE project_id = %(project)s AND trace_id = %(trace)s "
+        "AND is_deleted = 0",
+        {"project": project, "trace": trace},
+    ) == [(3, 3, 3, 1)]
+    content_builder = TraceListQueryBuilderV2(
+        project_id=str(project), filters=[_time_filter()]
+    )
+    content_query = content_builder.build_content_query(
+        [trace],
+        root_identities=[_root_identity(project, trace, "span-0", START)],
+        include_trace_rollup=True,
+    )
+    observe = ObserveTraceListQueryBuilderV2(
+        project_id=str(project), filters=[_time_filter()]
+    )
+    usage_query = observe.build_usage_sorted_query(
+        [{"column_id": "cost", "direction": "desc"}]
+    )
+
+    def read_all(threads: int | None) -> set[int]:
+        (detail_row,) = _rows(
+            ch,
+            build_session_detail_traces_query(
+                str(project), (str(session),), limit=10, offset=0
+            ),
+            threads=threads,
+        )
+        (content_row,) = _rows(ch, content_query, threads=threads)
+        (usage_row,) = _rows(ch, usage_query, threads=threads)
+        return {
+            _bits(detail_row["total_cost"]),
+            _bits(content_row["trace_rollup_cost"]),
+            _bits(usage_row["cost"]),
+            _bits(_detail_total(ch, project, session, threads=threads)),
+        }
+
+    seen: set[int] = set()
+    for threads in THREADS:
+        seen |= read_all(threads)
+    ch.execute("SYSTEM START MERGES spans")
+    ch.execute("OPTIMIZE TABLE spans FINAL")
+    for threads in THREADS:
+        seen |= read_all(threads)
+    assert seen == {_bits(0.6)}
+
+    matching = ObserveTraceListQueryBuilderV2(
+        project_id=str(project),
+        filters=[
+            _time_filter(),
+            _usage_filter("cost", "greater_than_or_equal", 0.6),
+        ],
+    )
+    rows = _rows(ch, matching.build_filter_match_query([trace]))
+    assert [row["trace_id"] for row in rows] == [trace]
