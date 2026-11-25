@@ -51,7 +51,13 @@ type APIError struct {
 	// sent as x-agentcc-upstream-status so a caller can tell the gateway's
 	// refusal from the vendor's.
 	UpstreamStatus int
+
+	// Set only by the gateway's provider admission constructors, never from the wire.
+	localAdmission bool
 }
+
+// IsLocalAdmission distinguishes a routing refusal from an identically coded upstream error.
+func (e *APIError) IsLocalAdmission() bool { return e.localAdmission }
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
@@ -109,6 +115,20 @@ func ErrTooManyRequests(message string) *APIError {
 
 func ErrServiceUnavailable(message string) *APIError {
 	return newAPIError(http.StatusServiceUnavailable, ErrTypeServer, "all_providers_unavailable", message)
+}
+
+// ErrProviderCircuitOpen reports a local circuit breaker's refusal to dispatch.
+func ErrProviderCircuitOpen() *APIError {
+	err := newAPIError(http.StatusServiceUnavailable, ErrTypeServer, "circuit_open", "Provider circuit is open or at its probe limit")
+	err.localAdmission = true
+	return err
+}
+
+// ErrProvidersUnavailable reports that local selection exhausted the available providers.
+func ErrProvidersUnavailable(message string) *APIError {
+	err := ErrServiceUnavailable(message)
+	err.localAdmission = true
+	return err
 }
 
 func ErrInternal(message string) *APIError {

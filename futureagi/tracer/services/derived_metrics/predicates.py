@@ -63,7 +63,7 @@ def metric_field_id(metric_id) -> str:
     return f"{METRIC_FIELD_PREFIX}{UUID(str(metric_id))}"
 
 
-def decode_metric_field_id(identity: str) -> str:
+def decode_metric_field_id(identity: object) -> str:
     try:
         if not isinstance(identity, str) or not identity.startswith(
             METRIC_FIELD_PREFIX

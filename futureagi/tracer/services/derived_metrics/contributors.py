@@ -134,6 +134,8 @@ def _read_contributors(
                 "Contributor influence is not additive for distinct counts or percentiles."
             )
         formula = field_recipe(definition).formula
+        if formula is None:  # e.g. a custom-kind version with an empty formula.
+            raise MetricInputError("Contributor influence needs a metric formula.")
     else:
         formula = compile_formula(
             definition.formula, [item["alias"] for item in definition.inputs]

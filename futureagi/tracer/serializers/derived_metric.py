@@ -28,7 +28,7 @@ class MetricObservationConditionSerializer(StrictInputSerializer):
 
 class DerivedMetricInputSerializer(StrictInputSerializer):
     alias = serializers.RegexField(r"^[a-z][a-z0-9_]{0,39}$")
-    source = serializers.ChoiceField(choices=["eval", "span"])
+    source = serializers.ChoiceField(choices=["eval", "span"])  # type: ignore[assignment]  # a serializer field, not Field.source
     config_id = serializers.UUIDField(required=False)
     config_hash = serializers.RegexField(
         r"^(?:[a-f0-9]{64})?$", required=False, allow_blank=True, default=""
@@ -119,7 +119,7 @@ class MetricConditionSerializer(StrictInputSerializer):
 
 class MetricFieldSpecSerializer(StrictInputSerializer):
     inputs = DerivedMetricInputSerializer(many=True, required=False)
-    conditions = MetricConditionSerializer(many=True, required=False, max_length=16)
+    conditions = MetricConditionSerializer(many=True, required=False, max_length=16)  # type: ignore[call-arg]  # forwarded to ListSerializer; stubs omit it
     value_alias = serializers.RegexField(r"^[a-z][a-z0-9_]{0,39}$", required=False)
     percentile = serializers.FloatField(min_value=0, max_value=1, required=False)
 
@@ -803,7 +803,7 @@ class MetricWindowSerializer(StrictInputSerializer):
 
 class MetricPreviewRequestSerializer(MetricWindowSerializer):
     version = serializers.IntegerField(min_value=1, required=False)
-    filters = DerivedMetricFilterSerializer(
+    filters = DerivedMetricFilterSerializer(  # type: ignore[call-arg]  # forwarded to ListSerializer; stubs omit it
         many=True, required=False, default=list, max_length=10
     )
     source_run_id = serializers.UUIDField(required=False)
@@ -824,14 +824,14 @@ class MetricPreviewRequestSerializer(MetricWindowSerializer):
 class MetricDraftDefinitionSerializer(DerivedMetricWriteSerializer):
     """An unsaved recipe needs neither a name nor a persistent metric identity."""
 
-    project_id = None
-    name = None
-    description = None
-    expected_version = None
+    project_id = None  # type: ignore[assignment]  # DRF: None drops the inherited field
+    name = None  # type: ignore[assignment]  # DRF: None drops the inherited field
+    description = None  # type: ignore[assignment]  # DRF: None drops the inherited field
+    expected_version = None  # type: ignore[assignment]  # DRF: None drops the inherited field
 
 
 class MetricDraftPreviewRequestSerializer(MetricPreviewRequestSerializer):
-    version = None
+    version = None  # type: ignore[assignment]  # DRF: None drops the inherited field
     project_id = serializers.UUIDField()
     definition = MetricDraftDefinitionSerializer()
     include_samples = serializers.BooleanField(default=True)
@@ -945,7 +945,7 @@ class MetricKpiSerializer(serializers.Serializer):
     complete_through = serializers.DateTimeField(
         allow_null=True, required=False, help_text=_COMPLETE_THROUGH_HELP
     )
-    partial = serializers.BooleanField(required=False, help_text=_PARTIAL_HELP)
+    partial = serializers.BooleanField(required=False, help_text=_PARTIAL_HELP)  # type: ignore[assignment]  # declared field; not BaseSerializer.partial
     nonfinal_buckets = serializers.IntegerField(
         min_value=0,
         required=False,
@@ -981,7 +981,7 @@ class MetricTrendSerializer(serializers.Serializer):
     )
     nonfinal_buckets = serializers.IntegerField(min_value=0, required=False)
     open_units = serializers.IntegerField(min_value=0, required=False)
-    partial = serializers.BooleanField(
+    partial = serializers.BooleanField(  # type: ignore[assignment]  # declared field; not BaseSerializer.partial
         required=False, help_text="true when any point is not_calculated or settling"
     )
     results = MetricTrendPointSerializer(many=True)
@@ -1018,7 +1018,7 @@ class MetricDriversSerializer(serializers.Serializer):
     complete_through = serializers.DateTimeField(
         allow_null=True, required=False, help_text=_COMPLETE_THROUGH_HELP
     )
-    partial = serializers.BooleanField(required=False, help_text=_PARTIAL_HELP)
+    partial = serializers.BooleanField(required=False, help_text=_PARTIAL_HELP)  # type: ignore[assignment]  # declared field; not BaseSerializer.partial
     nonfinal_buckets = serializers.IntegerField(
         min_value=0,
         required=False,
@@ -1045,11 +1045,11 @@ class MetricUnitValuesRequestSerializer(MetricWindowSerializer):
     unit_ids = MetricUnitIdsField(
         child=serializers.CharField(max_length=512), min_length=1, max_length=100
     )
-    context = serializers.ChoiceField(choices=["sessions", "users", "spans", "traces"])
+    context = serializers.ChoiceField(choices=["sessions", "users", "spans", "traces"])  # type: ignore[assignment]  # declared field; not Field.context
 
 
 class MetricFieldsQuerySerializer(StrictInputSerializer):
-    context = serializers.ChoiceField(
+    context = serializers.ChoiceField(  # type: ignore[assignment]  # declared field; not Field.context
         choices=["sessions", "users", "spans", "traces"], default="sessions"
     )
 
@@ -1133,7 +1133,7 @@ class MetricPreviewSerializer(DerivedMetricResultPageSerializer):
     point_status = serializers.CharField()
     summary = serializers.CharField()
     sample_users = MetricUnitValueSerializer(many=True, required=False)
-    sample_units = MetricPreviewSampleSerializer(
+    sample_units = MetricPreviewSampleSerializer(  # type: ignore[call-arg]  # forwarded to ListSerializer; stubs omit it
         many=True, required=False, max_length=20
     )
 

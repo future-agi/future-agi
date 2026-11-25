@@ -304,9 +304,7 @@ class WorkflowTests(unittest.TestCase):
     def test_prs_have_no_paths_or_branches_filter(self):
         on = top_level_block(self.text, "on")
         self.assertRegex(on, r"(?m)^  pull_request:\s*$")
-        self.assertRegex(
-            on, r"(?m)^    types: \[opened, synchronize, reopened, edited\]\s*$"
-        )
+        self.assertRegex(on, r"(?m)^    types: \[opened, synchronize, reopened\]\s*$")
         # A workflow-level paths filter means no check at all on a PR without
         # Python changes, and a required check that never starts never passes.
         self.assertNotRegex(on, r"(?m)^\s*(paths|paths-ignore)\s*:")
@@ -325,30 +323,26 @@ class WorkflowTests(unittest.TestCase):
         on = top_level_block(self.text, "on")
         self.assertRegex(on, r"(?m)^  merge_group:\s*$")
         self.assertIn("    types: [checks_requested]", on)
-        self.assertIn("github.event.changes.title) && github.run_id", self.text)
+        # One candidate group per ref: no event gets a group of its own.
+        self.assertRegex(self.text, r"(?m)^  group: python-lint-.*-candidate$")
 
     def test_the_header_names_the_check_to_require(self):
         header = self.text.split("\non:", 1)[0]
         self.assertIn('The check to require is "Python Lint Pass"', header)
         self.assertNotIn("Advisory", header)
 
-    def test_both_jobs_run_on_every_candidate_but_not_description_edits(self):
-        metadata = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)"
+    def test_both_jobs_run_on_every_candidate(self):
+        # Edits and labels start no run of this workflow: such a run would
+        # become its newest suite and hide the required check (#4332).
         for name in ("ruff-delta", "ruff-self-test"):
             job = job_block(self.text, name)
-            self.assertIn("    if: ${{ !(" + metadata + ") }}", job)
+            self.assertNotRegex(job, r"(?m)^    if:")
             self.assertIn("fetch-depth: 1", job)
         summary = job_block(self.text, "python-lint-pass")
-        # A skipped job under the protected name can itself replace a red
-        # verdict. Metadata-only edits must not issue that name at all.
-        self.assertIn(
-            "name: ${{ "
-            + metadata
-            + " && 'Python lint metadata edit' || 'Python Lint Pass' }}",
-            summary,
-        )
-        self.assertEqual(self.text.count("'Python Lint Pass'"), 1)
-        self.assertIn("    if: ${{ always() && !(" + metadata + ") }}", summary)
+        self.assertIn("    name: Python Lint Pass\n", summary)
+        self.assertIn("    if: ${{ always() }}\n", summary)
+        self.assertEqual(self.text.count("name: Python Lint Pass"), 1)
+        self.assertNotIn("github.event.action", self.text)
         self.assertIn("needs: [ruff-delta, ruff-self-test]", summary)
         self.assertIn("RUFF: ${{ needs.ruff-delta.result }}", summary)
         self.assertIn("SELF_TEST: ${{ needs.ruff-self-test.result }}", summary)

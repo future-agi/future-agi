@@ -1,4 +1,4 @@
-import { request } from "@playwright/test";
+import { newBackendRequest } from "../../lib/backend-request";
 import type { Locator, Page, Route } from "@playwright/test";
 import { test, expect } from "../../lib/scope-actors";
 import { POLL } from "../../lib/state-probe";
@@ -158,7 +158,7 @@ test(
     }>("/agentcc/api-keys/", { name: `e2e-gw-${suffix}` });
     const gatewayKeyId = created.result.gateway_key_id;
 
-    const req = await request.newContext();
+    const req = await newBackendRequest();
     try {
       const deliver = async (
         index: number,

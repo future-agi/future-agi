@@ -103,7 +103,8 @@ def _constant(node: ast.AST) -> float | None:
     Names are finite on complete units; predicates, when defined, are Boolean.
     """
     if isinstance(node, ast.Constant):
-        return float(node.value)
+        # The validated formula AST only holds int/float/bool constants.
+        return float(node.value)  # type: ignore[arg-type]
     if isinstance(node, ast.UnaryOp):
         value = _constant(node.operand)
         if value is not None:
@@ -179,7 +180,8 @@ def compile_formula(text: str, aliases: list[str]) -> Formula:
             return f"v_{node.id}"
         if isinstance(node, ast.Constant) and type(node.value) in (int, float, bool):
             try:
-                value = float(node.value)
+                # The type() check above admits only int/float/bool values.
+                value = float(node.value)  # type: ignore[arg-type]
             except OverflowError as exc:
                 raise FormulaError("Constants must be finite numbers.") from exc
             if not math.isfinite(value) or abs(value) > 1e15:
@@ -244,7 +246,11 @@ def compile_formula(text: str, aliases: list[str]) -> Formula:
             proportionality = 1.0
         elif numerator_constant == 0:
             proportionality = 0.0
-        elif numerator_constant is not None and denominator_constant not in (None, 0):
+        elif (
+            numerator_constant is not None
+            and denominator_constant is not None
+            and denominator_constant != 0
+        ):
             value = numerator_constant / denominator_constant
             if math.isfinite(value):
                 proportionality = value

@@ -23,7 +23,8 @@ jobs:
   test-integrity:
     name: Test integrity (new errors and review warnings)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # A dev-to-main promotion compares thousands of files; 5 minutes cut it off.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:

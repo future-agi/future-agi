@@ -21,7 +21,9 @@ const { listHarnessEnvironments, deleteHarnessEnvironment } = await import(
   "src/api/simulate-environments/harnessEnvironments"
 );
 const { default: MyEnvironmentsTab } = await import("../MyEnvironmentsTab");
-
+const { buildEnvironmentColumns } = await import(
+  "../components/environmentTableColumns"
+);
 
 // A small harness-environments page: the four pill states, two voice rows and
 // two chat rows, with a real description on the first row.
@@ -127,7 +129,9 @@ describe("MyEnvironmentsTable", () => {
   it("maps every harness job to a row with a relative updated time", async () => {
     renderTab();
 
-    expect(await screen.findByText("Customer Support Line")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Customer Support Line"),
+    ).toBeInTheDocument();
     ["Billing Chat Agent", "Repo Triage Bot", "Airline Rebooking"].forEach(
       (name) => expect(screen.getByText(name)).toBeInTheDocument(),
     );
@@ -147,7 +151,7 @@ describe("MyEnvironmentsTable", () => {
     renderTab();
     await screen.findByText("Customer Support Line");
 
-    ["Ready", "Running…", "Building", "Failed"].forEach((label) =>
+    ["Ready", "Running", "Building", "Failed"].forEach((label) =>
       expect(screen.getByText(label)).toBeInTheDocument(),
     );
   });
@@ -172,7 +176,7 @@ describe("MyEnvironmentsTable", () => {
     // Real description, sub-goals count and run state for the first row. The
     // Domain column is gone: §1 sends `domain` verbatim from the submitter's
     // metadata and it is null for nearly every environment.
-    expect(row.getByText("Handles inbound billing calls")).toBeInTheDocument();
+    expect(row.queryByText("Handles inbound billing calls")).toBeNull();
     expect(screen.queryByText("Domain")).toBeNull();
     expect(row.queryByText("Logistics")).toBeNull();
     expect(row.getByText("12")).toBeInTheDocument();
@@ -236,7 +240,6 @@ describe("MyEnvironmentsTable", () => {
     );
   });
 
-
   it("disables the run action while the environment is building", async () => {
     const user = userEvent.setup();
     renderTab();
@@ -265,7 +268,10 @@ describe("MyEnvironmentsTable", () => {
 
     // The footer reflects the server total, not the four rows on screen.
     expect(screen.getByText(/1–25 of 30/)).toBeInTheDocument();
-    expect(listHarnessEnvironments).toHaveBeenCalledWith({ page: 1, limit: 25 });
+    expect(listHarnessEnvironments).toHaveBeenCalledWith({
+      page: 1,
+      limit: 25,
+    });
 
     // The next chevron is the last button in the tab; clicking it asks the
     // backend for the second page.
@@ -273,7 +279,10 @@ describe("MyEnvironmentsTable", () => {
     await user.click(buttons[buttons.length - 1]);
 
     await waitFor(() =>
-      expect(listHarnessEnvironments).toHaveBeenCalledWith({ page: 2, limit: 25 }),
+      expect(listHarnessEnvironments).toHaveBeenCalledWith({
+        page: 2,
+        limit: 25,
+      }),
     );
   });
 
@@ -287,7 +296,9 @@ describe("MyEnvironmentsTable", () => {
 
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Delete environment?")).toBeInTheDocument();
-    expect(within(dialog).getByText("Customer Support Line")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Customer Support Line"),
+    ).toBeInTheDocument();
 
     // Delete invalidates the list, so the refetched page no longer carries the
     // removed row.
@@ -318,7 +329,9 @@ describe("MyEnvironmentsTable", () => {
     await user.click(within(screen.getByRole("menu")).getByText("Delete"));
 
     await user.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }),
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Cancel",
+      }),
     );
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -335,5 +348,47 @@ describe("MyEnvironmentsTable", () => {
     expect(navigate).toHaveBeenCalledWith(
       "/dashboard/simulate/environments/job-support",
     );
+  });
+
+  it("shows the design's columns in order", async () => {
+    renderTab();
+    await screen.findByText("Customer Support Line");
+    const headers = screen
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent.trim())
+      .filter(Boolean);
+    expect(headers).toEqual([
+      "Name",
+      "Status",
+      "Agent type",
+      "Agent",
+      "Last run",
+      "Scenarios",
+      "Sub-goals",
+      "Runs",
+      "Updated",
+    ]);
+  });
+
+  it("puts no Run button on a row", async () => {
+    renderTab();
+    await screen.findByText("Customer Support Line");
+    expect(
+      within(rowFor("Customer Support Line")).queryByRole("button", {
+        name: /^Run/,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the Name column wide enough to read a name beside its version chip", () => {
+    const name = buildEnvironmentColumns({}).find((c) => c.id === "name");
+    expect(name.minSize).toBeGreaterThanOrEqual(280);
+  });
+
+  it("offers no column sorting, since the list API always returns newest first", () => {
+    const sortable = buildEnvironmentColumns({}).filter(
+      (c) => c.enableSorting !== false,
+    );
+    expect(sortable.map((c) => c.id)).toEqual([]);
   });
 });

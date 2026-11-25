@@ -86,27 +86,27 @@ def _scopes_for(model, rows, *, using):
         project_ids = [row.pk for row in rows]
     else:
         project_ids = [row.project_id for row in rows]
-    project_ids = {
+    scope_ids = {
         value if isinstance(value, UUID) else UUID(str(value))
         for value in project_ids
         if value is not None
     }
     project_model = apps.get_model("tracer", "Project")
-    projects = _raw_rows(project_model, using).filter(pk__in=project_ids)
+    projects = _raw_rows(project_model, using).filter(pk__in=scope_ids)
     if name == "tracer.project":
         # Bulk inputs may not exist yet: only persisted visible Projects enroll.
-        project_ids = projects.filter(simulation_agent_id__isnull=True).values_list(
+        scope_ids = projects.filter(simulation_agent_id__isnull=True).values_list(
             "pk", flat=True
         )
     else:
         # Exclude known hidden owners, not deleted/workspace-filtered owners or
         # soft IDs whose Project was hard-deleted. Their fences outlive sources.
-        project_ids.difference_update(
+        scope_ids.difference_update(
             projects.filter(simulation_agent_id__isnull=False).values_list(
                 "pk", flat=True
             )
         )
-    return {PgProjectScope(value) for value in project_ids}
+    return {PgProjectScope(value) for value in scope_ids}
 
 
 def _locked_rows(model, ids, *, using):
@@ -168,8 +168,10 @@ def pg_response_save(save):
 class PgResponseQuerySet(models.QuerySet):
     """Cooperative managers only. Hard deletes stay with the single A06 owner."""
 
+    # _db, _hints, _fields and _not_support_combined_queries are Django-private
+    # QuerySet members that exist at runtime but are absent from django-stubs.
     def _write_alias(self):
-        return self._db or router.db_for_write(self.model, **self._hints)
+        return self._db or router.db_for_write(self.model, **self._hints)  # type: ignore[attr-defined]
 
     def update_or_create(self, *args, **kwargs):
         if not pg_response_hooks_enabled():
@@ -192,7 +194,7 @@ class PgResponseQuerySet(models.QuerySet):
             # Post-write scope resolution relies on stable identities. Native
             # PK reassignment must remain unavailable, not lose its new owner.
             raise PgRevisionUnavailable("primary-key update is unenrolled")
-        self._not_support_combined_queries("update")
+        self._not_support_combined_queries("update")  # type: ignore[attr-defined]
         if self.query.is_sliced:
             raise TypeError("Cannot update a query once a slice has been taken.")
         using = self._write_alias()
@@ -243,10 +245,10 @@ class PgResponseQuerySet(models.QuerySet):
             or self.model._meta.label_lower != "tracer.tracesessionoverlay"
         ):
             return super().delete()
-        self._not_support_combined_queries("delete")
+        self._not_support_combined_queries("delete")  # type: ignore[attr-defined]
         if self.query.is_sliced:
             raise TypeError("Cannot use 'limit' or 'offset' with delete().")
-        if self._fields is not None:
+        if self._fields is not None:  # type: ignore[attr-defined]
             raise TypeError("Cannot call delete() after .values() or .values_list()")
         using = self._write_alias()
         with pg_response_writer(using=using):

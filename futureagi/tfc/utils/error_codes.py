@@ -859,7 +859,6 @@ err_dict = {
     "MEMBER_ALREADY_ACTIVE": ["Cannot Update Role of Active User."],
     "ROLE_NOT_MENTIONED": ["Please mention the updated role of the user."],
     "USER_CANNOT_CHANGE_ROLE": ["You cannot change your own role."],
-    "MEMBER_NOT_IN_ORG": ["User not found in the organization."],
     "UNABLE_TO_UPDATE_ROLE": ["Unable to update role. Please try again."],
     "FAILED_TO_RUN_EVAL": ["Unable to run evaluation. Please try again."],
     "ERROR_AUDIO_UPLOAD": ["Audio upload failed. Try again."],

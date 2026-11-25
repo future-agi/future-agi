@@ -969,7 +969,7 @@ def _compact_ranges(writer, *, deadline, target_rows):
                 raise MetricStateConflict("multiple open range compactions")
             attempt = candidates.first()
             if attempt is None:
-                handoff = {}
+                handoff: dict[str, list[object]] = {}
                 pending = head.published_by.source_ceilings.get(
                     "recovery_pending", False
                 )
@@ -1000,6 +1000,9 @@ def _compact_ranges(writer, *, deadline, target_rows):
         if head.published_by_id == head.checkpoint_attempt_id:
             return head
         return _compact_ranges(writer, deadline=deadline, target_rows=target_rows)
+    # Only the pending-layout path (returned above) can read a null FK here; the
+    # open-candidate path always holds a found or newly begun attempt.
+    assert attempt is not None
     if attempt.state == "prepared" and attempt.ledger_sealed_at is None:
         target_rows = attempt.source_ceilings.get("range_target_rows", RANGE_ROWS)
         try:

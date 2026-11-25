@@ -100,9 +100,16 @@ def unique_latest(rows):
 
 
 @pytest.mark.parametrize("hours", [2, 49])
+@pytest.mark.parametrize(
+    "all_history", [True, False], ids=["zero-slack", "default-slack"]
+)
 def test_same_hour_replacements_different_hour_controls_and_old_child(
-    trace_engine, monkeypatch, hours
+    trace_engine, monkeypatch, settings, hours, all_history
 ):  # noqa: F811 - pytest injects the re-exported trace_engine fixture.
+    if all_history:
+        settings.FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS = 0
+    else:
+        assert subject().filter_seed_witness_slack_hours() == 1
     run, _ = trace_engine
     (metadata,) = run(
         "SELECT sorting_key,engine_full FROM system.tables WHERE database=currentDatabase() AND name='spans'"
@@ -217,21 +224,34 @@ def test_same_hour_replacements_different_hour_controls_and_old_child(
         )
         if row["trace_id"] not in canonical or key > canonical[row["trace_id"]][0]:
             canonical[row["trace_id"]] = (key, row)
-    expected = [
+    ordered = [
         r["trace_id"]
         for _, r in sorted(
             canonical.values(),
             key=lambda pair: (pair[1]["start_time"], pair[1]["trace_id"]),
             reverse=True,
-        )[:25]
+        )
     ]
-    assert expected == [
+    assert ordered[:25] == [
         "z-old-child",
         "y-hour-clear",
         "x-hour-delete",
         *b.names(175, 154),
     ]
     assert len(canonical) == 178
+    # Every other survivor witnesses itself at its root. The old child is
+    # outside even the entire request plus one hour, hence outside every
+    # bounded root slice; only the zero-slack route may acquire its trace.
+    bounded_matches = {
+        row["trace_id"]
+        for row in live
+        if row["attrs_string"].get("company_id") in {"a", "b", "c"}
+        and b.plain(n.END - timedelta(days=7, hours=1))
+        <= row["start_time"]
+        < b.plain(n.END + timedelta(hours=1))
+    }
+    assert matches - bounded_matches == {"z-old-child"}
+    expected = [name for name in ordered if all_history or name in bounded_matches][:25]
     baseline_transport = b.Transport(run)
     with monkeypatch.context() as m:
         m.setattr(Actual, "supports_filter_empty_seed_root_time_discovery", ORIGINAL)
@@ -245,9 +265,34 @@ def test_same_hour_replacements_different_hour_controls_and_old_child(
     )
     assert b.ids(baseline) == expected and b.ids(actual) == expected
     assert typed(actual.rows) == typed(baseline.rows)
-    assert not b.probes(baseline_transport) and b.probes(transport)
+    assert not b.probes(baseline_transport)
     hour = at.replace(minute=0, second=0, microsecond=0)
-    replay = b.seeds(transport)[1][1]
-    assert replay["filter_slice_start"] == b.plain(hour)
-    assert replay["filter_slice_end"] == b.plain(hour + timedelta(hours=1))
-    assert not b.globals_used(transport)
+    if all_history and hours == 2:
+        # The unbounded lane opens four hours at a time: this root is in
+        # the first seed, so there is no empty gap to discover or replay.
+        assert not b.probes(transport)
+        first = b.seeds(transport)[0][1]
+        assert first["filter_slice_start"] == b.plain(n.END - timedelta(hours=4))
+        assert first["filter_slice_end"] == b.plain(n.END)
+    else:
+        assert b.probes(transport)
+        replay = b.seeds(transport)[1][1]
+        replay_end = hour + timedelta(hours=1)
+        width = timedelta(hours=4 if all_history else 1)
+        assert replay["filter_slice_start"] == b.plain(replay_end - width)
+        assert replay["filter_slice_end"] == b.plain(replay_end)
+    # The short-text seed uses the scalar witness CTE too. What makes this
+    # a slice-local seed (even at zero slack) is its *inner* root population;
+    # the global fallback has only the outer root bounds.
+    for query, params, _ in b.seeds(transport):
+        witness, roots = query.split("SELECT trace_id, id AS root_span_id", 1)
+        assert "SELECT trace_id FROM matching_scalar_trace_identities" in roots
+        assert "AND trace_id IN (" in witness
+        assert (
+            "%(filter_slice_start_us)s" in witness
+            and "%(filter_slice_end_us)s" in witness
+        )
+        assert "WHERE parent_span_id IS NULL OR parent_span_id = ''" in witness
+        for bound in ("filter_witness_start_us", "filter_witness_end_us"):
+            assert (bound in params) is (not all_history)
+            assert (f"%({bound})s" in witness) is (not all_history)

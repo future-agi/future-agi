@@ -52,6 +52,29 @@
 - The UI displays the exact ordered graph set returned by the authorized list request at supported page sizes.
 - Above-cap graph requests return at most 100 rows, metadata reflects the cap, and following next_page returns the complete seeded ID set once.
 
+### AGENT-E2E-003 — connecting an agent from a folder asks only for the keys its code reads, then Connect enables
+
+**Goal:** A developer connects an agent from a folder, and the check asks only for the keys the agent's code reads before Connect enables
+
+**Spec:** `flows/agents/connect-folder-preflight.spec.ts:27`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Agents › New agent › Upload a folder
+2. choose the agent folder and wait for the upload
+3. find agents and pick the one found
+4. name it and run preflight
+5. see preflight pass without asking for a key the code only mentions in a comment
+6. connect the agent and land on its page
+
+**Backend state verified:**
+
+- the preflight response the page received is ready to submit and does not name the commented key
+- the scan of the uploaded folder reached found in PG simulate_agent_scan, scoped to the actor org
+- exactly one PG simulate_agent_definition row has the minted name in the actor org after Connect
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
@@ -1631,11 +1654,11 @@
 - the previous entry is retired (deleted = true), not left live beside the new one
 - the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
 
-### EVAL-E2E-016 — shipped link evaluators accept approved links and refuse other destinations
+### EVAL-E2E-016 — shipped link evaluators give correct format verdicts without network requests
 
-**Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
+**Goal:** Run the shipped link evaluators on well-formed links and ordinary prose using format-only validation without contacting any destination
 
-**Spec:** `flows/evals/link-destinations.spec.ts:16`
+**Spec:** `flows/evals/link-destinations.spec.ts:15`
 
 **Tags:** —
 
@@ -1643,15 +1666,15 @@
 
 1. resolve the two shipped system template IDs without rewriting their code
 2. open each system evaluator in the browser
-3. submit approved links, link-free prose and refused destinations in the Custom playground
-4. read exact verdicts and explanations
-5. inspect the exact request set on the owned canary
+3. submit well-formed links including formerly denied, private-host and redirecting destinations, plus link-free prose in the Custom playground
+4. read exact verdicts and explanations for all 16 evaluator and input combinations
+5. require empty browser and Temporal canary journals after every submission
 
 **Backend state verified:**
 
 - both shipped templates retain their system identity and text input contract
-- browser-submitted playground responses match the exact verdict and explanation matrix
-- the owned canary records only approved HEAD requests and never receives refused destinations
+- browser-submitted playground responses match the exact offline verdict and explanation matrix
+- both complete canary journals record zero destination requests in every case
 
 ### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
 
@@ -1855,6 +1878,31 @@
 **Backend state verified:**
 
 - the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
+
+### GW-E2E-023 — request logs tell an unpriced request apart from a free and a priced one
+
+**Goal:** Someone reading the gateway Request Logs can tell a request whose model has no price apart from a request that really cost $0 and from a priced one, in the table and in the request drawer
+
+**Spec:** `flows/gateway/unpriced-request-cost.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision an organization of the test's own, an org provider on the managed mock listing an unpriced, a zero-priced and gpt-4o-mini model, an org config pricing only the zero model at 0, and an org API key
+2. wait for the gateway to hold the pushed org config
+3. send one real chat completion per model with the org key
+4. open Request Logs and read the Cost cell of each of the three rows
+5. hover the Unpriced chip and read its tooltip
+6. open each request's drawer and read its Cost
+
+**Backend state verified:**
+
+- the gateway answers all three completions with HTTP 200, a request id and the requested model
+- PG agentcc_request_log holds exactly the three request ids: unpriced cost 0 with cost_source unpriced, free cost 0 with no cost_source, gpt-4o-mini cost above 0 with cost_source catalogue, all status 200
+- the request-logs list and detail endpoints return the same three request IDs, costs and cost sources as the stored rows
+- the table shows Unpriced with the explanatory tooltip only for the unpriced row, $0.00 for the free row and the formatted API cost for gpt-4o-mini
+- each request drawer shows the same Cost as its table row
 
 ### GW-E2E-024 — Add/Edit Provider saves only the models the user picked or typed
 
@@ -2156,7 +2204,7 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:108`
 
 **Tags:** —
 
@@ -2176,7 +2224,7 @@
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:161`
 
 **Tags:** —
 
@@ -2217,7 +2265,7 @@
 
 **Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end
 
-**Spec:** `flows/observe/list-pagination.spec.ts:220`
+**Spec:** `flows/observe/list-pagination.spec.ts:193`
 
 **Tags:** —
 
@@ -2240,7 +2288,7 @@
 
 **Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation
 
-**Spec:** `flows/observe/list-pagination.spec.ts:446`
+**Spec:** `flows/observe/list-pagination.spec.ts:419`
 
 **Tags:** —
 
@@ -2260,7 +2308,7 @@
 
 **Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1
 
-**Spec:** `flows/observe/list-pagination.spec.ts:538`
+**Spec:** `flows/observe/list-pagination.spec.ts:511`
 
 **Tags:** —
 
@@ -2279,7 +2327,7 @@
 
 **Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists
 
-**Spec:** `flows/observe/list-pagination.spec.ts:592`
+**Spec:** `flows/observe/list-pagination.spec.ts:565`
 
 **Tags:** —
 
@@ -2299,7 +2347,7 @@
 
 **Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it
 
-**Spec:** `flows/observe/list-pagination.spec.ts:671`
+**Spec:** `flows/observe/list-pagination.spec.ts:644`
 
 **Tags:** —
 
@@ -2307,8 +2355,8 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10 (Next enabled)
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. capture the Next label's DOM node and watch the pager subtree for ~1.5s
+3. capture the Next label's DOM node and observe it while alternating row heights for ~1.5s
+4. verify each row-height change re-renders the pager ancestor (INT-06)
 5. confirm the node is never removed from the DOM and stays connected
 
 **Backend state verified:**
@@ -2319,7 +2367,7 @@
 
 **Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render
 
-**Spec:** `flows/observe/list-pagination.spec.ts:737`
+**Spec:** `flows/observe/list-pagination.spec.ts:698`
 
 **Tags:** —
 
@@ -2327,10 +2375,10 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. install capture-phase pointer/click counters on the pager root
-5. press-dwell-release on Next and confirm the page advanced with pointerdown === click === 1
-6. repeat the same dwell-click on Back
+3. install capture-phase pointer/click counters on the pager root
+4. hold Next down while changing row heights and verifying the ancestor re-renders, then release
+5. confirm the page advanced with one press, release and click
+6. repeat the same dwell-click on Back and confirm the pager returns to page 1
 
 **Backend state verified:**
 
@@ -2340,7 +2388,7 @@
 
 **Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position
 
-**Spec:** `flows/observe/list-pagination.spec.ts:806`
+**Spec:** `flows/observe/list-pagination.spec.ts:761`
 
 **Tags:** —
 
@@ -2380,7 +2428,7 @@
 
 **Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced
 
-**Spec:** `flows/observe/list-pagination.spec.ts:846`
+**Spec:** `flows/observe/list-pagination.spec.ts:801`
 
 **Tags:** —
 
@@ -2400,7 +2448,7 @@
 
 **Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on
 
-**Spec:** `flows/observe/list-pagination.spec.ts:933`
+**Spec:** `flows/observe/list-pagination.spec.ts:888`
 
 **Tags:** —
 
@@ -3271,7 +3319,7 @@
 **Browser observations:**
 
 - /dashboard/simulate lands on Environments
-- harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>
+- harness lands on Environments, harness/new on My Environments with the Build environment drawer open (build= in the address), harness/<id> on environments/<id>
 - simulator-agent lands on Environments
 - personas lands on the Environments Personas tab
 - the Personas tab is selected and shows the persona search
@@ -3715,3 +3763,30 @@
 - the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
 - B reading A's import answers 404, through A's environment and through B's own
 - a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending
+
+### SIM-E2E-037 — a Viewer opens a built environment, finds Run and Rename locked with the reason, and is refused a run
+
+**Goal:** A Viewer of a workspace opens one of its built environments, sees that they can't start a run or rename it and why, and the API refuses the run they try anyway without starting anything
+
+**Spec:** `flows/simulate/viewer-environment-refusal.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment in the owner's workspace (lib/environment-seed.ts)
+2. as a Viewer of that workspace, open the environment
+3. hover Run simulation
+4. look at Rename
+5. as the same Viewer, start a run through the API
+
+**Backend state verified:**
+
+- the run answers 403 with code viewer_read_only, action "start a paid run" and its reason
+- simulate_hosted_harness_job has no run job for the environment afterwards
+
+**Browser observations:**
+
+- the environment opens on its workspace with its name
+- Run simulation is disabled and its tooltip says "You don't have permission to start runs."
+- Rename environment is disabled

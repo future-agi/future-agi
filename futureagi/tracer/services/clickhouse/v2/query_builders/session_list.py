@@ -96,6 +96,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
                 "root_membership_predicates",
             )
         ):
+            assert self._current_facts is not None  # _current_facts_available()
             return self._current_facts.session_ctes(
                 self,
                 params,
@@ -113,6 +114,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
     def _page_hydration_source_ctes(self, params, **native):
         if not self._current_facts_available():
             return super()._page_hydration_source_ctes(params, **native)
+        assert self._current_facts is not None  # _current_facts_available()
         sql, bound = self._current_facts.rows(members=True)
         params.update(bound)
         time_scope = self._latest_time_scope_sql(

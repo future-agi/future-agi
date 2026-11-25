@@ -1,55 +1,6 @@
 [
   {
     "files": {
-      "tracer/tests/test_annotation_value_predicate_parity.py": 108,
-      "tracer/tests/test_dashboard_exact_candidate_optimization.py": 29,
-      "tracer/tests/test_exact_graph_membership_latest.py": 53,
-      "tracer/tests/test_filter_attribute_key_binding.py": 58,
-      "tracer/tests/test_native_id_source_contract.py": 144,
-      "tracer/tests/test_negative_typed_presence_witness.py": 6,
-      "tracer/tests/test_physical_span_detail_reference.py": 21,
-      "tracer/tests/test_relational_filter_native.py": 252,
-      "tracer/tests/test_resolved_score_candidate_guards.py": 24,
-      "tracer/tests/test_session_analytics_v2.py": 9,
-      "tracer/tests/test_session_detail_physical_latest.py": 9,
-      "tracer/tests/test_session_numeric_graph_boundaries.py": 15,
-      "tracer/tests/test_span_index_only_companion.py": 15,
-      "tracer/tests/test_span_physical_identity_latest.py": 17,
-      "tracer/tests/test_span_population_time_discovery.py": 10,
-      "tracer/tests/test_span_post_final_scalar_seed.py": 11,
-      "tracer/tests/test_span_primary_prefix.py": 19,
-      "tracer/tests/test_span_score_physical_identity.py": 74,
-      "tracer/tests/test_span_seed_population_prefix.py": 36,
-      "tracer/tests/test_span_text_population_hours.py": 12,
-      "tracer/tests/test_trace_boolean_candidate_seed.py": 63,
-      "tracer/tests/test_trace_graph_full_span_reference.py": 4,
-      "tracer/tests/test_trace_graph_numeric_witness.py": 7,
-      "tracer/tests/test_trace_numeric_primary_seed.py": 111,
-      "tracer/tests/test_trace_ordered_identity_refill.py": 13,
-      "tracer/tests/test_trace_primary_prefix.py": 4,
-      "tracer/tests/test_trace_root_physical_replay.py": 65,
-      "tracer/tests/test_trace_short_text_population_hours.py": 2,
-      "tracer/tests/test_user_detail_physical_snapshot.py": 21,
-      "tracer/tests/test_user_graph_final_time_fence.py": 9,
-      "tracer/tests/test_user_graph_legacy_final_time_fence.py": 12,
-      "tracer/tests/test_user_session_count_exact.py": 5,
-      "tracer/tests/test_users_attribute_physical_replay.py": 71,
-      "tracer/tests/test_users_canonical_text_walk.py": 5,
-      "tracer/tests/test_users_native_conjunction_replay.py": 9,
-      "tracer/tests/test_users_offset_attribute_aliases.py": 2,
-      "tracer/tests/test_users_physical_latest_native.py": 35,
-      "tracer/tests/test_users_text_candidate_witness.py": 22,
-      "tracer/tests/test_users_unseeded_hour_replay.py": 57,
-      "tracer/tests/test_voice_physical_replay.py": 23
-    },
-    "reason": "^(?:Skipped:\\ could\\ not\\ import\\ 'chdb':\\ No\\ module\\ named\\ 'chdb'|Skipped:\\ explicit\\ offline\\ chDB\\ runtime\\ required|Skipped:\\ native\\ dashboard\\ parity\\ requires\\ local\\ chdb)$",
-    "why": "Opt-in by design: native engine (chDB). CI does not install chDB; TH-10617 runs these. 1,462 tests in 40 files on 22 Nov.",
-    "issue": "TH-10617",
-    "owner": "tracer",
-    "expires": "2027-01-06"
-  },
-  {
-    "files": {
       "model_hub/tests/test_ch25_annotation_queue_session_validation_sliceE.py": 5,
       "tracer/tests/test_ch25_session_bulkselect_and_scorecol_sliceF.py": 8,
       "tracer/tests/test_ch25_session_eval_candidate_and_target_sliceC.py": 9,
@@ -68,17 +19,11 @@
       "tracer/tests/test_metric_schema_contract.py": 21,
       "tracer/tests/test_session_annotation_graph_ch25.py": 15,
       "tracer/tests/test_session_annotation_membership_ch25.py": 28,
-      "tracer/tests/test_session_complete_attribute_hydration.py": 3,
-      "tracer/tests/test_session_exact_latest_cursor.py": 3,
-      "tracer/tests/test_session_positive_witness_page.py": 27,
-      "tracer/tests/test_session_relational_history.py": 10,
       "tracer/tests/test_session_rollup_projection_ch25.py": 22,
-      "tracer/tests/test_session_user_candidate_reads.py": 4,
-      "tracer/tests/test_span_long_text_population_equality_ch25.py": 2,
-      "tracer/tests/test_trace_attribute_physical_snapshot.py": 29
+      "tracer/tests/test_span_long_text_population_equality_ch25.py": 2
     },
     "reason": "^(?:Skipped:\\ explicit\\ isolated\\ native\\ engine\\ required|Skipped:\\ isolated\\ native\\ fixture\\ engine\\ required|Skipped:\\ live\\ ClickHouse\\ tests\\ are\\ opt\\-in:\\ set\\ FI_LIVE_CH_TESTS=1|Skipped:\\ optional\\ isolated\\ ClickHouse\\ engine|Skipped:\\ optional\\ isolated\\ ClickHouse\\ execution\\ engine|Skipped:\\ owned\\ ClickHouse\\ change\\-discovery\\ sidecar\\ not\\ requested|Skipped:\\ owned\\ ClickHouse\\ sidecar\\ not\\ requested|Skipped:\\ refusing\\ to\\ run\\ outside\\ the\\ ch_rehearsal\\ harness\\ \\(CH25_DATABASE='test_tfc'\\);\\ set\\ CH25_DATABASE=ch_rehearsal|Skipped:\\ requires\\ explicit\\ owned\\ B20\\ native\\ ClickHouse\\ runtime|Skipped:\\ requires\\ the\\ owned\\ isolated\\ session\\-annotation\\ ClickHouse\\ fixture)$",
-    "why": "Opt-in by design: live ClickHouse (owned, isolated or live, or the ch_rehearsal harness). No CI job provides one; TH-10617 runs these. 327 tests in 26 files on 22 Nov.",
+    "why": "Opt-in by design: live ClickHouse (owned, isolated or live, or the ch_rehearsal harness). No CI job provides one; TH-10617 runs these. 251 tests in 20 files on 22 Nov (Backend CI run 45072697969).",
     "issue": "TH-10617",
     "owner": "model_hub and tracer",
     "expires": "2027-01-06"
@@ -111,27 +56,6 @@
     "why": "Optional by design: compares with the harness package where it is installed; CI does not install it. 1 test.",
     "issue": "TH-10618",
     "owner": "simulate",
-    "expires": "2027-01-06"
-  },
-  {
-    "files": {
-      "tracer/tests/test_session_user_candidate_reads.py": 4
-    },
-    "reason": "^Skipped: CH25_HOST is not configured$",
-    "why": "The test reads a ClickHouse variable CI does not set. 4 tests.",
-    "issue": "TH-10618",
-    "owner": "tracer",
-    "expires": "2027-01-06"
-  },
-  {
-    "files": {
-      "tracer/tests/test_hourly_aggregate_state_route_live_ch.py": 8
-    },
-    "varies": "The skip depends on spans other tests on the same shard leave in the shared ClickHouse table.",
-    "reason": "^Skipped: test ClickHouse has no spans to plan against$",
-    "why": "The test needs spans it does not create. Its shard's earlier tests decide whether any are there, so 1 or 2 of the file's 8 tests skipped in six runs on 22 Nov.",
-    "issue": "TH-10618",
-    "owner": "tracer",
     "expires": "2027-01-06"
   },
   {

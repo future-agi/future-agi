@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 
 from tracer.services.clickhouse.v2.id_remap_sql import (
@@ -373,7 +374,9 @@ def _source_plan(
     project (start_time is not a leading sort-key column and IN sets this large
     defeat the Bloom indexes).
     """
-    params = {} if unit_identities is not None else {"unit_read_ids": list(ids)}
+    params: dict[str, Any] = (
+        {} if unit_identities is not None else {"unit_read_ids": list(ids)}
+    )
     requested = (
         unit_identities.select
         if unit_identities is not None
@@ -846,7 +849,7 @@ def _field_projection(
     arrival_expression="ifNull(s.last_arrival_ns, 0)",
     user_expression="ifNull(s.user_id, '')",
     member_expression=None,
-):
+) -> tuple[str, dict]:
     formula, value_type, alias = recipe.formula, recipe.value_type, recipe.value_alias
     with_clause = f"WITH {', '.join(ctes)}" if ctes else ""
     requested_id = "s.unit_id" if level == "span" else "r.unit_id"
