@@ -27,7 +27,10 @@ export interface EnvironmentSeed {
   name: string;
   scenarioNames: string[];
   scenarioKeys: string[];
+  /** The default environment version: the newest one. */
   environmentVersionId: string;
+  /** Every environment version, oldest first. */
+  environmentVersionIds: string[];
   suiteVersionId: string;
 }
 
@@ -98,13 +101,13 @@ def payload():
     }
 
 
-def authoring():
+def authoring(rules):
     documents = [
         {"name": n, "scenario_key": key(n), "instruction": f"call about {n}", "tests": "t"}
         for n in SCENARIOS
     ]
     files = {
-        "contract.json": json.dumps({"agent": "support", "tools": []}),
+        "contract.json": json.dumps({"agent": "support", "tools": [], **({"hard_constraints": rules} if rules else {})}),
         "sub_goals.json": json.dumps(
             {"sub_goals": [{"name": "looks_up_order", "what": "looks up the order before answering"}]}
         ),
@@ -151,10 +154,15 @@ def main():
     environment.current_stage = "completed"
     environment.save(update_fields=["payload", "state", "current_stage", "updated_at"])
 
-    record_authoring(environment, authoring(), origin="authoring")
-    environment.refresh_from_db()
-    if environment.environment_version_id is None or environment.suite_version_id is None:
-        raise SystemExit("environment seed: record_authoring made no versions; is HARNESS_VERSIONING_ENABLED on?")
+    # A later version is a rebuild whose contract holds one more rule; the suite stays as it is.
+    environment_versions = []
+    for count in range(int(os.environ["SEED_ENVIRONMENT_VERSIONS"])):
+        rules = [f"rule added in v{number}" for number in range(2, count + 2)]
+        record_authoring(environment, authoring(rules), origin="authoring")
+        environment.refresh_from_db()
+        if environment.environment_version_id is None or environment.suite_version_id is None:
+            raise SystemExit("environment seed: record_authoring made no versions; is HARNESS_VERSIONING_ENABLED on?")
+        environment_versions.append(str(environment.environment_version_id))
 
     pinned = pinned_stage_outputs(environment.environment_version, environment.suite_version)
     for output in [*pinned.values(), {"kind": "environment", "title": "Execution environment", "data": {"a": 1}}]:
@@ -170,6 +178,7 @@ def main():
         "scenarioNames": list(SCENARIOS),
         "scenarioKeys": [key(n) for n in SCENARIOS],
         "environmentVersionId": str(environment.environment_version_id),
+        "environmentVersionIds": environment_versions,
         "suiteVersionId": str(environment.suite_version_id),
     }))
 
@@ -181,6 +190,8 @@ export function seedEnvironment(opts: {
   organizationId: string;
   workspaceId: string;
   name: string;
+  /** How many environment versions; each after the first adds the rule "rule added in v<n>". */
+  environmentVersions?: number;
 }): EnvironmentSeed {
   const container = resolveBackendContainer();
   const suffix = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
@@ -194,6 +205,7 @@ export function seedEnvironment(opts: {
       '-e', `SEED_WORKSPACE_ID=${opts.workspaceId}`,
       '-e', `SEED_SUFFIX=${suffix}`,
       '-e', `SEED_NAME=${opts.name}`,
+      '-e', `SEED_ENVIRONMENT_VERSIONS=${opts.environmentVersions ?? 1}`,
       container, 'sh', '-c',
       `cd /app/backend && PYTHONPATH=/app/backend python /tmp/env-seed-${suffix}.py`,
     ], { encoding: 'utf-8' });

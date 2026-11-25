@@ -1,11 +1,18 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Stack, Typography, Popover } from "@mui/material";
+import {
+  Box,
+  Button,
+  ButtonBase,
+  Stack,
+  Typography,
+  Popover,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fDateTime } from "src/utils/format-time";
-import { STATUS_ROLES } from "src/utils/runStatus";
 import {
   canMakeDefault,
+  isDiscarded,
   isVersioningDisabled,
   useEnvironmentVersions,
   useMoveDefault,
@@ -13,17 +20,19 @@ import {
 import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 import { refusalText } from "./evals/refusalText";
 import MakeDefaultConfirm from "./versions/MakeDefaultConfirm";
+import { VersionBadge } from "./versions/VersionBadge";
 import ViewerLock from "../components/ViewerLock";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 
 // The environment-version pin: the header names the default environment version,
-// and clicking it lists every version of the world, where an earlier active one
+// and clicking it lists every version of the world, where another active one
 // can be made the default. Shown once the server has answered (a failed refresh
 // keeps the last answer); hidden when versioning is off, has just been switched
 // off, or the environment has no versions.
-export default function EnvVersionPin({ env }) {
+export default function EnvVersionPin({ env, onHistory }) {
   const [anchor, setAnchor] = useState(null);
-  // The version waiting on the user's confirmation.
+  // The version waiting on the user's confirmation, with the default shown
+  // when they picked it.
   const [confirming, setConfirming] = useState(null);
   const move = useMoveDefault(env?.id);
   const { canEdit } = useSimulationAccess();
@@ -31,7 +40,7 @@ export default function EnvVersionPin({ env }) {
   const { data, error } = useEnvironmentVersions(env?.id, {
     enabled,
   });
-  const versions = data?.environment || [];
+  const versions = (data?.environment || []).filter((v) => !isDiscarded(v));
   const current = data?.defaults?.environment;
 
   if (!enabled || !data || isVersioningDisabled(error) || !current) {
@@ -44,22 +53,14 @@ export default function EnvVersionPin({ env }) {
     setAnchor(null);
     move.reset();
   };
-  const { pin, versionBar } = WORKSPACE_COPY;
+  const { pin } = WORKSPACE_COPY;
   const { makeDefault } = VERSIONS_COPY;
-  const defaultIndex = versions.findIndex((v) => v.id === current.id);
-  // Versions are newest first, so one listed after the default is older.
-  const actionLabel = (v, index) => {
-    const label = v.label || VERSIONS_COPY.unlabelled;
-    return index > defaultIndex
-      ? pin.rollBack(label)
-      : makeDefault.actionFor(label);
-  };
   const confirmMove = () =>
     move.mutate(
       {
         piece: "environment",
-        versionId: confirming.id,
-        expectedDefaultId: current.id,
+        versionId: confirming.version.id,
+        expectedDefaultId: confirming.expectedDefaultId,
       },
       { onSettled: () => setConfirming(null) },
     );
@@ -72,7 +73,7 @@ export default function EnvVersionPin({ env }) {
         spacing={0.625}
         role="button"
         tabIndex={0}
-        aria-label={`${versionBar.envPrefix} ${currentLabel}`}
+        aria-label={`${pin.prefix} ${currentLabel}`}
         aria-haspopup="dialog"
         aria-expanded={Boolean(anchor)}
         aria-controls={anchor ? "env-version-list" : undefined}
@@ -97,7 +98,7 @@ export default function EnvVersionPin({ env }) {
       >
         <Iconify icon="solar:code-linear" width={11} sx={{ opacity: 0.75 }} />
         <Typography sx={{ typography: "s3", fontWeight: 500 }}>
-          {versionBar.envPrefix} {currentLabel}
+          {pin.prefix} {currentLabel}
         </Typography>
         <Iconify
           data-testid="env-version-chevron"
@@ -160,7 +161,7 @@ export default function EnvVersionPin({ env }) {
           aria-labelledby="env-version-list-heading"
           sx={{ listStyle: "none", m: 0, p: 0 }}
         >
-          {versions.map((v, index) => (
+          {versions.map((v) => (
             <Box
               component="li"
               key={v.id}
@@ -225,21 +226,61 @@ export default function EnvVersionPin({ env }) {
                     variant="outlined"
                     color="inherit"
                     disabled={!canEdit || move.isPending}
-                    onClick={() => setConfirming(v)}
+                    onClick={() =>
+                      // The default shown now, so a refresh before the
+                      // confirm can't change what the server checks against.
+                      setConfirming({
+                        version: v,
+                        expectedDefaultId: current.id,
+                      })
+                    }
                     sx={{ mt: 0.75 }}
                   >
-                    {actionLabel(v, index)}
+                    {pin.rollBack(v.label || VERSIONS_COPY.unlabelled)}
                   </Button>
                 </ViewerLock>
               )}
             </Box>
           ))}
         </Stack>
+        {onHistory && (
+          <Box
+            sx={{
+              px: 1.25,
+              pt: 1,
+              pb: 0.25,
+              mt: 0.75,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <ButtonBase
+              onClick={() => {
+                close();
+                onHistory();
+              }}
+              sx={{
+                typography: "s3",
+                fontWeight: 500,
+                color: "primary.main",
+                borderRadius: "4px",
+                "&.Mui-focusVisible": {
+                  outline: "2px solid",
+                  outlineColor: "primary.main",
+                  outlineOffset: 2,
+                },
+              }}
+            >
+              {pin.fullHistory}
+            </ButtonBase>
+          </Box>
+        )}
       </Popover>
       <MakeDefaultConfirm
         piece="environment"
-        version={confirming}
+        version={confirming?.version ?? null}
         pending={move.isPending}
+        rollBack
         onConfirm={confirmMove}
         onClose={() => setConfirming(null)}
       />
@@ -252,32 +293,9 @@ EnvVersionPin.propTypes = {
     id: PropTypes.string,
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }).isRequired,
+  // Opens the History tab; no link without it.
+  onHistory: PropTypes.func,
 };
 
 // Small tag. Neutral by default (11/500 secondary on action.selected); a status
 // role (`role`, or a role name passed as `tone`) tints it with the status tokens.
-export function VersionBadge({ label, tone, role }) {
-  const statusRole = role || (STATUS_ROLES.includes(tone) ? tone : null);
-  return (
-    <Box
-      sx={{
-        px: 0.75,
-        height: 18,
-        borderRadius: "4px",
-        display: "inline-flex",
-        alignItems: "center",
-        color: statusRole ? `status.${statusRole}.fg` : "text.secondary",
-        bgcolor: statusRole ? `status.${statusRole}.bg` : "action.selected",
-      }}
-    >
-      <Typography sx={{ typography: "s3", fontWeight: 500 }}>
-        {label}
-      </Typography>
-    </Box>
-  );
-}
-VersionBadge.propTypes = {
-  label: PropTypes.string,
-  tone: PropTypes.string,
-  role: PropTypes.oneOf(STATUS_ROLES),
-};

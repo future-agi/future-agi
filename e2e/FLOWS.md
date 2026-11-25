@@ -3790,3 +3790,36 @@
 - the environment opens on its workspace with its name
 - Run simulation is disabled and its tooltip says "You don't have permission to start runs."
 - Rename environment is disabled
+
+### SIM-E2E-040 — a person reads an environment's history, compares two versions and rolls back without losing the newer ones
+
+**Goal:** A developer sees how their environment changed from version to version, compares two versions, and rolls back to an earlier one while the newer ones stay in the history
+
+**Spec:** `flows/simulate/environment-history.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed an environment with three environment versions and one scenario version (lib/environment-seed.ts)
+2. open its History tab
+3. switch to Scenarios and open its only version
+4. switch to Agent
+5. switch back to Environment and open v3
+6. compare v3 with v1
+7. roll back to v1 from its row's menu
+8. follow the version bar's scenarios link, then the header's See full history
+
+**Backend state verified:**
+
+- the versions API lists v3, v2 and v1 with v3 the default, one scenario version and no agent version
+- the diff API adds only v3's rule, and v2's and v3's rules against v1
+- after the roll back simulate_hosted_harness_job points at v1 with its scenario version unchanged, and all three environment versions remain active
+
+**Browser observations:**
+
+- Environment lists exactly v3, v2 and v1, and only v3 says runs use this
+- the only scenario version says it is the first, and Agent says there are none
+- v3 shows only its own rule as added; compared with v1 it shows the rules of v2 and v3
+- after the roll back only v1 says runs use this, and all three rows stay
+- the bar's scenarios link opens Scenarios, and See full history opens Environment

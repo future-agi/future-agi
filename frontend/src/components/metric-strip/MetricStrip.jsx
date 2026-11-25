@@ -12,7 +12,8 @@ import { STATUS_ROLES } from "src/utils/runStatus";
 
 const DELTA = { better: "status.success.fg", worse: "status.danger.fg", flat: "text.tertiary" };
 
-export default function MetricStrip({ items, sx }) {
+// With `wrap` the strip goes two to a row on small screens instead of squeezing.
+export default function MetricStrip({ items, wrap = false, sx }) {
   return (
     <Box
       sx={{
@@ -21,6 +22,16 @@ export default function MetricStrip({ items, sx }) {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "8px",
+        // The 1px gaps show the divider colour, so the lines hold in both layouts.
+        ...(wrap && {
+          gridTemplateColumns: {
+            xs: "repeat(2, minmax(0, 1fr))",
+            md: `repeat(${items.length}, minmax(0, 1fr))`,
+          },
+          gap: "1px",
+          bgcolor: "divider",
+          overflow: "hidden",
+        }),
         ...sx,
       }}
     >
@@ -31,8 +42,9 @@ export default function MetricStrip({ items, sx }) {
           sx={{
             px: 2,
             py: 1.5,
-            borderLeft: i ? "1px solid" : 0,
+            borderLeft: i && !wrap ? "1px solid" : 0,
             borderColor: "divider",
+            ...(wrap && { bgcolor: "background.default" }),
             minWidth: 0,
             display: "block",
             textAlign: "left",
@@ -46,6 +58,7 @@ export default function MetricStrip({ items, sx }) {
           </Tooltip>
           <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.75, mt: 0.5 }}>
             <Typography
+              noWrap={wrap}
               sx={{
                 fontSize: 20,
                 lineHeight: "28px",
@@ -96,5 +109,6 @@ MetricStrip.propTypes = {
       key: PropTypes.string,
     }),
   ).isRequired,
+  wrap: PropTypes.bool,
   sx: PropTypes.object,
 };

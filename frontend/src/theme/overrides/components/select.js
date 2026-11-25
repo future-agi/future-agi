@@ -16,7 +16,9 @@ export function select(theme) {
       styleOverrides: {
         root: {
           ".MuiFormLabel-root": {
-            "&.MuiInputLabel-shrink.Mui-focused": {
+            // Outlined labels sit above the field (textfield.js), so this
+            // notch padding would only nudge them sideways on focus.
+            "&.MuiInputLabel-shrink.Mui-focused:not(.MuiInputLabel-outlined)": {
               backgroundColor: theme.palette.background.paper,
               padding: "0 5px",
               borderColor:

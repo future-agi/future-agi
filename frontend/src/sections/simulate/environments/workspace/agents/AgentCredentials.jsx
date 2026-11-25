@@ -15,7 +15,7 @@ import {
   useChangeCredentials,
 } from "src/api/simulate-environments/versions";
 import { useUploadSecretFile } from "src/api/simulate-environments/environments";
-import { VersionBadge } from "../EnvVersionPin";
+import { VersionBadge } from "../versions/VersionBadge";
 import { AGENT_VERSIONS_COPY, WORKSPACE_COPY } from "../workspace.constants";
 import ViewerLock from "../../components/ViewerLock";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
@@ -233,7 +233,11 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
             <Stack key={name} direction="row" spacing={0.5} alignItems="center">
               <Typography
                 data-testid="credential-name"
-                sx={{ typography: "s3", fontFamily: MONO, color: "status.danger.fg" }}
+                sx={{
+                  typography: "s3",
+                  fontFamily: MONO,
+                  color: "status.danger.fg",
+                }}
               >
                 {name}
               </Typography>

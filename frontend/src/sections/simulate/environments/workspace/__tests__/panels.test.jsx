@@ -456,7 +456,7 @@ describe("useWorkspaceTab", () => {
 describe("Versions tab", () => {
   it("is hidden while versioning is off", () => {
     renderPanels();
-    expect(screen.queryByRole("tab", { name: /Versions/ })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /History/ })).toBeNull();
   });
 
   it("is shown and renders the versions body when versioning is on", () => {
@@ -464,7 +464,7 @@ describe("Versions tab", () => {
       env: { ...ENV, versioning: { enabled: true, nudges_enabled: false } },
       tab: "versions",
     });
-    expect(screen.getByRole("tab", { name: /Versions/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /History/ })).toBeInTheDocument();
     expect(screen.getByText("versions-body")).toBeInTheDocument();
   });
 

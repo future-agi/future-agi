@@ -5,6 +5,7 @@ import { format } from "../../detail/analytics/DashboardCharts";
 vi.mock("../../StopRunControl", () => ({ default: () => null }));
 
 const { default: SummaryTable } = await import("../SummaryTable");
+const { buildSummaryRow } = await import("../summaryData");
 const { STATUS_META } = await import("../../runs.constants");
 
 const passCell = (label) => {
@@ -39,5 +40,36 @@ describe("SummaryTable Pass column", () => {
     );
     expect(passCell("Run 3")).toHaveTextContent(format(66.67, "percent"));
     expect(passCell("Run 3")).not.toHaveTextContent("66.67");
+  });
+});
+
+describe("SummaryTable run label", () => {
+  it("names the environment and scenario versions a run was pinned to after its agent", () => {
+    render(
+      <SummaryTable
+        evals={[]}
+        rows={[
+          buildSummaryRow({
+            id: "a",
+            label: "Run 2",
+            status: "completed",
+            agentVersion: "v2",
+            environmentVersion: { id: "e3", label: "v3" },
+            suiteVersion: { id: "s4", label: "v4" },
+          }),
+          buildSummaryRow({
+            id: "b",
+            label: "Run 1",
+            status: "completed",
+            agentVersion: "v1",
+          }),
+        ]}
+      />,
+    );
+    expect(
+      screen.getByText("Run 2 · agent v2 × environment v3 · scenarios v4"),
+    ).toBeInTheDocument();
+    // A run from before versioning has neither to name.
+    expect(screen.getByText("Run 1 · agent v1")).toBeInTheDocument();
   });
 });

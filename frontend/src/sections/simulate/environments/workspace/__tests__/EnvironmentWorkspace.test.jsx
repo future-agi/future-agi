@@ -398,9 +398,7 @@ describe("EnvironmentWorkspace route shell", () => {
     });
     expect(runButton).toBeDisabled();
     expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
-    expect(
-      screen.queryByText(/scenarios, shared across agent versions/),
-    ).toBeNull();
+    expect(screen.queryByText(/^\d+ scenarios?$/)).toBeNull();
     // The tab area shows the loader rather than an empty pane.
     expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
   });
@@ -900,6 +898,72 @@ describe("EnvironmentWorkspace route shell", () => {
   });
 });
 
+describe("EnvironmentWorkspace history links", () => {
+  const version = (id, label) => ({
+    id,
+    label,
+    status: "active",
+    is_default: true,
+    created_at: NOW,
+  });
+
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+    resetEnvironmentsStore();
+    clearScenarioSelection();
+    getHarnessJob.mockReset();
+    getHarnessJob.mockResolvedValue({
+      ...COMPLETED_JOB,
+      versioning: { enabled: true },
+    });
+    axios.get.mockReset();
+    axios.get.mockImplementation((url) => {
+      if (url.endsWith("/versions/")) {
+        return Promise.resolve({
+          data: {
+            agent: [version("a1", "v4")],
+            environment: [version("e1", "v2")],
+            suite: [version("s1", "v3")],
+          },
+        });
+      }
+      if (/\/harness-environments\/job-done\/$/.test(url)) {
+        return Promise.resolve({ data: DETAIL_NOT_AUTHORED });
+      }
+      return Promise.reject(
+        Object.assign(new Error("Not found"), { statusCode: 404 }),
+      );
+    });
+  });
+
+  it("opens History on the version the bar names", async () => {
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+    await userEvent.click(
+      await screen.findByRole("button", { name: /scenarios v3/ }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Scenarios" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("opens History on environment versions from the header", async () => {
+    renderWorkspace(
+      "/dashboard/simulate/environments/job-done?tab=versions&kind=agent",
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /env v2/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "See full history" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Environment" }),
+      ).toHaveAttribute("aria-pressed", "true"),
+    );
+  });
+});
+
 describe("EnvironmentWorkspace unsaved changes", () => {
   const DRAFT = {
     id: "ed",
@@ -994,12 +1058,12 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     renderWorkspace("/dashboard/simulate/environments/job-done");
     const bar = await screen.findByTestId("draft-bar");
     expect(bar.previousElementSibling).toHaveTextContent(
-      /shared across agent versions/,
+      /^Agent .*scenarios?$/,
     );
     expect(await saveButton()).toBeEnabled();
   });
 
-  it("opens the draft in the Versions tab from the bar", async () => {
+  it("opens the draft in the History tab from the bar", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     await userEvent.click(
@@ -1014,7 +1078,7 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     serve({ environment: null, suite: null, set_aside: [] });
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
-    await screen.findByText(/shared across agent versions/);
+    await screen.findByText(/^\d+ scenarios?$/);
     await waitFor(() =>
       expect(
         axios.get.mock.calls.some(([url]) => url.endsWith("/drafts/")),

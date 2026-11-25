@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { camelCase } from "lodash";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
@@ -402,6 +407,10 @@ const awaitsCheck = (data) =>
   Array.isArray(data?.agent) &&
   data.agent.some((item) => awaitedCheck(versionFromApi(item)));
 
+// The server keeps and sends discarded versions; the History tab and the
+// header's version list leave them out.
+export const isDiscarded = (version) => version?.status === "discarded";
+
 // Only an active version that is not already the default can become it; an
 // agent version only when the server says it can be picked here.
 export const canMakeDefault = (piece, version) =>
@@ -452,6 +461,9 @@ export function useVersionDiff(
     queryKey: versionDiffKey(envId, piece, versionId, against),
     queryFn: () => getVersionDiff(envId, piece, versionId, against),
     enabled: Boolean(envId && piece && versionId) && enabled,
+    // Picking another version to compare with keeps the last answer on screen
+    // (isPlaceholderData) until the new one lands, instead of a blank flash.
+    placeholderData: keepPreviousData,
     retry: retryUnlessNotFound,
     meta: { errorHandled: true },
   });

@@ -27,6 +27,7 @@ export function buildSummaryRow(run, scores) {
     agentVersion: run?.agentVersion ?? null,
     pinnedAgentVersion: run?.pinnedAgentVersion ?? null,
     environmentVersion: run?.environmentVersion ?? null,
+    suiteVersion: run?.suiteVersion ?? null,
     agentDiffers: Boolean(run?.agentDiffers),
     status: run?.status,
     runState: run?.runState ?? run?.status,

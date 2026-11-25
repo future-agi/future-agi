@@ -277,6 +277,21 @@ describe("useVersionDiff", () => {
     ]);
   });
 
+  it("keeps the last comparison while another one loads", async () => {
+    axios.get.mockResolvedValueOnce({ data: { summary: "against s2" } });
+    const { result, rerender } = renderHook(
+      ({ against }) => useVersionDiff("env-1", "suite", "s3", against),
+      { wrapper, initialProps: { against: "s2" } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    axios.get.mockReturnValueOnce(new Promise(() => {}));
+    rerender({ against: "s1" });
+    // No empty state between the two: the old answer shows, marked as stale.
+    expect(result.current.data).toEqual({ summary: "against s2" });
+    expect(result.current.isPlaceholderData).toBe(true);
+  });
+
   it("waits for a version id", () => {
     renderHook(() => useVersionDiff("env-1", "suite", undefined), { wrapper });
     expect(axios.get).not.toHaveBeenCalled();
