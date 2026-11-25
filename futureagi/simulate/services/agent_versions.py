@@ -339,6 +339,7 @@ def provider_sync(
     parent_source: Mapping[str, Any] | None,
     *,
     user: Any = None,
+    read: bool = True,
 ) -> AgentVersion:
     """Read the agent as its provider holds it now. The first Sync records what it
     found on the parent; a later one that finds a change makes a version carrying
@@ -399,6 +400,8 @@ def provider_sync(
                 agent_version_id=str(parent.id),
                 code=exc.code,
             )
+        if read:
+            _read_synced(parent)
         return parent
     changed = (
         known != digest
@@ -440,6 +443,8 @@ def provider_sync(
                 agent_version_id=str(version.id),
                 code=exc.code,
             )
+    if read:
+        _read_synced(version)
     logger.info(
         "provider_sync_version",
         agent_definition_id=str(definition.id),
@@ -448,6 +453,30 @@ def provider_sync(
         tools=len(document["tools"]),
     )
     return version
+
+
+def _read_synced(version: AgentVersion) -> None:
+    from simulate.services.harness_design_review import review_applies
+
+    if not review_applies(_runtime(version)):
+        return
+    version_id = str(version.id)
+    transaction.on_commit(lambda: _start_contract_reading(version_id), robust=True)
+
+
+def _start_contract_reading(version_id: str) -> None:
+    from temporalio.service import RPCError
+
+    from simulate.tasks.harness_agent_versions import schedule_agent_contract_reading
+
+    try:
+        schedule_agent_contract_reading(version_id)
+    except (RPCError, RuntimeError, OSError):
+        logger.warning(
+            "provider_sync_reading_not_started",
+            agent_version_id=version_id,
+            exc_info=True,
+        )
 
 
 def upload_version(

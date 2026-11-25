@@ -14,20 +14,42 @@ from simulate.models import (
 from simulate.models.agent_definition import ProviderCredentials
 from simulate.models.agent_setup import AgentVersionSetup
 from simulate.services import agent_versions
-from simulate.services.agent_setup import AgentStoreError
+from simulate.services.agent_contracts import stored_read_contract
+from simulate.services.agent_reading_sandbox import PROFILE_PATH
+from simulate.services.agent_setup import AgentStoreError, stored_agent
 from simulate.services.harness_agent_versions import create_agent_version
+from simulate.services.harness_design_review import (
+    AWAITING_APPROVAL,
+    begin_design_review,
+    stored_review,
+)
 from simulate.services.provider_profile import (
     _safe,
     _secret_key,
+    profile_bytes_for_version,
     profile_digest,
     profile_document,
 )
+from simulate.tasks.harness_agent_versions import (
+    read_harness_agent_version_contract,
+)
+from simulate.tests.test_harness_design_review import CONTRACT
+from simulate.tests.test_harness_design_review_reading import _received
+from simulate.tests.test_hosted_harness_conversation import storage  # noqa: F401
 
 pytestmark = pytest.mark.django_db
 
 Trigger = HarnessAgentVersionRuntime.Trigger
 READ = "simulate.services.provider_profile.read_profile"
 STORE = "simulate.services.agent_setup.store_agent"
+TASKS = "simulate.tasks.harness_agent_versions"
+SCHEDULE_READING = f"{TASKS}.schedule_agent_contract_reading"
+SCHEDULE_DESIGN_READING = f"{TASKS}.schedule_design_reading"
+PREFLIGHT = "simulate.services.harness_agent_versions._schedule_preflight"
+SANDBOX = "simulate.services.agent_reading_sandbox"
+ACTIVITY_INFO = "tfc.logging.temporal.context.try_activity_info"
+READ_CONTRACT = {**copy.deepcopy(CONTRACT), "reading_inputs": {}}
+read_contract_activity = read_harness_agent_version_contract._original_func
 
 VAPI = {
     "name": "Harbor Hotels",
@@ -322,3 +344,136 @@ class TestSyncWithoutSideRow:
             == "sk-vapi-key-123456"
         )
         assert _versions(classic_agent) == [1, 2]
+
+
+@pytest.fixture
+def hosted_review(settings):
+    settings.HARNESS_DESIGN_REVIEW_ENABLED = True
+    settings.HARNESS_SEED_CONTRACT_ENABLED = True
+    settings.ALK_HOSTED_BUILDER_SESSION = True
+    settings.HARNESS_HOSTED_DESIGN_REVIEW_ENABLED = True
+    return settings
+
+
+def _sync_queued(definition, profile, capture):
+    with (
+        patch(SCHEDULE_READING) as schedule,
+        patch(PREFLIGHT),
+        capture(execute=True),
+    ):
+        version = _sync(definition, profile)
+    return version, [call.args[0] for call in schedule.call_args_list]
+
+
+def _read(version_id, *, reading=None, crash=None):
+    with (
+        patch(f"{TASKS}.close_old_connections"),
+        patch(ACTIVITY_INFO, return_value=None),
+        patch(f"{SANDBOX}.require_harness_authoring"),
+        patch(
+            f"{SANDBOX}.run_reading",
+            return_value=reading,
+            side_effect=crash,
+        ) as run,
+        patch("simulate.services.harness_evals.briefing_evals", return_value=[]),
+        patch(f"{TASKS}.logger") as logger,
+    ):
+        status = read_contract_activity(str(version_id))
+    return status, run, logger
+
+
+def _read_contract_of(version_id):
+    return _read(version_id, reading=(None, {}, copy.deepcopy(READ_CONTRACT), None))
+
+
+@pytest.mark.usefixtures("hosted_review", "storage")
+class TestSyncReading:
+    def test_the_first_sync_queues_a_reading_of_the_parent(
+        self, agent, django_capture_on_commit_callbacks
+    ):
+        version, queued = _sync_queued(agent, VAPI, django_capture_on_commit_callbacks)
+
+        assert version.version_number == 1
+        assert queued == [str(version.id)]
+
+    def test_a_changed_profile_makes_a_version_and_queues_its_reading(
+        self, agent, django_capture_on_commit_callbacks
+    ):
+        _sync_queued(agent, VAPI, django_capture_on_commit_callbacks)
+        changed = copy.deepcopy(VAPI)
+        changed["model"]["messages"][0]["content"] = "Book rooms and upsell."
+
+        version, queued = _sync_queued(
+            agent, changed, django_capture_on_commit_callbacks
+        )
+
+        assert version.version_number == 2
+        assert queued == [str(version.id)]
+
+    def test_an_unchanged_profile_queues_nothing(
+        self, agent, django_capture_on_commit_callbacks
+    ):
+        _sync_queued(agent, VAPI, django_capture_on_commit_callbacks)
+
+        version, queued = _sync_queued(agent, VAPI, django_capture_on_commit_callbacks)
+
+        assert version.version_number == 1
+        assert queued == []
+
+    def test_a_reading_stores_the_read_contract_beside_the_synced_document(
+        self, agent, django_capture_on_commit_callbacks
+    ):
+        version, _ = _sync_queued(agent, VAPI, django_capture_on_commit_callbacks)
+        synced = stored_agent(version.id, include_stale=True)
+        pinned = profile_bytes_for_version(version)
+
+        status, run, _logger = _read_contract_of(version.id)
+
+        assert status == "stored"
+        assert run.call_args.kwargs["files"] == {PROFILE_PATH: pinned}
+        assert stored_read_contract(version.id) == READ_CONTRACT
+        assert stored_agent(version.id, include_stale=True) == synced
+
+    def test_a_failed_reading_keeps_the_synced_document(
+        self, agent, django_capture_on_commit_callbacks
+    ):
+        version, _ = _sync_queued(agent, VAPI, django_capture_on_commit_callbacks)
+        synced = stored_agent(version.id, include_stale=True)
+
+        status, _run, logger = _read(version.id, crash=RuntimeError("sandbox died"))
+
+        assert status == "failed"
+        assert logger.warning.call_args_list[0].kwargs["exc_info"] is True
+        assert stored_read_contract(version.id) is None
+        assert stored_agent(version.id, include_stale=True) == synced
+
+    def test_a_version_already_read_is_not_read_again(
+        self, agent, django_capture_on_commit_callbacks
+    ):
+        version, _ = _sync_queued(agent, VAPI, django_capture_on_commit_callbacks)
+        _read_contract_of(version.id)
+
+        status, run, _logger = _read_contract_of(version.id)
+
+        assert status == "skipped"
+        run.assert_not_called()
+
+    def test_a_build_of_a_synced_version_opens_its_review_at_once(
+        self, agent, user, workspace, django_capture_on_commit_callbacks
+    ):
+        version, _ = _sync_queued(agent, VAPI, django_capture_on_commit_callbacks)
+        _read_contract_of(version.id)
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version=version
+        )
+        job = _received(user, workspace)
+
+        with (
+            patch(READ, return_value=_safe(copy.deepcopy(VAPI))),
+            patch(SCHEDULE_DESIGN_READING) as schedule,
+        ):
+            begin_design_review(job, runtime, None)
+
+        job.refresh_from_db()
+        assert stored_review(job)["status"] == AWAITING_APPROVAL
+        schedule.assert_not_called()

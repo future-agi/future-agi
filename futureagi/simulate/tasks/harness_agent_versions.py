@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.db import close_old_connections
@@ -8,11 +8,16 @@ from django.db import close_old_connections
 from simulate.temporal.constants import READING_ACTIVITY_TIMEOUT_SECONDS
 from tfc.temporal.drop_in import temporal_activity
 
+if TYPE_CHECKING:
+    from simulate.services.agent_reading_sandbox import ReadOutcome
+
 __all__ = [
     "DESIGN_READING_DEADLINE_SECONDS",
     "preflight_harness_agent_version",
     "read_agent_for_design_review",
+    "read_harness_agent_version_contract",
     "read_harness_agent_version_document",
+    "schedule_agent_contract_reading",
     "schedule_agent_document_reading",
     "schedule_agent_preflight",
     "schedule_design_reading",
@@ -100,51 +105,62 @@ def _retries_left(info) -> bool:
     return info is not None and info.attempt < DESIGN_READING_ATTEMPTS
 
 
+def _read_contract(version_id: str, **context: str) -> ReadOutcome:
+    from simulate.services.agent_reading_sandbox import (
+        CRASHED,
+        ReadOutcome,
+        read_version_contract,
+    )
+    from tfc.logging.temporal.context import try_activity_info
+
+    info = try_activity_info()
+    try:
+        outcome = read_version_contract(
+            version_id, check_id=info.workflow_run_id if info else None
+        )
+    except Exception as exc:
+        retryable = bool(getattr(exc, "retryable", True))
+        if retryable and _retries_left(info):
+            raise
+        logger.warning(
+            "design_reading_crashed",
+            agent_version_id=version_id,
+            exc_info=True,
+            **context,
+        )
+        return ReadOutcome(
+            "failed",
+            code=str(getattr(exc, "code", "") or CRASHED),
+            message=str(getattr(exc, "message", "") or _CRASHED_MESSAGE),
+            retryable=retryable,
+        )
+    if outcome.status == "failed" and outcome.retryable and _retries_left(info):
+        raise RuntimeError(outcome.code)
+    return outcome
+
+
 @temporal_activity(
     time_limit=READING_ACTIVITY_TIMEOUT_SECONDS,
     max_retries=DESIGN_READING_ATTEMPTS - 1,
     queue="simulation_runner",
 )
 def read_agent_for_design_review(job_id: str) -> str:
-    from simulate.services.agent_reading_sandbox import CRASHED, read_version_contract
     from simulate.services.harness_design_review import (
         open_review_after_reading,
         reading_version_id,
     )
-    from tfc.logging.temporal.context import try_activity_info
 
     close_old_connections()
     try:
         version_id = reading_version_id(job_id)
         if version_id is None:
             return "closed"
-        info = try_activity_info()
-        try:
-            outcome = read_version_contract(
-                version_id, check_id=info.workflow_run_id if info else None
-            )
-        except Exception as exc:
-            retryable = bool(getattr(exc, "retryable", True))
-            if retryable and _retries_left(info):
-                raise
-            logger.warning(
-                "design_reading_crashed",
-                environment_id=job_id,
-                agent_version_id=version_id,
-                exc_info=True,
-            )
-            return open_review_after_reading(
-                job_id,
-                code=str(getattr(exc, "code", "") or CRASHED),
-                message=str(getattr(exc, "message", "") or _CRASHED_MESSAGE),
-                retryable=retryable,
-            )
-        if outcome.status == "failed" and outcome.retryable and _retries_left(info):
-            raise RuntimeError(outcome.code)
+        outcome = _read_contract(version_id, environment_id=job_id)
+        failed = outcome.status == "failed"
         return open_review_after_reading(
             job_id,
-            code=outcome.code if outcome.status == "failed" else "",
-            message=outcome.message if outcome.status == "failed" else "",
+            code=outcome.code if failed else "",
+            message=outcome.message if failed else "",
             retryable=outcome.retryable,
             commit_sha=outcome.commit_sha,
         )
@@ -158,5 +174,36 @@ def schedule_design_reading(job_id: Any):
     return read_agent_for_design_review.apply_async(
         args=[str(job_id)],
         task_id=f"harness-design-reading-{job_id}",
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+
+
+@temporal_activity(
+    time_limit=READING_ACTIVITY_TIMEOUT_SECONDS,
+    max_retries=DESIGN_READING_ATTEMPTS - 1,
+    queue="simulation_runner",
+)
+def read_harness_agent_version_contract(version_id: str) -> str:
+    close_old_connections()
+    try:
+        outcome = _read_contract(version_id)
+        if outcome.status == "failed":
+            logger.warning(
+                "agent_contract_reading_failed",
+                agent_version_id=version_id,
+                code=outcome.code,
+                retryable=outcome.retryable,
+            )
+        return outcome.status
+    finally:
+        close_old_connections()
+
+
+def schedule_agent_contract_reading(version_id: Any):
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    return read_harness_agent_version_contract.apply_async(
+        args=[str(version_id)],
+        task_id=f"harness-agent-contract-{version_id}",
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
