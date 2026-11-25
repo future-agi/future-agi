@@ -85,7 +85,7 @@ func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.
 	rc.TraceID = r.Header.Get("x-agentcc-trace-id")
 	rc.EndpointType = "assistants"
 	rc.Metadata["assistants_operation"] = operation
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	setAuthMetadataFromRequest(rc, r)
 	// Caller dimensions, from the x-agentcc-metadata header.
@@ -120,6 +120,11 @@ func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.
 // ---------------------------------------------------------------------------
 
 func (h *Handlers) proxyAssistantsNonStream(w http.ResponseWriter, ctx context.Context, rc *models.RequestContext, ap providers.AssistantsProvider, method, upstreamPath string, body []byte, queryParams url.Values) []byte {
+	// These calls skip the pipeline, but not its access checks.
+	if apiErr := h.engine.CheckAccess(ctx, rc); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return nil
+	}
 	respBody, statusCode, respHeaders, err := ap.ProxyAssistantsRequest(ctx, method, upstreamPath, body, queryParams)
 	if err != nil {
 		models.WriteErrorFromError(w, err)

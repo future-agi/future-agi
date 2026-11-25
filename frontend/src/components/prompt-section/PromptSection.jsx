@@ -528,7 +528,7 @@ export const PromptSection = ({
             verticalAlign: "top",
             overflowY: "auto", // Ensure only vertical scroll
             lineHeight: "1.5",
-            fontSize: "13px",
+            fontSize: "12px",
             transition: "height 0.1s ease-out",
             "&::placeholder": {
               color: theme.palette.text.secondary,

@@ -11,6 +11,9 @@ const OBSERVE = '/dashboard/observe';
 // accounts/urls.py and frontend/src/sections/auth/jwt/jwt-register-view.jsx.
 const SIGNUP = '/accounts/signup/';
 const ONBOARDING = '/accounts/onboarding/';
+// frontend/src/sections/auth/jwt/constants.js: labels are the saved role/goals values.
+const ROLE = 'Backend / Platform Engineer / DevOps';
+const GOAL = 'Monitor LLMs and Agents';
 // accounts/user_onboard.py: the existing sample is one 35-span trace per project.
 const PROJECT_NAMES = ['Demo SQL Agent (Experiment)', 'Demo SQL Agent (Observe)'];
 const DATASET_NAMES = ['Demo-dataset', 'Image-Demo-dataset'];
@@ -31,22 +34,30 @@ test('AUTH-E2E-004: fresh signup seeds demo traces visible in Observe', {
     id: 'AUTH-E2E-004', area: 'auth',
     userGoal: 'A new user signs up with their own password and can inspect the seeded demo trace in Observe',
     steps: ['complete first-run checks if required', 'sign up with a unique email and a user-supplied password',
-      'complete role and organization onboarding', 'see both demo datasets',
+      'wait for the held initial profile read before role and goal controls become interactive',
+      'select a role and click one goal once, then save and complete organization onboarding', 'see both demo datasets',
       'open the Observe demo project', 'open its single demo trace and inspect the span tree'],
     backendChecks: [
+      'the onboarding POST and the fresh accounts_user row contain exactly the selected role and goal',
       'the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL',
       'ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC',
     ],
   }),
 }, async ({ page, request }, testInfo) => {
-  // Ten UI stages × 60 s + three Temporal publication polls × 60 s.
-  test.setTimeout(780_000);
+  // Eleven UI stages × 60 s + three Temporal publication polls × 60 s.
+  test.setTimeout(840_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const email = `e2e-demo-seed-${suffix}@futureagi.com`;
   const password = `E2e-demo-${suffix}!`;
   const probe = new StateProbe({ api: new ApiClient(request, E2E.apiUrl),
     chUrl: E2E.chUrl, chDatabase: E2E.chDatabase, chPassword: E2E.chPassword, pgUrl: E2E.pgUrl });
   await testInfo.attach('signup-identity', { contentType: 'application/json', body: JSON.stringify({ email }) });
+  let releaseOnboarding!: () => void;
+  const onboardingGate = new Promise<void>(resolve => { releaseOnboarding = resolve; });
+  await page.route(url => url.pathname === ONBOARDING, async route => {
+    if (route.request().method() === 'GET') await onboardingGate;
+    await route.continue();
+  });
   try {
     const fullName = page.getByLabel(/Full Name/i);
     const testFlight = page.getByText('Test flight', { exact: true });
@@ -75,32 +86,63 @@ test('AUTH-E2E-004: fresh signup seeds demo traces visible in Observe', {
       await page.getByLabel(/Email ID/i).fill(email);
       await page.getByLabel('Set Password', { exact: true }).fill(password);
       await page.getByLabel('Confirm Password', { exact: true }).fill(password);
-      // Wait for hydration before selecting the role; it resets form defaults.
-      const onboarding = page.waitForResponse(r => new URL(r.url()).pathname === ONBOARDING &&
-        r.request().method() === 'GET', { timeout: UI_READY });
+      const onboarding = page.waitForRequest(r => new URL(r.url()).pathname === ONBOARDING &&
+        r.method() === 'GET', { timeout: UI_READY });
       const signup = page.waitForResponse(r => new URL(r.url()).pathname === SIGNUP &&
         r.request().method() === 'POST', { timeout: UI_READY });
       await page.getByRole('button', { name: 'Continue', exact: true }).click();
       expect((await signup).status()).toBe(200);
+      await onboarding;
+    }, { timeout: UI_READY });
+
+    await test.step('wait for the initial profile read', async () => {
+      await expect(page.getByRole('progressbar', { name: 'Loading your profile' })).toBeVisible({ timeout: UI_READY });
+      await expect(page.getByPlaceholder('Tell us about your role')).toHaveCount(0, { timeout: UI_READY });
+      await expect(page.getByRole('radio')).toHaveCount(0, { timeout: UI_READY });
+      await expect(page.getByRole('checkbox')).toHaveCount(0, { timeout: UI_READY });
+      await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0, { timeout: UI_READY });
+      await expect(page.getByText('Skip for now', { exact: true })).toHaveCount(0, { timeout: UI_READY });
+      const onboarding = page.waitForResponse(r => new URL(r.url()).pathname === ONBOARDING &&
+        r.request().method() === 'GET', { timeout: UI_READY });
+      releaseOnboarding();
       expect((await onboarding).status()).toBe(200);
     }, { timeout: UI_READY });
 
-    await test.step('complete role onboarding', async () => {
-      await page.getByText('Backend / Platform Engineer / DevOps', { exact: true }).click();
+    await test.step('save the chosen role and one-click goal selection', async () => {
+      await page.getByText(ROLE, { exact: true }).click();
       await page.getByRole('button', { name: 'Continue', exact: true }).click();
-      await page.getByText('Skip for now', { exact: true }).click();
+      // FormCheckboxField's custom card has separate text and a checkbox named "controlled".
+      const goalCard = page.locator('.MuiFormControl-root').filter({ has: page.getByText(GOAL, { exact: true }) });
+      await expect(goalCard.getByRole('checkbox')).not.toBeChecked({ timeout: UI_READY });
+      await page.getByText(GOAL, { exact: true }).click();
+      await expect(goalCard.getByRole('checkbox')).toBeChecked({ timeout: UI_READY });
+      await expect(page.getByRole('checkbox', { checked: true })).toHaveCount(1, { timeout: UI_READY });
+      const saved = page.waitForResponse(r => new URL(r.url()).pathname === ONBOARDING &&
+        r.request().method() === 'POST', { timeout: UI_READY });
+      await page.getByRole('button', { name: 'Continue', exact: true }).click();
+      const result = await saved;
+      expect(result.status()).toBe(200);
+      // accounts/serializers/user.py: UserOnboardingSerializer accepts label values.
+      expect(result.request().postDataJSON()).toEqual({ role: ROLE, goals: [GOAL] });
     }, { timeout: UI_READY });
     await test.step('complete organization setup', async () => {
       await page.getByLabel(/Organization Name/i).fill(`E2E Demo ${suffix}`);
       await page.getByRole('button', { name: 'Continue', exact: true }).click();
       await expect(page).toHaveURL(/\/dashboard\//, { timeout: UI_READY });
+      // Saving a goal completes onboarding, so AuthGuard performs its one-time
+      // post-onboarding landing (auth/guard/auth-guard.jsx: router.replace to
+      // the post-login path, then initial-render=done). Let it finish before
+      // navigating, or the landing redirect can replace the next page.
+      await page.waitForFunction(() => localStorage.getItem('initial-render') === 'done',
+        undefined, { timeout: UI_READY });
     }, { timeout: UI_READY });
 
     // Model table names and relationships: accounts/models/user.py,
     // model_hub/models/develop_dataset.py, tracer/models/{project,trace,trace_session,observation_span}.py.
-    const users = await probe.pg<{ organization_id: string }>(
-      'SELECT organization_id FROM accounts_user WHERE email = $1', [email]);
+    const users = await probe.pg<{ organization_id: string; role: string; goals: string[] }>(
+      'SELECT organization_id, role, goals FROM accounts_user WHERE email = $1', [email]);
     expect(users).toHaveLength(1);
+    expect({ role: users[0].role, goals: users[0].goals }).toEqual({ role: ROLE, goals: [GOAL] });
     const org = users[0].organization_id;
     await expect.poll(async () => (await probe.pg<{ name: string }>(
       'SELECT name FROM model_hub_dataset WHERE organization_id = $1 AND NOT deleted ORDER BY name',
@@ -155,6 +197,8 @@ test('AUTH-E2E-004: fresh signup seeds demo traces visible in Observe', {
       await expect(page.getByText('RunnableSequence', { exact: true }).first()).toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
   } finally {
+    releaseOnboarding();
+    await page.unrouteAll({ behavior: 'wait' });
     await probe.dispose();
   }
 });

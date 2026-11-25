@@ -3,8 +3,9 @@
 // out. TypeSafe defined it; Perplexity's Decider and self-hosted endpoints
 // speak it too. Each vendor is a Dialect row.
 //
-// The caller's body is forwarded byte for byte and the vendor's 200 body is
-// returned unchanged, so a field either side adds passes through.
+// The caller's body is forwarded byte for byte except OpenRouter's routing
+// policy (one model, same-model host failover, required parameters). The
+// vendor's 200 body is returned unchanged.
 package systemone
 
 import (
@@ -104,7 +105,11 @@ func endpointFor(id string, cfg config.ProviderConfig, dialect Dialect) (string,
 	if base == "" {
 		return "", ErrBaseURLRequired
 	}
-	endpoint := config.JoinEndpoint(base, cfg.EffectiveAPIPathPrefix(), dialect.Leaf)
+	prefix := cfg.EffectiveAPIPathPrefix()
+	if cfg.APIPathPrefix == nil {
+		prefix = dialect.DefaultPathPrefix
+	}
+	endpoint := config.JoinEndpoint(base, prefix, dialect.Leaf)
 	if u, err := url.Parse(endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("systemone: provider %q has an invalid base_url", id)
 	}
@@ -167,6 +172,15 @@ func (p *Provider) SystemOne(ctx context.Context, req *models.DecisionRequest) (
 		}
 	}
 
+	body := req.Body
+	if p.dialect.Name == OpenRouter.Name {
+		var err error
+		body, err = openRouterDecisionBody(body)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// The timeout covers the wait for a concurrency slot too.
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
@@ -177,7 +191,7 @@ func (p *Provider) SystemOne(ctx context.Context, req *models.DecisionRequest) (
 		return nil, models.ErrGatewayTimeout(vendor + " request timed out")
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(req.Body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal("systemone: could not create request")
 	}

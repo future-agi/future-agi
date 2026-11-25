@@ -58,6 +58,7 @@ from tfc.utils.storage_client import (
     get_storage_client,
 )
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import (
         ROW_LIMIT_REACHED_MESSAGE,
@@ -139,6 +140,9 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
 
         bucket_name = UPLOAD_BUCKET_NAME
         minio_client = get_storage_client()
+        # Build the URL first: a misconfigured MINIO_URL then fails the upload
+        # before an object is written that nothing would reference.
+        url = get_object_url(bucket_name, object_key)
         ensure_bucket(minio_client, bucket_name)
 
         # Reset file pointer to beginning
@@ -169,7 +173,11 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
                 except ImportError:
                     emit = None
 
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
                         UsageEvent(
                             org_id=str(org_id),
@@ -181,7 +189,6 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
             except (ImportError, TypeError):
                 pass
 
-        url = get_object_url(bucket_name, object_key)
         return url
     except Exception as e:
         logger.error(f"Error uploading file to Minio: {str(e)}")
@@ -1034,7 +1041,9 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                 call_log_row_entry = log_and_deduct_cost_for_resource_request(
                     organization=organization,
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
+                    sdk_source=True
+                    if source == DatasetSourceChoices.SDK.value
+                    else False,
                     workspace=request.workspace,
                 )
                 refusal = dataset_add_refusal(

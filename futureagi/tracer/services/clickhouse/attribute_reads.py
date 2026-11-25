@@ -38,6 +38,7 @@ from tracer.services.clickhouse.attribute_cursor_state import (
 )
 from tracer.services.clickhouse.client import ClickHouseClient
 from tracer.services.clickhouse.read_budget import (
+    ReadDeadline,
     ReadDeadlineExceeded,
     is_read_budget_error,
 )
@@ -715,8 +716,10 @@ class V2AttributeQueryExecutor:
         *,
         timeout_ms: int,
         settings: dict[str, Any],
+        retained_until: float | None = None,
     ) -> AttributeQueryPage:
-        if self._application_read:
+        application_read = self._application_read and retained_until is None
+        if application_read:
             timeout_ms = None
             settings = application_read_settings(settings)
         try:
@@ -725,7 +728,7 @@ class V2AttributeQueryExecutor:
             )
             # Explicit False also isolates diagnostics inside an application
             # request; the pooled client must never inherit a caller's mode.
-            with application_read_context(self._application_read):
+            with application_read_context(application_read):
                 if callable(progress_execute):
                     (
                         rows,
@@ -739,7 +742,15 @@ class V2AttributeQueryExecutor:
                         params,
                         timeout_ms=timeout_ms,
                         settings=settings,
+                        **(
+                            {"retained_until": retained_until}
+                            if retained_until is not None
+                            else {}
+                        ),
                     )
+                elif retained_until is not None:
+                    # Do not fall through to a client without quiet metadata support.
+                    raise ReadDeadlineExceeded("Optional metadata client unavailable")
                 else:
                     rows, columns, query_time_ms = self._client.execute_read(
                         query,
@@ -1266,12 +1277,14 @@ class AttributeReadSelector:
         typed_only: bool = False,
         json_attribute_mode: JsonAttributeMode | None = None,
         application_read: bool = True,
+        retained_lookup_deadline: ReadDeadline | None = None,
     ):
         if not isinstance(application_read, bool):
             raise TypeError("Application read mode must be bool")
         self._executor = executor or V2AttributeQueryExecutor(
             application_read=application_read
         )
+        self._retained_lookup_deadline = retained_lookup_deadline
         self._clock = clock
         self._wall_timeout_seconds = max(int(wall_timeout_ms), 1) / 1000
         self._deadline: float | None = None
@@ -1343,6 +1356,7 @@ class AttributeReadSelector:
                 },
                 max_result_rows=1,
                 query_timeout_ms=ATTRIBUTE_READ_METADATA_TIMEOUT_MS,
+                retained_lookup_deadline=self._retained_lookup_deadline,
             )
         except Exception as exc:
             if not is_read_budget_error(exc):
@@ -1405,11 +1419,14 @@ class AttributeReadSelector:
         max_result_rows: int,
         query_settings: dict[str, Any] | None = None,
         query_timeout_ms: int | None = None,
+        retained_lookup_deadline: ReadDeadline | None = None,
     ) -> list[dict[str, Any]]:
         if self._deadline is None:
             self._begin_operation()
         assert self._deadline is not None
         remaining_ms = int((self._deadline - self._clock()) * 1000)
+        if retained_lookup_deadline is not None:
+            remaining_ms = min(remaining_ms, retained_lookup_deadline.remaining_ms())
         if remaining_ms < 25:
             raise ReadDeadlineExceeded("Attribute read deadline exceeded")
         timeout_cap_ms = (
@@ -1424,13 +1441,19 @@ class AttributeReadSelector:
         # particular, a fail-open speculative probe must not wait for the
         # semaphore longer than its own short cap and consume the exact
         # fallback's whole operation wall.
-        acquired = _ATTRIBUTE_READ_CAPACITY.acquire(
+        # The optional retained lookup has its own non-queueing worker and
+        # native permit. Leave all ordinary attribute slots available as well.
+        use_attribute_slot = retained_lookup_deadline is None
+        if use_attribute_slot and not _ATTRIBUTE_READ_CAPACITY.acquire(
             timeout=max(min(remaining_ms, timeout_cap_ms), 0) / 1000
-        )
-        if not acquired:
+        ):
             raise ReadDeadlineExceeded("Attribute read capacity is busy")
         try:
             remaining_ms = int((self._deadline - self._clock()) * 1000)
+            if retained_lookup_deadline is not None:
+                remaining_ms = min(
+                    remaining_ms, retained_lookup_deadline.remaining_ms()
+                )
             if remaining_ms < 25:
                 raise ReadDeadlineExceeded("Attribute read deadline exceeded")
             if self._query_count >= ATTRIBUTE_READ_MAX_QUERY_COUNT:
@@ -1445,6 +1468,16 @@ class AttributeReadSelector:
                 query,
                 params,
                 timeout_ms=min(timeout_cap_ms, remaining_ms),
+                **(
+                    {
+                        "retained_until": (
+                            retained_lookup_deadline.started
+                            + retained_lookup_deadline.total_ms / 1000
+                        )
+                    }
+                    if retained_lookup_deadline is not None
+                    else {}
+                ),
                 settings={
                     **ATTRIBUTE_READ_SETTINGS,
                     **(query_settings or {}),
@@ -1452,7 +1485,8 @@ class AttributeReadSelector:
                 },
             )
         finally:
-            _ATTRIBUTE_READ_CAPACITY.release()
+            if use_attribute_slot:
+                _ATTRIBUTE_READ_CAPACITY.release()
         if not isinstance(page, AttributeQueryPage) or not isinstance(page.data, list):
             raise IncompleteLatestStateReplay(
                 "Attribute query returned an invalid result envelope"

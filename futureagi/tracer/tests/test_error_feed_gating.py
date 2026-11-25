@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 import pytest
 
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
 from tfc.licensing.types import (
     DeploymentFlavor,
@@ -22,6 +23,10 @@ from tfc.licensing.types import (
     LicenseType,
 )
 from tracer.views.feed._permissions import ErrorFeedLicenseRequired
+
+preserve_capability_service = capability_testing.preserve_capability_service
+
+pytestmark = pytest.mark.usefixtures("preserve_capability_service")
 
 
 class _FakeResolver:
@@ -44,7 +49,6 @@ def _snapshot(state: LicenseState, features: frozenset[str]) -> LicenseSnapshot:
 
 
 def _configure_ee(snapshot: LicenseSnapshot) -> None:
-    service._configured = False
     service.configure(
         flavor=DeploymentFlavor.SELF_HOSTED_EE,
         location=DeploymentLocation.SELF_HOSTED,
@@ -53,19 +57,11 @@ def _configure_ee(snapshot: LicenseSnapshot) -> None:
 
 
 def _configure_oss() -> None:
-    service._configured = False
     service.configure(
         flavor=DeploymentFlavor.OSS,
         location=DeploymentLocation.SELF_HOSTED,
         license_resolver=None,
     )
-
-
-@pytest.fixture(autouse=True)
-def _reset_service():
-    yield
-    _configure_oss()
-    service._configured = False
 
 
 class TestErrorFeedGate:
@@ -119,9 +115,9 @@ class TestErrorFeedGate:
             CreateLinearIssueView,
             LinearTeamsView,
         ):
-            assert issubclass(
-                view, ErrorFeedLicenseRequired
-            ), f"{view.__name__} lost the error-feed license gate"
+            assert issubclass(view, ErrorFeedLicenseRequired), (
+                f"{view.__name__} lost the error-feed license gate"
+            )
 
 
 class TestOpenedGates:

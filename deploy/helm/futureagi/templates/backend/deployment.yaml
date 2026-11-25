@@ -2,7 +2,7 @@
 {{- $ctx := dict "root" . "component" "backend" -}}
 {{- $image := include "futureagi.image" (dict "root" . "image" $b.image "digestKey" "backend") -}}
 {{- $pullPolicy := include "futureagi.imagePullPolicy" (dict "root" . "image" $b.image) -}}
-{{- $env := include "futureagi.env.python" (dict "root" . "component" (dict "SERVICE_TYPE" "backend") "overrides" $b.extraEnv) -}}
+{{- $env := include "futureagi.env.python" (dict "root" . "component" (dict "SERVICE_TYPE" "backend" "STARTUP_SCHEMA_GUARD_ENABLED" "true") "overrides" $b.extraEnv) -}}
 {{- $containerSecurity := include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $b.containerSecurityContext) -}}
 apiVersion: apps/v1
 kind: Deployment
