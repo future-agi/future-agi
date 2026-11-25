@@ -3870,3 +3870,29 @@
 
 - the URL agent's Run reads Stop requested, its hover says the stop can't be confirmed, and its note says why
 - the runs list reads Stop requested for the URL agent's Run and Stopped for the sandboxed Run
+
+### SIM-E2E-038 — a reviewed draft saves only the accepted change, and only through Validate
+
+**Goal:** A builder reviews a chat-proposed rule and their own actor edit, keeps the rule, rejects the actor, validates and saves a named version holding only the rule
+
+**Spec:** `flows/simulate/reviewed-change-save.spec.ts:27`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment and a draft rule the builder chat added in answer to a message (e2e/lib/simulate-seed.ts; no hosted build runs in this harness)
+2. add a Manager actor through the actors route
+3. read the review: the rule cited to the message, the actor to the person
+4. accept the rule and reject the actor
+5. try a plain Save, first with the decisions alone, then with the review digest too
+6. Validate
+7. stand in for the validation job: proofs recorded, the candidate pairing certified, the job completed (no sandbox in this harness)
+8. read the drafts until validation is ready, then Save the candidates with a name
+
+**Backend state verified:**
+
+- a plain Save of a draft with decisions recorded is refused 409 validation_required, with or without the review digest, and the default does not move
+- Validate answers 202 with candidates, which the drafts read returns in the same shape, while the default stays put
+- after Save the Environment default is the candidate version, active and named, holding the rule and its amendment line and not the actor
+- no draft is left open once saved

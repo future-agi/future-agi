@@ -1,0 +1,16 @@
+{
+  "about": "Keys of knowledge/roles.json and the attached file each names (null: none). The same file is tested by agent-learning-kit's knowledge_role_key and the platform's, so the two readers cannot drift.",
+  "cases": [
+    {"key": "knowledge/answers.md", "names": "knowledge/answers.md"},
+    {"key": "./knowledge/answers.md", "names": "knowledge/answers.md"},
+    {"key": "  knowledge/key.csv  ", "names": "knowledge/key.csv"},
+    {"key": " ./knowledge/padded.md", "names": "knowledge/padded.md"},
+    {"key": "knowledge/../secrets.md", "names": null},
+    {"key": "knowledge/a/../b.md", "names": null},
+    {"key": "KNOWLEDGE/x.md", "names": null},
+    {"key": "knowledge/folder/", "names": "knowledge/folder/"},
+    {"key": "x.md", "names": null},
+    {"key": "/knowledge/x.md", "names": null},
+    {"key": "knowledge/roles.json", "names": null}
+  ]
+}

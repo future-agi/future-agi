@@ -98,6 +98,8 @@ def _add(auth_client, environment, actor, revision=None):
 def test_a_manager_added_to_the_draft_reads_back_and_the_saved_version_waits_for_save(
     user, workspace, storage, auth_client, settings
 ):
+    # A plain Save, as with Validate before Save turned off; the validated path is test_harness_candidates.py's.
+    settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = False
     # With an agent runtime, so the save can prepare the environment's bundle.
     environment = _versioned(user, workspace, "actors-done-when", storage)
     record_authoring(
@@ -2176,6 +2178,10 @@ def test_an_environment_sealed_before_actor_rules_never_offers_the_harness_s_own
     assert listed["knowledge_sources"] == {
         "files": ["docs/discount-policy.md"],
         "records": [{"store": "world_db", "collection": "deals"}],
+        # No attached file has a role.
+        "roles": {},
+        # A release sealed before the rules said whether seed records reach the agent says nothing.
+        "seed_records_loaded": None,
     }
     assert [one["action"] for one in listed["actions"]] == sorted(
         one["action"] for one in listed["actions"] if "." in one["action"]

@@ -326,6 +326,22 @@ def _report_key(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> str:
         .values_list("id", "setup_hash", "status")
         .first()
     )
+    from django.db.models import Max
+
+    from simulate.models import HarnessSuiteValidation, HostedHarnessScenario
+
+    # A validation or an archive between reading readiness and starting the run changes the key.
+    proved = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version_id=pairing.suite_version.id,
+            environment_version_id=pairing.environment_version.id,
+        )
+        .values_list("updated_at", flat=True)
+        .first()
+    )
+    archived = HostedHarnessScenario.no_workspace_objects.filter(
+        job_id=pairing.environment.id
+    ).aggregate(newest=Max("archived_at"))["newest"]
     parts = (
         RULES_VERSION,
         pairing.environment.id,
@@ -342,6 +358,8 @@ def _report_key(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> str:
         check,
         newest,
         setup,
+        proved,
+        archived,
         # A newer harness makes every certificate made before it Stale.
         current_harness_version(pairing.environment.organization_id),
     )

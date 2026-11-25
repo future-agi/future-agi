@@ -103,6 +103,10 @@ def _environment(user, workspace, storage, key):
     """Legacy A1 is the default; its pairing with E1 and S1 is certified."""
     environment = _agent_env(user, workspace, key, storage, body=_sealed_authoring())
     assert _row(environment).state == "ready"
+    # Its build proved every case on this pair, so a run sends them.
+    from simulate.tests.harness_validation import prove_pair
+
+    prove_pair(environment)
     return environment
 
 
@@ -674,7 +678,9 @@ class TestRows:
         assert routing["targets"] == [
             {"kind": "tool", "name": "issue_refund", "result": "failed"}
         ]
-        assert routing["fix"]["action"] == "Point issue_refund at the test world"
+        assert routing["fix"]["action"] == (
+            "Upload a new agent version that serves issue_refund from its tools service, or remove it"
+        )
 
 
 class TestPairs:
@@ -1073,6 +1079,10 @@ class TestApi:
             "dropped",
             "grading",
             "requirements_recorded",
+            "next",
+            "running",
+            "held_back",
+            "reasons",
         }
         # A single agent's workers hold nothing back.
         assert body["selection"]["held_by"] == []
@@ -1375,12 +1385,12 @@ class TestDoneWhen:
         assert routing["reason_code"] == "production_only"
         assert routing["reason"] == production_only_reason("issue_refund")
         assert routing["fix"] == {
-            "type": "tool_routing",
-            "category": "tool_routing",
+            "type": "production_only",
+            "category": "agent_version",
             "target": "issue_refund",
-            "action": "Point issue_refund at the test world",
-            "would": "issue_refund lands in the test world and its check passes",
-            # Certified already: the fix is a new version, checked on its own.
+            "action": "Upload a new agent version that serves issue_refund from its tools service, or remove it",
+            "would": "issue_refund runs in the test world instead of reaching production",
+            # Only a new agent version moves the tool off production: nothing to re-check.
             "recheck": None,
         }
         assert {
@@ -3969,7 +3979,7 @@ def test_a_scenario_with_an_acting_actor_on_an_in_process_agent_is_held_back():
     placed = _place(
         _case(acting),
         {},
-        proved=True,
+        view=None,
         voice=False,
         many=False,
         pair_validating=False,

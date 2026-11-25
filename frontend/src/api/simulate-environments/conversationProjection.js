@@ -352,7 +352,22 @@ export function conversationInFlight(conversation) {
   const messages = Array.isArray(conversation.messages)
     ? conversation.messages
     : [];
-  return messages.some((m) => IN_FLIGHT_MESSAGE_STATES.has(m.state));
+  // A message a later finished reply came after has been handled, whatever state it was left in:
+  // the server leaves the answer to a confirmation "delivered", which kept the chat in flight for
+  // good, so the unsaved-changes bar never refreshed after the turn. A question the builder still
+  // waits on is not such a reply: its turn is paused, not finished.
+  const open = conversation.blocking_input?.message_id;
+  const answered = (m) =>
+    messages.some(
+      (o) =>
+        o.role === "assistant" &&
+        o.state === "completed" &&
+        (!open || o.message_id !== open) &&
+        (o.sequence ?? 0) > (m.sequence ?? 0),
+    );
+  return messages.some(
+    (m) => IN_FLIGHT_MESSAGE_STATES.has(m.state) && !answered(m),
+  );
 }
 
 // A Stop the builder has not acted on yet. The server settles it when the turn
