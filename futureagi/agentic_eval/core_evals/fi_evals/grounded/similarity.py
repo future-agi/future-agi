@@ -51,6 +51,8 @@ class NormalisedLevenshteinSimilarity(Comparator):
 
     def _normalised_levenshtein_distance(self, str1, str2):
         m, n = len(str1), len(str2)
+        if m == n == 0:
+            return 0.0
         # Create a matrix to store the distances
         dp = [[0] * (n + 1) for _ in range(m + 1)]
         # Initialize the first row and first column
@@ -119,6 +121,8 @@ class JaccardSimilarity(Comparator):
     def _jaccard_similarity(self, str1, str2):
         str1_tokens = set(str1.lower().split())
         str2_tokens = set(str2.lower().split())
+        if not str1_tokens and not str2_tokens:
+            return 1.0
         return len(str1_tokens.intersection(str2_tokens)) / len(
             str1_tokens.union(str2_tokens)
         )
@@ -131,6 +135,8 @@ class SorensenDiceSimilarity(Comparator):
     def _sorensen_dice_similarity(self, str1, str2):
         str1_tokens = set(str1.lower().split())
         str2_tokens = set(str2.lower().split())
+        if not str1_tokens and not str2_tokens:
+            return 1.0
         return (
             2
             * len(str1_tokens.intersection(str2_tokens))
