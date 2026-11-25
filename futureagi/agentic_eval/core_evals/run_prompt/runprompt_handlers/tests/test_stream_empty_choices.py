@@ -110,8 +110,9 @@ class TestRunPromptStreamUsageOnlyChunk:
             iter(_chunks()), span, span_cm
         )
 
-        with patch("litellm.completion", return_value=stream), patch(
-            FORMATTER, return_value=FIXED_COST
+        with (
+            patch("litellm.completion", return_value=stream),
+            patch(FORMATTER, return_value=FIXED_COST),
         ):
             response = handler.execute_sync(streaming=True)
 
@@ -142,8 +143,9 @@ class TestRunPromptStreamUsageOnlyChunk:
             _AsyncChunks(_chunks()), span, span_cm
         )
 
-        with patch("litellm.acompletion", AsyncMock(return_value=stream)), patch(
-            FORMATTER, return_value=FIXED_COST
+        with (
+            patch("litellm.acompletion", AsyncMock(return_value=stream)),
+            patch(FORMATTER, return_value=FIXED_COST),
         ):
             response = await handler.execute_async(streaming=True)
 
