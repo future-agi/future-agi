@@ -135,11 +135,15 @@ export default function ScenariosStep({
   const { canEdit } = useSimulationAccess();
   // A composition's suite is a sealed release; the amend route cannot change it, its chat can.
   const editHint = env?.composition ? SCENARIOS_COPY.compositionEditHint : null;
-  const rowsLocked = locked || !canEdit || Boolean(editHint);
+  // Its rows can still be selected, to run some of them.
+  const rowsLocked = locked || !canEdit;
+  const editLocked = rowsLocked || Boolean(editHint);
   const rowsLockTooltip = locked
     ? LOCK_TOOLTIP
-    : editHint || WORKSPACE_COPY.viewer.scenarios;
-  const addLockReason = rowsLocked ? rowsLockTooltip : undefined;
+    : !canEdit
+      ? WORKSPACE_COPY.viewer.scenarios
+      : editHint;
+  const addLockReason = editLocked ? rowsLockTooltip : undefined;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -638,7 +642,7 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
-              {!rowsLocked && env?.id ? (
+              {!editLocked && env?.id ? (
                 <DraftImports envId={env.id} onResume={openImport} />
               ) : null}
               <PagedScenarioViews
@@ -657,6 +661,7 @@ export default function ScenariosStep({
                 filters={filters}
                 groupBy={activeGroupBy}
                 locked={rowsLocked}
+                editLocked={editLocked}
                 lockTooltip={rowsLockTooltip}
                 rowHeight={rowHeight}
                 readout={
@@ -697,7 +702,7 @@ export default function ScenariosStep({
           setOpenRow(null);
           setEditing(row);
         }}
-        locked={rowsLocked}
+        locked={editLocked}
         testConditions={
           !!pageData.scenarioEditing?.editable_fields?.includes("faults")
         }
