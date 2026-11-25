@@ -408,16 +408,27 @@ def _synthetic_generation_max_attempts(info):
     ).maximum_attempts
 
 
-def _is_final_synthetic_generation_attempt():
-    """Whether a failure now ends the run instead of being retried.
+def _is_final_synthetic_generation_attempt(error):
+    """Whether ``error`` ends the run instead of being retried.
 
-    Outside a Temporal activity nothing retries the call, so it is final.
+    Outside a Temporal activity nothing retries the call, so it is final. A
+    non-retryable error, or one the retry policy names, is final on any
+    attempt.
     """
     from temporalio import activity
+    from temporalio.exceptions import ApplicationError
 
     if not activity.in_activity():
         return True
+    if isinstance(error, ApplicationError) and error.non_retryable:
+        return True
     info = activity.info()
+    policy = getattr(info, "retry_policy", None)
+    error_type = (
+        error.type if isinstance(error, ApplicationError) else type(error).__name__
+    )
+    if policy is not None and error_type in (policy.non_retryable_error_types or ()):
+        return True
     max_attempts = _synthetic_generation_max_attempts(info)
     return bool(max_attempts) and info.attempt >= max_attempts
 
@@ -713,7 +724,7 @@ def create_synthetic_dataset(
             # Dataset has no status field, so keep the reason where the data
             # tab reads it. A failure Temporal will retry is not the run's
             # outcome yet, so the data tab keeps showing generation.
-            if _is_final_synthetic_generation_attempt():
+            if _is_final_synthetic_generation_attempt(e):
                 _set_synthetic_generation_error(dataset_id, request_uuid, failure)
         except Exception as inner_e:  # noqa: BLE001 - the original failure is re-raised below
             logger.error(

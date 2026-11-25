@@ -17,6 +17,8 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from rest_framework import status
+from temporalio.common import RetryPolicy
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 
 from model_hub.models.choices import DataTypeChoices, SourceChoices
@@ -335,21 +337,28 @@ def test_regenerating_clears_a_reason_the_replaced_run_wrote_while_starting(
     assert "synthetic_generation_error" not in synthetic_dataset.dataset_config
 
 
-def _run_as_activity(dataset, request_uuid, attempt):
-    """Run the task the way the worker does, as attempt ``attempt`` of 3.
+def _run_as_activity(
+    dataset,
+    request_uuid,
+    attempt,
+    error=None,
+    retry_policy=None,
+):
+    """Run the task the way the worker does, as attempt ``attempt``.
 
     This goes through the real activity wrapper, which runs the task body on
-    another thread, so the attempt has to reach that thread.
+    another thread, so the attempt has to reach that thread. Without
+    ``retry_policy`` the activity has the drop-in workflow's 3 attempts.
     """
     registered = _create_real_activity(
         create_synthetic_dataset._activity_name,
         create_synthetic_dataset._sync_wrapper,
     )
     env = ActivityEnvironment()
-    env.info = replace(env.info, attempt=attempt)
+    env.info = replace(env.info, attempt=attempt, retry_policy=retry_policy)
     with patch(
         "model_hub.tasks.develop_dataset.SyntheticDataAgent",
-        side_effect=RuntimeError("LLM provider timed out"),
+        side_effect=error or RuntimeError("LLM provider timed out"),
     ):
         asyncio.run(
             env.run(
@@ -383,3 +392,48 @@ def test_the_last_attempt_records_the_reason(synthetic_dataset):
         **GENERIC_REASON,
         "request_id": request_uuid,
     }
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_non_retryable_failure_records_the_reason_on_the_first_attempt(
+    synthetic_dataset,
+):
+    request_uuid = SyntheticTaskManager().start_task(str(synthetic_dataset.id))
+
+    # Temporal does not retry this error, so attempt 1 is the run's outcome.
+    with pytest.raises(ApplicationError):
+        _run_as_activity(
+            synthetic_dataset,
+            request_uuid,
+            attempt=1,
+            error=ApplicationError("agent unavailable", non_retryable=True),
+        )
+
+    synthetic_dataset.refresh_from_db()
+    assert synthetic_dataset.dataset_config["synthetic_generation_error"] == {
+        **GENERIC_REASON,
+        "request_id": request_uuid,
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("attempt, recorded", [(1, False), (2, True)])
+def test_the_activity_retry_policy_sets_the_last_attempt(
+    synthetic_dataset, attempt, recorded
+):
+    request_uuid = SyntheticTaskManager().start_task(str(synthetic_dataset.id))
+
+    with pytest.raises(RuntimeError):
+        _run_as_activity(
+            synthetic_dataset,
+            request_uuid,
+            attempt=attempt,
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+
+    synthetic_dataset.refresh_from_db()
+    stored = (synthetic_dataset.dataset_config or {}).get("synthetic_generation_error")
+    if recorded:
+        assert stored == {**GENERIC_REASON, "request_id": request_uuid}
+    else:
+        assert stored is None
