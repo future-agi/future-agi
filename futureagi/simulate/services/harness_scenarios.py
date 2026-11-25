@@ -1028,24 +1028,54 @@ def _row_value(row: HostedHarnessScenario, orm_path: str) -> Any:
     return getattr(value, tail, None)
 
 
-def _filter_terms(params) -> Iterator[tuple[str, str, list[str], bool]]:
-    """The filter panel's query params as (field, ORM path, values, negated)."""
+_TEXT_OPERATORS = {
+    "contains": ("contains", False),
+    "not_contains": ("contains", True),
+    "starts_with": ("starts_with", False),
+}
+
+
+def _filter_key(key: str) -> tuple[str, str, bool] | None:
+    field, marker, operator = key.partition("__")
+    if marker:
+        if operator not in _TEXT_OPERATORS or field not in _BY_VALUE:
+            return None
+        if _BY_VALUE[field]["type"] != "string":
+            return None
+        match, negated = _TEXT_OPERATORS[operator]
+        return field, match, negated
+    negated = key.endswith("_not")
+    field = key[:-4] if negated else key
+    return (field, "equals", negated) if field in _BY_VALUE else None
+
+
+def _filter_terms(params) -> Iterator[tuple[str, str, list[str], bool, str]]:
+    """The filter panel's query params as (field, ORM path, values, negated, match)."""
     for key in params.keys():
-        negated = key.endswith("_not")
-        field = key[:-4] if negated else key
-        if field not in _BY_VALUE:
+        parsed = _filter_key(key)
+        if parsed is None:
             continue
+        field, match, negated = parsed
         values = [one for one in params.getlist(key) if one not in (None, "")]
         if not values:
             continue
-        yield field, _orm_path(field), values, negated
+        yield field, _orm_path(field), values, negated, match
+
+
+def _text_match(held: Any, value: str, match: str) -> bool:
+    text, wanted = str(held or "").lower(), value.lower()
+    return text.startswith(wanted) if match == "starts_with" else wanted in text
 
 
 def _filtered_rows(rows: ScenarioRows, params) -> ScenarioRows:
-    for field, path, values, negated in _filter_terms(params):
+    for field, path, values, negated, match in _filter_terms(params):
 
         def matches(
-            row: HostedHarnessScenario, path=path, field=field, values=values
+            row: HostedHarnessScenario,
+            path=path,
+            field=field,
+            values=values,
+            match=match,
         ) -> bool:
             if field == "actors":
                 ids = {str(one.get("id")) for one in row.actors or []}
@@ -1053,6 +1083,8 @@ def _filtered_rows(rows: ScenarioRows, params) -> ScenarioRows:
                     not ids if one == NO_CALL_ACTOR else one in ids for one in values
                 )
             held = _row_value(row, path)
+            if match != "equals":
+                return any(_text_match(held, one, match) for one in values)
             if field in _LIST_FIELDS:
                 return isinstance(held, list) and any(one in held for one in values)
             return held in values
@@ -1062,14 +1094,27 @@ def _filtered_rows(rows: ScenarioRows, params) -> ScenarioRows:
 
 
 def apply_filters(queryset: QuerySet, params) -> QuerySet:
-    """Narrow the suite by the filter panel's query params: repeated keys OR, a `_not` suffix negates."""
+    """Narrow the suite by the filter panel's query params: repeated keys OR, a `_not` suffix
+    negates, and a text field's `__contains`, `__not_contains` or `__starts_with` key matches
+    part of it, ignoring case."""
     if isinstance(queryset, ScenarioRows):
         return _filtered_rows(queryset, params)
-    for field, path, values, negated in _filter_terms(params):
+    for field, path, values, negated, match in _filter_terms(params):
         if field == "actors":
             matches = Q()
             for value in values:
                 matches |= _call_actor_match(value)
+            queryset = (
+                queryset.exclude(matches) if negated else queryset.filter(matches)
+            )
+            continue
+        if match != "equals":
+            lookup = (
+                f"{path}__{'istartswith' if match == 'starts_with' else 'icontains'}"
+            )
+            matches = Q()
+            for value in values:
+                matches |= Q(**{lookup: value})
             queryset = (
                 queryset.exclude(matches) if negated else queryset.filter(matches)
             )

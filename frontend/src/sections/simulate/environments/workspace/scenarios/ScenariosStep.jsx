@@ -10,6 +10,7 @@ import { useSnackbar } from "notistack";
 import { useSearchParams } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
+import { filterKeyOf } from "src/components/filter-panel/filterKeys";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
@@ -284,6 +285,11 @@ export default function ScenariosStep({
     [pageData.scenarioEditing],
   );
 
+  const fieldTypes = useMemo(
+    () => Object.fromEntries(filterFields.map((f) => [f.value, f.type])),
+    [filterFields],
+  );
+
   const filterCount = Object.values(filters).reduce(
     (sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0),
     0,
@@ -308,10 +314,7 @@ export default function ScenariosStep({
             ? [r.value]
             : [];
         if (!values.length) return;
-        const key =
-          r.operator === "is_not" || r.operator === "not_equals"
-            ? `${r.field}_not`
-            : r.field;
+        const key = filterKeyOf(r, fieldTypes[r.field], true);
         flat[key] = [...(flat[key] || []), ...values];
       });
       setFilters(flat);

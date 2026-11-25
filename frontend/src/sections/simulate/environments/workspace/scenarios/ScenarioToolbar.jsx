@@ -106,6 +106,7 @@ export default function ScenarioToolbar({
         currentFilters={filters}
         onApply={onApplyFilters}
         placement="bottom-start"
+        operatorKeys
         // The grounded AI filter has no `scenarios` source in model-hub yet
         // (README §8), so hide the AI box here — Basic + Query still work.
         showAiFilter={false}
