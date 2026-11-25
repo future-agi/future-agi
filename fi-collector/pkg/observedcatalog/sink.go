@@ -80,6 +80,21 @@ func (s *ClickHouseSink) Publish(ctx context.Context, batch Batch) error {
 	return s.Insert(ctx, batch)
 }
 
+// Known availability exceptions may arrive even with HTTP 200 after headers
+// were flushed. Never propagate response bodies or request URLs into logs.
+func clickHouseFailure(response *http.Response, err error) error {
+	switch response.Header.Get("X-ClickHouse-Exception-Code") {
+	case "159", "202", "209", "210", "242", "252", "285", "286", "319", "999":
+		return transientFailure{err}
+	case "":
+		switch response.StatusCode {
+		case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return transientFailure{err}
+		}
+	}
+	return err
+}
+
 func (s *ClickHouseSink) insert(ctx context.Context, table string, rows any) error {
 	// Metadata and INSERT share the existing per-table deadline.
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
@@ -122,7 +137,7 @@ func (s *ClickHouseSink) insert(ctx context.Context, table string, rows any) err
 	}
 	quorumMillis := (budget / 2).Milliseconds()
 	if quorumMillis < 1 {
-		return errors.New("observedcatalog: insufficient ClickHouse quorum deadline")
+		return transientFailure{errors.New("observedcatalog: insufficient ClickHouse quorum deadline")}
 	}
 	q.Set("insert_quorum_timeout", strconv.FormatInt(quorumMillis, 10))
 	u.RawQuery = q.Encode()
@@ -136,17 +151,20 @@ func (s *ClickHouseSink) insert(ctx context.Context, table string, rows any) err
 	}
 	response, err := s.client.Do(req)
 	if err != nil {
-		return errors.New("observedcatalog: ClickHouse request failed")
+		return transientFailure{errors.New("observedcatalog: ClickHouse request failed")}
 	}
 	defer response.Body.Close()
 	result, err := io.ReadAll(io.LimitReader(response.Body, 4097))
-	if err != nil || len(result) > 4096 {
+	if err != nil {
+		return transientFailure{errors.New("observedcatalog: interrupted ClickHouse response")}
+	}
+	if len(result) > 4096 {
 		return errors.New("observedcatalog: incomplete or oversized ClickHouse response")
 	}
 	// An INSERT has no result body. Do not acknowledge a late exception in a
 	// response whose status was already sent as 200, or log server payloads.
 	if response.StatusCode != http.StatusOK || len(strings.TrimSpace(string(result))) != 0 || response.Header.Get("X-ClickHouse-Exception-Code") != "" {
-		return fmt.Errorf("observedcatalog: %s insert not confirmed (HTTP %d)", table, response.StatusCode)
+		return clickHouseFailure(response, fmt.Errorf("observedcatalog: %s insert not confirmed (HTTP %d)", table, response.StatusCode))
 	}
 	return nil
 }
@@ -211,12 +229,15 @@ func (s *ClickHouseSink) catalogMetadata(ctx context.Context, table, query strin
 	}
 	response, err := s.client.Do(req)
 	if err != nil {
-		return errors.New("observedcatalog: ClickHouse topology request failed")
+		return transientFailure{errors.New("observedcatalog: ClickHouse topology request failed")}
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 4097))
-	if err != nil || len(body) > 4096 || response.StatusCode != http.StatusOK || response.Header.Get("X-ClickHouse-Exception-Code") != "" {
-		return errors.New("observedcatalog: ClickHouse topology not confirmed (check system.tables/system.replicas SELECT grants)")
+	if err != nil {
+		return transientFailure{errors.New("observedcatalog: interrupted ClickHouse topology response")}
+	}
+	if len(body) > 4096 || response.StatusCode != http.StatusOK || response.Header.Get("X-ClickHouse-Exception-Code") != "" {
+		return clickHouseFailure(response, errors.New("observedcatalog: ClickHouse topology not confirmed (check system.tables/system.replicas SELECT grants)"))
 	}
 	if err := json.Unmarshal(body, result); err != nil {
 		return errors.New("observedcatalog: invalid ClickHouse topology response")

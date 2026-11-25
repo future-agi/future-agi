@@ -4,9 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"math/rand/v2"
+	"net"
 	"strings"
 	"time"
 
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -134,22 +139,26 @@ func NewConsumer(cfg KafkaConfig, sink Sink) (*Consumer, error) {
 	if sink == nil {
 		return nil, errors.New("observedcatalog: sink required")
 	}
-	// One record performs at most two 30-second sink requests and a
-	// 30-second commit. Leave another 30 seconds for rebalance headroom.
-	client, err := kgo.NewClient(kgo.SeedBrokers(cfg.Brokers...), kgo.ClientID(cfg.ClientID), kgo.ConsumeTopics(cfg.Topic), kgo.ConsumerGroup(cfg.Group), kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.ConsumeStartOffset(kgo.NewOffset().AtStart()), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.FetchMaxBytes(4*MaxRecordBytes), kgo.FetchMaxPartitionBytes(MaxRecordBytes+1024), kgo.MaxConcurrentFetches(1), kgo.BrokerMaxReadBytes(8*MaxRecordBytes), kgo.RebalanceTimeout(2*time.Minute))
+	client, err := newRecordSource(cfg)
 	if err != nil {
 		return nil, err
 	}
 	return &Consumer{source: client, sink: sink, cfg: cfg}, nil
 }
 
-// processOnce never commits past a failed record. Run exits on any error so
-// restart begins at the committed offset, not the client's advanced fetch cursor.
+func newRecordSource(cfg KafkaConfig) (*kgo.Client, error) {
+	// One record performs at most two 30-second sink requests and a
+	// 30-second commit. Leave another 30 seconds for rebalance headroom.
+	return kgo.NewClient(kgo.SeedBrokers(cfg.Brokers...), kgo.ClientID(cfg.ClientID), kgo.ConsumeTopics(cfg.Topic), kgo.ConsumerGroup(cfg.Group), kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.ConsumeStartOffset(kgo.NewOffset().AtStart()), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.FetchMaxBytes(4*MaxRecordBytes), kgo.FetchMaxPartitionBytes(MaxRecordBytes+1024), kgo.MaxConcurrentFetches(1), kgo.BrokerMaxReadBytes(8*MaxRecordBytes), kgo.RebalanceTimeout(2*time.Minute))
+}
+
+// processOnce never commits past a failed record. On failure its source may
+// have advanced its fetch cursor and must not be polled again.
 func (c *Consumer) processOnce(ctx context.Context) error {
 	fetches := c.source.PollRecords(ctx, 1)
 	defer c.source.AllowRebalance()
 	if err := fetches.Err(); err != nil {
-		return err
+		return kafkaFailure(err)
 	}
 	records := fetches.Records()
 	if len(records) == 0 {
@@ -187,17 +196,69 @@ func (c *Consumer) processOnce(ctx context.Context) error {
 	}
 	commit, stop := context.WithTimeout(ctx, c.cfg.Timeout)
 	defer stop()
-	return c.source.CommitRecords(commit, records...)
+	return kafkaFailure(c.source.CommitRecords(commit, records...))
+}
+
+// Only dependency failures marked at the I/O boundary are retried. Decode,
+// configuration, authorization and offset-reset errors remain terminal.
+type transientFailure struct{ error }
+
+func (e transientFailure) Unwrap() error { return e.error }
+
+func kafkaFailure(err error) error {
+	var network net.Error
+	if kerr.IsRetriable(err) || errors.As(err, &network) || errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, kerr.IllegalGeneration) ||
+		errors.Is(err, kerr.UnknownMemberID) || errors.Is(err, kerr.RebalanceInProgress) {
+		return transientFailure{err}
+	}
+	return err
 }
 
 func (c *Consumer) Run(ctx context.Context) error {
+	const ceiling = 2 * time.Hour
+	var since time.Time
+	delay := time.Second
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := c.processOnce(ctx); err != nil {
+		err := c.processOnce(ctx)
+		if err == nil {
+			since = time.Time{}
+			delay = time.Second
+			continue
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var transient transientFailure
+		if !errors.As(err, &transient) {
 			return err
 		}
+		if since.IsZero() {
+			since = time.Now()
+		}
+		// Release group ownership before backing off. A new client starts at
+		// the group's committed offset, including after an ambiguous commit.
+		c.Close()
+		c.source = nil
+		wait := delay/2 + time.Duration(rand.Int64N(int64(delay/2)))
+		if time.Since(since)+wait >= ceiling {
+			return fmt.Errorf("observedcatalog: retry window expired: %w", err)
+		}
+		slog.Warn("observed consumer will rejoin after dependency failure", "delay", wait)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		delay = min(2*delay, time.Minute)
+		client, err := newRecordSource(c.cfg)
+		if err != nil {
+			return err
+		}
+		c.source = client
 	}
 }
 func (c *Consumer) Close() {
