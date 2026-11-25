@@ -17,6 +17,7 @@ import { STATUS_META, runColor } from "../runs.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
+import ReleaseSplitTag from "../../run/ReleaseSplitTag";
 import { neutralCheckboxSx } from "../detail/trace/traceTable.constants";
 import { COMPARE_COPY } from "../../workspace.constants";
 import { format } from "../detail/analytics/DashboardCharts";
@@ -208,6 +209,7 @@ function SummaryRow({
                 {row.label}
                 {sub ? ` · ${sub}` : ""}
               </Typography>
+              <ReleaseSplitTag release={row.release} split={row.split} />
               {row.agentDiffers && (
                 <AgentDiffersTag
                   agentVersion={row.pinnedAgentVersion}

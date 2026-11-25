@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import {
+  Alert,
   Box,
   Chip,
   CircularProgress,
@@ -44,10 +45,13 @@ const signed = (value) =>
   value == null ? "-" : `${value > 0 ? "+" : ""}${number(value)}`;
 
 const versionLine = (versions) =>
-  Object.entries(COPY.pieces)
-    .map(([piece, name]) =>
+  [
+    ...Object.entries(COPY.pieces).map(([piece, name]) =>
       versions?.[piece]?.label ? `${name} ${versions[piece].label}` : null,
-    )
+    ),
+    versions?.release?.label && COPY.release(versions.release.label),
+    versions?.split && COPY.splits[versions.split],
+  ]
     .filter(Boolean)
     .join(" · ");
 
@@ -105,7 +109,10 @@ function Verdict({ pair }) {
       )}
       {verdict}
       {[interval, hint].filter(Boolean).map((text) => (
-        <Typography key={text} sx={{ typography: "s3", color: "text.secondary" }}>
+        <Typography
+          key={text}
+          sx={{ typography: "s3", color: "text.secondary" }}
+        >
           {text}
         </Typography>
       ))}
@@ -125,6 +132,8 @@ export default function RunCompare({ open, onClose, env, current, against }) {
   );
   const pairs = [...(data?.pairs ?? [])].sort((a, b) => rank(a) - rank(b));
   const summary = data?.summary;
+  // Runs on different releases or splits: the server withholds the verdicts.
+  const comparable = data?.comparability?.comparable !== false;
   const counts = summary
     ? Object.entries(COPY.summary)
         .filter(([key]) => summary[key])
@@ -150,11 +159,22 @@ export default function RunCompare({ open, onClose, env, current, against }) {
   } else {
     body = (
       <>
-        <Typography sx={{ mt: 0.75, typography: "s3", color: "text.secondary" }}>
+        <Typography
+          sx={{ mt: 0.75, typography: "s3", color: "text.secondary" }}
+        >
           {COPY.versions(current?.label, versionLine(data.versions?.current))}
           {" · "}
           {COPY.versions(against?.label, versionLine(data.versions?.against))}
         </Typography>
+        {!comparable && (
+          <Alert
+            severity="warning"
+            data-testid="compare-not-comparable"
+            sx={{ mt: 1 }}
+          >
+            {COPY.notComparableRuns}
+          </Alert>
+        )}
         {counts.length > 0 && (
           <Typography sx={{ mt: 0.5, typography: "s1" }}>
             {counts.join(" · ")}

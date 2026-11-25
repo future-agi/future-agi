@@ -140,11 +140,13 @@ export default function EnvironmentWorkspace() {
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
     // the changed `picks` are sent.
-    mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
+    mutationFn: async ({ ids, trials, picks, resolved, seed, split }) => {
       // Run-all reads the keys from the server list: the bootstrap
       // `envState.scenarios` is seeded once and keeps a key an amend dropped.
-      const scenarioIds =
-        ids === undefined ? await listAllScenarioKeys(env.id) : ids;
+      // Run-all of a split sends no keys: the server runs the split's.
+      let scenarioIds = ids;
+      if (ids === undefined && !split)
+        scenarioIds = await listAllScenarioKeys(env.id);
       const selection = JSON.stringify([
         env.id,
         scenarioIds,
@@ -153,6 +155,7 @@ export default function EnvironmentWorkspace() {
         resolved?.environment ?? picks?.environment ?? null,
         resolved?.suite ?? picks?.suite ?? null,
         seed ?? null,
+        split ?? null,
       ]);
       if (pendingSubmission.current?.selection !== selection) {
         pendingSubmission.current = {
@@ -167,6 +170,7 @@ export default function EnvironmentWorkspace() {
         pendingSubmission.current.key,
         picks,
         seed,
+        split,
       );
     },
     onSuccess: (run) => {
@@ -220,13 +224,14 @@ export default function EnvironmentWorkspace() {
       initialPicks={runDialog.initialPicks}
       initialSeed={runDialog.seed}
       onClose={() => setRunDialog(null)}
-      onSubmit={(picks, ids, resolved, seed) =>
+      onSubmit={(picks, ids, resolved, seed, split) =>
         runMutation.mutate({
           ids,
           trials: runDialog.trials,
           picks,
           resolved,
           seed,
+          split,
         })
       }
       submitting={runMutation.isPending}

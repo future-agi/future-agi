@@ -150,7 +150,10 @@ export const moveDefault = async (envId, piece, versionId, expectedDefaultId) =>
   ).data;
 
 // The default pair the user saw rides along; a newer one refuses the lock (409).
-export const lockRelease = async (envId, { environmentVersionId, suiteVersionId }) =>
+export const lockRelease = async (
+  envId,
+  { environmentVersionId, suiteVersionId },
+) =>
   (
     await axios.post(lockReleasePath(envId), {
       environment_version_id: environmentVersionId,
@@ -183,13 +186,14 @@ export const changeCredentials = async (envId, environmentValues, files) =>
 export const createAgentVersion = async (envId, body) =>
   (await axios.post(agentVersionsPath(envId), body)).data;
 
-// No scenarioKeys means every scenario.
-export const getRunPlan = async (envId, picks, scenarioKeys) =>
+// No scenarioKeys means every scenario, or every scenario of the split.
+export const getRunPlan = async (envId, picks, scenarioKeys, split = null) =>
   (
     await axios.get(runPlanPath(envId), {
       params: {
         ...versionPickFields(picks),
         ...(scenarioKeys ? { scenario_keys: scenarioKeys.join(",") } : {}),
+        ...(split ? { split } : {}),
       },
     })
   ).data;
@@ -329,11 +333,17 @@ export const draftsKey = (envId) => [
 export const actorsKey = (envId) => [...draftsKey(envId), "actors"];
 export const actorViewKey = (envId, actorId) => [...actorsKey(envId), actorId];
 
-export const runPlanKey = (envId, picks = {}, scenarioKeys = null) => [
+export const runPlanKey = (
+  envId,
+  picks = {},
+  scenarioKeys = null,
+  split = null,
+) => [
   ...environmentVersionsKey(envId),
   "run-plan",
   ...VERSION_PIECES.map((piece) => picks?.[piece] || null),
   scenarioKeys,
+  split,
 ];
 
 const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
@@ -397,6 +407,15 @@ export const releaseFromApi = (item = {}) => ({
   train: item.train ?? 0,
   test: item.test ?? 0,
 });
+
+// The locked release of an environment and scenario version pair, or null.
+export const lockedRelease = (releases, environmentVersionId, suiteVersionId) =>
+  (releases || []).find(
+    (release) =>
+      !release.unlockedAt &&
+      release.environmentVersionId === environmentVersionId &&
+      release.suiteVersionId === suiteVersionId,
+  ) || null;
 
 // Whether the default pair can be locked now, why not, and its splits.
 export const lockFromApi = (item = {}) => ({
@@ -521,11 +540,11 @@ export function useSuiteMembers(envId, versionId, { enabled = true } = {}) {
 export function useRunPlan(
   envId,
   picks,
-  { enabled = true, scenarioKeys = null } = {},
+  { enabled = true, scenarioKeys = null, split = null } = {},
 ) {
   return useQuery({
-    queryKey: runPlanKey(envId, picks, scenarioKeys),
-    queryFn: () => getRunPlan(envId, picks, scenarioKeys),
+    queryKey: runPlanKey(envId, picks, scenarioKeys, split),
+    queryFn: () => getRunPlan(envId, picks, scenarioKeys, split),
     enabled: Boolean(envId) && enabled,
     retry: retryServerFailures,
     meta: { errorHandled: true },

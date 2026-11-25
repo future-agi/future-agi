@@ -233,6 +233,8 @@ export function useRunDetail(
       pinnedAgentVersion: execution.pinned_agent_version ?? null,
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
+      split: execution.split ?? null,
+      release: execution.release ?? null,
       agentDiffers: Boolean(execution.agent_differs),
       // Said by the server when the run replayed a build without its environment's actors.
       buildNotice: execution.build_notice ?? null,

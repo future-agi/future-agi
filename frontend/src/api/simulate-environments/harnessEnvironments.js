@@ -56,7 +56,8 @@ export const getHarnessEnvironment = async (id) =>
   (await axios.get(environmentPath(id))).data;
 
 // `picks` ({agent, environment, suite} → version id) carries only the pieces
-// the user changed; the rest run the environment's defaults.
+// the user changed; the rest run the environment's defaults. A release
+// `split` with no scenarioIds runs every scenario of that split.
 export const runHarnessEnvironment = async (
   id,
   scenarioIds,
@@ -64,13 +65,15 @@ export const runHarnessEnvironment = async (
   idempotencyKey,
   picks,
   seed,
+  split,
 ) =>
   (
     await axios.post(
       environmentRunPath(id),
       {
-        scenario_ids: scenarioIds,
+        ...(scenarioIds !== undefined ? { scenario_ids: scenarioIds } : {}),
         trials,
+        ...(split ? { split } : {}),
         ...versionPickFields(picks),
         // Omitted so the run keeps the environment's seed.
         ...(seed != null ? { seed } : {}),

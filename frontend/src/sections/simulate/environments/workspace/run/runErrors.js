@@ -7,6 +7,9 @@ const INLINE_ERRORS = new Set([
   "production_only",
   "scenario_selection_unknown",
   "idempotency_key_reused",
+  "split_needs_release",
+  "split_scenario_outside",
+  "split_not_for_coding_agent",
 ]);
 
 const isClientError = (error) => {
