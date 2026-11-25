@@ -960,9 +960,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/mixed-histories"
           echo "HISTORICAL_REPLAY_HISTORY_DIR=$RUNNER_TEMP/mixed-histories" >> "$GITHUB_ENV"
 
-      # The Temporal CLI archive is cached under its SHA-256, so a merge group
-      # downloads nothing once a run on dev has saved it. temporal-cli.sh
-      # verifies the digest on a cache hit and on a download alike.
+      # The Temporal CLI archive is cached under its SHA-256, and temporal-cli.sh
+      # verifies the digest on a cache hit and on a download alike. A merge
+      # group restores only caches saved on the default branch (or its own
+      # queue ref), so it downloads nothing once a run on main has saved the
+      # archive; until then it fetches the GitHub release, not Temporal's
+      # rate-limited download proxy.
       - name: Key the pinned Temporal CLI by its digest
         id: temporal-cli
         run: echo "sha256=$(bash .ci/temporal-cli.sh digest)" >> "$GITHUB_OUTPUT"
