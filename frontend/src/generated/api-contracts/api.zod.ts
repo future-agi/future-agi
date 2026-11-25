@@ -47074,6 +47074,19 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
           label: zod.string().min(1).nullish(),
         })
         .nullable(),
+      split: zod
+        .enum(["train", "test"])
+        .describe(
+          "The release split the run runs; null for the scenarios selected.",
+        ),
+      release: zod
+        .object({
+          label: zod.string().min(1).nullish(),
+          locked: zod.boolean().optional(),
+        })
+        .describe(
+          "The release of the environment and suite versions; null when none names them.",
+        ),
     }),
     against: zod
       .object({
@@ -47095,8 +47108,29 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
             label: zod.string().min(1).nullish(),
           })
           .nullable(),
+        split: zod
+          .enum(["train", "test"])
+          .describe(
+            "The release split the run runs; null for the scenarios selected.",
+          ),
+        release: zod
+          .object({
+            label: zod.string().min(1).nullish(),
+            locked: zod.boolean().optional(),
+          })
+          .describe(
+            "The release of the environment and suite versions; null when none names them.",
+          ),
       })
       .nullable(),
+  }),
+  comparability: zod.object({
+    comparable: zod
+      .boolean()
+      .describe(
+        "False when either run ran a split and the two differ in release or split; every verdict is then null.",
+      ),
+    reasons: zod.array(zod.enum(["different_release", "different_split"])),
   }),
 });
 
@@ -50706,6 +50740,12 @@ export const SimulateApiHarnessEnvironmentsRunPlanQueryParams = zod.object({
     .describe(
       "The scenarios the run would select, comma-separated; absent or blank selects every scenario.",
     ),
+  split: zod
+    .enum(["train", "test"])
+    .optional()
+    .describe(
+      "The release split the run would run; absent previews the scenarios selected.",
+    ),
 });
 
 export const simulateApiHarnessEnvironmentsRunPlanResponseHeldBackMin = 0;
@@ -50730,6 +50770,19 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
         label: zod.string().min(1).nullish(),
       })
       .nullable(),
+    split: zod
+      .enum(["train", "test"])
+      .describe(
+        "The release split the run runs; null for the scenarios selected.",
+      ),
+    release: zod
+      .object({
+        label: zod.string().min(1).nullish(),
+        locked: zod.boolean().optional(),
+      })
+      .describe(
+        "The release of the environment and suite versions; null when none names them.",
+      ),
   }),
   warnings: zod.array(
     zod.object({
@@ -50801,7 +50854,14 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
         .min(1)
         .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsItemMax),
     )
-    .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax),
+    .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax)
+    .optional(),
+  split: zod
+    .enum(["train", "test"])
+    .optional()
+    .describe(
+      "Run this split of the release that locks the run's versions; absent or null runs the scenarios selected.",
+    ),
   trials: zod
     .number()
     .min(1)
@@ -54243,7 +54303,14 @@ export const SimulateApiHarnessJobsRunsBody = zod.object({
     .array(
       zod.string().min(1).max(simulateApiHarnessJobsRunsBodyScenarioIdsItemMax),
     )
-    .max(simulateApiHarnessJobsRunsBodyScenarioIdsMax),
+    .max(simulateApiHarnessJobsRunsBodyScenarioIdsMax)
+    .optional(),
+  split: zod
+    .enum(["train", "test"])
+    .optional()
+    .describe(
+      "Run this split of the release that locks the run's versions; absent or null runs the scenarios selected.",
+    ),
   trials: zod
     .number()
     .min(1)
@@ -62034,6 +62101,21 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
           })
           .nullish(),
         agent_differs: zod.boolean().optional(),
+        split: zod
+          .enum(["train", "test"])
+          .optional()
+          .describe(
+            "The release split the run ran; null for the scenarios selected.",
+          ),
+        release: zod
+          .object({
+            label: zod.string().min(1).optional(),
+            locked: zod.boolean().optional(),
+          })
+          .optional()
+          .describe(
+            "The release of the environment and suite versions; null when none names them.",
+          ),
       }),
     )
     .optional(),
@@ -66994,6 +67076,21 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .boolean()
       .default(
         simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault,
+      ),
+    split: zod
+      .enum(["train", "test"])
+      .optional()
+      .describe(
+        "The release split the run ran; null for the scenarios selected.",
+      ),
+    release: zod
+      .object({
+        label: zod.string().min(1).optional(),
+        locked: zod.boolean().optional(),
+      })
+      .optional()
+      .describe(
+        "The release of the environment and suite versions; null when none names them.",
       ),
     build_notice: zod
       .string()

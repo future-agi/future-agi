@@ -22197,15 +22197,52 @@ export interface HarnessCompareSummaryApi {
   excluded_not_comparable: number;
 }
 
+/**
+ * The release split the run runs; null for the scenarios selected.
+ */
+export type HarnessRunPinnedVersionsApiSplit =
+  (typeof HarnessRunPinnedVersionsApiSplit)[keyof typeof HarnessRunPinnedVersionsApiSplit];
+
+export const HarnessRunPinnedVersionsApiSplit = {
+  train: "train",
+  test: "test",
+} as const;
+
+/**
+ * The release of the environment and suite versions; null when none names them.
+ */
+export interface RunReleaseLabelApi {
+  /** @minLength 1 */
+  readonly label?: string;
+  readonly locked?: boolean;
+}
+
 export interface HarnessRunPinnedVersionsApi {
   agent: RunVersionLabelApi | null;
   environment: RunVersionLabelApi | null;
   suite: RunVersionLabelApi | null;
+  /** The release split the run runs; null for the scenarios selected. */
+  split: HarnessRunPinnedVersionsApiSplit;
+  release: RunReleaseLabelApi;
 }
 
 export interface HarnessCompareVersionsApi {
   current: HarnessRunPinnedVersionsApi;
   against: HarnessRunPinnedVersionsApi | null;
+}
+
+export type HarnessComparabilityApiReasonsItem =
+  (typeof HarnessComparabilityApiReasonsItem)[keyof typeof HarnessComparabilityApiReasonsItem];
+
+export const HarnessComparabilityApiReasonsItem = {
+  different_release: "different_release",
+  different_split: "different_split",
+} as const;
+
+export interface HarnessComparabilityApi {
+  /** False when either run ran a split and the two differ in release or split; every verdict is then null. */
+  comparable: boolean;
+  reasons: HarnessComparabilityApiReasonsItem[];
 }
 
 export interface HarnessCompareApi {
@@ -22214,6 +22251,7 @@ export interface HarnessCompareApi {
   pairs: HarnessComparePairApi[];
   summary: HarnessCompareSummaryApi;
   versions: HarnessCompareVersionsApi;
+  comparability: HarnessComparabilityApi;
 }
 
 export type HarnessDraftItemApiStatus =
@@ -23022,9 +23060,22 @@ export interface HarnessRunPlanApi {
   held_back: number;
 }
 
+/**
+ * Run this split of the release that locks the run's versions; absent or null runs the scenarios selected.
+ */
+export type HarnessRunCreateApiSplit =
+  (typeof HarnessRunCreateApiSplit)[keyof typeof HarnessRunCreateApiSplit];
+
+export const HarnessRunCreateApiSplit = {
+  train: "train",
+  test: "test",
+} as const;
+
 export interface HarnessRunCreateApi {
   /** @maxItems 1000 */
-  scenario_ids: string[];
+  scenario_ids?: string[];
+  /** Run this split of the release that locks the run's versions; absent or null runs the scenarios selected. */
+  split?: HarnessRunCreateApiSplit;
   /**
    * @minimum 1
    * @maximum 20
@@ -27320,6 +27371,17 @@ export const TestExecutionItemResponseApiOutcomeStatus = {
   no_score: "no_score",
 } as const;
 
+/**
+ * The release split the run ran; null for the scenarios selected.
+ */
+export type TestExecutionItemResponseApiSplit =
+  (typeof TestExecutionItemResponseApiSplit)[keyof typeof TestExecutionItemResponseApiSplit];
+
+export const TestExecutionItemResponseApiSplit = {
+  train: "train",
+  test: "test",
+} as const;
+
 export interface TestExecutionItemResponseApi {
   /** Comparable trials that passed. */
   trials_passed: number;
@@ -27388,6 +27450,9 @@ export interface TestExecutionItemResponseApi {
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
   readonly agent_differs?: boolean;
+  /** The release split the run ran; null for the scenarios selected. */
+  readonly split?: TestExecutionItemResponseApiSplit;
+  release?: RunReleaseLabelApi;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -30426,6 +30491,17 @@ export interface RunAnalyticsV3ResponseApi {
   trends: TrendApi[];
 }
 
+/**
+ * The release split the run ran; null for the scenarios selected.
+ */
+export type RunExecutionApiSplit =
+  (typeof RunExecutionApiSplit)[keyof typeof RunExecutionApiSplit];
+
+export const RunExecutionApiSplit = {
+  train: "train",
+  test: "test",
+} as const;
+
 export interface RunResumeEntryApi {
   at: string;
   by: string;
@@ -30471,6 +30547,9 @@ export interface RunExecutionApi {
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
   agent_differs?: boolean;
+  /** The release split the run ran; null for the scenarios selected. */
+  split?: RunExecutionApiSplit;
+  release?: RunReleaseLabelApi;
   /**
    * Said when the run replayed a build without its environment's actors.
    * @minLength 1
@@ -47209,7 +47288,19 @@ export type SimulateApiHarnessEnvironmentsRunPlanParams = {
    * The scenarios the run would select, comma-separated; absent or blank selects every scenario.
    */
   scenario_keys?: string;
+  /**
+   * The release split the run would run; absent previews the scenarios selected.
+   */
+  split?: SimulateApiHarnessEnvironmentsRunPlanSplit;
 };
+
+export type SimulateApiHarnessEnvironmentsRunPlanSplit =
+  (typeof SimulateApiHarnessEnvironmentsRunPlanSplit)[keyof typeof SimulateApiHarnessEnvironmentsRunPlanSplit];
+
+export const SimulateApiHarnessEnvironmentsRunPlanSplit = {
+  train: "train",
+  test: "test",
+} as const;
 
 export type SimulateApiHarnessEnvironmentsVersionsVersionDiffParams = {
   against?: string;

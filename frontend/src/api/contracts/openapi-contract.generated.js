@@ -30233,6 +30233,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
             },
           },
+          split: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["train", "test"],
+            },
+          },
         },
         responses: {
           200: {
@@ -71789,6 +71796,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "pairs",
         "summary",
         "versions",
+        "comparability",
       ],
       type: "object",
       properties: {
@@ -71814,6 +71822,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         versions: {
           $ref: "#/definitions/HarnessCompareVersions",
+        },
+        comparability: {
+          $ref: "#/definitions/HarnessComparability",
         },
       },
     },
@@ -73640,7 +73651,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessRunCreate: {
-      required: ["scenario_ids"],
       type: "object",
       properties: {
         scenario_ids: {
@@ -73651,6 +73661,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
           maxItems: 1000,
+        },
+        split: {
+          title: "Split",
+          description:
+            "Run this split of the release that locks the run's versions; absent or null runs the scenarios selected.",
+          type: "string",
+          enum: ["train", "test"],
+          "x-nullable": true,
         },
         trials: {
           title: "Trials",
@@ -113491,6 +113509,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessComparability: {
+      required: ["comparable", "reasons"],
+      type: "object",
+      properties: {
+        comparable: {
+          title: "Comparable",
+          description:
+            "False when either run ran a split and the two differ in release or split; every verdict is then null.",
+          type: "boolean",
+        },
+        reasons: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["different_release", "different_split"],
+          },
+        },
+      },
+    },
     HarnessComparePair: {
       required: [
         "scenario_key",
@@ -113590,18 +113627,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         improved: {
           title: "Improved",
           type: "integer",
+          "x-nullable": true,
         },
         regressed: {
           title: "Regressed",
           type: "integer",
+          "x-nullable": true,
         },
         no_meaningful_change: {
           title: "No meaningful change",
           type: "integer",
+          "x-nullable": true,
         },
         inconclusive: {
           title: "Inconclusive",
           type: "integer",
+          "x-nullable": true,
         },
         criteria_changed: {
           title: "Criteria changed",
@@ -116132,7 +116173,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessRunPinnedVersions: {
-      required: ["agent", "environment", "suite"],
+      required: ["agent", "environment", "suite", "split", "release"],
       type: "object",
       properties: {
         agent: {
@@ -116143,6 +116184,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         suite: {
           $ref: "#/definitions/RunVersionLabel",
+        },
+        split: {
+          title: "Split",
+          description:
+            "The release split the run runs; null for the scenarios selected.",
+          type: "string",
+          enum: ["train", "test"],
+          "x-nullable": true,
+        },
+        release: {
+          $ref: "#/definitions/RunReleaseLabel",
         },
       },
     },
@@ -125213,6 +125265,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        split: {
+          title: "Split",
+          description:
+            "The release split the run ran; null for the scenarios selected.",
+          type: "string",
+          enum: ["train", "test"],
+          "x-nullable": true,
+        },
+        release: {
+          $ref: "#/definitions/RunReleaseLabel",
+        },
         build_notice: {
           title: "Build notice",
           description:
@@ -125771,6 +125834,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Agent differs",
           type: "boolean",
           readOnly: true,
+        },
+        split: {
+          title: "Split",
+          description:
+            "The release split the run ran; null for the scenarios selected.",
+          type: "string",
+          enum: ["train", "test"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        release: {
+          $ref: "#/definitions/RunReleaseLabel",
         },
       },
     },
@@ -139340,6 +139415,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 255,
           minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    RunReleaseLabel: {
+      description:
+        "The release of the environment and suite versions; null when none names them.",
+      type: "object",
+      properties: {
+        label: {
+          title: "Label",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        locked: {
+          title: "Locked",
+          type: "boolean",
+          readOnly: true,
         },
       },
       "x-nullable": true,
