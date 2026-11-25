@@ -131497,7 +131497,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AgentFixCandidateWording: {
-      required: ["headline", "must_pass", "changes", "caveats"],
+      required: [
+        "headline",
+        "must_pass",
+        "must_pass_broken",
+        "changes",
+        "caveats",
+      ],
       type: "object",
       properties: {
         headline: {
@@ -131507,6 +131513,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         must_pass: {
           title: "Must pass",
           type: "string",
+        },
+        must_pass_broken: {
+          title: "Must pass broken",
+          type: "integer",
+          minimum: 0,
         },
         changes: {
           title: "Changes",

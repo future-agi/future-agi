@@ -39271,6 +39271,8 @@ export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPa
 export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersDefault =
   [];
 
+export const simulateApiAgentFixRunsReadResponseCandidatesItemWordingMustPassBrokenMin = 0;
+
 export const SimulateApiAgentFixRunsReadResponse = zod.object({
   id: zod.string().uuid().optional(),
   number: zod.union([zod.number(), zod.null()]),
@@ -39578,6 +39580,11 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
         .object({
           headline: zod.string(),
           must_pass: zod.string(),
+          must_pass_broken: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsReadResponseCandidatesItemWordingMustPassBrokenMin,
+            ),
           changes: zod.union([zod.string().min(1), zod.null()]),
           caveats: zod.array(zod.string().min(1)),
         })

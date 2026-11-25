@@ -146195,6 +146195,7 @@
             "required": [
                 "headline",
                 "must_pass",
+                "must_pass_broken",
                 "changes",
                 "caveats"
             ],
@@ -146207,6 +146208,11 @@
                 "must_pass": {
                     "title": "Must pass",
                     "type": "string"
+                },
+                "must_pass_broken": {
+                    "title": "Must pass broken",
+                    "type": "integer",
+                    "minimum": 0
                 },
                 "changes": {
                     "title": "Changes",
