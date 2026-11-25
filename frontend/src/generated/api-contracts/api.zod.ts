@@ -65086,6 +65086,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       }),
     }),
   ),
+  browser_environment: zod
+    .boolean()
+    .describe(
+      "The trial ran in an environment with a browser: its job had sites at its pin. What the browser did is read only when its entry is opened, from the call's browser endpoint.",
+    ),
   attempt_number: zod
     .number()
     .describe(

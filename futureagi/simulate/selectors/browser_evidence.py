@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from collections.abc import Mapping
 from typing import Any, Literal, TypedDict
 from urllib.parse import urlsplit
@@ -17,8 +18,9 @@ from urllib.parse import urlsplit
 import structlog
 
 from simulate.constants.hosted_harness import TRIAL_STATE_KEY
-from simulate.models import CallExecution, HostedHarnessArtifact
+from simulate.models import CallExecution, HostedHarnessArtifact, HostedHarnessJob
 from simulate.selectors.call_detail import end_state_artifact
+from simulate.services.browser_sites import browser_sites_at_pin
 from simulate.services.hosted_harness_ingestion import artifact_kind_kept
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
@@ -118,6 +120,37 @@ def browser_evidence(call: CallExecution) -> BrowserEvidence:
     )
     shown["screenshots"] = [_screenshot(row, pictures) for row in rows]
     return shown
+
+
+def browser_environment(call: CallExecution) -> bool:
+    """Whether the trial ran in a browser environment: the job that sent its receipt, in the run's organisation and
+    workspace, has sites at its pin. Read through the one function for a job's sites, never a second reader."""
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+    receipt = metadata.get("hosted_harness_receipt")
+    try:
+        job_id = uuid.UUID(str(receipt.get("job_id")))
+    except (AttributeError, ValueError):
+        return False
+    run_test = call.test_execution.run_test
+    jobs = HostedHarnessJob.no_workspace_objects.filter(
+        id=job_id, organization_id=run_test.organization_id
+    )
+    jobs = (
+        jobs.filter(workspace_id=run_test.workspace_id)
+        if run_test.workspace_id is not None
+        else jobs.filter(workspace_id__isnull=True)
+    )
+    job = jobs.select_related("environment_version").first()
+    if job is None:
+        return False
+    try:
+        return bool(browser_sites_at_pin(job.payload, job.environment_version))
+    except HostedHarnessError:
+        # A stored list the save would refuse still names a browser environment; the entry says what was kept.
+        logger.warning("browser_environment_sites_refused", job_id=str(job.id))
+        return True
 
 
 def _read(stored: HostedHarnessArtifact) -> dict[str, Any]:

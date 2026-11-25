@@ -60078,6 +60078,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "has_customer",
         "trial_state",
         "earlier_attempts",
+        "browser_environment",
         "attempt_number",
         "actors_enabled",
         "comparable",
@@ -60590,6 +60591,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/EarlierAttempt",
           },
+        },
+        browser_environment: {
+          title: "Browser environment",
+          description:
+            "The trial ran in an environment with a browser: its job had sites at its pin. What the browser did is read only when its entry is opened, from the call's browser endpoint.",
+          type: "boolean",
         },
         attempt_number: {
           title: "Attempt number",

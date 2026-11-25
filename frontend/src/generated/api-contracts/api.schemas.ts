@@ -29396,6 +29396,8 @@ export interface CallExecutionV3DetailResponseApi {
   has_customer: boolean;
   trial_state: TrialStateApi;
   earlier_attempts: EarlierAttemptApi[];
+  /** The trial ran in an environment with a browser: its job had sites at its pin. What the browser did is read only when its entry is opened, from the call's browser endpoint. */
+  browser_environment: boolean;
   /** Which attempt this call is, counted from 1: one more than its earlier attempts. */
   attempt_number: number;
   /** Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view. */
