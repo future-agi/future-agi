@@ -311,6 +311,29 @@ def read_file(version: AgentVersion, raw_path: str) -> dict[str, Any]:
     }
 
 
+def read_texts(code: VersionCode, paths: list[str]) -> dict[str, str]:
+    """The UTF-8 text of each of ``paths`` found in the archive, read in one pass; a
+    binary, oversized or missing member is left out."""
+    wanted = set(paths)
+    texts: dict[str, str] = {}
+    with tarfile.open(fileobj=io.BytesIO(code.archive), mode="r:gz") as tar:
+        for member in tar:
+            path = member.name[len(_ROOT) :]
+            if (
+                not member.isfile()
+                or not member.name.startswith(_ROOT)
+                or path not in wanted
+                or member.size > MAX_FILE_BYTES
+            ):
+                continue
+            handle = tar.extractfile(member)
+            try:
+                texts[path] = (handle.read() if handle else b"").decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+    return texts
+
+
 def previous_version(version: AgentVersion) -> AgentVersion | None:
     """The version before this one by number; what ``changes`` compares against
     unless told otherwise."""

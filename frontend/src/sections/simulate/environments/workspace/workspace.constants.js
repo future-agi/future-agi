@@ -11,9 +11,16 @@
 export const WORKSPACE_TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
   {
+    id: "world",
+    label: "World & tools",
+    icon: "solar:global-linear",
+    hint: "What your agent talks to during a run: the data and the tools that answer its calls.",
+  },
+  {
     id: "contract",
     label: "Contract",
     icon: "solar:document-text-linear",
+    hint: "The agent's rules and purpose, and how a conversation runs and is scored. Editing makes a new environment version; affected scenarios are marked Re-check.",
   },
   { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {
@@ -50,33 +57,41 @@ export const WORKSPACE_TABS = [
   },
 ];
 
-// Setup-gap areas map onto the tab that owns the underlying answer, so a
-// blocking gap surfaces as an amber dot on that tab. Only the areas the user
-// can resolve inside this workspace are routed; the designer's Sandbox/Tools
-// entries point at an Agents tab we do not render, so they are omitted.
 export const GAP_AREA_TO_TAB = {
   Contract: "contract",
   Grading: "evals",
+  Tools: "world",
 };
 
 // Header, overflow-menu and empty-state copy for the workspace shell.
 export const WORKSPACE_COPY = {
+  buildLock: {
+    building: "Available once the build finishes.",
+    stopped: "The build has to finish first. The strip at the top says how.",
+  },
   back: "All environments",
   live: "Ready",
+  awaitingApprovalLabel: "Awaiting approval",
+  awaitingApprovalTooltip:
+    "The design is waiting for your approval. Nothing is built until you approve it.",
+  readingLabel: "Reading the agent",
+  readingTooltip:
+    "Reading the agent to plan its environment. Nothing is built yet.",
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",
-  failedLabel: "Failed",
+  failedLabel: "Build stopped",
   liveTooltip:
     "Environment is ready to run. You can edit via the builder or inline.",
   buildingTooltip: "Environment is still being built…",
   finalizingTooltip: "Wrapping up the build…",
   cancellingLabel: "Cancelling",
   cancellingTooltip: "Stopping the build and cleaning up its sandbox.",
-  cancelledLabel: "Cancelled",
-  cancelledTooltip: "You cancelled this build.",
+  cancelledLabel: "Build stopped",
+  cancelledTooltip: "You stopped this build before it finished.",
   runningTooltip:
     "A simulation is running. Results land under Runs when it finishes.",
-  failedTooltip: "This environment failed to build.",
+  failedTooltip:
+    "The build stopped before it finished. Try again to finish it before running.",
   run: "Run simulation",
   moreActions: "More actions",
   fork: "Fork environment",
@@ -120,6 +135,7 @@ export const WORKSPACE_COPY = {
     delete: "You don't have permission to delete environments.",
     create: "You don't have permission to create environments.",
     cancel: "You don't have permission to cancel builds.",
+    retry: "You don't have permission to start builds.",
     chat: "You don't have permission to send messages to the builder.",
     secrets: "You don't have permission to change secrets.",
     agentVersion: "You don't have permission to create agent versions.",
@@ -127,6 +143,7 @@ export const WORKSPACE_COPY = {
     rebuild: "You don't have permission to answer rebuild prompts.",
     drafts: "You don't have permission to save or discard drafts.",
     scenarios: "You don't have permission to change scenarios.",
+    actors: "You don't have permission to change actors.",
     evals: "You don't have permission to change evaluations.",
     runEvals: "You don't have permission to run evaluations.",
   },
@@ -152,12 +169,6 @@ export const WORKSPACE_COPY = {
   },
   // Banner shown while the derivation is still in flight — the panels below are
   // loading and this explains why.
-  building: {
-    title: "Environment is still being built",
-    progress: (done, total) => `${done} of ${total} steps done.`,
-    deriving: "Scenarios and personas are still deriving.",
-    tail: "You can leave and come back. This page will fill in as each stage lands.",
-  },
   // The strip under the header: the environment / agent version pairing when
   // versioning is on, else the agent version under test; stated, not selected.
   versionBar: {
@@ -626,4 +637,105 @@ export const agentDiffersTag = (agentLabel, envLabel) => {
   return agent && env
     ? `${agent} differs from ${env}`
     : "Agent differs from its environment version";
+};
+
+export const BUILD_STOPPED_COPY = {
+  badge: "Build stopped",
+  sentence: {
+    worldCheck:
+      "A tool didn't answer truthfully, so the world wasn't finished.",
+    toolUntruthful: (tool) =>
+      `${tool} didn't answer truthfully, so the world wasn't finished.`,
+    world: "The world couldn't be written for every use case.",
+    scenarios: "Some use cases got no scenario that passed all three checks.",
+    checks: "Couldn't reach your agent.",
+    checksOther: "The release checks didn't finish.",
+    ours: "An issue occurred while building. Nothing you set up was lost.",
+    canceled: "You stopped the build before it finished.",
+  },
+  checkConnection: "Check the connection",
+  retry: {
+    start: (readsAgent) =>
+      readsAgent ? "Try again from the start" : "Try again from the world",
+    checks: "Try again from the checks",
+  },
+  retryTip: {
+    start: (readsAgent) =>
+      readsAgent
+        ? "Reads the agent and builds again."
+        : "Builds again from your approved design.",
+    checks:
+      "The world and scenarios are kept; the build starts again at the release checks.",
+  },
+  logTitle: (step, no, total) => `Build log · ${step} (step ${no} of ${total})`,
+  canceledLog: "Stopped by you.",
+  showDetails: "Show details",
+  hideDetails: "Hide details",
+  retryFailed: "Couldn't start the build again. Try again.",
+};
+
+export const TAB_UNAVAILABLE_COPY = {
+  runs: "Runs opens once this environment has a run. Showing the Overview.",
+  improvements: "Epochs opens once a fix has run here. Showing the Overview.",
+  versions: "Versions is off for this environment. Showing the Overview.",
+  actors: "This environment has no actors to show. Showing the Overview.",
+};
+
+export const TAB_WAITING_COPY = {
+  tabTip: (wait) =>
+    wait.stopped
+      ? `Not written. The build stopped at ${wait.step}.`
+      : wait.now
+        ? `Being written now: ${wait.phase.toLowerCase()}.`
+        : `Opens after ${wait.phase.toLowerCase()}.`,
+  now: (phase, tab) => `${phase}… ${tab} opens once it's written.`,
+  next: (tab, phase) => `${tab} opens after ${phase.toLowerCase()}.`,
+};
+
+export const STOPPED_NOTE_COPY = {
+  text: (step) => `Not written. The build stopped at ${step}.`,
+  tip: (reason) => `${reason} The strip at the top says what to do next.`,
+  why: "Why it stopped",
+};
+
+export const TAB_SKELETON_COPY = {
+  world: {
+    graph: "Capability graph",
+    graphSub: "Tools, flows, personas and guardrails as one picture",
+    tools: "Tools",
+  },
+  contract: {
+    rules: "Rules",
+    addRule: "Add rule",
+    useCases: "Use cases",
+    addUseCase: "Add use case",
+  },
+  actors: {
+    add: "Add actor",
+    title: "Actors",
+    everyRun: "In every run",
+    callerSide: "On the caller's side",
+    inWorld: "In the world",
+    connect: "How they connect",
+    connectSub: "Who can reach whom in a run",
+  },
+  scenarios: {
+    search: "Search scenarios by name, task or use case…",
+    filter: "Filter",
+    display: "Display",
+    add: "Add",
+    columns: {
+      pick: "",
+      no: "#",
+      scenario: "Scenario",
+      persona: "Persona",
+      situation: "Situation",
+    },
+  },
+  evals: {
+    suggested: "Suggested for this environment",
+    addAll: "Add all",
+    add: "Add",
+    added: "Added evaluations",
+  },
 };

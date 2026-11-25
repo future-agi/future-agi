@@ -1,6 +1,6 @@
 """Attribute a simulation call to its target agent, not its recording transport."""
 
-from typing import cast
+from typing import Any, cast
 
 from django.db.models import Case, F, Func, JSONField, TextField, Value, When
 from django.db.models.fields.json import KeyTextTransform
@@ -32,6 +32,13 @@ def record_hosted_voice_target(calls, version, provider: str) -> None:
             output_field=JSONField(),
         ),
     )
+
+
+def record_harness_target(metadata: dict[str, Any], call: CallExecution) -> None:
+    if HOSTED_TARGET_PROVIDER not in metadata:
+        metadata[HOSTED_TARGET_PROVIDER] = (
+            _configured_provider(call.test_execution, call.agent_version) or ""
+        )
 
 
 def _configured_provider(
@@ -76,8 +83,8 @@ def call_agent_provider(call: CallExecution) -> str | None:
     if hasattr(call, "result_provider"):
         return cast("str | None", call.result_provider)
     metadata = call.call_metadata
-    if isinstance(metadata, dict) and metadata.get(HOSTED_TARGET_PROVIDER):
-        return cast("str", metadata[HOSTED_TARGET_PROVIDER])
+    if isinstance(metadata, dict) and HOSTED_TARGET_PROVIDER in metadata:
+        return cast("str | None", metadata[HOSTED_TARGET_PROVIDER] or None)
     return _configured_provider(
         call.test_execution, getattr(call, "agent_version", None)
     ) or _payload_provider(call.provider_call_data)
@@ -97,11 +104,19 @@ class _FirstObjectPayloadKey(Func):
     )
 
 
-def call_agent_provider_expression() -> Coalesce:
+def call_agent_provider_expression() -> Case:
     """SQL equivalent of call_agent_provider for pages, exports and aggregation."""
     empty = Value("", output_field=TextField())
+    recorded = NullIf(KeyTextTransform(HOSTED_TARGET_PROVIDER, "call_metadata"), empty)
+    return Case(
+        When(call_metadata__has_key=HOSTED_TARGET_PROVIDER, then=recorded),
+        default=_resolved_provider(empty),
+        output_field=TextField(),
+    )
+
+
+def _resolved_provider(empty: Value) -> Coalesce:
     return Coalesce(
-        NullIf(KeyTextTransform(HOSTED_TARGET_PROVIDER, "call_metadata"), empty),
         NullIf(
             KeyTextTransform("provider", "agent_version__configuration_snapshot"), empty
         ),

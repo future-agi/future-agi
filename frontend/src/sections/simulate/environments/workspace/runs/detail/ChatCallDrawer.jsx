@@ -22,7 +22,7 @@ import {
 } from "src/api/simulate-environments/runDetail";
 
 import { SCORING_STATUS } from "../runs.constants";
-import { runOutcome } from "./trace/traceTable.constants";
+import { REQUIRED_EVAL_COPY, runOutcome } from "./trace/traceTable.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import TrialPicker from "./TrialPicker";
 import CallTracesPanel from "./CallTracesPanel";
@@ -421,6 +421,12 @@ export default function ChatCallDrawer({
             <Stack direction="row" flexWrap="wrap" gap={0.75}>
               <Meta label="Type" value="Chat" />
               <Meta label="Status" value={runOutcome(task.status).label} />
+              {task.requiredEvalsFailed?.length > 0 && (
+                <Meta
+                  label={REQUIRED_EVAL_COPY.label}
+                  value={task.requiredEvalsFailed.join(", ")}
+                />
+              )}
               <Meta label="Duration" value={secs(durationMs)} />
               <Meta label="Turns" value={turnCount ?? "-"} />
               <Meta
@@ -430,7 +436,32 @@ export default function ChatCallDrawer({
             </Stack>
           </Box>
 
-          <OutcomeReason reason={task.outcomeReason} />
+          {task.status === "error" && task.outcomeReason ? (
+            <Stack
+              role="alert"
+              direction="row"
+              spacing={1.25}
+              alignItems="flex-start"
+              sx={{
+                mx: 2,
+                mb: 1.5,
+                p: 1.5,
+                borderRadius: "8px",
+                bgcolor: "status.danger.bg",
+              }}
+            >
+              <Iconify
+                icon="solar:close-circle-bold"
+                width={15}
+                sx={{ color: "status.danger.solid", flexShrink: 0, mt: "1px" }}
+              />
+              <Typography sx={{ typography: "s2", minWidth: 0 }}>
+                {task.outcomeReason}
+              </Typography>
+            </Stack>
+          ) : (
+            <OutcomeReason reason={task.outcomeReason} />
+          )}
           {/* The scenario's own verdict stands; only the platform's evals and CSAT did not run. */}
           <OutcomeReason reason={callDetail?.processingSkipReason} />
 
@@ -595,12 +626,13 @@ ChatCallDrawer.propTypes = {
     sourceScenarioKey: PropTypes.string,
     persona: PropTypes.string,
     status: PropTypes.string,
+    outcomeReason: PropTypes.string,
+    requiredEvalsFailed: PropTypes.arrayOf(PropTypes.string),
     turns: PropTypes.number,
     tokens: PropTypes.number,
     durationMs: PropTypes.number,
     provider: PropTypes.string,
     evalResults: PropTypes.array,
-    outcomeReason: PropTypes.string,
   }).isRequired,
   executionId: PropTypes.string,
   onClose: PropTypes.func,

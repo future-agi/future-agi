@@ -109,11 +109,15 @@ export default function VoiceCallDrawer({
               data.evaluations,
             ),
             transcript: callTranscript(data),
+            ended_reason:
+              task.status === "error" && task.outcomeReason
+                ? task.outcomeReason
+                : data.ended_reason,
             module: "simulate",
             origin: "simulate",
           }
         : null,
-    [data],
+    [data, task.status, task.outcomeReason],
   );
 
   const callTraces = useCallTraces(executionId, task.id);

@@ -38,6 +38,8 @@ export const SELECTED_EVAL_SHAPE = PropTypes.shape({
   ...ENTRY_FIELDS,
   id: PropTypes.string,
   runnable: PropTypes.bool,
+  required: PropTypes.bool,
+  pass_threshold: PropTypes.number,
 });
 
 // "system" is a built-in from the library, anything else is the
@@ -66,8 +68,11 @@ export const costLabel = (entry, runMode = false) => {
   // The noun has to agree in number with whatever the API sent ("1 credit",
   // not "1 credits").
   const noun = credits === 1 ? "credit" : "credits";
-  return runMode ? `${credits} ${noun} per call graded${suffix}` : `${credits} ${noun} per run${suffix}`;
+  return runMode
+    ? `${credits} ${noun} per call graded${suffix}`
+    : `${credits} ${noun} per run${suffix}`;
 };
 
 // The arrows a row draws, as given — order included.
-export const inputRowsOf = (entry) => (Array.isArray(entry?.inputs) ? entry.inputs : []);
+export const inputRowsOf = (entry) =>
+  Array.isArray(entry?.inputs) ? entry.inputs : [];

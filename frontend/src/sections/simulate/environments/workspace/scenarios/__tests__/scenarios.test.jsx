@@ -279,7 +279,7 @@ describe("ScenariosStep", () => {
     await screen.findByRole("table");
     const firstName = defaultView().results[0].name;
     const removes = screen.getAllByRole("button", {
-      name: "Remove from this environment",
+      name: /^Remove .* from this environment$/,
     });
     fireEvent.click(removes[0]);
 
@@ -310,7 +310,7 @@ describe("ScenariosStep", () => {
   it("enables the edit pencil", async () => {
     renderStep();
     await screen.findByRole("table");
-    const pencils = screen.getAllByRole("button", { name: "Edit scenario" });
+    const pencils = screen.getAllByRole("button", { name: /^Edit (?!tags$)/ });
     expect(pencils[0]).toBeEnabled();
   });
 });
@@ -391,11 +391,11 @@ describe("ScenariosStep — locked template", () => {
     renderLocked(true);
     await screen.findByRole("table");
     expect(
-      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+      screen.getAllByRole("button", { name: /^Edit (?!tags$)/ })[0],
     ).toBeDisabled();
     expect(
       screen.getAllByRole("button", {
-        name: "Remove from this environment",
+        name: /^Remove .* from this environment$/,
       })[0],
     ).toBeDisabled();
     expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
@@ -412,11 +412,11 @@ describe("ScenariosStep — locked template", () => {
     await screen.findByRole("table");
     pickView("List");
     expect(
-      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+      screen.getAllByRole("button", { name: /^Edit (?!tags$)/ })[0],
     ).toBeDisabled();
     expect(
       screen.getAllByRole("button", {
-        name: "Remove from this environment",
+        name: /^Remove .* from this environment$/,
       })[0],
     ).toBeDisabled();
   });
@@ -437,11 +437,11 @@ describe("ScenariosStep — locked template", () => {
     renderLocked(false);
     await screen.findByRole("table");
     expect(
-      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+      screen.getAllByRole("button", { name: /^Edit (?!tags$)/ })[0],
     ).toBeEnabled();
     expect(
       screen.getAllByRole("button", {
-        name: "Remove from this environment",
+        name: /^Remove .* from this environment$/,
       })[0],
     ).toBeEnabled();
     expect(screen.queryAllByRole("checkbox").length).toBeGreaterThan(0);

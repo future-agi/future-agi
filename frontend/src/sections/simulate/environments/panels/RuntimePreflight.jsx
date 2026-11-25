@@ -49,6 +49,14 @@ export default function RuntimePreflight({ status = "idle", canRun = false, bloc
   const requirements = (credentials?.requirements || []).filter((item) => item.required || item.status === "configured");
   const probes = credentials?.probe || [];
   const choices = (credentials?.credential_choices || []).filter((choice) => !choice.satisfied);
+  const failedProbes = probes.filter((probe) => !probe.ok);
+  const onlyUnreached =
+    !ready &&
+    failedProbes.length > 0 &&
+    failedProbes.every((probe) => probe.retryable) &&
+    !choices.length &&
+    !requirements.some((item) => item.status === "missing");
+  const headline = ready ? "Ready to build" : onlyUnreached ? "Couldn't finish the credential check, try again" : "Credentials need attention";
 
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden" }}>
@@ -60,8 +68,8 @@ export default function RuntimePreflight({ status = "idle", canRun = false, bloc
       </Stack>
       <Stack spacing={1.25} sx={{ p: 1.5 }} divider={<Divider />}>
         <Box>
-          <Typography sx={{ typography: "s1_2", fontWeight: 500, color: ready ? "status.success.fg" : "status.danger.fg" }}>
-            {ready ? "Ready to build" : "Credentials need attention"}
+          <Typography sx={{ typography: "s1_2", fontWeight: 500, color: ready ? "status.success.fg" : onlyUnreached ? "status.warning.fg" : "status.danger.fg" }}>
+            {headline}
           </Typography>
           {credentials && (
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -92,8 +100,8 @@ export default function RuntimePreflight({ status = "idle", canRun = false, bloc
         ))}
         {probes.map((probe) => (
           <Box key={`${probe.provider}:${probe.aliases.join(",")}`}>
-            <Typography sx={{ typography: "s1", color: probe.ok ? "status.success.fg" : "status.danger.fg" }}>
-              {probe.label}: {probe.ok ? "verified" : "failed"}
+            <Typography sx={{ typography: "s1", color: probe.ok ? "status.success.fg" : probe.retryable ? "status.warning.fg" : "status.danger.fg" }}>
+              {probe.label}: {probe.ok ? "verified" : probe.retryable ? "not checked" : "failed"}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{probe.message}</Typography>
           </Box>

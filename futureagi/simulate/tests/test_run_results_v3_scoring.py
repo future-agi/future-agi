@@ -29,14 +29,16 @@ from simulate.services.run_results_v3_scoring import (
 from simulate.tests.test_rerun_calls_in_run import calls, finished_run  # noqa: F401
 
 
-def _config(output_type: str):
+def _config(output_type: str, *, required: bool = False):
     template = SimpleNamespace(
         output_type_normalized=output_type,
         choice_scores=None,
         config={"output": "Pass/Fail" if output_type == "pass_fail" else "score"},
         pass_threshold=0.5,
     )
-    return SimpleNamespace(eval_template=template, config={"reverse_output": True})
+    return SimpleNamespace(
+        eval_template=template, config={"reverse_output": True, "required": required}
+    )
 
 
 def test_score_compilation_is_scoped_to_expression_and_resolved_alias():
@@ -120,7 +122,9 @@ def test_score_compilation_distinguishes_evaluators_types_and_choice_weights():
     ("stored_output", "expected"),
     [("Passed", "passed"), ("Failed", "failed")],
 )
-def test_reversed_pass_fail_uses_stored_final_verdict(stored_output, expected):
+def test_reversed_pass_fail_uses_stored_final_verdict(
+    settings, stored_output, expected
+):
     config = _config("pass_fail")
     result = {
         "status": "completed",
@@ -136,6 +140,10 @@ def test_reversed_pass_fail_uses_stored_final_verdict(stored_output, expected):
         eval_outputs={"eval-1": result},
     )
     assert call_outcome(call, {"eval-1": config}) == expected
+    settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = True
+    assert call_outcome(call, {"eval-1": config}) == "passed"
+    required = _config("pass_fail", required=True)
+    assert call_outcome(call, {"eval-1": required}) == expected
 
 
 @pytest.mark.parametrize(

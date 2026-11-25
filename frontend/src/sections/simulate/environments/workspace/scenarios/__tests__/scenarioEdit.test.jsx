@@ -111,7 +111,7 @@ describe("ScenariosStep — edit", () => {
   it("enables the per-row edit pencil", async () => {
     renderStep();
     await screen.findByRole("table");
-    const pencils = screen.getAllByRole("button", { name: "Edit scenario" });
+    const pencils = screen.getAllByRole("button", { name: /^Edit (?!tags$)/ });
     expect(pencils[0]).toBeEnabled();
   });
 
@@ -120,7 +120,7 @@ describe("ScenariosStep — edit", () => {
     await screen.findByRole("table");
     const row = firstRow();
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+      screen.getAllByRole("button", { name: /^Edit (?!tags$)/ })[0],
     );
 
     // Name is proved, not described — it prefills but is read-only (not in the

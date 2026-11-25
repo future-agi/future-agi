@@ -20540,6 +20540,8 @@ export type HarnessEnvironmentApiStatus =
   (typeof HarnessEnvironmentApiStatus)[keyof typeof HarnessEnvironmentApiStatus];
 
 export const HarnessEnvironmentApiStatus = {
+  reading: "reading",
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -20588,6 +20590,8 @@ export interface HarnessEnvironmentApi {
 }
 
 export interface HarnessEnvironmentStatusCountsApi {
+  reading: number;
+  awaiting_approval: number;
   building: number;
   running: number;
   completed: number;
@@ -20604,6 +20608,43 @@ export interface HarnessEnvironmentListResponseApi {
   current_page: number;
   results: HarnessEnvironmentApi[];
   status_counts: HarnessEnvironmentStatusCountsApi;
+}
+
+export interface HarnessEnvironmentTagsApi {
+  /** Every tag the environment's scenarios carry. */
+  tags: string[];
+}
+
+export interface HarnessScenarioTagsChangeApi {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  scenario_keys: string[];
+  /** @maxItems 20 */
+  add?: string[];
+  /** @maxItems 20 */
+  remove?: string[];
+}
+
+export interface HarnessScenarioTagsResultApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  tags: string[];
+}
+
+export interface HarnessScenarioTagsChangeResultApi {
+  scenarios: HarnessScenarioTagsResultApi[];
+  /** Every tag the environment's scenarios carry after the change. */
+  tags: string[];
+}
+
+export interface HarnessScenarioTagsApi {
+  /**
+   * The scenario's tags; an empty list clears them.
+   * @maxItems 20
+   */
+  tags: string[];
 }
 
 /**
@@ -20629,6 +20670,8 @@ export type HarnessEnvironmentOverviewApiStatus =
   (typeof HarnessEnvironmentOverviewApiStatus)[keyof typeof HarnessEnvironmentOverviewApiStatus];
 
 export const HarnessEnvironmentOverviewApiStatus = {
+  reading: "reading",
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -20692,10 +20735,104 @@ export interface HarnessEnvironmentOverviewApi {
   agent: HarnessEnvironmentAgentApi;
 }
 
+export interface HarnessEnvironmentOriginApi {
+  /** @minLength 1 */
+  kind: string;
+  path?: string;
+  field?: string;
+  line?: number;
+  /** @minLength 1 */
+  sha256?: string;
+}
+
+export interface HarnessEnvironmentContractItemApi {
+  /** @minLength 1 */
+  text: string;
+  /** @minLength 1 */
+  short?: string;
+  origin?: HarnessEnvironmentOriginApi;
+  enforced_by?: string[];
+  sub_goal?: string;
+}
+
+export interface HarnessEnvironmentSchemaColumnApi {
+  /** @minLength 1 */
+  name: string;
+  type: string;
+  enum?: string[];
+  pk?: boolean;
+  nullable?: boolean;
+  /** @minLength 1 */
+  references?: string;
+}
+
+export type HarnessEnvironmentSchemaTableApiForeignKeysItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessEnvironmentSchemaTableApi {
+  /** @minLength 1 */
+  name: string;
+  columns: HarnessEnvironmentSchemaColumnApi[];
+  primary_key: string[];
+  foreign_keys: HarnessEnvironmentSchemaTableApiForeignKeysItem[];
+}
+
+export type HarnessEnvironmentToolCertificationApiAvailability =
+  (typeof HarnessEnvironmentToolCertificationApiAvailability)[keyof typeof HarnessEnvironmentToolCertificationApiAvailability];
+
+export const HarnessEnvironmentToolCertificationApiAvailability = {
+  certified: "certified",
+  runtime_only: "runtime_only",
+  rejected: "rejected",
+} as const;
+
+export type HarnessEnvironmentToolCertificationApiProbeMode =
+  (typeof HarnessEnvironmentToolCertificationApiProbeMode)[keyof typeof HarnessEnvironmentToolCertificationApiProbeMode];
+
+export const HarnessEnvironmentToolCertificationApiProbeMode = {
+  read_only: "read_only",
+  disposable_world: "disposable_world",
+  provider_sandbox: "provider_sandbox",
+  runtime_only: "runtime_only",
+} as const;
+
+export interface HarnessEnvironmentToolCertificationApi {
+  /** @minLength 1 */
+  tool: string;
+  availability: HarnessEnvironmentToolCertificationApiAvailability;
+  probe_mode: HarnessEnvironmentToolCertificationApiProbeMode;
+  reason: string;
+}
+
 export interface HarnessEnvironmentAmendmentApi {
   subject: string;
   /** @minLength 1 */
   note: string;
+}
+
+export type HarnessEnvironmentAmendmentDetailApiKind =
+  (typeof HarnessEnvironmentAmendmentDetailApiKind)[keyof typeof HarnessEnvironmentAmendmentDetailApiKind];
+
+export const HarnessEnvironmentAmendmentDetailApiKind = {
+  unreachable_tool: "unreachable_tool",
+  contract_change: "contract_change",
+} as const;
+
+export interface HarnessEnvironmentAmendmentDetailApi {
+  /** @minLength 1 */
+  subject: string;
+  kind: HarnessEnvironmentAmendmentDetailApiKind;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface HarnessEnvironmentActorApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  role: string;
+  origin: HarnessEnvironmentOriginApi;
 }
 
 export type HarnessEnvironmentCatalogueSubGoalApiKind =
@@ -20713,6 +20850,8 @@ export interface HarnessEnvironmentCatalogueSubGoalApi {
   kind: HarnessEnvironmentCatalogueSubGoalApiKind;
   claim: string;
   check: string;
+  output: string;
+  overlay: string;
 }
 
 export type HarnessEnvironmentCallActorApiPersona = { [key: string]: unknown };
@@ -20743,6 +20882,8 @@ export const HarnessEnvironmentToolStatusApiStatus = {
   unknown: "unknown",
 } as const;
 
+export type HarnessToolArgumentApiValuesItem = { [key: string]: unknown };
+
 export interface HarnessToolArgumentApi {
   /** @minLength 1 */
   name: string;
@@ -20753,6 +20894,14 @@ export interface HarnessToolArgumentApi {
    * @minLength 1
    */
   unit: string;
+  /** The values it is allowed to take, where the agent limits them. */
+  values: HarnessToolArgumentApiValuesItem[];
+  /** Whether a call needs it; null when the reading did not record it. */
+  required: boolean;
+  /** The lowest value it accepts, where one is stated. */
+  min: number;
+  /** The highest value it accepts, where one is stated. */
+  max: number;
 }
 
 /**
@@ -20930,11 +21079,24 @@ export const HarnessEnvironmentEndConditionsApiClock = {
   stepped: "stepped",
 } as const;
 
+export interface HarnessEnvironmentSeedApi {
+  /**
+   * Decimal string preserving the full integer seed without JavaScript precision loss. The internal harness seed remains an integer.
+   * @minLength 1
+   */
+  value: string;
+  /** Platform-derived scope for the supported hosted ALK runtime, not an ALK-reported capability. scenario_world_rng controls world initialization randomness, not model responses or conversation replay. */
+  controls: string[];
+}
+
 export interface HarnessEnvironmentEndConditionsApi {
   max_turns: number;
   max_duration_seconds: number;
   clock: HarnessEnvironmentEndConditionsApiClock;
   ended_reasons: string[];
+  terminate_reasons: string[];
+  truncate_reasons: string[];
+  seed?: HarnessEnvironmentSeedApi;
 }
 
 export type HarnessEnvironmentProvenanceApiBuiltBy =
@@ -20963,6 +21125,8 @@ export interface HarnessEnvironmentProvenanceApi {
   authored_at: HarnessEnvironmentProvenanceApiAuthoredAt;
 }
 
+export type HarnessEnvironmentContractApiDomain = { [key: string]: unknown };
+
 export type HarnessEnvironmentContractApiToolsItem = { [key: string]: unknown };
 
 export type HarnessEnvironmentContractApiRuntime = { [key: string]: unknown };
@@ -20979,7 +21143,22 @@ export type HarnessEnvironmentContractApiToolEntrypointsItem = {
   [key: string]: unknown;
 };
 
+/**
+ * ALK datastore facts. configured_by remains a string; optional location and configuration {source, ref, section} carry observed configuration evidence.
+ */
 export type HarnessEnvironmentContractApiDataStore = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiDataSchema = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiBaseEnvironment = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiDataSchemaColumns = {
+  [key: string]: HarnessEnvironmentSchemaColumnApi[];
+};
 
 /**
  * Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.
@@ -20991,20 +21170,37 @@ export interface HarnessEnvironmentContractApi {
   one_liner?: string;
   modality?: string;
   call_direction?: string;
+  domain?: HarnessEnvironmentContractApiDomain;
+  system_prompt?: string;
+  system_prompt_origin?: HarnessEnvironmentOriginApi;
   system_prompt_excerpt?: string;
+  /** ALK tool specifications, including origin, legacy effect text, optional effect_kind (read, write, external, control), and effect_evidence {origin, excerpt}. */
   tools?: HarnessEnvironmentContractApiToolsItem[];
   real_use_cases?: string[];
+  real_use_case_details?: HarnessEnvironmentContractItemApi[];
   hard_constraints?: string[];
+  hard_constraint_details?: HarnessEnvironmentContractItemApi[];
   runtime?: HarnessEnvironmentContractApiRuntime;
   dependencies?: HarnessEnvironmentContractApiDependenciesItem[];
+  /** Runtime dependencies with used_by containing only consumers identified by ALK. */
   runtime_dependencies?: HarnessEnvironmentContractApiRuntimeDependenciesItem[];
   implementation?: string;
+  /** Implementation seams with source code where available, implementation_origin, and provider_function {url, parameters} for provider functions. Parameters retain the provider JSON Schema after secret redaction. */
   tool_entrypoints?: HarnessEnvironmentContractApiToolEntrypointsItem[];
+  /** ALK datastore facts. configured_by remains a string; optional location and configuration {source, ref, section} carry observed configuration evidence. */
+  data_store?: HarnessEnvironmentContractApiDataStore;
+  data_schema?: HarnessEnvironmentContractApiDataSchema;
+  base_environment?: HarnessEnvironmentContractApiBaseEnvironment;
+  refusal_signature?: string;
+  data_schema_columns?: HarnessEnvironmentContractApiDataSchemaColumns;
+  data_schema_tables?: HarnessEnvironmentSchemaTableApi[];
+  tool_certification?: HarnessEnvironmentToolCertificationApi[];
   /** The workers the app's source declares; a run shows which of them took part. */
   workers?: HarnessEnvironmentWorkerApi[];
-  data_store?: HarnessEnvironmentContractApiDataStore;
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
+  amendment_details?: HarnessEnvironmentAmendmentDetailApi[];
+  actors?: HarnessEnvironmentActorApi[];
   sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
   call_actors: HarnessEnvironmentCallActorApi[];
   /** Per tool: whether the world's door stands in front of it, so actors can take it and faults apply. */
@@ -21030,6 +21226,8 @@ export interface HarnessEnvironmentStoreTableApi {
   /** @minLength 1 */
   name: string;
   rows: number;
+  internal?: boolean;
+  columns?: HarnessEnvironmentSchemaColumnApi[];
 }
 
 export interface HarnessEnvironmentStoreApi {
@@ -21088,6 +21286,8 @@ export interface HarnessEnvironmentSubGoalApi {
   what?: string;
   kind?: HarnessEnvironmentSubGoalApiKind;
   claim?: string;
+  output?: string;
+  overlay?: string;
 }
 
 export type HarnessEnvironmentCallActorTriggerApiKind =
@@ -21274,6 +21474,57 @@ export interface HarnessEnvironmentSelectedEvalApi {
   id: string;
   runnable: boolean;
   editable: boolean;
+  required: boolean;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  pass_threshold: number;
+}
+
+export type HarnessEnvironmentSuggestedEvalApiSource =
+  (typeof HarnessEnvironmentSuggestedEvalApiSource)[keyof typeof HarnessEnvironmentSuggestedEvalApiSource];
+
+export const HarnessEnvironmentSuggestedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentSuggestedEvalApiAgentType =
+  (typeof HarnessEnvironmentSuggestedEvalApiAgentType)[keyof typeof HarnessEnvironmentSuggestedEvalApiAgentType];
+
+export const HarnessEnvironmentSuggestedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentSuggestedEvalApiModality =
+  (typeof HarnessEnvironmentSuggestedEvalApiModality)[keyof typeof HarnessEnvironmentSuggestedEvalApiModality];
+
+export const HarnessEnvironmentSuggestedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export interface HarnessEnvironmentSuggestedEvalApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  source: HarnessEnvironmentSuggestedEvalApiSource;
+  tags: string[];
+  required_keys: string[];
+  agent_type: HarnessEnvironmentSuggestedEvalApiAgentType;
+  modality: HarnessEnvironmentSuggestedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
+  required: boolean;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  pass_threshold: number;
 }
 
 export type HarnessEnvironmentResultApiEvaluationsItem = {
@@ -21294,6 +21545,7 @@ export interface HarnessEnvironmentResultApi {
 
 export interface HarnessEnvironmentEvaluationsApi {
   selected: HarnessEnvironmentSelectedEvalApi[];
+  suggested?: HarnessEnvironmentSuggestedEvalApi[];
   results: HarnessEnvironmentResultApi[];
 }
 
@@ -21336,7 +21588,11 @@ export interface HarnessEnvironmentSettingsApi {
   security: HarnessEnvironmentSettingsApiSecurity;
   artifacts: HarnessEnvironmentSettingsApiArtifacts;
   scenario_count: number;
-  seed: number;
+  /**
+   * Decimal string preserving the full internal integer seed without JavaScript precision loss.
+   * @minLength 1
+   */
+  seed: string;
   enable_tool_evaluation: boolean;
 }
 
@@ -21350,6 +21606,288 @@ export interface HarnessEnvironmentDetailApi {
   settings: HarnessEnvironmentSettingsApi;
   /** edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab. */
   actors_tab: HarnessEnvironmentDetailApiActorsTab;
+}
+
+/**
+ * edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab.
+ */
+export type HarnessEnvironmentDetailV2ApiActorsTab =
+  (typeof HarnessEnvironmentDetailV2ApiActorsTab)[keyof typeof HarnessEnvironmentDetailV2ApiActorsTab];
+
+export const HarnessEnvironmentDetailV2ApiActorsTab = {
+  edit: "edit",
+  list: "list",
+} as const;
+
+export type HarnessEnvironmentDetailV2ApiContractVersion =
+  (typeof HarnessEnvironmentDetailV2ApiContractVersion)[keyof typeof HarnessEnvironmentDetailV2ApiContractVersion];
+
+export const HarnessEnvironmentDetailV2ApiContractVersion = {
+  NUMBER_2: 2,
+} as const;
+
+export type HarnessEnvironmentToolV2ApiEffect =
+  (typeof HarnessEnvironmentToolV2ApiEffect)[keyof typeof HarnessEnvironmentToolV2ApiEffect];
+
+export const HarnessEnvironmentToolV2ApiEffect = {
+  read: "read",
+  write: "write",
+  external: "external",
+  control: "control",
+} as const;
+
+export type HarnessEnvironmentToolV2ApiEffectKind =
+  (typeof HarnessEnvironmentToolV2ApiEffectKind)[keyof typeof HarnessEnvironmentToolV2ApiEffectKind];
+
+export const HarnessEnvironmentToolV2ApiEffectKind = {
+  read: "read",
+  write: "write",
+  external: "external",
+  control: "control",
+} as const;
+
+export interface HarnessEnvironmentEffectEvidenceApi {
+  origin: HarnessEnvironmentOriginApi;
+  /** @minLength 1 */
+  excerpt: string;
+}
+
+export type HarnessEnvironmentToolV2ApiArgTypes = { [key: string]: string };
+
+export type HarnessEnvironmentToolV2ApiArgValues = { [key: string]: unknown };
+
+export interface HarnessEnvironmentToolV2Api {
+  /** @minLength 1 */
+  name: string;
+  args?: string[];
+  arg_types?: HarnessEnvironmentToolV2ApiArgTypes;
+  arg_values?: HarnessEnvironmentToolV2ApiArgValues;
+  description?: string;
+  origin?: HarnessEnvironmentOriginApi;
+  effect: HarnessEnvironmentToolV2ApiEffect;
+  effect_legacy: string;
+  effect_kind?: HarnessEnvironmentToolV2ApiEffectKind;
+  effect_evidence?: HarnessEnvironmentEffectEvidenceApi;
+  requires?: string[];
+}
+
+export type HarnessEnvironmentToolEntrypointV2ApiOrigin =
+  (typeof HarnessEnvironmentToolEntrypointV2ApiOrigin)[keyof typeof HarnessEnvironmentToolEntrypointV2ApiOrigin];
+
+export const HarnessEnvironmentToolEntrypointV2ApiOrigin = {
+  provider_builtin: "provider_builtin",
+  provider_custom_function: "provider_custom_function",
+  source: "source",
+} as const;
+
+export type HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin =
+  (typeof HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin)[keyof typeof HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin];
+
+export const HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin = {
+  provider_builtin: "provider_builtin",
+  provider_custom_function: "provider_custom_function",
+  source: "source",
+} as const;
+
+export interface HarnessEnvironmentToolSourceApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minimum 1 */
+  line_start: number;
+  /** @minimum 1 */
+  line_end: number;
+  /** @minLength 1 */
+  code: string;
+}
+
+export type HarnessEnvironmentProviderFunctionApiParameters = {
+  [key: string]: unknown;
+};
+
+export interface HarnessEnvironmentProviderFunctionApi {
+  /** @minLength 1 */
+  url?: string;
+  parameters?: HarnessEnvironmentProviderFunctionApiParameters;
+}
+
+export interface HarnessEnvironmentToolEntrypointV2Api {
+  /** @minLength 1 */
+  tool: string;
+  mode?: string;
+  module?: string;
+  callable?: string;
+  factory?: string;
+  first_arg?: string;
+  service?: string;
+  endpoint?: string;
+  method?: string;
+  notes?: string;
+  origin: HarnessEnvironmentToolEntrypointV2ApiOrigin;
+  origin_evidence: HarnessEnvironmentOriginApi;
+  implementation_origin?: HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin;
+  source?: HarnessEnvironmentToolSourceApi;
+  provider_function?: HarnessEnvironmentProviderFunctionApi;
+}
+
+export type HarnessEnvironmentStoreConfigurationApiSource =
+  (typeof HarnessEnvironmentStoreConfigurationApiSource)[keyof typeof HarnessEnvironmentStoreConfigurationApiSource];
+
+export const HarnessEnvironmentStoreConfigurationApiSource = {
+  environment: "environment",
+  file: "file",
+  provider_field: "provider_field",
+  system_prompt: "system_prompt",
+} as const;
+
+export interface HarnessEnvironmentStoreConfigurationApi {
+  source: HarnessEnvironmentStoreConfigurationApiSource;
+  /** @minLength 1 */
+  ref: string;
+  /** @minLength 1 */
+  section?: string;
+}
+
+export type HarnessEnvironmentDataStoreV2ApiLocation =
+  (typeof HarnessEnvironmentDataStoreV2ApiLocation)[keyof typeof HarnessEnvironmentDataStoreV2ApiLocation];
+
+export const HarnessEnvironmentDataStoreV2ApiLocation = {
+  external_db: "external_db",
+  in_process: "in_process",
+  prompt_embedded: "prompt_embedded",
+  provider_kb: "provider_kb",
+  none: "none",
+} as const;
+
+export interface HarnessEnvironmentDataStoreV2Api {
+  kind?: string;
+  version?: string;
+  configured_by: HarnessEnvironmentStoreConfigurationApi;
+  configured_by_legacy: string;
+  configuration?: HarnessEnvironmentStoreConfigurationApi;
+  location?: HarnessEnvironmentDataStoreV2ApiLocation;
+  config_key?: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  user?: string;
+  password_from?: string;
+  schema_from?: string;
+  loaded_by?: string;
+  loader_module?: string;
+}
+
+export type HarnessEnvironmentAmendmentV2ApiKind =
+  (typeof HarnessEnvironmentAmendmentV2ApiKind)[keyof typeof HarnessEnvironmentAmendmentV2ApiKind];
+
+export const HarnessEnvironmentAmendmentV2ApiKind = {
+  unreachable_tool: "unreachable_tool",
+  contract_change: "contract_change",
+} as const;
+
+export interface HarnessEnvironmentAmendmentV2Api {
+  subject: string;
+  kind: HarnessEnvironmentAmendmentV2ApiKind;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export type HarnessEnvironmentContractV2ApiDomain = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractV2ApiRuntime = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractV2ApiDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractV2ApiRuntimeDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractV2ApiDataSchema = {
+  [key: string]: HarnessEnvironmentSchemaColumnApi[];
+};
+
+export type HarnessEnvironmentContractV2ApiBaseEnvironment = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractV2ApiDataSchemaColumns = {
+  [key: string]: HarnessEnvironmentSchemaColumnApi[];
+};
+
+/**
+ * Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.
+ */
+export type HarnessEnvironmentContractV2ApiDoorReach = {
+  [key: string]: boolean;
+};
+
+export type HarnessEnvironmentContractV2ApiDataSchemaLegacy = {
+  [key: string]: unknown;
+};
+
+export interface HarnessEnvironmentContractV2Api {
+  agent?: string;
+  one_liner?: string;
+  modality?: string;
+  call_direction?: string;
+  domain?: HarnessEnvironmentContractV2ApiDomain;
+  system_prompt?: string;
+  system_prompt_origin?: HarnessEnvironmentOriginApi;
+  system_prompt_excerpt?: string;
+  tools: HarnessEnvironmentToolV2Api[];
+  real_use_cases: HarnessEnvironmentContractItemApi[];
+  real_use_case_details?: HarnessEnvironmentContractItemApi[];
+  hard_constraints: HarnessEnvironmentContractItemApi[];
+  hard_constraint_details?: HarnessEnvironmentContractItemApi[];
+  runtime?: HarnessEnvironmentContractV2ApiRuntime;
+  dependencies?: HarnessEnvironmentContractV2ApiDependenciesItem[];
+  /** Runtime dependencies with used_by containing only consumers identified by ALK. */
+  runtime_dependencies?: HarnessEnvironmentContractV2ApiRuntimeDependenciesItem[];
+  implementation?: string;
+  tool_entrypoints: HarnessEnvironmentToolEntrypointV2Api[];
+  data_store: HarnessEnvironmentDataStoreV2Api;
+  data_schema: HarnessEnvironmentContractV2ApiDataSchema;
+  base_environment?: HarnessEnvironmentContractV2ApiBaseEnvironment;
+  refusal_signature?: string;
+  data_schema_columns?: HarnessEnvironmentContractV2ApiDataSchemaColumns;
+  data_schema_tables?: HarnessEnvironmentSchemaTableApi[];
+  tool_certification?: HarnessEnvironmentToolCertificationApi[];
+  /** The workers the app's source declares; a run shows which of them took part. */
+  workers?: HarnessEnvironmentWorkerApi[];
+  open_questions?: string[];
+  amendments: HarnessEnvironmentAmendmentV2Api[];
+  amendment_details?: HarnessEnvironmentAmendmentDetailApi[];
+  actors?: HarnessEnvironmentActorApi[];
+  sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
+  call_actors: HarnessEnvironmentCallActorApi[];
+  /** Per tool: whether the world's door stands in front of it, so actors can take it and faults apply. */
+  door_reach?: HarnessEnvironmentContractV2ApiDoorReach;
+  /** Tools that reach a system the environment has no copy of: Unsupported for this controlled test. */
+  production_only?: string[];
+  tool_status: HarnessEnvironmentToolStatusApi[];
+  /** Whether this is an open draft's contract, which no run uses until the draft is saved. */
+  from_draft?: boolean;
+  fault_targets: HarnessEnvironmentFaultTargetApi[];
+  end_conditions: HarnessEnvironmentEndConditionsApi;
+  notes?: string;
+  chosen_evals?: string[];
+  provenance: HarnessEnvironmentProvenanceApi;
+  data_schema_legacy: HarnessEnvironmentContractV2ApiDataSchemaLegacy;
+  amendments_legacy: HarnessEnvironmentAmendmentApi[];
+}
+
+export interface HarnessEnvironmentDetailV2Api {
+  id: string;
+  overview: HarnessEnvironmentOverviewApi;
+  contract: HarnessEnvironmentContractV2Api;
+  world: HarnessEnvironmentWorldApi;
+  scenarios: HarnessEnvironmentScenarioApi[];
+  evaluations: HarnessEnvironmentEvaluationsApi;
+  settings: HarnessEnvironmentSettingsApi;
+  /** edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab. */
+  actors_tab: HarnessEnvironmentDetailV2ApiActorsTab;
+  contract_version: HarnessEnvironmentDetailV2ApiContractVersion;
 }
 
 export interface HarnessEnvironmentRenameApi {
@@ -22118,6 +22656,21 @@ export interface HarnessAgentPolicyResponseApi {
   agent_version?: HarnessVersionApi;
 }
 
+export type HarnessEnvironmentBuildRetryApiResumeFrom =
+  (typeof HarnessEnvironmentBuildRetryApiResumeFrom)[keyof typeof HarnessEnvironmentBuildRetryApiResumeFrom];
+
+export const HarnessEnvironmentBuildRetryApiResumeFrom = {
+  start: "start",
+  checks: "checks",
+} as const;
+
+export interface HarnessEnvironmentBuildRetryApi {
+  environment_id: string;
+  /** @minLength 1 */
+  state: string;
+  resume_from: HarnessEnvironmentBuildRetryApiResumeFrom;
+}
+
 export type HarnessComparePairApiBand =
   (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
 
@@ -22214,6 +22767,248 @@ export interface HarnessCompareApi {
   pairs: HarnessComparePairApi[];
   summary: HarnessCompareSummaryApi;
   versions: HarnessCompareVersionsApi;
+}
+
+export type DesignReviewApiStatus =
+  (typeof DesignReviewApiStatus)[keyof typeof DesignReviewApiStatus];
+
+export const DesignReviewApiStatus = {
+  awaiting_approval: "awaiting_approval",
+  approved: "approved",
+  discarded: "discarded",
+} as const;
+
+export interface DesignTableApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  columns: string[];
+  /** @minLength 1 */
+  source: string;
+  removed: boolean;
+}
+
+export interface DesignToolArgApi {
+  /** @minLength 1 */
+  name: string;
+  type: string;
+}
+
+export type DesignToolApiStatus =
+  (typeof DesignToolApiStatus)[keyof typeof DesignToolApiStatus];
+
+export const DesignToolApiStatus = {
+  simulated: "simulated",
+  in_process: "in_process",
+  unsupported: "unsupported",
+  unknown: "unknown",
+} as const;
+
+export type DesignToolApiInputsFrom = { [key: string]: string };
+
+export interface DesignToolApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  args: DesignToolArgApi[];
+  requires: string[];
+  inputs_from: DesignToolApiInputsFrom;
+  effects: string;
+  refuses: string;
+  tables_read?: string[];
+  tables_changed?: string[];
+  status?: DesignToolApiStatus;
+  /** @minLength 1 */
+  source: string;
+  removed: boolean;
+}
+
+export interface DesignRuleApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  text: string;
+  /** @minLength 1 */
+  source: string;
+  removed: boolean;
+  edited: boolean;
+  /** @minLength 1 */
+  original_text: string;
+}
+
+export interface DesignUseCaseApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  text: string;
+  /** @minLength 1 */
+  source: string;
+  removed: boolean;
+  /** @minimum 0 */
+  planned_scenarios: number;
+}
+
+export type DesignBriefApiChannel =
+  (typeof DesignBriefApiChannel)[keyof typeof DesignBriefApiChannel];
+
+export const DesignBriefApiChannel = {
+  chat: "chat",
+  voice: "voice",
+} as const;
+
+export interface DesignAgentApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  version: string;
+}
+
+export interface DesignBriefApi {
+  description: string;
+  channel: DesignBriefApiChannel;
+  agent: DesignAgentApi;
+}
+
+export interface DesignActorApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  role: string;
+}
+
+export interface DesignUnsupportedApi {
+  /** @minLength 1 */
+  tool: string;
+  reaches: string[];
+  removed: boolean;
+}
+
+export type DesignEditApiOp =
+  (typeof DesignEditApiOp)[keyof typeof DesignEditApiOp];
+
+export const DesignEditApiOp = {
+  remove: "remove",
+  edit: "edit",
+} as const;
+
+export type DesignEditApiKind =
+  (typeof DesignEditApiKind)[keyof typeof DesignEditApiKind];
+
+export const DesignEditApiKind = {
+  table: "table",
+  tool: "tool",
+  rule: "rule",
+  use_case: "use_case",
+} as const;
+
+export interface DesignEditApi {
+  /** @minLength 1 */
+  edit_id: string;
+  op: DesignEditApiOp;
+  kind: DesignEditApiKind;
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  text?: string;
+  by: string;
+  /** @minLength 1 */
+  at: string;
+}
+
+export interface DesignReviewApi {
+  environment_id: string;
+  status: DesignReviewApiStatus;
+  agent_version_id: string;
+  agent_changed: boolean;
+  /** @minimum 0 */
+  scenario_count: number;
+  tables: DesignTableApi[];
+  tools: DesignToolApi[];
+  rules: DesignRuleApi[];
+  use_cases: DesignUseCaseApi[];
+  brief: DesignBriefApi;
+  actors: DesignActorApi[];
+  unsupported: DesignUnsupportedApi[];
+  edits: DesignEditApi[];
+  /** @minLength 1 */
+  revision: string;
+  created_at: string;
+  approved_at: string;
+}
+
+export interface DesignApproveRequestApi {
+  /**
+   * @minLength 64
+   * @maxLength 64
+   */
+  revision: string;
+}
+
+export type DesignEditRequestApiOp =
+  (typeof DesignEditRequestApiOp)[keyof typeof DesignEditRequestApiOp];
+
+export const DesignEditRequestApiOp = {
+  remove: "remove",
+  edit: "edit",
+} as const;
+
+export type DesignEditRequestApiKind =
+  (typeof DesignEditRequestApiKind)[keyof typeof DesignEditRequestApiKind];
+
+export const DesignEditRequestApiKind = {
+  table: "table",
+  tool: "tool",
+  rule: "rule",
+  use_case: "use_case",
+} as const;
+
+export interface DesignEditRequestApi {
+  op: DesignEditRequestApiOp;
+  kind: DesignEditRequestApiKind;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  id: string;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  text?: string;
+}
+
+export type DesignImpactApiKind =
+  (typeof DesignImpactApiKind)[keyof typeof DesignImpactApiKind];
+
+export const DesignImpactApiKind = {
+  table: "table",
+  tool: "tool",
+} as const;
+
+export interface DesignImpactToolApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface DesignImpactRuleApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  text: string;
+}
+
+export interface DesignImpactApi {
+  kind: DesignImpactApiKind;
+  /** @minLength 1 */
+  id: string;
+  tools: DesignImpactToolApi[];
+  rules: DesignImpactRuleApi[];
 }
 
 export type HarnessDraftItemApiStatus =
@@ -22363,6 +23158,12 @@ export interface HarnessEnvironmentAddEvaluationApi {
    * @maxLength 255
    */
   name: string;
+  required?: boolean;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  pass_threshold?: number;
 }
 
 export type HarnessEnvironmentOfferedEvalApiSource =
@@ -22542,6 +23343,15 @@ export interface SimulateEvalConfigResponseApi {
   readonly eval_type?: string;
   readonly regradable?: boolean;
   readonly editable?: boolean;
+}
+
+export interface HarnessEnvironmentEvalRequirementApi {
+  required?: boolean;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  pass_threshold?: number;
 }
 
 export type EvidenceImportListItemApiSourceKind =
@@ -23372,6 +24182,17 @@ export interface HarnessJobInfoApi {
   test_execution_id: string;
 }
 
+/**
+ * Where trying a stopped build again starts; null when it cannot be tried again.
+ */
+export type HarnessJobStatusApiRetryFrom =
+  (typeof HarnessJobStatusApiRetryFrom)[keyof typeof HarnessJobStatusApiRetryFrom];
+
+export const HarnessJobStatusApiRetryFrom = {
+  start: "start",
+  checks: "checks",
+} as const;
+
 export type HarnessJobStatusApiFailure = { [key: string]: unknown };
 
 export interface HarnessJobStatusApi {
@@ -23390,6 +24211,8 @@ export interface HarnessJobStatusApi {
   /** @minLength 1 */
   deadline_at: string;
   failure: HarnessJobStatusApiFailure;
+  /** Where trying a stopped build again starts; null when it cannot be tried again. */
+  retry_from?: HarnessJobStatusApiRetryFrom;
 }
 
 export type HarnessJobEventApiPayload = { [key: string]: unknown };
@@ -24207,6 +25030,8 @@ export const HarnessScenarioRowApiDraftChange = {
 
 export interface HarnessScenarioRowApi {
   id: string;
+  /** The free-text tags people put on the scenario; never versioned. */
+  tags?: string[];
   scenario_id: string;
   /** @minLength 1 */
   scenario_key: string;
@@ -28602,6 +29427,8 @@ export interface SimulateRunV3EvaluationResultApi {
   passed: boolean;
   reason: string;
   status: SimulateRunV3EvaluationResultApiStatus;
+  /** Marked required on the environment: a failing score fails the call. */
+  required: boolean;
 }
 
 /**
@@ -29357,6 +30184,8 @@ export interface CallExecutionV3DetailResponseApi {
   sub_goals: string[];
   sub_goal_results: SubGoalResultApi[];
   outcome: CallExecutionV3DetailResponseApiOutcome;
+  /** Names of the required evaluations this call failed; any one fails the call. */
+  required_evals_failed: string[];
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
@@ -30290,6 +31119,8 @@ export interface EvaluationSummaryApi {
   missing: number;
   pass_rate: number;
   average_score: number;
+  /** Marked required on the environment; a failing score fails the call. */
+  required: boolean;
 }
 
 export interface FailureBreakdownApi {
@@ -30537,6 +31368,8 @@ export interface RunCallApi {
   source_scenario_key: string;
   trial_index: number;
   outcome: RunCallApiOutcome;
+  /** Names of the required evaluations this call failed; any one fails the call. */
+  required_evals_failed: string[];
   /** @minLength 1 */
   outcome_reason?: string;
   /** @minLength 1 */
@@ -47099,6 +47932,8 @@ export type SimulateApiHarnessEnvironmentsListStatus =
   (typeof SimulateApiHarnessEnvironmentsListStatus)[keyof typeof SimulateApiHarnessEnvironmentsListStatus];
 
 export const SimulateApiHarnessEnvironmentsListStatus = {
+  reading: "reading",
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -47111,6 +47946,21 @@ export type SimulateApiHarnessEnvironmentsListAgentType =
 export const SimulateApiHarnessEnvironmentsListAgentType = {
   voice: "voice",
   chat: "chat",
+} as const;
+
+export type SimulateApiHarnessEnvironmentsReadParams = {
+  /**
+   * Version 1 preserves legacy field shapes. Version 2 returns rich contract fields, described by the response's x-contract-version-2 schema.
+   */
+  contract_version?: SimulateApiHarnessEnvironmentsReadContractVersion;
+};
+
+export type SimulateApiHarnessEnvironmentsReadContractVersion =
+  (typeof SimulateApiHarnessEnvironmentsReadContractVersion)[keyof typeof SimulateApiHarnessEnvironmentsReadContractVersion];
+
+export const SimulateApiHarnessEnvironmentsReadContractVersion = {
+  NUMBER_1: 1,
+  NUMBER_2: 2,
 } as const;
 
 export type SimulateApiHarnessEnvironmentsActorViewParams = {
@@ -47135,6 +47985,23 @@ export type SimulateApiHarnessEnvironmentsCompareParams = {
    */
   against_execution_id?: string;
 };
+
+export type SimulateApiHarnessEnvironmentsDesignReviewImpactParams = {
+  kind: SimulateApiHarnessEnvironmentsDesignReviewImpactKind;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  id: string;
+};
+
+export type SimulateApiHarnessEnvironmentsDesignReviewImpactKind =
+  (typeof SimulateApiHarnessEnvironmentsDesignReviewImpactKind)[keyof typeof SimulateApiHarnessEnvironmentsDesignReviewImpactKind];
+
+export const SimulateApiHarnessEnvironmentsDesignReviewImpactKind = {
+  table: "table",
+  tool: "tool",
+} as const;
 
 export type SimulateApiHarnessEnvironmentsUploadFileBody = {
   file: Blob;

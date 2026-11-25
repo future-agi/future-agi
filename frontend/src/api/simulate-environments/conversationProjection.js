@@ -224,6 +224,10 @@ export function projectConversation(conversation) {
                   reason: answerFor[m.message_id].payload?.failure_reason || "",
                 }
               : undefined,
+          closed:
+            !answered && m.payload?.closed_reason
+              ? { reason: m.payload.closed_reason }
+              : undefined,
         });
         continue;
       }

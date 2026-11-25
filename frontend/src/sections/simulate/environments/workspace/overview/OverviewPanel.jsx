@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { useState } from "react";
-import { Box, Stack, Typography, Grid } from "@mui/material";
+import { Box, Stack, Tooltip, Typography, Grid } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
@@ -23,11 +24,23 @@ import SideDrawer from "../../components/SideDrawer";
 import AgentVersionsPanel from "../agents/AgentVersionsPanel";
 import { GroupHeading, Fact } from "./OverviewPrimitives";
 import AgentSummarySection from "./AgentSummarySection";
+import {
+  CountsSkeleton,
+  FactSkeleton,
+  MapSkeleton,
+  UseCasesSkeleton,
+  WorldSkeleton,
+} from "./OverviewSkeletons";
+import { isCodeSource } from "./agentLine";
 import SourceReadCard from "./SourceReadCard";
+import SourceToSandboxMap from "./SourceToSandboxMap";
 import NextStepsChecklist from "./NextStepsChecklist";
 import StateSummary from "./StateSummary";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
-import { DependsOnCard, SeededDataCard } from "./WorldCards";
+import { DependsOnCard, SeededDataCard, StartingDataCard } from "./WorldCards";
+import ConnectOnlyWorld from "../world/ConnectOnlyWorld";
+import { hasNoWorld, isConnectOnly } from "../world/world.constants";
+import useApprovedDesign from "./useApprovedDesign";
 
 /**
  * What this environment is.
@@ -55,31 +68,76 @@ const dependsFromContract = (dependencies) =>
   }));
 
 export default function OverviewPanel({
-  env,
+  env: builtEnv,
   envState,
   onGo,
   agentConnected,
   locked = false,
   buildMode,
-  counts,
-  latestRun,
+  counts: builtCounts,
   backedWorld,
+  waits = {},
 }) {
+  const { env, fromDesign } = useApprovedDesign(builtEnv);
+  const counts = fromDesign
+    ? { ...builtCounts, hardRules: env.rules.length }
+    : builtCounts;
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
   // Agent versions are managed on real data, so only while versioning is on.
   const canManageVersions = !locked && Boolean(env.versioning?.enabled);
   const surface = getSurface(env.surface);
   const contract = contractFor(env);
-  // The real connector for a backed env (envState.agent.typeId = the job poll's
-  // detected connector, e.g. "livekit"). No transports field is served, so this
-  // replaces the old hardcoded transports fact.
-  const connector = envState?.agent?.typeId;
+  const connector = env.connector || envState?.agent?.typeId;
   const connectorLabel = connector
     ? CONNECTOR_LABEL[connector] || connector
-    : "-";
+    : null;
 
   const parallelism = env.parallelism;
   const degradeReasons = parallelism?.degrade_reasons || [];
+
+  const seeded = Boolean(backedWorld) && worldTables(env).length > 0;
+  const startingData =
+    Boolean(backedWorld) && !isConnectOnly(env) && env.baseEnvironment != null;
+
+  const amendments =
+    (backedWorld
+      ? backedWorld.amendments
+      : env.amendments ?? contract.amendments) || [];
+  const showAmendments = !buildMode && amendments.length > 0;
+  const useCaseCount = (env.useCases || []).length;
+  const scenarioTotal = counts?.scenarios;
+  const scenarioPacks =
+    useCaseCount && scenarioTotal != null
+      ? OVERVIEW_COPY.scenarioPacks(useCaseCount, scenarioTotal)
+      : null;
+
+  const useCases = backedWorld
+    ? env.useCases ?? []
+    : env.useCases ?? contract.useCases;
+  const hasUseCases = (useCases?.length || 0) > 0;
+  const showUseCases = Boolean(waits.contract) || hasUseCases;
+
+  const noWorld = Boolean(backedWorld) && hasNoWorld(env);
+  const worldKnown = !waits.world;
+  const dependsOn = backedWorld
+    ? dependsFromContract(backedWorld.dependencies)
+    : contract.dependsOn || [];
+  const runtimeDependsOn = backedWorld
+    ? dependsFromContract(backedWorld.runtimeDependencies)
+    : [];
+  const hasDepends = dependsOn.length + runtimeDependsOn.length > 0;
+  const tablesCard =
+    seeded || !startingData ? (
+      worldTables(env).length > 0 ? (
+        <SeededDataCard env={env} />
+      ) : null
+    ) : (
+      <StartingDataCard baseEnvironment={env.baseEnvironment} />
+    );
+  const hasWorldCards = Boolean(tablesCard) || hasDepends;
+  const showWorld = !worldKnown || noWorld || hasWorldCards;
+  const showWorldKind =
+    worldKnown && Boolean(backedWorld) && !noWorld && hasWorldCards;
 
   const hasDerivedWorld =
     (env.rules?.length || 0) > 0 ||
@@ -93,11 +151,19 @@ export default function OverviewPanel({
         alignItems={{ sm: "flex-start" }}
         spacing={2}
       >
-        <Typography
-          sx={{ typography: "m3", color: "text.secondary", maxWidth: 820 }}
-        >
-          {env.description}
-        </Typography>
+        <OverflowTooltip title={env.description || ""}>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s1",
+              color: "text.secondary",
+              minWidth: 0,
+              flex: 1,
+            }}
+          >
+            {env.description}
+          </Typography>
+        </OverflowTooltip>
       </Stack>
 
       {/* Labels, not content — a strip rather than a column of its own. */}
@@ -112,16 +178,23 @@ export default function OverviewPanel({
           border: "1px solid",
           borderColor: "divider",
           borderRadius: "8px",
+          bgcolor: "background.paper",
           rowGap: 1,
-          width: "fit-content",
-          maxWidth: "100%",
         }}
       >
         <Fact
           label={OVERVIEW_COPY.facts.channel}
-          value={surface?.label ?? "-"}
+          value={
+            !surface && waits.contract && !waits.contract.stopped ? (
+              <FactSkeleton />
+            ) : (
+              surface?.label ?? "-"
+            )
+          }
         />
-        <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
+        {connectorLabel && !isCodeSource(env.source) && (
+          <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
+        )}
         {/* Domain, direction, source and mode are real §6 fields; a client-only
             env (template, fork) carries sample values for them, so they show
             for a backed env only. */}
@@ -147,6 +220,12 @@ export default function OverviewPanel({
             value={MODE_LABEL[env.agentMode] || env.agentMode}
           />
         ) : null}
+        {backedWorld && scenarioPacks ? (
+          <Fact
+            label={OVERVIEW_COPY.facts.scenarioPacks}
+            value={scenarioPacks}
+          />
+        ) : null}
         {parallelism?.requested ? (
           <Fact
             label={PARALLELISM_COPY.fact}
@@ -167,9 +246,7 @@ export default function OverviewPanel({
             bgcolor: "background.neutral",
           }}
         >
-          <Typography
-            sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
-          >
+          <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
             {PARALLELISM_COPY.degradedTitle(
               parallelism.effective,
               parallelism.requested,
@@ -188,6 +265,12 @@ export default function OverviewPanel({
 
       <AgentSummarySection
         subject={env.testSubject}
+        source={env.source}
+        connector={connector}
+        policy={env.agentPolicy}
+        noWorld={worldKnown ? noWorld : null}
+        systemPrompt={env.systemPrompt}
+        systemPromptOrigin={env.systemPromptOrigin}
         onManageVersions={
           canManageVersions ? () => setAgentDrawerOpen(true) : undefined
         }
@@ -196,75 +279,141 @@ export default function OverviewPanel({
       {/* State-of-the-env summary tiles + latest run — the "how's this env doing
           right now?" answer. Each tile jumps to the tab it summarises. For a
           backed env the numbers come from §6 (summaryCounts). */}
-      <StateSummary
-        env={env}
-        envState={envState}
-        counts={counts}
-        latestRun={latestRun}
-        onGo={onGo}
-      />
+      {waits.scenarios ? (
+        <CountsSkeleton wait={waits.scenarios} />
+      ) : (
+        <StateSummary
+          env={env}
+          envState={envState}
+          counts={counts}
+          onGo={onGo}
+        />
+      )}
 
       {/* Getting-started checklist for envs that haven't been seeded yet. A
           scratch env arrives carrying a derived world, so the same checklist
           would render every step pre-complete — skip it there. */}
       {!agentConnected && !hasDerivedWorld && (
-        <NextStepsChecklist env={env} envState={envState} onGo={onGo} scenarioCount={counts?.scenarios} />
+        <NextStepsChecklist
+          env={env}
+          envState={envState}
+          onGo={onGo}
+          scenarioCount={counts?.scenarios}
+        />
       )}
 
-      {/* CapabilityGraph moved to the Contract tab — that's where the shape of
-          the environment belongs. Overview keeps the summary, not the definition. */}
       <GroupHeading>{OVERVIEW_COPY.capabilities}</GroupHeading>
 
-      <SourceReadCard tools={env.tools} rules={env.rules} />
+      {waits.world ? (
+        <MapSkeleton wait={waits.world} />
+      ) : backedWorld ? (
+        <SourceToSandboxMap
+          env={env}
+          envState={envState}
+          stores={env.stores || []}
+          backed
+        />
+      ) : (
+        <SourceReadCard tools={env.tools} rules={env.rules} />
+      )}
 
-      {/* Tools and Hard rules cards were here — removed as duplicates of the
-          Contract tab, which owns the tool inventory and the hard-rule list. */}
-      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-        <Grid item xs={12} md={7}>
-          {/* A backed env reads only the real §6 fields; a use case the build
-              didn't write stays empty rather than being made up. The fixture
-              derivation is for client-only envs (templates, forks). */}
-          <UseCasesCard
-            useCases={
-              backedWorld
-                ? env.useCases ?? []
-                : env.useCases ?? contract.useCases
-            }
-          />
-        </Grid>
-        <Grid item xs={12} md={5}>
-          {!buildMode && (
-            <AmendmentsCard
-              amendments={
-                backedWorld
-                  ? backedWorld.amendments
-                  : env.amendments ?? contract.amendments
-              }
-            />
+      {(showUseCases || showAmendments) && (
+        <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
+          {showUseCases && (
+            <Grid item xs={12} md={showAmendments ? 7 : 12}>
+              {waits.contract ? (
+                <UseCasesSkeleton wait={waits.contract} />
+              ) : (
+                <UseCasesCard useCases={useCases} />
+              )}
+            </Grid>
+          )}
+          {showAmendments && (
+            <Grid item xs={12} md={showUseCases ? 5 : 12}>
+              <AmendmentsCard amendments={amendments} />
+            </Grid>
           )}
         </Grid>
-      </Grid>
+      )}
 
-      {/* The world the agent works in: the seeded tables (real §6
-          world.stores, shown only when there are any) and what it depends on
-          (real §6 contract.dependencies). */}
-      <GroupHeading>{OVERVIEW_COPY.world}</GroupHeading>
-      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-        <Grid item xs={12} md={7}>
-          <DependsOnCard
-            dependsOn={
-              backedWorld
-                ? dependsFromContract(backedWorld.dependencies)
-                : contract.dependsOn
-            }
+      {showWorld && <GroupHeading>{OVERVIEW_COPY.world}</GroupHeading>}
+      {showWorldKind && (
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          sx={{ px: 0.5, mb: 2 }}
+        >
+          <Iconify
+            icon="solar:lock-keyhole-minimalistic-linear"
+            width={14}
+            sx={{ color: "text.tertiary", flexShrink: 0 }}
           />
-        </Grid>
-        {backedWorld && worldTables(env).length > 0 && (
-          <Grid item xs={12} md={5}>
-            <SeededDataCard env={env} />
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
+          >
+            <Box
+              component="span"
+              sx={{ fontWeight: 600, color: "text.primary" }}
+            >
+              {OVERVIEW_COPY.worldKind.label}
+            </Box>
+            {OVERVIEW_COPY.worldKind.short}
+          </Typography>
+          <Tooltip arrow title={OVERVIEW_COPY.worldKind.tip}>
+            <Box
+              component="span"
+              sx={{ display: "inline-flex", flexShrink: 0 }}
+            >
+              <Iconify
+                icon="solar:info-circle-linear"
+                width={14}
+                sx={{ color: "text.disabled" }}
+              />
+            </Box>
+          </Tooltip>
+        </Stack>
+      )}
+      {waits.world ? (
+        <WorldSkeleton wait={waits.world} />
+      ) : noWorld ? (
+        <Stack spacing={2} sx={{ mb: 3 }}>
+          <ConnectOnlyWorld env={env} />
+          <DependsOnCard
+            dependsOn={dependsOn}
+            runtimeDependsOn={runtimeDependsOn}
+          />
+          {startingData && (
+            <StartingDataCard baseEnvironment={env.baseEnvironment} />
+          )}
+        </Stack>
+      ) : (
+        hasWorldCards && (
+          <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
+            {tablesCard && (
+              <Grid item xs={12} md={hasDepends ? 7 : 12}>
+                {tablesCard}
+              </Grid>
+            )}
+            {hasDepends && (
+              <Grid item xs={12} md={tablesCard ? 5 : 12}>
+                <DependsOnCard
+                  dependsOn={dependsOn}
+                  runtimeDependsOn={runtimeDependsOn}
+                />
+              </Grid>
+            )}
+            {seeded && startingData && (
+              <Grid item xs={12}>
+                <StartingDataCard
+                  baseEnvironment={env.baseEnvironment}
+                  title={OVERVIEW_COPY.startingTitle}
+                />
+              </Grid>
+            )}
           </Grid>
-        )}
-      </Grid>
+        )
+      )}
 
       {/* Agent version-management drawer, overlaid on Overview so the user
           never leaves the tab. Not kept mounted while closed. */}
@@ -316,6 +465,7 @@ export default function OverviewPanel({
 }
 
 OverviewPanel.propTypes = {
+  waits: PropTypes.objectOf(PropTypes.object),
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE,
   onGo: PropTypes.func,
@@ -326,12 +476,12 @@ OverviewPanel.propTypes = {
   // client-store fallback in StateSummary covers non-backed envs.
   counts: PropTypes.object,
   // The newest run from the executions list, for the latest-run card.
-  latestRun: PropTypes.object,
   // Real §6 world content for a backed env: { stores, amendments, dependencies }.
   // Undefined for a non-backed env (keeps the client/fixture source).
   backedWorld: PropTypes.shape({
     stores: PropTypes.array,
     amendments: PropTypes.array,
     dependencies: PropTypes.array,
+    runtimeDependencies: PropTypes.array,
   }),
 };

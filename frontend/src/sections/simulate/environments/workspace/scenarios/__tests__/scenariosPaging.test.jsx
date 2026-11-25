@@ -17,10 +17,15 @@ import {
   pickView,
 } from "./scenariosTestUtils";
 
-const { mockSnack } = vi.hoisted(() => ({ mockSnack: { calls: [], close: () => {} } }));
+const { mockSnack } = vi.hoisted(() => ({
+  mockSnack: { calls: [], close: () => {} },
+}));
 vi.mock("notistack", () => ({
   useSnackbar: () => ({
-    enqueueSnackbar: (message, options) => { mockSnack.calls.push({ message, options }); return "snack-key"; },
+    enqueueSnackbar: (message, options) => {
+      mockSnack.calls.push({ message, options });
+      return "snack-key";
+    },
     closeSnackbar: (...args) => mockSnack.close(...args),
   }),
 }));
@@ -28,17 +33,27 @@ vi.mock("notistack", () => ({
 // The list reads the server (fixtures) source through listScenarios; serve a
 // controlled 60-row suite so the pager engages at PAGE_SIZE 25.
 vi.mock("src/api/simulate-environments/scenarios", async () => {
-  const actual = await vi.importActual("src/api/simulate-environments/scenarios");
+  const actual = await vi.importActual(
+    "src/api/simulate-environments/scenarios",
+  );
   return {
     ...actual,
     listScenarios: vi.fn(),
     amendScenarios: vi.fn(),
     // Mock coverage too so CoverageMatrix does not fire a real (failing) request
     // that spams the axios auth-redirect interceptor on every render.
-    scenarioCoverage: vi.fn(async () => ({ axes: [], per_axis: [], rows: [], columns: [], cells: [] })),
+    scenarioCoverage: vi.fn(async () => ({
+      axes: [],
+      per_axis: [],
+      rows: [],
+      columns: [],
+      cells: [],
+    })),
   };
 });
-const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
+const { listScenarios, amendScenarios } = await import(
+  "src/api/simulate-environments/scenarios"
+);
 const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
@@ -93,7 +108,9 @@ describe("ScenariosStep — pagination", () => {
   it("shows an error state, not the empty placeholder, when the list request fails", async () => {
     listScenarios.mockRejectedValue(new Error("boom"));
     renderStep();
-    expect(await screen.findByText(/Couldn't load scenarios/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Couldn't load scenarios/i),
+    ).toBeInTheDocument();
     // Not the "no scenarios yet" empty placeholder.
     expect(screen.queryByText(/no scenarios/i)).toBeNull();
   });
@@ -132,7 +149,9 @@ describe("ScenariosStep — pagination", () => {
 
     // Delete a row on the (now non-existent after shrink) last page.
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Remove from this environment" })[0],
+      screen.getAllByRole("button", {
+        name: /^Remove .* from this environment$/,
+      })[0],
     );
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
@@ -149,19 +168,31 @@ describe("ScenariosStep — select all matching", () => {
     fireEvent.click(headerCheckbox());
 
     // Page selected → the banner offers the escalation to every match.
-    expect(screen.getByRole("button", { name: /Select all 60 matching/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Select all 60 matching/ }),
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Select all 60 matching/ }));
-    expect(screen.getByText(/All 60 matching scenarios selected/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Select all 60 matching/ })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Clear selection" })).toHaveLength(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Select all 60 matching/ }),
+    );
+    expect(
+      screen.getByText(/All 60 matching scenarios selected/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Select all 60 matching/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "Clear selection" }),
+    ).toHaveLength(1);
   });
 
   it("keeps the whole-match selection across a page change without loading every row", async () => {
     renderStep();
     await screen.findByText(/Showing 1–25 of 60/);
     fireEvent.click(headerCheckbox());
-    fireEvent.click(screen.getByRole("button", { name: /Select all 60 matching/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Select all 60 matching/ }),
+    );
 
     fireEvent.click(screen.getByLabelText("Go to page 2"));
     expect(await screen.findByText(/Showing 26–50 of 60/)).toBeInTheDocument();
@@ -174,8 +205,12 @@ describe("ScenariosStep — select all matching", () => {
     renderStep();
     await screen.findByText(/Showing 1–25 of 60/);
     fireEvent.click(headerCheckbox());
-    fireEvent.click(screen.getByRole("button", { name: /Select all 60 matching/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete selected scenarios" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Select all 60 matching/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete selected scenarios" }),
+    );
 
     // Confirm, then all 60 matches are enumerated (paged server-side) and dropped
     // in a single amend naming every one.
@@ -191,10 +226,14 @@ describe("ScenariosStep — select all matching", () => {
     renderStep();
     await screen.findByText(/Showing 1–25 of 60/);
     fireEvent.click(headerCheckbox());
-    fireEvent.click(screen.getByRole("button", { name: /Select all 60 matching/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Select all 60 matching/ }),
+    );
     // Uncheck the first row checkbox (index 1; 0 is the header).
     fireEvent.click(screen.getAllByRole("checkbox")[1]);
-    expect(screen.getByText(/All 59 matching scenarios selected/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/All 59 matching scenarios selected/),
+    ).toBeInTheDocument();
   });
 });
 
@@ -208,7 +247,9 @@ describe("ScenariosStep — keyboard and drawer", () => {
     expect(screen.getByText("scenario selected")).toBeInTheDocument();
     // The just-ticked checkbox still has focus; Escape clears anyway.
     fireEvent.keyDown(box, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByText("scenario selected")).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByText("scenario selected")).toBeNull(),
+    );
   });
 
   it("keeps Escape for the search box while typing", async () => {
@@ -242,7 +283,9 @@ describe("ScenariosStep — keyboard and drawer", () => {
     fireEvent.click(screen.getByText(/^Repeats: \d/).closest("button"));
     const popoverHeading = await screen.findByText("Repeats per scenario");
     fireEvent.keyDown(popoverHeading, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByText("Repeats per scenario")).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByText("Repeats per scenario")).toBeNull(),
+    );
     expect(screen.getByText("scenario selected")).toBeInTheDocument();
   });
 
@@ -253,13 +296,16 @@ describe("ScenariosStep — keyboard and drawer", () => {
     fireEvent.click(screen.getAllByText(first.name)[0]);
     // The drawer's header carries the name and Edit; the table's own edit
     // buttons are labelled "Edit scenario".
-    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Edit" }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText(first.name).length).toBeGreaterThan(1);
   });
 });
 
 describe("ScenariosStep — run a selection", () => {
-  const runButton = () => screen.getByRole("button", { name: /scenarios? × \d+ repeat/ });
+  const runButton = () =>
+    screen.getByRole("button", { name: /scenarios? × \d+ repeat/ });
 
   it("runs the ticked rows by scenario key, not row id", async () => {
     const { onStartRun } = renderStep();
@@ -281,7 +327,9 @@ describe("ScenariosStep — run a selection", () => {
     const { onStartRun } = renderStep();
     await screen.findByText(/Showing 1–25 of 60/);
     fireEvent.click(headerCheckbox());
-    fireEvent.click(screen.getByRole("button", { name: /Select all 60 matching/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Select all 60 matching/ }),
+    );
     fireEvent.click(screen.getAllByRole("checkbox")[1]);
     fireEvent.click(runButton());
 
@@ -291,7 +339,9 @@ describe("ScenariosStep — run a selection", () => {
     expect(new Set(keys).size).toBe(59);
     keys.forEach((k) => expect(k).toMatch(/^key-\d+$/));
     // Exactly the one un-ticked scenario is left out.
-    const missing = PAGING_ROWS.map((r) => r.scenario_key).filter((k) => !keys.includes(k));
+    const missing = PAGING_ROWS.map((r) => r.scenario_key).filter(
+      (k) => !keys.includes(k),
+    );
     expect(missing).toHaveLength(1);
   });
 
@@ -311,12 +361,16 @@ describe("ScenariosStep — run a selection", () => {
     });
     await screen.findByText(new RegExp(`of ${expected.length}\\b`));
     fireEvent.click(headerCheckbox());
-    const escalate = screen.queryByRole("button", { name: /Select all \d+ matching/ });
+    const escalate = screen.queryByRole("button", {
+      name: /Select all \d+ matching/,
+    });
     if (escalate) fireEvent.click(escalate);
     fireEvent.click(runButton());
 
     await waitFor(() => expect(onStartRun).toHaveBeenCalledTimes(1));
-    expect([...onStartRun.mock.calls[0][0]].sort()).toEqual([...expected].sort());
+    expect([...onStartRun.mock.calls[0][0]].sort()).toEqual(
+      [...expected].sort(),
+    );
   });
 });
 
@@ -327,12 +381,18 @@ describe("ScenariosStep — background refetch failure", () => {
     listScenarios.mockRejectedValue(new Error("boom"));
     fireEvent.click(screen.getByLabelText("Go to page 2"));
 
-    expect(await screen.findByText(/Couldn't refresh the scenarios/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Couldn't refresh the scenarios/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Couldn't load scenarios/)).toBeNull();
 
-    listScenarios.mockImplementation((jobId, params) => queryScenarioFixture(params, PAGING_ROWS));
+    listScenarios.mockImplementation((jobId, params) =>
+      queryScenarioFixture(params, PAGING_ROWS),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(screen.queryByText(/Couldn't refresh the scenarios/)).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByText(/Couldn't refresh the scenarios/)).toBeNull(),
+    );
   });
 });
 
@@ -342,7 +402,9 @@ describe("ScenariosStep — list view has checkboxes", () => {
     await screen.findByText(/Showing 1–25 of 60/);
     pickView("List");
     await waitFor(() =>
-      expect(screen.getAllByLabelText(/^Select group/).length).toBeGreaterThan(0),
+      expect(screen.getAllByLabelText(/^Select group/).length).toBeGreaterThan(
+        0,
+      ),
     );
     const rowBoxes = screen.getAllByLabelText(/^Select (?!group)/);
     expect(rowBoxes.length).toBeGreaterThan(0);

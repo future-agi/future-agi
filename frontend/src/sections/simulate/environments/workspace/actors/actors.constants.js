@@ -26,26 +26,45 @@ export const ACTORS_COPY = {
     scenarioOverride: "A scenario can set its own values for any of these.",
   },
   relations: {
-    title: "Who can reach whom",
-    subtitle:
-      "Each actor's role, when it comes in and who its actions reach, from the records themselves.",
-    comesIn: (when) => `Comes in: ${when}`,
-    broughtBy: (name) => `Brought in by ${name}`,
-    reaches: (names) => `Its actions reach ${names.join(", ")}`,
-    reachesNoOne: "Its actions reach no other actor",
+    title: "How they connect",
+    subtitle: "Who can reach whom in a run",
+    agent: "Agent",
+    canReach: "can reach them through its actions",
   },
   showSettings: "Limits",
   hideSettings: "Hide limits",
   noCaller:
     "There is no caller record yet. The caller is an actor too: the builder writes one when it builds or first edits this environment, or add one with the id caller.",
   callActors: {
-    title: (n) => `Actors (${n})`,
+    title: (n) => (n ? `Actors (${n})` : "Actors"),
     subtitle:
       "People on the person's side who are not the person. Change them in the builder chat.",
     channels: ACTOR_CHANNEL_LABELS,
-    scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
+    scenarios: (n) => (n ? `In ${n} scenario${n === 1 ? "" : "s"}` : null),
   },
 
+  spec: {
+    theirPart: "Their part",
+    whatTheySee: (name) => (name ? `What ${name} sees` : "What they see"),
+    tests: "Tests",
+    howTheyJoin: "How they join",
+    whenTheyComeIn: "When they come in",
+    actions: "Actions they may take",
+    onlyTalk: "None, they only talk",
+    voice: "Voice",
+    canApprove: "Can approve",
+    answersWithin: (seconds) =>
+      seconds >= 60
+        ? `answers within ${Math.round(seconds / 60)} min`
+        : `answers within ${Math.round(seconds)} s`,
+    ifNoAnswer: "If they don't answer",
+    traits: "Traits",
+    note: "Note",
+    graderAlways: "The evaluator's expected answers, hidden checks and scoring",
+    hiddenTask: "The scenario's hidden task, unless it is told",
+    othersAlways: "What other actors keep to themselves",
+    loadingLabels: ["Knows", "Can do", "Never sees"],
+  },
   worldActors: {
     unresolved: {
       title: "Needs your decision",
@@ -56,9 +75,16 @@ export const ACTORS_COPY = {
       edit: "Edit actor",
     },
     title: "Actors",
-    groupTitle: (title, n) => `${title} (${n})`,
+    groupTitle: (title, n) => (n ? `${title} (${n})` : title),
     intro:
-      "Every simulated person in this world: what each knows, when they join and what they're allowed to do. A persona is how one of them behaves. Edits wait in the draft until you save.",
+      "Everyone simulated in this world, the customer included. Your agent's own workers aren't actors.",
+    inEveryRun: "In every run",
+    callerTask: (personas, scenarios) =>
+      `Has the scenario's task · plays ${personas} persona${personas === 1 ? "" : "s"} across ${scenarios} scenario${scenarios === 1 ? "" : "s"}`,
+    callerScenarios: (scenarios) =>
+      `Has the scenario's task · in ${scenarios} scenario${scenarios === 1 ? "" : "s"}`,
+    rowScenarios: (side, n) =>
+      side === "world" ? `Used by ${n}` : `${n} scenario${n === 1 ? "" : "s"}`,
     notSet: "Not set",
     removeTitle: (name) => `Remove ${name}?`,
     removeBody: "They leave the draft. Saved versions keep them.",
@@ -91,21 +117,13 @@ export const ACTORS_COPY = {
     remove: "Remove",
     removeNamed: (name) => `Remove ${name}`,
     empty: "No actors yet. Add one, or ask the builder chat.",
-    wants: "Wants",
-    mayDo: "May do",
-    nothing: "Nothing in the world",
     notInWorld: "not an action of this world",
-    showView: "What they see",
-    hideView: "Hide what they see",
-    sees: "Sees",
     neverSees: "Never sees",
-    comesIn: "Comes in",
     comesInDifferently: (n) =>
       `Comes in differently in ${n} scenario${n === 1 ? "" : "s"}`,
     loudnessShare: (ratio) =>
       `${Math.round(ratio * 100)}% as loud as the caller`,
     loudnessAutomatic: "Loudness automatic",
-    ifNoAnswer: "If they do not answer",
     graderMaterial: "Grader material",
     othersPrivate: (fields, count) =>
       `What the ${count === 1 ? "other actor keeps" : `${count} other actors each keep`} to themselves: ${fields}`,

@@ -170,13 +170,10 @@ describe("buildStatusFor", () => {
     expect(buildStatusFor("canceled")).toBe(BUILD_STATUS.FAILED);
   });
 
-  // "running" is stage 10 of 14 in `stages` — after validating_scenarios and
-  // connecting_agent — so by then the world is fully derived and the agent is
-  // attached; what is running is the calls. The backend agrees: status_for()
-  // reports RUNNING/FINALIZING/CLEANING_UP as "running" and only the states
-  // before them as "building". A build spinner here would never stop.
-  it("maps running → ready: the environment is built, the calls are running", () => {
-    expect(buildStatusFor("running")).toBe(BUILD_STATUS.READY);
+  it("maps every stage before completed → building", () => {
+    ["running", "finalizing", "cleaning_up"].forEach((s) =>
+      expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING),
+    );
   });
 
   it("maps every stage before the agent connects → building", () => {
@@ -202,6 +199,10 @@ describe("jobStatusFor", () => {
     ["failed", cancel, ENV_STATUS.FAILED],
     ["cleaning_up", null, ENV_STATUS.FINALIZING],
     ["running", null, ENV_STATUS.RUNNING],
+    ["understanding_agent", null, ENV_STATUS.READING],
+    ["acquiring_source", null, ENV_STATUS.BUILDING],
+    ["generating_environment", null, ENV_STATUS.BUILDING],
+    ["awaiting_approval", null, ENV_STATUS.AWAITING_APPROVAL],
   ])(
     "stage %s with cancel_requested_at=%s reads %s",
     (stage, cancelAt, expected) => {
@@ -210,6 +211,15 @@ describe("jobStatusFor", () => {
       );
     },
   );
+
+  it("shows a job reading its agent as Reading in the list, while it still builds for every action", () => {
+    const row = harnessJobToRow({
+      job: { job_id: "job-1" },
+      status: { stage: "understanding_agent" },
+    });
+    expect(row.status).toBe(ENV_STATUS.READING);
+    expect(buildStatusFor("understanding_agent")).toBe(BUILD_STATUS.BUILDING);
+  });
 
   it("drives the jobs-list row, so a cancel in flight reads Cancelling there too", () => {
     const row = harnessJobToRow({
@@ -228,6 +238,10 @@ describe("envStatusFor", () => {
     ["running", ENV_STATUS.RUNNING, ENV_STATUS.RUNNING],
     ["failed", ENV_STATUS.FAILED, ENV_STATUS.FAILED],
     ["generating_scenarios", ENV_STATUS.BUILDING, ENV_STATUS.BUILDING],
+    ["understanding_agent", ENV_STATUS.BUILDING, ENV_STATUS.READING],
+    ["understanding_agent", "reading", ENV_STATUS.READING],
+    ["awaiting_approval", "awaiting_approval", ENV_STATUS.AWAITING_APPROVAL],
+    ["awaiting_approval", ENV_STATUS.BUILDING, ENV_STATUS.AWAITING_APPROVAL],
     ["completed", "completed", ENV_STATUS.READY],
   ])("stage %s with backend status %s reads %s", (stage, status, expected) => {
     expect(envStatusFor(stage, status)).toBe(expected);
@@ -329,10 +343,10 @@ describe("harnessEnvToRow, design columns", () => {
     expect(row.lastRun).toEqual({ rate: 75, ordinal: 4 });
   });
 
-  it("shows no rate when the API has none", () => {
+  it("keeps a run without a rate as a run, so it never reads as not run", () => {
     expect(
       harnessEnvToRow({ ...base, last_run: run({ pass_rate: null }) }).lastRun,
-    ).toBeNull();
+    ).toEqual({ rate: null, ordinal: 4 });
     expect(harnessEnvToRow({ ...base, last_run: null }).lastRun).toBeNull();
   });
 });

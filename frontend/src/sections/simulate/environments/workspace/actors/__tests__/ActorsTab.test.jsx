@@ -2,6 +2,17 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import ActorsTab from "../ActorsTab";
 
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    useQuery: (options, ...rest) =>
+      options?.queryKey?.[0] === "harness-environment"
+        ? { data: undefined }
+        : real.useQuery(options, ...rest),
+  };
+});
+
 vi.mock("src/api/simulate-environments/versions", async () => {
   const { cast: castOf } = await import("./castFixtures");
   return {
@@ -24,7 +35,8 @@ vi.mock("src/api/simulate-environments/versions", async () => {
 describe("ActorsTab", () => {
   it("edits the cast when the environment says edit", () => {
     render(<ActorsTab env={{ id: "env-1", actorsTab: "edit" }} />);
-    expect(screen.getByText("Actors (0)")).toBeInTheDocument();
+    expect(screen.getByText("Actors")).toBeInTheDocument();
+    expect(screen.queryByText("Actors (0)")).toBeNull();
     expect(
       screen.getByRole("button", { name: "Add actor" }),
     ).toBeInTheDocument();
@@ -66,5 +78,27 @@ describe("ActorsTab", () => {
     expect(
       screen.getByText("Heard nearby · Female · 25-32 · In 2 scenarios"),
     ).toBeInTheDocument();
+  });
+
+  it("leaves the scenario count off an actor no scenario includes yet", () => {
+    render(
+      <ActorsTab
+        env={{
+          surface: "voice",
+          actorsTab: "list",
+          callActors: [
+            {
+              id: "friend",
+              name: "Rowan",
+              channel: "audio_mix",
+              persona: { gender: "female" },
+              scenarios_count: 0,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Heard nearby · Female")).toBeInTheDocument();
+    expect(screen.queryByText(/In 0 scenarios/)).toBeNull();
   });
 });

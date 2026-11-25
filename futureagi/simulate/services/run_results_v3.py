@@ -29,6 +29,7 @@ from simulate.services.call_provider import (
     call_agent_provider,
     call_agent_provider_expression,
 )
+from simulate.services.harness_eval_suggestions import is_required
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_scenarios import (
     authored_scenarios_for_calls,
@@ -58,6 +59,7 @@ from simulate.services.run_results_v3_scoring import (
     EvalScoringSpec,
     LiveEvals,
     judge_stored_eval,
+    judged_by_required_evals,
     resolve_eval_scoring_spec,
 )
 from simulate.services.scoring_status import (
@@ -198,6 +200,21 @@ def _eval_outcome(
     return judge_stored_eval(eval_data, _scoring_spec(config, specs)).outcome
 
 
+def _required_eval_failed(
+    call: CallExecution,
+    live_eval_configs: dict[str, SimulateEvalConfig],
+    specs: dict[str, EvalScoringSpec] | None,
+) -> bool:
+    return any(
+        _eval_outcome(data, config, specs) == "failed"
+        for eval_id, data in iter_live_eval_outputs(
+            call.eval_outputs, set(live_eval_configs)
+        )
+        if (config := live_eval_configs.get(str(eval_id))) is not None
+        and is_required(config)
+    )
+
+
 def call_outcome(
     call: CallExecution,
     live_eval_configs: dict[str, SimulateEvalConfig],
@@ -231,6 +248,21 @@ def call_outcome(
     if call.status != CallExecution.CallStatus.COMPLETED:
         return "inconclusive"
 
+    if judged_by_required_evals():
+        if harness_outcome in HARNESS_FAILED:
+            return "failed"
+        if harness_outcome in (
+            *HARNESS_NO_SCORE,
+            *HARNESS_INCONCLUSIVE,
+            *HARNESS_PASSED,
+        ) and _required_eval_failed(call, live_eval_configs, specs):
+            return "failed"
+        if harness_outcome in HARNESS_NO_SCORE:
+            return "no_score"
+        if harness_outcome in HARNESS_INCONCLUSIVE:
+            return "inconclusive"
+        if harness_outcome in HARNESS_PASSED:
+            return "passed"
     verdicts = [
         verdict
         for eval_id, data in iter_live_eval_outputs(
@@ -467,6 +499,7 @@ def eval_rows(
                 "passed": verdict,
                 "reason": reason,
                 "status": status,
+                "required": config is not None and is_required(config),
             }
         )
     if scoring is not None:
@@ -484,6 +517,10 @@ def eval_rows(
                     "passed": None,
                     "reason": derived.reason or "",
                     "status": derived.status,
+                    "required": (
+                        eval_id in live_eval_configs
+                        and is_required(live_eval_configs[eval_id])
+                    ),
                 }
             )
     return rows
@@ -752,6 +789,18 @@ def _reader_failure_reason(receipt: Mapping[str, Any]) -> str | None:
     return message or None
 
 
+_ERROR_CODE_PREFIX = re.compile(r"^(?:[a-z][a-z0-9_]*:(?:\s+|$))+")
+
+
+def _errored_reason(outcome: str, error_message: str | None) -> str | None:
+    """Why a call ended in error, from the message it recorded without its leading
+    codes; None for any other outcome."""
+    if outcome != "error":
+        return None
+    reason = _ERROR_CODE_PREFIX.sub("", (error_message or "").strip()).strip()
+    return reason[:1].upper() + reason[1:] or None
+
+
 def build_call_rows(
     execution: TestExecution,
     calls: list[CallExecution] | None = None,
@@ -919,6 +968,11 @@ def build_call_rows(
                 "sub_goals": [goal["name"] for goal in sub_goal_results],
                 "sub_goal_results": sub_goal_results,
                 "outcome": outcome,
+                "required_evals_failed": [
+                    evaluation["name"]
+                    for evaluation in evaluations
+                    if evaluation["required"] and evaluation["passed"] is False
+                ],
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
                 # Why it was skipped, when the harness gave a reason; why an actor's call is inconclusive; a stopped call.
@@ -930,6 +984,7 @@ def build_call_rows(
                     if call.status == CallExecution.CallStatus.CANCELLED
                     else None
                 )
+                or _errored_reason(outcome, call.error_message)
                 or _unscored_reason(outcome, sub_goal_results),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),

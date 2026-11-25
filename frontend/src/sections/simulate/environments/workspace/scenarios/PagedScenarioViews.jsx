@@ -13,7 +13,8 @@ import {
 import Iconify from "src/components/iconify";
 import ScenarioTable from "./ScenarioTable";
 import GroupedScenarioList from "./GroupedScenarioList";
-import { SCENARIOS_COPY } from "./scenarios.constants";
+import { useEnvironmentVersions } from "src/api/simulate-environments/versions";
+import { SCENARIOS_COPY, scenarioBatch } from "./scenarios.constants";
 
 /**
  * The Scenarios list body — table or list, one page at a time.
@@ -47,6 +48,10 @@ export default function PagedScenarioViews({
   onOpen,
 }) {
   const [inspect, setInspect] = useState(false);
+  const versions = useEnvironmentVersions(env?.id, {
+    enabled: Boolean(env?.versioning?.enabled),
+  });
+  const batch = scenarioBatch(versions.data?.suite);
   const { rows, total, pageCount, limit, pageGroups, pageIds, loading } =
     pageData;
 
@@ -142,6 +147,9 @@ export default function PagedScenarioViews({
             locked={locked}
             lockTooltip={lockTooltip}
             rowHeight={rowHeight}
+            envId={env?.id}
+            batch={batch}
+            total={total}
           />
         ) : (
           <GroupedScenarioList

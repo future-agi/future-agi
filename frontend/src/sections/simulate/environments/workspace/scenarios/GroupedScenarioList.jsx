@@ -169,7 +169,7 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                     <IconButton
                       size="small"
                       disabled={locked}
-                      aria-label={SCENARIOS_COPY.editLabel}
+                      aria-label={SCENARIOS_COPY.editNamed(s.name || s.title)}
                       onClick={() => onEdit?.(s)}
                     >
                       <Iconify icon="solar:pen-new-square-linear" width={15} sx={{ color: "text.subtitle" }} />
@@ -181,7 +181,7 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                     <IconButton
                       size="small"
                       disabled={locked}
-                      aria-label={SCENARIOS_COPY.removeLabel}
+                      aria-label={SCENARIOS_COPY.removeNamed(s.name || s.title)}
                       onClick={() => onRemove(s.id)}
                     >
                       <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />

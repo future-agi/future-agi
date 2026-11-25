@@ -3596,9 +3596,9 @@
 
 1. seed a built, versioned Environment whose contract records each tool's fields and one tool that reaches production (e2e/lib/harness_environment_seed.py)
 2. read the environment (GET harness-environments/<id>/)
-3. open the Contract tab
-4. expand lookup_order
-5. read issue_refund's Unsupported label
+3. open the World & tools tab
+4. open lookup_order in the tool drawer
+5. find issue_refund under Unsupported
 
 **Backend state verified:**
 
@@ -3607,8 +3607,8 @@
 
 **Browser observations:**
 
-- lookup_order reads "Reads only" and its returned fields with units
-- issue_refund reads Unsupported, never Simulated
+- the lookup_order drawer shows what it reads, its returned fields with units and its reset
+- issue_refund is listed under Unsupported, never under Simulated
 
 ### SIM-E2E-019 — World state shows a faulted call apart from a commit, and an actor's change made during the call
 
@@ -3730,7 +3730,7 @@
 
 - after the stop the Run offers no Stop control
 - the Cancelled chip counts 1 and the Error chip counts 1
-- the donut legend entry for Cancelled calls opens the calls list on the stopped call alone
+- the donut legend entry for Cancelled calls opens the calls list on the stopped call alone, with no Error chip
 
 ### SIM-E2E-036 — an environment-only org imports Observe sessions only into its own workspace's environments, and no other org or workspace reaches them
 
@@ -3785,3 +3785,56 @@
 - the environment opens on its workspace with its name
 - Run simulation is disabled and its tooltip says "You don't have permission to start runs."
 - Rename environment is disabled
+
+### SIM-E2E-038 — a person reviews a read design, removes a tool and approves exactly what is on screen
+
+**Goal:** A developer reviews the design read from their agent, takes out a tool the test world should not have, and approves the design they see so the build starts from it
+
+**Spec:** `flows/simulate/design-review-approve.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed an environment whose read design waits for approval (e2e/lib/design-review-seed.ts)
+2. open the environment
+3. remove the notify tool from the design
+4. read the design again (GET harness-environments/<id>/design-review/)
+5. approve and build
+
+**Backend state verified:**
+
+- the review is approved with one edit that removes notify
+- the approved design is stored on the environment, apart from the copy the review opened with
+- the design read back after approval marks notify removed and is approved
+
+**Browser observations:**
+
+- notify leaves the design and the page says it was removed
+- approve sends the revision the page shows
+
+### SIM-E2E-039 — a person tags one scenario of an environment and only that scenario carries the tag
+
+**Goal:** A developer labels a scenario of their environment with a tag of their own, so they can find and group it later, without changing the versioned suite
+
+**Spec:** `flows/simulate/scenario-tags.spec.ts:18`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment with two scenarios (e2e/lib/harness_environment_seed.py)
+2. open its Scenarios tab
+3. select one scenario
+4. open Tag and type a new tag
+5. read the environment's tags (GET harness-environments/<id>/scenario-tags/)
+
+**Backend state verified:**
+
+- one tag row exists, on the selected scenario, holding only the new tag
+- the environment's tags are exactly the new tag
+
+**Browser observations:**
+
+- the page confirms the tag was added to one scenario
+- the tagged row shows the tag and the other row does not

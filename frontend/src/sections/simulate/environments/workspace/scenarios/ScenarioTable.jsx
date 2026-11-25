@@ -1,4 +1,6 @@
 import PropTypes from "prop-types";
+import ScenarioTagCell from "./ScenarioTagCell";
+import ScenarioBatchRow from "./ScenarioBatchRow";
 import {
   Fragment,
   useCallback,
@@ -27,6 +29,7 @@ import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import {
   ClampCell,
+  SourceChip,
   SubTasksCell,
   TruncTooltip,
   UnsavedMark,
@@ -35,10 +38,11 @@ import {
   ROW_HEIGHTS,
   SCENARIOS_COPY,
   isUnsavedAddition,
+  rowSourceLabel,
   unsavedCheckboxProps,
 } from "./scenarios.constants";
 import { personaSubline } from "./personaLabels";
-import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
+import { BATCH_SHAPE, GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // on the table carries this on a tooltip so the disabled state reads as
@@ -48,9 +52,9 @@ const LOCK_TOOLTIP = "Fork this environment to edit.";
 // Body cells pinned to an edge need an opaque base (rows scroll under them)
 // and the row's hover tint layered on top. The actions column on the right is
 // set off by a hairline; the checkbox column sits flat beside the row.
-const pinnedBodyCellSx = (side) => ({
+const pinnedBodyCellSx = (side, offset = 0) => ({
   position: "sticky",
-  [side]: 0,
+  [side]: offset,
   zIndex: 1,
   bgcolor: "background.paper",
   ...(side === "right" && {
@@ -77,10 +81,12 @@ const WIDTHS_KEY = "simulate:scenario-table:column-widths";
 const DEFAULT_WIDTHS = {
   Scenario: 280,
   Persona: 200,
-  Situation: 320,
+  Tags: 200,
   "Sub-goals": 260,
-  "Ideal outcome": 320,
+  Brief: 320,
+  "Passes when": 320,
 };
+const HEADER_TIPS = { Brief: SCENARIOS_COPY.briefTip };
 const FIXED_WIDTHS = { select: 48, "#": 44, "": 96 };
 const FILLER = "filler";
 const edgeLine = (color) => ({
@@ -145,7 +151,11 @@ export default function ScenarioTable({
   locked = false,
   lockTooltip = LOCK_TOOLTIP,
   rowHeight = "Short",
+  envId = null,
+  batch = null,
+  total,
 }) {
+  const [batchOpen, setBatchOpen] = useState(true);
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
   const [widths, setWidths] = useState(readWidths);
   const widthsRef = useRef(widths);
@@ -176,6 +186,8 @@ export default function ScenarioTable({
       groups?.length ? groups : [{ id: "all", label: null, rows: rows || [] }],
     [groups, rows],
   );
+
+  const shownSections = batch && !batchOpen ? [] : sections;
 
   const allIds = useMemo(
     () =>
@@ -253,14 +265,23 @@ export default function ScenarioTable({
     "#",
     "Scenario",
     "Persona",
-    "Situation",
+    "Tags",
     "Sub-goals",
-    "Ideal outcome",
+    "Brief",
+    "Passes when",
     FILLER,
     "",
   ];
   const widthOf = (h) => widths[h] ?? FIXED_WIDTHS[h] ?? 0;
   const tableWidth = columns.reduce((sum, h) => sum + widthOf(h), 0);
+  const numberLeft = locked ? 0 : FIXED_WIDTHS.select;
+  const pinnedLeft = {
+    "#": numberLeft,
+    Scenario: numberLeft + FIXED_WIDTHS["#"],
+  };
+  const scenarioEdgeSx = {
+    boxShadow: (t) => `1px 0 0 ${t.palette.divider}`,
+  };
 
   return (
     // No own scroll wrapper: the parent (PagedScenarioViews) owns the scroll
@@ -290,6 +311,8 @@ export default function ScenarioTable({
             const isActions = i === columns.length - 1;
             const isSelect = h === "select";
             const resize = resizeHandlers[h];
+            const tip = HEADER_TIPS[h];
+            const pinLeft = pinnedLeft[h];
             return (
               <TableCell
                 key={h || i}
@@ -313,6 +336,7 @@ export default function ScenarioTable({
                   ...(h !== FILLER && { width: widthOf(h) }),
                   ...(!isActions &&
                     h !== FILLER && { borderRight: "1px solid" }),
+                  ...(pinLeft !== undefined && { left: pinLeft, zIndex: 4 }),
                   ...(isSelect && {
                     "&.MuiTableCell-paddingCheckbox": {
                       width: FIXED_WIDTHS.select,
@@ -342,9 +366,13 @@ export default function ScenarioTable({
                   />
                 ) : resize ? (
                   <>
-                    <Box sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {h}
-                    </Box>
+                    <Tooltip arrow title={tip || ""}>
+                      <Box
+                        sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+                      >
+                        {h}
+                      </Box>
+                    </Tooltip>
                     <DraggableColResizer
                       onResize={resize.onResize}
                       getCurrentWidth={resize.getCurrentWidth}
@@ -364,7 +392,17 @@ export default function ScenarioTable({
       </TableHead>
 
       <TableBody>
-        {sections.map((section) => (
+        {batch && (
+          <ScenarioBatchRow
+            batch={batch}
+            rows={rows || []}
+            total={total ?? allIds.length}
+            colSpan={columns.length}
+            open={batchOpen}
+            onToggle={() => setBatchOpen((was) => !was)}
+          />
+        )}
+        {shownSections.map((section) => (
           <Fragment key={section.id}>
             {section.label && (
               <TableRow>
@@ -446,8 +484,8 @@ export default function ScenarioTable({
               const subTasks = row.subTasks || [];
               const personaLine = personaSubline(p);
               const callActorLine = `With ${(row.callActors || []).map((one) => one.name).join(", ")}`;
-              const situationText = row.situation || row.task || "";
-              const idealOutcomeText = row.outcome || row.expected || "";
+              const briefText = row.situation || row.task || "";
+              const passesWhenText = row.outcome || row.expected || "";
 
               return (
                 <TableRow
@@ -502,6 +540,7 @@ export default function ScenarioTable({
                   )}
                   <TableCell
                     sx={{
+                      ...pinnedBodyCellSx("left", pinnedLeft["#"]),
                       typography: "s1",
                       color: "text.subtitle",
                       fontVariantNumeric: "tabular-nums",
@@ -511,7 +550,14 @@ export default function ScenarioTable({
                     {idx}
                   </TableCell>
 
-                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                  <TableCell
+                    sx={{
+                      ...pinnedBodyCellSx("left", pinnedLeft.Scenario),
+                      ...scenarioEdgeSx,
+                      overflow: "hidden",
+                      verticalAlign: "top",
+                    }}
+                  >
                     <Stack direction="row" alignItems="center" spacing={0.75}>
                       <TruncTooltip title={row.name || row.title}>
                         <Typography
@@ -524,6 +570,7 @@ export default function ScenarioTable({
                           {row.name || row.title}
                         </Typography>
                       </TruncTooltip>
+                      <SourceChip label={rowSourceLabel(row, batch)} />
                       {row.critical && (
                         <Tooltip arrow title={SCENARIOS_COPY.critical}>
                           <Box sx={{ display: "flex" }}>
@@ -573,8 +620,19 @@ export default function ScenarioTable({
                     )}
                   </TableCell>
 
-                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
-                    <ClampCell text={situationText} lines={limits.lines} />
+                  <TableCell
+                    onClick={stopRowClick}
+                    sx={{ overflow: "hidden", verticalAlign: "top" }}
+                  >
+                    {envId && (
+                      <ScenarioTagCell
+                        envId={envId}
+                        scenarioKey={row.scenarioKey}
+                        tags={row.tags}
+                        locked={locked}
+                        lockTooltip={lockTooltip}
+                      />
+                    )}
                   </TableCell>
 
                   <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
@@ -582,7 +640,11 @@ export default function ScenarioTable({
                   </TableCell>
 
                   <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
-                    <ClampCell text={idealOutcomeText} lines={limits.lines} />
+                    <ClampCell text={briefText} lines={limits.lines} />
+                  </TableCell>
+
+                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                    <ClampCell text={passesWhenText} lines={limits.lines} />
                   </TableCell>
 
                   <TableCell />
@@ -606,7 +668,9 @@ export default function ScenarioTable({
                         <IconButton
                           size="small"
                           disabled={locked}
-                          aria-label={SCENARIOS_COPY.editLabel}
+                          aria-label={SCENARIOS_COPY.editNamed(
+                            row.name || row.title,
+                          )}
                           onClick={() => onEdit?.(row)}
                         >
                           <Iconify
@@ -625,7 +689,9 @@ export default function ScenarioTable({
                         <IconButton
                           size="small"
                           disabled={locked}
-                          aria-label={SCENARIOS_COPY.removeLabel}
+                          aria-label={SCENARIOS_COPY.removeNamed(
+                            row.name || row.title,
+                          )}
                           onClick={() => onRemove(row.id)}
                         >
                           <Iconify
@@ -664,5 +730,8 @@ ScenarioTable.propTypes = {
   onTogglePage: PropTypes.func,
   locked: PropTypes.bool,
   lockTooltip: PropTypes.string,
+  envId: PropTypes.string,
+  batch: BATCH_SHAPE,
+  total: PropTypes.number,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
 };

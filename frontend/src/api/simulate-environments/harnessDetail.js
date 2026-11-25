@@ -4,7 +4,10 @@ import {
   buildStatusFor,
   envStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
-import { BUILD_STATUS } from "src/sections/simulate/environments/myEnvironments.constants";
+import {
+  AWAITING_APPROVAL_STAGE,
+  BUILD_STATUS,
+} from "src/sections/simulate/environments/myEnvironments.constants";
 
 /**
  * §6 environment-detail adapter.
@@ -24,9 +27,14 @@ import { BUILD_STATUS } from "src/sections/simulate/environments/myEnvironments.
 const AGENT_TYPE = { voice: "voice", chat: "text" };
 
 // contract.tools[] → the { name, args, desc } shape stageOutputsToWorld emits.
-const toWorldTool = (tool) =>
+const toWorldTool = (tool, certifications = {}) =>
   typeof tool === "string"
-    ? { name: tool, args: [], desc: tool }
+    ? {
+        name: tool,
+        args: [],
+        desc: tool,
+        certification: certifications[tool] || null,
+      }
     : {
         name: tool?.name,
         args: tool?.args || [],
@@ -37,25 +45,63 @@ const toWorldTool = (tool) =>
         returns: tool?.returns || undefined,
         refuses: tool?.refuses || undefined,
         effects: tool?.effects || undefined,
+        origin: tool?.origin || undefined,
+        effect: tool?.effect || undefined,
+        effectKind: tool?.effect_kind || null,
+        effectEvidence: tool?.effect_evidence || null,
+        certification: certifications[tool?.name] || null,
       };
+
+const certificationsByTool = (certifications) =>
+  Object.fromEntries(
+    (Array.isArray(certifications) ? certifications : [])
+      .filter((entry) => entry?.tool)
+      .map((entry) => [entry.tool, entry]),
+  );
+
+const nonEmpty = (value) => (value && Object.keys(value).length ? value : null);
+
+const runtimeExtras = (runtime) => {
+  const { services, ...rest } = runtime || {};
+  return Object.keys(rest).length ? rest : null;
+};
 
 // world.stores[] → the seed.tables[] shape the SeededDataCard / schema surfaces
 // read: one row per table with { name, rows, note }. The note carries the
 // store's capability + engine so the provenance is legible.
 const storeTables = (stores = []) =>
   (Array.isArray(stores) ? stores : []).flatMap((store) =>
-    (Array.isArray(store?.tables) ? store.tables : []).map((table) => ({
-      name: table?.name,
-      rows: table?.rows,
-      note: [store?.capability, store?.engine].filter(Boolean).join(" · "),
-    })),
+    (Array.isArray(store?.tables) ? store.tables : [])
+      .filter((table) => !table?.internal)
+      .map((table) => ({
+        name: table?.name,
+        rows: table?.rows,
+        note: [store?.capability, store?.engine].filter(Boolean).join(" · "),
+      })),
   );
+
+const internalTableNames = (contract, world) =>
+  new Set(
+    [
+      ...(world?.stores || []).flatMap((store) => store?.tables || []),
+      ...(contract?.data_schema_tables || []),
+    ]
+      .filter((table) => table?.internal)
+      .map((table) => table.name),
+  );
+
+const withoutTables = (tables, names) =>
+  tables && typeof tables === "object" && !Array.isArray(tables)
+    ? Object.fromEntries(
+        Object.entries(tables).filter(([name]) => !names.has(name)),
+      )
+    : null;
 
 // §6 scenario → the flat scenario-pool row the ScenarioTable/Detail read. Real
 // per-scenario sub_goals become `subTasks` (the row's real-first source that
 // ScenarioDetail already prefers over the fixture), and use_case is copied
 // verbatim so Flows grouping matches `real_use_cases` by exact string.
-const toScenarioRow = (row) => ({
+export const toScenarioRow = (row) => ({
   id: row?.scenario_key || row?.scenario_id || row?.name,
   name: row?.name,
   title: row?.name,
@@ -70,6 +116,8 @@ const toScenarioRow = (row) => ({
     id: sg?.name,
     label: sg?.what || sg?.name,
     kind: sg?.kind,
+    ...(sg?.output && { output: sg.output }),
+    ...(sg?.overlay && { overlay: sg.overlay }),
   })),
   callActors: Array.isArray(row?.actors) ? row.actors : [],
   // {code, message} when the scenario cannot work as set, else null.
@@ -91,8 +139,11 @@ export function harnessDetailToEnvironment(detail) {
   const world = detail.world || null;
   const settings = detail.settings || {};
 
+  const certifications = certificationsByTool(contract?.tool_certification);
   const tools = contract?.tools
-    ? contract.tools.map(toWorldTool).filter((t) => t.name)
+    ? contract.tools
+        .map((tool) => toWorldTool(tool, certifications))
+        .filter((t) => t.name)
     : null;
   const rules = contract?.hard_constraints
     ? contract.hard_constraints.map(String).filter(Boolean)
@@ -100,6 +151,16 @@ export function harnessDetailToEnvironment(detail) {
   const description = contract?.one_liner || overview.description || null;
   const services = world?.runtime?.services || null;
   const seedTables = world?.stores ? storeTables(world.stores) : null;
+  const internalTables = internalTableNames(contract, world);
+  const domainTag =
+    contract?.domain && typeof contract.domain === "object"
+      ? contract.domain
+      : null;
+  const domain =
+    overview.domain ||
+    domainTag?.label ||
+    (typeof contract?.domain === "string" ? contract.domain : null) ||
+    null;
 
   // Only set world keys we actually have, so the caller can overlay fixtures for
   // the rest (same contract as stageOutputsToWorld's partial world).
@@ -115,10 +176,11 @@ export function harnessDetailToEnvironment(detail) {
     id: detail.id || overview.id,
     name: overview.name || environmentName({ job_id: detail.id }),
     description,
-    domain: overview.domain ?? null,
+    domain,
+    domainTag,
     // The header's one-line subtitle. The description already opens the
     // Overview, so the subtitle names the domain instead; none when unset.
-    tagline: overview.domain ?? null,
+    tagline: domain,
     agentType: AGENT_TYPE[overview.agent_type] || overview.agent_type || null,
     // The channel is the backend's own voice-or-chat answer. The contract's
     // raw modality uses the authoring vocabulary ("text" for chat), which the
@@ -130,11 +192,14 @@ export function harnessDetailToEnvironment(detail) {
     buildStatus: overview.status
       ? buildStatusFor(overview.status)
       : BUILD_STATUS.BUILDING,
+    awaitingApproval: overview.stage === AWAITING_APPROVAL_STAGE,
+    contractReady: Boolean(contract),
     tools: derivedWorld.tools,
     rules: derivedWorld.rules,
     seed: derivedWorld.seed,
     evalPreset: contract?.chosen_evals || undefined,
     testSubject: overview.agent ?? null,
+    agentPolicy: overview.agent_policy ?? null,
     platform: {
       runTestId: overview.run?.run_test_id,
       testExecutionId: overview.run?.test_execution_id,
@@ -147,6 +212,8 @@ export function harnessDetailToEnvironment(detail) {
     callActors: contract?.call_actors || null,
     endConditions: contract?.end_conditions || null,
     useCases: contract?.real_use_cases || null,
+    useCaseDetails: contract?.real_use_case_details || null,
+    ruleDetails: contract?.hard_constraint_details || null,
     personas: world?.personas || null,
     stores: world?.stores || null,
     callDirection:
@@ -155,9 +222,16 @@ export function harnessDetailToEnvironment(detail) {
     // and how it is run (`settings.agent.mode`), for the Overview's facts.
     source: settings.source ?? null,
     agentMode: settings.agent?.mode ?? null,
+    connector: settings.agent?.connector ?? null,
     // Real per-table field types, when ALK read them from source. Empty for
     // provider agents, which have none.
-    dataSchema: contract?.data_schema || null,
+    dataSchema: withoutTables(contract?.data_schema, internalTables),
+    dataSchemaColumns: withoutTables(
+      contract?.data_schema_columns,
+      internalTables,
+    ),
+    dataStore: contract?.data_store || null,
+    toolEntrypoints: contract?.tool_entrypoints || null,
     toolStatus: contract?.tool_status,
     // An open draft's contract, which runs do not use until it is saved.
     contractFromDraft: Boolean(contract?.from_draft),
@@ -169,6 +243,12 @@ export function harnessDetailToEnvironment(detail) {
     // The workers the app's source declares; a run shows which took part.
     workers: contract?.workers || null,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
+    systemPrompt: contract?.system_prompt || null,
+    systemPromptOrigin: contract?.system_prompt_origin || null,
+    baseEnvironment: nonEmpty(contract?.base_environment),
+    refusalSignature: contract?.refusal_signature || null,
+    actors: contract?.actors || null,
+    runtime: runtimeExtras(world?.runtime),
     counts: {
       flows: overview.flows_count ?? null,
       guardrails: overview.guardrails_count ?? null,

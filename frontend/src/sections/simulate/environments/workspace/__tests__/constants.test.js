@@ -10,6 +10,7 @@ describe("workspace tab constants", () => {
   it("declares the tabs in rail order with Overview first and Settings last", () => {
     expect(WORKSPACE_TABS.map((t) => t.id)).toEqual([
       "overview",
+      "world",
       "contract",
       "actors",
       "scenarios",
@@ -30,15 +31,32 @@ describe("workspace tab constants", () => {
     });
   });
 
+  it("labels the World & tools tab and gives it a hover hint", () => {
+    const world = WORKSPACE_TABS.find((t) => t.id === "world");
+    expect(world.label).toBe("World & tools");
+    expect(world.hint).toBe(
+      "What your agent talks to during a run: the data and the tools that answer its calls.",
+    );
+  });
+
   it("badges the counted tabs with their state key", () => {
     const badged = WORKSPACE_TABS.filter((t) => t.badge);
-    expect(badged.map((t) => t.badge)).toEqual(["scenarios", "evals", "runs", "improvements"]);
+    expect(badged.map((t) => t.badge)).toEqual([
+      "scenarios",
+      "evals",
+      "runs",
+      "improvements",
+    ]);
   });
 });
 
 describe("setup-gap to tab mapping", () => {
-  it("routes contract gaps to Contract and grading gaps to Evaluations", () => {
-    expect(GAP_AREA_TO_TAB).toEqual({ Contract: "contract", Grading: "evals" });
+  it("routes contract gaps to Contract, grading gaps to Evaluations and tool gaps to World & tools", () => {
+    expect(GAP_AREA_TO_TAB).toEqual({
+      Contract: "contract",
+      Grading: "evals",
+      Tools: "world",
+    });
   });
 
   it("only maps gaps onto tabs the workspace actually renders", () => {
@@ -51,10 +69,12 @@ describe("setup-gap to tab mapping", () => {
 
 describe("workspace copy", () => {
   it("exposes the header, menu and empty-state strings", () => {
-    ["back", "live", "run", "moreActions", "fork", "forkHint"].forEach((key) => {
-      expect(typeof WORKSPACE_COPY[key]).toBe("string");
-      expect(WORKSPACE_COPY[key].length).toBeGreaterThan(0);
-    });
+    ["back", "live", "run", "moreActions", "fork", "forkHint"].forEach(
+      (key) => {
+        expect(typeof WORKSPACE_COPY[key]).toBe("string");
+        expect(WORKSPACE_COPY[key].length).toBeGreaterThan(0);
+      },
+    );
     ["title", "body", "action"].forEach((key) => {
       expect(typeof WORKSPACE_COPY.notFound[key]).toBe("string");
     });

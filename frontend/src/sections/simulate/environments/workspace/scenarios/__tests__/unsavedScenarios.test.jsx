@@ -189,7 +189,7 @@ describe("ScenariosStep — unsaved changes", () => {
     await screen.findByRole("table");
     fireEvent.click(
       within(rowOf(CHANGED_NAME)).getByRole("button", {
-        name: "Remove from this environment",
+        name: /^Remove .* from this environment$/,
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -204,7 +204,7 @@ describe("ScenariosStep — unsaved changes", () => {
     await screen.findByRole("table");
     fireEvent.click(
       within(rowOf(CHANGED_NAME)).getByRole("button", {
-        name: "Remove from this environment",
+        name: /^Remove .* from this environment$/,
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));

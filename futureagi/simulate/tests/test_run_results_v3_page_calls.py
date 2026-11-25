@@ -34,6 +34,7 @@ from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.call_provider import (
     call_agent_provider,
     call_agent_provider_expression,
+    record_harness_target,
 )
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3 import (
@@ -584,6 +585,29 @@ def test_unconfigured_call_provider_payload_fallback_in_python_and_sql(
     call.provider_call_data = payload
     call.save(update_fields=["provider_call_data"])
     assert call_agent_provider(call) == expected
+    call.refresh_from_db()
+    assert call_agent_provider(call) == expected
+    assert (
+        execution.calls.annotate(result_provider=call_agent_provider_expression())
+        .values_list("result_provider", flat=True)
+        .get(pk=call.pk)
+        == expected
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("configured,expected", [(None, None), ("retell", "retell")])
+def test_harness_call_names_its_target_not_its_transport(run, configured, expected):
+    execution, calls, _, _ = run
+    agent = execution.agent_definition
+    agent.provider = configured
+    agent.save(update_fields=["provider"])
+    call = execution.calls.get(pk=calls[0].pk)
+    call.provider_call_data = {"livekit": {"tool_calls": [{"name": "lookup"}]}}
+    metadata = {}
+    record_harness_target(metadata, call)
+    call.call_metadata = metadata
+    call.save(update_fields=["provider_call_data", "call_metadata"])
     call.refresh_from_db()
     assert call_agent_provider(call) == expected
     assert (

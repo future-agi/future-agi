@@ -21,6 +21,22 @@ export const ROW_HEIGHTS = {
 // label on one line and the button from shrinking.
 export const scenarioToolbarButtonSx = { whiteSpace: "nowrap", flexShrink: 0 };
 
+export const SCENARIO_TAGS_COPY = {
+  tag: "Tag",
+  tagTip: "Add or remove a tag on the selected scenarios",
+  bulkTitle: (n) => `Tag ${n} scenario${n === 1 ? "" : "s"}`,
+  search: "Search tags",
+  add: "Add",
+  remove: "Remove",
+  newTag: "Type a new tag and press Enter",
+  none: "No tags yet",
+  unavailable: "Tags couldn't load",
+  added: (tag, n) => `Added ${tag} to ${n} scenario${n === 1 ? "" : "s"}`,
+  removed: (tag, n) => `Removed ${tag} from ${n} scenario${n === 1 ? "" : "s"}`,
+  failed: "Couldn't change the tags. Try again",
+  refused: "Those tags can't be saved",
+};
+
 export const SCENARIOS_COPY = {
   searchPlaceholder: "Search scenarios by name, task or use case…",
   addLabel: "Add scenarios",
@@ -29,6 +45,8 @@ export const SCENARIOS_COPY = {
   editLabel: "Edit scenario",
   openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
+  editNamed: (name) => `Edit ${name || "scenario"}`,
+  removeNamed: (name) => `Remove ${name || "scenario"} from this environment`,
   filterLabel: "Filter",
   filterTitle: "Filter by use case",
   clearLabel: "Clear",
@@ -44,6 +62,17 @@ export const SCENARIOS_COPY = {
   emptyBody:
     "Scenarios are normally derived from your agent when the environment is built.",
   critical: "Critical: a failure here is a release blocker",
+  briefTip: "What the caller is told to do",
+  batchSystem: "System",
+  batchBuilt: (who) => `${who} built the environment`,
+  batchChanged: (who) => `${who} changed the scenarios`,
+  batchWritten: "Written from the agent",
+  batchVersion: (label) => `scenarios ${label}`,
+  latest: "Latest",
+  allCanRun: (n) => `all ${n} can run`,
+  someCanRun: (ok, n) => `${ok} of ${n} can run`,
+  hideBatch: (n) => `Hide ${n}`,
+  showBatch: (n) => `Show ${n}`,
 };
 
 // A row the unsaved changes add or change; an added one can't be picked for a
@@ -67,6 +96,39 @@ export const unsavedCheckboxProps = (row) =>
         inputProps: { "aria-describedby": unsavedReasonId(row) },
       }
     : {};
+
+export const SCENARIO_SOURCE_CHIP = {
+  authoring: "Derived",
+  extend: "Extended",
+  chat: "Chat",
+  manual: "By hand",
+  nudge: "Rebuild",
+};
+
+const newestOf = (versions) =>
+  versions.reduce(
+    (best, one) =>
+      !best || new Date(one.createdAt || 0) > new Date(best.createdAt || 0)
+        ? one
+        : best,
+    null,
+  );
+
+export const scenarioBatch = (suiteVersions) => {
+  const list = Array.isArray(suiteVersions) ? suiteVersions : [];
+  const version = list.find((one) => one.isDefault);
+  if (!version) return null;
+  return {
+    version,
+    latest: newestOf(list)?.id === version.id,
+    only: list.length === 1,
+  };
+};
+
+export const rowSourceLabel = (row, batch) =>
+  batch?.only && !isUnsavedAddition(row)
+    ? SCENARIO_SOURCE_CHIP[batch.version?.origin] || null
+    : null;
 
 // The three axes a reader scans scenarios by. The trace table on the run view
 // uses the same three, so a scenarios-tab "Persona" bucket matches the trace

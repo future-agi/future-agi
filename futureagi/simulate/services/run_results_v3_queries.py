@@ -69,6 +69,7 @@ from simulate.models import (
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.selectors.runs import user_executions
 from simulate.services.call_provider import call_agent_provider_expression
+from simulate.services.harness_eval_suggestions import is_required
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.harness_scenarios import (
     NO_CALL_ACTOR,
@@ -106,6 +107,7 @@ from simulate.services.run_results_v3_scoring import (
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
+    judged_by_required_evals,
     live_eval_specs,
     resolve_eval_scoring_spec,
     score_tokens,
@@ -746,6 +748,60 @@ class _NativeHarnessVerdict(Func):
         return sql, [*source_params, *source_params, *ids_params, *verdict_params]
 
 
+def _completed_outcome_whens(
+    failed_eval: Q, passed_eval: Q, errored_eval: Q, failed_required_eval: Q
+) -> list[When]:
+    harness_failed = When(
+        call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
+        then=Value("failed"),
+    )
+    harness_inconclusive = When(
+        call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
+        then=Value("inconclusive"),
+    )
+    harness_passed = When(
+        call_metadata__harness_outcome_status__in=list(HARNESS_PASSED),
+        then=Value("passed"),
+    )
+    if not judged_by_required_evals():
+        return [
+            harness_failed,
+            When(failed_eval, then=Value("failed")),
+            When(
+                Q(call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE))
+                & ~passed_eval,
+                then=Value("no_score"),
+            ),
+            When(errored_eval, then=Value("inconclusive")),
+            harness_inconclusive,
+            harness_passed,
+            When(passed_eval, then=Value("passed")),
+        ]
+    return [
+        harness_failed,
+        When(
+            Q(
+                call_metadata__harness_outcome_status__in=[
+                    *HARNESS_NO_SCORE,
+                    *HARNESS_INCONCLUSIVE,
+                    *HARNESS_PASSED,
+                ]
+            )
+            & failed_required_eval,
+            then=Value("failed"),
+        ),
+        When(
+            call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE),
+            then=Value("no_score"),
+        ),
+        harness_inconclusive,
+        harness_passed,
+        When(failed_eval, then=Value("failed")),
+        When(errored_eval, then=Value("inconclusive")),
+        When(passed_eval, then=Value("passed")),
+    ]
+
+
 def run_calls_queryset(
     execution: TestExecution,
     execution_ids: list[Any] | None = None,
@@ -758,11 +814,15 @@ def run_calls_queryset(
     failed_eval = Q(pk__in=[])
     passed_eval = Q(pk__in=[])
     errored_eval = Q(pk__in=[])
+    failed_required_eval = Q(pk__in=[])
+    required_ids = live_evals.required_ids()
     for eval_id, live in live_evals.items():
         _, passed_q, failed_q = _configured_eval_verdict(
             eval_id, live.config, live.spec
         )
         failed_eval |= failed_q
+        if eval_id in required_ids:
+            failed_required_eval |= failed_q
         passed_eval |= passed_q
         errored_eval |= _eval_errored_q(eval_id)
 
@@ -936,26 +996,9 @@ def run_calls_queryset(
             ),
             When(status__in=list(ERRORED_CALL_STATUSES), then=Value("error")),
             When(~Q(status="completed"), then=Value("inconclusive")),
-            When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
-                then=Value("failed"),
+            *_completed_outcome_whens(
+                failed_eval, passed_eval, errored_eval, failed_required_eval
             ),
-            When(failed_eval, then=Value("failed")),
-            When(
-                Q(call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE))
-                & ~passed_eval,
-                then=Value("no_score"),
-            ),
-            When(errored_eval, then=Value("inconclusive")),
-            When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
-                then=Value("inconclusive"),
-            ),
-            When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_PASSED),
-                then=Value("passed"),
-            ),
-            When(passed_eval, then=Value("passed")),
             default=Value("inconclusive"),
             output_field=CharField(),
         ),
@@ -1751,6 +1794,8 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
                 "missing": summary["total"] - present,
                 "pass_rate": round(passed / measured * 100, 2) if measured else None,
                 "average_score": evaluation_values.get(f"score_{eval_id}"),
+                "required": eval_id in scoring_configs
+                and is_required(scoring_configs[eval_id]),
             }
         )
 
@@ -1758,6 +1803,11 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         queryset.filter(result_outcome__in=["failed", "error"])
         .annotate(
             failure_reason=Case(
+                When(
+                    Q(result_outcome="failed")
+                    & Q(call_metadata__harness_outcome_status__in=list(HARNESS_FAILED)),
+                    then=Value("Task checks failed"),
+                ),
                 When(result_outcome="failed", then=Value("Evaluation failure")),
                 default=Coalesce(
                     NullIf(F("ended_reason"), Value("")),

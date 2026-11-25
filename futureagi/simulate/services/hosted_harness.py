@@ -31,6 +31,7 @@ from simulate.models import (
 )
 from simulate.models.hosted_harness import SEED_BITS
 from simulate.services.agent_contracts import (
+    approved_with_changes,
     seeded_from_reading,
     store_build_contract,
 )
@@ -227,6 +228,7 @@ def create_hosted_job(
     workspace=None,
     on_create: Callable[[HostedHarnessJob], None] | None = None,
     request_digest: str | None = None,
+    state: str = HostedHarnessJob.State.QUEUED,
 ) -> tuple[HostedHarnessJob, bool]:
     """Create the job, or return the one this idempotency key already made.
 
@@ -278,7 +280,7 @@ def create_hosted_job(
             request_digest=request_digest,
             schema_version=_JOB_SCHEMA_VERSION,
             payload=normalized,
-            state=HostedHarnessJob.State.QUEUED,
+            state=state,
             seed=seed,
             scenario_count=normalized["scenario_count"],
             artifact_level=normalized["artifacts"]["level"],
@@ -2112,8 +2114,11 @@ _TERMINAL_STATES = frozenset(
 DELETE_CANCEL_REASON = "environment_deleted"
 
 
-def delete_environment(job: HostedHarnessJob) -> None:
-    """Hide an environment and request cleanup for every live hosted sandbox."""
+def delete_environment(
+    job: HostedHarnessJob, *, reason: str = DELETE_CANCEL_REASON
+) -> None:
+    """Hide an environment and request cleanup for every live hosted sandbox. One still
+    waiting for its design to be approved never started, so it is closed in place."""
     from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
 
     jobs_to_cancel = []
@@ -2150,8 +2155,10 @@ def delete_environment(job: HostedHarnessJob) -> None:
 
         if locked.state in _TERMINAL_STATES:
             _soft_delete(locked)
+        elif _never_started(locked):
+            _close_unstarted(locked, reason)
         else:
-            locked = request_cancellation(locked, DELETE_CANCEL_REASON)
+            locked = request_cancellation(locked, reason)
             if locked.state in _TERMINAL_STATES:
                 _soft_delete(locked)
             else:
@@ -2180,6 +2187,38 @@ def delete_environment(job: HostedHarnessJob) -> None:
                     _soft_delete(HostedHarnessJob.no_workspace_objects.get(id=job_id))
 
 
+def _never_started(job: HostedHarnessJob) -> bool:
+    from simulate.services.harness_design_review import design_review_pending
+
+    return job.state == HostedHarnessJob.State.RECEIVED and design_review_pending(job)
+
+
+def _close_unstarted(job: HostedHarnessJob, reason: str) -> None:
+    from simulate.services.harness_design_review import close_open_review
+
+    validate_cancellation_reason(reason)
+    close_open_review(job)
+    now = timezone.now()
+    job.state = HostedHarnessJob.State.CANCELED
+    job.cancel_requested_at = now
+    job.cancel_reason = reason
+    job.terminal_at = now
+    job.deleted = True
+    job.deleted_at = now
+    job.save(
+        update_fields=[
+            "payload",
+            "state",
+            "cancel_requested_at",
+            "cancel_reason",
+            "terminal_at",
+            "deleted",
+            "deleted_at",
+            "updated_at",
+        ]
+    )
+
+
 def _soft_delete(job: HostedHarnessJob) -> None:
     job.deleted = True
     job.deleted_at = timezone.now()
@@ -2206,6 +2245,7 @@ def validate_cancellation_reason(reason: str) -> None:
         "ttl_exceeded",
         DELETE_CANCEL_REASON,
         "fix_ended",
+        "design_discarded",
     }:
         raise HostedHarnessError(
             "invalid_cancellation_reason",
@@ -2226,6 +2266,9 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
             HostedHarnessJob.State.CANCELED,
         }:
             return locked
+        from simulate.services.harness_design_review import close_open_review
+
+        closed_review = close_open_review(locked)
         locked.cancel_requested_at = timezone.now()
         locked.cancel_reason = reason
         locked.state = HostedHarnessJob.State.CLEANING_UP
@@ -2240,6 +2283,7 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
                 "state",
                 "current_stage",
                 "updated_at",
+                *(["payload"] if closed_review else []),
             ]
         )
         return locked
@@ -2804,7 +2848,8 @@ def _store_authored_agent(
                 agent_version_id=version.id,
                 agent=sent["agent"],
                 sdk_version=sent["sdk_version"],
-                replace_reading=seeded_from_reading(job),
+                replace_reading=seeded_from_reading(job)
+                and not approved_with_changes(job),
             )
         transaction.on_commit(
             lambda: store_build_contract(job, agent_version_id=agent_version_id)
@@ -2917,7 +2962,9 @@ def _select_platform_evals(
     payload: dict[str, Any],
     modality: str,
 ) -> None:
-    """Bind the guest's chosen platform evals to this run, or refuse an unknown name."""
+    """Bind the guest's chosen platform evals to this run, or only suggest them while
+    suggestions are on; an unknown name is refused either way."""
+    from simulate.services.harness_eval_suggestions import store_suggested_evals
     from simulate.services.harness_evals import (
         UnknownEvalSelection,
         create_selected_eval_configs,
@@ -2927,7 +2974,10 @@ def _select_platform_evals(
     if not chosen:
         return
     try:
-        create_selected_eval_configs(run_test, list(chosen), modality)
+        if getattr(settings, "HARNESS_EVAL_SUGGESTIONS_ENABLED", False):
+            store_suggested_evals(job, run_test, list(chosen), modality)
+        else:
+            create_selected_eval_configs(run_test, list(chosen), modality)
     except UnknownEvalSelection as unknown:
         raise HostedHarnessError(
             "eval_selection_unknown",

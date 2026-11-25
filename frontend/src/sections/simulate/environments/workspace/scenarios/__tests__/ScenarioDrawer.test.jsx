@@ -56,9 +56,9 @@ describe("ScenarioDrawer", () => {
     const labels = [
       "#",
       "Persona",
-      "Situation",
+      "Brief",
       "Sub-goals",
-      "Ideal outcome",
+      "Passes when",
     ].map((l) => screen.getByText(l));
     labels
       .slice(1)
@@ -111,9 +111,9 @@ describe("ScenarioDrawer", () => {
   it("drops a row the API left empty instead of filling it in", () => {
     open({ id: "s2", name: "bare", persona: {}, sub_goals: [] });
     expect(screen.queryByText("#")).toBeNull();
-    expect(screen.queryByText("Ideal outcome")).toBeNull();
+    expect(screen.queryByText("Passes when")).toBeNull();
     expect(screen.queryByText("Persona")).toBeNull();
-    expect(screen.queryByText("Situation")).toBeNull();
+    expect(screen.queryByText("Brief")).toBeNull();
     expect(screen.queryByText("Sub-goals")).toBeNull();
     // Without test conditions taken, a scenario that sets none shows no row for them.
     expect(screen.queryByText("Hidden · test conditions")).toBeNull();

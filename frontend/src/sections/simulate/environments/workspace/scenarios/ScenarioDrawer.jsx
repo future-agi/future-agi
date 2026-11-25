@@ -132,7 +132,7 @@ function ScenarioSheet({ row, testConditions = false }) {
       </Row>
     ),
     situation && (
-      <Row key="situation" label="Situation">
+      <Row key="situation" label="Brief">
         <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>
           {situation}
         </Typography>
@@ -240,7 +240,7 @@ function ScenarioSheet({ row, testConditions = false }) {
       </Row>
     ),
     idealOutcome && (
-      <Row key="outcome" label="Ideal outcome">
+      <Row key="outcome" label="Passes when">
         <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>
           {idealOutcome}
         </Typography>

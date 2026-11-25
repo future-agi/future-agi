@@ -1,4 +1,9 @@
+export const AWAITING_APPROVAL_STAGE = "awaiting_approval";
+export const READING_STAGE = "understanding_agent";
+
 export const ENV_STATUS = {
+  AWAITING_APPROVAL: "awaiting_approval",
+  READING: "reading",
   BUILDING: "building",
   NOT_RUN: "not_run",
   RUNNING: "running",
@@ -13,7 +18,10 @@ export const ENV_STATUS = {
 // The unfinished values of the list endpoint's own status (building | running |
 // completed | failed, from harness_environment.status_for). A cancel in flight
 // stays building/running until it lands as failed, so these two cover it.
+export const PARKED_REFETCH_MS = 30000;
+
 export const LIVE_ENV_STATUSES = new Set([
+  ENV_STATUS.READING,
   ENV_STATUS.BUILDING,
   ENV_STATUS.RUNNING,
 ]);
@@ -32,6 +40,8 @@ export const BUILD_STATUS = {
 // The label and status role (theme.palette.status.<role>) of each run-state
 // pill; StatusBadge turns the role into colours.
 export const STATUS_META = {
+  awaiting_approval: { label: "Awaiting approval", role: "warning" },
+  reading: { label: "Reading the agent", role: "info" },
   building: { label: "Building", role: "info" },
   not_run: { label: "Not run yet", role: "neutral" },
   running: { label: "Running", role: "info" },

@@ -5,9 +5,11 @@ import {
   terminalStages,
 } from "src/pages/dashboard/harness/harnessShared";
 import {
+  AWAITING_APPROVAL_STAGE,
   ENV_STATUS,
   BUILD_STATUS,
   NOT_PROVIDED,
+  READING_STAGE,
 } from "../myEnvironments.constants";
 
 // ALK reports the transports it detected in the source under
@@ -29,6 +31,8 @@ const FINALIZING_STAGES = new Set([
 const STAGE_LED_STAGES = new Set([
   ...FINALIZING_STAGES,
   HARNESS_STAGE.CANCELED,
+  AWAITING_APPROVAL_STAGE,
+  READING_STAGE,
 ]);
 
 // The harness pipeline reports fine-grained stages; the table only needs the
@@ -37,11 +41,13 @@ const STAGE_LED_STAGES = new Set([
 // terminal ones is still assembling the environment. A finished build is Ready,
 // never Completed: more simulations can always run in it (PRD §7.1).
 export const stageToStatus = (stage) => {
+  if (stage === AWAITING_APPROVAL_STAGE) return ENV_STATUS.AWAITING_APPROVAL;
   if (stage === HARNESS_STAGE.COMPLETED) return ENV_STATUS.READY;
   if (stage === HARNESS_STAGE.FAILED) return ENV_STATUS.FAILED;
   if (stage === HARNESS_STAGE.CANCELED) return ENV_STATUS.CANCELLED;
   if (FINALIZING_STAGES.has(stage)) return ENV_STATUS.FINALIZING;
   if (stage === HARNESS_STAGE.RUNNING) return ENV_STATUS.RUNNING;
+  if (stage === READING_STAGE) return ENV_STATUS.READING;
   return ENV_STATUS.BUILDING;
 };
 
@@ -64,8 +70,7 @@ export const jobStatusFor = (status) =>
 // terminal-failed job as still building (the header stuck on "Building" with the
 // animation never stopping). A failed/canceled stage is now BUILD_STATUS.FAILED.
 export const buildStatusFor = (stage) => {
-  if (stage === HARNESS_STAGE.COMPLETED || stage === HARNESS_STAGE.RUNNING)
-    return BUILD_STATUS.READY;
+  if (stage === HARNESS_STAGE.COMPLETED) return BUILD_STATUS.READY;
   if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED)
     return BUILD_STATUS.FAILED;
   return BUILD_STATUS.BUILDING;
@@ -114,8 +119,8 @@ const sent = (obj, key) =>
   obj && Object.hasOwn(obj, key) ? obj[key] : NOT_PROVIDED;
 
 const lastRunOf = (run) => {
-  if (!run || run.pass_rate == null) return null;
-  return { rate: run.pass_rate, ordinal: run.run_number ?? null };
+  if (!run) return null;
+  return { rate: run.pass_rate ?? null, ordinal: run.run_number ?? null };
 };
 
 const versionLabelOf = (version) =>

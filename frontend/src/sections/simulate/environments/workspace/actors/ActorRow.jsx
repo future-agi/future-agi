@@ -1,23 +1,15 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import {
-  Box,
-  Button,
-  Collapse,
-  IconButton,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Collapse, IconButton, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { useActorView } from "src/api/simulate-environments/versions";
-import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import { ACTORS_COPY } from "./actors.constants";
+import { TheirPart, WhatTheySee, WhatTheySeeSkeleton } from "./ActorSpecCards";
 
 const C = ACTORS_COPY.worldActors;
-const CHANNEL_LABELS = ACTORS_COPY.callActors.channels;
 // Only as wide as its text so the tooltip sits over the text.
 const ONE_LINE = {
   display: "inline-block",
@@ -25,40 +17,17 @@ const ONE_LINE = {
   verticalAlign: "top",
 };
 
-function summary(actor, loudChannels) {
-  return [
-    actor.channel && (CHANNEL_LABELS[actor.channel] || actor.channel),
-    actor.channel &&
-      loudChannels.includes(actor.channel) &&
-      (actor.loudness_ratio
-        ? C.loudnessShare(actor.loudness_ratio)
-        : C.loudnessAutomatic),
-    `${C.mayDo}: ${
-      actor.permissions.length
-        ? actor.permissions
-            .map((one) =>
-              one.in_world ? one.action : `${one.action} (${C.notInWorld})`,
-            )
-            .join(", ")
-        : C.nothing
-    }`,
-    `${C.comesIn}: ${actor.when_label}`,
-    `${C.ifNoAnswer}: ${actor.fallback.label}`,
-    ACTORS_COPY.callActors.scenarios(actor.scenarios),
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 export default function ActorRow({
   envId,
   actor,
+  callerLine = null,
   locked,
   onEdit,
   onRemove,
   loudChannels,
   deleting,
   busy,
+  busyReason = null,
 }) {
   const [open, setOpen] = useState(false);
   // Off while removing so the removed actor's view is not refetched.
@@ -71,11 +40,6 @@ export default function ActorRow({
     enabled: open && !deleting,
   });
 
-  const quiet = {
-    typography: "s3",
-    color: "text.secondary",
-    wordBreak: "break-word",
-  };
   return (
     <Box>
       <Stack
@@ -124,9 +88,9 @@ export default function ActorRow({
               </Typography>
             </OverflowTooltip>
           </Box>
-          {actor.goal ? (
+          {callerLine || actor.goal ? (
             <Box>
-              <OverflowTooltip title={`${C.wants}: ${actor.goal}`}>
+              <OverflowTooltip title={callerLine || actor.goal}>
                 <Typography
                   noWrap
                   sx={{
@@ -135,20 +99,11 @@ export default function ActorRow({
                     ...ONE_LINE,
                   }}
                 >
-                  {`${C.wants}: ${actor.goal}`}
+                  {callerLine || actor.goal}
                 </Typography>
               </OverflowTooltip>
             </Box>
           ) : null}
-          <Typography
-            sx={{
-              typography: "s2",
-              color: "text.secondary",
-              wordBreak: "break-word",
-            }}
-          >
-            {summary(actor, loudChannels)}
-          </Typography>
           {actor.arrival_overrides?.length ? (
             <CustomTooltip
               show
@@ -181,12 +136,26 @@ export default function ActorRow({
           alignItems="center"
           sx={{ flexShrink: 0 }}
         >
-          <Button size="small" onClick={() => setOpen((o) => !o)}>
-            {open ? C.hideView : C.showView}
-          </Button>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              whiteSpace: "nowrap",
+              mr: 0.5,
+            }}
+          >
+            {callerLine
+              ? actor.when_label
+              : `${actor.when_label} · ${C.rowScenarios(actor.side, actor.scenarios)}`}
+          </Typography>
           {!locked && (
             <>
-              <CustomTooltip show size="small" arrow title={C.edit}>
+              <CustomTooltip
+                show
+                size="small"
+                arrow
+                title={busyReason || C.edit}
+              >
                 <span>
                   <IconButton
                     size="small"
@@ -202,7 +171,12 @@ export default function ActorRow({
                   </IconButton>
                 </span>
               </CustomTooltip>
-              <CustomTooltip show size="small" arrow title={C.remove}>
+              <CustomTooltip
+                show
+                size="small"
+                arrow
+                title={busyReason || C.remove}
+              >
                 <span>
                   <IconButton
                     size="small"
@@ -223,53 +197,35 @@ export default function ActorRow({
         </Stack>
       </Stack>
       <Collapse in={open} unmountOnExit>
-        {viewLoading && <ContentSkeleton variant="panel" sx={{ pl: 5 }} />}
-        {viewFailed && !view && (
-          <ErrorState
-            title={C.viewFailedTitle}
-            detail={C.loadFailed}
-            onRetry={() => retryView()}
-          />
-        )}
-        {view && (
-          <Stack spacing={0.75} sx={{ pl: 6.5, pr: 1.5, pb: 1.5 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              {C.sees}
-            </Typography>
-            {view.unused_reason && (
-              <Typography sx={quiet}>{view.unused_reason}</Typography>
-            )}
-            {view.sees.map((one) => (
-              <Typography key={one.input} sx={quiet}>
-                {`${C.inputs[one.input] || one.input}: `}
-                {one.text || (
-                  <Box component="span" sx={{ color: "text.disabled" }}>
-                    {C.notSet}
-                  </Box>
-                )}
-              </Typography>
-            ))}
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              {C.neverSees}
-            </Typography>
-            {view.never_sees.grader.length > 0 && (
-              <Typography
-                sx={quiet}
-              >{`${C.graderMaterial}: ${view.never_sees.grader.join(", ")}`}</Typography>
-            )}
-            {view.never_sees.others.map((one) => (
-              <Typography key={one.fields.join(", ")} sx={quiet}>
-                {C.othersPrivate(one.fields.join(", "), one.count)}
-              </Typography>
-            ))}
-          </Stack>
-        )}
+        <Box
+          sx={{
+            pl: 6,
+            pr: 1.5,
+            pb: 1.5,
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+            gap: 1.5,
+            alignItems: "start",
+          }}
+        >
+          <TheirPart actor={actor} loudChannels={loudChannels} />
+          {viewLoading && <WhatTheySeeSkeleton actor={actor} />}
+          {viewFailed && !view && (
+            <ErrorState
+              title={C.viewFailedTitle}
+              detail={C.loadFailed}
+              onRetry={() => retryView()}
+            />
+          )}
+          {view && <WhatTheySee actor={actor} view={view} />}
+        </Box>
       </Collapse>
     </Box>
   );
 }
 
 ActorRow.propTypes = {
+  callerLine: PropTypes.string,
   envId: PropTypes.string.isRequired,
   actor: PropTypes.object.isRequired,
   locked: PropTypes.bool,
@@ -278,4 +234,5 @@ ActorRow.propTypes = {
   loudChannels: PropTypes.arrayOf(PropTypes.string),
   deleting: PropTypes.bool,
   busy: PropTypes.bool,
+  busyReason: PropTypes.string,
 };

@@ -275,6 +275,36 @@ describe("projectConversation", () => {
     expect(taken.answerFailed).toBeUndefined();
   });
 
+  it("marks a question the server closed, and keeps an answered one resolved", () => {
+    const reason =
+      "Closed: the turn that asked this ended before it was answered. Send what you want as a new message.";
+    const turns = projectConversation({
+      messages: [
+        msg({
+          message_id: "q1",
+          kind: "confirmation",
+          content: "Confirm this change",
+          payload: { options: ["Yes", "No"], closed_reason: reason },
+          created_at: "2026-09-22T10:00:00Z",
+        }),
+        msg({
+          message_id: "q2",
+          kind: "confirmation",
+          content: "Confirm this other change",
+          payload: { options: ["Yes", "No"] },
+          created_at: "2026-09-22T10:00:05Z",
+        }),
+      ],
+      events: [],
+    });
+    const [closed, open] = turns
+      .flatMap((t) => t.steps)
+      .filter((s) => s.kind === "ask");
+    expect(closed.closed).toEqual({ reason });
+    expect(closed.resolved).toBe(false);
+    expect(open.closed).toBeUndefined();
+  });
+
   it("finalizes a lingering running tool once the run is no longer active", () => {
     // A tool call whose result never arrived because the run stopped mid-call:
     // its dot must not keep pulsing after the run is no longer working.

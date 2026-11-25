@@ -70,6 +70,7 @@ from simulate.services.hosted_harness_gateway import (
     _known_simulator_egress_inputs,
     _normalize_egress_domains,
     _platform_simulator_material,
+    _postgres_json_safe,
     _provider_egress_domains,
     _provider_import_authoring_material,
     _read_harness_spend,
@@ -471,6 +472,7 @@ def test_provider_import_authoring_gets_only_the_matching_target_key():
     assert material == {"RETELL_API_KEY": "retell-target-secret"}
     assert _provider_egress_domains({"RETELL_API_KEY": "opaque"}) == {
         "api.retellai.com",
+        "turn.retellai.com",
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
     }
@@ -705,6 +707,7 @@ def test_retell_connector_includes_default_livekit_cloud_egress(settings):
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
         "api.retellai.com",
+        "turn.retellai.com",
     }
 
 
@@ -721,6 +724,7 @@ def test_retell_job_allowlists_platform_simulator_livekit_signaling_and_turn(set
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
         "api.retellai.com",
+        "turn.retellai.com",
         "livekit-eu.futureagi.com",
         "coturn.turn-eu.futureagi.com",
         "turn-eu.futureagi.com",
@@ -914,6 +918,12 @@ def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
         pack_authoring_archive(tmp_path)
 
 
+def test_postgres_json_safe_removes_nested_nul_bytes():
+    assert _postgres_json_safe({"output": ["SQLite\x00data"]}) == {
+        "output": ["SQLitedata"]
+    }
+
+
 @pytest.mark.django_db
 def test_unified_progress_freezes_authoring_for_saved_reruns(organization, monkeypatch):
     job, _ = create_hosted_job(
@@ -924,6 +934,7 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization, monke
         "/work/authoring/contract.json": b'{"modality":"voice"}',
         "/work/authoring/environment-bundle/environment-plan.json": b'{"runtime":{}}',
         "/work/authoring/scenarios.json": b'[{"scenario_key":"one"}]',
+        "/work/authoring/harness-events.jsonl": b'{"event_id":"one","payload":{"text":"SQLite\\u0000data"}}\n',
         "/work/bundle/manifest.json": b'{"schema_version":"v2"}',
         "/tmp/authoring-rerun.tar.gz": b"frozen-authoring",
     }
@@ -944,6 +955,9 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization, monke
         HostedHarnessGateway._sync_authoring_progress(attempt, sandbox)
 
     store.assert_called_once_with(job, b"frozen-authoring", advance_lifecycle=False)
+    job.refresh_from_db()
+    assert "\x00" not in json.dumps(job.stage_outputs)
+    assert "SQLitedata" in json.dumps(job.stage_outputs)
 
 
 def test_voice_authoring_resolves_auto_connector_with_livekit_credentials(tmp_path):

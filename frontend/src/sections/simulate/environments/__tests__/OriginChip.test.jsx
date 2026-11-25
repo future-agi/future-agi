@@ -11,6 +11,21 @@ describe("OriginChip", () => {
     expect(screen.getByText("policy.yaml")).toBeInTheDocument();
     rerender(<OriginChip origin="callGraph" />);
     expect(screen.getByText("Call graph")).toBeInTheDocument();
+    rerender(<OriginChip origin="provider_system_prompt" />);
+    expect(screen.getByText("System prompt")).toBeInTheDocument();
+    rerender(<OriginChip origin="provider_tool_list" />);
+    expect(screen.getByText("Tool list")).toBeInTheDocument();
+  });
+
+  it("renders the origin kinds ALK writes for prompts, tool lists and files", () => {
+    const { rerender } = render(<OriginChip origin="system_prompt" />);
+    expect(screen.getByText("System prompt")).toBeInTheDocument();
+    rerender(<OriginChip origin="tool_list" />);
+    expect(screen.getByText("Tool list")).toBeInTheDocument();
+    rerender(<OriginChip origin="file" />);
+    expect(screen.getByText("File")).toBeInTheDocument();
+    rerender(<OriginChip origin="platform_builtin" />);
+    expect(screen.getByText("Built-in")).toBeInTheDocument();
   });
 
   it("renders nothing for an unknown origin", () => {
@@ -23,8 +38,21 @@ describe("OriginChip", () => {
     expect(screen.getByText("agent/policy.py:12")).toBeInTheDocument();
   });
 
+  it("shows a provider field without an undefined line suffix", () => {
+    render(<OriginChip origin="provider_system_prompt" file="system_prompt" />);
+    expect(screen.getByText("system_prompt")).toBeInTheDocument();
+    expect(screen.queryByText("system_prompt:undefined")).toBeNull();
+  });
+
   it("hides the file:line path when showPath is false", () => {
-    render(<OriginChip origin="code" file="agent/policy.py" line={12} showPath={false} />);
+    render(
+      <OriginChip
+        origin="code"
+        file="agent/policy.py"
+        line={12}
+        showPath={false}
+      />,
+    );
     expect(screen.queryByText("agent/policy.py:12")).toBeNull();
   });
 

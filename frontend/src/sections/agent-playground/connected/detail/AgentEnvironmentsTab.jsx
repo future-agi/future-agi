@@ -211,7 +211,7 @@ export default function AgentEnvironmentsTab() {
                   justifyContent="flex-end"
                   spacing={0.75}
                 >
-                  {canEdit && canFollow(env) && (
+                  {canEdit && canFollow(env, agent) && (
                     <Button
                       size="small"
                       variant="outlined"

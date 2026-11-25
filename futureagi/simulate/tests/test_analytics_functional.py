@@ -662,8 +662,11 @@ class TestRunResultsV3Views:
             ("pass_fail", "Passed", False, 0.5, {}, "error", "inconclusive", None),
         ],
     )
+    @pytest.mark.parametrize("required_rule", [False, True])
     def test_configured_eval_verdict_agrees_across_rows_filters_and_analytics(
         self,
+        settings,
+        required_rule,
         auth_client,
         test_execution,
         scenario,
@@ -687,12 +690,19 @@ class TestRunResultsV3Views:
             update_fields=["output_type_normalized", "choice_scores"]
         )
         pass_fail_eval_config.config = {
+            "required": True,
             "run_config": {
                 "reverse_output": reverse,
                 "pass_threshold": threshold,
-            }
+            },
         }
         pass_fail_eval_config.save(update_fields=["config"])
+        settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = required_rule
+        call_expected = (
+            ("failed" if expected == "failed" else "passed")
+            if required_rule
+            else expected
+        )
         call = CallExecution.objects.create(
             test_execution=test_execution,
             scenario=scenario,
@@ -709,18 +719,18 @@ class TestRunResultsV3Views:
         )
         assert (
             call_outcome(call, {str(pass_fail_eval_config.id): pass_fail_eval_config})
-            == expected
+            == call_expected
         )
         assert (
             run_calls_queryset(test_execution).get(pk=call.pk).result_outcome
-            == expected
+            == call_expected
         )
 
         base = f"/simulate/v3/test-executions/{test_execution.id}"
         rows_response = auth_client.get(f"{base}/calls/")
         assert rows_response.status_code == 200
         row = rows_response.json()["results"][0]
-        assert row["outcome"] == expected
+        assert row["outcome"] == call_expected
         if expected_score is None:
             assert row["evaluations"][0]["score"] is None
         else:
@@ -729,8 +739,12 @@ class TestRunResultsV3Views:
             True if expected == "passed" else False if expected == "failed" else None
         )
 
+        assert row["required_evals_failed"] == (
+            ["Quality Gate"] if expected == "failed" else []
+        )
+
         filtered = auth_client.get(
-            f"{base}/calls/", {"filters": json.dumps({"status": [expected]})}
+            f"{base}/calls/", {"filters": json.dumps({"status": [call_expected]})}
         )
         assert filtered.status_code == 200
         assert filtered.json()["count"] == 1
@@ -738,7 +752,7 @@ class TestRunResultsV3Views:
         analytics = auth_client.get(f"{base}/analytics/")
         assert analytics.status_code == 200
         body = analytics.json()
-        assert body["summary"]["outcomes"][expected] == 1
+        assert body["summary"]["outcomes"][call_expected] == 1
         evaluation = next(
             item
             for item in body["evaluations"]
@@ -777,7 +791,8 @@ class TestRunResultsV3Views:
             update_fields=["output_type_normalized", "choice_scores"]
         )
         pass_fail_eval_config.config = {
-            "run_config": {"choice_scores": {"Good": 0.0}, "pass_threshold": 0.5}
+            "required": True,
+            "run_config": {"choice_scores": {"Good": 0.0}, "pass_threshold": 0.5},
         }
         pass_fail_eval_config.save(update_fields=["config"])
         call = CallExecution.objects.create(
@@ -1516,9 +1531,19 @@ class TestRunResultsV3Views:
             }
         ]
 
-    def test_a_failed_eval_on_a_call_with_no_scored_sub_goal_still_reads_failed(
-        self, auth_client, test_execution, analytics_call_executions
+    @pytest.mark.parametrize(
+        ("required_rule", "expected"), [(False, "failed"), (True, "no_score")]
+    )
+    def test_a_failed_harness_eval_on_a_call_with_no_scored_sub_goal(
+        self,
+        settings,
+        required_rule,
+        expected,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
     ):
+        settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = required_rule
         call = analytics_call_executions[0]
         call.status = CallExecution.CallStatus.COMPLETED
         call.call_metadata = {
@@ -1544,11 +1569,22 @@ class TestRunResultsV3Views:
         row = next(
             item for item in response.json()["results"] if item["id"] == str(call.id)
         )
-        assert row["outcome"] == "failed"
+        assert row["outcome"] == expected
+        assert row["evaluations"][0]["passed"] is False
 
-    def test_a_passing_eval_scores_a_call_whose_sub_goals_did_not_apply(
-        self, auth_client, test_execution, analytics_call_executions
+    @pytest.mark.parametrize(
+        ("required_rule", "expected"), [(False, "passed"), (True, "no_score")]
+    )
+    def test_a_passing_harness_eval_on_a_call_whose_sub_goals_did_not_apply(
+        self,
+        settings,
+        required_rule,
+        expected,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
     ):
+        settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = required_rule
         call = analytics_call_executions[0]
         call.status = CallExecution.CallStatus.COMPLETED
         call.call_metadata = {
@@ -1573,9 +1609,9 @@ class TestRunResultsV3Views:
         ).json()["results"]
 
         assert next(row for row in rows if row["id"] == str(call.id))["outcome"] == (
-            "passed"
+            expected
         )
-        assert str(call.id) in {row["id"] for row in passed}
+        assert (str(call.id) in {row["id"] for row in passed}) is (expected == "passed")
 
     def test_calls_rows_expose_scoring_states(
         self, auth_client, test_execution, scenario
@@ -1667,7 +1703,13 @@ class TestRunResultsV3Views:
                 )
             }
 
-        empty = {"type": "", "value": None, "score": None, "passed": None}
+        empty = {
+            "type": "",
+            "value": None,
+            "score": None,
+            "passed": None,
+            "required": False,
+        }
         assert _scoring(scoring) == {
             "scoring_status": "pending",
             "csat_status": "pending",

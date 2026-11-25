@@ -100,6 +100,87 @@ describe("VoiceRightPanel", () => {
     expect(screen.getByText("Stop wasting my time.")).toBeInTheDocument();
   });
 
+  it("counts a scored choice eval as passed and still shows its choice", async () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-1",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          eval_metrics: {
+            "eval-1": {
+              name: "customer_agent_query_handling",
+              output: { score: 1.0, choice: "always" },
+              output_type: "choices",
+              status: "Completed",
+            },
+            "eval-2": {
+              name: "call_opening_handling",
+              output: "Failed",
+              output_type: "Pass/Fail",
+              status: "Completed",
+            },
+          },
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+
+    expect(screen.getByText("always")).toBeInTheDocument();
+    expect(screen.getByText(/1\/2 passed/)).toBeInTheDocument();
+  });
+
+  it("counts a choice eval by the server's verdict when the detail sends only its answer", async () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-1",
+          module: "simulate",
+          status: "completed",
+          provider: "vapi",
+          transcript: [],
+          eval_metrics: {
+            "eval-loop": {
+              id: "eval-loop",
+              name: "customer_agent_loop_detection",
+              value: ["never"],
+              type: "choices",
+              status: "Completed",
+            },
+            "eval-repeat": {
+              id: "eval-repeat",
+              name: "customer_agent_repetition",
+              value: ["often"],
+              type: "choices",
+              status: "Completed",
+            },
+            "eval-tone": {
+              id: "eval-tone",
+              name: "conversational_naturalness",
+              value: "Passed",
+              type: "Pass/Fail",
+              status: "Completed",
+            },
+          },
+          evaluations: [
+            { id: "eval-loop", passed: true },
+            { id: "eval-repeat", passed: false },
+            { id: "eval-tone", passed: true },
+          ],
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+
+    expect(screen.getByText("never")).toBeInTheDocument();
+    expect(screen.getByText(/2\/3 passed/)).toBeInTheDocument();
+    expect(screen.getByText(/1 failed/)).toBeInTheDocument();
+  });
+
   it("shows image-region error localization when an image eval is expanded", async () => {
     const getContext = vi
       .spyOn(HTMLCanvasElement.prototype, "getContext")

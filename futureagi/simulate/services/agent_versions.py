@@ -339,6 +339,7 @@ def provider_sync(
     parent_source: Mapping[str, Any] | None,
     *,
     user: Any = None,
+    read: bool = True,
 ) -> AgentVersion:
     """Read the agent as its provider holds it now. The first Sync records what it
     found on the parent; a later one that finds a change makes a version carrying
@@ -399,6 +400,8 @@ def provider_sync(
                 agent_version_id=str(parent.id),
                 code=exc.code,
             )
+        if read:
+            _read_synced(parent)
         return parent
     changed = (
         known != digest
@@ -440,6 +443,8 @@ def provider_sync(
                 agent_version_id=str(version.id),
                 code=exc.code,
             )
+    if read:
+        _read_synced(version)
     logger.info(
         "provider_sync_version",
         agent_definition_id=str(definition.id),
@@ -448,6 +453,30 @@ def provider_sync(
         tools=len(document["tools"]),
     )
     return version
+
+
+def _read_synced(version: AgentVersion) -> None:
+    from simulate.services.harness_design_review import review_applies
+
+    if not review_applies(_runtime(version)):
+        return
+    version_id = str(version.id)
+    transaction.on_commit(lambda: _start_contract_reading(version_id), robust=True)
+
+
+def _start_contract_reading(version_id: str) -> None:
+    from temporalio.service import RPCError
+
+    from simulate.tasks.harness_agent_versions import schedule_agent_contract_reading
+
+    try:
+        schedule_agent_contract_reading(version_id)
+    except (RPCError, RuntimeError, OSError):
+        logger.warning(
+            "provider_sync_reading_not_started",
+            agent_version_id=version_id,
+            exc_info=True,
+        )
 
 
 def upload_version(
@@ -867,18 +896,21 @@ def build_preflight(
         check("version", False, "This agent has no version to build from yet")
         return {"ok": False, "version_id": None, "checks": checks}
     runtime = _runtime(version)
-    ready = runtime is None or runtime.preflight_status in (
-        Status.PASSED,
-        Status.LEGACY,
-    )
-    check(
-        "version",
-        ready,
-        f"v{version.version_number} "
-        + (
-            "is ready" if ready or runtime is None else f"is {runtime.preflight_status}"
-        ),
-    )
+    label = f"v{version.version_number}"
+    if runtime is None:
+        check(
+            "version",
+            False,
+            f"{label} can't be built from here: it was made before agent versions"
+            " were checked. Sync the agent to make a version that can be built",
+        )
+    else:
+        ready = runtime.preflight_status in (Status.PASSED, Status.LEGACY)
+        check(
+            "version",
+            ready,
+            f"{label} is ready" if ready else f"{label} is {runtime.preflight_status}",
+        )
     if runtime is not None and runtime.source_kind == SourceKind.GITHUB:
         source = runtime.source or {}
         stored = CodeArchive.no_workspace_objects.filter(
@@ -910,7 +942,11 @@ def build_preflight(
     check(
         "credentials",
         True,
-        f"{len(names)} credential name{'s' if len(names) != 1 else ''} come from the version",
+        (
+            "1 credential name comes from the version"
+            if len(names) == 1
+            else f"{len(names)} credential names come from the version"
+        ),
     )
     from simulate.services.agent_connect import found_check_required
 

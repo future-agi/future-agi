@@ -22,6 +22,13 @@ const environmentPath = (id) =>
   apiPath("/simulate/api/harness-environments/{id}/", { id });
 const environmentRunPath = (id) =>
   apiPath("/simulate/api/harness-environments/{id}/run/", { id });
+const environmentEvaluationsPath = (id) =>
+  apiPath("/simulate/api/harness-environments/{id}/evaluations/", { id });
+const environmentEvaluationRequirementPath = (id, evalConfigId) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/requirement/",
+    { id, eval_config_id: evalConfigId },
+  );
 const environmentEvaluationPath = (id, evalConfigId) =>
   apiPath(
     "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/",
@@ -90,6 +97,30 @@ export const renameHarnessEnvironment = async (id, name) =>
 // locally.
 export const deleteAppliedEvaluation = async (id, evalConfigId) =>
   (await axios.delete(environmentEvaluationPath(id, evalConfigId))).data;
+
+export const addSuggestedEvaluation = async (
+  id,
+  { name, required, passThreshold },
+) =>
+  (
+    await axios.post(environmentEvaluationsPath(id), {
+      name,
+      required,
+      pass_threshold: passThreshold,
+    })
+  ).data;
+
+export const setEvaluationRequirement = async (
+  id,
+  evalConfigId,
+  { required, passThreshold },
+) =>
+  (
+    await axios.patch(environmentEvaluationRequirementPath(id, evalConfigId), {
+      required,
+      pass_threshold: passThreshold,
+    })
+  ).data;
 
 // Edit an applied evaluation. Same path as the remove; the body carries only
 // the fields being changed and never grades. The 200 body is the updated eval

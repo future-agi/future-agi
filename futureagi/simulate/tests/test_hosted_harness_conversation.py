@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 from simulate.models import (
     HarnessNudge,
     HostedHarnessBuilderTurnUsage,
+    HostedHarnessConversation,
     HostedHarnessConversationMessage,
     HostedHarnessJob,
 )
@@ -27,6 +28,9 @@ from simulate.services.hosted_harness import (
     register_attempt,
 )
 from simulate.services.hosted_harness_conversation import (
+    ANSWER_NOT_TAKEN,
+    QUESTION_CLOSED,
+    _fail_outstanding,
     enqueue_message,
     issue_conversation_capability,
     serialize_conversation,
@@ -2502,6 +2506,7 @@ def test_a_question_asked_again_under_a_new_id_takes_the_answer_and_never_holds_
         reply_to=uuid.UUID(first),
     )
     # The turn was stopped before the answer reached it, and the builder asks the same question again.
+    _deliver(conversation, capability, next(sent), "turn_started", {"resumed": True})
     ask(again)
 
     conversation.refresh_from_db()
@@ -2643,3 +2648,141 @@ def test_a_resumed_turn_keeps_the_question_it_asks_again(organization):
     )
 
     assert conversation.blocking_input is not None
+
+
+def _open_question(organization, key):
+    """A job whose builder asked a question and waits for the answer, with a way to send
+    more events as the chat process does."""
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=key)
+    conversation, command, _ = enqueue_message(
+        job, content="Add a rule", client_request_id=f"{key}-ask"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-1",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    sent = iter(range(1, 20))
+
+    def emit(kind, *, acknowledged_through, message_id=None, payload=None):
+        event = {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "event_id": f"ce-{key}-{uuid.uuid4()}",
+            "conversation_id": str(conversation.id),
+            "sequence": next(sent),
+            "kind": kind,
+            "message_id": message_id,
+            "stage": "authoring",
+            "invocation_id": "turn-1",
+            "function_call_id": None,
+            "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "payload": payload or {},
+        }
+        event["digest"] = canonical_digest(event)
+        response = APIClient().post(
+            f"{BASE}/{conversation.id}/events/",
+            {
+                "schema_version": "futureagi.harness-conversation-event.v1",
+                "acknowledged_through": acknowledged_through,
+                "events": [event],
+            },
+            format="json",
+            **_headers(capability),
+        )
+        assert response.status_code == 200, response.content
+
+    question = str(uuid.uuid4())
+    emit(
+        "turn_started",
+        acknowledged_through=0,
+        payload={"command_message_id": str(command.id)},
+    )
+    emit(
+        "confirmation_requested",
+        acknowledged_through=0,
+        message_id=question,
+        payload={"prompt": "Confirm this change", "options": ["Yes", "No"]},
+    )
+    conversation.refresh_from_db()
+    assert conversation.blocking_input["message_id"] == question
+    return job, conversation, question, emit
+
+
+def _answer(job, question, key="answer"):
+    return enqueue_message(
+        job,
+        content="Yes, make this change",
+        client_request_id=key,
+        kind="approval",
+        reply_to=uuid.UUID(question),
+    )[1]
+
+
+@pytest.mark.django_db
+def test_a_turn_the_platform_gives_up_on_closes_its_card_and_takes_a_new_message(
+    organization,
+):
+    job, conversation, question, _ = _open_question(organization, "gave-up")
+
+    _fail_outstanding(
+        conversation,
+        state=HostedHarnessConversation.State.DEGRADED,
+        reply="The environment chat stopped responding. Send it again to retry.",
+    )
+
+    conversation.refresh_from_db()
+    assert conversation.blocking_input is None
+    asked = conversation.messages.get(id=question)
+    assert asked.payload["closed_reason"] == QUESTION_CLOSED
+    with pytest.raises(HostedHarnessError) as late:
+        _answer(job, question)
+    assert (late.value.code, late.value.status_code) == (
+        "conversation_question_closed",
+        409,
+    )
+    assert "Send your answer as a new message" in late.value.message
+    _, again, created = enqueue_message(
+        job, content="Add the rule again", client_request_id="resend"
+    )
+    assert created and again.reply_to is None
+
+
+@pytest.mark.django_db
+def test_a_stopped_turn_closes_its_card(organization):
+    job, conversation, question, emit = _open_question(organization, "stopped")
+
+    emit("turn_interrupted", acknowledged_through=1, payload={})
+
+    conversation.refresh_from_db()
+    assert conversation.blocking_input is None
+    assert conversation.state == HostedHarnessConversation.State.WARM_IDLE
+    assert conversation.messages.get(id=question).payload["closed_reason"] == (
+        QUESTION_CLOSED
+    )
+
+
+@pytest.mark.django_db
+def test_an_answer_the_builder_had_no_turn_for_is_shown_not_taken(organization):
+    job, conversation, question, emit = _open_question(organization, "ignored")
+    answer = _answer(job, question)
+
+    emit(
+        "turn_completed",
+        acknowledged_through=answer.sequence,
+        payload={
+            "command_message_id": str(answer.id),
+            "ignored": "no matching suspended question",
+        },
+    )
+
+    answer.refresh_from_db()
+    conversation.refresh_from_db()
+    assert answer.state == HostedHarnessConversationMessage.State.FAILED
+    assert answer.payload["failure_reason"] == ANSWER_NOT_TAKEN
+    assert conversation.messages.get(id=question).payload["closed_reason"] == (
+        QUESTION_CLOSED
+    )
+    assert conversation.blocking_input is None
+    assert conversation.state == HostedHarnessConversation.State.WARM_IDLE

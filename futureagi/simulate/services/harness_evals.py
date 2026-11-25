@@ -631,8 +631,11 @@ def bind_eval_config(
         # the first binding stored: the run's modality decides the sources, and
         # a contract authored since then can have changed it.
         existing.mapping = mapping
+        existing.config = template.config or {}
         existing.error_localizer = True
-        existing.save(update_fields=["deleted", "deleted_at", "mapping", "updated_at"])
+        existing.save(
+            update_fields=["deleted", "deleted_at", "mapping", "config", "updated_at"]
+        )
     return existing
 
 
@@ -683,10 +686,10 @@ def _tenant_known_names(organization, workspace, names: set[str]) -> set[str]:
     return known
 
 
-def create_selected_eval_configs(
+def eligible_selections(
     run_test: RunTest, chosen: list[str], modality: str
-) -> list[SimulateEvalConfig]:
-    """Bind the guest's chosen eval names to this run.
+) -> list[tuple[str, EvalTemplate, dict[str, str]]]:
+    """The guest's chosen eval names this run can bind, each with its template and mapping.
 
     Raises only on a name this tenant never could have been offered. A name
     that was offered at launch but has since gone stale — a template
@@ -778,7 +781,14 @@ def create_selected_eval_configs(
             )
             continue
         survivors.append((name, template, mapping))
+    return survivors
 
+
+def create_selected_eval_configs(
+    run_test: RunTest, chosen: list[str], modality: str
+) -> list[SimulateEvalConfig]:
+    """Bind the guest's chosen eval names to this run, at most ``MOST_SELECTED_EVALS``."""
+    survivors = eligible_selections(run_test, chosen, modality)
     kept = survivors[:MOST_SELECTED_EVALS]
     dropped = survivors[MOST_SELECTED_EVALS:]
     if dropped:
@@ -812,7 +822,7 @@ def selected_eval_configs(
     return [config for config in configs if config.mapping] if mapping_only else configs
 
 
-def _bound_eval_names(run_test: RunTest) -> set[str]:
+def bound_eval_names(run_test: RunTest) -> set[str]:
     """Every name already bound to this run, under both names a row can carry.
 
     A row ingestion creates for one of the harness's own result columns is
@@ -837,7 +847,7 @@ def addable_evals(run_test: RunTest, modality: str) -> list[dict[str, Any]]:
     already reports natively is never offered a second time under a second id,
     and no row the picker shows can be refused as a duplicate.
     """
-    bound = _bound_eval_names(run_test)
+    bound = bound_eval_names(run_test)
     return [
         entry
         for entry in offered_evals(run_test.organization, run_test.workspace, modality)

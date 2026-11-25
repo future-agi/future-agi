@@ -45,6 +45,20 @@ UnsavedMark.propTypes = {
   row: PropTypes.shape({ id: PropTypes.string, draftChange: PropTypes.string }),
 };
 
+export function SourceChip({ label }) {
+  if (!label) return null;
+  return (
+    <Typography
+      component="span"
+      noWrap
+      sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+    >
+      {label}
+    </Typography>
+  );
+}
+SourceChip.propTypes = { label: PropTypes.string };
+
 // Attach a tooltip to a truncated line so hovering reveals the full value. Kept
 // thin — the tooltip lives at the row level, not per-Typography, so the same
 // wrapper gates both single-line noWrap labels and multi-line clamped bodies.

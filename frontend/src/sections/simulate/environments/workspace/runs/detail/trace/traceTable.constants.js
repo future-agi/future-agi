@@ -271,5 +271,41 @@ export function runOutcome(status) {
   };
 }
 
+export const REQUIRED_EVAL_COPY = {
+  flag: (names) =>
+    names.length === 1
+      ? `Required eval failed: ${names[0]}`
+      : `${names.length} required evals failed`,
+  tip: "A failing required eval fails the call, even when its sub-goals pass.",
+  label: "Required eval failed",
+  required: "Required",
+};
+
+export const CHECK_LINE_COPY = {
+  from: "From",
+  heading: { subGoals: "Sub-goals", evals: "Required evals" },
+  failedOf: (failed, total, someApply) =>
+    `${failed} of ${total}${someApply ? " that apply" : ""} failed`,
+  passedOf: (kind, passed, total, someApply) =>
+    `${passed} of ${total}${someApply ? " that apply" : ""} ${kind === "subGoals" ? "met" : "passed"}`,
+  allPassed: (kind, total, someApply) =>
+    `all ${total}${someApply ? " that apply" : ""} ${kind === "subGoals" ? "met" : "passed"}`,
+  noneApply: (total) =>
+    total === 1 ? "does not apply" : `none of ${total} apply`,
+  notEvaluated: "not evaluated",
+  waitingAll: (total) => `${total} waiting`,
+  showMore: (n) => `+ ${n} more`,
+  showLess: "Show less",
+  state: {
+    failed: "Failed",
+    passed: "Passed",
+    inconclusive: "Inconclusive",
+    unmeasured: "Unmeasured",
+    not_applicable: "Not applicable",
+    not_scored: "Couldn't score",
+    waiting: "Waiting",
+  },
+};
+
 /** A sub-goal as the server names it, with its worker's name when it is one worker's own check. */
 export const subGoalLabel = (goal) => goal.display_name;

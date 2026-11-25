@@ -85,7 +85,14 @@ describe("EnvironmentFilters", () => {
   it("lists every status without counts when the API sends none", () => {
     renderBar({ statusCounts: NOT_PROVIDED });
     openMenu("Status");
-    for (const label of ["Building", "Running", "Ready", "Failed"])
+    for (const label of [
+      "Reading the agent",
+      "Awaiting approval",
+      "Building",
+      "Running",
+      "Ready",
+      "Failed",
+    ])
       expect(option(label)).toHaveTextContent(new RegExp(`^${label}$`));
   });
 

@@ -32,6 +32,8 @@ import ObservabilityToggle, {
 } from "./ObservabilityToggle";
 import useAgentRoute from "./useAgentRoute";
 
+const TRACED = new Set(["traceai", "opentelemetry"]);
+
 function DefinitionRow({ row }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -227,6 +229,9 @@ export default function AgentDefinitionTab() {
   const loading = !agent || isLoading || stored.isLoading;
   const isCode = kind === "source";
   const details = stored.data;
+  const traced = TRACED.has(details?.agent?.instrumentation);
+  const tracingUnknown = isCode && stored.isError;
+  const traceMode = traced ? "link" : tracingUnknown ? "both" : "setup";
   const facts = factsOf(agent ?? {}, version ?? {}, details?.agent);
   const source = agent?.source ?? version?.config?.provider;
   const readFrom = source ? sourceLabel(source) : null;
@@ -312,9 +317,11 @@ export default function AgentDefinitionTab() {
             color: "text.secondary",
           }}
         >
-          {isCode
-            ? "Not linked"
-            : "Not linked · turn observability on to pull its calls in"}
+          {!isCode
+            ? "Not linked · turn observability on to pull its calls in"
+            : traced || tracingUnknown
+              ? "Not linked"
+              : "Not traced · its code has no traceAI or OpenTelemetry"}
         </Typography>
         {isCode && (
           <CustomTooltip
@@ -331,7 +338,11 @@ export default function AgentDefinitionTab() {
                 disabled={!canEdit}
                 onClick={() => setConnecting(true)}
               >
-                Link a project
+                {traced
+                  ? "Link a project"
+                  : tracingUnknown
+                    ? "Connect traces"
+                    : "Set up tracing"}
               </Button>
             </span>
           </CustomTooltip>
@@ -431,12 +442,18 @@ export default function AgentDefinitionTab() {
       {version?.participants ? (
         <ParticipantsCard participants={version.participants} />
       ) : null}
-      {agent ? (
-        <ObservabilityToggle agent={agent} />
-      ) : (
+      {!agent || (isCode && stored.isLoading) ? (
         <ObservabilityToggleSkeleton />
+      ) : (
+        (!isCode || traced || agent.observabilityEnabled) && (
+          <ObservabilityToggle agent={agent} isCode={isCode} />
+        )
       )}
-      <Section title="Links" loading={!agent} rows={links} />
+      <Section
+        title="Links"
+        loading={!agent || (isCode && stored.isLoading)}
+        rows={links}
+      />
       {isCode && versionId && (
         <CodeCard
           agentId={agentId}
@@ -447,6 +464,7 @@ export default function AgentDefinitionTab() {
       {agent && isCode && (
         <ConnectTracesDrawer
           agent={agent}
+          mode={traceMode}
           open={connecting}
           onClose={() => setConnecting(false)}
           canEdit={canEdit}

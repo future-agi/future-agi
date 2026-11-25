@@ -11,9 +11,11 @@ from simulate.constants.harness_environment import (
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
     RUN_KIND_SIMULATE,
+    STATUS_AWAITING_APPROVAL,
     STATUS_BUILDING,
     STATUS_COMPLETED,
     STATUS_FAILED,
+    STATUS_READING,
     STATUS_RUNNING,
 )
 from simulate.constants.run_outcome import OUTCOME_STATUSES
@@ -57,11 +59,30 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     )
     status = serializers.ChoiceField(
         required=False,
-        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED),
+        choices=(
+            STATUS_READING,
+            STATUS_AWAITING_APPROVAL,
+            STATUS_BUILDING,
+            STATUS_RUNNING,
+            STATUS_COMPLETED,
+            STATUS_FAILED,
+        ),
     )
     agent_type = serializers.ChoiceField(
         required=False, choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT)
     )
+
+
+class HarnessEnvironmentDetailQuerySerializer(serializers.Serializer):
+    contract_version = serializers.ChoiceField(
+        choices=(1, 2),
+        default=1,
+        help_text="Version 1 preserves legacy field shapes. Version 2 returns rich contract fields, described by the response's x-contract-version-2 schema.",
+    )
+
+    def to_internal_value(self, data):
+        # QueryDict otherwise treats an explicitly blank optional selector as absent.
+        return super().to_internal_value(dict(data.items()))
 
 
 class HarnessEnvironmentRenameSerializer(serializers.Serializer):
@@ -102,7 +123,14 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     source_kind = serializers.CharField()
     agent_type = serializers.ChoiceField(choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT))
     status = serializers.ChoiceField(
-        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
+        choices=(
+            STATUS_READING,
+            STATUS_AWAITING_APPROVAL,
+            STATUS_BUILDING,
+            STATUS_RUNNING,
+            STATUS_COMPLETED,
+            STATUS_FAILED,
+        )
     )
     # The fine-grained pipeline stage behind ``status``, so a caller that draws a
     # progress bar does not have to infer it from the four-state pill.
@@ -189,6 +217,8 @@ class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
 
 
 class HarnessEnvironmentStatusCountsSerializer(serializers.Serializer):
+    reading = serializers.IntegerField()
+    awaiting_approval = serializers.IntegerField()
     building = serializers.IntegerField()
     running = serializers.IntegerField()
     completed = serializers.IntegerField()
@@ -231,11 +261,14 @@ class HarnessEnvironmentOverviewSerializer(HarnessEnvironmentFieldsSerializer):
 
 
 class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
-    """The one thing adding an eval takes: which eval, by its exact name."""
+    """Which eval to add, by its exact name, and optionally whether it is required
+    and the score from 0 to 1 it must reach."""
 
     name = serializers.CharField(
         max_length=255, allow_blank=False, trim_whitespace=True
     )
+    required = serializers.BooleanField(required=False)  # type: ignore[assignment]  # the API field is named required, as Field's own
+    pass_threshold = serializers.FloatField(min_value=0, max_value=1, required=False)
 
 
 class HarnessEnvironmentRunEvaluationQueuedSerializer(serializers.Serializer):
@@ -497,6 +530,21 @@ class HarnessToolArgumentSerializer(serializers.Serializer):
         allow_null=True,
         help_text="The unit or format it is written in, where the name does not say.",
     )
+    values = serializers.ListField(
+        child=serializers.JSONField(),
+        allow_null=True,
+        help_text="The values it is allowed to take, where the agent limits them.",
+    )
+    required = serializers.BooleanField(  # type: ignore[assignment]  # the API field is named required, as Field's own
+        allow_null=True,
+        help_text="Whether a call needs it; null when the reading did not record it.",
+    )
+    min = serializers.FloatField(
+        allow_null=True, help_text="The lowest value it accepts, where one is stated."
+    )
+    max = serializers.FloatField(
+        allow_null=True, help_text="The highest value it accepts, where one is stated."
+    )
 
 
 class HarnessToolReturnSerializer(serializers.Serializer):
@@ -668,6 +716,75 @@ class HarnessEnvironmentCatalogueSubGoalSerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=("checkpoint", "judge"))
     claim = serializers.CharField(allow_blank=True)
     check = serializers.CharField(allow_blank=True)
+    output = serializers.CharField(allow_blank=True)
+    overlay = serializers.CharField(allow_blank=True)
+
+
+class HarnessEnvironmentOriginSerializer(serializers.Serializer):
+    kind = serializers.CharField()
+    path = serializers.CharField(required=False, allow_blank=True)
+    field = serializers.CharField(required=False, allow_blank=True)
+    line = serializers.IntegerField(required=False, allow_null=True)
+    sha256 = serializers.CharField(required=False, allow_null=True)
+
+
+class HarnessEnvironmentContractItemSerializer(serializers.Serializer):
+    text = serializers.CharField()
+    short = serializers.CharField(required=False, allow_null=True)
+    origin = HarnessEnvironmentOriginSerializer(required=False, allow_null=True)
+    enforced_by = serializers.ListField(child=serializers.CharField(), required=False)
+    sub_goal = serializers.CharField(required=False, allow_blank=True)
+
+
+class HarnessEnvironmentAmendmentDetailSerializer(serializers.Serializer):
+    subject = serializers.CharField()
+    kind = serializers.ChoiceField(choices=("unreachable_tool", "contract_change"))
+    reason = serializers.CharField()
+
+
+class HarnessEnvironmentActorSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    role = serializers.CharField()
+    origin = HarnessEnvironmentOriginSerializer()
+
+
+class HarnessEnvironmentSchemaColumnSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    type = serializers.CharField(allow_blank=True)
+    enum = serializers.ListField(
+        child=serializers.CharField(allow_blank=True), required=False, allow_null=True
+    )
+    pk = serializers.BooleanField(required=False, allow_null=True)
+    nullable = serializers.BooleanField(required=False, allow_null=True)
+    references = serializers.CharField(required=False, allow_null=True)
+
+
+class HarnessEnvironmentSchemaTableSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    columns = HarnessEnvironmentSchemaColumnSerializer(many=True)
+    primary_key = serializers.ListField(child=serializers.CharField())
+    foreign_keys = serializers.ListField(child=serializers.JSONField())
+
+
+class HarnessEnvironmentToolCertificationSerializer(serializers.Serializer):
+    tool = serializers.CharField()
+    availability = serializers.ChoiceField(
+        choices=("certified", "runtime_only", "rejected")
+    )
+    probe_mode = serializers.ChoiceField(
+        choices=("read_only", "disposable_world", "provider_sandbox", "runtime_only")
+    )
+    reason = serializers.CharField(allow_blank=True)
+
+
+class HarnessEnvironmentSeedSerializer(serializers.Serializer):
+    value = serializers.CharField(
+        help_text="Decimal string preserving the full integer seed without JavaScript precision loss. The internal harness seed remains an integer."
+    )
+    controls = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Platform-derived scope for the supported hosted ALK runtime, not an ALK-reported capability. scenario_world_rng controls world initialization randomness, not model responses or conversation replay.",
+    )
 
 
 class HarnessEnvironmentEndConditionsSerializer(serializers.Serializer):
@@ -681,6 +798,9 @@ class HarnessEnvironmentEndConditionsSerializer(serializers.Serializer):
     max_duration_seconds = serializers.IntegerField(allow_null=True)
     clock = serializers.ChoiceField(choices=("real-time", "stepped"))
     ended_reasons = serializers.ListField(child=serializers.CharField())
+    terminate_reasons = serializers.ListField(child=serializers.CharField())
+    truncate_reasons = serializers.ListField(child=serializers.CharField())
+    seed = HarnessEnvironmentSeedSerializer(required=False)
 
 
 class HarnessEnvironmentWorkerSerializer(serializers.Serializer):
@@ -718,30 +838,75 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     call_direction = serializers.CharField(
         required=False, allow_null=True, allow_blank=True
     )
+    domain = serializers.JSONField(required=False, allow_null=True)
+    system_prompt = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    system_prompt_origin = HarnessEnvironmentOriginSerializer(
+        required=False, allow_null=True
+    )
     system_prompt_excerpt = serializers.CharField(
         required=False, allow_null=True, allow_blank=True
     )
-    tools = serializers.ListField(
-        child=serializers.JSONField(), required=False, allow_null=True
+    tools: serializers.Field = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        allow_null=True,
+        help_text="ALK tool specifications, including origin, legacy effect text, optional effect_kind (read, write, external, control), and effect_evidence {origin, excerpt}.",
     )
-    real_use_cases = serializers.ListField(
+    real_use_cases: serializers.Field = serializers.ListField(
         child=serializers.CharField(), required=False, allow_null=True
     )
-    hard_constraints = serializers.ListField(
+    real_use_case_details = HarnessEnvironmentContractItemSerializer(
+        many=True, required=False, allow_null=True
+    )
+    hard_constraints: serializers.Field = serializers.ListField(
         child=serializers.CharField(), required=False, allow_null=True
+    )
+    hard_constraint_details = HarnessEnvironmentContractItemSerializer(
+        many=True, required=False, allow_null=True
     )
     runtime = serializers.JSONField(required=False, allow_null=True)
     dependencies = serializers.ListField(
         child=serializers.JSONField(), required=False, allow_null=True
     )
     runtime_dependencies = serializers.ListField(
-        child=serializers.JSONField(), required=False, allow_null=True
+        child=serializers.JSONField(),
+        required=False,
+        allow_null=True,
+        help_text="Runtime dependencies with used_by containing only consumers identified by ALK.",
     )
     implementation = serializers.CharField(
         required=False, allow_null=True, allow_blank=True
     )
-    tool_entrypoints = serializers.ListField(
-        child=serializers.JSONField(), required=False, allow_null=True
+    tool_entrypoints: serializers.Field = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        allow_null=True,
+        help_text="Implementation seams with source code where available, implementation_origin, and provider_function {url, parameters} for provider functions. Parameters retain the provider JSON Schema after secret redaction.",
+    )
+    data_store: serializers.Field = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text="ALK datastore facts. configured_by remains a string; optional location and configuration {source, ref, section} carry observed configuration evidence.",
+    )
+    data_schema: serializers.Field = serializers.JSONField(
+        required=False, allow_null=True
+    )
+    base_environment = serializers.JSONField(required=False, allow_null=True)
+    refusal_signature = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    data_schema_columns = serializers.DictField(
+        child=serializers.ListField(child=HarnessEnvironmentSchemaColumnSerializer()),
+        required=False,
+        allow_null=True,
+    )
+    data_schema_tables = HarnessEnvironmentSchemaTableSerializer(
+        many=True, required=False
+    )
+    tool_certification = HarnessEnvironmentToolCertificationSerializer(
+        many=True, required=False
     )
     workers = HarnessEnvironmentWorkerSerializer(
         many=True,
@@ -749,11 +914,16 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
         allow_null=True,
         help_text="The workers the app's source declares; a run shows which of them took part.",
     )
-    data_store = serializers.JSONField(required=False, allow_null=True)
     open_questions = serializers.ListField(
         child=serializers.CharField(), required=False, allow_null=True
     )
-    amendments = HarnessEnvironmentAmendmentSerializer(many=True)
+    amendments: serializers.Field = HarnessEnvironmentAmendmentSerializer(many=True)
+    amendment_details = HarnessEnvironmentAmendmentDetailSerializer(
+        many=True, required=False, allow_null=True
+    )
+    actors = HarnessEnvironmentActorSerializer(
+        many=True, required=False, allow_null=True
+    )
     sub_goals = HarnessEnvironmentCatalogueSubGoalSerializer(many=True)
     call_actors = HarnessEnvironmentCallActorSerializer(many=True)
     door_reach = serializers.DictField(
@@ -793,6 +963,10 @@ class HarnessEnvironmentPersonaSerializer(serializers.Serializer):
 class HarnessEnvironmentStoreTableSerializer(serializers.Serializer):
     name = serializers.CharField()
     rows = serializers.IntegerField()
+    internal = serializers.BooleanField(required=False)
+    columns = HarnessEnvironmentSchemaColumnSerializer(
+        many=True, required=False, allow_null=True
+    )
 
 
 class HarnessEnvironmentStoreSerializer(serializers.Serializer):
@@ -849,6 +1023,8 @@ class HarnessEnvironmentSubGoalSerializer(serializers.Serializer):
     what = serializers.CharField(required=False, allow_blank=True)
     kind = serializers.ChoiceField(choices=("checkpoint", "judge"), required=False)
     claim = serializers.CharField(required=False, allow_blank=True)
+    output = serializers.CharField(required=False, allow_blank=True)
+    overlay = serializers.CharField(required=False, allow_blank=True)
 
 
 class HarnessEnvironmentScenarioSerializer(serializers.Serializer):
@@ -883,6 +1059,39 @@ class HarnessEnvironmentSelectedEvalSerializer(HarnessEnvironmentOfferedEvalSeri
     id = serializers.UUIDField()
     runnable = serializers.BooleanField()
     editable = serializers.BooleanField()
+    required = serializers.BooleanField()  # type: ignore[assignment]  # the API field is named required, as Field's own
+    pass_threshold = serializers.FloatField(min_value=0, max_value=1)
+
+
+class HarnessEnvironmentSuggestedEvalSerializer(
+    HarnessEnvironmentOfferedEvalSerializer
+):
+    """An eval the build suggests but nobody has added yet; it scores nothing until added."""
+
+    required = serializers.BooleanField()  # type: ignore[assignment]  # the API field is named required, as Field's own
+    pass_threshold = serializers.FloatField(min_value=0, max_value=1)
+
+
+class HarnessEnvironmentBuildRetrySerializer(serializers.Serializer):
+    """A stopped build queued again, and where it starts."""
+
+    environment_id = serializers.UUIDField()
+    state = serializers.CharField()
+    resume_from = serializers.ChoiceField(choices=("start", "checks"))
+
+
+class HarnessEnvironmentEvalRequirementSerializer(serializers.Serializer):
+    """Whether an added eval must pass, and the score from 0 to 1 it must reach.
+
+    Either may be left out; a body with neither is refused."""
+
+    required = serializers.BooleanField(required=False)  # type: ignore[assignment]  # the API field is named required, as Field's own
+    pass_threshold = serializers.FloatField(min_value=0, max_value=1, required=False)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError("Nothing to change")
+        return attrs
 
 
 class HarnessEnvironmentResultSerializer(serializers.Serializer):
@@ -897,6 +1106,7 @@ class HarnessEnvironmentEvaluationsSerializer(serializers.Serializer):
     """What will judge the runs, and what each run was judged as."""
 
     selected = HarnessEnvironmentSelectedEvalSerializer(many=True)
+    suggested = HarnessEnvironmentSuggestedEvalSerializer(many=True, required=False)
     results = HarnessEnvironmentResultSerializer(many=True)
 
 
@@ -946,7 +1156,10 @@ class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
     security = serializers.DictField(allow_null=True)
     artifacts = serializers.DictField(allow_null=True)
     scenario_count = serializers.IntegerField(allow_null=True)
-    seed = serializers.IntegerField(allow_null=True)
+    seed = serializers.CharField(
+        allow_null=True,
+        help_text="Decimal string preserving the full internal integer seed without JavaScript precision loss.",
+    )
     enable_tool_evaluation = serializers.BooleanField()
 
 
@@ -1036,6 +1249,11 @@ class HarnessScenarioRowSerializer(serializers.Serializer):
     """One authored scenario on the Scenarios list."""
 
     id = serializers.UUIDField()
+    tags = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="The free-text tags people put on the scenario; never versioned.",
+    )
     scenario_id = serializers.UUIDField(allow_null=True)
     scenario_key = serializers.CharField()
     number = serializers.IntegerField(allow_null=True)
@@ -1723,3 +1941,138 @@ class HarnessNudgeListQuerySerializer(serializers.Serializer):
 
 class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
+
+
+class HarnessEnvironmentStoreConfigurationSerializer(serializers.Serializer):
+    source = serializers.ChoiceField(  # type: ignore[assignment]  # the API field is named source, as Field's own
+        choices=("environment", "file", "provider_field", "system_prompt")
+    )
+    ref = serializers.CharField()
+    section = serializers.CharField(required=False, allow_null=True)
+
+
+class HarnessEnvironmentDataStoreV2Serializer(serializers.Serializer):
+    kind = serializers.CharField(required=False, allow_blank=True)
+    version = serializers.CharField(required=False, allow_blank=True)
+    configured_by = HarnessEnvironmentStoreConfigurationSerializer(allow_null=True)
+    configured_by_legacy = serializers.CharField(allow_null=True, allow_blank=True)
+    configuration = HarnessEnvironmentStoreConfigurationSerializer(
+        required=False, allow_null=True
+    )
+    location = serializers.ChoiceField(
+        choices=("external_db", "in_process", "prompt_embedded", "provider_kb", "none"),
+        required=False,
+        allow_null=True,
+    )
+    config_key = serializers.CharField(required=False, allow_blank=True)
+    host = serializers.CharField(required=False, allow_blank=True)
+    port = serializers.IntegerField(required=False, allow_null=True)
+    database = serializers.CharField(required=False, allow_blank=True)
+    user = serializers.CharField(required=False, allow_blank=True)
+    password_from = serializers.CharField(required=False, allow_blank=True)
+    schema_from = serializers.CharField(required=False, allow_blank=True)
+    loaded_by = serializers.CharField(required=False, allow_blank=True)
+    loader_module = serializers.CharField(required=False, allow_blank=True)
+
+
+class HarnessEnvironmentProviderFunctionSerializer(serializers.Serializer):
+    url = serializers.CharField(required=False, allow_null=True)
+    parameters = serializers.JSONField(required=False, allow_null=True)
+
+
+class HarnessEnvironmentToolSourceSerializer(serializers.Serializer):
+    path = serializers.CharField()
+    line_start = serializers.IntegerField(min_value=1)
+    line_end = serializers.IntegerField(min_value=1)
+    code = serializers.CharField(trim_whitespace=False)
+
+
+class HarnessEnvironmentToolEntrypointV2Serializer(serializers.Serializer):
+    tool = serializers.CharField()
+    mode = serializers.CharField(required=False, allow_blank=True)
+    module = serializers.CharField(required=False, allow_blank=True)
+    callable = serializers.CharField(required=False, allow_blank=True)
+    factory = serializers.CharField(required=False, allow_blank=True)
+    first_arg = serializers.CharField(required=False, allow_blank=True)
+    service = serializers.CharField(required=False, allow_blank=True)
+    endpoint = serializers.CharField(required=False, allow_blank=True)
+    method = serializers.CharField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+    origin = serializers.ChoiceField(
+        choices=("provider_builtin", "provider_custom_function", "source"),
+        allow_null=True,
+    )
+    origin_evidence = HarnessEnvironmentOriginSerializer(allow_null=True)
+    implementation_origin = serializers.ChoiceField(
+        choices=("provider_builtin", "provider_custom_function", "source"),
+        required=False,
+        allow_null=True,
+    )
+    source = HarnessEnvironmentToolSourceSerializer(  # type: ignore[assignment]
+        required=False, allow_null=True
+    )
+    provider_function = HarnessEnvironmentProviderFunctionSerializer(
+        required=False, allow_null=True
+    )
+
+
+class HarnessEnvironmentAmendmentV2Serializer(serializers.Serializer):
+    subject = serializers.CharField(allow_blank=True)
+    kind = serializers.ChoiceField(
+        choices=("unreachable_tool", "contract_change"),
+        allow_null=True,
+    )
+    reason = serializers.CharField()
+
+
+class HarnessEnvironmentEffectEvidenceSerializer(serializers.Serializer):
+    origin = HarnessEnvironmentOriginSerializer()
+    excerpt = serializers.CharField(trim_whitespace=False)
+
+
+class HarnessEnvironmentToolV2Serializer(serializers.Serializer):
+    name = serializers.CharField()
+    args = serializers.ListField(child=serializers.CharField(), required=False)
+    arg_types = serializers.DictField(child=serializers.CharField(), required=False)
+    arg_values = serializers.JSONField(required=False)
+    description = serializers.CharField(required=False, allow_blank=True)
+    origin = HarnessEnvironmentOriginSerializer(required=False, allow_null=True)
+    effect = serializers.ChoiceField(
+        choices=("read", "write", "external", "control"), allow_null=True
+    )
+    effect_legacy = serializers.CharField(allow_null=True, allow_blank=True)
+    effect_kind = serializers.ChoiceField(
+        choices=("read", "write", "external", "control"),
+        required=False,
+        allow_null=True,
+    )
+    effect_evidence = HarnessEnvironmentEffectEvidenceSerializer(
+        required=False, allow_null=True
+    )
+    requires = serializers.ListField(child=serializers.CharField(), required=False)
+
+
+class HarnessEnvironmentContractV2Serializer(HarnessEnvironmentContractSerializer):
+    tools = HarnessEnvironmentToolV2Serializer(many=True, allow_null=True)
+    hard_constraints = HarnessEnvironmentContractItemSerializer(
+        many=True, allow_null=True
+    )
+    real_use_cases = HarnessEnvironmentContractItemSerializer(
+        many=True, allow_null=True
+    )
+    data_schema = serializers.DictField(
+        child=serializers.ListField(child=HarnessEnvironmentSchemaColumnSerializer()),
+        allow_null=True,
+    )
+    data_schema_legacy = serializers.JSONField(allow_null=True)
+    data_store = HarnessEnvironmentDataStoreV2Serializer(allow_null=True)
+    amendments = HarnessEnvironmentAmendmentV2Serializer(many=True)
+    amendments_legacy = HarnessEnvironmentAmendmentSerializer(many=True)
+    tool_entrypoints = HarnessEnvironmentToolEntrypointV2Serializer(
+        many=True, allow_null=True
+    )
+
+
+class HarnessEnvironmentDetailV2Serializer(HarnessEnvironmentDetailSerializer):
+    contract_version = serializers.ChoiceField(choices=(2,))
+    contract = HarnessEnvironmentContractV2Serializer(allow_null=True)

@@ -348,6 +348,9 @@ class EvaluationResultSerializer(serializers.Serializer):
     passed = serializers.BooleanField(allow_null=True)
     reason = serializers.CharField(allow_blank=True)
     status = serializers.ChoiceField(choices=EVAL_STATUSES)
+    required = serializers.BooleanField(  # type: ignore[assignment]  # the API field is named required, as Field's own
+        help_text="Marked required on the environment: a failing score fails the call."
+    )
 
     class Meta:
         ref_name = "SimulateRunV3EvaluationResult"
@@ -401,6 +404,10 @@ class RunCallSerializer(serializers.Serializer):
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
+    required_evals_failed = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Names of the required evaluations this call failed; any one fails the call.",
+    )
     outcome_reason = serializers.CharField(required=False, allow_null=True)
     execution_status = serializers.CharField()
     modality = serializers.CharField()
@@ -603,6 +610,9 @@ class EvaluationSummarySerializer(serializers.Serializer):
     missing = serializers.IntegerField()
     pass_rate = serializers.FloatField(allow_null=True)
     average_score = serializers.FloatField(allow_null=True)
+    required = serializers.BooleanField(  # type: ignore[assignment]  # the API field is named required, as Field's own
+        help_text="Marked required on the environment; a failing score fails the call."
+    )
 
 
 class FailureBreakdownSerializer(serializers.Serializer):
@@ -672,6 +682,10 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     sub_goals = serializers.ListField(child=serializers.CharField())
     sub_goal_results = SubGoalResultSerializer(many=True)
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
+    required_evals_failed = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Names of the required evaluations this call failed; any one fails the call.",
+    )
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
@@ -719,6 +733,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "sub_goals",
             "sub_goal_results",
             "outcome",
+            "required_evals_failed",
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
@@ -1017,6 +1032,7 @@ def build_call_execution_detail(
             "sub_goals": normalized["sub_goals"],
             "sub_goal_results": normalized["sub_goal_results"],
             "outcome": normalized["outcome"],
+            "required_evals_failed": normalized["required_evals_failed"],
             "overall_score": normalized["csat"],
             "csat_score": normalized["csat"],
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
@@ -1183,6 +1199,57 @@ def _escape_csv_cell(value: Any) -> Any:
     return value
 
 
+_UNSCORED_CELLS = {
+    "pending": "Scoring",
+    "failed": "Scoring failed",
+    "error": "Scoring failed",
+    "timed_out": "Timed out",
+    "skipped": "Not scored",
+}
+
+
+def _percent(score: Any) -> str | None:
+    if isinstance(score, bool) or not isinstance(score, int | float):
+        return None
+    return f"{round(score * 100)}%"
+
+
+def _choice_label(value: Any) -> str | None:
+    if isinstance(value, dict):
+        value = value.get("choices", value.get("choice"))
+        if isinstance(value, str):
+            return value or None
+    if isinstance(value, list):
+        return ", ".join(str(one) for one in value if one not in (None, "")) or None
+    return None
+
+
+def _eval_cell(evaluation: dict[str, Any] | None) -> str:
+    if evaluation is None:
+        return ""
+    unscored = _UNSCORED_CELLS.get(str(evaluation.get("status") or "").lower())
+    if unscored is not None:
+        return unscored
+    value, score = evaluation.get("value"), evaluation.get("score")
+    choice = _choice_label(value)
+    if choice is not None:
+        shown = _percent(score)
+        return f"{choice} ({shown})" if shown else choice
+    passed = evaluation.get("passed")
+    if isinstance(value, str) and value.strip():
+        if passed is True:
+            return OUTCOME_LABELS["passed"]
+        if passed is False:
+            return OUTCOME_LABELS["failed"]
+        return value
+    return _percent(score) or ""
+
+
+def _csat_cell(row: dict[str, Any]) -> Any:
+    unscored = _UNSCORED_CELLS.get(str(row.get("csat_status") or "").lower())
+    return unscored if unscored is not None else row.get("csat")
+
+
 def _csv_rows(
     rows: list[dict[str, Any]], columns: list[dict[str, str]]
 ) -> Iterator[str]:
@@ -1190,6 +1257,7 @@ def _csv_rows(
     headers = [
         "call_id",
         "scenario",
+        "trial",
         "scenario_details",
         "goal",
         "ideal_outcome",
@@ -1197,6 +1265,8 @@ def _csv_rows(
         "sub_goals",
         "persona",
         "outcome",
+        "outcome_reason",
+        "required_evals_failed",
         "execution_status",
         "provider",
         "modality",
@@ -1213,7 +1283,7 @@ def _csv_rows(
     writer = csv.writer(_CsvEcho())
     yield writer.writerow([_escape_csv_cell(value) for value in headers])
     for row in rows:
-        evaluations = {item["id"]: item.get("value") for item in row["evaluations"]}
+        evaluations = {item["id"]: item for item in row["evaluations"]}
         sub_goals = []
         for goal in row["sub_goal_results"]:
             verdict = (
@@ -1229,14 +1299,17 @@ def _csv_rows(
                 _escape_csv_cell(value)
                 for value in [
                     row["id"],
-                    row["scenario"],
+                    row.get("source_scenario_key") or row["scenario"],
+                    row.get("trial_index"),
                     row["scenario_details"],
                     row["goal"],
                     row["ideal_outcome"],
                     row["conversation_branch"],
                     ", ".join(sub_goals),
                     row["persona"],
-                    row["outcome"],
+                    OUTCOME_LABELS.get(row["outcome"], row["outcome"]),
+                    row.get("outcome_reason"),
+                    ", ".join(row.get("required_evals_failed") or []),
                     row["execution_status"],
                     row["provider"],
                     row["modality"],
@@ -1245,10 +1318,10 @@ def _csv_rows(
                     row["turn_count"],
                     row["tokens"],
                     row["cost_cents"],
-                    row["csat"],
+                    _csat_cell(row),
                     row["ended_reason"],
                     row["error_message"],
-                    *[evaluations.get(column["id"]) for column in columns],
+                    *[_eval_cell(evaluations.get(column["id"])) for column in columns],
                 ]
             ]
         )

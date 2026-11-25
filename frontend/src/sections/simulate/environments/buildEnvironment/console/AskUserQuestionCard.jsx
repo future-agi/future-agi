@@ -80,6 +80,7 @@ export default function AskUserQuestionCard({
   resolved: resolvedProp = false,
   answerText,
   answerFailed,
+  closed,
 }) {
   const [answer, setAnswer] = useState({ pick: null, picks: [], other: "" });
   const [resolved, setResolved] = useState(null);
@@ -133,6 +134,10 @@ export default function AskUserQuestionCard({
 
   // Resolved either by this session's submit (internal state) or because the
   // conversation came back already answered (props) — e.g. after a page refresh.
+  if (closed && !resolved && !resolvedProp) {
+    return <ClosedSummary question={question} reason={closed.reason} />;
+  }
+
   if (resolved || resolvedProp) {
     return (
       <ResolvedSummary
@@ -262,6 +267,44 @@ AskUserQuestionCard.propTypes = {
   answerText: PropTypes.string,
   // The server did not take the answer: shown failed with its reason.
   answerFailed: PropTypes.shape({ reason: PropTypes.string }),
+  closed: PropTypes.shape({ reason: PropTypes.string }),
+};
+
+function ClosedSummary({ question, reason }) {
+  return (
+    <Box
+      data-testid="question-closed"
+      sx={{
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.neutral",
+        px: 2,
+        py: 1.5,
+      }}
+    >
+      <Prompt text={question.prompt} />
+      <Stack
+        direction="row"
+        alignItems="flex-start"
+        spacing={0.75}
+        sx={{ mt: 0.75 }}
+      >
+        <Iconify
+          icon="solar:clock-circle-linear"
+          width={14}
+          sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+        />
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          {reason}
+        </Typography>
+      </Stack>
+    </Box>
+  );
+}
+ClosedSummary.propTypes = {
+  question: PropTypes.object.isRequired,
+  reason: PropTypes.string,
 };
 
 function AskOptionRow({

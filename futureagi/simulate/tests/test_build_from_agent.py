@@ -223,6 +223,61 @@ def test_build_preflight_names_the_version_its_check_and_its_code(
     }
 
 
+def test_build_preflight_refuses_a_version_the_build_would_refuse(
+    auth_client, client, workspace, gates, agent
+):
+    version = agent.create_version(
+        description="p", commit_message="before versions", status="active"
+    )
+    url = f"/simulate/agent-definitions/{agent.id}/build-preflight/"
+
+    body = auth_client.get(url).json()
+
+    assert body["ok"] is False
+    assert body["version_id"] == str(version.id)
+    assert body["checks"][0] == {
+        "name": "version",
+        "status": "blocked",
+        "message": (
+            "v1 can't be built from here: it was made before agent versions were"
+            " checked. Sync the agent to make a version that can be built"
+        ),
+    }
+    dialog_request = _body(
+        source={"kind": "provider", "visibility": "public"},
+        metadata={
+            "agent_definition_id": str(agent.id),
+            "agent_version_id": str(version.id),
+        },
+    )
+    built = _post(client, workspace, dialog_request)
+    assert built.status_code == status.HTTP_409_CONFLICT, built.content
+    assert built.json()["error"] == "version_not_buildable"
+
+
+@pytest.mark.parametrize(
+    ("names", "message"),
+    [
+        ([], "0 credential names come from the version"),
+        (["API_KEY"], "1 credential name comes from the version"),
+        (["API_KEY", "SECRET"], "2 credential names come from the version"),
+    ],
+)
+def test_build_preflight_counts_credential_names_in_plain_words(
+    auth_client, agent, production, names, message
+):
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version=production
+    ).update(credential_names=names, credential_fingerprints={})
+
+    body = auth_client.get(
+        f"/simulate/agent-definitions/{agent.id}/build-preflight/"
+    ).json()
+
+    credentials = next(one for one in body["checks"] if one["name"] == "credentials")
+    assert credentials["message"] == message
+
+
 def test_build_preflight_on_an_agent_with_no_version(auth_client, agent):
     body = auth_client.get(
         f"/simulate/agent-definitions/{agent.id}/build-preflight/"

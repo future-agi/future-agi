@@ -183,6 +183,35 @@ class TestTrialPassed:
             "eval_pass_rate": 0.0,
         }
 
+    def test_an_eval_that_is_not_required_never_decides_a_trial(self, settings):
+        settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = True
+        trials = run_compare.ScenarioTrials("refund")
+        trials.add([{"name": "a", "held": True}], "passed", "passed", "failed")
+
+        assert trials.side() == {
+            "passed": 1,
+            "trials": 1,
+            "undecided": 0,
+            "pass_rate": 100.0,
+            "eval_pass_rate": 0.0,
+        }
+
+    @pytest.mark.parametrize("status", ["passed", "inconclusive", "no_score"])
+    def test_a_trial_the_run_results_fail_on_a_required_eval_fails(
+        self, settings, status
+    ):
+        settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = True
+        trials = run_compare.ScenarioTrials("refund")
+        trials.add([{"name": "a", "held": True}], status, "failed", "failed")
+
+        assert (trials.passed, trials.decided, trials.undecided) == (0, 1, 0)
+
+    def test_a_failed_harness_still_leaves_held_sub_goals_to_decide(self):
+        trials = run_compare.ScenarioTrials("refund")
+        trials.add([{"name": "a", "held": True}], "failed", "failed", None)
+
+        assert (trials.passed, trials.decided) == (1, 1)
+
     def test_a_call_that_never_ran_is_not_a_trial(self):
         trials = run_compare.ScenarioTrials("refund")
         trials.add([{"name": "a", "held": False}], "error", "error", None)

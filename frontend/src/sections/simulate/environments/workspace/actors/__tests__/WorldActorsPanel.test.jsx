@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   render,
@@ -22,6 +22,22 @@ let asked;
 // Save tests use the real hooks over a mocked axios; the rest use these stand-ins.
 let realHooks = false;
 let viewState;
+
+let envDetail;
+let detailAsked;
+
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    useQuery: (options, ...rest) => {
+      if (options?.queryKey?.[0] !== "harness-environment")
+        return real.useQuery(options, ...rest);
+      [, detailAsked] = options.queryKey;
+      return { data: envDetail };
+    },
+  };
+});
 
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
@@ -104,6 +120,11 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
   };
 });
 
+const access = { canEdit: true, canRun: true };
+vi.mock("../../../hooks/useSimulationAccess", () => ({
+  default: () => access,
+}));
+
 const { default: axios } = await import("src/utils/axios");
 const { actorsKey } = await import("src/api/simulate-environments/versions");
 const { default: WorldActorsPanel } = await import("../WorldActorsPanel");
@@ -124,6 +145,11 @@ const addActor = (side = "In the world") => {
   fireEvent.click(screen.getByRole("button", { name: "Add actor" }));
   fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(side) }));
 };
+const openRow = (name) => fireEvent.click(screen.getByText(name));
+const specCard = (title) => screen.getByText(title).parentElement;
+const specRow = (card, label) =>
+  within(card).getByText(label).nextElementSibling;
+const specValue = (card, label) => specRow(card, label).textContent;
 const saveButton = () => screen.getByRole("button", { name: "Save to draft" });
 const sent = (call = 0) => mutate.mock.calls[call][0];
 
@@ -201,7 +227,9 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     // A window-focus refetch moves the cast under the open form.
     axios.get.mockResolvedValue({ data: elsewhere });
     await client.invalidateQueries({ queryKey: actorsKey("env-1") });
-    await screen.findByText(/Wants: Approve only large discounts/);
+    await screen.findByText("Approve only large discounts", {
+      selector: "p",
+    });
     save.mockRejectedValueOnce(DRAFT_CHANGED);
 
     fireEvent.click(saveButton());
@@ -375,7 +403,9 @@ describe("WorldActorsPanel saving against the real hooks", () => {
       target: { files: [file()] },
     });
     await screen.findByText(/changed elsewhere while you were editing/);
-    await screen.findByText(/Wants: Approve only large discounts/);
+    await screen.findByText("Approve only large discounts", {
+      selector: "p",
+    });
     // What was typed stays.
     expect(screen.getByLabelText("Role (optional)")).toHaveValue(
       "regional manager",
@@ -442,6 +472,8 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([MANAGER]);
     actorsState = { isPending: false, isError: false };
     viewState = null;
+    envDetail = undefined;
+    detailAsked = undefined;
     answer = CLEAN;
     asked = undefined;
   });
@@ -486,6 +518,71 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("Actors (1)")).toBeInTheDocument();
     expect(screen.getByText("Add actor")).toBeInTheDocument();
   });
+
+  it("says who the actors are beside Add actor, and that the cast is in every run", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    const intro = screen.getByText(
+      "Everyone simulated in this world, the customer included. Your agent's own workers aren't actors.",
+    );
+    expect(
+      within(intro.parentElement).getByRole("button", { name: "Add actor" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("In every run")).toBeInTheDocument();
+  });
+
+  it("gives the caller the scenario's task with how many personas it plays across how many scenarios, from the environment", () => {
+    envDetail = { overview: { personas_count: 3, scenario_count: 1 } };
+    actorsData = cast([
+      typedActor({
+        id: "caller",
+        name: "Dana",
+        side: "caller",
+        goal: "Get a refund",
+        scenarios: 4,
+      }),
+      typedActor({
+        id: "colleague",
+        name: "Jordan Taylor",
+        side: "caller",
+        goal: "Help Dana",
+        scenarios: 1,
+      }),
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(detailAsked).toBe("env-1");
+    const side = within(screen.getByTestId("actors-side-caller"));
+    expect(
+      side.getByText(
+        "Has the scenario's task · plays 3 personas across 1 scenario",
+      ),
+    ).toBeInTheDocument();
+    expect(side.queryByText("Get a refund")).toBeNull();
+    expect(side.getByText("From the start")).toBeInTheDocument();
+    expect(side.getByText("Help Dana")).toBeInTheDocument();
+    expect(side.getByText("From the start · 1 scenario")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["has not come back", undefined],
+    ["has no persona count", { overview: { scenario_count: 2 } }],
+  ])(
+    "gives the caller the scenarios it is in when the environment %s",
+    (_, detail) => {
+      envDetail = detail;
+      actorsData = cast([
+        typedActor({
+          id: "caller",
+          name: "Dana",
+          side: "caller",
+          scenarios: 2,
+        }),
+      ]);
+      render(<WorldActorsPanel envId="env-1" />);
+      expect(
+        screen.getByText("Has the scenario's task · in 2 scenarios"),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("groups the cast by side, the caller's side first, each with its count, in the cast's order", () => {
     actorsData = cast([
@@ -588,10 +685,23 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     expect(
-      screen.getByText(
-        "May do: crm.approve_discount · Comes in: When the agent calls crm.request_approval · If they do not answer: Sam Rivera answers instead · In 2 scenarios",
-      ),
+      screen.getByText("When the agent calls crm.request_approval · Used by 2"),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Their part")).toBeNull();
+    openRow("Priya Raman");
+    const part = specCard("Their part");
+    expect(specValue(part, "Tests")).toBe(
+      "Approve only discounts she can justify",
+    );
+    expect(specValue(part, "Actions they may take")).toBe(
+      "crm.approve_discount",
+    );
+    expect(specValue(part, "When they come in")).toBe(
+      "When the agent calls crm.request_approval",
+    );
+    expect(specValue(part, "If they don't answer")).toBe(
+      "Sam Rivera answers instead",
+    );
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument();
   });
 
@@ -607,14 +717,13 @@ describe("WorldActorsPanel", () => {
       },
     ]);
     render(<WorldActorsPanel envId="env-1" />);
-    expect(
-      screen.getByText(
-        /May do: crm.approve_discount, crm.old \(not an action of this world\)/,
-      ),
-    ).toBeInTheDocument();
+    openRow("Priya Raman");
+    expect(specValue(specCard("Their part"), "Actions they may take")).toBe(
+      "crm.approve_discount, crm.old (not an action of this world)",
+    );
   });
 
-  it("shows how a speaking actor joins and how loud it is, beside what it may do", () => {
+  it("shows how a speaking actor joins and how loud it is, and no world actions for the caller's side", () => {
     actorsData = cast([
       typedActor({
         id: "colleague",
@@ -626,28 +735,33 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     expect(
-      screen.getByText(
-        "Heard nearby · Loudness automatic · May do: Nothing in the world · Comes in: From the start · If they do not answer: Nothing happens · In 2 scenarios",
-      ),
+      screen.getByText("From the start · 2 scenarios"),
     ).toBeInTheDocument();
+    openRow("Jordan Taylor");
+    const part = specCard("Their part");
+    expect(specValue(part, "How they join")).toBe("Heard nearby");
+    expect(specValue(part, "Voice")).toBe("Loudness automatic");
+    expect(specValue(part, "When they come in")).toBe("From the start");
+    expect(specValue(part, "If they don't answer")).toBe("Nothing happens");
+    expect(within(part).queryByText("Actions they may take")).toBeNull();
   });
 
-  it("shows who can reach whom from each actor's reaches and when it comes in, once there is more than one actor", () => {
+  it("shows how the actors connect, from each actor's reaches and when it comes in, once there is more than one actor", () => {
     render(<WorldActorsPanel envId="env-1" />);
-    expect(screen.queryByText("Who can reach whom")).toBeNull();
+    expect(screen.queryByText("How they connect")).toBeNull();
     actorsData = cast([
       { ...MANAGER, reaches: ["caller"], when_label: "When contacted" },
       typedActor({ id: "caller", name: "Dana", side: "caller" }),
     ]);
     const { container } = render(<WorldActorsPanel envId="env-2" />);
+    expect(within(container).getByText("How they connect")).toBeInTheDocument();
     expect(
-      within(container).getByText("Who can reach whom"),
+      within(container).getByText("Who can reach whom in a run"),
     ).toBeInTheDocument();
+    expect(within(container).getAllByText("Agent")).toHaveLength(2);
+    expect(within(container).getByText("When contacted")).toBeInTheDocument();
     expect(
-      within(container).getByText("Its actions reach Dana"),
-    ).toBeInTheDocument();
-    expect(
-      within(container).getByText("Comes in: When contacted"),
+      within(container).getByText("can reach them through its actions"),
     ).toBeInTheDocument();
     expect(
       within(container).getByRole("button", { name: "Limits" }),
@@ -685,28 +799,30 @@ describe("WorldActorsPanel", () => {
     ).toBeNull();
   });
 
-  it("shows what an actor sees and never sees in plain words", () => {
+  it("shows what an actor sees and never sees in plain words once its row is opened, and folds it away again", async () => {
     render(<WorldActorsPanel envId="env-1" locked />);
-    fireEvent.click(screen.getByText("What they see"));
+    expect(screen.queryByText("What Priya Raman sees")).toBeNull();
+    openRow("Priya Raman");
+    const sees = specCard("What Priya Raman sees");
+    expect(specValue(sees, "What they want")).toBe("Approve fast");
+    expect(specValue(sees, "What they know")).toBe("The limit is 25%");
+    expect(specValue(sees, "How they behave")).toBe("Answers after 5 s");
+    const never = specRow(sees, "Never sees");
     expect(
-      screen.getByText("What they want: Approve fast"),
+      within(never).getByText("Grader material: solution, sub goals"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("What they know: The limit is 25%"),
+      within(never).getByText("The scenario's hidden task, unless it is told"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("How they behave: Answers after 5 s"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Grader material: solution, sub goals"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
+      within(never).getByText(
         "What the 3 other actors each keep to themselves: goal, prompt",
       ),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Hide what they see"));
-    expect(screen.getByText("What they see")).toBeInTheDocument();
+    openRow("Priya Raman");
+    await waitFor(() =>
+      expect(screen.queryByText("What Priya Raman sees")).toBeNull(),
+    );
   });
 
   it("adds someone in the world with every field, sending only what was set, as typed changes", () => {
@@ -1147,8 +1263,12 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     expect(
-      screen.getByText(/Comes in: 30 s after the start/),
+      screen.getByText("30 s after the start · Used by 0"),
     ).toBeInTheDocument();
+    openRow("Priya Raman");
+    expect(specValue(specCard("Their part"), "When they come in")).toBe(
+      "30 s after the start",
+    );
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(screen.getByLabelText("Comes in")).toHaveTextContent(
       "At a set time",
@@ -1318,11 +1438,18 @@ describe("WorldActorsPanel", () => {
   it("shows a loading and a failed view inside the row, with a retry", () => {
     viewState = { isLoading: true };
     const { rerender } = render(<WorldActorsPanel envId="env-1" locked />);
-    fireEvent.click(screen.getByText("What they see"));
-    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    openRow("Priya Raman");
+    const loading = specCard("What Priya Raman sees");
+    expect(within(loading).getByText("Knows")).toBeInTheDocument();
+    expect(within(loading).getByText("Can do")).toBeInTheDocument();
+    expect(within(loading).getByText("Never sees")).toBeInTheDocument();
+    expect(within(loading).queryByText("What they want")).toBeNull();
+    expect(screen.queryByText("Couldn't load what they see")).toBeNull();
     const retry = vi.fn();
     viewState = { isError: true, refetch: retry };
     rerender(<WorldActorsPanel envId="env-1" locked />);
+    expect(screen.queryByText("What Priya Raman sees")).toBeNull();
+    expect(screen.getByText("Couldn't load what they see")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalled();
   });
@@ -1428,9 +1555,8 @@ describe("WorldActorsPanel", () => {
     expect(screen.queryByText("Add actor")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Edit / })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "What they see" }),
-    ).toBeInTheDocument();
+    openRow("Priya Raman");
+    expect(screen.getByText("What Priya Raman sees")).toBeInTheDocument();
   });
 
   it("offers no other edit while a remove is in flight, so its answer can't be lost", () => {
@@ -1531,14 +1657,15 @@ describe("WorldActorsPanel", () => {
 
   it("leaves an open view open when a remove is cancelled", async () => {
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("What they see"));
+    openRow("Priya Raman");
     fireEvent.click(screen.getByRole("button", { name: /^Remove / }));
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
         name: "Cancel",
       }),
     );
-    expect(await screen.findByText("Hide what they see")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("What Priya Raman sees")).toBeInTheDocument();
   });
 
   it("will not close or discard the form while a save is in flight", () => {
@@ -1574,10 +1701,13 @@ describe("WorldActorsPanel", () => {
 
   it("shows Not set for a value with nothing in it", () => {
     render(<WorldActorsPanel envId="env-1" locked />);
-    fireEvent.click(screen.getByText("What they see"));
-    expect(screen.getByText("Not set").parentElement).toHaveTextContent(
-      "What they may agree to and keep to themselves: Not set",
-    );
+    openRow("Priya Raman");
+    expect(
+      specValue(
+        specCard("What Priya Raman sees"),
+        "What they may agree to and keep to themselves",
+      ),
+    ).toBe("Not set");
   });
 
   it("lists the policy points waiting for a decision above the cast, to accept as written or edit an actor for", () => {
@@ -1614,5 +1744,37 @@ describe("WorldActorsPanel", () => {
   it("shows no decision block when nothing is waiting", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.queryByTestId("needs-decision")).toBeNull();
+  });
+});
+
+describe("WorldActorsPanel for a viewer", () => {
+  beforeEach(() => {
+    access.canEdit = false;
+    realHooks = false;
+    editState = { isPending: false };
+    actorsState = { isPending: false, isError: false };
+    actorsData = cast([MANAGER]);
+    envDetail = undefined;
+  });
+
+  afterEach(() => {
+    access.canEdit = true;
+  });
+
+  it("keeps Add, Edit and Remove off and says why", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+
+    expect(screen.getByRole("button", { name: "Add actor" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Edit Priya Raman/ }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Remove Priya Raman/ }),
+    ).toBeDisabled();
+    expect(
+      screen.getAllByLabelText("You don't have permission to change actors.")
+        .length,
+    ).toBeGreaterThan(0);
+    expect(mutate).not.toHaveBeenCalled();
   });
 });

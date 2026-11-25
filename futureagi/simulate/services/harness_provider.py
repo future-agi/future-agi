@@ -353,8 +353,17 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         ) from exc
 
 
+_DESIGN_REVIEW_READ_KEYS = ("status", "created_at", "approved_at")
+
+
 def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     metadata = job.payload.get("metadata", {})
+    if isinstance(metadata, dict) and isinstance(metadata.get("design_review"), dict):
+        review = metadata["design_review"]
+        metadata = {
+            **metadata,
+            "design_review": {key: review.get(key) for key in _DESIGN_REVIEW_READ_KEYS},
+        }
     if not isinstance(metadata, dict) or "observability_refusal" not in metadata:
         return metadata
     if not job.run_test_id:
@@ -368,6 +377,12 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     if enabled is not True:
         return metadata
     return {k: v for k, v in metadata.items() if k != "observability_refusal"}
+
+
+def _retry_from(job: HostedHarnessJob) -> str | None:
+    from simulate.services.harness_build_retry import resume_point, retryable
+
+    return resume_point(job) if retryable(job) else None
 
 
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
@@ -561,6 +576,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
                 job.cancel_requested_at.isoformat() if job.cancel_requested_at else None
             ),
             "failure": job.failure,
+            "retry_from": _retry_from(job),
         },
         "events": events,
         "stage_outputs": stage_outputs,
@@ -1482,6 +1498,17 @@ def _environment_agent_maker(
     return make
 
 
+def _with_design_review(on_create, runtime, contract):
+    from simulate.services.harness_design_review import begin_design_review
+
+    def make(job) -> None:
+        if on_create is not None:
+            on_create(job)
+        begin_design_review(job, runtime, contract)
+
+    return make
+
+
 # TODO: delete with the HARNESS_VERSIONING_ENABLED kill switch.
 def _secret_ref_minter(secret_values):
     """A hook storing the values after the request digest, so a replay mints none."""
@@ -1533,6 +1560,11 @@ class HostedHarnessProvider:
     def create(self, request) -> Response:
         from simulate.serializers.harness_job import names_agent_version
         from simulate.services.harness_agent_versions import advisory_xact_lock
+        from simulate.services.harness_design_review import (
+            design_review_pending,
+            review_contract_for,
+            review_wanted,
+        )
         from simulate.services.harness_versioning.versions import versioning_enabled
         from simulate.services.hosted_harness import (
             HostedHarnessError,
@@ -1587,6 +1619,13 @@ class HostedHarnessProvider:
             connected_runtime = None
             version_bound = False
         connected_build = connected_runtime is not None
+        review_contract = (
+            review_contract_for(connected_runtime) if connected_build else None
+        )
+        review_pending = review_contract is not None or (
+            review_wanted(payload, connected_runtime)
+            and (connected_build or versioning_enabled())
+        )
         if (
             not connected_build
             and (payload.get("source") or {}).get("kind") == "provider"
@@ -1705,6 +1744,10 @@ class HostedHarnessProvider:
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)
+                if review_pending:
+                    on_create = _with_design_review(
+                        on_create, connected_runtime, review_contract
+                    )
                 job, _ = create_hosted_job(
                     organization,
                     payload,
@@ -1712,6 +1755,11 @@ class HostedHarnessProvider:
                     workspace=workspace,
                     on_create=on_create,
                     request_digest=client_digest,
+                    state=(
+                        HostedHarnessJob.State.RECEIVED
+                        if review_pending
+                        else HostedHarnessJob.State.QUEUED
+                    ),
                 )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
@@ -1725,6 +1773,8 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness scheduler is unavailable"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        if design_review_pending(job):
+            return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
         try:
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(
@@ -2470,6 +2520,13 @@ class HostedHarnessProvider:
         queryset = apply_search(queryset, request.query_params.get("search", ""))
         offerable = queryset
         queryset = apply_filters(queryset, request.query_params)
+        from simulate.services.harness_scenario_tags import (
+            filter_by_tags,
+            tag_field,
+            tags_by_key,
+        )
+
+        queryset = filter_by_tags(job, queryset, request.query_params)
         queryset = apply_ordering(queryset, request.query_params.get("ordering", ""))
 
         paginator = ExtendedPageNumberPagination()
@@ -2496,10 +2553,13 @@ class HostedHarnessProvider:
         targets = fault_targets(contract, rules, actor_cast)
         door = targets if door_reach(contract) else None
 
+        tagged = tags_by_key(job, [one.scenario_key for one in page])
+
         def row_of(one: HostedHarnessScenario) -> dict[str, Any]:
             row = scenario_row(
                 one, targets=door, fault_targets=targets, actor_cast=actor_cast
             )
+            row = {**row, "tags": tagged.get(one.scenario_key, [])}
             return row if drafted is None else {**row, "draft_change": one.draft_change}
 
         rows = grouped([row_of(one) for one in page], group_by)
@@ -2516,6 +2576,9 @@ class HostedHarnessProvider:
         response.data["fields"] = field_catalogue(
             offerable, spoken=spoken, call_actor_labels=lambda: call_actor_labels(job)
         )
+        tags_entry = tag_field(job, offerable)
+        if tags_entry is not None:
+            response.data["fields"].append(tags_entry)
         response.data["scenario_editing"] = self._editing_contract(spoken)
         from simulate.services.harness_scenarios import GROUPINGS
 
@@ -2547,6 +2610,9 @@ class HostedHarnessProvider:
             queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
         queryset = apply_search(queryset, request.query_params.get("search", ""))
         queryset = apply_filters(queryset, request.query_params)
+        from simulate.services.harness_scenario_tags import filter_by_tags
+
+        queryset = filter_by_tags(job, queryset, request.query_params)
         from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
 
         return Response(

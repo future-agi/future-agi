@@ -21,6 +21,7 @@ from simulate.views.chat_simulation import (
     TestExecutionChatBatchView,
 )
 from simulate.views.debug_analysis import TestExecutionDebugAnalysisView
+from simulate.views.harness_scenario_tags import HarnessScenarioTagViewSet
 from simulate.views.preview_pagination import (
     RunTestPreviewExecutionsView,
     TestExecutionPreviewCallsView,
@@ -182,6 +183,11 @@ router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
 )
 router.register(r"harness-jobs", HarnessJobViewSet, basename="harness-job")
+router.register(
+    r"harness-environments/(?P<environment_id>[^/.]+)/scenario-tags",
+    HarnessScenarioTagViewSet,
+    basename="harness-scenario-tags",
+)
 router.register(
     r"harness-environments",
     HarnessEnvironmentViewSet,

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import PropTypes from "prop-types";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useSearchParams } from "react-router-dom";
+import { MemoryRouter, useNavigate, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import WorkspacePanels from "../WorkspacePanels";
@@ -33,9 +33,30 @@ OverviewPanelStub.propTypes = {
   envState: PropTypes.object,
   onGo: PropTypes.func,
 };
+const rail = vi.hoisted(() => ({ props: null }));
+vi.mock("src/components/tabs/tabs", async (importOriginal) => {
+  const actual = await importOriginal();
+  const { createElement } = await import("react");
+  return {
+    ...actual,
+    CustomTabs: (props) => {
+      rail.props = props;
+      return createElement(actual.CustomTabs, props);
+    },
+  };
+});
 vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
 vi.mock("../contract/RlContractPanel", () => ({
-  default: () => <div>contract-body</div>,
+  // eslint-disable-next-line react/prop-types
+  default: ({ chat, scenarios, coverageReady }) => (
+    <>
+      <div>{`contract-body:chat=${typeof chat?.send === "function"}`}</div>
+      <div>{`contract-coverage:${coverageReady}:${scenarios.length}`}</div>
+    </>
+  ),
+}));
+vi.mock("../world/WorldPanel", () => ({
+  default: () => <div>world-body</div>,
 }));
 vi.mock("../actors/ActorsTab", () => ({
   default: () => <div>actors-body</div>,
@@ -114,6 +135,13 @@ describe("WorkspacePanels", () => {
     runsApi.useEnvironmentRuns.mockImplementation(realUseEnvironmentRuns),
   );
 
+  it("offers scroll arrows when the tab rail is wider than the window", () => {
+    renderPanels();
+    expect(rail.props.variant).toBe("scrollable");
+    expect(rail.props.scrollButtons).toBe("auto");
+    expect(rail.props.allowScrollButtonsMobile).toBe(true);
+  });
+
   it("opens the actors tab when the environment says it has one", () => {
     renderPanels({ env: { ...ENV, actorsTab: "edit" }, tab: "actors" });
     expect(screen.getByRole("tab", { name: "Actors" })).toBeInTheDocument();
@@ -130,6 +158,7 @@ describe("WorkspacePanels", () => {
     renderPanels({ envState: baseEnvState({ runs: [{ id: "r1" }] }) });
     [
       "Overview",
+      "World & tools",
       "Contract",
       "Scenarios",
       "Evaluations",
@@ -171,10 +200,18 @@ describe("WorkspacePanels", () => {
     );
   });
 
-  it("falls back to the Overview for ?tab=runs while there are no runs", () => {
+  it("falls back to the Overview for ?tab=runs while there are no runs, and says why", () => {
     renderPanels({ tab: "runs" });
     expect(screen.getByText(/^overview-body:/)).toBeInTheDocument();
     expect(screen.queryByText("runs-body")).toBeNull();
+    expect(screen.getByTestId("tab-unavailable")).toHaveTextContent(
+      "Runs opens once this environment has a run. Showing the Overview.",
+    );
+  });
+
+  it("shows no notice on a tab that is there", () => {
+    renderPanels({ tab: "scenarios" });
+    expect(screen.queryByTestId("tab-unavailable")).toBeNull();
   });
 
   // A ?tab=runs deep link lands before the run list does. Keeping the tab
@@ -307,6 +344,58 @@ describe("WorkspacePanels", () => {
       "aria-selected",
       "true",
     );
+  });
+
+  it("puts World & tools between Overview and Contract", () => {
+    renderPanels();
+    const names = screen
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent)
+      .slice(0, 3);
+    expect(names).toEqual(["Overview", "World & tools", "Contract"]);
+  });
+
+  it("renders the World & tools body on its tab", () => {
+    renderPanels({ tab: "world" });
+    expect(screen.getByText("world-body")).toBeInTheDocument();
+  });
+
+  it("explains the World & tools tab on hover", async () => {
+    const user = userEvent.setup();
+    renderPanels();
+    await user.hover(screen.getByText("World & tools"));
+    expect(
+      await screen.findByText(
+        "What your agent talks to during a run: the data and the tools that answer its calls.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("hands the Contract tab the builder chat it was given, and none otherwise", () => {
+    const { unmount } = renderPanels({
+      tab: "contract",
+      contractChat: { send: vi.fn(), busy: false, live: true },
+    });
+    expect(screen.getByText("contract-body:chat=true")).toBeInTheDocument();
+    unmount();
+    renderPanels({ tab: "contract" });
+    expect(screen.getByText("contract-body:chat=false")).toBeInTheDocument();
+  });
+
+  it("hands the Contract tab the detail's scenarios, and no coverage until the scenarios are written", () => {
+    const { unmount } = renderPanels({
+      tab: "contract",
+      contractScenarios: [{ subTasks: [] }, { subTasks: [] }],
+    });
+    expect(screen.getByText("contract-coverage:true:2")).toBeInTheDocument();
+    unmount();
+    renderPanels({
+      tab: "contract",
+      tabWaits: {
+        scenarios: { phase: "Writing and checking scenarios", now: true },
+      },
+    });
+    expect(screen.getByText(/^contract-coverage:false:/)).toBeInTheDocument();
   });
 
   it("renders the body for the active tab", () => {
@@ -442,6 +531,40 @@ describe("useWorkspaceTab", () => {
 
   it("falls back to overview for an unknown ?tab=", () => {
     renderProbe("/env?tab=bogus");
+    expect(screen.getByTestId("tab")).toHaveTextContent("overview");
+  });
+
+  it("adds a history entry per tab, so Back returns to the tab before", async () => {
+    const user = userEvent.setup();
+    function BackProbe() {
+      const { tab, setTab } = useWorkspaceTab();
+      const navigate = useNavigate();
+      return (
+        <>
+          <span data-testid="tab">{tab}</span>
+          <button type="button" onClick={() => setTab("contract")}>
+            go contract
+          </button>
+          <button type="button" onClick={() => setTab("scenarios")}>
+            go scenarios
+          </button>
+          <button type="button" onClick={() => navigate(-1)}>
+            back
+          </button>
+        </>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={["/env"]}>
+        <BackProbe />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "go contract" }));
+    await user.click(screen.getByRole("button", { name: "go scenarios" }));
+    await user.click(screen.getByRole("button", { name: "back" }));
+    expect(screen.getByTestId("tab")).toHaveTextContent("contract");
+    await user.click(screen.getByRole("button", { name: "back" }));
     expect(screen.getByTestId("tab")).toHaveTextContent("overview");
   });
 

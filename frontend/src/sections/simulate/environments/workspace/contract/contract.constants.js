@@ -8,19 +8,59 @@ export const MONO_FONT = "ui-monospace, Menlo, monospace";
 // presentation. Each kind is a category, so it takes a data-palette series
 // (`theme.palette.data[series]`), not a status colour.
 export const VERIFIER_KINDS = [
-  { id: "goal", label: "Goal", series: 0, blurb: "Did the task get done. Terminal, sparse." },
-  { id: "rubric", label: "Rubric", series: 1, blurb: "How well, judged per turn. Dense." },
-  { id: "constraint", label: "Constraints", series: 2, blurb: "What must never happen. Penalty." },
+  {
+    id: "goal",
+    label: "Goal",
+    series: 0,
+    blurb: "Did the task get done. Terminal, sparse.",
+  },
+  {
+    id: "rubric",
+    label: "Rubric",
+    series: 1,
+    blurb: "How well, judged per turn. Dense.",
+  },
+  {
+    id: "constraint",
+    label: "Constraints",
+    series: 2,
+    blurb: "What must never happen. Penalty.",
+  },
 ];
 
 // Every copy string on the contract tab, so nothing is inlined in the JSX.
 export const CONTRACT_COPY = {
   endConditions: {
-    title: "Run end conditions",
-    subtitle: "When a run is over, and which kind of over it was",
+    title: "When a conversation ends",
+    subtitle: "What ends a conversation, and what that means for its result",
+    endsLabel: "It ends",
+    endsBlurb: "The conversation is over, and its checks decide the result.",
+    endsNone: "No ways to end recorded yet.",
+    cutLabel: "It's cut off",
+    cutBlurb: "A limit stops the conversation before it's over.",
+    cutNone: "No limits recorded yet.",
+    turns: (n) => `${n} agent ${n === 1 ? "turn" : "turns"}`,
+    turnsNote:
+      "The most turns across the suite. Each scenario can carry its own limit.",
+    durationNote: "The longest the whole run can take.",
+    timeLabel: (mode) => `Time · ${mode}`,
+    clockMode: { stepped: "Turn by turn", "real-time": "Real time" },
+    clockNote: {
+      "real-time":
+        "Pauses and slow replies are part of the test, so time runs as it would on a real call.",
+      stepped:
+        "The world only moves when the agent acts, so a slow model isn't marked down for being slow.",
+    },
+    clockNoteDefault: "How time is measured in a run.",
+    seedTitle: "Same starting data every time",
+    seedNote: (value, controls) =>
+      controls.includes("scenario_world_rng")
+        ? `Every conversation starts from the same data (seed ${value}). The caller's turns and the agent's replies can still differ between runs.`
+        : `Every conversation starts from the same seed (${value}). What else it controls was not reported, so results may still differ between runs.`,
     notAuthored: "Not authored yet",
     // A built environment's build writes them; a template or fork is never built.
-    notAuthoredBuilt: "The build writes these once it has read how a run of this agent ends.",
+    notAuthoredBuilt:
+      "The build writes these once it has read how a run of this agent ends.",
     notAuthoredUnbuilt: "This environment hasn't been built, so it has none.",
   },
   headingBlurb:
@@ -30,7 +70,8 @@ export const CONTRACT_COPY = {
   parts: {
     adapter: {
       title: "Modality adapter",
-      blurb: "Fixes what an observation and an action are. Everything else is generic.",
+      blurb:
+        "Fixes what an observation and an action are. Everything else is generic.",
     },
     spaces: {
       title: "Observation and action spaces",
@@ -39,7 +80,8 @@ export const CONTRACT_COPY = {
     },
     dynamics: {
       title: "Transition dynamics",
-      blurb: "What moves the world between steps, and it is never only the agent.",
+      blurb:
+        "What moves the world between steps, and it is never only the agent.",
     },
     reward: {
       title: "Reward spec",
@@ -71,7 +113,8 @@ export const CONTRACT_COPY = {
   terminateLabel: "Terminate",
   terminateBlurb: "The episode has a value. Goal verifiers settle.",
   truncateLabel: "Truncate",
-  truncateBlurb: "Not a failure, and not terminal. Bootstrap from the last state.",
+  truncateBlurb:
+    "Not a failure, and not terminal. Bootstrap from the last state.",
   clockLabel: (mode) => `Clock · ${mode}`,
   seedTitle: "Deterministic seed",
 
@@ -82,3 +125,62 @@ export const CONTRACT_COPY = {
 };
 
 export const GAP_LEGEND_ORDER = ["blocking", "assumed", "resolved"];
+
+export const CONTRACT_LISTS_COPY = {
+  rules: {
+    title: (n) => (n ? `Rules (${n})` : "Rules"),
+    subtitle: "From the agent's prompt",
+    empty: "No rules yet.",
+    add: "Add rule",
+    id: (n) => `R${n}`,
+    idWidth: "36px",
+    idWeight: 600,
+    textWeight: 600,
+    noun: "rule",
+    field: "Rule",
+  },
+  useCases: {
+    title: (n) => (n ? `Use cases (${n})` : "Use cases"),
+    subtitle: "What your agent is actually for",
+    empty: "No use cases yet.",
+    add: "Add use case",
+    id: (n) => `U${n}`,
+    idWidth: "72px",
+    idWeight: 400,
+    textWeight: 400,
+    noun: "use case",
+    field: "Use case",
+  },
+  coverage: (subGoals, scenarios) =>
+    [
+      `${subGoals} ${subGoals === 1 ? "sub-goal" : "sub-goals"}`,
+      scenarios
+        ? `${scenarios} ${scenarios === 1 ? "scenario" : "scenarios"}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  notTested: "Not tested",
+  edit: "Edit",
+  remove: "Remove",
+  busy: "The builder is busy. Try again once it finishes.",
+  notLive: "You can change the contract once the environment is ready.",
+};
+
+export const CONTRACT_TEXT_MAX = 2000;
+
+export const CONTRACT_EDIT_COPY = {
+  count: (n) =>
+    `${n.toLocaleString()} / ${CONTRACT_TEXT_MAX.toLocaleString()} characters`,
+  tooLong: `Up to ${CONTRACT_TEXT_MAX.toLocaleString()} characters`,
+  addTitle: (noun) => `Add ${noun}`,
+  editTitle: (noun, id) => `Edit ${noun} ${id}`,
+  removeTitle: (noun, id) => `Remove ${noun} ${id}`,
+  explain:
+    "This asks the builder to make the change. It lands as a draft that you save as a new environment version, and the scenarios that depend on it are checked again.",
+  removeExplain: (noun, text) =>
+    `This asks the builder to remove the ${noun} "${text}". It lands as a draft that you save as a new environment version, and the scenarios that depend on it are checked again.`,
+  submit: "Ask the builder",
+  removeAction: (noun) => `Remove ${noun}`,
+  sent: "The builder is updating the contract. The change shows as a draft for you to save.",
+};

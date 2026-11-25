@@ -412,7 +412,7 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
             </Box>
           </Popover>
           {/* Tag editor */}
-          {observeId && <TagEditor projectId={observeId} variant="header" />}
+          {observeId && <TagEditor projectId={observeId} />}
 
           {/* Show simulation calls toggle — moved to Display panel */}
         </Box>

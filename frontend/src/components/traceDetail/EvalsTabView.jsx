@@ -10,6 +10,7 @@ import EvalErrorLocalization from "./EvalErrorLocalization";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
+import { evalVerdict } from "./evalVerdict";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
 // see the informational toast — preserves pre-integration behavior.
@@ -83,7 +84,8 @@ export function collectAllEvalsFromEntry(entry) {
 // to the textual label so we still hide Fix on those. Anything else (null
 // score, arbitrary label) is treated as not-passed and keeps the button.
 const isPassedEval = (ev) => {
-  if (ev?.score != null) return ev.score >= 50;
+  const verdict = evalVerdict(ev);
+  if (verdict !== null) return verdict;
   const rawLabel = (ev?.score_label || "").trim();
   const numericLabel = parseFloat(rawLabel.replace(/%$/, ""));
   if (Number.isFinite(numericLabel)) return numericLabel >= 50;
@@ -355,6 +357,13 @@ const EvalTableRow = ({
               variant="badge"
               dot={false}
             />
+          ) : typeof ev.passed === "boolean" ? (
+            <StatusBadge
+              role={ev.passed ? "success" : "danger"}
+              label={scoreLabel}
+              variant="badge"
+              dot={false}
+            />
           ) : (
             <Typography
               sx={{
@@ -601,11 +610,11 @@ const EvalsTabView = ({
   );
 
   const totalPass = useMemo(
-    () => list.filter((e) => e.score != null && e.score >= 50).length,
+    () => list.filter((e) => evalVerdict(e) === true).length,
     [list],
   );
   const totalFail = useMemo(
-    () => list.filter((e) => e.score != null && e.score < 50).length,
+    () => list.filter((e) => evalVerdict(e) === false).length,
     [list],
   );
   const passRate =

@@ -8,6 +8,8 @@ import reprlib
 from dataclasses import dataclass
 from typing import Any
 
+from django.conf import settings
+
 from evaluations.engine.instance import resolve_pass_threshold
 from simulate.models import SimulateEvalConfig
 
@@ -31,6 +33,10 @@ ERRORED_CALL_STATUSES = ("failed", "cancelled")
 # is also stored cancelled, but nobody stopped it, so it stays an error.
 CANCELLED_CALL_STATUSES = ("cancelled",)
 SKIPPED_HARNESS_STATUSES = ("skipped",)
+
+
+def judged_by_required_evals() -> bool:
+    return bool(getattr(settings, "HARNESS_EVAL_SUGGESTIONS_ENABLED", False))
 
 
 @dataclass(frozen=True)
@@ -135,6 +141,13 @@ class LiveEvals(dict[str, LiveEval]):
     """A run test's live eval configs by id, each with its scoring spec."""
 
     warned = False
+
+    def required_ids(self) -> frozenset[str]:
+        from simulate.services.harness_eval_suggestions import is_required
+
+        return frozenset(
+            eval_id for eval_id, live in self.items() if is_required(live.config)
+        )
 
     def warn_invalid_thresholds(self) -> None:
         """Log each invalid threshold once per load, by the first read that scores."""

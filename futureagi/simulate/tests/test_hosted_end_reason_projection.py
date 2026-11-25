@@ -33,7 +33,10 @@ def projected_call(monkeypatch):
         conversation_metrics_data={},
         ended_reason="old-reason",
         completed_at=None,
-        test_execution=SimpleNamespace(run_test_id=None),
+        agent_version=None,
+        test_execution=SimpleNamespace(
+            run_test_id=None, agent_version=None, agent_definition=None
+        ),
         id="call-id",
         save=MagicMock(),
     )

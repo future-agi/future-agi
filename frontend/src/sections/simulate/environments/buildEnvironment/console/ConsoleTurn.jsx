@@ -40,6 +40,7 @@ const STEP_SHAPE = PropTypes.shape({
   answerText: PropTypes.string,
   // The server did not take the answer: the reason it serves.
   answerFailed: PropTypes.shape({ reason: PropTypes.string }),
+  closed: PropTypes.shape({ reason: PropTypes.string }),
   onSubmit: PropTypes.func,
   onSkip: PropTypes.func,
   onRetry: PropTypes.func,
@@ -153,6 +154,7 @@ export function Step({ step }) {
         resolved={step.resolved}
         answerText={step.answerText}
         answerFailed={step.answerFailed}
+        closed={step.closed}
       />
     );
   }

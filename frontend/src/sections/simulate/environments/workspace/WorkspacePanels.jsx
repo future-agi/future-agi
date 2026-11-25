@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Tab } from "@mui/material";
+import { Alert, Box, Stack, Tab, Tooltip } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
@@ -7,6 +7,7 @@ import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
 import { useEnvironmentFixRuns } from "src/api/simulate-environments/fixRuns";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
+import WorldPanel from "./world/WorldPanel";
 import ActorsTab from "./actors/ActorsTab";
 import ScenariosStep from "./scenarios/ScenariosStep";
 import EvalsStep from "./evals/EvalsStep";
@@ -15,7 +16,14 @@ import SettingsPanel from "./settings/SettingsPanel";
 import VersionsPanel from "./versions/VersionsPanel";
 import ImprovementsPanel from "./improvements/ImprovementsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
-import { WORKSPACE_TABS } from "./workspace.constants";
+import { BUILD_STATUS } from "../myEnvironments.constants";
+import TabWaiting from "./TabWaiting";
+import {
+  TAB_UNAVAILABLE_COPY,
+  TAB_WAITING_COPY,
+  WORKSPACE_COPY,
+  WORKSPACE_TABS,
+} from "./workspace.constants";
 
 // The shared rail + body switch. One instance serves the route workspace and
 // the build page's in-place swap at 7/7, so it stays presentational: the active
@@ -55,6 +63,9 @@ export default function WorkspacePanels({
   runDialogOpen = false,
   canRun = false,
   runBlockedReason,
+  contractChat = null,
+  contractScenarios,
+  tabWaits = {},
 }) {
   const navigate = useNavigate();
   const {
@@ -78,8 +89,11 @@ export default function WorkspacePanels({
   // the Overview and back.
   const showRuns = runsTotal > 0 || (runsLoading && tab === "runs");
   // Improvements appears once the environment has a fix, the same way Runs does.
-  const { count: fixCount, isLoading: fixesLoading } = useEnvironmentFixRuns(env?.id);
-  const showImprovements = fixCount > 0 || (fixesLoading && tab === "improvements");
+  const { count: fixCount, isLoading: fixesLoading } = useEnvironmentFixRuns(
+    env?.id,
+  );
+  const showImprovements =
+    fixCount > 0 || (fixesLoading && tab === "improvements");
   // Versions appears only while versioning is switched on for this environment.
   const showVersions = Boolean(env?.versioning?.enabled);
   const tabs = WORKSPACE_TABS.filter(
@@ -92,8 +106,10 @@ export default function WorkspacePanels({
 
   // Default landing is the Overview, which is also the first tab in the rail.
   const current =
-    tabs.find((t) => t.id === tab) ||
-    tabs.find((t) => t.id === "overview");
+    tabs.find((t) => t.id === tab) || tabs.find((t) => t.id === "overview");
+
+  const unavailable =
+    tab && tab !== current.id ? TAB_UNAVAILABLE_COPY[tab] : null;
 
   const go = (tabId) => {
     if (!tabs.some((t) => t.id === tabId)) return;
@@ -103,7 +119,13 @@ export default function WorkspacePanels({
   const openRun = (run) => {
     const runTestId = env?.platform?.runTestId;
     if (!runTestId || !run?.executionId) return;
-    navigate(paths.dashboard.simulate.environments.execution(env.id, runTestId, run.executionId));
+    navigate(
+      paths.dashboard.simulate.environments.execution(
+        env.id,
+        runTestId,
+        run.executionId,
+      ),
+    );
   };
 
   // The rest come from the injected client-state counts. A null `counts`
@@ -115,12 +137,48 @@ export default function WorkspacePanels({
     return counts[badge] ?? 0;
   };
 
+  const buildLock =
+    env?.buildStatus === BUILD_STATUS.BUILDING
+      ? WORKSPACE_COPY.buildLock.building
+      : env?.buildStatus === BUILD_STATUS.FAILED
+        ? WORKSPACE_COPY.buildLock.stopped
+        : null;
+
   const renderBody = () => {
+    const wait = tabWaits[current.id];
+    if (wait)
+      return (
+        <TabWaiting tabId={current.id} tabLabel={current.label} wait={wait} />
+      );
     switch (current.id) {
+      case "world":
+        return (
+          <WorldPanel
+            env={env}
+            envState={envState}
+            graphData={graphData}
+            chat={locked ? null : contractChat}
+          />
+        );
       case "contract":
-        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} backed={backed} />;
+        return (
+          <RlContractPanel
+            env={env}
+            backed={backed}
+            locked={locked}
+            chat={contractChat}
+            scenarios={
+              contractScenarios ||
+              serverEnvState?.scenarios ||
+              envState?.scenarios ||
+              []
+            }
+            coverageReady={!tabWaits.scenarios}
+            onGo={go}
+          />
+        );
       case "actors":
-        return <ActorsTab env={env} locked={locked} />;
+        return <ActorsTab env={env} locked={locked} lockReason={buildLock} />;
       case "scenarios":
         return (
           <ScenariosStep
@@ -128,6 +186,7 @@ export default function WorkspacePanels({
             envState={envState}
             patch={patch}
             locked={locked}
+            lockReason={buildLock}
             onFork={onFork}
             onStartRun={onStartRun}
             runDialogOpen={runDialogOpen}
@@ -152,7 +211,16 @@ export default function WorkspacePanels({
       case "runs":
         // The summary's eval columns come from the runs' own scores, so it
         // only needs the store for its scenario count.
-        return <RunsSummary key={env.id} env={env} envState={envState} scenarioCount={counts?.scenarios} onOpenRun={openRun} onGo={go} />;
+        return (
+          <RunsSummary
+            key={env.id}
+            env={env}
+            envState={envState}
+            scenarioCount={counts?.scenarios}
+            onOpenRun={openRun}
+            onGo={go}
+          />
+        );
       case "improvements":
         return <ImprovementsPanel env={env} />;
       case "versions":
@@ -173,10 +241,10 @@ export default function WorkspacePanels({
             agentConnected={!!envState?.agent}
             locked={locked}
             counts={overviewCounts}
-            latestRun={runs[0]}
             backedWorld={overviewWorld}
             onFork={onFork}
             buildMode={buildMode}
+            waits={tabWaits}
           />
         );
     }
@@ -184,30 +252,81 @@ export default function WorkspacePanels({
 
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
-      <Box sx={{ flexShrink: 0, borderBottom: "1px solid", borderColor: "divider" }}>
-        <CustomTabs sx={{ boxShadow: "none" }}
+      <Box
+        sx={{
+          flexShrink: 0,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <CustomTabs
+          sx={{ boxShadow: "none" }}
           value={current.id}
           onChange={(_, v) => onTabChange(v)}
           variant="scrollable"
-          scrollButtons={false}
+          scrollButtons="auto"
+          allowScrollButtonsMobile
         >
-          {tabs.map((t) => (
-            <Tab
-              key={t.id}
-              value={t.id}
-              label={
+          {tabs.map((t) => {
+            const wait = tabWaits[t.id];
+            const tip = wait ? TAB_WAITING_COPY.tabTip(wait) : t.hint;
+            const label = (
+              <Box
+                component="span"
+                sx={
+                  wait?.now
+                    ? { color: "text.primary", fontWeight: 500 }
+                    : wait
+                      ? { color: "text.tertiary" }
+                      : undefined
+                }
+              >
                 <WorkspaceTabLabel
                   label={t.label}
-                  count={t.badge ? badgeCount(t.badge) : null}
-                  gaps={gapsByTab?.[t.id]}
+                  count={t.badge && !wait ? badgeCount(t.badge) : null}
+                  gaps={wait ? null : gapsByTab?.[t.id]}
                 />
-              }
-            />
-          ))}
+              </Box>
+            );
+            return (
+              <Tab
+                key={t.id}
+                value={t.id}
+                label={
+                  tip ? (
+                    <Tooltip
+                      title={tip}
+                      describeChild
+                      arrow
+                      placement="bottom"
+                      enterDelay={400}
+                      enterNextDelay={200}
+                      slotProps={{ tooltip: { sx: { maxWidth: 320 } } }}
+                    >
+                      <span>{label}</span>
+                    </Tooltip>
+                  ) : (
+                    label
+                  )
+                }
+              />
+            );
+          })}
         </CustomTabs>
       </Box>
 
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>{renderBody()}</Box>
+      {unavailable && (
+        <Alert
+          severity="info"
+          data-testid="tab-unavailable"
+          sx={{ mx: 2, mt: 1.5, flexShrink: 0 }}
+        >
+          {unavailable}
+        </Alert>
+      )}
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
+        {renderBody()}
+      </Box>
     </Stack>
   );
 }
@@ -227,12 +346,16 @@ WorkspacePanels.propTypes = {
     }),
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
     actorsTab: PropTypes.oneOf(["edit", "list"]),
+    buildStatus: PropTypes.string,
   }).isRequired,
   envState: PropTypes.shape({
     agent: PropTypes.shape({ name: PropTypes.string }),
     scenarios: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
     evals: PropTypes.arrayOf(
-      PropTypes.oneOfType([PropTypes.string, PropTypes.shape({ id: PropTypes.string })]),
+      PropTypes.oneOfType([
+        PropTypes.string,
+        PropTypes.shape({ id: PropTypes.string }),
+      ]),
     ),
     runs: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
   }).isRequired,
@@ -256,7 +379,6 @@ WorkspacePanels.propTypes = {
   overviewCounts: PropTypes.object,
   // Its real world content (stores/amendments/dependencies) for the Overview.
   overviewWorld: PropTypes.object,
-  // Its real capability-graph data (tools/flows/personas/guardrails) for Contract.
   graphData: PropTypes.object,
   // Starts a run scoped to the scenario selection × trials — (ids, trials).
   onStartRun: PropTypes.func,
@@ -265,4 +387,17 @@ WorkspacePanels.propTypes = {
   canRun: PropTypes.bool,
   // Why Run is unavailable, for the Scenarios selection bar's disabled Run.
   runBlockedReason: PropTypes.string,
+  tabWaits: PropTypes.objectOf(
+    PropTypes.shape({
+      phase: PropTypes.string.isRequired,
+      now: PropTypes.bool,
+      stopped: PropTypes.bool,
+    }),
+  ),
+  contractChat: PropTypes.shape({
+    send: PropTypes.func,
+    busy: PropTypes.bool,
+    live: PropTypes.bool,
+  }),
+  contractScenarios: PropTypes.arrayOf(PropTypes.object),
 };

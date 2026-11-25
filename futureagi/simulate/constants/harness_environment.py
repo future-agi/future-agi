@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Literal
 
 # The list's four status-pill states; the pipeline's finer stage travels alongside as ``stage``.
+STATUS_READING = "reading"
+STATUS_AWAITING_APPROVAL = "awaiting_approval"
 STATUS_BUILDING = "building"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"

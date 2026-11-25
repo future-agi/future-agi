@@ -23,6 +23,7 @@ from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
 )
+from .harness_scenario_tags import HarnessScenarioTags
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
@@ -93,6 +94,7 @@ __all__ = [
     "HarnessAssembledBundle",
     "HarnessEnvironmentVersion",
     "HarnessNudge",
+    "HarnessScenarioTags",
     "HarnessSuiteMember",
     "HarnessSuiteValidation",
     "HarnessSuiteVersion",

@@ -266,6 +266,28 @@ describe("useMyEnvironments", () => {
       unmount();
     });
 
+    it("polls slowly while the only building rows wait for approval", async () => {
+      listHarnessEnvironments.mockResolvedValue({
+        count: 2,
+        results: [
+          { ...envRow("env-w", "building"), stage: "awaiting_approval" },
+          envRow("env-c", "completed"),
+        ],
+      });
+      const { queryClient, query, unmount } = await renderList();
+      expect(query.options.refetchInterval(query)).toBe(30000);
+
+      queryClient.setQueryData(query.queryKey, {
+        count: 2,
+        results: [
+          { ...envRow("env-w", "building"), stage: "awaiting_approval" },
+          envRow("env-b", "building"),
+        ],
+      });
+      expect(query.options.refetchInterval(query)).toBe(3000);
+      unmount();
+    });
+
     it("stops polling once every row is finished", async () => {
       listHarnessEnvironments.mockResolvedValue({
         count: 1,

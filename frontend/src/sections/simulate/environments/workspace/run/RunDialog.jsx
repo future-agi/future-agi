@@ -25,6 +25,7 @@ import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
 import RunSeedLine from "./RunSeedLine";
+import { runsProblem } from "../scenarios/trialsLimits";
 
 // Only versions a run can take are offered: an active environment or scenario
 // version, an agent version the server marks pickable (its check passed), and
@@ -177,6 +178,7 @@ export default function RunDialog({
   } else if (!runAll && scenarioIds.length > 0 && runIds.length === 0) {
     blocked = COPY.noneInSuite(named(suite));
   }
+  if (!blocked && runIds) blocked = runsProblem(runIds.length, trials);
   // Tools that reach production are blocked in this controlled test.
   const blockedTools = plan.data ? plan.data.blocked_tools : [];
   if (!blocked && plan.data && !plan.data.runnable)

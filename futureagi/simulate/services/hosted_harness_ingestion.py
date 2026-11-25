@@ -29,6 +29,7 @@ from simulate.models import (
     HostedHarnessScenario,
 )
 from simulate.models.chat_message import ChatMessageModel
+from simulate.services.call_provider import record_harness_target
 from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -951,11 +952,14 @@ def _apply_receipt_to_call(
     if call_data:
         call.started_at, call.ended_at = receipt_call_times(call_data)
         call.completed_at = call.ended_at
-        call.duration_seconds = round(call_data["duration_ms"] / 1000)
+        call.duration_seconds = (
+            0 if _call_never_connected(body) else round(call_data["duration_ms"] / 1000)
+        )
     elif body["status"] == "skipped" or call.completed_at is None:
         # Every receipt ends its trial: one with no call data still gets its end, so its worker read is due.
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
+    record_harness_target(metadata, call)
     previous_receipt = metadata.get("hosted_harness_receipt") or {}
     if previous_receipt.get("digest") != body.get("digest"):
         metadata.pop("hosted_harness_recovered_artifact_ids", None)
@@ -1263,12 +1267,22 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     if isinstance(failure, dict) and failure.get("code") == "user_canceled":
         # Stopped by the user during the call: cancelled, whatever part of the call ran.
         return CallExecution.CallStatus.CANCELLED
+    if _call_never_connected(body):
+        return CallExecution.CallStatus.FAILED
     call = body.get("call")
     if isinstance(call, dict) and call.get("started_at") and call.get("ended_at"):
         return CallExecution.CallStatus.COMPLETED
     if outcome in {"passed", "failed"}:
         return CallExecution.CallStatus.COMPLETED
     return CallExecution.CallStatus.FAILED
+
+
+def _call_never_connected(body: dict[str, Any]) -> bool:
+    call = body.get("call")
+    if body["status"] != "errored" or not isinstance(call, dict):
+        return False
+    turns = call.get("turns")
+    return isinstance(turns, int) and not isinstance(turns, bool) and turns == 0
 
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:

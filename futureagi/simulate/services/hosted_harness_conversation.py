@@ -113,7 +113,12 @@ def serialize_conversation(
         "stage": conversation.current_stage,
         "active_invocation_id": conversation.active_invocation_id,
         "blocking_input": conversation.blocking_input,
-        "messages": [_serialize_message(message) for message in messages],
+        "messages": [
+            _serialize_message(
+                message, acked_through=conversation.command_acked_through
+            )
+            for message in messages
+        ],
         "events": [_serialize_event(event) for event in events],
         "event_watermark": conversation.event_acked_through,
         "runtime": {
@@ -402,6 +407,7 @@ def _fail_outstanding(
         updated_at=timezone.now(),
     )
     settle_interrupted_turn(conversation)
+    _close_open_question(conversation)
     conversation.state = state
     if abandoned:
         HostedHarnessConversationMessage.no_workspace_objects.create(
@@ -419,6 +425,7 @@ def _fail_outstanding(
             "state",
             "next_message_sequence",
             "active_invocation_id",
+            "blocking_input",
             "updated_at",
         ]
     )
@@ -494,6 +501,25 @@ def send_to_harness(
     schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
 
 
+def _refuse_while_design_review_pending(job: HostedHarnessJob) -> None:
+    from simulate.services.harness_design_review import (
+        awaiting_design_approval,
+        design_review_pending,
+    )
+
+    if not design_review_pending(job):
+        return
+    raise HostedHarnessError(
+        "design_review_pending",
+        (
+            "Approve or discard the design before changing it in the builder chat"
+            if awaiting_design_approval(job)
+            else "The agent is still being read; change the design once it is ready"
+        ),
+        status_code=409,
+    )
+
+
 def enqueue_message(
     job: HostedHarnessJob,
     *,
@@ -507,6 +533,7 @@ def enqueue_message(
 ) -> tuple[HostedHarnessConversation, HostedHarnessConversationMessage, bool]:
     """Queue a user command. ``server_payload`` holds the ``_`` keys only the platform
     sets; ``expected_revision`` is the environment revision when the caller read it."""
+    _refuse_while_design_review_pending(job)
     revision = (
         environment_authoring_revision(job)
         if expected_revision is None
@@ -571,6 +598,20 @@ def enqueue_message(
                 (conversation.blocking_input or {}).get("message_id") or ""
             )
             already_answered = conversation.messages.filter(reply_to=reply_to).exists()
+            if (
+                target is not None
+                and not already_answered
+                and (
+                    str(reply_to) != blocking_id
+                    or (target.payload or {}).get("closed_reason")
+                )
+            ):
+                raise HostedHarnessError(
+                    "conversation_question_closed",
+                    "That question closed when the turn that asked it ended. "
+                    "Send your answer as a new message.",
+                    status_code=409,
+                )
             if target is None or str(reply_to) != blocking_id or already_answered:
                 raise HostedHarnessError(
                     "conversation_reply_target_invalid",
@@ -1129,6 +1170,107 @@ def _ingest_event(
 ASKED_AGAIN = (
     "Not taken as the answer: the builder asked again. Answer with one of the options."
 )
+QUESTION_CLOSED = (
+    "Closed: the turn that asked this ended before it was answered. "
+    "Send what you want as a new message."
+)
+ANSWER_NOT_TAKEN = (
+    "Not taken: the turn that asked this had already ended. "
+    "Send it again as a new message."
+)
+
+_TURN_BOUNDARIES = ("turn_started", "turn_completed", "turn_interrupted")
+_QUESTION_EVENTS = ("question_requested", "confirmation_requested")
+
+
+def _questions_asked_this_turn(
+    conversation: HostedHarnessConversation, before_sequence: int
+) -> set[uuid.UUID]:
+    turn_began = (
+        conversation.events.filter(
+            kind__in=_TURN_BOUNDARIES, sequence__lt=before_sequence
+        )
+        .order_by("-sequence")
+        .values_list("sequence", flat=True)
+        .first()
+        or 0
+    )
+    return {
+        message_id
+        for message_id in conversation.events.filter(
+            kind__in=_QUESTION_EVENTS,
+            sequence__gt=turn_began,
+            sequence__lt=before_sequence,
+            message_id__isnull=False,
+        ).values_list("message_id", flat=True)
+        if message_id is not None
+    }
+
+
+def _close_open_question(conversation: HostedHarnessConversation) -> bool:
+    """End the open question of a turn that is over, so the chat takes a new message;
+    the question keeps why it closed. Whether one was open."""
+    blocking_id = (conversation.blocking_input or {}).get("message_id")
+    conversation.blocking_input = None
+    if not blocking_id:
+        return False
+    answered = (
+        conversation.messages.filter(
+            role=HostedHarnessConversationMessage.Role.USER, reply_to=blocking_id
+        )
+        .exclude(state=HostedHarnessConversationMessage.State.FAILED)
+        .exists()
+    )
+    question = conversation.messages.filter(
+        id=blocking_id, role=HostedHarnessConversationMessage.Role.ASSISTANT
+    ).first()
+    if question is not None and not answered:
+        question.payload = {
+            **(question.payload or {}),
+            "closed_reason": QUESTION_CLOSED,
+        }
+        question.save(update_fields=["payload", "updated_at"])
+    return True
+
+
+def _refuse_ignored_answer(
+    conversation: HostedHarnessConversation, command_id: Any
+) -> bool:
+    answer = conversation.messages.filter(
+        id=command_id,
+        role=HostedHarnessConversationMessage.Role.USER,
+        reply_to__isnull=False,
+    ).first()
+    if answer is None or answer.reply_to is None:
+        return False
+    answer.state = HostedHarnessConversationMessage.State.FAILED
+    answer.payload = {**(answer.payload or {}), "failure_reason": ANSWER_NOT_TAKEN}
+    answer.save(update_fields=["state", "payload", "updated_at"])
+    question = conversation.messages.filter(
+        id=answer.reply_to, role=HostedHarnessConversationMessage.Role.ASSISTANT
+    ).first()
+    if question is not None:
+        question.payload = {
+            **(question.payload or {}),
+            "closed_reason": QUESTION_CLOSED,
+        }
+        question.save(update_fields=["payload", "updated_at"])
+    return True
+
+
+def _close_taken_answers(conversation: HostedHarnessConversation) -> None:
+    conversation.messages.filter(
+        role=HostedHarnessConversationMessage.Role.USER,
+        reply_to__isnull=False,
+        sequence__lte=conversation.command_acked_through,
+        state__in=(
+            HostedHarnessConversationMessage.State.DELIVERED,
+            HostedHarnessConversationMessage.State.STREAMING,
+        ),
+    ).update(
+        state=HostedHarnessConversationMessage.State.COMPLETED,
+        updated_at=timezone.now(),
+    )
 
 
 def _project_event(
@@ -1146,7 +1288,7 @@ def _project_event(
         if not payload.get("resumed"):
             # A fresh turn means the turn that asked has ended, so its question can no longer be answered; a resumed
             # turn asks it again itself.
-            conversation.blocking_input = None
+            _close_open_question(conversation)
         command_id = payload.get("command_message_id")
         if command_id:
             conversation.messages.filter(
@@ -1221,13 +1363,16 @@ def _project_event(
         ).exists():
             # Asked again after a restart, but already answered.
             return
-        # An answer still queued for another question can't be taken any more: that question is closed and the builder
-        # asks this one in its place, so the person answers this one. The answer says why it stopped.
+        asked_this_turn = _questions_asked_this_turn(conversation, event["sequence"])
         for stale in conversation.messages.filter(
             role=HostedHarnessConversationMessage.Role.USER,
             state=HostedHarnessConversationMessage.State.QUEUED,
             reply_to__isnull=False,
         ).exclude(reply_to=message_id):
+            if stale.reply_to in asked_this_turn:
+                stale.state = HostedHarnessConversationMessage.State.COMPLETED
+                stale.save(update_fields=["state", "updated_at"])
+                continue
             stale.state = HostedHarnessConversationMessage.State.FAILED
             stale.payload = {**(stale.payload or {}), "failure_reason": ASKED_AGAIN}
             stale.save(update_fields=["state", "payload", "updated_at"])
@@ -1247,6 +1392,8 @@ def _project_event(
                 id=control_id,
                 role=HostedHarnessConversationMessage.Role.USER,
             ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
+        _close_taken_answers(conversation)
+        _close_open_question(conversation)
         conversation.state = HostedHarnessConversation.State.WARM_IDLE
         conversation.active_invocation_id = None
         return
@@ -1257,6 +1404,13 @@ def _project_event(
                 id=command_id,
                 role=HostedHarnessConversationMessage.Role.USER,
             ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
+        _close_taken_answers(conversation)
+        ignored = bool(command_id and payload.get("ignored")) and (
+            _refuse_ignored_answer(conversation, command_id)
+        )
+        closed = (ignored or payload.get("outcome") == "failed") and (
+            _close_open_question(conversation)
+        )
         blocking_message_id = (conversation.blocking_input or {}).get("message_id")
         answered = bool(
             blocking_message_id
@@ -1271,6 +1425,7 @@ def _project_event(
         if (
             conversation.state != HostedHarnessConversation.State.WAITING_FOR_USER
             or answered
+            or closed
         ):
             conversation.state = HostedHarnessConversation.State.WARM_IDLE
         conversation.active_invocation_id = None
@@ -2485,13 +2640,26 @@ def _workspace_scenario_count(body: bytes) -> int:
         )
 
 
-def _serialize_message(message: HostedHarnessConversationMessage) -> dict[str, Any]:
+def _shown_state(message: HostedHarnessConversationMessage, acked_through: int) -> str:
+    if (
+        message.role == HostedHarnessConversationMessage.Role.USER
+        and message.reply_to is not None
+        and message.state == HostedHarnessConversationMessage.State.DELIVERED
+        and message.sequence <= acked_through
+    ):
+        return HostedHarnessConversationMessage.State.COMPLETED
+    return message.state
+
+
+def _serialize_message(
+    message: HostedHarnessConversationMessage, *, acked_through: int = 0
+) -> dict[str, Any]:
     return {
         "message_id": str(message.id),
         "sequence": message.sequence,
         "role": message.role,
         "kind": message.kind,
-        "state": message.state,
+        "state": _shown_state(message, acked_through),
         "stage": message.stage,
         # A rebuild's briefing is for its sandbox; the workspace shows its labels.
         "content": (

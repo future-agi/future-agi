@@ -141,7 +141,21 @@ function SetupCode() {
  * project is the user saying they flow. The observability switch, which only
  * exports simulation spans, is left as it is.
  */
-export function ConnectTracesDrawer({ agent, open, onClose, canEdit }) {
+const DRAWER_TITLE = {
+  both: "Connect production traces",
+  link: "Link an Observe project",
+  setup: "Set up tracing",
+};
+
+export function ConnectTracesDrawer({
+  agent,
+  open,
+  onClose,
+  canEdit,
+  mode = "both",
+}) {
+  const showSetup = mode !== "link";
+  const showLink = mode !== "setup";
   const { enqueueSnackbar } = useSnackbar();
   const linked = agent.observeProject;
   const [picked, setPicked] = useState(linked);
@@ -203,69 +217,80 @@ export function ConnectTracesDrawer({ agent, open, onClose, canEdit }) {
           id="connect-traces-title"
           sx={{ typography: "s1_2", fontWeight: 600, flex: 1 }}
         >
-          Connect production traces
+          {DRAWER_TITLE[mode]}
         </Typography>
         <IconButton size="small" onClick={close} aria-label="Close">
           <Iconify icon="solar:close-circle-linear" width={20} />
         </IconButton>
       </Stack>
       <Box sx={{ px: 3, py: 3, flex: 1, overflowY: "auto" }}>
-        {open && <SetupCode />}
+        {open && showSetup && <SetupCode />}
+        {open && !showSetup && (
+          <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
+            This agent already sends traces. Pick the Observe project its app
+            registers them with.
+          </Typography>
+        )}
       </Box>
-      <Stack
-        spacing={1}
-        sx={{
-          px: 3,
-          py: 2,
-          borderTop: "1px solid",
-          borderColor: "divider",
-          bgcolor: "background.paper",
-        }}
-      >
-        <Typography
-          component="label"
-          htmlFor="production-project"
-          sx={{ typography: "s2_1", fontWeight: 500 }}
+      {showLink && (
+        <Stack
+          spacing={1}
+          sx={{
+            px: 3,
+            py: 2,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+          }}
         >
-          Observe project
-        </Typography>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Autocomplete
-            id="production-project"
-            size="small"
-            options={options}
-            value={picked}
-            loading={projects.isLoading}
-            disabled={!canEdit}
-            onChange={(_, value) => setPicked(value)}
-            getOptionLabel={(o) => o.name}
-            isOptionEqualToValue={(a, b) => a.id === b?.id}
-            noOptionsText={
-              projects.isError
-                ? "Couldn't load projects"
-                : "No Observe projects"
-            }
-            sx={{ flex: 1 }}
-            renderInput={(params) => (
-              <TextField {...params} placeholder="Choose a project" />
-            )}
-          />
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            disabled={
-              !picked || picked.id === linked?.id || !canEdit || link.isPending
-            }
-            onClick={onLink}
+          <Typography
+            component="label"
+            htmlFor="production-project"
+            sx={{ typography: "s2_1", fontWeight: 500 }}
           >
-            Link project
-          </Button>
+            Observe project
+          </Typography>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Autocomplete
+              id="production-project"
+              size="small"
+              options={options}
+              value={picked}
+              loading={projects.isLoading}
+              disabled={!canEdit}
+              onChange={(_, value) => setPicked(value)}
+              getOptionLabel={(o) => o.name}
+              isOptionEqualToValue={(a, b) => a.id === b?.id}
+              noOptionsText={
+                projects.isError
+                  ? "Couldn't load projects"
+                  : "No Observe projects"
+              }
+              sx={{ flex: 1 }}
+              renderInput={(params) => (
+                <TextField {...params} placeholder="Choose a project" />
+              )}
+            />
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={
+                !picked ||
+                picked.id === linked?.id ||
+                !canEdit ||
+                link.isPending
+              }
+              onClick={onLink}
+            >
+              Link project
+            </Button>
+          </Stack>
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            Once your app sends traces, pick the project you registered it with.
+          </Typography>
         </Stack>
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          Once your app sends traces, pick the project you registered it with.
-        </Typography>
-      </Stack>
+      )}
     </Drawer>
   );
 }
@@ -275,6 +300,7 @@ ConnectTracesDrawer.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   canEdit: PropTypes.bool.isRequired,
+  mode: PropTypes.oneOf(["both", "link", "setup"]),
 };
 
 function PathCell({

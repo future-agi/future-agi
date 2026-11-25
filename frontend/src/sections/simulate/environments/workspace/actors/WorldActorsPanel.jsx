@@ -1,5 +1,7 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { harnessEnvironmentQuery } from "src/api/simulate-environments/environment";
 import { Alert, Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
@@ -18,10 +20,14 @@ import ActorRelations from "./ActorRelations";
 import ActorRow from "./ActorRow";
 import ActorSideGroups from "./ActorSideGroups";
 import ActorsSkeleton from "./ActorsSkeleton";
+import CustomTooltip from "src/components/tooltip";
 import AddActorMenu from "./AddActorMenu";
 import { ACTORS_COPY } from "./actors.constants";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
 
 const C = ACTORS_COPY.worldActors;
+const CALLER_ID = "caller";
 const OUTLINED = {
   color: "text.primary",
   borderColor: "divider",
@@ -29,8 +35,18 @@ const OUTLINED = {
 };
 
 // Edits go to the draft; a version changes only when the draft is saved.
-export default function WorldActorsPanel({ envId, locked = false }) {
+export default function WorldActorsPanel({
+  envId,
+  locked = false,
+  lockReason = null,
+}) {
+  const { canEdit } = useSimulationAccess();
+  const reason = lockReason || (canEdit ? null : WORKSPACE_COPY.viewer.actors);
+  const held = Boolean(reason);
   const { data, isPending, isError, refetch } = useActors(envId);
+  const { data: detail } = useQuery(harnessEnvironmentQuery(envId));
+  const personas = detail?.overview?.personas_count;
+  const scenarioTotal = detail?.overview?.scenario_count;
   const edit = useEditActor(envId);
   const limits = useSetActorLimits(envId);
   const accept = useAcceptUnresolved(envId);
@@ -128,18 +144,26 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     edit.isPending && edit.variables?.op === "delete"
       ? edit.variables.actorId
       : null;
+  const callerLine =
+    personas != null && scenarioTotal != null
+      ? C.callerTask(personas, scenarioTotal)
+      : C.callerScenarios(
+          cast.find((one) => one.id === CALLER_ID)?.scenarios ?? 0,
+        );
   const rows = (group) =>
     group.map((actor) => (
       <ActorRow
         key={actor.id}
         envId={envId}
         actor={actor}
+        callerLine={actor.id === CALLER_ID ? callerLine : null}
         locked={locked}
         onEdit={() => openForm(actor)}
         onRemove={() => remove(actor)}
         loudChannels={loudChannels}
         deleting={actor.id === deletingId}
-        busy={edit.isPending}
+        busy={edit.isPending || held}
+        busyReason={reason}
       />
     ));
 
@@ -162,11 +186,29 @@ export default function WorldActorsPanel({ envId, locked = false }) {
 
   return (
     <Box sx={{ p: 2 }}>
-      <Typography
-        sx={{ typography: "s2", color: "text.secondary", maxWidth: 780, mb: 2 }}
-      >
-        {C.intro}
-      </Typography>
+      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.secondary",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          {C.intro}
+        </Typography>
+        {!locked && (
+          <CustomTooltip show arrow size="small" title={reason || ""}>
+            <Box component="span" sx={{ display: "inline-flex" }}>
+              <AddActorMenu
+                label={C.add}
+                disabled={edit.isPending || held}
+                onPick={addOn}
+              />
+            </Box>
+          </CustomTooltip>
+        )}
+      </Stack>
       <Stack spacing={1} sx={{ mb: 2, "&:empty": { display: "none" } }}>
         {(edit.isPaused || limits.isPaused) && (
           <Alert severity="info">{C.offline}</Alert>
@@ -211,7 +253,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
                           size="small"
                           variant="outlined"
                           sx={OUTLINED}
-                          disabled={accept.isPending}
+                          disabled={accept.isPending || held}
                           onClick={() =>
                             once(accept, { policy: point.policy, revision })
                           }
@@ -223,12 +265,17 @@ export default function WorldActorsPanel({ envId, locked = false }) {
                             size="small"
                             variant="outlined"
                             sx={OUTLINED}
+                            disabled={held}
                             onClick={() => openForm(about)}
                           >
                             {C.unresolved.edit}
                           </Button>
                         ) : (
-                          <AddActorMenu label={C.add} onPick={addOn} />
+                          <AddActorMenu
+                            label={C.add}
+                            disabled={held}
+                            onPick={addOn}
+                          />
                         )}
                       </Stack>
                     )}
@@ -246,17 +293,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       )}
       <SectionCard
         title={C.groupTitle(C.title, cast.length)}
-        subtitle={C.everyoneAbout}
+        subtitle={C.inEveryRun}
         sx={{ mb: 2 }}
-        action={
-          !locked && (
-            <AddActorMenu
-              label={C.add}
-              disabled={edit.isPending}
-              onPick={addOn}
-            />
-          )
-        }
       >
         {cast.length === 0 ? (
           <Typography
@@ -287,8 +325,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
             limits={data.limits}
             fields={data.limit_fields}
             models={data.actor_models}
-            locked={locked}
-            busy={limits.isPending}
+            locked={locked || !canEdit}
+            busy={limits.isPending || held}
             error={limits.error}
             onSave={(next, done) =>
               once(limits, { limits: next, revision }, { onSuccess: done })
@@ -350,4 +388,5 @@ export default function WorldActorsPanel({ envId, locked = false }) {
 WorldActorsPanel.propTypes = {
   envId: PropTypes.string.isRequired,
   locked: PropTypes.bool,
+  lockReason: PropTypes.string,
 };

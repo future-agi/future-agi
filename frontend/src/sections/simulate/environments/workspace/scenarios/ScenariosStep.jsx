@@ -10,6 +10,7 @@ import { useSnackbar } from "notistack";
 import { useSearchParams } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
+import { filterKeyOf } from "src/components/filter-panel/filterKeys";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
@@ -48,6 +49,7 @@ import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHook
 import { useDebounce } from "src/hooks/use-debounce";
 import useSelection from "./useSelection";
 import PagedScenarioViews from "./PagedScenarioViews";
+import BulkTagMenu from "./BulkTagMenu";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // carries this on its tooltip while locked.
@@ -66,13 +68,14 @@ function AddButton({
   contained = false,
   locked = false,
   short = false,
+  lockTip = LOCK_TOOLTIP,
 }) {
   return (
     <CustomTooltip
       show
       arrow
       size="small"
-      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.addComingSoon}
+      title={locked ? lockTip : SCENARIOS_COPY.addComingSoon}
     >
       <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
         <Button
@@ -91,6 +94,7 @@ function AddButton({
   );
 }
 AddButton.propTypes = {
+  lockTip: PropTypes.string,
   onClick: PropTypes.func,
   contained: PropTypes.bool,
   locked: PropTypes.bool,
@@ -99,17 +103,28 @@ AddButton.propTypes = {
 
 // Shown when the environment has no scenarios at all — rare, since they are
 // normally derived when the environment is built.
-function RoutePlaceholder({ onAdd, locked = false }) {
+function RoutePlaceholder({ onAdd, locked = false, lockTip }) {
   return (
     <EmptyState
       icon="solar:widget-add-linear"
       title={SCENARIOS_COPY.emptyTitle}
       body={SCENARIOS_COPY.emptyBody}
-      action={<AddButton onClick={onAdd} contained locked={locked} />}
+      action={
+        <AddButton
+          onClick={onAdd}
+          contained
+          locked={locked}
+          lockTip={lockTip}
+        />
+      }
     />
   );
 }
-RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
+RoutePlaceholder.propTypes = {
+  lockTip: PropTypes.string,
+  onAdd: PropTypes.func,
+  locked: PropTypes.bool,
+};
 
 // Scenarios tab body. The scenarios are already here — derived when the
 // environment is built — so the page leads with them: one toolbar (search,
@@ -121,6 +136,7 @@ export default function ScenariosStep({
   envState,
   patch,
   locked = false,
+  lockReason = null,
   onStartRun,
   runDialogOpen = false,
   canRun = false,
@@ -143,10 +159,10 @@ export default function ScenariosStep({
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
   const { canEdit } = useSimulationAccess();
-  const rowsLocked = locked || !canEdit;
-  const rowsLockTooltip = locked
-    ? LOCK_TOOLTIP
-    : WORKSPACE_COPY.viewer.scenarios;
+  const held = locked || Boolean(lockReason);
+  const lockTip = lockReason || LOCK_TOOLTIP;
+  const rowsLocked = held || !canEdit;
+  const rowsLockTooltip = held ? lockTip : WORKSPACE_COPY.viewer.scenarios;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -163,6 +179,7 @@ export default function ScenariosStep({
   // no create route to restore from), so a drop is confirmed first, then run.
   // { count, resolve: () => Promise<string[]> } — resolve yields the names to drop.
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [tagAnchor, setTagAnchor] = useState(null);
   // Grouping axis. Users read the scenarios differently depending on what
   // they're after: by goal for coverage, by persona to spot a caller type the
   // agent handles badly, by sub-goal to see which step everyone lands on. Left
@@ -268,6 +285,11 @@ export default function ScenariosStep({
     [pageData.scenarioEditing],
   );
 
+  const fieldTypes = useMemo(
+    () => Object.fromEntries(filterFields.map((f) => [f.value, f.type])),
+    [filterFields],
+  );
+
   const filterCount = Object.values(filters).reduce(
     (sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0),
     0,
@@ -292,10 +314,7 @@ export default function ScenariosStep({
             ? [r.value]
             : [];
         if (!values.length) return;
-        const key =
-          r.operator === "is_not" || r.operator === "not_equals"
-            ? `${r.field}_not`
-            : r.field;
+        const key = filterKeyOf(r, fieldTypes[r.field], true);
         flat[key] = [...(flat[key] || []), ...values];
       });
       setFilters(flat);
@@ -519,7 +538,11 @@ export default function ScenariosStep({
           body="Something went wrong loading this environment's scenarios. Try again."
         />
       ) : !hasScenarios ? (
-        <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
+        <RoutePlaceholder
+          onAdd={() => setAdding(true)}
+          locked={held}
+          lockTip={lockTip}
+        />
       ) : (
         <ClickAwayListener onClickAway={handleClickAway}>
           <Box
@@ -597,7 +620,8 @@ export default function ScenariosStep({
                       <AddButton
                         onClick={() => setAdding(true)}
                         contained
-                        locked={locked}
+                        locked={held}
+                        lockTip={lockTip}
                         short
                       />
                     </>
@@ -620,6 +644,7 @@ export default function ScenariosStep({
                       count={sel.count}
                       onDelete={bulkDelete}
                       onClear={sel.clear}
+                      onTag={held || !env?.id ? undefined : setTagAnchor}
                       onRun={
                         canRun && onStartRun ? handleRunSelected : undefined
                       }
@@ -635,6 +660,19 @@ export default function ScenariosStep({
                         onSelectAll: sel.selectAllMatching,
                       }}
                     />
+                    {env?.id && (
+                      <BulkTagMenu
+                        envId={env.id}
+                        anchorEl={tagAnchor}
+                        onClose={() => setTagAnchor(null)}
+                        count={sel.count}
+                        resolveKeys={() => resolveSelection(runnableScenarioKey)}
+                        onDone={() => {
+                          setTagAnchor(null);
+                          sel.clear();
+                        }}
+                      />
+                    )}
                   </Box>
                 </Box>
               )}
@@ -755,6 +793,7 @@ export default function ScenariosStep({
 }
 
 ScenariosStep.propTypes = {
+  lockReason: PropTypes.string,
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE.isRequired,
   patch: PropTypes.func.isRequired,

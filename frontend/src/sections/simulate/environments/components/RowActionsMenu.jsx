@@ -19,6 +19,8 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
   const active = menuFor?.row;
   const { canEdit, canRun } = useSimulationAccess();
   const buildingActive = [
+    ENV_STATUS.AWAITING_APPROVAL,
+    ENV_STATUS.READING,
     ENV_STATUS.BUILDING,
     ENV_STATUS.FINALIZING,
     ENV_STATUS.CANCELLING,

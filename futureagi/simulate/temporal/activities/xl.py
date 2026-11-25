@@ -20,6 +20,7 @@ accumulate and hit PgBouncer's pool limit (~20 by default).
 """
 
 import asyncio
+import json
 import traceback
 from functools import partial
 from itertools import chain
@@ -217,6 +218,39 @@ def hosted_assistant_recording(call_execution):
     return server_reachable_url(recording.get("url") or "")
 
 
+_EVAL_TOOL_CALL_LIMIT = 50
+_EVAL_TOOL_TEXT_LIMIT = 200
+
+
+def sealed_tool_call_lines(provider_call_data) -> list[str]:
+    livekit = (
+        provider_call_data.get("livekit")
+        if isinstance(provider_call_data, dict)
+        else None
+    )
+    calls = livekit.get("tool_calls") if isinstance(livekit, dict) else None
+    if not isinstance(calls, list):
+        return []
+    lines = []
+    for call in calls[:_EVAL_TOOL_CALL_LIMIT]:
+        if not isinstance(call, dict):
+            continue
+        arguments = json.dumps(call.get("arguments") or {}, default=str, sort_keys=True)
+        arguments = arguments[:_EVAL_TOOL_TEXT_LIMIT]
+        if call.get("refused"):
+            outcome = "refused"
+        elif call.get("ok") is False:
+            outcome = "failed"
+        else:
+            outcome = "ok"
+        error = " ".join(str(call.get("error") or "").split())
+        line = f"{call.get('name') or 'unknown_tool'}({arguments}) -> {outcome}"
+        if outcome != "ok":
+            line += f": {error[:_EVAL_TOOL_TEXT_LIMIT] or 'no error given'}"
+        lines.append(line)
+    return lines
+
+
 def _build_transcript_data(call_execution):
     """
     Build transcript data dict from DB records.
@@ -323,6 +357,11 @@ def _build_transcript_data(call_execution):
                         is_outbound=is_outbound,
                     )
                     transcript_text.append(f"{eval_role}: {transcript.content}")
+
+            tool_lines = sealed_tool_call_lines(call_execution.provider_call_data)
+            if tool_lines:
+                transcript_text.append("=== TOOL CALLS ===")
+                transcript_text.extend(tool_lines)
 
             transcript_data["transcript"] = "\n".join(transcript_text)
             transcript_data["user_chat_transcript"] = "\n".join(

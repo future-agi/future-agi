@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -58,6 +59,13 @@ from simulate.serializers.harness_actors import (
     HarnessEnvironmentFileUploadSerializer,
     editor_problems,
 )
+from simulate.serializers.harness_design_review import (
+    DesignApproveRequestSerializer,
+    DesignEditRequestSerializer,
+    DesignImpactQuerySerializer,
+    DesignImpactSerializer,
+    DesignReviewSerializer,
+)
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentPolicyResponseSerializer,
@@ -71,8 +79,12 @@ from simulate.serializers.harness_environment import (
     HarnessDraftsSerializer,
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
+    HarnessEnvironmentBuildRetrySerializer,
+    HarnessEnvironmentDetailQuerySerializer,
     HarnessEnvironmentDetailSerializer,
+    HarnessEnvironmentDetailV2Serializer,
     HarnessEnvironmentEvalEditSerializer,
+    HarnessEnvironmentEvalRequirementSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
     HarnessEnvironmentRenameSerializer,
@@ -135,7 +147,7 @@ from simulate.services.harness_verify import require_default_suite, start_verify
 from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from simulate.views.harness_starting_records import HarnessStartingRecordsMixin
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import ManagementAPIAutoSchema, validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import (
     ApiErrorWithDetailsResponseSerializer,
@@ -278,6 +290,21 @@ def _editable_import(job, identifier):
             status_code=409,
         )
     return evidence_import
+
+
+class HarnessEnvironmentDetailAutoSchema(ManagementAPIAutoSchema):
+    def get_response_serializers(self):
+        return {
+            **super().get_response_serializers(),
+            200: HarnessEnvironmentDetailSerializer,
+        }
+
+    def get_responses(self):
+        responses = super().get_responses()
+        responses["200"]["x-contract-version-2"] = self.serializer_to_schema(
+            HarnessEnvironmentDetailV2Serializer()
+        )
+        return responses
 
 
 class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
@@ -635,6 +662,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             return self._not_found()
         return Response(harness_actor_reads.read_actors(job))
 
+    @viewer_denied("change actors")
     @validated_request(
         request_serializer=HarnessActorWriteSerializer,
         responses={200: HarnessActorListSerializer},
@@ -669,6 +697,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("change actors")
     @validated_request(
         request_serializer=HarnessActorWriteSerializer,
         responses={200: HarnessActorListSerializer},
@@ -682,6 +711,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """Replace one actor in the draft, as a whole record or as changes to it; its id never changes."""
         return self._actor_edit(request, pk, op="replace", actor_id=actor_id)
 
+    @viewer_denied("change actors")
     @validated_request(
         query_serializer=HarnessActorDeleteQuerySerializer,
         responses={200: HarnessActorListSerializer},
@@ -693,6 +723,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """Take one actor out of the draft; refused while a scenario includes it."""
         return self._actor_edit(request, pk, op="delete", actor_id=actor_id)
 
+    @viewer_denied("change actors")
     @validated_request(
         request_serializer=HarnessActorValidateSerializer,
         responses={200: HarnessActorValidationSerializer},
@@ -733,6 +764,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("change actor limits")
     @validated_request(
         request_serializer=HarnessActorLimitsWriteSerializer,
         responses={200: HarnessActorListSerializer},
@@ -759,6 +791,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("change actors")
     @validated_request(
         request_serializer=HarnessActorUnresolvedAcceptSerializer,
         responses={200: HarnessActorListSerializer},
@@ -903,6 +936,149 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             return self._not_found()
         discard_draft(job, piece, user=request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        responses={200: DesignReviewSerializer},
+        operation_id="simulate_api_harness-environments_design_review",
+    )
+    @action(detail=True, methods=["get"], url_path="design-review")
+    def design_review(self, request, pk=None):
+        from simulate.services.harness_design_review import design_document
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(design_document(job))
+
+    @viewer_denied("change the environment's design")
+    @validated_request(
+        request_serializer=DesignEditRequestSerializer,
+        responses={200: DesignReviewSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_design_review_edit",
+    )
+    @action(detail=True, methods=["post"], url_path="design-review/edits")
+    def add_design_edit(self, request, pk=None):
+        from simulate.services.harness_design_review import add_edit, design_document
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        job = add_edit(
+            job,
+            op=body["op"],
+            kind=body["kind"],
+            item_id=body["id"],
+            text=body.get("text"),
+            user=request.user,
+        )
+        return Response(design_document(job))
+
+    @viewer_denied("change the environment's design")
+    @swagger_auto_schema(
+        responses={200: DesignReviewSerializer},
+        operation_id="simulate_api_harness-environments_design_review_undo",
+    )
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"design-review/edits/(?P<edit_id>[0-9a-f]{32})",
+    )
+    def undo_design_edit(self, request, pk=None, edit_id=None):
+        from simulate.services.harness_design_review import design_document, undo_edit
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        job = undo_edit(job, edit_id, user=request.user)
+        return Response(design_document(job))
+
+    @validated_request(
+        query_serializer=DesignImpactQuerySerializer,
+        responses={200: DesignImpactSerializer},
+        operation_id="simulate_api_harness-environments_design_review_impact",
+    )
+    @action(detail=True, methods=["get"], url_path="design-review/impact")
+    def design_impact(self, request, pk=None):
+        from simulate.services.harness_design_review import impact
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        query = request.validated_query_data
+        return Response(impact(job, query["kind"], query["id"]))
+
+    @viewer_denied("approve the environment's design")
+    @validated_request(
+        request_serializer=DesignApproveRequestSerializer,
+        responses={200: DesignReviewSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_design_review_approve",
+    )
+    @action(detail=True, methods=["post"], url_path="design-review/approve")
+    def approve_design(self, request, pk=None):
+        from simulate.services.harness_design_review import approve, design_document
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        base_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
+        job = approve(
+            job,
+            user=request.user,
+            base_url=base_url,
+            revision=request.validated_data["revision"],
+        )
+        return Response(design_document(job))
+
+    @viewer_denied("start the build again")
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={202: HarnessEnvironmentBuildRetrySerializer},
+        operation_id="simulate_api_harness-environments_build_retry",
+        operation_description=(
+            "Start a stopped build again from its approved design. A build that "
+            "already froze its world and scenarios resumes at the release checks."
+        ),
+    )
+    @action(detail=True, methods=["post"], url_path="build/retry")
+    def retry_build(self, request, pk=None):
+        from simulate.services.harness_build_retry import retry_failed_build
+        from simulate.services.hosted_harness_ingress import _public_base_url
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        job, resume_from = retry_failed_build(
+            job, user=request.user, base_url=_public_base_url(request)
+        )
+        return Response(
+            {
+                "environment_id": str(job.id),
+                "state": job.state,
+                "resume_from": resume_from,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @viewer_denied("discard the environment's design")
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: DesignReviewSerializer},
+        operation_id="simulate_api_harness-environments_design_review_discard",
+    )
+    @action(detail=True, methods=["post"], url_path="design-review/discard")
+    def discard_design(self, request, pk=None):
+        from simulate.services.harness_design_review import design_document, discard
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(design_document(discard(job, user=request.user)))
 
     @validated_request(
         request_serializer=EvidenceImportCreateSerializer,
@@ -1322,7 +1498,10 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         response.data["status_counts"] = status_counts(self._scoped_jobs(request))
         return response
 
-    @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
+    @validated_request(
+        query_serializer=HarnessEnvironmentDetailQuerySerializer,
+        auto_schema=HarnessEnvironmentDetailAutoSchema,
+    )
     def retrieve(self, request, pk=None):
         """One environment: overview, contract, world, scenarios, evaluations, settings.
 
@@ -1336,9 +1515,14 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 {"detail": "Environment not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(
-            detail_without(environment_detail(job), _held_back_from(request, job))
+        version = request.validated_query_data["contract_version"]
+        detail = detail_without(
+            environment_detail(job, contract_version=version),
+            _held_back_from(request, job),
         )
+        if version == 2:
+            return Response(HarnessEnvironmentDetailV2Serializer(detail).data)
+        return Response(detail)
 
     @viewer_denied("edit an environment")
     @validated_request(
@@ -1454,18 +1638,24 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         the verdicts they were given, so adding an eval does not backfill a
         column onto past results.
         """
+        from simulate.services.harness_eval_suggestions import (
+            add_eval_with_requirement,
+        )
         from simulate.services.harness_evals import (
             EvalSelectionFull,
             EvalSelectionRefused,
-            add_selected_eval,
         )
 
         job, refusal = self._run_test_job(request, pk)
         if refusal is not None:
             return refusal
         try:
-            add_selected_eval(
-                job.run_test, request.validated_data["name"], eval_modality(job)
+            add_eval_with_requirement(
+                job.run_test,
+                request.validated_data["name"],
+                eval_modality(job),
+                required=request.validated_data.get("required"),
+                pass_threshold=request.validated_data.get("pass_threshold"),
             )
         except EvalSelectionFull as full:
             return Response({"detail": str(full)}, status=status.HTTP_409_CONFLICT)
@@ -1815,6 +2005,48 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         config.save(update_fields=["deleted", "deleted_at", "updated_at"])
         _touch_content(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @viewer_denied("edit evaluations")
+    @validated_request(
+        request_serializer=HarnessEnvironmentEvalRequirementSerializer,
+        responses={200: HarnessEnvironmentDetailSerializer},
+        reject_unknown_fields=True,
+        operation_description=(
+            "Set whether one added eval is required, and the score from 0 to 1 "
+            "it must reach. Either may be sent alone."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path=r"evaluations/(?P<eval_config_id>[0-9a-fA-F-]{36})/requirement",
+    )
+    def eval_requirement(self, request, pk=None, eval_config_id=None):
+        from simulate.services.harness_eval_suggestions import set_eval_requirement
+
+        job, refusal = self._run_test_job(request, pk)
+        if refusal is not None:
+            return refusal
+        config_id = _uuid_or_none(eval_config_id)
+        updated = (
+            set_eval_requirement(
+                job.run_test,
+                config_id,
+                required=request.validated_data.get("required"),
+                pass_threshold=request.validated_data.get("pass_threshold"),
+            )
+            if config_id is not None
+            else None
+        )
+        if updated is None:
+            return Response(
+                build_error_envelope(
+                    "Evaluation not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        _touch_content(job)
+        return Response(environment_detail(job))
 
     @viewer_denied("edit evaluations")
     @validated_request(

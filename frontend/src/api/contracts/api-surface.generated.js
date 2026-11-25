@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1206,
+  endpointCount: 1217,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -909,6 +909,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/simulate/api/call-executions/": ["get"],
       "/simulate/api/harness-environments/": ["get"],
+      "/simulate/api/harness-environments/{environment_id}/scenario-tags/": [
+        "get",
+      ],
+      "/simulate/api/harness-environments/{environment_id}/scenario-tags/change/":
+        ["post"],
+      "/simulate/api/harness-environments/{environment_id}/scenario-tags/scenarios/{scenario_key}/":
+        ["put"],
       "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
       "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
       "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": [
@@ -922,7 +929,19 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "put",
       ],
       "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
+      "/simulate/api/harness-environments/{id}/build/retry/": ["post"],
       "/simulate/api/harness-environments/{id}/compare/": ["get"],
+      "/simulate/api/harness-environments/{id}/design-review/": ["get"],
+      "/simulate/api/harness-environments/{id}/design-review/approve/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/design-review/discard/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/design-review/edits/": ["post"],
+      "/simulate/api/harness-environments/{id}/design-review/edits/{edit_id}/":
+        ["delete"],
+      "/simulate/api/harness-environments/{id}/design-review/impact/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
       "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],
@@ -933,6 +952,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "delete",
         "patch",
       ],
+      "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/requirement/":
+        ["patch"],
       "/simulate/api/harness-environments/{id}/evidence-imports/": [
         "get",
         "post",
@@ -2382,6 +2403,12 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/call-executions/": ["get"],
   "/simulate/api/harness-environments/": ["get"],
+  "/simulate/api/harness-environments/{environment_id}/scenario-tags/": ["get"],
+  "/simulate/api/harness-environments/{environment_id}/scenario-tags/change/": [
+    "post",
+  ],
+  "/simulate/api/harness-environments/{environment_id}/scenario-tags/scenarios/{scenario_key}/":
+    ["put"],
   "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
   "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
   "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": ["post"],
@@ -2393,7 +2420,16 @@ export const API_SURFACE_PATHS = Object.freeze({
     "put",
   ],
   "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
+  "/simulate/api/harness-environments/{id}/build/retry/": ["post"],
   "/simulate/api/harness-environments/{id}/compare/": ["get"],
+  "/simulate/api/harness-environments/{id}/design-review/": ["get"],
+  "/simulate/api/harness-environments/{id}/design-review/approve/": ["post"],
+  "/simulate/api/harness-environments/{id}/design-review/discard/": ["post"],
+  "/simulate/api/harness-environments/{id}/design-review/edits/": ["post"],
+  "/simulate/api/harness-environments/{id}/design-review/edits/{edit_id}/": [
+    "delete",
+  ],
+  "/simulate/api/harness-environments/{id}/design-review/impact/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
   "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],
@@ -2404,6 +2440,8 @@ export const API_SURFACE_PATHS = Object.freeze({
     "delete",
     "patch",
   ],
+  "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/requirement/":
+    ["patch"],
   "/simulate/api/harness-environments/{id}/evidence-imports/": ["get", "post"],
   "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": [
     "delete",

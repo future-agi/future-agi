@@ -67,7 +67,17 @@ def test_status_filter_matches_the_status_each_row_reports(
             )
         )
     }
+    reading = _set(
+        _environment(agent, 9),
+        state=State.RECEIVED,
+        current_stage="understanding_agent",
+    )
+    awaiting = _set(
+        _environment(agent, 10), state=State.RECEIVED, current_stage="awaiting_approval"
+    )
     expected = {
+        "reading": {State.RECEIVED},
+        "awaiting_approval": {"awaiting"},
         "building": {State.QUEUED, State.PROVISIONING},
         "running": {State.RUNNING, State.FINALIZING, State.CLEANING_UP},
         "completed": {State.COMPLETED},
@@ -76,11 +86,27 @@ def test_status_filter_matches_the_status_each_row_reports(
 
     for wanted, states in expected.items():
         body = _get(auth_client, workspace, status=wanted)
-        assert _ids(body) == {str(by_state[s].id) for s in states}
+        assert _ids(body) == {
+            str(
+                awaiting.id
+                if s == "awaiting"
+                else reading.id
+                if s == State.RECEIVED
+                else by_state[s].id
+            )
+            for s in states
+        }
         assert {row["status"] for row in body["results"]} == {wanted}
 
     counts = _get(auth_client, workspace, status="failed")["status_counts"]
-    assert counts == {"building": 2, "running": 3, "completed": 1, "failed": 2}
+    assert counts == {
+        "reading": 1,
+        "awaiting_approval": 1,
+        "building": 2,
+        "running": 3,
+        "completed": 1,
+        "failed": 2,
+    }
 
 
 @pytest.mark.django_db

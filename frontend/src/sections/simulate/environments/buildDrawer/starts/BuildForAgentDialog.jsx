@@ -88,12 +88,6 @@ function DialogBody({ agent, onClose, subtitle }) {
   const typed = Math.floor(Number(countText));
   const countOk =
     Number.isFinite(typed) && typed >= MIN_SCENARIOS && typed <= MAX_SCENARIOS;
-  const count = countOk
-    ? typed
-    : Math.min(
-        MAX_SCENARIOS,
-        Math.max(MIN_SCENARIOS, Number.isFinite(typed) ? typed : MIN_SCENARIOS),
-      );
 
   const blocked = !name.trim()
     ? "Name it first"
@@ -168,7 +162,6 @@ function DialogBody({ agent, onClose, subtitle }) {
               value={countText}
               placeholder="10"
               onChange={(e) => setCountText(e.target.value)}
-              onBlur={() => setCountText(String(count))}
               error={!countOk}
               inputProps={{
                 min: MIN_SCENARIOS,

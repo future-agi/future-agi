@@ -1708,6 +1708,54 @@ class TestLegacyTranscriptRecordingResolution:
         assert "agent: Hi, how can I help you?" in transcript_data["transcript"]
         assert "customer: I need a ride." in transcript_data["transcript"]
 
+    def test_eval_transcript_shows_a_failed_sealed_tool_call(self, call_execution):
+        from simulate.models.test_execution import CallTranscript
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        call_execution.provider_call_data = {
+            "livekit": {
+                "tool_calls": [
+                    {
+                        "name": "track_parcel",
+                        "arguments": {"tracking_number": "TRK123456"},
+                        "result": "HTTP 405: Axios Error",
+                        "ok": False,
+                        "error": "HTTP 405: Request failed with status code 405",
+                        "refused": False,
+                    },
+                    {
+                        "name": "open_claim",
+                        "arguments": {},
+                        "result": {"claim_id": "c-1"},
+                        "ok": True,
+                        "error": "",
+                        "refused": False,
+                    },
+                ]
+            }
+        }
+        call_execution.call_metadata = {"call_channel": "livekit"}
+        call_execution.save(update_fields=["provider_call_data", "call_metadata"])
+        CallTranscript.objects.create(
+            call_execution=call_execution,
+            speaker_role="assistant",
+            content="Sorry, I hit a technical issue.",
+            start_time_ms=0,
+            end_time_ms=1000,
+        )
+        executor = TestExecutor(initialize_voice_service=False)
+
+        for transcript in (
+            executor._get_call_transcript_data(call_execution)["transcript"],
+            _build_transcript_data(call_execution)["transcript"],
+        ):
+            assert "=== TOOL CALLS ===" in transcript
+            assert (
+                'track_parcel({"tracking_number": "TRK123456"}) -> failed: '
+                "HTTP 405: Request failed with status code 405"
+            ) in transcript
+            assert "open_claim({}) -> ok" in transcript
+
 
 # ---------------------------------------------------------------------------
 # TH-8045 -- sealed verdicts.

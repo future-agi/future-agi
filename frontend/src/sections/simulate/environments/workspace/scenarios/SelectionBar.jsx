@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SCENARIO_TAGS_COPY } from "./scenarios.constants";
 import { forwardRef } from "react";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -28,7 +29,7 @@ import TrialsPicker from "./TrialsPicker";
  * disabled, with the reason on hover, rather than leaving it out.
  */
 export default function SelectionBar({
-  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching,
+  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching, onTag,
 }) {
   const k = Math.max(1, Math.min(20, Number(trials) || 1));
   const totalRuns = count * k;
@@ -137,6 +138,21 @@ export default function SelectionBar({
 
       {/* The actions move as one: on a narrow bar they wrap together, right-aligned. */}
       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ ml: "auto", flexShrink: 0 }}>
+        {onTag && (
+          <CustomTooltip show arrow size="small" title={SCENARIO_TAGS_COPY.tagTip}>
+            <Button
+              size="small"
+              onClick={(event) => onTag(event.currentTarget)}
+              variant="outlined"
+              color="inherit"
+              startIcon={<Iconify icon="solar:tag-linear" width={14} />}
+              sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+            >
+              {SCENARIO_TAGS_COPY.tag}
+            </Button>
+          </CustomTooltip>
+        )}
+
         {/* DESTRUCTIVE — Delete */}
         <CustomTooltip show arrow size="small" title="Delete selected scenarios">
           <Button
@@ -215,6 +231,7 @@ SelectionBar.propTypes = {
   runBlockedReason: PropTypes.string,
   onDelete: PropTypes.func.isRequired,
   onClear: PropTypes.func.isRequired,
+  onTag: PropTypes.func,
   // Select-all-matching context from the pagination predicate. Absent → a plain
   // page selection with no escalation. { mode, total, pageCount, onSelectAll }.
   matching: PropTypes.shape({

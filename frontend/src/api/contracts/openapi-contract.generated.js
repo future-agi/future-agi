@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1206,
+  endpointCount: 1217,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29546,7 +29546,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["building", "running", "completed", "failed"],
+              enum: [
+                "reading",
+                "awaiting_approval",
+                "building",
+                "running",
+                "completed",
+                "failed",
+              ],
             },
           },
           agent_type: {
@@ -29567,13 +29574,85 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{environment_id}/scenario-tags/": {
+      get: {
+        operationId: "simulate_api_harness-environments_scenario_tags_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentTags",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{environment_id}/scenario-tags/change/":
+      {
+        post: {
+          operationId: "simulate_api_harness-environments_scenario_tags_change",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessScenarioTagsChange",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessScenarioTagsChangeResult",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{environment_id}/scenario-tags/scenarios/{scenario_key}/":
+      {
+        put: {
+          operationId: "simulate_api_harness-environments_scenario_tags_set",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessScenarioTags",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessScenarioTagsResult",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-environments/{id}/": {
       get: {
         operationId: "simulate_api_harness-environments_read",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: false,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          contract_version: {
+            required: false,
+            schema: {
+              type: "integer",
+              enum: [1, 2],
+              default: 1,
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/HarnessEnvironmentDetail",
@@ -29632,6 +29711,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessActorList",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29651,6 +29733,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessActorList",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29669,6 +29754,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessActorValidation",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29703,6 +29791,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessActorList",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29747,6 +29838,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessActorList",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29769,6 +29863,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessActorList",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29813,6 +29910,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/build/retry/": {
+      post: {
+        operationId: "simulate_api_harness-environments_build_retry",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessEnvironmentBuildRetry",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/compare/": {
       get: {
         operationId: "simulate_api_harness-environments_compare",
@@ -29838,6 +29957,142 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessCompare",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/": {
+      get: {
+        operationId: "simulate_api_harness-environments_design_review",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/approve/": {
+      post: {
+        operationId: "simulate_api_harness-environments_design_review_approve",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DesignApproveRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/discard/": {
+      post: {
+        operationId: "simulate_api_harness-environments_design_review_discard",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/edits/": {
+      post: {
+        operationId: "simulate_api_harness-environments_design_review_edit",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DesignEditRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/edits/{edit_id}/": {
+      delete: {
+        operationId: "simulate_api_harness-environments_design_review_undo",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/impact/": {
+      get: {
+        operationId: "simulate_api_harness-environments_design_review_impact",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          kind: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["table", "tool"],
+            },
+          },
+          id: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignImpact",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30001,6 +30256,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/requirement/":
+      {
+        patch: {
+          operationId:
+            "simulate_api_harness-environments_evaluations_eval_requirement",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessEnvironmentEvalRequirement",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessEnvironmentDetail",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-environments/{id}/evidence-imports/": {
       get: {
         operationId: "simulate_api_harness-environments_list_evidence_imports",
@@ -59988,6 +60267,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "sub_goals",
         "sub_goal_results",
         "outcome",
+        "required_evals_failed",
         "cost_breakdown_cents",
         "evaluations",
         "function_calls",
@@ -60459,6 +60739,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "error",
             "cancelled",
           ],
+        },
+        required_evals_failed: {
+          description:
+            "Names of the required evaluations this call failed; any one fails the call.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         cost_breakdown_cents: {
           $ref: "#/definitions/CostBreakdown",
@@ -65647,6 +65936,184 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           default: "output",
           minLength: 1,
+        },
+      },
+    },
+    DesignApproveRequest: {
+      required: ["revision"],
+      type: "object",
+      properties: {
+        revision: {
+          title: "Revision",
+          type: "string",
+          maxLength: 64,
+          minLength: 64,
+        },
+      },
+    },
+    DesignEditRequest: {
+      required: ["op", "kind", "id"],
+      type: "object",
+      properties: {
+        op: {
+          title: "Op",
+          type: "string",
+          enum: ["remove", "edit"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["table", "tool", "rule", "use_case"],
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          maxLength: 2000,
+          minLength: 1,
+        },
+      },
+    },
+    DesignImpact: {
+      required: ["kind", "id", "tools", "rules"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["table", "tool"],
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignImpactTool",
+          },
+        },
+        rules: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignImpactRule",
+          },
+        },
+      },
+    },
+    DesignReview: {
+      required: [
+        "environment_id",
+        "status",
+        "agent_version_id",
+        "agent_changed",
+        "scenario_count",
+        "tables",
+        "tools",
+        "rules",
+        "use_cases",
+        "brief",
+        "actors",
+        "unsupported",
+        "edits",
+        "revision",
+        "created_at",
+        "approved_at",
+      ],
+      type: "object",
+      properties: {
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["awaiting_approval", "approved", "discarded"],
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        agent_changed: {
+          title: "Agent changed",
+          type: "boolean",
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+          minimum: 0,
+        },
+        tables: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignTable",
+          },
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignTool",
+          },
+        },
+        rules: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignRule",
+          },
+        },
+        use_cases: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignUseCase",
+          },
+        },
+        brief: {
+          $ref: "#/definitions/DesignBrief",
+        },
+        actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignActor",
+          },
+        },
+        unsupported: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignUnsupported",
+          },
+        },
+        edits: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignEdit",
+          },
+        },
+        revision: {
+          title: "Revision",
+          type: "string",
+          minLength: 1,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        approved_at: {
+          title: "Approved at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -72403,6 +72870,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 255,
           minLength: 1,
         },
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        pass_threshold: {
+          title: "Pass threshold",
+          type: "number",
+          maximum: 1,
+          minimum: 0,
+        },
       },
     },
     HarnessEnvironmentAvailableEvals: {
@@ -72414,6 +72891,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessEnvironmentOfferedEval",
           },
+        },
+      },
+    },
+    HarnessEnvironmentBuildRetry: {
+      required: ["environment_id", "state", "resume_from"],
+      type: "object",
+      properties: {
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        resume_from: {
+          title: "Resume from",
+          type: "string",
+          enum: ["start", "checks"],
         },
       },
     },
@@ -72583,6 +73081,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Updated name for the evaluation configuration.",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    HarnessEnvironmentEvalRequirement: {
+      type: "object",
+      properties: {
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        pass_threshold: {
+          title: "Pass threshold",
+          type: "number",
+          maximum: 1,
+          minimum: 0,
         },
       },
     },
@@ -72851,6 +73364,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Call execution count",
           description: "How many of the run's calls were queued for grading.",
           type: "integer",
+        },
+      },
+    },
+    HarnessEnvironmentTags: {
+      required: ["tags"],
+      type: "object",
+      properties: {
+        tags: {
+          description: "Every tag the environment's scenarios carry.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -73963,6 +74490,94 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         result: {
           $ref: "#/definitions/HarnessScenarioOperationResult",
+        },
+      },
+    },
+    HarnessScenarioTags: {
+      required: ["tags"],
+      type: "object",
+      properties: {
+        tags: {
+          description: "The scenario's tags; an empty list clears them.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+          },
+          maxItems: 20,
+        },
+      },
+    },
+    HarnessScenarioTagsChange: {
+      required: ["scenario_keys"],
+      type: "object",
+      properties: {
+        scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 1000,
+          minItems: 1,
+        },
+        add: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+          },
+          default: [],
+          maxItems: 20,
+        },
+        remove: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+          },
+          default: [],
+          maxItems: 20,
+        },
+      },
+    },
+    HarnessScenarioTagsChangeResult: {
+      required: ["scenarios", "tags"],
+      type: "object",
+      properties: {
+        scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessScenarioTagsResult",
+          },
+        },
+        tags: {
+          description:
+            "Every tag the environment's scenarios carry after the change.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    HarnessScenarioTagsResult: {
+      required: ["scenario_key", "tags"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        tags: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -104039,6 +104654,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "reason",
         "status",
+        "required",
       ],
       type: "object",
       properties: {
@@ -104081,6 +104697,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Status",
           type: "string",
           enum: ["pending", "succeeded", "failed", "timed_out", "skipped"],
+        },
+        required: {
+          title: "Required",
+          description:
+            "Marked required on the environment: a failing score fails the call.",
+          type: "boolean",
         },
       },
     },
@@ -108445,6 +109067,323 @@ export const OPENAPI_CONTRACT = Object.freeze({
         is_json: {
           title: "Is json",
           type: "boolean",
+        },
+      },
+    },
+    DesignImpactRule: {
+      required: ["id", "text"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    DesignImpactTool: {
+      required: ["name", "reason"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    DesignActor: {
+      required: ["id", "name", "role"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+        },
+      },
+    },
+    DesignBrief: {
+      required: ["description", "channel", "agent"],
+      type: "object",
+      properties: {
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        channel: {
+          title: "Channel",
+          type: "string",
+          enum: ["chat", "voice"],
+        },
+        agent: {
+          $ref: "#/definitions/DesignAgent",
+        },
+      },
+    },
+    DesignEdit: {
+      required: ["edit_id", "op", "kind", "id", "by", "at"],
+      type: "object",
+      properties: {
+        edit_id: {
+          title: "Edit id",
+          type: "string",
+          minLength: 1,
+        },
+        op: {
+          title: "Op",
+          type: "string",
+          enum: ["remove", "edit"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["table", "tool", "rule", "use_case"],
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        by: {
+          title: "By",
+          type: "string",
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    DesignRule: {
+      required: ["id", "text", "source", "removed", "edited", "original_text"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+        edited: {
+          title: "Edited",
+          type: "boolean",
+        },
+        original_text: {
+          title: "Original text",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    DesignTable: {
+      required: ["id", "name", "columns", "source", "removed"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        columns: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+      },
+    },
+    DesignTool: {
+      required: [
+        "id",
+        "name",
+        "description",
+        "args",
+        "requires",
+        "inputs_from",
+        "effects",
+        "refuses",
+        "source",
+        "removed",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        args: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignToolArg",
+          },
+        },
+        requires: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        inputs_from: {
+          title: "Inputs from",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        effects: {
+          title: "Effects",
+          type: "string",
+        },
+        refuses: {
+          title: "Refuses",
+          type: "string",
+        },
+        tables_read: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        tables_changed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["simulated", "in_process", "unsupported", "unknown"],
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+      },
+    },
+    DesignUnsupported: {
+      required: ["tool", "reaches", "removed"],
+      type: "object",
+      properties: {
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        reaches: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+      },
+    },
+    DesignUseCase: {
+      required: ["id", "text", "source", "removed", "planned_scenarios"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+        planned_scenarios: {
+          title: "Planned scenarios",
+          type: "integer",
+          minimum: 0,
         },
       },
     },
@@ -114208,12 +115147,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        domain: {
+          title: "Domain",
+          type: "object",
+          "x-nullable": true,
+        },
+        system_prompt: {
+          title: "System prompt",
+          type: "string",
+          "x-nullable": true,
+        },
+        system_prompt_origin: {
+          $ref: "#/definitions/HarnessEnvironmentOrigin",
+        },
         system_prompt_excerpt: {
           title: "System prompt excerpt",
           type: "string",
           "x-nullable": true,
         },
         tools: {
+          description:
+            "ALK tool specifications, including origin, legacy effect text, optional effect_kind (read, write, external, control), and effect_evidence {origin, excerpt}.",
           type: "array",
           items: {
             type: "object",
@@ -114228,11 +115182,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "x-nullable": true,
         },
+        real_use_case_details: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentContractItem",
+          },
+          "x-nullable": true,
+        },
         hard_constraints: {
           type: "array",
           items: {
             type: "string",
             minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        hard_constraint_details: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentContractItem",
           },
           "x-nullable": true,
         },
@@ -114249,6 +115217,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         runtime_dependencies: {
+          description:
+            "Runtime dependencies with used_by containing only consumers identified by ALK.",
           type: "array",
           items: {
             type: "object",
@@ -114261,11 +115231,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         tool_entrypoints: {
+          description:
+            "Implementation seams with source code where available, implementation_origin, and provider_function {url, parameters} for provider functions. Parameters retain the provider JSON Schema after secret redaction.",
           type: "array",
           items: {
             type: "object",
           },
           "x-nullable": true,
+        },
+        data_store: {
+          title: "Data store",
+          description:
+            "ALK datastore facts. configured_by remains a string; optional location and configuration {source, ref, section} carry observed configuration evidence.",
+          type: "object",
+          "x-nullable": true,
+        },
+        data_schema: {
+          title: "Data schema",
+          type: "object",
+          "x-nullable": true,
+        },
+        base_environment: {
+          title: "Base environment",
+          type: "object",
+          "x-nullable": true,
+        },
+        refusal_signature: {
+          title: "Refusal signature",
+          type: "string",
+          "x-nullable": true,
+        },
+        data_schema_columns: {
+          title: "Data schema columns",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              $ref: "#/definitions/HarnessEnvironmentSchemaColumn",
+            },
+          },
+          "x-nullable": true,
+        },
+        data_schema_tables: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentSchemaTable",
+          },
+        },
+        tool_certification: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentToolCertification",
+          },
         },
         workers: {
           description:
@@ -114274,11 +115291,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessEnvironmentWorker",
           },
-          "x-nullable": true,
-        },
-        data_store: {
-          title: "Data store",
-          type: "object",
           "x-nullable": true,
         },
         open_questions: {
@@ -114294,6 +115306,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessEnvironmentAmendment",
           },
+        },
+        amendment_details: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentAmendmentDetail",
+          },
+          "x-nullable": true,
+        },
+        actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentActor",
+          },
+          "x-nullable": true,
         },
         sub_goals: {
           type: "array",
@@ -114375,6 +115401,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessEnvironmentSelectedEval",
           },
         },
+        suggested: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentSuggestedEval",
+          },
+        },
         results: {
           type: "array",
           items: {
@@ -114446,7 +115478,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["building", "running", "completed", "failed"],
+          enum: [
+            "reading",
+            "awaiting_approval",
+            "building",
+            "running",
+            "completed",
+            "failed",
+          ],
         },
         stage: {
           title: "Stage",
@@ -114706,7 +115745,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         seed: {
           title: "Seed",
-          type: "integer",
+          description:
+            "Decimal string preserving the full internal integer seed without JavaScript precision loss.",
+          type: "string",
+          minLength: 1,
           "x-nullable": true,
         },
         enable_tool_evaluation: {
@@ -114812,7 +115854,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["building", "running", "completed", "failed"],
+          enum: [
+            "reading",
+            "awaiting_approval",
+            "building",
+            "running",
+            "completed",
+            "failed",
+          ],
         },
         stage: {
           title: "Stage",
@@ -114868,9 +115917,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentStatusCounts: {
-      required: ["building", "running", "completed", "failed"],
+      required: [
+        "reading",
+        "awaiting_approval",
+        "building",
+        "running",
+        "completed",
+        "failed",
+      ],
       type: "object",
       properties: {
+        reading: {
+          title: "Reading",
+          type: "integer",
+        },
+        awaiting_approval: {
+          title: "Awaiting approval",
+          type: "integer",
+        },
         building: {
           title: "Building",
           type: "integer",
@@ -115487,6 +116551,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         failure: {
           title: "Failure",
           type: "object",
+          "x-nullable": true,
+        },
+        retry_from: {
+          title: "Retry from",
+          description:
+            "Where trying a stopped build again starts; null when it cannot be tried again.",
+          type: "string",
+          enum: ["start", "checks"],
           "x-nullable": true,
         },
       },
@@ -116400,6 +117472,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Id",
           type: "string",
           format: "uuid",
+        },
+        tags: {
+          description:
+            "The free-text tags people put on the scenario; never versioned.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         scenario_id: {
           title: "Scenario id",
@@ -124120,6 +125201,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "missing",
         "pass_rate",
         "average_score",
+        "required",
       ],
       type: "object",
       properties: {
@@ -124162,6 +125244,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Average score",
           type: "number",
           "x-nullable": true,
+        },
+        required: {
+          title: "Required",
+          description:
+            "Marked required on the environment; a failing score fails the call.",
+          type: "boolean",
         },
       },
     },
@@ -124669,6 +125757,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "source_scenario_key",
         "trial_index",
         "outcome",
+        "required_evals_failed",
         "execution_status",
         "modality",
         "provider",
@@ -124779,6 +125868,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "error",
             "cancelled",
           ],
+        },
+        required_evals_failed: {
+          description:
+            "Names of the required evaluations this call failed; any one fails the call.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         outcome_reason: {
           title: "Outcome reason",
@@ -134556,6 +135654,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DesignAgent: {
+      required: ["name", "version"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    DesignToolArg: {
+      required: ["name", "type"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+        },
+      },
+    },
     EmbeddingProvider: {
       required: ["name", "description", "requires_api_key", "config_schema"],
       type: "object",
@@ -138160,6 +139290,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentActor: {
+      required: ["name", "role", "origin"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          minLength: 1,
+        },
+        origin: {
+          $ref: "#/definitions/HarnessEnvironmentOrigin",
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentAmendment: {
       required: ["subject", "note"],
       type: "object",
@@ -138174,6 +139324,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    HarnessEnvironmentAmendmentDetail: {
+      required: ["subject", "kind", "reason"],
+      type: "object",
+      properties: {
+        subject: {
+          title: "Subject",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["unreachable_tool", "contract_change"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessEnvironmentCallActor: {
       required: ["id", "name", "role", "channel", "persona", "scenarios_count"],
@@ -138215,7 +139387,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentCatalogueSubGoal: {
-      required: ["name", "what", "kind", "claim", "check"],
+      required: ["name", "what", "kind", "claim", "check", "output", "overlay"],
       type: "object",
       properties: {
         name: {
@@ -138240,10 +139412,57 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Check",
           type: "string",
         },
+        output: {
+          title: "Output",
+          type: "string",
+        },
+        overlay: {
+          title: "Overlay",
+          type: "string",
+        },
       },
     },
+    HarnessEnvironmentContractItem: {
+      required: ["text"],
+      type: "object",
+      properties: {
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        short: {
+          title: "Short",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        origin: {
+          $ref: "#/definitions/HarnessEnvironmentOrigin",
+        },
+        enforced_by: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        sub_goal: {
+          title: "Sub goal",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentEndConditions: {
-      required: ["max_turns", "max_duration_seconds", "clock", "ended_reasons"],
+      required: [
+        "max_turns",
+        "max_duration_seconds",
+        "clock",
+        "ended_reasons",
+        "terminate_reasons",
+        "truncate_reasons",
+      ],
       type: "object",
       properties: {
         max_turns: {
@@ -138267,6 +139486,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        terminate_reasons: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        truncate_reasons: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        seed: {
+          $ref: "#/definitions/HarnessEnvironmentSeed",
         },
       },
     },
@@ -138321,6 +139557,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentOrigin: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        path: {
+          title: "Path",
+          type: "string",
+        },
+        field: {
+          title: "Field",
+          type: "string",
+        },
+        line: {
+          title: "Line",
+          type: "integer",
+          "x-nullable": true,
+        },
+        sha256: {
+          title: "Sha256",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentProvenance: {
       required: [
         "source",
@@ -138374,6 +139641,104 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
             "x-nullable": true,
           },
+        },
+      },
+    },
+    HarnessEnvironmentSchemaColumn: {
+      required: ["name", "type"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+        },
+        enum: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          "x-nullable": true,
+        },
+        pk: {
+          title: "Pk",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        nullable: {
+          title: "Nullable",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        references: {
+          title: "References",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessEnvironmentSchemaTable: {
+      required: ["name", "columns", "primary_key", "foreign_keys"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentSchemaColumn",
+          },
+        },
+        primary_key: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        foreign_keys: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+      },
+    },
+    HarnessEnvironmentToolCertification: {
+      required: ["tool", "availability", "probe_mode", "reason"],
+      type: "object",
+      properties: {
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        availability: {
+          title: "Availability",
+          type: "string",
+          enum: ["certified", "runtime_only", "rejected"],
+        },
+        probe_mode: {
+          title: "Probe mode",
+          type: "string",
+          enum: [
+            "read_only",
+            "disposable_world",
+            "provider_sandbox",
+            "runtime_only",
+          ],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
         },
       },
     },
@@ -138548,6 +139913,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "id",
         "runnable",
         "editable",
+        "required",
+        "pass_threshold",
       ],
       type: "object",
       properties: {
@@ -138615,6 +139982,97 @@ export const OPENAPI_CONTRACT = Object.freeze({
         editable: {
           title: "Editable",
           type: "boolean",
+        },
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        pass_threshold: {
+          title: "Pass threshold",
+          type: "number",
+          maximum: 1,
+          minimum: 0,
+        },
+      },
+    },
+    HarnessEnvironmentSuggestedEval: {
+      required: [
+        "name",
+        "description",
+        "source",
+        "tags",
+        "required_keys",
+        "agent_type",
+        "modality",
+        "credits_per_run",
+        "charges_judge_tokens",
+        "inputs",
+        "required",
+        "pass_threshold",
+      ],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["system", "custom"],
+        },
+        tags: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        required_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          enum: ["voice", "chat"],
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["voice", "text", "any"],
+        },
+        credits_per_run: {
+          title: "Credits per run",
+          type: "number",
+        },
+        charges_judge_tokens: {
+          title: "Charges judge tokens",
+          type: "boolean",
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentEvalInput",
+          },
+        },
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        pass_threshold: {
+          title: "Pass threshold",
+          type: "number",
+          maximum: 1,
+          minimum: 0,
         },
       },
     },
@@ -138794,6 +140252,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         claim: {
           title: "Claim",
+          type: "string",
+        },
+        output: {
+          title: "Output",
+          type: "string",
+        },
+        overlay: {
+          title: "Overlay",
           type: "string",
         },
       },
@@ -148890,6 +150356,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentSeed: {
+      required: ["value", "controls"],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          description:
+            "Decimal string preserving the full integer seed without JavaScript precision loss. The internal harness seed remains an integer.",
+          type: "string",
+          minLength: 1,
+        },
+        controls: {
+          description:
+            "Platform-derived scope for the supported hosted ALK runtime, not an ALK-reported capability. scenario_world_rng controls world initialization randomness, not model responses or conversation replay.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     HarnessFaultBounds: {
       required: ["on_call", "delay_seconds", "status", "message"],
       type: "object",
@@ -148981,7 +150469,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessToolArgument: {
-      required: ["name", "type", "unit"],
+      required: ["name", "type", "unit", "values", "required", "min", "max"],
       type: "object",
       properties: {
         name: {
@@ -149001,6 +150489,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "The unit or format it is written in, where the name does not say.",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+        values: {
+          description:
+            "The values it is allowed to take, where the agent limits them.",
+          type: "array",
+          items: {
+            type: "object",
+          },
+          "x-nullable": true,
+        },
+        required: {
+          title: "Required",
+          description:
+            "Whether a call needs it; null when the reading did not record it.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        min: {
+          title: "Min",
+          description: "The lowest value it accepts, where one is stated.",
+          type: "number",
+          "x-nullable": true,
+        },
+        max: {
+          title: "Max",
+          description: "The highest value it accepts, where one is stated.",
+          type: "number",
           "x-nullable": true,
         },
       },
@@ -149155,6 +150671,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         rows: {
           title: "Rows",
           type: "integer",
+        },
+        internal: {
+          title: "Internal",
+          type: "boolean",
+        },
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentSchemaColumn",
+          },
+          "x-nullable": true,
         },
       },
     },

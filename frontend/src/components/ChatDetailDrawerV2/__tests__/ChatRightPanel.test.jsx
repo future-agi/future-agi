@@ -28,6 +28,25 @@ describe("ChatRightPanel Evals tab", () => {
   });
 });
 
+describe("ChatRightPanel choice evals", () => {
+  it("counts a choice eval by the server's verdict and shows its answer", async () => {
+    renderPanel({
+      ...base,
+      eval_metrics: {
+        "ev-loop": { id: "ev-loop", name: "loop_detection", value: ["never"], type: "choices" },
+        "ev-tone": { id: "ev-tone", name: "tone_check", value: "Passed", type: "Pass/Fail" },
+      },
+      evaluations: [
+        { id: "ev-loop", name: "loop_detection", passed: true },
+        { id: "ev-tone", name: "tone_check", passed: true },
+      ],
+    });
+    await userEvent.click(screen.getByRole("tab", { name: /Evals/ }));
+    expect(screen.getByText("never")).toBeInTheDocument();
+    expect(screen.getByText(/2\/2 passed/)).toBeInTheDocument();
+  });
+});
+
 describe("ChatRightPanel Scenario tab", () => {
   it("shows for a call with a persona but no scenario columns", () => {
     renderPanel({ ...base, persona_details: { name: "Siddharth Nair", voice: null, age: null, traits: [] } });

@@ -1,6 +1,6 @@
 """Unit tests for the hosted→canonical ended_reason translator."""
 
-from simulate.utils.ended_reason import to_canonical_ended_reason
+from simulate.utils.ended_reason import ended_reason_groups, to_canonical_ended_reason
 
 
 class TestToCanonicalEndedReason:
@@ -36,3 +36,22 @@ class TestToCanonicalEndedReason:
     def test_empty_and_none_preserved(self):
         assert to_canonical_ended_reason("") == ""
         assert to_canonical_ended_reason(None) is None
+
+
+def test_voice_end_reason_groups_distinguish_terminal_and_truncated_calls():
+    assert ended_reason_groups(voice=True) == {
+        "terminate_reasons": ["assistant-ended-call", "customer-ended-call"],
+        "truncate_reasons": [
+            "cancelled",
+            "max-duration-reached",
+            "no-answer",
+            "silence-timed-out",
+        ],
+    }
+
+
+def test_chat_end_reason_groups_exclude_voice_only_failures():
+    assert ended_reason_groups(voice=False) == {
+        "terminate_reasons": ["assistant-ended-call", "customer-ended-call"],
+        "truncate_reasons": ["cancelled", "max-duration-reached"],
+    }

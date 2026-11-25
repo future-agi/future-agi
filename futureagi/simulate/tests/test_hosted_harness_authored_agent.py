@@ -9,9 +9,9 @@ from structlog.testing import capture_logs
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_setup import AgentVersionSetup
 from simulate.services import hosted_harness
-from simulate.services.agent_setup import stored_agent
+from simulate.services.agent_setup import store_agent, stored_agent
 from simulate.services.hosted_harness import create_hosted_job, register_attempt
-from simulate.tests.test_agent_setup_service import source_agent
+from simulate.tests.test_agent_setup_service import HASH_B, source_agent
 from simulate.tests.test_hosted_harness_channels import _headers, _payload
 
 
@@ -237,3 +237,59 @@ def test_a_pinned_job_stores_the_agent_on_its_pinned_version(definition):
 
     assert stored_agent(pinned.id)["kind"] == "source"
     assert stored_agent(newer.id) is None
+
+
+def _tool(name):
+    return {
+        "name": name,
+        "description": name,
+        "kind": "builtin",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+        "endpoint": None,
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("approved_contract_key", "tools_kept"),
+    [
+        ("", ["get_booking"]),
+        (
+            "environment-contracts/org/env/approved.json",
+            ["get_booking", "check_late_checkout"],
+        ),
+    ],
+)
+def test_a_build_replaces_the_reading_only_when_its_design_was_not_changed(
+    definition, approved_contract_key, tools_kept
+):
+    version = definition.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    store_agent(
+        agent_version_id=version.id,
+        agent=source_agent(tools=[_tool("get_booking"), _tool("check_late_checkout")]),
+        sdk_version="0.3.0",
+        origin=AgentVersionSetup.Origin.READING,
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        payload={
+            "source": {"kind": "github"},
+            "metadata": {
+                "seeded_contract": True,
+                "design_review": {
+                    "status": "approved",
+                    "approved_contract_key": approved_contract_key,
+                },
+            },
+        },
+        agent_version=version,
+    )
+    built = source_agent(name="built", setup_hash=HASH_B, tools=[_tool("get_booking")])
+
+    hosted_harness._store_authored_agent(
+        job, definition, {"agent": {"sdk_version": "0.3.0", "agent": built}}
+    )
+
+    assert [tool["name"] for tool in stored_agent(version.id)["tools"]] == tools_kept

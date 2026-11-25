@@ -41,8 +41,7 @@ export const CONSOLE_COPY = {
   answerWithOptions: "Answer with the options above",
   working: "Working on your last message…",
   idle: "Ask, correct, or steer what it builds",
-  empty:
-    "Answer the questions below to kick things off. You can also just start typing.",
+  empty: "Answer the questions below to kick things off.",
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",

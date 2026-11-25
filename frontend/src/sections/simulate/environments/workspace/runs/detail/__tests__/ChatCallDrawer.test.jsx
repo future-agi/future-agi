@@ -161,6 +161,40 @@ describe("ChatCallDrawer tabs", () => {
   });
 });
 
+describe("ChatCallDrawer errored call", () => {
+  it("says why a call ended as an error", () => {
+    render(
+      <ChatCallDrawer
+        task={{
+          id: "call-execution-3",
+          status: "error",
+          outcomeReason: "Failed to start the provider web bridge",
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to start the provider web bridge",
+    );
+  });
+
+  it("shows a reason on a call that did not error as a note, not an error", () => {
+    const reason = "Held for review while the scenario is rechecked.";
+    render(
+      <ChatCallDrawer
+        task={{
+          id: "call-execution-4",
+          status: "completed",
+          outcomeReason: reason,
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
 describe("ChatCallDrawer, a call whose transcript was not kept", () => {
   it("says why in the transcript pane and beside the evals, keeping the call's own verdict", () => {
     const reason = "Call transcript is unavailable, so processing was skipped.";

@@ -353,10 +353,10 @@ describe("harnessJobToEnvironment", () => {
     expect(env.buildProgress.total).toBeGreaterThan(0);
   });
 
-  // "running" is past connecting_agent in the pipeline, so the world is derived
-  // and the build experience must give way to the workspace.
-  it("reads a running job as a built environment, not one still building", () => {
-    expect(harnessJobToEnvironment(RUNNING_JOB).env.buildStatus).toBe("ready");
+  it("reads a running job as still building, through the release checks", () => {
+    expect(harnessJobToEnvironment(RUNNING_JOB).env.buildStatus).toBe(
+      "building",
+    );
   });
 
   it("marks a terminal-failed job as failed (not building) and carries the failure", () => {
@@ -675,6 +675,14 @@ describe("jobRefetchInterval", () => {
       0,
     );
     expect(jobRefetchInterval(idle, 1000 + SAVE_GRACE_MS)).toBe(false);
+  });
+
+  it("polls slowly while the design waits for approval", () => {
+    const parked = { status: { stage: "awaiting_approval" } };
+    expect(jobRefetchInterval(parked, 0)).toBe(30000);
+    expect(jobRefetchInterval({ status: { stage: "authoring" } }, 0)).toBe(
+      2000,
+    );
   });
 
   it("does not poll a finished environment whose chat was never busy here", () => {

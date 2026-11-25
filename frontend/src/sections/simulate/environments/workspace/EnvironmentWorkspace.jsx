@@ -10,10 +10,12 @@ import {
   useEnvironment,
   canRunHeader,
   stageOutputsToWorld,
+  harnessEnvironmentKey,
   harnessEnvironmentQuery,
   harnessJobQuery,
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
+import { toScenarioRow } from "src/api/simulate-environments/harnessDetail";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { runHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
@@ -22,7 +24,10 @@ import {
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
-import { environmentVersionsKey } from "src/api/simulate-environments/versions";
+import {
+  environmentVersionsKey,
+  useEnvironmentVersions,
+} from "src/api/simulate-environments/versions";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -37,7 +42,9 @@ import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
 import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
-import SystemBanners from "./SystemBanners";
+import DesignReviewStage from "./designReview/DesignReviewStage";
+import BuildStrip from "./designReview/BuildStrip";
+import { REVIEW_COPY } from "./designReview/designReview.constants";
 import VersionBar from "./VersionBar";
 import DraftBar from "./drafts/DraftBar";
 import TemplateLockBanner from "./TemplateLockBanner";
@@ -50,6 +57,14 @@ import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
+import BuildStoppedStrip from "./BuildStoppedStrip";
+import {
+  landedOf,
+  stepOfStage,
+  stopSentence,
+  stoppedStep,
+  tabWaits,
+} from "./buildSteps";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -251,6 +266,44 @@ export default function EnvironmentWorkspace() {
   const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
   const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
+  const buildStage = jobQuery.data?.status?.stage;
+  const jobStatus = jobQuery.data?.status;
+  const jobEvents = jobQuery.data?.events;
+  const readsAgent = !env?.designApproved;
+  const liveStep = building ? stepOfStage(buildStage, { readsAgent }) : null;
+  const stopStep = buildFailed
+    ? stoppedStep(jobStatus, {
+        events: jobEvents,
+        outputs: jobQuery.data?.stage_outputs,
+        designApproved: Boolean(env?.designApproved),
+      })
+    : null;
+  const buildVersions = useEnvironmentVersions(envId, {
+    enabled: backed && building && Boolean(env?.versioning?.enabled),
+  });
+  const landed = landedOf(env, liveStep || stopStep, {
+    versions:
+      Boolean(stopStep) ||
+      Boolean(buildVersions.data && !buildVersions.data.empty),
+  });
+  const waitsByTab = liveStep
+    ? tabWaits(liveStep, { landed })
+    : stopStep
+      ? tabWaits(stopStep, {
+          stopped: true,
+          reason: stopSentence(jobStatus, stopStep),
+          landed,
+        })
+      : {};
+  const buildStartedAt = env?.designApproved
+    ? jobQuery.data?.job?.metadata?.design_review?.approved_at
+    : jobEvents?.[0]?.emitted_at;
+  useEffect(() => {
+    if (building && buildStage)
+      queryClient.invalidateQueries({
+        queryKey: harnessEnvironmentKey(envId),
+      });
+  }, [building, buildStage, envId, queryClient]);
   const usageLimit = jobQuery.data?.usage_limit;
   const hadRemoteUsageLimit = useRef(false);
   useEffect(() => {
@@ -351,13 +404,50 @@ export default function EnvironmentWorkspace() {
     return <LoadingScreen />;
   }
 
-  // Still deriving OR terminally failed: the workspace header over the two-pane
-  // build stage (console + hero/pipeline). A failed build keeps this layout —
-  // the chat stays usable and the pipeline shows which stage failed — but the
-  // hero animation freezes and the header reads "Failed" (LivePill), rather than
-  // a dead-end error page. Run is gated off and Fork is hidden (locked) until it
-  // goes Live, at which point buildStatus flips and the branch below takes over.
-  if (building || buildFailed) {
+  if (env?.awaitingApproval) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+        }}
+      >
+        <WorkspaceHeader
+          env={env}
+          envState={envState}
+          canRun={false}
+          runBlockedReason={REVIEW_COPY.runBlocked}
+          locked
+        />
+        {creditBanner}
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <ChatSplitPane
+            chat={({ collapse, open, collapseRef }) => (
+              <BuilderConsole
+                turns={chat.turns}
+                running={false}
+                onSend={chat.send}
+                onStop={chat.stop}
+                canStop={false}
+                frozen
+                frozenReason={REVIEW_COPY.chatBlocked}
+                answerWithOptions={chat.answerWithOptions}
+                onCollapse={collapse}
+                collapseRef={collapseRef}
+                active={open}
+              />
+            )}
+          >
+            <DesignReviewStage key={env.id} envId={env.id} />
+          </ChatSplitPane>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (!backed && (building || buildFailed)) {
     return (
       <Box
         sx={{
@@ -484,8 +574,6 @@ export default function EnvironmentWorkspace() {
   // yields its Run/Repeats while one is active ("one primary at a time").
   const selectionActive = (selection.count ?? selection.ids.length) > 0;
 
-  // While the environment is still deriving, the builder can't accept edits —
-  // the console freezes until it goes Live. SystemBanners reads the same value.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
 
   // The tab count, the "no evals" gap and the Runs summary read the
@@ -536,11 +624,14 @@ export default function EnvironmentWorkspace() {
           stores: backedDetail.world?.stores ?? [],
           amendments: backedDetail.contract?.amendments ?? [],
           dependencies: backedDetail.contract?.dependencies ?? [],
+          runtimeDependencies:
+            backedDetail.contract?.runtime_dependencies ?? [],
         }
       : undefined;
   // Real capability-graph branches for a backed env: tools names,
   // real_use_cases (flows), world.personas names, hard_constraints (guardrails).
-  // Empty arrays render the graph's honest "none yet" instead of a fixture.
+  // A branch with nothing in it is left out of the graph, never filled with a
+  // fixture.
   const graphData =
     backed && backedDetail
       ? {
@@ -554,6 +645,26 @@ export default function EnvironmentWorkspace() {
           guardrails: backedDetail.contract?.hard_constraints ?? [],
         }
       : undefined;
+
+  const contractScenarios =
+    backed && Array.isArray(backedDetail?.scenarios)
+      ? backedDetail.scenarios.map(toScenarioRow)
+      : undefined;
+
+  const contractChat =
+    backed && !chat.frozen
+      ? {
+          send: chat.send,
+          busy: Boolean(
+            chat.running ||
+              chat.inFlight ||
+              chat.waiting ||
+              chat.draftsBlocked ||
+              chatSaving,
+          ),
+          live: envLive,
+        }
+      : null;
 
   // A backed env's tabs all read the detail. Until it lands, or if it fails,
   // the job poll alone would fill them with a guessed channel, no agent, zero
@@ -580,9 +691,17 @@ export default function EnvironmentWorkspace() {
       <WorkspaceHeader
         env={displayEnv}
         envState={envState}
-        canRun={runnable && !runMutation.isPending && !detailBlock}
+        canRun={
+          !building &&
+          !buildFailed &&
+          runnable &&
+          !runMutation.isPending &&
+          !detailBlock
+        }
         runBlockedReason={runReason(
-          detailBlock ||
+          (building && WORKSPACE_COPY.buildingTooltip) ||
+            (buildFailed && WORKSPACE_COPY.failedTooltip) ||
+            detailBlock ||
             blockedReason(
               envState,
               env,
@@ -600,8 +719,31 @@ export default function EnvironmentWorkspace() {
       />
       {creditBanner}
       {refusalLine}
+      {building && (
+        <BuildStrip
+          name={displayEnv.name}
+          stage={buildStage}
+          startedAt={buildStartedAt}
+          readsAgent={readsAgent}
+        />
+      )}
+      {stopStep && (
+        <BuildStoppedStrip
+          envId={envId}
+          status={jobStatus}
+          step={stopStep}
+          counts={{
+            tools: backedDetail?.contract?.tools?.length || 0,
+            tables: backedDetail?.world?.tables?.length || 0,
+            scenarios: backedDetail?.overview?.scenario_count || 0,
+          }}
+          credits={jobQuery.data?.consumption?.ai_credits ?? undefined}
+          readsAgent={readsAgent}
+          designApproved={Boolean(env.designApproved)}
+          agentId={displayEnv.testSubject?.id}
+        />
+      )}
 
-      <SystemBanners env={env} />
       {!detailLoading && !detailFailed && (
         <VersionBar env={env} envState={envState} />
       )}
@@ -676,6 +818,9 @@ export default function EnvironmentWorkspace() {
               overviewCounts={overviewCounts}
               overviewWorld={overviewWorld}
               graphData={graphData}
+              contractChat={contractChat}
+              contractScenarios={contractScenarios}
+              tabWaits={waitsByTab}
               onStartRun={startRun}
               runDialogOpen={Boolean(runDialog)}
               canRun={runnable && !runMutation.isPending}
