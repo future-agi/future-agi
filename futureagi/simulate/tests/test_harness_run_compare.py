@@ -204,6 +204,61 @@ class TestTrialPassed:
         assert (side["passed"], side["trials"], side["undecided"]) == (1, 1, 1)
 
 
+def _pins(environment_version=None, suite_version=None, split=None):
+    return {
+        "agent": None,
+        "environment": {"id": environment_version, "label": "v1"}
+        if environment_version
+        else None,
+        "suite": {"id": suite_version, "label": "v1"} if suite_version else None,
+        "split": split,
+        "release": None,
+    }
+
+
+class TestComparability:
+    def test_runs_without_a_split_compare_as_before(self):
+        assert run_compare.comparability(_pins("e1", "s1"), _pins("e2", "s2")) == {
+            "comparable": True,
+            "reasons": [],
+        }
+
+    def test_the_same_split_on_the_same_versions_compares(self):
+        assert run_compare.comparability(
+            _pins("e1", "s1", "test"), _pins("e1", "s1", "test")
+        ) == {"comparable": True, "reasons": []}
+
+    def test_another_split_is_not_comparable(self):
+        assert run_compare.comparability(
+            _pins("e1", "s1", "test"), _pins("e1", "s1", "train")
+        ) == {"comparable": False, "reasons": ["different_split"]}
+
+    def test_a_split_against_the_whole_suite_is_not_comparable(self):
+        assert run_compare.comparability(
+            _pins("e1", "s1"), _pins("e1", "s1", "test")
+        ) == {"comparable": False, "reasons": ["different_split"]}
+
+    @pytest.mark.parametrize(
+        "against", [_pins("e2", "s1", "test"), _pins("e1", "s2", "test")]
+    )
+    def test_the_same_split_of_other_versions_is_another_release(self, against):
+        assert run_compare.comparability(_pins("e1", "s1", "test"), against) == {
+            "comparable": False,
+            "reasons": ["different_release"],
+        }
+
+    def test_both_reasons_together(self):
+        assert run_compare.comparability(
+            _pins("e1", "s1", "test"), _pins("e2", "s1", "train")
+        ) == {"comparable": False, "reasons": ["different_release", "different_split"]}
+
+    def test_nothing_to_compare_against_is_comparable(self):
+        assert run_compare.comparability(_pins("e1", "s1", "test"), None) == {
+            "comparable": True,
+            "reasons": [],
+        }
+
+
 def _done(run, *, ago=None):
     """Mark a run's execution completed, optionally ``ago`` in the past."""
     fields = {"status": Execution.ExecutionStatus.COMPLETED}
@@ -360,6 +415,52 @@ class TestBuildRunComparison:
         assert [pair["band"] for pair in comparison["pairs"]] == ["new"]
         assert comparison["versions"]["against"] is None
         assert comparison["versions"]["current"]["suite"]["label"]
+        assert comparison["comparability"] == {"comparable": True, "reasons": []}
+
+    def test_runs_of_other_splits_keep_their_pairs_but_no_verdicts(
+        self, user, workspace, storage
+    ):
+        environment = _two_scenarios(user, workspace, storage, "cmp-split")
+        before = _run(environment, KEYS[:1], trials=2, key="before")
+        _trials(before, [(KEYS[0], False), (KEYS[0], False)])
+        after = _run(environment, KEYS[:1], trials=2, key="after")
+        _trials(after, [(KEYS[0], True), (KEYS[0], True)])
+        HostedHarnessJob.no_workspace_objects.filter(id=before.id).update(split="train")
+        HostedHarnessJob.no_workspace_objects.filter(id=after.id).update(split="test")
+        _done(before, ago=timedelta(minutes=5))
+
+        comparison = _compare(_done(after))
+
+        assert comparison["comparability"] == {
+            "comparable": False,
+            "reasons": ["different_split"],
+        }
+        [pair] = comparison["pairs"]
+        assert (pair["band"], pair["difference"]) == ("paired", 100.0)
+        assert pair["verdict"] is None
+        summary = comparison["summary"]
+        assert summary["paired"] == 1
+        for name in ("improved", "regressed", "no_meaningful_change", "inconclusive"):
+            assert summary[name] is None
+        assert comparison["versions"]["current"]["split"] == "test"
+        assert comparison["versions"]["against"]["split"] == "train"
+
+    def test_runs_of_the_same_split_keep_their_verdicts(self, user, workspace, storage):
+        environment = _two_scenarios(user, workspace, storage, "cmp-same-split")
+        before = _run(environment, KEYS[:1], key="before")
+        _trials(before, [(KEYS[0], True)])
+        after = _run(environment, KEYS[:1], key="after")
+        _trials(after, [(KEYS[0], True)])
+        HostedHarnessJob.no_workspace_objects.filter(
+            id__in=[before.id, after.id]
+        ).update(split="test")
+        _done(before, ago=timedelta(minutes=5))
+
+        comparison = _compare(_done(after))
+
+        assert comparison["comparability"]["comparable"] is True
+        assert _by_key(comparison)[KEYS[0]]["verdict"] == "no_meaningful_change"
+        assert comparison["summary"]["no_meaningful_change"] == 1
 
     def test_new_and_not_applicable_bands_with_the_removal_reason(
         self, user, workspace, storage
@@ -663,7 +764,13 @@ class TestBuildRunComparison:
 
         comparison = _compare(_done(after))
 
-        nothing = {"agent": None, "environment": None, "suite": None}
+        nothing = {
+            "agent": None,
+            "environment": None,
+            "suite": None,
+            "split": None,
+            "release": None,
+        }
         assert comparison["versions"] == {"current": nothing, "against": nothing}
         pairs = _by_key(comparison)
         assert pairs[KEYS[0]]["band"] == "paired"
@@ -745,7 +852,9 @@ class TestCompareEndpoint:
             "pairs",
             "summary",
             "versions",
+            "comparability",
         }
+        assert body["comparability"] == {"comparable": True, "reasons": []}
         assert body["execution_id"] == str(after.test_execution_id)
         assert body["against_execution_id"] == str(before.test_execution_id)
         [pair] = body["pairs"]
@@ -753,7 +862,13 @@ class TestCompareEndpoint:
         assert pair["verdict"] == "inconclusive"
         assert pair["interval"]["low"] < 0 < pair["interval"]["high"]
         assert set(body["versions"]) == {"current", "against"}
-        assert set(body["versions"]["current"]) == {"agent", "environment", "suite"}
+        assert set(body["versions"]["current"]) == {
+            "agent",
+            "environment",
+            "suite",
+            "split",
+            "release",
+        }
         assert body["versions"]["current"]["suite"]["label"].startswith("v")
 
     def test_an_explicit_against_run(self, auth_client, user, workspace, storage):
