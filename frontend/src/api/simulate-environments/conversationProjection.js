@@ -23,6 +23,9 @@ export const IN_FLIGHT_MESSAGE_STATES = new Set([
   "streaming",
 ]);
 
+export const POST_BUILD_CHECK_LINE =
+  "Checking the environment against your agent…";
+
 const nudgeLine = (payload = {}) => {
   const label = payload.trigger_label || "an unnumbered version";
   return payload.stage === "suite"
@@ -159,12 +162,14 @@ export function projectConversation(conversation) {
         if (cmd === "interrupt" || cmd === "cancel_operation") continue;
         // A Rebuild's builder message has no text on polls: the builder's
         // turn opens with a line naming what it updates.
-        if (cmd === "nudge") {
+        if (cmd === "nudge" || cmd === "post_build_check") {
           endBuilder();
           startBuilder().steps.push({
             id: m.message_id,
             kind: "nudge-line",
-            text: nudgeLine(m.payload),
+            text:
+              cmd === "nudge" ? nudgeLine(m.payload) : POST_BUILD_CHECK_LINE,
+            check: cmd === "post_build_check",
           });
           continue;
         }

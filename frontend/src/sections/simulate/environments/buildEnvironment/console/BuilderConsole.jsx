@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
+import { POST_BUILD_CHECK_LINE } from "src/api/simulate-environments/conversationProjection";
 import { CONSOLE_COPY } from "../build.constants";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ViewerLock from "../../components/ViewerLock";
@@ -186,6 +187,7 @@ export default function BuilderConsole({
   // agent). Distinct from `blocked`, so the composer stays usable while waiting.
   // `working` narrows it when Stop also covers work that only waits.
   const busy = running || working;
+  const checking = busy && Boolean(lastTurn?.steps?.[0]?.check);
   const hasNewMessage = !following && messageCount > seenMessages;
   // One button: Stop while there's something to stop, Send as soon as the user types.
   const showStop = onStop && (canStop || running) && !locked && !hasContent;
@@ -242,9 +244,11 @@ export default function BuilderConsole({
               ? reason
               : stopping
                 ? CONSOLE_COPY.stopping
-                : busy
-                  ? CONSOLE_COPY.working
-                  : CONSOLE_COPY.idle}
+                : checking
+                  ? POST_BUILD_CHECK_LINE
+                  : busy
+                    ? CONSOLE_COPY.working
+                    : CONSOLE_COPY.idle}
           </Typography>
         </Box>
         {onCollapse && (
