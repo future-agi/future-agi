@@ -976,7 +976,7 @@ export const useFixMyAgentBlocked = (executionId) => {
     status === TestRunExecutionStatus.COMPLETED ||
     status === TestRunExecutionStatus.CANCELLED
   ) {
-    if (callDetails.connectedCalls < 15) {
+    if (callDetails.connected_calls < 15) {
       return {
         disabled: true,
         reason: "You need at least 15 connected calls to debug failures.",

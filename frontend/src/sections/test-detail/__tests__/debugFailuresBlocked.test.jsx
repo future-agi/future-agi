@@ -1,20 +1,70 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useFixMyAgentBlocked } from "../common";
 import { useTestExecutionStore } from "../states";
 
+const mockKpis = vi.hoisted(() => ({ current: { agent_type: "voice" } }));
+
 vi.mock("src/hooks/useKpis", () => ({
-  default: () => ({ data: { agent_type: "voice" }, isPending: false }),
+  default: () => ({ data: mockKpis.current, isPending: false }),
 }));
+
+const BLOCKED_REASON =
+  "You need at least 15 connected calls to debug failures.";
+
+const run = (status, kpis) => {
+  mockKpis.current = kpis;
+  useTestExecutionStore.setState({ status });
+  return renderHook(() => useFixMyAgentBlocked("e1")).result.current;
+};
 
 describe("Debug failures on a run still in progress", () => {
   it("says it opens once the run finishes", () => {
-    useTestExecutionStore.setState({ status: "running" });
-    const { result } = renderHook(() => useFixMyAgentBlocked("e1"));
-    expect(result.current).toEqual({
+    expect(run("running", { agent_type: "voice" })).toEqual({
       disabled: true,
       reason:
         "The test run is still running. You can debug its failures once it finishes.",
+    });
+  });
+});
+
+describe("Debug failures on a finished run", () => {
+  beforeEach(() => {
+    mockKpis.current = { agent_type: "voice" };
+  });
+
+  it.each(["voice", "chat"])(
+    "is blocked on a completed %s run with 14 connected calls",
+    (agent_type) => {
+      expect(
+        run("completed", { agent_type, total_calls: 20, connected_calls: 14 }),
+      ).toEqual({ disabled: true, reason: BLOCKED_REASON });
+    },
+  );
+
+  it.each(["voice", "chat"])(
+    "is open on a completed %s run with exactly 15 connected calls",
+    (agent_type) => {
+      expect(
+        run("completed", { agent_type, total_calls: 20, connected_calls: 15 }),
+      ).toEqual({ disabled: false, reason: "" });
+    },
+  );
+
+  it("is blocked on a cancelled run with 14 connected calls", () => {
+    expect(
+      run("cancelled", {
+        agent_type: "voice",
+        total_calls: 20,
+        connected_calls: 14,
+      }),
+    ).toEqual({ disabled: true, reason: BLOCKED_REASON });
+  });
+
+  it("does not block on a count it was never sent", () => {
+    expect(run("completed", { agent_type: "voice", total_calls: 3 })).toEqual({
+      disabled: false,
+      reason: "",
     });
   });
 });
