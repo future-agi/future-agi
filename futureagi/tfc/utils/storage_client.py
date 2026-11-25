@@ -22,6 +22,7 @@ import certifi
 import idna
 import structlog
 import urllib3
+from defusedxml import ElementTree
 from minio import Minio
 from requests.utils import (
     get_auth_from_url,
@@ -577,6 +578,31 @@ def _require_project_bucket(client: Minio, bucket_name: str) -> None:
         raise error
 
 
+def _require_private_s3_acl(client: Minio, bucket_name: str) -> None:
+    """Reject public group grants, regardless of the permission they convey."""
+    try:
+        # minio-py has no GetBucketAcl wrapper; reuse its signed request path.
+        response = client._execute("GET", bucket_name, query_params={"acl": ""})
+        root = ElementTree.fromstring(response.data)
+        acl = root.find("{*}AccessControlList")
+        if acl is None:
+            raise ValueError("missing S3 access control list")
+        public_groups = {
+            "http://acs.amazonaws.com/groups/global/AllUsers",
+            "http://acs.amazonaws.com/groups/global/AuthenticatedUsers",
+        }
+        public = any(
+            uri.text in public_groups
+            for uri in acl.findall("{*}Grant/{*}Grantee/{*}URI")
+        )
+    except Exception as exc:
+        logger.error("storage_private_bucket_acl_unreadable", bucket=bucket_name)
+        raise PrivateBucketRefused(bucket_name) from exc
+    if public:
+        logger.error("storage_private_bucket_public_acl", bucket=bucket_name)
+        raise PrivateBucketRefused(bucket_name)
+
+
 def _check_private_bucket(client: Minio, bucket_name: str) -> None:
     """One check of ensure_private_bucket. Raises when the bucket is not
     known to be private."""
@@ -617,3 +643,5 @@ def _check_private_bucket(client: Minio, bucket_name: str) -> None:
     if policy and policy_allows_anyone(policy):
         logger.error("storage_private_bucket_public", bucket=bucket_name)
         raise PrivateBucketRefused(bucket_name)
+    if STORAGE_BACKEND == "s3":
+        _require_private_s3_acl(client, bucket_name)

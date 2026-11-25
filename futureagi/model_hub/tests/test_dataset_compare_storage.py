@@ -207,7 +207,36 @@ def test_a_bucket_given_a_policy_while_it_was_created_is_refused(
         write_compare_json(compare_id, "metadata.json", {"status": "completed"})
 
 
-class _PolicyClient:
+class _BucketAclClient:
+    # MinIO's SDK has no GetBucketAcl wrapper. Model its signed GET response.
+    acl = b"""<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+      <AccessControlList><Grant><Grantee><ID>owner</ID></Grantee>
+      <Permission>FULL_CONTROL</Permission></Grant></AccessControlList></AccessControlPolicy>"""
+
+    def _execute(self, method, bucket, *, query_params):
+        assert (method, query_params) == ("GET", {"acl": ""})
+        return SimpleNamespace(data=self.acl)
+
+
+@pytest.mark.parametrize("permission", ["READ", "WRITE", "FULL_CONTROL"])
+@pytest.mark.parametrize("group", ["AllUsers", "AuthenticatedUsers"])
+def test_public_bucket_acl_prevents_compare_write(
+    monkeypatch, settings, group, permission
+):
+    from model_hub.utils.compare_storage import write_compare_json
+
+    client = _CreationClient(exists=True)
+    client.acl = f"""<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+      <AccessControlList><Grant><Grantee>
+      <URI>http://acs.amazonaws.com/groups/global/{group}</URI></Grantee>
+      <Permission>{permission}</Permission></Grant></AccessControlList></AccessControlPolicy>""".encode()
+    _use_creation_client(monkeypatch, settings, client, "s3")
+    with pytest.raises(storage_client.PrivateBucketRefused):
+        write_compare_json(uuid.uuid4(), "metadata.json", {})
+    assert client.written == []
+
+
+class _PolicyClient(_BucketAclClient):
     """An existing bucket whose policy read gives the error code."""
 
     def __init__(self, code):
@@ -250,7 +279,7 @@ def test_a_bucket_whose_policy_cannot_be_read_is_not_used(
         assert client.written == []
 
 
-class _CreationClient:
+class _CreationClient(_BucketAclClient):
     """A bucket that may not exist yet. ``make_bucket`` creates it, or fails
     with ``create_code`` as when another request created it first."""
 
@@ -701,7 +730,7 @@ def test_a_refused_compare_bucket_is_a_storage_error(monkeypatch, settings):
     assert isinstance(unavailable.value.__cause__, PrivateBucketRefused)
 
 
-class _PolicyTextClient:
+class _PolicyTextClient(_BucketAclClient):
     """An existing bucket whose policy read returns the given text."""
 
     def __init__(self, policy):
