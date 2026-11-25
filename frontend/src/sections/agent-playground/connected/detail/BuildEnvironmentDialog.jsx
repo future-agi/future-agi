@@ -92,7 +92,8 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   const [parallelismInput, setParallelismInput] = useState("1");
   const parallelism = clampParallelism(parallelismInput);
   const [building, setBuilding] = useState(false);
-  const chosen = versionId || versions[0]?.id || "";
+  const chosen =
+    versionId || versions.find((v) => v.isActive)?.id || versions[0]?.id || "";
   // The chosen version may be past the first page of the list: its own read
   // stands in, so an old production version still builds.
   const detail = useAgentVersion(agent.id, chosen);

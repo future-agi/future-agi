@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
+import { resolveFrontendTool } from "./resolve-frontend-tool.mjs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -8,15 +9,12 @@ const rootDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const prettier = path.join(
-  rootDir,
-  "frontend",
-  "node_modules",
-  ".bin",
+const prettier = resolveFrontendTool(
+  path.join(rootDir, "frontend"),
   "prettier",
 );
 
-if (!existsSync(prettier)) {
+if (!prettier) {
   console.error('Missing prettier. Run "yarn --cwd frontend install" first.');
   process.exit(1);
 }
@@ -43,9 +41,13 @@ const files = process.argv
 const uniqueFiles = [...new Set(files)];
 if (uniqueFiles.length === 0) process.exit(0);
 
-const result = spawnSync(prettier, ["--write", ...uniqueFiles], {
-  cwd: rootDir,
-  stdio: "inherit",
-});
+const result = spawnSync(
+  process.execPath,
+  [prettier, "--write", ...uniqueFiles],
+  {
+    cwd: rootDir,
+    stdio: "inherit",
+  },
+);
 
 process.exit(result.status ?? 1);

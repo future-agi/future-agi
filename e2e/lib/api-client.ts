@@ -1,4 +1,5 @@
 import { test, type APIRequestContext } from '@playwright/test';
+import { firstHopOptions } from './backend-transport';
 
 type Method = 'get' | 'head' | 'post' | 'put' | 'patch' | 'delete';
 
@@ -61,12 +62,13 @@ export class ApiClient {
 
   /** The status and body whatever the status, for a flow that asserts a refusal or a 202. */
   async request<T = unknown>(method: Method, path: string, opts: RequestOptions = {}): Promise<{ status: number; body: T }> {
-    const request = () => this.req[method](`${this.baseURL}${path}`, {
+    const url = `${this.baseURL}${path}`;
+    const request = () => this.req[method](url, firstHopOptions(url, this.baseURL, {
       headers: { ...this.headers, ...opts.headers },
       params: opts.params,
       data: opts.data,
       maxRetries: 0, // This wrapper owns the one retry; never nest Playwright retries.
-    });
+    }));
     let res;
     try {
       res = await request();
