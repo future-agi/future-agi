@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +21,11 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.tests.test_hosted_harness_channels import _payload
+
+# World_state files as the kit writes them, made by its own code: a trial with no world door, and one with a door.
+KIT_FILES = json.loads(
+    (Path(__file__).parent / "browser_world_state_files.json").read_text()
+)
 
 BROWSER_SCHEMA = "futureagi.browser-world-state.v1"
 DOOR_SCHEMA = "futureagi.world-state.v1"
@@ -68,16 +74,28 @@ def _no_door_file(browser, **extra):
 
 
 class _Storage:
-    """The object store as the page reads it: the bytes of each stored key, and every key read."""
+    """The object store as the page reads it: the bytes of each stored key, given a few at a time as a network read
+    gives them, and every key read."""
 
-    def __init__(self):
+    def __init__(self, piece: int = 7):
         self.objects: dict[str, bytes] = {}
         self.read: list[str] = []
+        self.piece = piece
 
     def get_object(self, bucket, key):
         self.read.append(key)
+        data = self.objects[key]
+        position = 0
+
+        def read(amount=None):
+            nonlocal position
+            size = min(self.piece, amount if amount is not None else len(data))
+            chunk = data[position : position + size]
+            position += len(chunk)
+            return chunk
+
         response = MagicMock()
-        response.read.side_effect = lambda amount=None: self.objects[key][:amount]
+        response.read.side_effect = read
         return response
 
 
@@ -543,3 +561,62 @@ def test_the_trial_s_browser_is_read_through_its_call_only_in_its_workspace(
         organization=Organization.objects.create(name="Other browser organization"),
     )
     assert auth_client.get(url).status_code == 404
+
+
+@pytest.mark.django_db
+def test_the_kit_s_own_files_read_as_listed_with_their_pictures_and_refusals(
+    job, store
+):
+    for text in KIT_FILES["shot_bytes"].values():
+        _stored(job, hashlib.sha256(text.encode()).hexdigest())
+    no_door = _file(job, store, KIT_FILES["no_door"])
+    door = _file(job, store, KIT_FILES["door"])
+
+    without = be.browser_evidence(_call(job, no_door))
+    with_door = be.browser_evidence(_call(job, door, recorded=True))
+
+    for shown in (without, with_door):
+        assert shown["state"] == "listed"
+        assert [
+            (one["when"], one["url"], one["kept"]) for one in shown["screenshots"]
+        ] == [
+            ("load", "https://shop.example.com/", True),
+            ("end", "https://shop.example.com/cart", True),
+        ]
+    assert without["blocked_source"] == "file"
+    assert without["blocked"] == [
+        {"host": "www.example.com", "via": "browser", "what": "navigation", "count": 1},
+        {
+            "host": "cdn.other.test",
+            "via": "browser",
+            "what": "page_request",
+            "count": 1,
+        },
+    ]
+    assert with_door["blocked_source"] == "record"
+
+
+@pytest.mark.django_db
+def test_a_file_storage_cannot_give_is_said_unreadable(job, store):
+    end = _file(job, store, _no_door_file(_browser()))
+
+    with patch.object(store, "get_object", side_effect=OSError("storage is down")):
+        shown = be.browser_evidence(_call(job, end))
+
+    assert shown["state"] == "unreadable"
+    assert shown["blocked_source"] == "unreadable"
+
+
+@pytest.mark.django_db
+def test_every_field_of_a_listed_answer_is_served_as_read(job, store):
+    from simulate.serializers.call_detail_v3 import CallBrowserEvidenceSerializer
+
+    _stored(job, hashlib.sha256(KIT_FILES["shot_bytes"]["load"].encode()).hexdigest())
+    body = KIT_FILES["no_door"]
+    end = _file(job, store, {**body, "browser": {**body["browser"], "complete": False}})
+    shown = be.browser_evidence(_call(job, end))
+
+    served = json.loads(json.dumps(CallBrowserEvidenceSerializer(shown).data))
+
+    assert shown["complete"] is False
+    assert served == json.loads(json.dumps(shown))
