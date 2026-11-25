@@ -282,6 +282,9 @@ jobs:
     # .test_durations when there is none.
     needs: changes
     if: needs.changes.outputs.backend == 'true'
+    permissions:
+      contents: read
+      actions: read # read the dev timing artifact if the cache is not visible
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.backend_cold_fanout && 45 || 5 }}
     outputs:
@@ -314,13 +317,37 @@ jobs:
       IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Restore newest timing cache over the committed floor
+        id: timing-cache
         uses: actions/cache/restore@v4
         with:
           path: futureagi/.test_durations
           key: test-durations-${{ github.run_id }} # never matches; forces prefix restore
           restore-keys: |
             test-durations-
+      - name: Record the timing cache used for planning
+        if: steps.timing-cache.outputs.cache-matched-key != ''
+        env:
+          CACHE_KEY: ${{ steps.timing-cache.outputs.cache-matched-key }}
+        run: |
+          printf 'Timing source (before floors) — cache %s\n' "$CACHE_KEY" >> "$GITHUB_STEP_SUMMARY" ||
+            echo '::warning title=Timings::Could not write timing source to step summary'
+      - name: Fetch saved dev timings on cache miss
+        if: steps.timing-cache.outputs.cache-matched-key == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! python3 -I futureagi/.ci/fetch_saved_timings.py; then
+            echo '::warning title=Timings::Fetcher exited unexpectedly; restoring committed timings'
+            if git restore --source=HEAD --worktree -- futureagi/.test_durations; then
+              echo "Timing source (before floors) — committed fallback (futureagi/.test_durations)" >> "$GITHUB_STEP_SUMMARY" ||
+                echo '::warning title=Timings::Could not write timing source to step summary'
+            else
+              echo '::warning title=Timings::Could not restore committed timings'
+            fi
+          fi
       - name: Test CI asset verification and failure paths
         run: python3 -I -m unittest discover -s futureagi/.ci -p 'test_*.py' -v
       - name: Raise known long tests to their weight floors (raise only)
@@ -916,9 +943,8 @@ jobs:
 
   timings:
     # Each shard of a dev push records its tests' times (--store-durations).
-    # This job merges them into one .test_durations and saves it under the
-    # cache key the plan job restores, so the next runs split on fresh times.
-    # Without it the committed file was the only input and went stale. Not a
+    # Save the merged .test_durations as both a cache and a run artifact:
+    # refs that cannot restore dev's caches can still plan from its timings. Not a
     # dependency of "Backend Tests Pass": a failure here costs balance, not
     # correctness, and it still turns this run red.
     name: Save test timings (dev pushes)
@@ -950,6 +976,15 @@ jobs:
         with:
           path: futureagi/.test_durations
           key: test-durations-${{ github.run_id }}
+      - name: Save merged timings for refs outside the dev cache scope
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-durations-saved
+          path: futureagi/.test_durations
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
 
   collection:
     # pytest-split runs each test exactly once only when every shard collects
