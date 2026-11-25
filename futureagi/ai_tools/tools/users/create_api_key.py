@@ -33,16 +33,12 @@ class CreateApiKeyTool(BaseTool):
         from django.db import IntegrityError
 
         from accounts.models.user import OrgApiKey
-        from accounts.models.workspace import OrganizationRoles
+        from accounts.services.organization_access import is_organization_admin
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
+        if not is_organization_admin(actor, org):
             return ToolResult.error(
                 "You do not have permission to create API keys. "
                 "Only Owner or Admin roles can create API keys.",

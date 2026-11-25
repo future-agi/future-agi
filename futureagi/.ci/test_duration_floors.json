@@ -1,0 +1,3 @@
+{
+    "tracer/tests/test_metric_busy_guard_clickhouse.py::test_dense_mixed_work_is_bounded_without_false_pause[3200]": 1230
+}

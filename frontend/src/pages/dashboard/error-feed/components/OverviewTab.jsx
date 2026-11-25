@@ -504,7 +504,7 @@ function EventsUsersChart({
               <Skeleton width={28} height={14} sx={{ borderRadius: "4px" }} />
             ) : (
               <Typography
-                fontSize="13px"
+                fontSize="12px"
                 fontWeight={600}
                 color="text.primary"
                 sx={{ fontFeatureSettings: "'tnum'", lineHeight: 1 }}
@@ -621,7 +621,7 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
             {/* Top row: trace ID + time */}
             <Stack direction="row" alignItems="center" gap={0.75} mb={0.4}>
               <Typography
-                fontSize="13px"
+                fontSize="12px"
                 fontWeight={500}
                 color="text.primary"
                 sx={{ flex: 1, minWidth: 0 }}
@@ -1318,7 +1318,7 @@ function ReelStep({ step, isFailReel, isLast }) {
       </Box>
       <Typography
         component="span"
-        fontSize="13px"
+        fontSize="12px"
         color="text.primary"
         sx={{ lineHeight: 1.5, flex: 1, minWidth: 0 }}
       >

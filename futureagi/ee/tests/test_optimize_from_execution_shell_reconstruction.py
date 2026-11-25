@@ -29,7 +29,8 @@ def _eval_data(
         "eval_template_name": template_name,
         "description": "",
         "criteria": "",
-        "template_config": template_config or {
+        "template_config": template_config
+        or {
             "output": "choices",
             "required_keys": ["output"],
             "eval_type_id": "AgentEvaluator",
@@ -126,7 +127,12 @@ class TestShellReconstructionCarriesScoringFields:
         cfgs = _reconstruct_eval_configs(_execution_data(data))
         tpl = cfgs[0].eval_template
         assert tpl.output_type_normalized == "percentage"
-        assert tpl.choice_scores == {"Good": 1.0, "Average": 0.7, "Normal": 0.3, "Bad": 0.0}
+        assert tpl.choice_scores == {
+            "Good": 1.0,
+            "Average": 0.7,
+            "Normal": 0.3,
+            "Bad": 0.0,
+        }
         assert tpl.pass_threshold == 0.5
 
     def test_percentage_without_choice_scores_shell_carries_none(self):
@@ -244,11 +250,22 @@ class TestShellReconstructionMultipleTemplates:
         cfgs = _reconstruct_eval_configs(_execution_data(*datas))
         assert len(cfgs) == 7
         by_name = {c.eval_template.name: c.eval_template for c in cfgs}
-        assert by_name["customer_agent_single_choice"].output_type_normalized == "deterministic"
+        assert (
+            by_name["customer_agent_single_choice"].output_type_normalized
+            == "deterministic"
+        )
         assert by_name["customer_agent_single_choice"].choice_scores == {
-            "Good": 1.0, "Neutral": 0.5, "Bad": 0.0,
+            "Good": 1.0,
+            "Neutral": 0.5,
+            "Bad": 0.0,
         }
-        assert by_name["customer_agent_human_escalation"].output_type_normalized == "pass_fail"
-        assert by_name["customer_agent_context_retention"].output_type_normalized == "percentage"
+        assert (
+            by_name["customer_agent_human_escalation"].output_type_normalized
+            == "pass_fail"
+        )
+        assert (
+            by_name["customer_agent_context_retention"].output_type_normalized
+            == "percentage"
+        )
         assert by_name["tone"].output_type_normalized == "deterministic"
         assert by_name["tone"].choice_scores is None

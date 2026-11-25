@@ -364,15 +364,17 @@ providers:
 #       - provider: openai-west
 #         weight: 50
 
-# cache:
-#   enabled: true
-#   default_ttl: 5m                        # Default cache entry TTL
-#   max_entries: 10000                     # Max entries in LRU cache
-#   # Per-request headers:
-#   #   x-agentcc-cache-ttl: "10m"           # Override TTL for this request
-#   #   x-agentcc-cache-namespace: "prod"    # Isolate cache by namespace
-#   #   x-agentcc-cache-force-refresh: true  # Skip cache read, refresh entry
-#   #   Cache-Control: no-store            # Skip caching entirely
+# Instantiate the real exact cache for cache-policy flows. Organizations still
+# opt in through their configuration; no embedding provider or CDN is involved.
+cache:
+  enabled: true
+  backend: memory
+  default_ttl: 30m
+  max_entries: 10000
+  semantic:
+    enabled: false
+  edge:
+    enabled: false
 
 # rate_limiting:
 #   enabled: true
@@ -392,8 +394,13 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
-# guardrails:
-#   enabled: true
+# Exercise org-configured checks; no static rules are installed for other flows.
+# The deliberately permissive global value must not opt any tenant in.
+guardrails:
+  enabled: true
+  fail_open: true
+  default_timeout: 5s
+# Example static rules:
 #   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
 #   default_timeout: 5s                 # Default per-guardrail timeout
 #   rules:

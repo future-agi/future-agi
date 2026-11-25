@@ -311,7 +311,7 @@ ports the UI is `http://<host>:3000` and the API `http://<host>:8000`.
     keys = ["BASE_URL"]
     default = "`http://localhost:8000`"
     setups = ["S", "D", "H"]
-    text = "The API's own public URL: SSO and OAuth callbacks, the MCP and SDK endpoints shown in the UI, trusted CSRF origins. Wrong: SSO sign-in redirects fail and copied snippets point at localhost."
+    text = "The API's own public URL: SSO and OAuth callbacks, the MCP and SDK endpoints shown in the UI (the SDK snippet's `FI_BASE_URL`, which falls back to `VITE_HOST_API`, then `http://localhost:<BACKEND_PORT>`, while this is unset), trusted CSRF origins. Wrong: SSO sign-in redirects fail and copied snippets point at localhost."
 
     [[part.section.row]]
     keys = ["FRONTEND_URL"]
@@ -326,6 +326,12 @@ ports the UI is `http://<host>:3000` and the API `http://<host>:8000`.
     text = "The UI's address, as `host[:port]` (`app.example.com`) or a full URL (`https://app.example.com`). Invite, verification and password-reset links, the links in app emails and the SSO redirects back to the UI are built from it. A scheme you write is kept. Without one, links use `http://` for `localhost` and loopback addresses, and otherwise `https://`, or `http://` while `ENV_TYPE` is `local` or `test`. So write the full URL when that guess is wrong: `https://...` for a UI behind TLS with the default `ENV_TYPE=local`, `http://...` for a plain-HTTP host with `ENV_TYPE=production`. Wrong: invite and reset links open the wrong address."
 
     [[part.section.row]]
+    keys = ["AGENTCC_GATEWAY_PUBLIC_URL"]
+    default = "unset (gateway page shows `http://localhost:8090`); Helm: `urls.gateway`"
+    setups = ["S", "D", "H"]
+    text = "Public URL shown in the dashboard's gateway configuration. Set it to the externally reachable `https://` URL when gateway TLS is on; otherwise copied base URLs point to localhost or cause mixed content. Helm passes `urls.gateway` to the API and worker pods."
+
+    [[part.section.row]]
     keys = ["MINIO_URL"]
     default = "`http://localhost:9005` (follows `MINIO_API_PORT`); Helm: `urls.objects`, else the ingress's objects host or the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>`"
     setups = ["S", "D", "H"]
@@ -335,7 +341,7 @@ ports the UI is `http://<host>:3000` and the API `http://<host>:8000`.
     keys = ["FI_COLLECTOR_PUBLIC_URL"]
     default = "`http://localhost:<FI_COLLECTOR_OTLP_HTTP_PORT>` (`http://localhost:4318`); Helm: `urls.otlp`, else the OTLP host of the ingress or the Gateway API routes, else `http://localhost:4318` (the port-forward)"
     setups = ["S", "D", "H"]
-    text = "OTLP/HTTP base URL of the trace collector as SDKs outside the stack reach it: what the in-app SDK snippet, the first-run setup screen, the installer's and the app's start-up summaries hand out as `FI_BASE_URL`. The collector listens on `127.0.0.1` in both Compose setups, so SDKs on other machines need a reverse proxy in front of port 4318 and this set to its URL. Wrong: copied snippets send traces to an address that does not answer."
+    text = "OTLP/HTTP base URL of the trace collector as SDKs outside the stack reach it: what the in-app SDK snippet, the first-run setup screen, the installer's and the app's start-up summaries hand out as `FI_TRACES_URL` (`FI_BASE_URL` is the API's URL: `BASE_URL`, else `VITE_HOST_API`, else `http://localhost:<BACKEND_PORT>`). `FI_TRACES_URL` needs fi-instrumentation-otel 1.5.0+ (Python) or @traceai/fi-core 1.4.0+ (TypeScript); with an older SDK, set `FI_BASE_URL` to the collector URL instead. The collector listens on `127.0.0.1` in both Compose setups, so SDKs on other machines need a reverse proxy in front of port 4318 and this set to its URL. Wrong: copied snippets send traces to an address that does not answer."
 
   [[part.section]]
   heading = "Email"
@@ -649,6 +655,12 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "Sandbox snapshot names, comma-separated, that carry the SDK able to apply a run's observability export. Empty means no run exports. List a snapshot only once it carries agent-learning-kit #162, #172 and #173 together: without #173 the exporter never sends the agent's key."
 
     [[part.section.row]]
+    keys = ["ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Sandbox snapshot names, comma-separated, whose hook measures the model calls of an agent that traces nothing itself. A name counts only when `ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS` lists it too. Empty means an untraced agent's runs export nothing. List a snapshot only once it carries agent-learning-kit's `simulation_measure` module: an older hook puts the agent's ingest key on any exporter the agent aims at its own traces endpoint."
+
+    [[part.section.row]]
     keys = ["HARNESS_OBSERVABILITY", "FI_HARNESS_PROJECT"]
     default = "empty (off)"
     setups = ["S", "D", "H"]
@@ -721,10 +733,52 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "`true` tells an environment when its agent or environment version changed and offers a rebuild. Turn it on together with `HARNESS_BUNDLE_CERTIFY_ENABLED`, after `HARNESS_VERSIONING_ENABLED`, once the sandbox template carries an agent-learning-kit release that supports versioning."
 
     [[part.section.row]]
+    keys = ["HARNESS_SOURCE_SUBFOLDER_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` lets a GitHub build name the folder of the agent inside the repository (`source.subfolder`). Turn it on only once the sandbox template carries an agent-learning-kit release that reads `subfolder`; before that a build would silently use the repository root, so the field is refused."
+
+    [[part.section.row]]
+    keys = ["HARNESS_AGENT_READING_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` reads every new code version of an Agents-page agent in the sandbox before its check, and turns on Find agents and Connect for GitHub and uploads. `false` keeps today's check, and a version's tools, prompt and model arrive with its first build. Turn it on only once the sandbox template carries an agent-learning-kit release with the read-only reading mode, and before `HARNESS_SEED_CONTRACT_ENABLED`."
+
+    [[part.section.row]]
+    keys = ["HARNESS_SEED_CONTRACT_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` starts a build from the reading stored on its agent version instead of reading the agent again. Turn it on after `HARNESS_AGENT_READING_ENABLED`, once the sandbox template carries an agent-learning-kit release that takes `--seed-contract`; a version with no stored reading is still read in the build."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_READING_TIMEOUT"]
+    default = "`2400`"
+    setups = ["S", "D", "H"]
+    text = "Seconds one reading of an agent, or one scan for the agents in a source, may run before it is stopped and marked failed with Try again."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_READING_MAX_MODEL_CALLS"]
+    default = "`60`"
+    setups = ["S", "D", "H"]
+    text = "Most model calls one reading of an agent may make, its readers' calls included. A reading that reaches it stops as failed and is not retried. Zero, a negative number or no number means 60; it cannot turn the limit off. Takes effect only once the sandbox template carries an agent-learning-kit release that reads it."
+
+    [[part.section.row]]
     keys = ["HARNESS_BUNDLE_CERTIFY_ENABLED"]
     default = "`false`"
     setups = ["S", "D", "H"]
     text = "`true` lets a run build and certify an environment bundle for a version combination that has none yet. `false` never builds a bundle: a run at the environment's default versions runs as before, a rerun whose versions have no ready bundle runs the defaults, and picking another combination with no ready bundle is refused, as is a default pair with no sealed bundle. Turn it on together with `HARNESS_VERSIONING_NUDGES_ENABLED`."
+
+    [[part.section.row]]
+    keys = ["HARNESS_ACTORS_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` turns on actors and test conditions: the Actors tab and its editor, test conditions in the scenario editor, the World changes view on each call, and the harness authoring, playing and applying them. `false` hides and refuses all of it and tells the harness, in every job it sends, to author, play and apply none. Turn it on once the sandbox template carries an agent-learning-kit release that reads that switch."
+
+    [[part.section.row]]
+    keys = ["HARNESS_ACTORS_SHARE"]
+    default = "`0.15-0.25`"
+    setups = ["S", "D", "H"]
+    text = "While `HARNESS_ACTORS_ENABLED` is `true`, the default share of an environment's scenarios that include an actor, as `<min>-<max>`, each from 0 to 1 with min not above max; a request that names its own share wins. Any other value stops the backend at startup. Ignored while actors are off."
 
     [[part.section.row]]
     keys = ["HARNESS_PARALLEL_SNAPSHOT_DIGESTS"]
@@ -1058,6 +1112,12 @@ a Mixpanel token.
     text = "Most entries kept on `usage:events` (about 160 bytes each) while its consumer is behind or stopped. A positive integer in plain digits; blank means the default. The app and fi-collector refuse to start on zero, a negative number or text."
 
     [[part.section.row]]
+    keys = ["HARNESS_AGENT_READING_CHARGE_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Only has an effect on Future AGI Cloud. A self-hosted install records no charge either way: `USAGE_EVENTS_ENABLED` is off there, and an install with no enterprise licence records none. On Future AGI Cloud, `true` charges the organization for the model use of each reading of an agent and each scan for agents in a source; `false` charges none and logs one line per reading, `agent_reading_not_charged`, with what it would have cost."
+
+    [[part.section.row]]
     keys = ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"]
     default = "empty: no organization restricted"
     setups = ["S", "D", "H"]
@@ -1212,6 +1272,101 @@ values for these settings at startup. Deploy the backend and frontend together.
     default = "empty: the community Discord"
     setups = ["S", "D", "H"]
     text = "Where the sidebar's Help entry points."
+
+  [[part.section]]
+  heading = "SQL workbench"
+  body = '''
+Pass execution credentials to the backend and dedicated `sql_workbench` worker.
+Compose uses the shared `.env` through `env_file`. Helm uses `secrets.extra` or
+its existing Secret references; never store credentials in chart values committed
+to source control. Estimator credentials are optional and consumed only by the API.
+`EXACT_AGGREGATION_TASK_QUEUE` routes workflow/control and retention work;
+interactive scans always run on the separate bounded `sql_workbench` queue.
+'''
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_CH_USER"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Application-only read-only ClickHouse principal. Backend and SQL worker; required to run queries; cannot be the normal admin account."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_CH_PASSWORD"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Secret for the dedicated execution principal. Backend and SQL worker; at least 24 characters when provisioning; never supply the admin password."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_CH_SECURE"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "Native TLS for backend and SQL worker, with certificate verification enabled. Set true for a TLS listener."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_ESTIMATE_CH_USER"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Optional, separate estimator principal on the backend only. Missing credentials disable estimates, never queries."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_ESTIMATE_CH_PASSWORD"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Optional estimator secret on the backend only. At least 24 characters when provisioning; never reuse the execution account."
+
+    [[part.section.row]]
+    keys = ["METRICS_ENABLED"]
+    default = "0"
+    setups = ["S", "D", "H"]
+    text = "Backend and workers. 1 turns on Metrics; while it is 1, install and update apply the Metrics ClickHouse schema (Distributed production: deploy/README.md step 6)."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_DERIVED_METRICS_ENABLED"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "Backend and SQL worker. Enable only after the derived metrics schema and read-only grants are installed."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_RESULT_CACHE_SECONDS"]
+    default = "60"
+    setups = ["S", "D", "H"]
+    text = "Backend and SQL worker. Integer 0 to 3600; 0 disables same-actor exact-scope result reuse."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H"]
+    default = "1500"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer ceiling on one actor's rolling 24-hour query submissions."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ORG_QUERIES_24H"]
+    default = "30000"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer ceiling on organization-wide rolling 24-hour query submissions."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H"]
+    default = "134217728"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer byte budget for one actor, including in-flight reservations."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H"]
+    default = "536870912"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer organization byte budget, including in-flight reservations."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_ESTIMATES_PER_MINUTE"]
+    default = "30"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer per-actor advisory-estimate rate ceiling."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_AUDIT_RETENTION_DAYS"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Retention worker. Unset preserves audit metadata indefinitely; a positive integer opts into deletion of expired terminal records older than this many days. Result bodies always expire after 24 hours."
 
   [[part.section]]
   heading = "Optional host update reporting"
@@ -1668,7 +1823,7 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["READ_REPLICA_OPT_IN"]
     default = "empty: nothing reads from the replica"
     setups = ["S", "D", "H"]
-    text = "Model class names and `feature:` keys routed to the replica, comma-separated. Helm: `postgres.readReplica.optIn`."
+    text = "`feature:` keys and model class names routed to the replica, comma-separated; read at startup. A model name routes every ordinary read of that model, including re-reads of a row just written, so list only audited models: the Helm chart README's \"Read replica\" section has the tested list. Helm: `postgres.readReplica.optIn`."
 
     [[part.section.row]]
     keys = ["PG_DIRECT_HOST", "PG_DIRECT_PORT"]
@@ -1744,6 +1899,90 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     default = "`false`; Helm: `agentccGateway.allowPrivateProviderURLs`"
     setups = ["S", "D", "H"]
     text = "`true` lets org providers use base URLs on private networks (RFC 1918 addresses, Docker service names): a local Ollama or vLLM, see [INSTALLATION.md](repo:INSTALLATION.md#local-models-ollama-vllm). Read by the gateway and the API; a gateway or API from before this setting ignores it and refuses every private address. Loopback, link-local and cloud metadata addresses stay refused. Anyone who can add a provider can then reach every service on that network, ClickHouse included (its `default` user has no password while `CH_PASSWORD` is empty, as on installs made before the installer generated one), so turn it on only when they are all trusted."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_HTTP_ENABLED"]
+    default = "`true`; Helm: `agentccGateway.tls.httpEnabled`"
+    setups = ["D", "H"]
+    text = "Keep the gateway HTTP listener on; set false only after enabling TLS and migrating all callers. The gateway refuses startup if neither listener is enabled, or if the value is not `true` or `false`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_ENABLED"]
+    default = "`false`; Helm: `agentccGateway.tls.enabled`"
+    setups = ["D", "H"]
+    text = "Enable the native HTTPS listener. A missing, invalid or expired certificate or private key, or a value other than `true` or `false`, fails startup rather than falling back to HTTP."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_PORT"]
+    default = "`8443`; Helm: `agentccGateway.tls.port`"
+    setups = ["D", "H"]
+    text = "Gateway HTTPS container port, distinct from the HTTP listener while both are on; Helm exposes it at `agentccGateway.tls.servicePort`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_CERT_FILE"]
+    default = "empty; Helm: mounted Secret's `tls.crt`"
+    setups = ["D", "H"]
+    text = "Full-chain certificate path. Mount the certificate directory rather than individual files so Kubernetes Secret rotation and atomic file replacement work."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_KEY_FILE"]
+    default = "empty; Helm: mounted Secret's `tls.key`"
+    setups = ["D", "H"]
+    text = "Matching private-key file path. Protect access to the key; the gateway refuses startup on a missing or mismatched key."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_MIN_VERSION"]
+    default = "`1.2`; Helm: `agentccGateway.tls.minVersion`"
+    setups = ["D", "H"]
+    text = "Minimum accepted TLS protocol version: `1.2` or `1.3`. Older TLS versions are refused."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TLS_RELOAD_INTERVAL"]
+    default = "`30s`; Helm: `agentccGateway.tls.reloadInterval`"
+    setups = ["D", "H"]
+    text = "Go duration for polling certificate content, greater than zero and at most 60s. Bad rotations keep the last good certificate in use."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_HTTP_ENABLED"]
+    default = "`true`; Helm: `frontend.tls.httpEnabled`"
+    setups = ["D", "H"]
+    text = "Keep the dashboard HTTP listener on during migration; disabling HTTP without enabling TLS fails startup."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_HTTP_PORT"]
+    default = "`80`; Helm: `8080` when native HTTPS is enabled"
+    setups = ["D", "H"]
+    text = "Dashboard HTTP port in the container. Helm's unprivileged nginx configuration listens on 8080."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_ENABLED"]
+    default = "`false`; Helm: `frontend.tls.enabled`"
+    setups = ["D", "H"]
+    text = "Serve the dashboard over HTTPS. A missing certificate or key, or an expired or unreadable certificate, fails startup rather than falling back to HTTP."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_PORT"]
+    default = "`443`; Helm: `frontend.tls.port` (8443 by default)"
+    setups = ["D", "H"]
+    text = "Dashboard HTTPS container port. Helm exposes it on `frontend.tls.servicePort` (443 by default)."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_CERT_FILE"]
+    default = "empty; Helm: mounted Secret's `tls.crt`"
+    setups = ["D", "H"]
+    text = "Full-chain certificate path. Mount the directory, not individual files, so atomic certificate rotation is visible."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_KEY_FILE"]
+    default = "empty; Helm: mounted Secret's `tls.key`"
+    setups = ["D", "H"]
+    text = "Matching private key file path, readable by nginx (Helm uid and fsGroup 101)."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_TLS_RELOAD_INTERVAL"]
+    default = "`30` seconds; Helm: `frontend.tls.reloadInterval`"
+    setups = ["D", "H"]
+    text = "Seconds between certificate content checks. On change nginx reloads without dropping active connections; an expired certificate is not loaded, and a bad pair keeps the previous certificate in use."
 
     [[part.section.row]]
     keys = ["AGENTCC_SYNC_INTERVAL"]
@@ -2125,6 +2364,25 @@ in a compose override; the Helm chart sets them from `global.proxy`,
     default = "unset"
     setups = ["S", "D", "H"]
     text = "`1` stops the model server from downloading models; pre-seed its cache first. Helm: on (serving only) with `global.airgap`."
+
+  [[part.section]]
+  heading = "Collector provenance and obsolete settings"
+  body = '''
+Set these in the collector container's environment (a Compose override or
+`fiCollector.extraEnv` in Helm), not just in the installer's `.env`.
+'''
+
+    [[part.section.row]]
+    keys = ["FI_MAX_PENDING_ROWS"]
+    default = "unset (obsolete; setting it prevents startup)"
+    setups = ["S", "D", "H"]
+    text = "Obsolete benchmark-branch row setting. Any value is rejected at startup; remove it and use FI_INGEST_BUDGET_MIB and the current byte-budget settings. Row counts cannot size the leased decode/row memory pool."
+
+    [[part.section.row]]
+    keys = ["FI_BUILD_REVISION"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Optional build identifier exposed as `/healthz.build.configured_revision` for benchmark provenance, especially for image builds without `.git`. It is operator-supplied metadata, not a verified source hash; record the image digest and available VCS fields too. Does not change ingestion behavior."
 
   [[part.section]]
   heading = "Development overlays (`./bin/dev`)"
