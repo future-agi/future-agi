@@ -392,14 +392,17 @@ def _worker_keys(hold: CaseHold) -> list[str]:
     return [f"worker:{one}" for one in hold.unheld or ()] or [WORKER_LIMITS_HELD]
 
 
-def _row_holds(row: Any, placed: list[Placed]) -> list[str]:
-    """The selected cases a row holds back: a blocked row the cases it blocks, never one it only reads stale or
-    untested for; any other row every case it holds."""
+def _holds(row: Any, one: Placed) -> bool:
+    """Whether a row holds this case back: a blocked row a case it blocks, never one it only reads stale or untested
+    for; any other row every case it holds."""
     if row["status"] == "blocked":
-        return [
-            one.case.key for one in placed if one.bucket == "blocked" and row["id"] in one.by
-        ]
-    return [one.case.key for one in placed if row["id"] in one.held_by]
+        return one.bucket == "blocked" and row["id"] in one.by
+    return row["id"] in one.held_by
+
+
+def _row_holds(row: Any, placed: list[Placed]) -> list[str]:
+    """The selected cases a row holds back."""
+    return [one.case.key for one in placed if _holds(row, one)]
 
 
 def _held_by(
@@ -707,11 +710,16 @@ def case_page(
         evidence=evidence,
         workers=report["workers"],
     ).placed
+    # A row's cases are the ones its count names (`_holds`); a key that is no report row matches as before.
+    shown = next((one for one in report["rows"] if one["id"] == row), None)
     matching = [
         one
         for one in placed
         if (bucket is None or one.bucket == bucket)
-        and (row is None or row in one.held_by)
+        and (
+            row is None
+            or (_holds(shown, one) if shown is not None else row in one.held_by)
+        )
         and (cursor is None or one.case.number > cursor)
     ]
     page = matching[:PAGE_SIZE]

@@ -1345,6 +1345,11 @@ class TestAgentGapCases:
         assert chosen["lists"]["stale"]["keys"] == LOOKUP_KEYS
         # The blocked row holds back the cases it blocks; the lookup cases it reads stale for still run.
         assert routing["affected"]["count"] == len(REFUND_KEYS)
+        # Its case list names the same cases its count does.
+        page = harness_readiness.case_page(
+            pairing, keys=None, trials=1, bucket=None, row="tool_routing", cursor=None
+        )
+        assert [one["key"] for one in page["items"]] == REFUND_KEYS
 
     def test_a_changed_signature_with_a_stale_failure_holds_both(
         self, user, workspace, storage
