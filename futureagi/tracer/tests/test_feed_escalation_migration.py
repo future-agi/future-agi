@@ -237,3 +237,74 @@ def test_old_writer_can_insert_after_additive_schema_without_claiming_system_own
         ).occurrence_time_source
         == ""
     )
+
+
+@pytest.mark.integration
+@pytest.mark.django_db(transaction=True)
+def test_backfill_copies_omega_root_times_across_batches_and_reruns_as_noop(
+    observe_project, monkeypatch
+):
+    from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
+    from tracer.models.trace_investigation import TraceInvestigationFinding
+    from tracer.tests.test_grouping_snapshot import _saved_report
+
+    migration = importlib.import_module(
+        "tracer.migrations.0118_backfill_feed_issue_statuses"
+    )
+    monkeypatch.setattr(migration, "BATCH", 2)
+    cluster = TraceErrorGroup.no_workspace_objects.create(
+        project=observe_project, cluster_id="BACKFILL-OMEGA", error_type="finding"
+    )
+    timed = _saved_report(observe_project, identity="timed")
+    untimed = _saved_report(observe_project, identity="untimed")
+    untimed.job.root_end_time = None
+    untimed.job.save(update_fields=["root_end_time"])
+
+    def member(report, index, **fields):
+        finding = TraceInvestigationFinding.no_workspace_objects.create(
+            id=uuid.uuid4(),
+            report=report,
+            finding_id=f"backfill-{index}",
+            ordinal=100 + index,
+            statement="Backfill defect",
+            cluster=cluster,
+        )
+        return ErrorClusterTraces.no_workspace_objects.create(
+            cluster=cluster, finding=finding, trace_id=report.trace_id, **fields
+        ).pk
+
+    copied = [member(timed, index) for index in range(5)]  # > BATCH: three batches
+    no_root = [member(untimed, index) for index in range(3)]
+    already = T - timedelta(days=3)
+    kept = member(timed, 9, occurred_at=already, occurrence_time_source="trace_end")
+    scanner = ErrorClusterTraces.no_workspace_objects.create(
+        cluster=cluster, trace_id=uuid.uuid4()
+    ).pk
+
+    def snapshot():
+        return {
+            row["pk"]: (row["occurred_at"], row["occurrence_time_source"])
+            for row in ErrorClusterTraces.no_workspace_objects.filter(
+                cluster=cluster
+            ).values("pk", "occurred_at", "occurrence_time_source")
+        }
+
+    apps = (
+        MigrationExecutor(connection)
+        .loader.project_state([("tracer", "0118_backfill_feed_issue_statuses")])
+        .apps
+    )
+    with connection.schema_editor(atomic=False) as editor:
+        migration.backfill_feed_issue_statuses(apps, editor)
+    after = snapshot()
+    root_end = timed.job.root_end_time
+    assert root_end is not None
+    for pk in copied:
+        assert after[pk] == (root_end, "omega_root_end")
+    for pk in (*no_root, scanner):
+        assert after[pk] == (None, "")
+    assert after[kept] == (already, "trace_end")
+
+    with connection.schema_editor(atomic=False) as editor:
+        migration.backfill_feed_issue_statuses(apps, editor)
+    assert snapshot() == after
