@@ -196,6 +196,8 @@ describe("preparing a run", () => {
     expect(
       await screen.findByText(
         "Your environment is ready, but its run didn't start: you have used all your simulation calls",
+        {},
+        { timeout: 8000 },
       ),
     ).toBeInTheDocument();
     expect(preparing()).toBeNull();

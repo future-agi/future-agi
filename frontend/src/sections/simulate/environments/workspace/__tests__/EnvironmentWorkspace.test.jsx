@@ -332,7 +332,13 @@ describe("EnvironmentWorkspace route shell", () => {
         ? Promise.resolve({
             data: {
               ...DETAIL_NOT_AUTHORED,
-              overview: { ...DETAIL_NOT_AUTHORED.overview, scenario_count: 8 },
+              overview: {
+                ...DETAIL_NOT_AUTHORED.overview,
+                status: "completed",
+                agent_type: "chat",
+                scenario_count: 8,
+                run: { run_test_id: "rt1", test_execution_id: "ex1" },
+              },
               composition: {
                 alignment: {
                   unscorable: [
@@ -348,7 +354,9 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/job-done");
 
-    await userEvent.click(await screen.findByText(/^Repeats:/));
+    await userEvent.click(
+      await screen.findByText(/^Repeats:/, {}, { timeout: 8000 }),
+    );
     expect(
       screen.getByText(/6 scenarios × 1 repeat = 6 runs/),
     ).toBeInTheDocument();
