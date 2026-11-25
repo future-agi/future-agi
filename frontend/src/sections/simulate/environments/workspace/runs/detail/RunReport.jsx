@@ -180,8 +180,18 @@ export default function RunReport({ env, executionId, live = false }) {
   );
   const baselineId =
     baseline?.id || (typeof baseline === "string" ? baseline.trim() : "");
-  const report = useHarnessRunReport(env.id, executionId, baselineId, { live });
-  const comparable = report.data?.comparability?.comparable === true;
+  const compared = useHarnessRunReport(
+    baselineId ? env.id : null,
+    executionId,
+    baselineId,
+    { live },
+  );
+  // The report on its own stays up while a comparison loads or can't be read.
+  const report = useHarnessRunReport(env.id, executionId, null, {
+    live: live && !compared.data,
+  });
+  const error = (baselineId ? compared : report).error;
+  const comparable = compared.data?.comparability?.comparable === true;
   // Only a baseline from this environment has a report under this environment's route.
   const sameEnvironmentBaseline = baselineOptions.some(
     (option) => option.id === baselineId,
@@ -198,14 +208,15 @@ export default function RunReport({ env, executionId, live = false }) {
       </Box>
     );
   }
-  if (report.error) {
+  const loaded = compared.data || report.data;
+  if (error && !loaded && !baselineId) {
     return (
       <Alert severity="error" variant="outlined">
-        {errorMessage(report.error)}
+        {errorMessage(error)}
       </Alert>
     );
   }
-  const data = report.data || {};
+  const data = loaded || {};
   const coverage = data.coverage || {};
   const manifest = data.manifest || {};
   const before = comparable ? baselineReport.data : null;
@@ -256,6 +267,11 @@ export default function RunReport({ env, executionId, live = false }) {
             )}
             sx={{ maxWidth: 420 }}
           />
+          {error && (
+            <Alert severity="error" variant="outlined" sx={{ mt: 1.5 }}>
+              {errorMessage(error)}
+            </Alert>
+          )}
           <Comparability comparability={data.comparability} />
         </Box>
       </SectionCard>
