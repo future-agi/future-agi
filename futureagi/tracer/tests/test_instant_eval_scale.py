@@ -3070,7 +3070,7 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
         assert generation == "accepted-generation"
         return {"active": True, "status": "running", "has_undrained_work": True}
 
-    async def claim(task_id, n):
+    async def claim(task_id, n, generation=None):
         return {"entry_ids": ["e2"]}
 
     given = []

@@ -845,6 +845,31 @@ class TestTheRestartRunsOnTheSweepsOwnDescribe:
         [start] = starts
         assert start["workflow_input"].workflow_confirmed_stopped is True
 
+    def test_a_restart_never_joins_or_replaces_a_live_run(
+        self, make_task, make_entry, monkeypatch
+    ):
+        """The restart is sent inside the transaction that stamps the new
+        generation. Only a brand-new run may take it: a live owner that raced
+        the describe must make the start fail (the sweep then defers), never
+        absorb the new generation or be terminated."""
+        from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+        from tfc.temporal.eval_tasks import client
+
+        starts = self._real_starter(monkeypatch, lambda _task_id: client.WF_CLOSED)
+        task = make_task()
+        make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=1_000)
+
+        assert sweeper.recover_task(task, stale_running_seconds=7_200)["restarted"]
+        [start] = starts
+        assert start["id_conflict_policy"] == WorkflowIDConflictPolicy.FAIL
+        assert start["id_reuse_policy"] == WorkflowIDReusePolicy.ALLOW_DUPLICATE
+        assert start["cancel_existing"] is False
+        task.refresh_from_db()
+        assert start["workflow_input"].workflow_generation == str(
+            task.workflow_generation
+        )
+
     def test_the_run_reaps_at_the_threshold_the_deferral_check_admitted(
         self, make_task, make_entry, monkeypatch
     ):

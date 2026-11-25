@@ -155,7 +155,8 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
             )
             if current is None:
                 return outcome  # A committed handoff, pause or delete won the race.
-            failed = claims.fail_exhausted()
+            # Recorded below, once the task lock is released.
+            failed = claims.fail_exhausted(record_answers=False)
             if only_unreclaimable_claims_remain(
                 current, reclaimable_after_seconds=RESTART_REAP_SECONDS
             ):
@@ -179,6 +180,7 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         return outcome
     except Exception as exc:
         raise RecoveryInterrupted(outcome, exc) from exc
+    claims.record_failed_answers()
     outcome["failed"] = failed
     outcome["restarted"] = not outcome["deferred"]
     return outcome

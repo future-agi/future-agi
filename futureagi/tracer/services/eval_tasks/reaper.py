@@ -77,22 +77,34 @@ class StaleRunningClaims:
         self.task = task
         self.max_attempts = max_attempts
         self.now = timezone.now()
+        self.failed = 0
         self.stale = EvalLogger.objects.filter(
             eval_task_id=str(task.id),
             status=EvalEntryStatus.RUNNING,
             updated_at__lt=self.now - timedelta(seconds=older_than_seconds),
         )
 
-    def fail_exhausted(self) -> int:
-        failed = self.stale.filter(attempts__gte=self.max_attempts).update(
+    def fail_exhausted(self, *, record_answers: bool = True) -> int:
+        """Fail the claims that used up their attempts.
+
+        A caller holding the task row lock passes ``record_answers=False`` and
+        calls ``record_failed_answers`` once that lock is released: recording
+        locks the Instant eval run row, and Instant eval cancel, Resume and
+        retry lock that run row before the task row.
+        """
+        self.failed = self.stale.filter(attempts__gte=self.max_attempts).update(
             status=EvalEntryStatus.ERRORED,
             error=True,
             error_message=_GAVE_UP,
             updated_at=self.now,
         )
-        if failed:
+        if record_answers:
+            self.record_failed_answers()
+        return self.failed
+
+    def record_failed_answers(self) -> None:
+        if self.failed:
             _record_instant_answers(self.task, self.now)
-        return failed
 
     def requeue_retryable(self) -> int:
         return self.stale.filter(attempts__lt=self.max_attempts).update(
@@ -103,13 +115,24 @@ class StaleRunningClaims:
 
 
 def reap_stale_running(
-    task: EvalTask, *, older_than_seconds: int, max_attempts: int
+    task: EvalTask,
+    *,
+    older_than_seconds: int,
+    max_attempts: int,
+    answers_after_lock: list[StaleRunningClaims] | None = None,
 ) -> tuple[int, int]:
-    """Return (requeued, failed) for a workflow's startup or periodic reap."""
+    """Return (requeued, failed) for a workflow's startup or periodic reap.
+
+    A caller that holds the task row lock passes ``answers_after_lock`` and
+    calls ``record_failed_answers`` on what it collects after releasing the
+    lock (see ``StaleRunningClaims.fail_exhausted``).
+    """
     claims = StaleRunningClaims(
         task, older_than_seconds=older_than_seconds, max_attempts=max_attempts
     )
-    failed = claims.fail_exhausted()
+    failed = claims.fail_exhausted(record_answers=answers_after_lock is None)
+    if answers_after_lock is not None:
+        answers_after_lock.append(claims)
     return claims.requeue_retryable(), failed
 
 
@@ -118,7 +141,9 @@ def _record_instant_answers(task: EvalTask, at) -> None:
     still pending) while it runs. Never fails the reap."""
     from tracer.services.instant_eval_answers import record_answers
 
-    ids = EvalLogger.objects.filter(
+    # Primary: these rows were failed a moment ago, and a replica may not
+    # have them yet.
+    ids = EvalLogger.objects.using("default").filter(
         eval_task_id=str(task.id),
         status=EvalEntryStatus.ERRORED,
         error_message=_GAVE_UP,

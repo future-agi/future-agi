@@ -6,6 +6,7 @@ from rest_framework import status
 
 from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync as real_start
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
+from tracer.services.eval_tasks.selection_failure import SelectionFailure
 
 _UPDATE = "/tracer/eval-task/update_eval_task/"
 
@@ -263,7 +264,7 @@ def test_superseded_workflow_cannot_publish_its_status(
     from temporalio.testing import ActivityEnvironment
 
     from tfc.temporal.eval_tasks import activities, client
-    from tfc.temporal.eval_tasks.types import FinalizeInput, SetStatusInput
+    from tfc.temporal.eval_tasks.types import FinalizeInput
 
     historical_task.run_type = run_type
     historical_task.save(update_fields=["run_type"])
@@ -299,16 +300,72 @@ def test_superseded_workflow_cannot_publish_its_status(
             historical_task.status == "pending"
             and historical_task.failure_reason is None
         )
-        # The newly dispatched run can publish.
-        old = SetStatusInput(
-            task_id,
-            "failed",
-            failure_reason="from this run",
-            workflow_generation=starts[-1].workflow_generation,
-        )
+        # The newly dispatched run can publish. Its writes are the ones the
+        # workflow builds from the start it was given, not ones made here.
+        mark, old = _status_writes_of_a_failing_run(starts[-1])
+        assert old.workflow_generation == str(historical_task.workflow_generation)
+        assert run(activities.set_eval_task_status_activity, mark).changed
         assert run(activities.set_eval_task_status_activity, old).changed
         historical_task.refresh_from_db()
-        assert historical_task.failure_reason == "from this run"
+        assert historical_task.status == "failed"
+        assert historical_task.failure_reason == SelectionFailure.ROW_LIMIT.value
+
+
+def _status_writes_of_a_failing_run(start):
+    """The status payloads the dispatched workflow itself sends when its first
+    reconcile is rejected: its mark-running, then its failure."""
+    import asyncio
+
+    from temporalio.exceptions import ActivityError, ApplicationError
+
+    from tfc.temporal.eval_tasks import workflows
+    from tfc.temporal.eval_tasks.types import EvalTaskWorkflowInput
+
+    sent = []
+
+    async def execute(name, arg, **_kwargs):
+        if name == "set_eval_task_status_activity":
+            sent.append(arg)
+            return {"task_id": arg.task_id, "changed": True, "status": arg.status}
+        assert name == "reconcile_eval_task_activity", name
+        error = ActivityError(
+            "reconcile failed",
+            scheduled_event_id=1,
+            started_event_id=2,
+            identity="worker",
+            activity_type=name,
+            activity_id="activity-id",
+            retry_state=None,
+        )
+        error.__cause__ = ApplicationError(
+            SelectionFailure.ROW_LIMIT.value,
+            type="EvalTaskSelectionRejected",
+            non_retryable=True,
+        )
+        raise error
+
+    async def labelled(_task_id):
+        return None
+
+    workflow_class = (
+        workflows.HistoricalEvalTaskWorkflow
+        if isinstance(start, EvalTaskWorkflowInput)
+        else workflows.ContinuousEvalTaskWorkflow
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(workflows.workflow, "execute_activity", execute)
+        patch.setattr(workflows.workflow, "patched", lambda _patch_id: False)
+        patch.setattr(workflows, "_apply_labels", labelled)
+        patch.setattr(workflows, "_set_status", lambda _status: None)
+        with pytest.raises(ActivityError):
+            asyncio.run(workflow_class().run(start))
+    mark, failed = sent
+    assert (mark.status, mark.expected_status, failed.status) == (
+        "running",
+        "pending",
+        "failed",
+    )
+    return mark, failed
 
 
 @pytest.mark.integration

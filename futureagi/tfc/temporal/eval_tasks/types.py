@@ -111,6 +111,13 @@ class ClaimBatchInput:
 
 
 @dataclass
+class FencedClaimInput(ClaimBatchInput):
+    # As ``FencedReconcileInput``: only a generation-carrying run sends it, so
+    # a replaced run claims nothing once its task has been handed over.
+    workflow_generation: str | None = None
+
+
+@dataclass
 class ClaimBatchOutput:
     entry_ids: list[str]
 

@@ -1,8 +1,8 @@
 """Record the eval-task replay fixtures used by ``test_generation_replay.py``.
 
 Run from the ``futureagi`` directory of the checkout whose workflow code should
-produce the histories (``--label base`` on dev at #4199's merge base,
-``--label new`` on the branch itself):
+produce the histories (``--label base`` on the v1.59 workflow code,
+``--label dev`` on dev, ``--label new`` on the branch itself):
 
     DJANGO_SETTINGS_MODULE=tfc.settings.test \\
         python <this file> --label base --out <fixtures dir>
@@ -24,6 +24,7 @@ import json
 import os
 import sys
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from temporalio import activity
@@ -43,9 +44,32 @@ SELECTION_REJECTED = (
 # so the stub activities below can follow it across continue-as-new hops.
 HISTORICAL_BASE = {"batch_size": 2, "max_concurrent": 2}
 CONTINUOUS_BASE = {"batch_size": 2, "max_concurrent": 2, "poll_interval_seconds": 1}
+# How far ahead the closed-sampling deadline is when the run marks itself
+# running: in the future, so the first-closed delay starts a real timer.
+CLOSED_SETTLE = timedelta(seconds=3)
+
+
+def _closed_scenarios() -> dict:
+    """Closed sampling: the status reply carries ``first_reconcile_at``, so a
+    run with the first-closed delay sleeps on a timer before its reconcile."""
+    drain = {"closed": True, "batches": [["e1"], []]}
+    return {
+        "historical-closed": (
+            "HistoricalEvalTaskWorkflow",
+            dict(HISTORICAL_BASE),
+            dict(drain),
+        ),
+        "historical-gen-closed": (
+            "HistoricalEvalTaskWorkflow",
+            {**HISTORICAL_BASE, "workflow_generation": "g-1"},
+            dict(drain),
+        ),
+    }
 
 
 def _scenarios(label: str) -> dict:
+    if label == "dev":
+        return _closed_scenarios()
     gen = {"workflow_generation": "g-1"}
     out = {
         # Historical: drain with two continue-as-new hops, and a failed start.
@@ -103,6 +127,7 @@ def _scenarios(label: str) -> dict:
             {**CONTINUOUS_BASE, "workflow_generation": STALE_GENERATION},
             {},
         )
+        out.update(_closed_scenarios())
     return out
 
 
@@ -130,7 +155,13 @@ class _Stubs:
 
         @activity.defn(name="set_eval_task_status_activity")
         async def set_status(inp: dict) -> dict:
-            return {"task_id": inp["task_id"], "changed": True, "status": "x"}
+            ack = {"task_id": inp["task_id"], "changed": True, "status": "x"}
+            if s.by_task[inp["task_id"]].get("closed") and (
+                inp.get("expected_status") == "pending"
+            ):
+                deadline = datetime.now(UTC) + CLOSED_SETTLE
+                ack.update(status="running", first_reconcile_at=deadline.isoformat())
+            return ack
 
         @activity.defn(name="reconcile_eval_task_activity")
         async def reconcile(inp: dict) -> dict:
@@ -247,7 +278,11 @@ async def record_histories(client, label: str) -> dict[str, str]:
 async def _record(label: str, out_dir: Path) -> None:
     from tfc.temporal.eval_tasks.search_attributes import ALL_KEYS
 
-    env = await WorkflowEnvironment.start_local(search_attributes=ALL_KEYS)
+    pinned = os.environ.get("TEMPORAL_DEV_SERVER")
+    env = await WorkflowEnvironment.start_local(
+        search_attributes=ALL_KEYS,
+        **({"dev_server_existing_path": pinned} if pinned else {}),
+    )
     try:
         for name, text in (await record_histories(env.client, label)).items():
             (out_dir / name).write_text(text)
@@ -258,7 +293,7 @@ async def _record(label: str, out_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--label", choices=["base", "new"], required=True)
+    parser.add_argument("--label", choices=["base", "dev", "new"], required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.test")

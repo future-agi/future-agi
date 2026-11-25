@@ -48,6 +48,7 @@ from tfc.temporal.eval_tasks.types import (
     ContinuousDrainState,
     EvalTaskWorkflowInput,
     EvalTaskWorkflowOutput,
+    FencedClaimInput,
     FencedReapInput,
     FencedReconcileInput,
     FinalizeInput,
@@ -217,6 +218,10 @@ _MAX_CLAIM_OUTCOME_UNKNOWN_WAITS = 12
 # enforce it. A v1.59 worker replaying a newer history, or running a newer
 # start, therefore sees exactly the commands it would issue itself (it drops
 # the unknown field), so no patch marker is involved in either direction.
+# The generation adds no limit of its own. v1.59's one limit is the
+# closed-sampling timer in ``HistoricalEvalTaskWorkflow._run``
+# (``historical-first-closed-reconcile-delay-v1``), which it cannot replay
+# with or without a generation.
 # Explicit bound even when no batch can finish and the server has not suggested
 # CAN yet. All deferred paths, including pause cleanup, pass this checkpoint.
 _MAX_CONTINUOUS_POLLS = 100
@@ -466,10 +471,15 @@ async def _task_state(task_id: str, generation: str | None = None) -> dict:
     return state
 
 
-async def _claim(task_id: str, n: int) -> dict:
+async def _claim(task_id: str, n: int, generation: str | None = None) -> dict:
+    args: ClaimBatchInput
+    if generation:
+        args = FencedClaimInput(task_id=task_id, n=n, workflow_generation=generation)
+    else:
+        args = ClaimBatchInput(task_id=task_id, n=n)
     claimed: dict = await workflow.execute_activity(
         "claim_eval_batch_activity",
-        ClaimBatchInput(task_id=task_id, n=n),
+        args,
         start_to_close_timeout=_CONTROL_TIMEOUT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
@@ -745,7 +755,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
 
             claim_lost = False
             try:
-                batch = await _claim(input.task_id, input.batch_size)
+                batch = await _claim(input.task_id, input.batch_size, input.workflow_generation)
             except ActivityError as exc:
                 # A lost claim reply: handle it as an empty claim, never as a
                 # retry (see _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH). The
@@ -915,7 +925,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                                 generation=state.workflow_generation,
                             )
                             reaped = True
-                        batch = await _claim(state.task_id, state.batch_size)
+                        batch = await _claim(state.task_id, state.batch_size, state.workflow_generation)
                         entry_ids = batch["entry_ids"]
                         if entry_ids:
                             self._phase = PHASE_DRAINING
@@ -1017,7 +1027,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 )
                 reaped = True
 
-            batch = await _claim(state.task_id, state.batch_size)
+            batch = await _claim(state.task_id, state.batch_size, state.workflow_generation)
             entry_ids = batch["entry_ids"]
             if entry_ids:
                 self._phase = PHASE_DRAINING

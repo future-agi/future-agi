@@ -1,4 +1,4 @@
-"""The workflow-generation fence lives in the activities (TH-7963, #4199).
+"""The workflow-generation fence lives in the activities.
 
 A run that carries a generation writes nothing once its task has been handed
 to another run. A run without one (a pre-fence start, or a new start whose
@@ -11,11 +11,11 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import pytest
-from django.db import connection, connections, transaction
+from django.db import OperationalError, connection, connections, transaction
 
 from tfc.temporal.eval_tasks import activities
 from tracer.models.eval_task import EvalTask, EvalTaskStatus
-from tracer.models.observation_span import EvalEntryStatus
+from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 
 
 def _stamp(task, status):
@@ -151,3 +151,126 @@ def test_first_write_waits_for_recovery_to_commit_its_handoff(
         assert eval_task.status == EvalTaskStatus.RUNNING
     else:
         assert result.get("inactive_status") is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_replaced_run_cannot_claim_the_new_owners_batch(eval_task, make_pending_entries):
+    """Reconcile refuses a replaced run, but a continuous run claims next: the
+    claim itself must select nothing once the task is handed over."""
+    first, second = make_pending_entries(eval_task, 2)
+    current = _stamp(eval_task, EvalTaskStatus.RUNNING)
+    task_id = str(eval_task.pk)
+
+    assert activities._claim_batch_sync(task_id, 5, str(uuid.uuid4())) == {
+        "entry_ids": []
+    }
+    assert set(
+        EvalLogger.objects.filter(pk__in=[first.pk, second.pk]).values_list(
+            "status", flat=True
+        )
+    ) == {EvalEntryStatus.PENDING}
+
+    assert activities._claim_batch_sync(task_id, 1, current) == {
+        "entry_ids": [str(first.pk)]
+    }
+    # A run without a generation is unfenced, as on v1.59.
+    assert activities._claim_batch_sync(task_id, 1) == {"entry_ids": [str(second.pk)]}
+
+
+def _probe_task_lock_while_recording_answers(monkeypatch, task):
+    """Record, from inside the Instant answer write, whether another session
+    could lock the task row at that moment. Instant eval cancel, Resume and
+    retry lock the run row and then the task row, and the answer write locks
+    the run row: doing it under the task lock is a lock-order inversion."""
+    from tracer.services.eval_tasks import reaper
+
+    original = reaper._record_instant_answers
+    seen = []
+
+    def contender():
+        try:
+            with transaction.atomic():
+                EvalTask.all_objects.select_for_update(nowait=True).get(pk=task.pk)
+            return "free"
+        except OperationalError as exc:
+            return exc.__cause__.sqlstate
+        finally:
+            connections.close_all()
+
+    def recording(task, at):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            seen.append(pool.submit(contender).result(timeout=5))
+        return original(task, at)
+
+    monkeypatch.setattr(reaper, "_record_instant_answers", recording)
+    return seen
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("guard", ["generation", "require_running"])
+def test_fenced_reap_records_given_up_answers_after_the_task_lock(
+    stale_running_entry, monkeypatch, guard
+):
+    task, entry = stale_running_entry
+    current = _stamp(task, EvalTaskStatus.RUNNING)
+    EvalLogger.objects.filter(pk=entry.pk).update(attempts=3)
+    seen = _probe_task_lock_while_recording_answers(monkeypatch, task)
+    kwargs = (
+        {"workflow_generation": current}
+        if guard == "generation"
+        else {"require_running": True}
+    )
+
+    reaped = activities._reap_sync(str(task.pk), 600, 3, True, **kwargs)
+
+    assert (reaped["requeued"], reaped["failed"]) == (0, 1)
+    assert seen == ["free"]
+    entry.refresh_from_db()
+    assert entry.status == EvalEntryStatus.ERRORED
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recovery_records_given_up_answers_after_the_task_lock(
+    stale_running_entry, monkeypatch
+):
+    from tfc.temporal.eval_tasks import client
+    from tracer.services.eval_tasks.recovery import recover_task
+
+    task, entry = stale_running_entry
+    EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.RUNNING)
+    task.refresh_from_db()
+    EvalLogger.objects.filter(pk=entry.pk).update(attempts=3)
+    monkeypatch.setattr(
+        client, "describe_eval_task_workflow_sync", lambda _id: client.WF_CLOSED
+    )
+    monkeypatch.setattr(client, "start_recovery_workflow_sync", lambda _task: "wf")
+    seen = _probe_task_lock_while_recording_answers(monkeypatch, task)
+
+    outcome = recover_task(task, stale_running_seconds=7_200)
+
+    assert (outcome["failed"], outcome["restarted"]) == (1, True)
+    assert seen == ["free"]
+
+
+@pytest.mark.django_db
+def test_given_up_answers_read_their_entries_from_the_primary(
+    stale_running_entry, monkeypatch
+):
+    """With EvalLogger reads routed to a replica, the entries the reap failed
+    a moment ago may not be there yet."""
+    from tfc.routers import ReadReplicaRouter
+    from tracer.services.eval_tasks.reaper import reap_stale_running
+
+    task, entry = stale_running_entry
+    EvalLogger.objects.filter(pk=entry.pk).update(attempts=3)
+    read_from = []
+    monkeypatch.setattr(
+        ReadReplicaRouter, "db_for_read", lambda self, model, **hints: "replica"
+    )
+    monkeypatch.setattr(
+        "tracer.services.instant_eval_answers.record_answers",
+        lambda _task_id, ids: read_from.append(ids.db) or 0,
+    )
+
+    assert reap_stale_running(task, older_than_seconds=600, max_attempts=3) == (0, 1)
+    assert read_from == ["default"]

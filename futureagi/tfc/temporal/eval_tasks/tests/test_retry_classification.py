@@ -132,7 +132,7 @@ async def test_eventual_reconcile_success_reaps_before_first_claim(monkeypatch) 
         events.append("state")
         return {"active": True, "status": "running"}
 
-    async def claim(_task_id: str, _n: int) -> dict:
+    async def claim(_task_id: str, _n: int, _generation=None) -> dict:
         events.append("claim")
         raise RuntimeError("stop after proving claim order")
 

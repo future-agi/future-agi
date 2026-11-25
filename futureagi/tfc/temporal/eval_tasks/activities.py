@@ -23,8 +23,8 @@ from tfc.temporal.eval_tasks.db_errors import (
     database_control_errors,
 )
 from tfc.temporal.eval_tasks.types import (
-    ClaimBatchInput,
     ClaimBatchOutput,
+    FencedClaimInput,
     FencedReapInput,
     FencedReconcileInput,
     FinalizeInput,
@@ -215,13 +215,15 @@ def _reconcile_sync(
         close_old_connections()
 
 
-def _claim_batch_sync(task_id: str, n: int) -> dict:
+def _claim_batch_sync(task_id: str, n: int, workflow_generation: str | None = None) -> dict:
     """Atomically claim up to ``n`` pending entries and flip them to running.
 
     Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` so concurrent claims never grab
     the same row, then returns the claimed entry ids for the workflow to fan out
     one ``run_eval_entry`` activity per id. Returns ``{"entry_ids": []}`` when no
     pending work remains, which the drain loop treats as "batch is drained".
+    A generation-carrying run whose task has been handed to another run claims
+    nothing: the check is part of the claim statement itself.
     """
     close_old_connections()
     try:
@@ -250,7 +252,15 @@ def _claim_batch_sync(task_id: str, n: int) -> dict:
             ),
             connection.execute_wrapper(track_submission),
         ):
-            entries = claim_pending_batch(task, n)
+            entries = claim_pending_batch(
+                task,
+                n,
+                **(
+                    {"workflow_generation": workflow_generation}
+                    if workflow_generation
+                    else {}
+                ),
+            )
         return {"entry_ids": [str(e.id) for e in entries]}
     finally:
         close_old_connections()
@@ -459,6 +469,9 @@ def _reap_sync(
             workflow_confirmed_stopped=workflow_confirmed_stopped,
         )
         fenced = require_running or bool(workflow_generation)
+        # Answers of given-up Instant entries are recorded after the task lock
+        # is released (see ``StaleRunningClaims.fail_exhausted``).
+        answers_after_lock: list | None = [] if fenced else None
         with transaction.atomic() if fenced else nullcontext():
             if require_running:
                 from tracer.services.eval_tasks.running_task import (
@@ -490,8 +503,17 @@ def _reap_sync(
                     "inactive_status": task.status or "",
                 }
             requeued, failed = reap_stale_running(
-                task, older_than_seconds=stale_seconds, max_attempts=max_attempts
+                task,
+                older_than_seconds=stale_seconds,
+                max_attempts=max_attempts,
+                **(
+                    {"answers_after_lock": answers_after_lock}
+                    if answers_after_lock is not None
+                    else {}
+                ),
             )
+        for claims in answers_after_lock or ():
+            claims.record_failed_answers()
         return {
             "requeued": requeued,
             "failed": failed,
@@ -855,10 +877,11 @@ async def reconcile_eval_task_activity(
 
 @activity.defn
 @database_control_activity()
-async def claim_eval_batch_activity(input: ClaimBatchInput) -> ClaimBatchOutput:
+async def claim_eval_batch_activity(input: FencedClaimInput) -> ClaimBatchOutput:
+    generation = getattr(input, "workflow_generation", None)
     async with Heartbeater():
         result = await otel_sync_to_async(_claim_batch_sync, thread_sensitive=False)(
-            input.task_id, input.n
+            input.task_id, input.n, *((generation,) if generation else ())
         )
     logger.info(
         "eval_task_batch_claimed",

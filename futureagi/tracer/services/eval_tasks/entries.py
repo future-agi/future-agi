@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.db import transaction
+from django.db.models import Exists
 from django.utils import timezone
 
-from tracer.models.eval_task import RowType
+from tracer.models.eval_task import EvalTask, RowType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
 from tracer.queries.eval_clustering import retire_eval_memberships
 from tracer.selectors.eval_tasks.row_resolver import (
@@ -34,7 +35,6 @@ from tracer.services.eval_tasks.selection_failure import SelectionFailure
 if TYPE_CHECKING:
     from django.db.models import QuerySet
 
-    from tracer.models.eval_task import EvalTask
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
 logger = structlog.get_logger(__name__)
@@ -414,7 +414,9 @@ def soft_delete_live(task: EvalTask) -> int:
     )
 
 
-def claim_pending_batch(task: EvalTask, n: int) -> list[EvalLogger]:
+def claim_pending_batch(
+    task: EvalTask, n: int, *, workflow_generation: str | None = None
+) -> list[EvalLogger]:
     """Atomically claim up to ``n`` pending entries and mark them running.
 
     ``FOR UPDATE SKIP LOCKED`` lets many workers pull disjoint batches without
@@ -422,14 +424,26 @@ def claim_pending_batch(task: EvalTask, n: int) -> list[EvalLogger]:
     claim's epoch -- ``run_entry`` compare-and-sets it when a run starts, so a
     run that is superseded while it works cannot land its result -- and, until
     the run re-stamps it, how long the entry has been waiting for one.
+
+    With ``workflow_generation`` the claim selects nothing unless the task
+    still carries that generation. The check is a condition of the claiming
+    statement, so it adds no statement and takes no task-row lock.
     """
     now = timezone.now()
+    pending = EvalLogger.objects.filter(
+        eval_task_id=str(task.id), status=EvalEntryStatus.PENDING
+    )
+    if workflow_generation:
+        pending = pending.filter(
+            Exists(
+                EvalTask.all_objects.filter(
+                    pk=task.pk, workflow_generation=workflow_generation
+                )
+            )
+        )
     with transaction.atomic():
         entries = list(
-            EvalLogger.objects.filter(
-                eval_task_id=str(task.id), status=EvalEntryStatus.PENDING
-            )
-            .select_for_update(skip_locked=True)
+            pending.select_for_update(skip_locked=True)
             .order_by("created_at", "id")[:n]
         )
         if entries:
