@@ -17,6 +17,7 @@ from accounts.serializers.contracts import (
     OrganizationSwitchRequestSerializer,
     OrganizationSwitchResponseSerializer,
 )
+from accounts.services.default_workspace import get_or_create_default_workspace
 from accounts.services.workspace_membership import resolve_org_membership
 from tfc.constants.roles import RoleMapping
 from tfc.utils.api_contracts import validated_api_request, validated_request
@@ -305,24 +306,14 @@ class SwitchOrganizationView(APIView):
             except (Workspace.DoesNotExist, ValueError):
                 pass
 
-        # 2. Org's default workspace
+        # 2. Org's default workspace, created if missing. A concurrent first
+        # login may create it first; the helper then returns that workspace.
         try:
-            ws = Workspace.objects.get(
-                organization=organization, is_default=True, is_active=True
+            ws, created = get_or_create_default_workspace(
+                organization, created_by=user
             )
-            return ws
-        except Workspace.DoesNotExist:
-            pass
-
-        # 3. Create default workspace
-        try:
-            ws = Workspace.objects.create(
-                name="Default Workspace",
-                organization=organization,
-                is_default=True,
-                is_active=True,
-                created_by=user,
-            )
+            if not created:
+                return ws
             # Ensure workspace membership
             org_role = user.get_organization_role(organization)
             ws_role = RoleMapping.get_workspace_role(org_role or "Member")
