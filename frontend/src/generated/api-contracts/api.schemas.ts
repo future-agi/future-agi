@@ -19760,6 +19760,18 @@ export interface AgentFixLaunchLimitsApi {
   scenarios_max: number;
 }
 
+export interface AgentFixLaunchBlockedApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+  /**
+   * For issue_epoch_measuring, the issue whose epoch is starting in the environment; its page shows it. Null otherwise.
+   * @minLength 1
+   */
+  cluster_id: string;
+}
+
 export interface AgentFixLaunchOptionsApi {
   source_run: AgentFixLaunchSourceRunApi;
   environment: AgentFixLaunchEnvironmentApi;
@@ -19769,7 +19781,7 @@ export interface AgentFixLaunchOptionsApi {
   surfaces: AgentFixLaunchSurfaceApi[];
   defaults: AgentFixLaunchDefaultsApi;
   limits: AgentFixLaunchLimitsApi;
-  blocked: AgentFixFailureApi | null;
+  blocked: AgentFixLaunchBlockedApi | null;
   variations_blocked: AgentFixFailureApi | null;
   held_back_scenario_keys: string[] | null;
   ship: AgentFixShipReadinessApi | null;

@@ -1435,7 +1435,7 @@ def launch_blocker(
             status_code=409,
         )
     # An issue's baseline holds the environment for the epoch launched from it.
-    if (
+    measuring = (
         AgentFixIssueJob.no_workspace_objects.filter(
             environment=source_run.environment,
             baseline_run__isnull=False,
@@ -1443,13 +1443,21 @@ def launch_blocker(
             ending__isnull=True,
         )
         .exclude(baseline_run=source_run)
-        .exists()
-    ):
+        .select_related("evidence_import__source_issue")
+        .first()
+    )
+    if measuring is not None:
+        # selectors.agent_fix_issue imports this module.
+        from simulate.selectors.agent_fix_issue import live_issue
+
+        issue = live_issue(measuring.evidence_import.source_issue)
         return HostedHarnessError(
             "issue_epoch_measuring",
             "An epoch from an Error Feed issue is starting in this environment. Wait"
             " for it, or open it.",
             status_code=409,
+            # Its issue's page shows it, as the issue's own refusal links it.
+            details={"cluster_id": issue.cluster_id if issue else None},
         )
     if usage:
         decision = check_harness_action(str(source_run.organization_id), "agent_fix")
@@ -1932,7 +1940,11 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             verified_cases_min=verified_cases_min(),
             scenarios_max=SCENARIOS_MAX,
         ),
-        blocked=LaunchBlocked(code=blocked.code, message=blocked.message)
+        blocked=LaunchBlocked(
+            code=blocked.code,
+            message=blocked.message,
+            cluster_id=(blocked.details or {}).get("cluster_id"),
+        )
         if blocked
         else None,
         variations_blocked=LaunchBlocked(

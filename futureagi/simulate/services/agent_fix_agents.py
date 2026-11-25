@@ -6,7 +6,7 @@ kind is one more class in ``AGENT_KINDS``.
 """
 
 import io
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from django.db.models import Exists, OuterRef, Q, QuerySet
 
@@ -30,6 +30,9 @@ from simulate.services.hosted_harness_gateway import (
     HostedSourceAcquirer,
     store_source_archive,
 )
+
+if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
 
 
 class AgentKind(Protocol):
@@ -209,9 +212,13 @@ def pickable_environments(
     return found
 
 
+class EpochPickable(TypedDict):
+    epoch_pickable: bool
+
+
 def with_epoch_pickable(
     environments: QuerySet[HostedHarnessJob],
-) -> QuerySet[HostedHarnessJob]:
+) -> "QuerySet[WithAnnotations[HostedHarnessJob, EpochPickable]]":
     """``environments`` annotated ``epoch_pickable``, in the same query."""
     return environments.annotate(
         epoch_pickable=Exists(

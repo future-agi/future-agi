@@ -467,6 +467,8 @@ class LaunchLimits(BaseModel):
 class LaunchBlocked(BaseModel):
     code: str
     message: str
+    # The issue whose epoch is starting in the environment, for issue_epoch_measuring.
+    cluster_id: str | None = None
 
 
 class ShipPath(StrEnum):

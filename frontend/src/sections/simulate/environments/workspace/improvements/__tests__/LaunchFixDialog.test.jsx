@@ -515,6 +515,26 @@ describe("LaunchFixDialog", () => {
     );
   });
 
+  it("opens the issue whose epoch is starting in the environment", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "issue_epoch_measuring",
+        message:
+          "An epoch from an Error Feed issue is starting in this environment. Wait for it, or open it.",
+        cluster_id: "TH-42",
+      },
+    });
+    renderDialog();
+    const open = await screen.findByTestId("epoch-blocker-action");
+    expect(open).toHaveTextContent("Open that issue");
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
+    await userEvent.click(open);
+    expect(navigate).toHaveBeenCalledWith(
+      paths.dashboard.errorFeed.detail("TH-42"),
+    );
+  });
+
   it("says how the winner ships and where to connect GitHub, without blocking Start", async () => {
     pinOptions({
       ...fixtureLaunchOptions("te-run-6"),

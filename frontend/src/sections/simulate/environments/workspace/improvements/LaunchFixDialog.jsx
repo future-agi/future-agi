@@ -129,7 +129,7 @@ export default function LaunchFixDialog({
   const blockedReason = blocker
     ? [blocker.message, blockerHint(blocker.code)].filter(Boolean).join(" ")
     : null;
-  const next = blocker ? blockerAction(blocker.code, envId) : null;
+  const next = blocker ? blockerAction(blocker.code, envId, blocker) : null;
   const variations = variationsNote(targets.length, limits, agent?.kind);
   const heldBack = heldBackOf(options, targets);
   const nameOf = (key) =>

@@ -39210,6 +39210,12 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     zod.object({
       code: zod.string().min(1),
       message: zod.string().min(1),
+      cluster_id: zod
+        .string()
+        .min(1)
+        .describe(
+          "For issue_epoch_measuring, the issue whose epoch is starting in the environment; its page shows it. Null otherwise.",
+        ),
     }),
     zod.null(),
   ]),

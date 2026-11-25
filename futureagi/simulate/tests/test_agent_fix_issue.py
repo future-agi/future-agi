@@ -39,7 +39,11 @@ from simulate.pydantic_schemas.agent_fix_issue import (
     IssueLaunch,
 )
 from simulate.selectors import agent_fix_issue as reads
-from simulate.selectors.agent_fix import launch_blocker, variations_blocker
+from simulate.selectors.agent_fix import (
+    launch_blocker,
+    launch_options,
+    variations_blocker,
+)
 from simulate.services import agent_fix_issue as jobs
 from simulate.services import harness_usage
 from simulate.services.evidence_drafts import _proposal, scenario_key_for
@@ -638,6 +642,25 @@ class TestRunEpoch:
         job.refresh_from_db()
         assert job.baseline_run_id is None
 
+    @pytest.mark.parametrize(
+        "flag", ["HARNESS_VERSIONING_ENABLED", "HARNESS_BUNDLE_CERTIFY_ENABLED"]
+    )
+    def test_without_versions_or_builds_the_run_is_refused_before_the_baseline(
+        self, environment, issue, user, settings, flag
+    ):
+        job, case = _in_review(environment, issue, user)
+        suite = environment.suite_version_id
+        setattr(settings, flag, False)
+
+        with pytest.raises(HostedHarnessError) as refused:
+            jobs.run_issue_job(job, case_ids=[str(case.id)], launch=LAUNCH, user=user)
+
+        assert refused.value.code == "fix_unavailable"
+        environment.refresh_from_db()
+        assert environment.suite_version_id == suite
+        job.refresh_from_db()
+        assert (job.baseline_run_id, job.ending) == (None, None)
+
     def test_variations_are_refused_while_the_environment_is_still_building(
         self, environment, source_run
     ):
@@ -902,6 +925,9 @@ class TestAdvance:
         refused = launch_blocker(source_run)
 
         assert refused is not None and refused.code == "issue_epoch_measuring"
+        # The launch form links that issue, as the issue's own refusal does.
+        assert refused.details == {"cluster_id": issue.cluster_id}
+        assert launch_options(source_run).blocked.cluster_id == issue.cluster_id
         job.refresh_from_db()
         assert launch_blocker(job.baseline_run) is None
 

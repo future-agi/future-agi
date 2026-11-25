@@ -235,6 +235,14 @@ class AgentFixFailureSerializer(serializers.Serializer):
     message = serializers.CharField()
 
 
+class AgentFixLaunchBlockedSerializer(AgentFixFailureSerializer):
+    cluster_id = serializers.CharField(
+        allow_null=True,
+        help_text="For issue_epoch_measuring, the issue whose epoch is starting in the"
+        " environment; its page shows it. Null otherwise.",
+    )
+
+
 class AgentFixShipReadinessSerializer(serializers.Serializer):
     """How an epoch's winner would ship, known before launch."""
 
@@ -694,7 +702,7 @@ class AgentFixLaunchOptionsSerializer(serializers.Serializer):
     defaults = AgentFixLaunchDefaultsSerializer()
     limits = AgentFixLaunchLimitsSerializer()
     # Set when Start must be disabled, with the reason launch would give.
-    blocked = AgentFixFailureSerializer(allow_null=True)
+    blocked = AgentFixLaunchBlockedSerializer(allow_null=True)
     # Set when a launch that first writes variations would be refused, with the reason.
     variations_blocked = AgentFixFailureSerializer(allow_null=True)
     held_back_scenario_keys = serializers.ListField(
