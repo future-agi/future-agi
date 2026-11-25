@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import {
+  simulateV3CallExecutionBrowser,
   simulateV3CallExecutionWorkers,
   simulateV3TestExecutionTrialRoutes,
 } from "src/generated/api-contracts/api";
@@ -831,6 +832,19 @@ export function useHasWorkers(callExecutionId, callStatus = null) {
   const { data, isError } = useCallWorkers(callExecutionId, callStatus);
   if (isError) return true;
   return data === undefined ? undefined : data !== null;
+}
+
+/* What a trial's browser did, read from the trial's own stored file:
+   asked only when its entry is opened, and for the latest attempt only. */
+export function useCallBrowser(callExecutionId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: ["simulation-call-browser-v3", callExecutionId],
+    queryFn: async () =>
+      (await simulateV3CallExecutionBrowser(callExecutionId)).data,
+    enabled: Boolean(callExecutionId) && enabled,
+    // The pictures' links are signed for a while; read again when the entry is opened later.
+    staleTime: 60 * 1000,
+  });
 }
 
 export function useCallTraces(executionId, callExecutionId) {
