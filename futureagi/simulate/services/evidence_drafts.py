@@ -433,9 +433,7 @@ def record_start(
             return
         payload = dict(locked.payload or {})
         payload["_starting_scenarios"] = len(documents)
-        payload["_starting_keys"] = sorted(
-            {_identity(one) for one in documents} - {""}
-        )
+        payload["_starting_keys"] = sorted({_identity(one) for one in documents} - {""})
         HostedHarnessConversationMessage._base_manager.filter(id=locked.id).update(
             payload=payload
         )

@@ -541,9 +541,7 @@ class TestSettleAndForget:
         again, leaves the new drafting job and its chat alone."""
         first = _start(cases, user)
         with django_capture_on_commit_callbacks(execute=True):
-            evidence_drafts.turn_ended(
-                str(first.id), str(_command(first).id), "failed"
-            )
+            evidence_drafts.turn_ended(str(first.id), str(_command(first).id), "failed")
         late = scheduled.forget.call_args
         evidence_drafts.forget(*late.args, **late.kwargs)
         assert not any(_gone(first).values())
@@ -625,9 +623,9 @@ class TestSettleAndForget:
             )
         }
         assert {statuses[case_id] for case_id in drafted} == {("drafted", "")}
-        assert [
-            statuses[case.id] for case in cases[:2] if case.id not in drafted
-        ] == [("blocked", evidence_drafts.TIMED_OUT)] * (2 - landed)
+        assert [statuses[case.id] for case in cases[:2] if case.id not in drafted] == [
+            ("blocked", evidence_drafts.TIMED_OUT)
+        ] * (2 - landed)
         assert swept["timed_out"] == timed_out
 
     def test_a_young_turn_is_left_to_finish(self, cases, user, scheduled):
