@@ -110,6 +110,13 @@ export default function EnvironmentWorkspace() {
   const backedScenarioCount = backed
     ? evalDetailQuery.data?.overview?.scenario_count ?? undefined
     : undefined;
+  // On a composition, a run of everything is the scenarios the agent can be scored on: the rest
+  // need a tool no agent tool reaches, so running them costs a conversation and scores nothing.
+  const unscorable = new Set(
+    (evalDetailQuery.data?.composition?.alignment?.unscorable || []).map(
+      (item) => item.scenario_key,
+    ),
+  );
   // A composition (a released environment bound to an agent) rides on `env` so the
   // alignment tab, the run picker and the run report can read it without a second fetch.
   const composition = (backed && evalDetailQuery.data?.composition) || null;
@@ -147,13 +154,6 @@ export default function EnvironmentWorkspace() {
     mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
       // Run-all reads the keys from the server list: the bootstrap
       // `envState.scenarios` is seeded once and keeps a key an amend dropped.
-      // On a composition, "all" is the scenarios the agent can be scored on: the rest need
-      // a tool no agent tool reaches, so running them costs a conversation and scores nothing.
-      const unscorable = new Set(
-        (evalDetailQuery.data?.composition?.alignment?.unscorable || []).map(
-          (item) => item.scenario_key,
-        ),
-      );
       const scenarioIds =
         ids === undefined
           ? (await listAllScenarioKeys(env.id)).filter(
@@ -638,7 +638,11 @@ export default function EnvironmentWorkspace() {
         onFork={onFork}
         onStartRun={startRun}
         selectionActive={selectionActive}
-        scenarioCount={backedScenarioCount}
+        scenarioCount={
+          backedScenarioCount != null
+            ? Math.max(0, backedScenarioCount - unscorable.size)
+            : undefined
+        }
       />
       {creditBanner}
       {refusalLine}
