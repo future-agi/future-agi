@@ -5452,6 +5452,43 @@ def test_a_model_base_url_set_outside_the_run_s_secrets_is_measured_too(
     )
 
 
+def test_an_internationalized_model_host_is_measured_by_its_ascii_name():
+    """The run's mark carries ASCII only: a model host in another script is named by
+    its IDNA A-label, and one with no such form is left out, never the whole mark."""
+    from simulate.services.hosted_harness_gateway import _model_hosts
+
+    hosts = _model_hosts(
+        {
+            "OPENAI_BASE_URL": "https://модели.example.test/v1",
+            "LLM_BASE_URL": "https://broken..example.test/v1",
+        },
+        {"AGENTCC_BASE_URL": "https://gateway.example.test"},
+    )
+
+    assert hosts == ("gateway.example.test", "xn--d1acjlcm.example.test")
+
+
+@pytest.mark.django_db
+def test_an_internationalized_model_host_keeps_the_run_measured(
+    organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="untraced-idna",
+        instrumentation="none",
+        environment_values={"OPENAI_BASE_URL": "https://Модели.example.test/v1"},
+    ).launch()
+
+    assert (
+        world.mark["FI_SIMULATION_MODEL_HOSTS"]
+        == "gateway.example.test,xn--d1acjlcm.example.test"
+    )
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "tag, options",

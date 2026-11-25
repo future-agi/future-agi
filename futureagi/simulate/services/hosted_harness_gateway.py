@@ -1706,7 +1706,20 @@ def _model_hosts(
         for alias, value in values.items()
         if _MODEL_BASE_URL_ALIAS.fullmatch(str(alias).upper())
     )
-    return tuple(sorted(host for host in hosts if host))
+    return tuple(
+        sorted({wire for host in hosts if host and (wire := _wire_host(host))})
+    )
+
+
+def _wire_host(host: str) -> str | None:
+    """The host as a request names it: an internationalized name as its IDNA A-label,
+    since the run's mark carries ASCII only, or None when it has no such form. One host
+    that cannot be written so is left out; it never costs the run its mark."""
+    try:
+        wire = host.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return None
+    return wire if wire.isascii() and wire.isprintable() else None
 
 
 def _simulation_mark(
