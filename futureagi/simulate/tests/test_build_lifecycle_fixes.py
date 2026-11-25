@@ -203,7 +203,7 @@ class TestApproveRollback:
         waiting,  # noqa: F811
         stored_contracts,  # noqa: F811
     ):
-        add_edit(
+        edited = add_edit(
             waiting, op="remove", kind="tool", item_id="notify", text=None, user=user
         )
 
@@ -218,7 +218,7 @@ class TestApproveRollback:
             patch("simulate.services.agent_contracts.remove_contract") as removed,
             pytest.raises(HostedHarnessError),
         ):
-            approve(waiting, user=user, base_url=BASE_URL)
+            approve(edited, user=user, base_url=BASE_URL)
 
         removed.assert_not_called()
         waiting.refresh_from_db()
