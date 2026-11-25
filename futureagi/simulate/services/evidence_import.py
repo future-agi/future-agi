@@ -321,6 +321,37 @@ def _gone_from_suite(environment: HostedHarnessJob) -> Q:
     return Q(status=EvidenceImportCase.Status.ADDED) & ~Q(scenario_key__in=held)
 
 
+def sources_awaiting_review(
+    environment: HostedHarnessJob,
+    *,
+    project: Project,
+    source_kind: SourceKind,
+    source_ids: list[str],
+) -> set[str]:
+    """Those of ``source_ids`` (Observe sources of ``project``) that another import
+    of ``environment`` still drafts or reviews: a case of the same source waiting
+    to be drafted, or drafted on the environment as it is. Read from the cases
+    alone, without their fingerprints, so a source that changed since, one whose
+    fingerprint is blank, or Observe being unreachable never hides one. Ask it
+    before importing: an import retires a waiting case whose source changed."""
+    return set(
+        EvidenceImportCase.no_workspace_objects.filter(
+            evidence_import__environment_id=environment.id,
+            evidence_import__deleted=False,
+            evidence_import__source_kind=source_kind,
+            evidence_import__project_id=project.id,
+            source_id__in=source_ids,
+            status__in=(
+                EvidenceImportCase.Status.PENDING,
+                EvidenceImportCase.Status.DRAFTED,
+            ),
+            duplicate_of__isnull=True,
+        )
+        .exclude(_stale_drafts(environment))
+        .values_list("source_id", flat=True)
+    )
+
+
 def _source_key(evidence_import: EvidenceImport, source_id: str) -> tuple | None:
     """What names one source across imports: an Observe session or call by its
     project and id, a dataset row by its dataset and id. A transcript has no source to name."""
