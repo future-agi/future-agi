@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import tarfile
@@ -157,6 +158,13 @@ def stored_version_contract(agent_version_id: UUID) -> dict[str, Any] | None:
 def has_reading_record(contract: dict[str, Any] | None) -> bool:
     """Whether a contract carries the record of what its reading was made from."""
     return isinstance((contract or {}).get(_READING_INPUTS_KEY), dict)
+
+
+def reading_digest(contract: dict[str, Any] | None) -> str:
+    record = (contract or {}).get(_READING_INPUTS_KEY)
+    if not isinstance(record, dict):
+        return ""
+    return hashlib.sha256(contract_bytes(record)).hexdigest()
 
 
 def stored_read_contract(agent_version_id: UUID) -> dict[str, Any] | None:

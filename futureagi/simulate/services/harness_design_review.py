@@ -143,8 +143,29 @@ def approved_seed_key(job: HostedHarnessJob) -> str:
     review = stored_review(job)
     if review is None or review.get("status") != APPROVED:
         return ""
+    return str(review.get("approved_contract_key") or _reviewed_key(review))
+
+
+def _reviewed_key(review: dict[str, Any]) -> str:
     return str(
-        review.get("approved_contract_key") or review.get("source_contract_key") or ""
+        review.get("reviewed_contract_key") or review.get("source_contract_key") or ""
+    )
+
+
+def _keep_reviewed_contract(
+    job: HostedHarnessJob, contract: dict[str, Any], agent_version_id: Any
+) -> str:
+    if not agent_version_id:
+        return ""
+    from simulate.services.agent_contracts import store_environment_contract
+
+    return (
+        store_environment_contract(
+            organization_id=job.organization_id,
+            environment_id=job.id,
+            contract=contract,
+        )
+        or ""
     )
 
 
@@ -169,20 +190,19 @@ def create_design_review(
     runtime: HarnessAgentVersionRuntime,
     contract: dict[str, Any],
 ) -> None:
-    from simulate.services.agent_contracts import version_contract_key
+    from simulate.services.agent_contracts import reading_digest, version_contract_key
 
+    version_id = runtime.agent_version_id
     _write(
         job,
         {
             "status": AWAITING_APPROVAL,
-            "agent_version_id": (
-                str(runtime.agent_version_id) if runtime.agent_version_id else None
-            ),
+            "agent_version_id": str(version_id) if version_id else None,
             "source_contract_key": (
-                version_contract_key(runtime.agent_version_id)
-                if runtime.agent_version_id
-                else ""
+                version_contract_key(version_id) if version_id else ""
             ),
+            "reviewed_contract_key": _keep_reviewed_contract(job, contract, version_id),
+            "source_reading": reading_digest(contract),
             "proposal": build_proposal(
                 contract,
                 job.scenario_count,
@@ -548,15 +568,24 @@ def _effective(proposal: dict[str, Any], edits: list[dict[str, Any]]) -> dict[st
 
 
 def agent_changed(review: dict[str, Any]) -> bool:
-    """Whether the agent version's stored contract is no longer the one this design
-    was read from; compared by object key, since every new contract gets a new key."""
-    if not review.get("agent_version_id") or not review.get("source_contract_key"):
+    """Whether the agent version's stored contract was read again since this design
+    was read. A build seeded from the reading replaces the contract under a new key
+    but keeps the reading's record, so only a different record is a changed agent."""
+    version_id = review.get("agent_version_id")
+    if not version_id or not review.get("source_contract_key"):
         return False
-    from simulate.services.agent_contracts import version_contract_key
-
-    return version_contract_key(review["agent_version_id"]) != review.get(
-        "source_contract_key"
+    from simulate.services.agent_contracts import (
+        reading_digest,
+        stored_read_contract,
+        version_contract_key,
     )
+
+    if version_contract_key(version_id) == review.get("source_contract_key"):
+        return False
+    if not review.get("source_reading"):
+        return True
+    current = stored_read_contract(version_id)
+    return current is not None and reading_digest(current) != review["source_reading"]
 
 
 def _legacy_edit_id(edit: dict[str, Any]) -> str:
@@ -852,7 +881,7 @@ def _store_approved_contract(job: HostedHarnessJob, review: dict[str, Any]) -> s
 
     if agent_changed(review):
         raise _agent_changed_refusal()
-    source = read_contract(str(review.get("source_contract_key") or ""))
+    source = read_contract(_reviewed_key(review))
     if source is None:
         raise HostedHarnessError(
             "design_contract_unreadable",
