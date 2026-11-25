@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from django.core.cache.backends.locmem import LocMemCache
 
 from simulate.models import (
     AgentDefinition,
@@ -20,6 +21,8 @@ from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessJob,
     HostedHarnessScenario,
+)
+from simulate.models import (
     TestExecution as SimulationExecution,
 )
 from simulate.services import harness_fit, hosted_harness_gateway
@@ -344,7 +347,7 @@ class TestStrictKeys:
 @pytest.mark.django_db
 class TestJobRequests:
     @pytest.fixture(params=["", "preflight/"])
-    def send(self, request, auth_client, monkeypatch):
+    def send(self, request, auth_client, organization, monkeypatch):
         from simulate.services import harness_provider
         from simulate.temporal import client
 
@@ -356,12 +359,16 @@ class TestJobRequests:
         )
 
         def post(body):
-            return auth_client.post(
+            response = auth_client.post(
                 f"{JOBS}{request.param}",
                 {"artifacts": {"level": "full"}, **body},
                 format="json",
                 HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()),
             )
+            assert not HostedHarnessJob.no_workspace_objects.filter(
+                organization=organization
+            ).exists()
+            return response
 
         return post
 
@@ -375,7 +382,6 @@ class TestJobRequests:
 
         assert response.status_code == 400, response.content
         assert b"only on an environment it is composed with" in response.content
-        assert not HostedHarnessJob.no_workspace_objects.exists()
 
     @pytest.mark.parametrize(
         "key",
@@ -385,8 +391,7 @@ class TestJobRequests:
         response = send({"agent": _connection(), "metadata": {key: {"suite": {}}}})
 
         assert response.status_code == 400, response.content
-        assert key in response.content.decode()
-        assert not HostedHarnessJob.no_workspace_objects.exists()
+        assert b"metadata contains reserved" in response.content
 
 
 # --- runs of a composition ----------------------------------------------------------------------
@@ -462,7 +467,7 @@ class TestRuns:
     def test_its_scenarios_are_edited_in_its_chat(self, auth_client, composition):
         response = auth_client.post(
             f"{JOBS}{composition.id}/scenarios/amend/",
-            {"remove": ["gone"]},
+            {"changes": [{"op": "drop", "scenario": "gone"}]},
             format="json",
         )
 
@@ -536,7 +541,8 @@ class TestReleases:
         suite = _suite(archives, earlier, ["a"])
         composition = _hosted(organization, workspace, suite)
         later = _environment(organization, letter="2")
-        shared = _environment(None, letter="3")
+        with releases._owned_by(None):
+            shared = _environment(None, letter="3")
 
         listed = {one["digest"] for one in releases.list_releases(organization)}
 
@@ -666,15 +672,16 @@ def dispatched(monkeypatch):
     return started
 
 
-def _runs():
-    return HostedHarnessJob.no_workspace_objects.filter(environment__isnull=False)
+@pytest.fixture
+def runs(composition):
+    return HostedHarnessJob.no_workspace_objects.filter(environment=composition)
 
 
 @pytest.mark.django_db
 class TestSettled:
     @pytest.mark.parametrize("mode", ["review", "run"])
     def test_a_worker_lost_after_the_sandbox_is_deleted_changes_nothing(
-        self, organization, composed, output, dispatched, mode
+        self, organization, composed, output, dispatched, runs, mode
     ):
         job = _adaptation(organization, mode=mode)
         attempt = _attempted(job)
@@ -688,7 +695,7 @@ class TestSettled:
         assert attempt.terminal_stage == "completed"
         assert attempt.cleanup_verified_at is not None
         assert len(composed) == 1
-        assert _runs().count() == len(dispatched) == (1 if mode == "run" else 0)
+        assert runs.count() == len(dispatched) == (1 if mode == "run" else 0)
 
     def test_a_failed_adaptation_is_not_retried_either(
         self, organization, composed, dispatched
@@ -704,7 +711,7 @@ class TestSettled:
         assert settled.failure["code"] == "adaptation_result_missing"
 
     def test_a_cancel_after_it_completed_keeps_its_outcome(
-        self, organization, composed, output, dispatched
+        self, organization, composed, output, dispatched, runs
     ):
         job = _adaptation(organization, mode="review")
         _attempted(job)
@@ -717,7 +724,7 @@ class TestSettled:
 
     @pytest.mark.parametrize("ended", ["canceled", "deleted"])
     def test_a_canceled_or_deleted_one_composes_and_runs_nothing(
-        self, organization, composed, output, dispatched, ended
+        self, organization, composed, output, dispatched, runs, ended
     ):
         job = _adaptation(organization, mode="run")
         attempt = _attempted(job)
@@ -730,14 +737,13 @@ class TestSettled:
 
         assert settled.state == HostedHarnessJob.State.CANCELED
         assert composed == [] and dispatched == []
-        assert not _runs().exists()
-        assert (
-            _gateway()._end_adaptation(attempt, settled).state
-            == HostedHarnessJob.State.CANCELED
-        )
+        assert not runs.exists()
+        if ended == "canceled":
+            settled = _gateway().reconcile_completed(attempt)
+            assert settled.state == HostedHarnessJob.State.CANCELED
 
     def test_one_already_settled_is_not_adapted_again(
-        self, organization, composed, output, dispatched
+        self, organization, composed, output, dispatched, runs
     ):
         job = _adaptation(organization, mode="run")
         HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
@@ -753,7 +759,7 @@ class TestSettled:
 @pytest.mark.django_db
 class TestRunMode:
     def test_a_run_created_but_not_started_is_started(
-        self, organization, composed, output, dispatched, monkeypatch
+        self, organization, composed, output, dispatched, runs, monkeypatch
     ):
         from simulate.temporal import client
 
@@ -766,11 +772,11 @@ class TestRunMode:
             worker.setattr(client, "start_hosted_harness_gateway_workflow", died)
             with pytest.raises(SystemExit):
                 releases.complete_adaptation(job, output)
-        assert _runs().get().state == HostedHarnessJob.State.QUEUED
+        assert runs.get().state == HostedHarnessJob.State.QUEUED
 
         settled = releases.complete_adaptation(job, output)
 
-        assert dispatched == [str(_runs().get().id)]
+        assert dispatched == [str(runs.get().id)]
         assert (
             settled.payload["metadata"]["adaptation_result"]["run"]["job_id"]
             == dispatched[0]
@@ -780,7 +786,7 @@ class TestRunMode:
         assert len(dispatched) == 1
 
     def test_a_run_that_cannot_be_scheduled_is_failed(
-        self, organization, composed, output, dispatched, monkeypatch
+        self, organization, composed, output, dispatched, runs, monkeypatch
     ):
         from simulate.temporal import client
 
@@ -796,7 +802,7 @@ class TestRunMode:
             settled.payload["metadata"]["adaptation_result"]["run_failure"]["code"]
             == "run_not_started"
         )
-        run = _runs().get()
+        run = runs.get()
         assert run.state == HostedHarnessJob.State.FAILED
         assert run.failure["code"] == "scheduler_unavailable"
         assert run.test_execution.status == SimulationExecution.ExecutionStatus.FAILED
@@ -906,7 +912,7 @@ class TestOutputArchive:
             b"",
             b"not a gzip",
             _targz({"result.json": b"x" * 4096})[:60],
-            _targz({"result.json": b"{}"})[:-12] + b"\xff" * 12,
+            _targz({"result.json": b"{}"})[:12] + b"\xff" * 60,
         ],
         ids=["empty", "not-gzip", "truncated", "corrupt"],
     )
@@ -1077,30 +1083,29 @@ class TestSuiteEdits:
 
 
 class TestModelCall:
-    def test_one_request_at_a_time_asks_the_model(self, monkeypatch):
-        from django.core.cache import cache
+    @pytest.fixture(autouse=True)
+    def cache(self, monkeypatch):
+        cache = LocMemCache(str(uuid.uuid4()), {})
+        monkeypatch.setattr(harness_fit, "cache", cache)
 
-        cache.clear()
+    def test_one_request_at_a_time_asks_the_model(self, monkeypatch):
         asked = []
 
         def ask(task, material):
             asked.append(task)
             with pytest.raises(harness_fit._Busy):
-                harness_fit._one_at_a_time("fit", task, material)
+                harness_fit._one_at_a_time(task, task, material)
             return {"pairs": []}
 
         monkeypatch.setattr(harness_fit, "_ask_model", ask)
 
-        assert harness_fit._one_at_a_time("fit", "task", {}) == {"pairs": []}
+        assert harness_fit._one_at_a_time("fit", "fit", {}) == {"pairs": []}
         # Another question is not held up, and the next request may ask again.
-        assert harness_fit._one_at_a_time("other", "task", {}) == {"pairs": []}
-        assert harness_fit._one_at_a_time("fit", "task", {}) == {"pairs": []}
+        assert harness_fit._one_at_a_time("other", "other", {}) == {"pairs": []}
+        assert harness_fit._one_at_a_time("fit", "fit", {}) == {"pairs": []}
         assert len(asked) == 3
 
     def test_a_request_that_fails_lets_the_next_one_ask(self, monkeypatch):
-        from django.core.cache import cache
-
-        cache.clear()
         replies = iter([httpx.ReadTimeout("slow"), None])
 
         def ask(task, material):

@@ -1689,9 +1689,7 @@ def complete_adaptation(
     settled keeps its outcome: only the run it still owes is started.
     """
     with transaction.atomic():
-        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=job.id
-        )
+        locked = HostedHarnessJob._base_manager.select_for_update().get(id=job.id)
         if not adaptation_settled(locked):
             _settle_adaptation(locked, output, verified)
     result = (locked.payload.get("metadata") or {}).get("adaptation_result") or {}
