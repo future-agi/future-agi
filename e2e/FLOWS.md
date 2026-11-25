@@ -3812,3 +3812,29 @@
 
 - notify leaves the design and the page says it was removed
 - approve sends the revision the page shows
+
+### SIM-E2E-039 — a person tags one scenario of an environment and only that scenario carries the tag
+
+**Goal:** A developer labels a scenario of their environment with a tag of their own, so they can find and group it later, without changing the versioned suite
+
+**Spec:** `flows/simulate/scenario-tags.spec.ts:18`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment with two scenarios (e2e/lib/harness_environment_seed.py)
+2. open its Scenarios tab
+3. select one scenario
+4. open Tag and type a new tag
+5. read the environment's tags (GET harness-environments/<id>/scenario-tags/)
+
+**Backend state verified:**
+
+- one tag row exists, on the selected scenario, holding only the new tag
+- the environment's tags are exactly the new tag
+
+**Browser observations:**
+
+- the page confirms the tag was added to one scenario
+- the tagged row shows the tag and the other row does not
