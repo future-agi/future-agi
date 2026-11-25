@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createTheme } from "@mui/material/styles";
-import { act, fireEvent, render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  userEvent,
+  waitFor,
+} from "src/utils/test-utils";
 import FilterValueLabel from "./FilterValueLabel";
 import {
   filterValuesUseBackendSearch,
@@ -24,7 +31,16 @@ const { mockState, hookSpy } = vi.hoisted(() => ({
 vi.mock("src/hooks/useDashboards", () => ({
   useDashboardFilterValues: (args) => {
     hookSpy(args);
-    return mockState.current;
+    const { isLoading, isFetchingNextPage } = mockState.current;
+    return {
+      queryIdentity: args.propertyId,
+      fetchStatus: isLoading || isFetchingNextPage ? "fetching" : "idle",
+      // These unit cases publish progress explicitly by changing the cursor.
+      onNextPageError: () => () => {},
+      tryStartNextPage: () =>
+        mockState.current.fetchNextPage() ?? new Promise(() => {}),
+      ...mockState.current,
+    };
   },
 }));
 
@@ -199,6 +215,7 @@ describe("FilterValueLabel", () => {
       data: [],
       isLoading: false,
       hasNextPage: true,
+      continuationKey: "cursor-0",
       isFetchingNextPage: false,
       fetchNextPage,
     };
@@ -212,6 +229,7 @@ describe("FilterValueLabel", () => {
       data: DEFAULT_OPTIONS,
       isLoading: false,
       hasNextPage: true,
+      continuationKey: "cursor-0",
       isFetchingNextPage: false,
       fetchNextPage,
     };
@@ -226,12 +244,246 @@ describe("FilterValueLabel", () => {
       data: [],
       isLoading: false,
       hasNextPage: true,
+      continuationKey: "cursor-0",
       isFetchNextPageError: true,
       fetchNextPage,
     };
     renderLabel({ ...baseFilter, value: ["p1"] });
     expect(fetchNextPage).not.toHaveBeenCalled();
     expect(screen.getByText("p1")).toBeInTheDocument();
+  });
+
+  // Each continuation read is one in-flight -> settled cycle of the shared
+  // infinite query; drive that cycle through the mock and re-render.
+  const cycleReads = ({
+    rerender,
+    fetchNextPage,
+    cycles,
+    filterFor,
+    resolveAt,
+  }) => {
+    for (let i = 0; i < cycles; i += 1) {
+      const resolved =
+        resolveAt !== undefined && fetchNextPage.mock.calls.length >= resolveAt;
+      const page = {
+        data: resolved ? DEFAULT_OPTIONS : [],
+        isLoading: false,
+        hasNextPage: true,
+        fetchNextPage,
+      };
+      mockState.current = {
+        ...page,
+        continuationKey: mockState.current.continuationKey,
+        isFetchingNextPage: true,
+      };
+      rerender(<FilterValueLabel filter={filterFor()} source="traces" />);
+      mockState.current = {
+        ...page,
+        continuationKey: `cursor-${i + 1}`,
+        isFetchingNextPage: false,
+      };
+      rerender(<FilterValueLabel filter={filterFor()} source="traces" />);
+    }
+  };
+  const unresolvedChain = (fetchNextPage) => ({
+    data: [],
+    isLoading: false,
+    hasNextPage: true,
+    continuationKey: "cursor-0",
+    isFetchingNextPage: false,
+    fetchNextPage,
+  });
+
+  it("stops watching a peer cursor when the row switches query or unmounts", () => {
+    const stopFirst = vi.fn();
+    const stopSecond = vi.fn();
+    const onNextPageError = vi
+      .fn()
+      .mockReturnValueOnce(stopFirst)
+      .mockReturnValueOnce(stopSecond);
+    mockState.current = {
+      ...unresolvedChain(vi.fn()),
+      isFetchingNextPage: true,
+      onNextPageError,
+    };
+    const filter = { ...baseFilter, registryId: "first", value: ["saved-id"] };
+    const view = renderLabel(filter);
+    view.rerender(
+      <FilterValueLabel
+        filter={{ ...filter, registryId: "second" }}
+        source="traces"
+      />,
+    );
+    expect(stopFirst).toHaveBeenCalledOnce();
+    expect(stopSecond).not.toHaveBeenCalled();
+    view.unmount();
+    expect(stopSecond).toHaveBeenCalledOnce();
+  });
+
+  it.each(["fetching", "paused"])(
+    "does not dispatch a continuation while a refetch is %s",
+    (fetchStatus) => {
+      const fetchNextPage = vi.fn();
+      const filter = { ...baseFilter, value: ["p1"] };
+      mockState.current = { ...unresolvedChain(fetchNextPage), fetchStatus };
+      const { rerender } = renderLabel(filter);
+      expect(fetchNextPage).not.toHaveBeenCalled();
+
+      mockState.current.fetchStatus = "idle";
+      rerender(<FilterValueLabel filter={filter} source="traces" />);
+      expect(fetchNextPage).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([true, false])(
+    "follows cursor-only settlements without repeating a read (resolves: %s)",
+    (resolves) => {
+      const fetchNextPage = vi.fn();
+      const filter = { ...baseFilter, registryId: "project", value: ["p1"] };
+      mockState.current = unresolvedChain(fetchNextPage);
+      const { rerender } = renderLabel(filter);
+      const renderSameChip = () =>
+        rerender(<FilterValueLabel filter={filter} source="traces" />);
+      expect(fetchNextPage).toHaveBeenCalledTimes(1);
+      // Fetch notifications without cursor progress must not charge another read.
+      mockState.current.isFetchingNextPage = true;
+      renderSameChip();
+      mockState.current.isFetchingNextPage = false;
+      renderSameChip();
+      expect(fetchNextPage).toHaveBeenCalledTimes(1);
+
+      for (let i = 1; i <= 15; i += 1) {
+        // No intermediate fetching render; the query, selection, handler and
+        // options are unchanged until the page that actually resolves the id.
+        mockState.current.continuationKey = `cursor-${i}`;
+        if (resolves && i === 3) mockState.current.data = DEFAULT_OPTIONS;
+        renderSameChip();
+        renderSameChip();
+        expect(fetchNextPage).toHaveBeenCalledTimes(
+          Math.min(i + 1, resolves ? 3 : 12),
+        );
+      }
+      expect(screen.getByText(resolves ? "Project Alpha" : "p1")).toBeVisible();
+    },
+  );
+
+  it("stops after exactly 12 continuation reads and shows the raw id", () => {
+    const fetchNextPage = vi.fn();
+    mockState.current = unresolvedChain(fetchNextPage);
+    const filter = { ...baseFilter, value: ["gone-id"] };
+    const { container, rerender } = renderLabel(filter);
+
+    cycleReads({
+      rerender,
+      fetchNextPage,
+      cycles: 30,
+      filterFor: () => filter,
+    });
+
+    expect(fetchNextPage).toHaveBeenCalledTimes(12);
+    expect(screen.getByText("gone-id")).toBeInTheDocument();
+    expect(
+      container.querySelector(".MuiSkeleton-root"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("stops reading on the page that resolves the saved id", () => {
+    const fetchNextPage = vi.fn();
+    mockState.current = unresolvedChain(fetchNextPage);
+    const filter = { ...baseFilter, value: ["p1"] };
+    const { rerender } = renderLabel(filter);
+
+    // The fifth read's page carries the id; nothing is read after it.
+    cycleReads({
+      rerender,
+      fetchNextPage,
+      cycles: 30,
+      filterFor: () => filter,
+      resolveAt: 5,
+    });
+
+    expect(fetchNextPage).toHaveBeenCalledTimes(5);
+    expect(screen.getByText("Project Alpha")).toBeInTheDocument();
+  });
+
+  it("does not restart the capped chain when the value array is rebuilt", () => {
+    const fetchNextPage = vi.fn();
+    mockState.current = unresolvedChain(fetchNextPage);
+    const { rerender } = renderLabel({ ...baseFilter, value: ["gone-id"] });
+
+    // A parent that rebuilds filter.value on every render (same contents).
+    cycleReads({
+      rerender,
+      fetchNextPage,
+      cycles: 30,
+      filterFor: () => ({ ...baseFilter, value: ["gone-id"] }),
+    });
+
+    expect(fetchNextPage).toHaveBeenCalledTimes(12);
+    expect(screen.getByText("gone-id")).toBeInTheDocument();
+  });
+
+  it("gives a different selection its own continuation budget", () => {
+    const fetchNextPage = vi.fn();
+    mockState.current = unresolvedChain(fetchNextPage);
+    const { rerender } = renderLabel({ ...baseFilter, value: ["gone-id"] });
+    cycleReads({
+      rerender,
+      fetchNextPage,
+      cycles: 30,
+      filterFor: () => ({ ...baseFilter, value: ["gone-id"] }),
+    });
+    expect(fetchNextPage).toHaveBeenCalledTimes(12);
+
+    // The new selection reads on its very first render, with the shared
+    // query state unchanged.
+    rerender(
+      <FilterValueLabel
+        filter={{ ...baseFilter, value: ["other-id"] }}
+        source="traces"
+      />,
+    );
+    expect(fetchNextPage).toHaveBeenCalledTimes(13);
+
+    cycleReads({
+      rerender,
+      fetchNextPage,
+      cycles: 30,
+      filterFor: () => ({ ...baseFilter, value: ["other-id"] }),
+    });
+    expect(fetchNextPage).toHaveBeenCalledTimes(24);
+    expect(screen.getByText("other-id")).toBeInTheDocument();
+  });
+
+  it("reads page two when an exhausted row is reused for another property with the same id selected", () => {
+    const firstRead = vi.fn();
+    const first = {
+      ...baseFilter,
+      registryId: "first-property",
+      value: ["p1"],
+    };
+    mockState.current = unresolvedChain(firstRead);
+    const { rerender } = renderLabel(first);
+    cycleReads({
+      rerender,
+      fetchNextPage: firstRead,
+      cycles: 15,
+      filterFor: () => first,
+    });
+    expect(firstRead).toHaveBeenCalledTimes(12);
+    expect(screen.getByText("p1")).toBeInTheDocument();
+
+    // Deleting an index-keyed widget row gives the same mounted label the
+    // next row's props. Only the registry property changes, not the selection.
+    const next = { ...first, registryId: "next-property" };
+    const nextRead = vi.fn();
+    mockState.current = unresolvedChain(nextRead);
+    rerender(<FilterValueLabel filter={next} source="traces" />);
+    expect(nextRead).toHaveBeenCalledTimes(1);
+    mockState.current = { ...mockState.current, data: DEFAULT_OPTIONS };
+    rerender(<FilterValueLabel filter={next} source="traces" />);
+    expect(screen.getByText("Project Alpha")).toBeInTheDocument();
+    expect(nextRead).toHaveBeenCalledTimes(1);
   });
 
   it("shows a skeleton instead of raw ids while resolving", () => {
@@ -265,13 +517,19 @@ describe("FilterValueLabel", () => {
     expect(await screen.findByRole("tooltip")).toBeVisible();
 
     rerender(
-      <FilterValueLabel filter={filter} source="traces" onClick={onClick} disableTooltip />,
+      <FilterValueLabel
+        filter={filter}
+        source="traces"
+        onClick={onClick}
+        disableTooltip
+      />,
     );
     await waitFor(() =>
       expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
     );
     expect(
-      screen.getByText("Project Alpha", { selector: ".filter-value-name" }).parentElement,
+      screen.getByText("Project Alpha", { selector: ".filter-value-name" })
+        .parentElement,
     ).toBe(anchor);
     expect(anchor.isConnected).toBe(true);
     await userEvent.unhover(anchor);
@@ -280,35 +538,39 @@ describe("FilterValueLabel", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
-    rerender(<FilterValueLabel filter={filter} source="traces" onClick={onClick} />);
+    rerender(
+      <FilterValueLabel filter={filter} source="traces" onClick={onClick} />,
+    );
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     await userEvent.unhover(anchor);
     await userEvent.hover(anchor);
     expect(await screen.findByRole("tooltip")).toBeVisible();
     expect(
-      screen.getByText("Project Alpha", { selector: ".filter-value-name" }).parentElement,
+      screen.getByText("Project Alpha", { selector: ".filter-value-name" })
+        .parentElement,
     ).toBe(anchor);
   });
 
   it("does not reopen from a hover timer queued before editing", () => {
     vi.useFakeTimers();
     const filter = { ...baseFilter, value: ["p1", "p2"] };
-    const view = render(
-      <FilterValueLabel filter={filter} source="traces" />,
-      {
-        theme: createTheme({
-          components: {
-            MuiTooltip: { defaultProps: { enterDelay: 100, enterNextDelay: 100 } },
+    const view = render(<FilterValueLabel filter={filter} source="traces" />, {
+      theme: createTheme({
+        components: {
+          MuiTooltip: {
+            defaultProps: { enterDelay: 100, enterNextDelay: 100 },
           },
-        }),
-      },
-    );
+        },
+      }),
+    });
     try {
       const anchor = screen.getByText("Project Alpha").parentElement;
       fireEvent.mouseOver(anchor);
       act(() => vi.advanceTimersByTime(50));
       expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-      view.rerender(<FilterValueLabel filter={filter} source="traces" disableTooltip />);
+      view.rerender(
+        <FilterValueLabel filter={filter} source="traces" disableTooltip />,
+      );
       act(() => vi.advanceTimersByTime(150));
       expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
       view.rerender(<FilterValueLabel filter={filter} source="traces" />);

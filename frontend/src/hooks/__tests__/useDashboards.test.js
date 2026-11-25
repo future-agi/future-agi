@@ -498,6 +498,149 @@ describe("usePropertyCatalog", () => {
     );
   });
 
+  it.each([undefined, 0, 3])(
+    "accepts exact legacy/current counts with metric=%s for both provenances",
+    (metric) => {
+      const counts = {
+        ...page().category_counts,
+        ...(metric === undefined ? {} : { metric, all: 1 + metric }),
+      };
+      for (const makePage of [page, currentPage]) {
+        const result = makePage({
+          category_counts: counts,
+          category_counts_exact: true,
+        });
+        expect(validatePropertyCatalogPage(result)).toBe(result);
+      }
+    },
+  );
+
+  it("requires every legacy key even when metric is present", () => {
+    for (const key of Object.keys(page().category_counts)) {
+      const counts = { ...page().category_counts, metric: 0 };
+      delete counts[key];
+      expect(
+        validatePropertyCatalogPage(
+          currentPage({ category_counts: counts, category_counts_exact: true }),
+        ),
+      ).toHaveProperty("__propertyCatalogCursorStopped", "malformed_page");
+    }
+  });
+
+  it.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, "0", null])(
+    "rejects invalid values in every allowed count key: %s",
+    (value) => {
+      const valid = { ...page().category_counts, metric: 0 };
+      for (const key of Object.keys(valid)) {
+        expect(
+          validatePropertyCatalogPage(
+            currentPage({
+              category_counts: { ...valid, [key]: value },
+              category_counts_exact: true,
+            }),
+          ),
+        ).toHaveProperty("__propertyCatalogCursorStopped", "malformed_page");
+      }
+    },
+  );
+
+  it.each([
+    { ...page().category_counts, metric: 0, unknown: 0 },
+    { ...page().category_counts, unknown: 0 },
+    { ...page().category_counts, metric: 3 },
+    { ...page().category_counts, metric: 0, all: 2 },
+  ])("rejects unknown keys or mismatched seven-key totals: %j", (counts) => {
+    expect(
+      validatePropertyCatalogPage(
+        currentPage({ category_counts: counts, category_counts_exact: true }),
+      ),
+    ).toHaveProperty("__propertyCatalogCursorStopped", "malformed_page");
+  });
+
+  it.each([
+    { category_counts_exact: false },
+    { category_counts_exact: undefined },
+    { query_exact: true },
+    { query_complete: false, query_status: "complete" },
+    { query_complete: true, query_status: "partial" },
+    { query_provenance: "unknown_property_catalog" },
+  ])("does not relax page metadata for seven-key counts: %j", (metadata) => {
+    expect(
+      validatePropertyCatalogPage(
+        currentPage({
+          category_counts: { ...page().category_counts, metric: 0 },
+          category_counts_exact: true,
+          ...metadata,
+        }),
+      ),
+    ).toHaveProperty("__propertyCatalogCursorStopped", "malformed_page");
+  });
+
+  it.each([
+    { has_more: true, next_cursor: null },
+    { has_more: true, next_cursor: "" },
+    { has_more: true, next_cursor: "consumed" },
+    { has_more: false, next_cursor: "unexpected" },
+  ])("does not relax cursors for seven-key counts: %j", (cursor) => {
+    expect(
+      validatePropertyCatalogPage(
+        currentPage({
+          category_counts: { ...page().category_counts, metric: 0 },
+          category_counts_exact: true,
+          ...cursor,
+        }),
+        new Set(["consumed"]),
+      ),
+    ).toHaveProperty("__propertyCatalogCursorStopped", "malformed_cursor");
+  });
+
+  it.each([0, 3])(
+    "retains All property rows and continuation with seven-key metric=%s counts",
+    async (metric) => {
+      const counts = { ...page().category_counts, metric, all: 1 + metric };
+      const first = currentPage({
+        category_counts: counts,
+        category_counts_exact: true,
+        has_more: true,
+        next_cursor: "all-next",
+      });
+      const second = currentPage({
+        metrics: [
+          { name: "customer.tier", property_id: "custom_attribute:customer.tier" },
+        ],
+      });
+      mocks.get
+        .mockResolvedValueOnce({ data: { result: first } })
+        .mockResolvedValueOnce({ data: { result: second } });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const { result } = renderHook(
+        () => usePropertyCatalog({ source: "traces", perEvalConfig: true }),
+        { wrapper: createQueryWrapper(client) },
+      );
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.cursorStopReason).toBeNull();
+      expect(result.current.metrics).toEqual(first.metrics);
+      expect(result.current.hasNextPage).toBe(true);
+      expect(result.current.continuationKey).toBe("all-next");
+      expect(result.current.categoryCounts).toEqual(counts);
+      expect(mocks.get.mock.calls[0][1].params).not.toHaveProperty("category");
+      await act(async () => result.current.fetchNextPage());
+      await waitFor(() => expect(result.current.metrics).toHaveLength(2));
+      expect(result.current.metrics).toEqual([...first.metrics, ...second.metrics]);
+      expect(mocks.get.mock.calls[1][1].params.cursor).toBe("all-next");
+      expect(result.current.hasNextPage).toBe(false);
+      expect(result.current.cursorChainStopped).toBe(false);
+      expect(result.current.categoryCounts).toEqual(counts);
+      expect(result.current.categoryCountsExact).toBe(true);
+      expect(result.current.queryProvenance).toBe("current_property_catalog");
+      expect(result.current.queryReadState).toBe("complete");
+      expect(result.current.total).toBeNull();
+      expect(result.current.totalIsExact).toBe(false);
+    },
+  );
+
   it("retains search-wide first-page counts when current continuation pages omit them", async () => {
     const counts = {
       all: 516,

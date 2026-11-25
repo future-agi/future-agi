@@ -1,7 +1,7 @@
 import type { Response } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { fetchRoute } from '../../lib/backend-request';
 import { flowAnnotation } from '../../lib/flow-meta';
-
 // ModelSelector.jsx ordinary-model query and useDecisionModels.js catalog query.
 const MODELS = '/model-hub/api/models_list/';
 // EvalCreatePage drafts on mount; KeysDrawer/KeyCard read status and write keys.
@@ -68,7 +68,7 @@ test('EVAL-E2E-013: a Jev choice stays under the pointer while ordinary model se
     try {
       await page.route(url => url.pathname === MODELS && url.searchParams.get('model_type') === 'llm' &&
         url.searchParams.get('search') === 'Jev' && url.searchParams.get('page') === '1', async route => {
-        const response = await route.fetch();
+        const response = await fetchRoute(route);
         await responseGate;
         // Delay only delivery: status, body and headers are the real backend's.
         await route.fulfill({ response });
