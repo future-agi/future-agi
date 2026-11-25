@@ -190,7 +190,7 @@ def add_candidate(
         _put(patch_key, patch, "text/x-diff")
         # Counted here, outside the fix's lock too, so reading the candidate never
         # reads its patch.
-        files = counted_files(fix_run, patch)
+        counted = counted_files(fix_run, patch)
         try:
             with transaction.atomic():
                 locked = _locked_running(fix_run.id)
@@ -201,8 +201,8 @@ def add_candidate(
                     agent_version=version,
                     patch_object_key=patch_key,
                     changed_files=None
-                    if files is None
-                    else [list(one) for one in files],
+                    if counted is None
+                    else [list(one) for one in counted],
                     summary=summary[:4000],
                 )
         except IntegrityError as exc:
