@@ -1584,3 +1584,180 @@ class TestV2EnrichmentFaultLogging:
         result, logger_mock = self._run_with_trace_objects(objs)
         assert result["trace"]["id"] == "T1"
         assert not logger_mock.exception.called
+
+
+# --------------------------------------------------------------------------- #
+# Annotation (model_hub_score) read: latest version before the span check
+# --------------------------------------------------------------------------- #
+_ANNOTATION_DRIVER_CONTEXT = SimpleNamespace(
+    server_info=SimpleNamespace(get_timezone=lambda: "UTC")
+)
+
+
+def _annotation_query(spans=2):
+    builder = TraceDetailReadBuilder(project_ids=["P1"], trace_id="T1")
+    return builder.build_annotation_query(
+        project_id="P1",
+        span_ids=[f"00000000-0000-4000-8000-{index:012x}" for index in range(spans)],
+    )
+
+
+def _score_table_statement():
+    from tracer.services.clickhouse.schema import CDC_MODEL_HUB_SCORE
+
+    code = "\n".join(
+        line.split("--", 1)[0] for line in CDC_MODEL_HUB_SCORE.splitlines()
+    )
+    start = code.index("CREATE TABLE IF NOT EXISTS model_hub_score")
+    return code[start:].split(";", 1)[0]
+
+
+def _score_column_types():
+    statement = _score_table_statement()
+    types = {}
+    for line in statement[statement.index("(") + 1 :].splitlines():
+        code = line.strip().rstrip(",")
+        if not code:
+            continue
+        if code.startswith(")"):
+            break
+        name, _, rest = code.partition(" ")
+        if name.upper() != "INDEX":
+            types[name] = rest.split(" DEFAULT ", 1)[0].strip()
+    return types
+
+
+@pytest.mark.unit
+def test_trace_detail_annotation_query_picks_latest_version_before_span_check():
+    query, _params = _annotation_query()
+    collapsed = " ".join(query.split())
+    keys = "label_id, created_at, id"
+    candidates = f"({keys}) IN ( SELECT {keys} FROM model_hub_score PREWHERE"
+
+    outer_from = collapsed.index("FROM model_hub_score PREWHERE")
+    candidates_at = collapsed.index(candidates)
+    group_at = collapsed.index(") GROUP BY id")
+    outer_prewhere = collapsed[outer_from:candidates_at]
+    subquery = collapsed[candidates_at:group_at]
+    after_collapse = collapsed[group_at:]
+    assert collapsed.startswith(
+        "WITH %(detail_annotation_span_ids)s AS detail_annotation_span_set SELECT"
+    )
+    assert outer_from < candidates_at < group_at
+    assert "observation_span_id" not in outer_prewhere
+    assert "tracer_project_id = %(detail_annotation_project_id)s" in outer_prewhere
+    assert "trace_id = %(detail_annotation_trace_id)s" in outer_prewhere
+    assert "tracer_project_id = %(detail_annotation_project_id)s" in subquery
+    assert "trace_id = %(detail_annotation_trace_id)s" in subquery
+    assert "observation_span_id IN detail_annotation_span_set" in subquery
+    assert collapsed.count("observation_span_id IN") == 1
+    assert (
+        "argMax(tuple(observation_span_id), _peerdb_version).1 AS latest_span_id"
+        in collapsed
+    )
+    assert "argMax(observation_span_id," not in collapsed
+    assert "latest_span_id IN detail_annotation_span_set" in after_collapse
+    assert "ORDER BY span_id ASC, label_id ASC LIMIT 5001" in after_collapse
+
+
+@pytest.mark.unit
+def test_trace_detail_annotation_query_writes_the_span_list_once():
+    from clickhouse_driver.util.escape import escape_params
+
+    query, params = _annotation_query(spans=1000)
+    escaped = escape_params(params, _ANNOTATION_DRIVER_CONTEXT)
+    span_literal = escaped["detail_annotation_span_ids"]
+    binding = "WITH %(detail_annotation_span_ids)s AS detail_annotation_span_set"
+    # Each use of the alias written out as the list, as without the binding.
+    unbound = query.replace(binding, "").replace(
+        "IN detail_annotation_span_set", "IN %(detail_annotation_span_ids)s"
+    )
+
+    rendered = query % escaped
+    assert query.count("%(detail_annotation_span_ids)s") == 1
+    assert query.count("detail_annotation_span_set") == 3
+    assert rendered.count(span_literal) == 1
+    assert "detail_annotation_span_set" not in unbound
+    assert (unbound % escaped).count(span_literal) == 2
+    # 1,000 UUID spans take about 40 KB; the statement adds about 2 KB.
+    assert len(rendered.encode()) <= len(span_literal.encode()) + 4096
+
+
+@pytest.mark.unit
+def test_trace_detail_annotation_query_passes_the_read_only_statement_guard():
+    from tracer.services.clickhouse.server_readonly import (
+        ensure_read_statement,
+        without_query_settings,
+    )
+
+    query, _params = _annotation_query()
+
+    ensure_read_statement(query)
+    assert without_query_settings(query) == query
+
+
+@pytest.mark.unit
+def test_trace_detail_annotation_span_alias_is_not_a_score_column():
+    alias = TraceDetailReadBuilder._ANNOTATION_SPAN_SET
+    query, _params = _annotation_query()
+    body = query[query.index("SELECT") :]
+    select_aliases = {
+        word.strip(",()")
+        for before, word in zip(body.split(), body.split()[1:], strict=False)
+        if before == "AS"
+    }
+
+    assert {"id", "observation_span_id", "label_id"} <= set(_score_column_types())
+    assert alias not in _score_table_statement()
+    assert "latest_span_id" in select_aliases
+    assert alias not in select_aliases
+    if ScoreModel is not None:
+        model_columns = {
+            name
+            for field in ScoreModel._meta.get_fields()
+            for name in (field.name, getattr(field, "column", None))
+            if name
+        }
+        assert alias not in model_columns
+
+
+@pytest.mark.unit
+def test_trace_detail_annotation_key_tuple_is_the_score_order_by():
+    statement = _score_table_statement()
+    order_by = statement[statement.index("ORDER BY") :]
+    columns = order_by[order_by.index("(") + 1 : order_by.index(")")]
+
+    assert " ".join(columns.split()) == TraceDetailReadBuilder._SCORE_SORT_KEY
+
+
+@pytest.mark.unit
+def test_trace_detail_annotation_plain_argmax_columns_are_not_nullable():
+    # argMax skips NULL: every column read with a plain argMax must be
+    # non-Nullable, or it could come from an older version than the row.
+    query, _params = _annotation_query()
+    types = _score_column_types()
+    plain = {
+        part.split(",", 1)[0]
+        for part in query.split("argMax(")[1:]
+        if not part.startswith("tuple(")
+    }
+
+    assert plain == {"label_id", "value", "_peerdb_is_deleted", "deleted"}
+    for column in plain:
+        assert not types[column].startswith("Nullable("), (column, types[column])
+
+
+@pytest.mark.unit
+def test_trace_detail_annotation_query_params_are_unchanged():
+    builder = TraceDetailReadBuilder(project_ids=["P1"], trace_id="T1")
+
+    query, params = builder.build_annotation_query(
+        project_id="P1", span_ids=["S1", "S2", "S1"]
+    )
+
+    assert params == {
+        "detail_annotation_project_id": "P1",
+        "detail_annotation_trace_id": "T1",
+        "detail_annotation_span_ids": ("S1", "S2"),
+    }
+    assert "latest_trace_annotations" in query

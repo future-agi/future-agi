@@ -169,15 +169,18 @@ def _detail_tables(ch_client, monkeypatch, *, legacy_evals=False):
         f"""
         CREATE TABLE {scores} (
             id UUID,
-            tracer_project_id UUID,
+            tracer_project_id Nullable(UUID),
             trace_id Nullable(UUID),
             observation_span_id Nullable(String),
             label_id UUID,
             value String,
             deleted UInt8,
+            created_at DateTime64(6),
             _peerdb_is_deleted UInt8,
             _peerdb_version Int64
-        ) ENGINE = MergeTree ORDER BY (id, _peerdb_version)
+        ) ENGINE = MergeTree
+        PARTITION BY toYYYYMM(created_at)
+        ORDER BY (label_id, created_at, id)
         """
     )
     monkeypatch.setattr(TraceDetailReadBuilder, "TABLE", spans)
@@ -1672,3 +1675,386 @@ def test_span_anchor_serves_newest_live_copy_across_scoped_projects(
     )
     assert read.project_id == older
     assert [row["input"] for row in read.spans] == ["copy-1"]
+
+
+# Score versions oldest first as (span, payload) or (span, payload, deleted);
+# spans as in the eval cases: "root" and "child" live, "dead" tombstoned,
+# "foreign" live only in another project's copy, "ghost" absent.
+_STALE_SCORE_CASES = {
+    "S1-null": [("root", "S1-v1"), (None, "S1-v2")],
+    "S2-dead": [("root", "S2-v1"), ("dead", "S2-v2")],
+    "S3-foreign": [("root", "S3-v1"), ("foreign", "S3-v2")],
+    "S4-ghost": [("root", "S4-v1"), ("ghost", "S4-v2")],
+    "S5-null-tombstone": [("root", "S5-v1"), (None, "S5-v2", 1)],
+    "S6-child-to-root": [("child", "S6-v1"), ("root", "S6-v2")],
+    "S7-null-to-root": [(None, "S7-v1"), ("root", "S7-v2")],
+    "S8-root-null-child": [("root", "S8-v1"), (None, "S8-v2"), ("child", "S8-v3")],
+    "S9-single": [("root", "S9-v1")],
+    "S13-five-versions": [
+        ("root", "S13-v1"),
+        (None, "S13-v2"),
+        ("child", "S13-v3"),
+        ("dead", "S13-v4"),
+        ("root", "S13-v5"),
+    ],
+}
+_SCORE_CREATED = datetime(2026, 7, 31, 9, 45)
+# The trace-detail annotation read before the latest-first change: the span
+# check runs in PREWHERE, before GROUP BY id picks each score's latest version.
+_PRIOR_ANNOTATION_SQL = """
+SELECT
+    toString(id) AS score_id,
+    argMax(observation_span_id, _peerdb_version) AS latest_span_id,
+    toString(argMax(label_id, _peerdb_version)) AS latest_label_id,
+    argMax(value, _peerdb_version) AS latest_value,
+    greatest(
+        argMax(_peerdb_is_deleted, _peerdb_version),
+        argMax(deleted, _peerdb_version)
+    ) AS latest_is_deleted
+FROM {table}
+PREWHERE tracer_project_id = %(project)s
+  AND trace_id = %(trace)s
+  AND observation_span_id IN %(spans)s
+GROUP BY id
+HAVING latest_is_deleted = 0
+"""
+
+
+def _seed_score_trace_spans(ch_client, tables, *, project, foreign, trace):
+    """Live "root" and "child", tombstoned "dead", "foreign" in another copy."""
+
+    started = datetime(2026, 7, 31, 9, 0, 0)
+    ch_client.execute(
+        f"INSERT INTO {tables.spans} {_SPAN_COLUMNS} VALUES",
+        [
+            _span_row(
+                project_id=project,
+                trace_id=trace,
+                span_id="root",
+                started_at=started,
+                version=2,
+            ),
+            _span_row(
+                project_id=project,
+                trace_id=trace,
+                span_id="child",
+                parent="root",
+                started_at=started + timedelta(seconds=1),
+            ),
+            _span_row(
+                project_id=project,
+                trace_id=trace,
+                span_id="dead",
+                started_at=started + timedelta(seconds=2),
+            ),
+            _span_row(
+                project_id=project,
+                trace_id=trace,
+                span_id="dead",
+                started_at=started + timedelta(seconds=2),
+                version=2,
+                deleted=1,
+            ),
+            _span_row(
+                project_id=foreign,
+                trace_id=trace,
+                span_id="foreign",
+                started_at=started,
+            ),
+        ],
+    )
+
+
+def _insert_scores(ch_client, tables, physical):
+    """Insert physical score versions, given as dicts."""
+
+    ch_client.execute(
+        f"""
+        INSERT INTO {tables.scores}
+            (id, tracer_project_id, trace_id, observation_span_id, label_id,
+             value, deleted, created_at, _peerdb_is_deleted, _peerdb_version)
+        VALUES
+        """,
+        [
+            (
+                row["id"],
+                row["project"],
+                row["trace_id"],
+                row["span"],
+                row["label"],
+                row["value"],
+                0,
+                row.get("created", _SCORE_CREATED),
+                row["deleted"],
+                row["version"],
+            )
+            for row in physical
+        ],
+    )
+
+
+def _score_oracle(ch_client, tables, *, project, trace, live_spans):
+    """``{id: (span, label, value)}`` from every physical score row.
+
+    The newest version of each id is served only when it is live, in the
+    project, on the trace and on one of the live spans.
+    """
+
+    latest = {}
+    for row in ch_client.execute(
+        f"""
+        SELECT toString(id), toString(tracer_project_id), toString(trace_id),
+               observation_span_id, toString(label_id), value,
+               greatest(deleted, _peerdb_is_deleted), _peerdb_version
+        FROM {tables.scores}
+        """
+    ):
+        score_id, version = row[0], row[7]
+        assert (score_id, version) not in {
+            (kept[0], kept[7]) for kept in latest.values()
+        }, "version tie"
+        if score_id not in latest or version > latest[score_id][7]:
+            latest[score_id] = row
+    return {
+        score_id: (row[3], row[4], row[5])
+        for score_id, row in latest.items()
+        if row[1] == project and row[2] == trace and not row[6] and row[3] in live_spans
+    }
+
+
+def _prior_annotation_rows(ch_client, tables, *, project, trace, spans):
+    rows = ch_client.execute(
+        _PRIOR_ANNOTATION_SQL.format(table=tables.scores),
+        {"project": project, "trace": trace, "spans": tuple(spans)},
+    )
+    return {row[0]: (row[1], row[2], row[3]) for row in rows}
+
+
+def _read_annotations(ch_client, *, project, foreign, trace):
+    read = read_trace_detail(
+        analytics=_Analytics(ch_client),
+        project_ids=[project, foreign],
+        trace_id=trace,
+        eval_config_ids_resolver=lambda selected_project: [],
+        deadline_ms=30_000,
+    )
+    assert read.project_id == project
+    # identity + content + annotations; no authorized configs, so no evals.
+    assert read.query_count == 3
+    return read
+
+
+def _ids_by_label(ch_client, tables):
+    return dict(
+        ch_client.execute(
+            f"SELECT DISTINCT toString(label_id), toString(id) FROM {tables.scores}"
+        )
+    )
+
+
+def test_trace_detail_serves_annotation_only_when_latest_version_is_on_a_live_span(
+    ch_client, detail_tables
+):
+    project = "00000000-0000-4000-8000-0000000000f1"
+    foreign = "00000000-0000-4000-8000-0000000000f2"
+    trace = "00000000-0000-4000-8000-0000000000f3"
+    _seed_score_trace_spans(
+        ch_client, detail_tables, project=project, foreign=foreign, trace=trace
+    )
+    # Each case has its own label, so a served row names its case.
+    labels = {name: str(uuid.uuid4()) for name in _STALE_SCORE_CASES}
+    ids = {name: str(uuid.uuid4()) for name in _STALE_SCORE_CASES}
+    physical = [
+        {
+            "id": ids[name],
+            "project": project,
+            "trace_id": trace,
+            "span": span,
+            "label": labels[name],
+            "value": payload,
+            "deleted": rest[0] if rest else 0,
+            "version": version,
+        }
+        for name, versions in _STALE_SCORE_CASES.items()
+        for version, (span, payload, *rest) in enumerate(versions, start=1)
+    ]
+    for name, versions in {
+        # Another project's score on a live span of the selected copy.
+        "S10-foreign-project": [(foreign, "root")],
+        # A backfill sets the project, then the span is cleared.
+        "S14-project-backfill": [(None, "root"), (project, "root"), (project, None)],
+    }.items():
+        labels[name], ids[name] = str(uuid.uuid4()), str(uuid.uuid4())
+        physical.extend(
+            {
+                "id": ids[name],
+                "project": score_project,
+                "trace_id": trace,
+                "span": span,
+                "label": labels[name],
+                "value": f"{name}-v{version}",
+                "deleted": 0,
+                "version": version,
+            }
+            for version, (score_project, span) in enumerate(versions, start=1)
+        )
+    _insert_scores(ch_client, detail_tables, physical)
+
+    read = _read_annotations(ch_client, project=project, foreign=foreign, trace=trace)
+
+    oracle = _score_oracle(
+        ch_client,
+        detail_tables,
+        project=project,
+        trace=trace,
+        live_spans={"root", "child"},
+    )
+    assert oracle == {
+        ids["S6-child-to-root"]: ("root", labels["S6-child-to-root"], "S6-v2"),
+        ids["S7-null-to-root"]: ("root", labels["S7-null-to-root"], "S7-v2"),
+        ids["S8-root-null-child"]: ("child", labels["S8-root-null-child"], "S8-v3"),
+        ids["S9-single"]: ("root", labels["S9-single"], "S9-v1"),
+        ids["S13-five-versions"]: ("root", labels["S13-five-versions"], "S13-v5"),
+    }
+    id_of_label = _ids_by_label(ch_client, detail_tables)
+    served = {
+        id_of_label[row["label_id"]]: (row["span_id"], row["label_id"], row["value"])
+        for row in read.annotations
+    }
+    assert len(served) == len(read.annotations)
+    assert served == oracle
+    # The prior statement serves each moved score's older version.
+    prior = _prior_annotation_rows(
+        ch_client, detail_tables, project=project, trace=trace, spans=["root", "child"]
+    )
+    for name in ("S1-null", "S2-dead", "S3-foreign", "S4-ghost"):
+        assert prior[ids[name]] == ("root", labels[name], f"{name[:2]}-v1"), name
+    assert prior[ids["S14-project-backfill"]] == (
+        "root",
+        labels["S14-project-backfill"],
+        "S14-project-backfill-v2",
+    )
+
+
+def test_trace_detail_annotation_residual_cases_match_the_prior_statement(
+    ch_client, detail_tables
+):
+    project = "00000000-0000-4000-8000-0000000000f4"
+    foreign = "00000000-0000-4000-8000-0000000000f5"
+    trace = "00000000-0000-4000-8000-0000000000f6"
+    _seed_score_trace_spans(
+        ch_client, detail_tables, project=project, foreign=foreign, trace=trace
+    )
+    label, other_label = str(uuid.uuid4()), str(uuid.uuid4())
+    label_move, tombstoned = str(uuid.uuid4()), str(uuid.uuid4())
+
+    def score(score_id, version, span, label_id, value):
+        return {
+            "id": score_id,
+            "project": project,
+            "trace_id": trace,
+            "span": span,
+            "label": label_id,
+            "value": value,
+            "deleted": 0,
+            "version": version,
+        }
+
+    _insert_scores(
+        ch_client,
+        detail_tables,
+        [
+            # The label (a sort-key column) changes in the same version as the
+            # span leaves the live spans.
+            score(label_move, 1, "root", label, "S11-v1"),
+            score(label_move, 2, None, other_label, "S11-v2"),
+            score(tombstoned, 1, "root", label, "S12-v1"),
+        ],
+    )
+    # A hard delete arrives as the id, the tombstone flag and a newer version;
+    # every other column keeps its default.
+    ch_client.execute(
+        f"INSERT INTO {detail_tables.scores} (id, _peerdb_is_deleted, _peerdb_version)"
+        " VALUES",
+        [(tombstoned, 1, 2)],
+    )
+
+    read = _read_annotations(ch_client, project=project, foreign=foreign, trace=trace)
+
+    assert (
+        _score_oracle(
+            ch_client,
+            detail_tables,
+            project=project,
+            trace=trace,
+            live_spans={"root", "child"},
+        )
+        == {}
+    )
+    prior = _prior_annotation_rows(
+        ch_client, detail_tables, project=project, trace=trace, spans=["root", "child"]
+    )
+    assert prior == {
+        label_move: ("root", label, "S11-v1"),
+        tombstoned: ("root", label, "S12-v1"),
+    }
+    # model_hub_score reads every version of the candidates' sort keys; a
+    # version under another key, or an id-only tombstone without project or
+    # trace, is not one of them, so both scores stay as before.
+    assert sorted(
+        (row["span_id"], row["label_id"], row["value"]) for row in read.annotations
+    ) == sorted(prior.values())
+
+
+def test_trace_detail_annotation_read_past_the_row_limit_returns_only_live_rows(
+    ch_client, detail_tables
+):
+    project = "00000000-0000-4000-8000-0000000000f7"
+    foreign = "00000000-0000-4000-8000-0000000000f8"
+    trace = "00000000-0000-4000-8000-0000000000f9"
+    label = "00000000-0000-4000-8000-0000000000fa"
+    _seed_score_trace_spans(
+        ch_client, detail_tables, project=project, foreign=foreign, trace=trace
+    )
+    # 6,000 scores whose newest version moved to the tombstoned span, more
+    # than the 5,000-row limit, and 10 scores live on a live span.
+    for prefix, rows, span, versions in (
+        ("stale", 12_000, "if(number % 2 = 0, 'root', 'dead')", "1 + number % 2"),
+        ("live", 10, "'child'", "1"),
+    ):
+        score_id = (
+            f"reinterpretAsUUID(sipHash128('{prefix}', intDiv(number, 2)))"
+            if prefix == "stale"
+            else f"reinterpretAsUUID(sipHash128('{prefix}', number))"
+        )
+        ch_client.execute(
+            f"""
+            INSERT INTO {detail_tables.scores}
+                (id, tracer_project_id, trace_id, observation_span_id, label_id,
+                 value, deleted, created_at, _peerdb_is_deleted,
+                 _peerdb_version)
+            SELECT
+                {score_id},
+                toUUID('{project}'),
+                toUUID('{trace}'),
+                {span},
+                toUUID('{label}'),
+                concat('{prefix}-', toString(number)),
+                0,
+                toDateTime64('2026-07-31 09:45:00', 6),
+                0,
+                {versions}
+            FROM numbers({rows})
+            """
+        )
+
+    read = _read_annotations(ch_client, project=project, foreign=foreign, trace=trace)
+
+    assert sorted(row["value"] for row in read.annotations) == sorted(
+        f"live-{number}" for number in range(10)
+    )
+    # The prior statement served all 6,010 scores, over the row limit.
+    prior = _prior_annotation_rows(
+        ch_client, detail_tables, project=project, trace=trace, spans=["root", "child"]
+    )
+    assert len(prior) == 6010

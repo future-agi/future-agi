@@ -116,6 +116,15 @@ class TraceDetailRead:
 
 class TraceDetailReadBuilder:
     TABLE = "spans"
+    # Bound once with WITH and used twice in the annotation read: as the
+    # candidate (span bloom index) filter and as the live-span test after the
+    # collapse. It must never be a column of model_hub_score, nor a SELECT
+    # alias in that statement.
+    _ANNOTATION_SPAN_SET = "detail_annotation_span_set"
+    # The full ORDER BY of model_hub_score (schema.CDC_MODEL_HUB_SCORE). The
+    # outer annotation read addresses versions by this tuple so the primary
+    # key can prune it.
+    _SCORE_SORT_KEY = "label_id, created_at, id"
     SCORE_TABLE = "model_hub_score"
     # The authorized config tuple is written into the SQL text once, bound to
     # this alias, and both config checks name the alias. The driver inlines
@@ -454,8 +463,16 @@ class TraceDetailReadBuilder:
             return "", {}
         if str(project_id) not in self.project_ids:
             raise TraceDetailReadUnavailable("annotation_project_out_of_scope")
+        # The live-span check runs on the latest version, after GROUP BY id;
+        # in PREWHERE it would let an older version on a live span stand in
+        # for a newer one that left it. model_hub_score is not sorted by
+        # trace: the candidate subquery keeps the project, trace and span
+        # (bloom-pruned) predicates and returns only sort keys, and the outer
+        # read takes every version of those keys through the primary key.
+        # ``tuple(...).1`` keeps a NULL latest span, so the outer IN drops it.
         return (
             f"""
+            WITH %(detail_annotation_span_ids)s AS {self._ANNOTATION_SPAN_SET}
             SELECT
                 latest_span_id AS span_id,
                 toString(latest_label_id) AS label_id,
@@ -463,7 +480,7 @@ class TraceDetailReadBuilder:
             FROM (
                 SELECT
                     id AS grouped_score_id,
-                    argMax(observation_span_id, _peerdb_version)
+                    argMax(tuple(observation_span_id), _peerdb_version).1
                         AS latest_span_id,
                     argMax(label_id, _peerdb_version) AS latest_label_id,
                     argMax(value, _peerdb_version) AS latest_value,
@@ -474,10 +491,17 @@ class TraceDetailReadBuilder:
                 FROM {self.SCORE_TABLE}
                 PREWHERE tracer_project_id = %(detail_annotation_project_id)s
                   AND trace_id = %(detail_annotation_trace_id)s
-                  AND observation_span_id IN %(detail_annotation_span_ids)s
+                  AND ({self._SCORE_SORT_KEY}) IN (
+                      SELECT {self._SCORE_SORT_KEY}
+                      FROM {self.SCORE_TABLE}
+                      PREWHERE tracer_project_id = %(detail_annotation_project_id)s
+                        AND trace_id = %(detail_annotation_trace_id)s
+                        AND observation_span_id IN {self._ANNOTATION_SPAN_SET}
+                  )
                 GROUP BY id
             ) AS latest_trace_annotations
             WHERE latest_is_deleted = 0
+              AND latest_span_id IN {self._ANNOTATION_SPAN_SET}
             ORDER BY span_id ASC, label_id ASC
             LIMIT {_MAX_ANNOTATION_ROWS + 1}
             """,
