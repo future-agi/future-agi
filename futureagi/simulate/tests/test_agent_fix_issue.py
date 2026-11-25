@@ -853,6 +853,27 @@ class TestAdvance:
         }
         assert job.fix_run_id is None
 
+    def test_one_failing_case_in_the_test_split_ends_the_job_in_the_singular(
+        self, environment, issue, user
+    ):
+        job = self._measuring(
+            environment, issue, user, state="completed", held={"refunded": False}
+        )
+        _receipts(
+            job.baseline_run,
+            {KEYS[0]: {"refunded": False}, KEYS[1]: {"refunded": True}},
+        )
+        _release(job.baseline_run, test=[KEYS[0]], train=[KEYS[1]])
+
+        assert jobs.advance_issue_job(str(job.id)) is True
+
+        job.refresh_from_db()
+        assert job.ending == {
+            "code": "fix_targets_all_test",
+            "message": "The only failing case is in the test split, so the Epoch has"
+            " nothing to learn from.",
+        }
+
     def test_a_passing_test_split_case_is_not_protected(self, environment, issue, user):
         job = self._measuring(
             environment, issue, user, state="completed", held={"refunded": False}

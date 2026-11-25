@@ -614,6 +614,20 @@ class TestARelease:
         )
         assert not AgentFixRun.no_workspace_objects.exists()
 
+    def test_the_refusal_of_one_failing_case_in_the_test_split_is_singular(
+        self, source_run, user
+    ):
+        _release(source_run, test=[KEYS[0]], train=[KEYS[1]])
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _launch(source_run, user)
+
+        assert refused.value.code == "fix_targets_all_test"
+        assert refused.value.message == (
+            "The only failing case is in the test split. Pick failing cases from the"
+            " train split, or run the train split."
+        )
+
     def test_a_protected_test_split_case_never_reaches_the_request(
         self, source_run, user
     ):

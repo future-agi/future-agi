@@ -106,6 +106,9 @@ describe("held back on a release", () => {
     expect(check(["a", "b"])).toBe(
       "All 2 failing cases are in the test split. Pick failing cases from the train split, or run the train split.",
     );
+    expect(check(["a"])).toBe(
+      "The only failing case is in the test split. Pick failing cases from the train split, or run the train split.",
+    );
     expect(check(["a", "c"])).toBeNull();
   });
 });

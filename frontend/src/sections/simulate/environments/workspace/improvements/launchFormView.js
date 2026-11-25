@@ -183,7 +183,11 @@ export function launchError({
   if (!targets.length) return "Pick at least one failing case to fix.";
   // Every case held back: the epoch would have nothing to learn from.
   if (testKeys.length && targets.every((key) => testKeys.includes(key))) {
-    return `All ${targets.length} failing cases are in the test split. Pick failing cases from the train split, or run the train split.`;
+    const subject =
+      targets.length === 1
+        ? "The only failing case is"
+        : `All ${targets.length} failing cases are`;
+    return `${subject} in the test split. Pick failing cases from the train split, or run the train split.`;
   }
   if (targets.length < limits.scenarios_min) {
     // Only for a backend older than dev: the current schema requires cases_min and

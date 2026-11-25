@@ -153,12 +153,14 @@ def release_test_keys(source_run: HostedHarnessJob) -> frozenset[str]:
 def all_in_test_split(cases: int, *, picked: bool = True) -> HostedHarnessError:
     """The refusal of a fix whose every failing case is in the test split: it would have
     nothing to learn from. A user who ``picked`` the cases is told how to pick others."""
+    subject = (
+        "The only failing case is" if cases == 1 else f"All {cases} failing cases are"
+    )
     message = (
-        f"All {cases} failing cases are in the test split. Pick failing cases from the"
-        " train split, or run the train split."
+        f"{subject} in the test split. Pick failing cases from the train split, or"
+        " run the train split."
         if picked
-        else f"All {cases} failing cases are in the test split, so the Epoch has"
-        " nothing to learn from."
+        else f"{subject} in the test split, so the Epoch has nothing to learn from."
     )
     return HostedHarnessError(
         "fix_targets_all_test", message, status_code=422, details={"cases": cases}
