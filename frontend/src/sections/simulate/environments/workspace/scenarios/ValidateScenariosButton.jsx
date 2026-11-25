@@ -81,7 +81,9 @@ export default function ValidateScenariosButton({
         variant: "error",
       });
     } else {
-      enqueueSnackbar(COPY.failed(status.data?.message), { variant: "error" });
+      enqueueSnackbar(COPY.failed(status.data?.message), {
+        variant: state === "unavailable" ? "warning" : "error",
+      });
     }
   }, [enqueueSnackbar, quiet, state, status.data, validationJobId]);
 

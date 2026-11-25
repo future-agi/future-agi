@@ -198,6 +198,20 @@ describe("ValidateScenariosButton", () => {
     ).toBeInTheDocument();
   });
 
+  it.each([
+    ["failed", "error"],
+    ["unavailable", "warning"],
+  ])("announces a validation that ended %s as %s", async (state, variant) => {
+    getScenarioValidation.mockResolvedValue({ state, message: "Out of time." });
+    renderButton();
+    await pressWhenReady("Validate cases not yet proved");
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(expect.any(String), {
+        variant,
+      }),
+    );
+  });
+
   it("says a validation that didn't finish changed nothing, and offers Try again", async () => {
     getScenarioValidation.mockResolvedValue({
       state: "failed",

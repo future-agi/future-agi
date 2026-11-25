@@ -33,6 +33,13 @@ describe("readinessView", () => {
     expect(view.holdsRun).toBe(false);
   });
 
+  it("leaves out a blocked row that blocks none of the picked scenarios", () => {
+    const row = { id: "tool_routing", status: "blocked", measured: true };
+    const view = (affected) => readinessView(report([{ ...row, affected }]));
+    expect(view({ count: 0 }).open).toEqual([]);
+    expect(view({ count: 1 }).open).toHaveLength(1);
+  });
+
   it("holds the run only while the pair is checked or after its check failed", () => {
     const held = (state) => readinessView(report([], { state })).holdsRun;
     expect(held("validating")).toBe(true);

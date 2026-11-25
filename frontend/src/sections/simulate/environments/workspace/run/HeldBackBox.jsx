@@ -54,9 +54,9 @@ export default function HeldBackBox({ shownRows = [], selection }) {
   const [showAll, setShowAll] = useState(false);
   const held = selection?.held_back;
   if (!held?.count) return null;
-  // The server's words for a row, else ours for a code it sends none for, never the bare code where we have words.
+  // Ours first: a lifecycle row's words from the server are every scenario's own reason joined.
   const reasonText = (row) =>
-    selection.reasons?.[row] || COPY.heldCodes[row] || row;
+    COPY.heldCodes[row] || selection.reasons?.[row] || row;
   const byKey = held.by_key ?? {};
   const ownReason = held.reason_by_key ?? {};
   const items = held.keys.map((key) => ({

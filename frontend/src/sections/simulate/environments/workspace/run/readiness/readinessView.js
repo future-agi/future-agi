@@ -28,8 +28,11 @@ const CHECK_STATES = {
 const HOLDS_RUN = new Set(["checking", "failed"]);
 
 // A row nothing measures yet (browser, sub-agents) would keep its area "not checked" forever; it counts only once
-// it affects a scenario.
-const counts = (row) => row.measured || (row.affected?.count ?? 0) > 0;
+// it affects a scenario. So does a block: one that blocks none of the picked scenarios stops nothing.
+const counts = (row) =>
+  row.status === "blocked" && row.affected
+    ? row.affected.count > 0
+    : row.measured || (row.affected?.count ?? 0) > 0;
 
 // A fix someone makes on the agent: new credentials, or a new version that changes how a tool is served.
 const AGENT_FIXES = new Set(["preflight"]);
