@@ -140,7 +140,7 @@ const DatapointCard = ({
 
   // Annotation cells store the typed envelope (e.g. {"selected":[...]},
   // {"value":"up"}, {"rating":4}). Pull out the primitive once so the rest
-  // of the card (raw tab, copy, float-as-% formatting) sees the user-facing
+  // of the card (raw tab, copy, percentage formatting) sees the user-facing
   // value rather than the envelope JSON.
   const annotationUnwrapped = useMemo(() => {
     if (!isAnnotationColumn) return undefined;
@@ -160,7 +160,7 @@ const DatapointCard = ({
 
   const formattedValue = useMemo(() => {
     if (isAnnotationColumn) return annotationUnwrapped;
-    if (dataType === "float") {
+    if (dataType === "percentage") {
       return `${getScorePercentage(parseFloat(cellValue) * 10)}%`;
     }
     if (dataType === "datetime") {
@@ -184,8 +184,8 @@ const DatapointCard = ({
       return null;
     }
   }, [formattedValue]);
-  const formatFloatCellDiffvalue = useMemo(() => {
-    if (dataType === "float" && value?.cellDiffValue?.length > 0) {
+  const formattedCellDiffValue = useMemo(() => {
+    if (dataType === "percentage" && value?.cellDiffValue?.length > 0) {
       return value?.cellDiffValue?.map((val) => {
         return {
           ...val,
@@ -466,7 +466,7 @@ const DatapointCard = ({
                         },
                       }}
                     >
-                      <GenerateDiffText cellText={formatFloatCellDiffvalue} />
+                      <GenerateDiffText cellText={formattedCellDiffValue} />
                     </Box>
                   </ShowComponent>
                 </>

@@ -80,13 +80,13 @@ const row = {
 };
 
 // CompareDatasetDetailDrawer owns showDiff and toggles it the same way.
-function DrawerState({ row: shownRow }) {
+function DrawerState({ row: shownRow, columns = columnConfig }) {
   const [showDiff, setShowDiff] = useState(false);
   return (
     <CompareDatasetDetailContent
       onClose={vi.fn()}
       row={shownRow}
-      columnConfig={columnConfig}
+      columnConfig={columns}
       showDiff={showDiff}
       setShowDiff={setShowDiff}
       handleToggleDiff={() => setShowDiff((prev) => !prev)}
@@ -99,7 +99,7 @@ function DrawerState({ row: shownRow }) {
   );
 }
 
-DrawerState.propTypes = { row: PropTypes.object };
+DrawerState.propTypes = { row: PropTypes.object, columns: PropTypes.array };
 
 const datasetColumns = () =>
   screen.getAllByText("Dataset Details").map((title) => title.closest("td"));
@@ -115,6 +115,40 @@ const expectWordDiff = (column) => {
 };
 
 describe("Compare row detail Difference tab", () => {
+  it.each([
+    ["float", "0.42", "0.75"],
+    ["percentage", "42%", "75%"],
+  ])(
+    "uses the declared %s unit in both Raw and Difference",
+    async (type, left, right) => {
+      const user = userEvent.setup();
+      render(
+        <DrawerState
+          columns={columnConfig.map((col) => ({ ...col, data_type: type }))}
+          row={{
+            row_id: "numeric-row",
+            "output-a": { cell_value: "0.42" },
+            "output-b": {
+              cell_value: "0.75",
+              cell_diff_value: [
+                { text: "0.42", status: "removed" },
+                { text: "0.75", status: "added" },
+              ],
+            },
+          }}
+        />,
+      );
+      const [base, compared] = datasetColumns();
+      expect(within(base).getByText(left)).toBeVisible();
+      expect(within(compared).getByText(right)).toBeVisible();
+      await user.click(
+        within(compared).getByRole("tab", { name: "Difference" }),
+      );
+      expect(within(compared).getByText(left)).toBeVisible();
+      expect(within(compared).getByText(right)).toBeVisible();
+    },
+  );
+
   it("renders the compared cell's word diff, and no tab for the base", async () => {
     const user = userEvent.setup();
     render(<DrawerState row={row} />);
