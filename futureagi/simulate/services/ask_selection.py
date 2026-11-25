@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -181,10 +181,11 @@ def _runs(run_ids: Sequence[Any], organization_id: Any, workspace_id: Any) -> li
             id__in=ids, deleted=False, run_test__deleted=False
         ).select_related("run_test")
     }
-    runs = [found.get(str(one)) for one in dict.fromkeys(ids)]
+    asked = [found.get(str(one)) for one in dict.fromkeys(ids)]
+    runs = [run for run in asked if run is not None]
     if (
         not runs
-        or any(run is None for run in runs)
+        or len(runs) != len(asked)
         or not all(
             in_workspace(run.run_test, organization_id, workspace_id) for run in runs
         )
@@ -352,7 +353,7 @@ def check_before_launch(
 
 
 def _count(question: Question, states: list[dict]) -> dict[str, Any]:
-    by_kind = {
+    by_kind: dict[str, dict[str, Any]] = {
         kind.value: {"present": 0, "not_applicable": 0, "not_captured": Counter()}
         for kind in question.kinds
     }
@@ -431,6 +432,10 @@ def _check_capability(organization: Any) -> None:
         ) from None
 
 
+def _no_description(error: BaseException) -> dict | None:
+    return None
+
+
 def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
     from agentic_eval.core_evals.run_prompt.litellm_models import (
         MissingProviderKeyError,
@@ -444,15 +449,16 @@ def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
         set_workspace_context,
     )
 
+    # A build without ee has no decision models to key: it catches nothing here.
+    gateway_errors: tuple[type[Exception], ...] = ()
+    describe: Callable[[BaseException], dict | None] = _no_description
     try:
-        from ee.decisions.errors import DecisionGatewayError, describe
-    except ImportError:  # a build without ee has no decision models to key
-
-        class DecisionGatewayError(Exception):
-            code = provider = None
-
-        def describe(error):
-            return None
+        from ee.decisions import errors as decision_errors
+    except ImportError:
+        pass
+    else:
+        gateway_errors = (decision_errors.DecisionGatewayError,)
+        describe = decision_errors.describe
 
     if not is_jev_model(model) and get_decision_model(model) is None:
         raise LaunchRefused(
@@ -473,17 +479,18 @@ def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
         raise LaunchRefused(
             "JEV_KEY_MISSING", str(missing), settings_path=AI_PROVIDERS_SETTINGS_PATH
         ) from None
-    except DecisionGatewayError as failed:
-        if failed.code == "DECISION_KEY_MISSING":
+    except gateway_errors as failed:
+        code = getattr(failed, "code", None)
+        if code == "DECISION_KEY_MISSING":
             raise LaunchRefused(
-                failed.code,
-                missing_provider_key_message(failed.provider),
+                code,
+                missing_provider_key_message(getattr(failed, "provider", None)),
                 settings_path=AI_PROVIDERS_SETTINGS_PATH,
             ) from None
         # The gateway's own body-free wording for its code; nothing upstream.
         described = describe(failed) or {}
         raise LaunchRefused(
-            failed.code or "decision_check_unavailable",
+            code or "decision_check_unavailable",
             described.get("message")
             or "The decision model's key can't be checked right now. Please retry in a moment.",
         ) from None

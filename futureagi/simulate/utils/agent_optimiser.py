@@ -616,7 +616,9 @@ _OPTIMISER_RUN_GIVE_UP = timedelta(
 def analysis_on_its_way(optimiser: AgentOptimiser | None) -> AgentOptimiserRun | None:
     """The optimiser's latest run when it is still pending or running and has
     not outlived its job, else None."""
-    latest_run = optimiser.latest_run if optimiser is not None else None
+    latest_run: AgentOptimiserRun | None = (
+        optimiser.latest_run if optimiser is not None else None
+    )
     if latest_run is None or latest_run.status not in (
         AgentOptimiserRun.OptimiserStatus.PENDING,
         AgentOptimiserRun.OptimiserStatus.RUNNING,
