@@ -95,7 +95,7 @@ class DesignUnsupportedSerializer(serializers.Serializer):
 
 
 class DesignEditSerializer(serializers.Serializer):
-    index = serializers.IntegerField(min_value=0)
+    edit_id = serializers.CharField()
     op = serializers.ChoiceField(choices=OPS)
     kind = serializers.ChoiceField(choices=KINDS)
     id = serializers.CharField()

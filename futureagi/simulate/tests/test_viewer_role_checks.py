@@ -40,7 +40,7 @@ VIEWER_REFUSALS = [
     ("post", f"{ENVIRONMENT}design-review/edits/", "change the environment's design"),
     (
         "delete",
-        f"{ENVIRONMENT}design-review/edits/0/",
+        f"{ENVIRONMENT}design-review/edits/{OTHER.hex}/",
         "change the environment's design",
     ),
     (

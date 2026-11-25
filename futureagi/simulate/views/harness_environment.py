@@ -976,15 +976,15 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     @action(
         detail=True,
         methods=["delete"],
-        url_path=r"design-review/edits/(?P<index>[0-9]{1,4})",
+        url_path=r"design-review/edits/(?P<edit_id>[0-9a-f]{32})",
     )
-    def undo_design_edit(self, request, pk=None, index=None):
+    def undo_design_edit(self, request, pk=None, edit_id=None):
         from simulate.services.harness_design_review import design_document, undo_edit
 
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        job = undo_edit(job, int(index), user=request.user)
+        job = undo_edit(job, edit_id, user=request.user)
         return Response(design_document(job))
 
     @validated_request(

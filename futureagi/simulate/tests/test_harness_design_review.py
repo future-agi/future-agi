@@ -16,6 +16,7 @@ from simulate.services.harness_design_review import (
     AWAITING_STAGE,
     DISCARD_REASON,
     _effective,
+    _write,
     create_design_review,
     stored_review,
 )
@@ -92,6 +93,32 @@ def _post(client, workspace, path, body=None):
 
 def _get(client, workspace, path):
     return client.get(path, HTTP_X_WORKSPACE_ID=str(workspace.id))
+
+
+def _undo(client, workspace, job, edit_id):
+    return client.delete(
+        URL.format(job.id) + f"edits/{edit_id}/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+        format="json",
+    )
+
+
+def _reword(client, workspace, job, text):
+    return _post(
+        client,
+        workspace,
+        URL.format(job.id) + "edits/",
+        {"op": "edit", "kind": "rule", "id": "rule-2", "text": text},
+    )
+
+
+def _remove_notify(client, workspace, job):
+    return _post(
+        client,
+        workspace,
+        URL.format(job.id) + "edits/",
+        {"op": "remove", "kind": "tool", "id": "notify"},
+    )
 
 
 class TestProposal:
@@ -245,15 +272,76 @@ class TestReviewApi:
             {"op": "edit", "kind": "rule", "id": "rule-2", "text": "Over 50"},
         )
         assert response.status_code == 200, response.content
-        assert [edit["op"] for edit in response.json()["edits"]] == ["remove", "edit"]
+        edits = response.json()["edits"]
+        assert [edit["op"] for edit in edits] == ["remove", "edit"]
 
-        undone = client.delete(
-            path + "0/", HTTP_X_WORKSPACE_ID=str(workspace.id), format="json"
-        )
+        undone = _undo(client, workspace, waiting, edits[0]["edit_id"])
         assert undone.status_code == 200, undone.content
         assert [edit["op"] for edit in undone.json()["edits"]] == ["edit"]
         waiting.refresh_from_db()
         assert [edit["op"] for edit in stored_review(waiting)["edits"]] == ["edit"]
+
+    def test_undo_in_one_tab_takes_back_its_own_change_after_another_tab_edits(
+        self, client, workspace, waiting
+    ):
+        _reword(client, workspace, waiting, "Over 50")
+        tab_a = _remove_notify(client, workspace, waiting).json()["edits"][-1]
+        tab_b = _reword(client, workspace, waiting, "Over 75").json()["edits"][-1]
+
+        undone = _undo(client, workspace, waiting, tab_a["edit_id"])
+
+        assert undone.status_code == 200, undone.content
+        body = undone.json()
+        assert [edit["edit_id"] for edit in body["edits"]] == [tab_b["edit_id"]]
+        assert not next(t for t in body["tools"] if t["id"] == "notify")["removed"]
+        assert next(r for r in body["rules"] if r["id"] == "rule-2")["text"] == (
+            "Over 75"
+        )
+
+    def test_undoing_a_change_already_undone_or_replaced_is_refused(
+        self, client, workspace, waiting
+    ):
+        replaced = _reword(client, workspace, waiting, "Over 50").json()["edits"][-1]
+        removed = _remove_notify(client, workspace, waiting).json()["edits"][-1]
+        _reword(client, workspace, waiting, "Over 75")
+        assert _undo(client, workspace, waiting, removed["edit_id"]).status_code == 200
+
+        for gone in (removed, replaced):
+            response = _undo(client, workspace, waiting, gone["edit_id"])
+
+            assert response.status_code == 409, response.content
+            assert response.json()["error"] == "design_edit_gone"
+            assert response.json()["message"] == (
+                "This change was already undone or replaced"
+            )
+        waiting.refresh_from_db()
+        assert [edit["text"] for edit in stored_review(waiting)["edits"]] == ["Over 75"]
+
+    def test_a_change_stored_without_an_id_can_still_be_undone(
+        self, client, workspace, waiting
+    ):
+        legacy = [
+            {"op": "remove", "kind": "tool", "id": tool, "by": "", "at": at}
+            for tool, at in (
+                ("notify", "2026-11-01T10:00:00+00:00"),
+                ("find_hotels", "2026-11-01T10:01:00+00:00"),
+            )
+        ]
+        _write(waiting, {**stored_review(waiting), "edits": legacy})
+        waiting.save(update_fields=["payload", "updated_at"])
+
+        first = _get(client, workspace, URL.format(waiting.id)).json()["edits"]
+        again = _get(client, workspace, URL.format(waiting.id)).json()["edits"]
+        assert [edit["edit_id"] for edit in first] == [
+            edit["edit_id"] for edit in again
+        ]
+        assert len({edit["edit_id"] for edit in first}) == 2
+
+        undone = _undo(client, workspace, waiting, first[0]["edit_id"])
+
+        assert undone.status_code == 200, undone.content
+        assert [edit["id"] for edit in undone.json()["edits"]] == ["find_hotels"]
+        assert undone.json()["edits"][0]["edit_id"] == first[1]["edit_id"]
 
     @pytest.mark.parametrize(
         "edit, code",

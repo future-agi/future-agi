@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
+import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +18,7 @@ from simulate.services.harness_design_contract import (
     apply_edits_to_contract,
     build_proposal,
 )
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import BUILD_PIN_KEY, HostedHarnessError
 
 if TYPE_CHECKING:
     from accounts.models.user import User
@@ -202,22 +204,24 @@ def begin_design_review(
     runtime: HarnessAgentVersionRuntime | None,
     contract: dict[str, Any] | None,
 ) -> None:
-    if contract is not None and runtime is not None:
-        _build_as_read(job, runtime)
-        create_design_review(job, runtime, contract)
-        return
     from simulate.services.agent_contracts import stored_read_contract
     from simulate.services.harness_agent_versions import _side_row
 
-    if runtime is None or not getattr(runtime, "agent_version_id", None):
-        runtime = _side_row(job.agent_version_id) if job.agent_version_id else None
-    if runtime is None or not review_applies(runtime):
-        job.state = HostedHarnessJob.State.QUEUED
-        job.current_stage = "queued"
-        job.save(update_fields=["state", "current_stage", "updated_at"])
-        return
+    if contract is None or runtime is None:
+        contract = None
+        if runtime is None or not getattr(runtime, "agent_version_id", None):
+            runtime = _side_row(job.agent_version_id) if job.agent_version_id else None
+        if runtime is None or not review_applies(runtime):
+            job.state = HostedHarnessJob.State.QUEUED
+            job.current_stage = "queued"
+            job.save(update_fields=["state", "current_stage", "updated_at"])
+            return
+    current = _current_agent(job, runtime)
+    if current is not runtime:
+        runtime, contract = current, None
     _build_as_read(job, runtime)
-    contract = stored_read_contract(runtime.agent_version_id)
+    if contract is None:
+        contract = stored_read_contract(runtime.agent_version_id)
     if contract is not None:
         create_design_review(job, runtime, contract)
         return
@@ -233,6 +237,66 @@ def begin_design_review(
     job.save(update_fields=["payload", "current_stage", "updated_at"])
     job_id = str(job.id)
     transaction.on_commit(lambda: _start_reading(job_id))
+
+
+def _pins_a_profile(runtime: HarnessAgentVersionRuntime) -> bool:
+    from simulate.services.agent_reading_sandbox import _has_document
+
+    return bool(
+        (runtime.source or {}).get("profile_digest")
+        or _has_document(runtime.agent_version_id)
+    )
+
+
+def _current_agent(
+    job: HostedHarnessJob, runtime: HarnessAgentVersionRuntime
+) -> HarnessAgentVersionRuntime:
+    if getattr(runtime, "source_kind", None) != SourceKind.PROVIDER or not (
+        _pins_a_profile(runtime)
+    ):
+        return runtime
+    from simulate.services.agent_versions import provider_sync
+    from simulate.services.harness_agent_versions import _side_row
+
+    try:
+        version = provider_sync(
+            runtime.agent_definition,
+            runtime.agent_version,
+            dict(runtime.source or {}),
+            read=False,
+        )
+    except HostedHarnessError as exc:
+        logger.warning(
+            "design_review_agent_not_refreshed",
+            environment_id=str(job.id),
+            agent_version_id=str(runtime.agent_version_id),
+            code=exc.code,
+            exc_info=True,
+        )
+        return runtime
+    if version.id == runtime.agent_version_id:
+        return runtime
+    current = _side_row(version.id)
+    if current is None:
+        return runtime
+    _move_build_to(job, current)
+    logger.info(
+        "design_review_agent_refreshed",
+        environment_id=str(job.id),
+        pinned_version_id=str(runtime.agent_version_id),
+        agent_version_id=str(current.agent_version_id),
+    )
+    return current
+
+
+def _move_build_to(job: HostedHarnessJob, runtime: HarnessAgentVersionRuntime) -> None:
+    metadata = dict((job.payload or {}).get("metadata") or {})
+    metadata[BUILD_PIN_KEY] = str(runtime.agent_version_id)
+    if metadata.get("agent_version_id"):
+        metadata["agent_version_id"] = str(runtime.agent_version_id)
+    job.agent_version = runtime.agent_version
+    job.payload = {**(job.payload or {}), "metadata": metadata}
+    job.save(update_fields=["agent_version", "payload", "updated_at"])
 
 
 def _build_as_read(job: HostedHarnessJob, runtime: HarnessAgentVersionRuntime) -> None:
@@ -495,6 +559,19 @@ def agent_changed(review: dict[str, Any]) -> bool:
     )
 
 
+def _legacy_edit_id(edit: dict[str, Any]) -> str:
+    return uuid.uuid5(
+        uuid.NAMESPACE_OID, json.dumps(edit, sort_keys=True, default=str)
+    ).hex
+
+
+def _with_ids(edits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        edit if edit.get("edit_id") else {**edit, "edit_id": _legacy_edit_id(edit)}
+        for edit in edits
+    ]
+
+
 def design_document(job: HostedHarnessJob) -> dict[str, Any]:
     fail_stale_reading(job)
     review = review_for(job)
@@ -522,7 +599,7 @@ def design_document(job: HostedHarnessJob) -> dict[str, Any]:
             {**one, "removed": one["tool"] in removed_tools}
             for one in view.get("unsupported") or []
         ],
-        "edits": [{**edit, "index": index} for index, edit in enumerate(edits)],
+        "edits": _with_ids(edits),
         "created_at": review.get("created_at"),
         "approved_at": review.get("approved_at"),
     }
@@ -636,23 +713,34 @@ def add_edit(
         if op == "edit":
             record["text"] = str(text or "").strip()
         edits = [
-            one for one in review.get("edits") or [] if not _same_rewording(one, record)
+            one
+            for one in _with_ids(review.get("edits") or [])
+            if not _same_rewording(one, record)
         ]
         _validate(_effective(review.get("proposal") or {}, edits), record)
-        record.update(by=str(user.pk or ""), at=timezone.now().isoformat())
+        record.update(
+            edit_id=uuid.uuid4().hex,
+            by=str(user.pk or ""),
+            at=timezone.now().isoformat(),
+        )
         _write(locked, {**review, "edits": [*edits, record]})
         locked.save(update_fields=["payload", "updated_at"])
     return locked
 
 
-def undo_edit(job: HostedHarnessJob, index: int, *, user: User) -> HostedHarnessJob:
+def undo_edit(job: HostedHarnessJob, edit_id: str, *, user: User) -> HostedHarnessJob:
     with transaction.atomic():
         locked, review = _locked(job)
         _require_open(review)
-        edits = list(review.get("edits") or [])
-        if index < 0 or index >= len(edits):
+        edits = _with_ids(review.get("edits") or [])
+        index = next(
+            (at for at, edit in enumerate(edits) if edit["edit_id"] == edit_id), None
+        )
+        if index is None:
             raise HostedHarnessError(
-                "design_edit_not_found", "No such change to undo", status_code=404
+                "design_edit_gone",
+                "This change was already undone or replaced",
+                status_code=409,
             )
         undone = edits.pop(index)
         _write(locked, {**review, "edits": edits})
