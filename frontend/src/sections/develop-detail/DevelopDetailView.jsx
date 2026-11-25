@@ -14,7 +14,7 @@ import DevelopDataRightSection from "./DevelopBarRightSection/DevelopDataRightSe
 import DevelopExperimentRightSection from "./DevelopBarRightSection/DevelopExperimentRightSection";
 import DatasetSummaryTab from "./DatasetSummaryTab/DatasetSummaryTab";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import AddColumnApiCall from "./AddColumn/AddColumnApiCall/AddColumnApiCall";
@@ -41,6 +41,9 @@ import DevelopEvaluationDrawer from "./DataTab/DevelopEvaluationDrawer";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import ConditionalNodeV2 from "./AddColumn/ConditionalNode/ConditionalNodeV2";
 import ExperimentTabHeader from "./ExperimentTab/ExperimentTabHeader";
+import ResourceUnavailable from "src/sections/common/ResourceUnavailable/ResourceUnavailable";
+import { getResourceUnavailableKind } from "src/sections/common/ResourceUnavailable/resourceUnavailableKind";
+import { paths } from "src/routes/paths";
 
 const TabOptions = [
   { label: "Data", value: "data" },
@@ -59,6 +62,26 @@ const DevelopDetailView = () => {
   const hideScenarioFeatures = urlParams.get("fromScenario") === "true";
 
   const { data } = useDevelopDatasetList();
+
+  // A light read of the dataset itself, so a deleted dataset or one in
+  // another organisation shows a not-found page on every tab instead of the
+  // loading shell. Only a not-found/no-access refusal changes the page; any
+  // other failure is left to the tab that shows the data. It reads again on
+  // every mount, so a cached success from before a delete (Back, or reopening
+  // the link) cannot hide the not-found page; it never refetches on focus.
+  const { error: datasetLoadError } = useQuery({
+    queryKey: ["dataset-availability", dataset],
+    queryFn: () =>
+      axios.get(endpoints.develop.getDatasetDetail(dataset), {
+        params: { column_config_only: true },
+      }),
+    enabled: Boolean(dataset),
+    staleTime: Infinity,
+    refetchOnMount: "always",
+    retry: false,
+    meta: { errorHandled: true },
+  });
+  const datasetUnavailableKind = getResourceUnavailableKind(datasetLoadError);
 
   const currentDataset = data?.find((d) => d.datasetId === dataset)?.name;
 
@@ -345,6 +368,22 @@ const DevelopDetailView = () => {
       );
     }
   };
+
+  if (datasetUnavailableKind) {
+    return (
+      <Box sx={{ backgroundColor: "background.paper", height: "100%" }}>
+        <Helmet>
+          <title>Dataset not found</title>
+        </Helmet>
+        <ResourceUnavailable
+          kind={datasetUnavailableKind}
+          resourceLabel="dataset"
+          backTo={paths.dashboard.develop}
+          backLabel="Back to datasets"
+        />
+      </Box>
+    );
+  }
 
   return (
     <DevelopDetailProvider>

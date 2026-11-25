@@ -28,6 +28,9 @@ import {
 import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
 import { withLiveGridApi } from "src/utils/gridApi";
+import ResourceUnavailable from "src/sections/common/ResourceUnavailable/ResourceUnavailable";
+import { getResourceUnavailableKind } from "src/sections/common/ResourceUnavailable/resourceUnavailableKind";
+import { paths } from "src/routes/paths";
 
 // Loading component for tab content
 const TabContentLoader = () => (
@@ -105,7 +108,8 @@ const ObservePage = React.memo(() => {
   const location = useLocation();
   const navigate = useNavigate();
   const { observeId } = useParams();
-  const { data: projectDetail } = useGetProjectDetails(observeId);
+  const { data: projectDetail, error: projectDetailError } =
+    useGetProjectDetails(observeId);
   const { data: savedViewsData } = useGetSavedViews(observeId);
   const queryClient = useQueryClient();
 
@@ -365,6 +369,27 @@ const ObservePage = React.memo(() => {
         <Alert severity="error">
           Invalid observe ID. Please check the URL and try again.
         </Alert>
+      </Box>
+    );
+  }
+
+  // A deleted project, or one in another organisation or workspace, has no
+  // data for any tab to load, so show that instead of a tab's retry panel.
+  // Only when nothing has loaded: the current API also answers a transient
+  // failure with 400 "Project Not Found", and a failed background refetch must
+  // not replace a working page.
+  const projectUnavailableKind = projectDetail
+    ? null
+    : getResourceUnavailableKind(projectDetailError);
+  if (projectUnavailableKind) {
+    return (
+      <Box sx={containerStyles}>
+        <ResourceUnavailable
+          kind={projectUnavailableKind}
+          resourceLabel="project"
+          backTo={paths.dashboard.observe}
+          backLabel="Back to Observe"
+        />
       </Box>
     );
   }
