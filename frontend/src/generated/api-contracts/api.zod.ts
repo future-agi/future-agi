@@ -51240,6 +51240,7 @@ export const SimulateApiHarnessEnvironmentsRunsRunReportResponse = zod.object({
     environment: zod.array(zod.record(zod.string(), zod.string())),
     suite: zod.record(zod.string(), zod.string()),
     binding: zod.record(zod.string(), zod.string()),
+    binding_proof: zod.record(zod.string(), zod.string()),
     agent: zod.record(zod.string(), zod.string()),
     selection: zod.record(zod.string(), zod.string()),
     simulator: zod.record(zod.string(), zod.string()),

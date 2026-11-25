@@ -650,6 +650,7 @@ import type {
   HarnessActorValidationApi,
   HarnessActorViewApi,
   HarnessActorWriteApi,
+  HarnessAdaptationApprovedApi,
   HarnessAdaptationDesignApi,
   HarnessAgentCredentialsResponseApi,
   HarnessAgentPolicyApi,
@@ -61928,6 +61929,11 @@ export type simulateApiHarnessAdaptationsCreateResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessAdaptationsCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessAdaptationsCreateResponse404 = {
   data: ApiTextErrorResponseApi;
   status: 404;
@@ -61935,7 +61941,7 @@ export type simulateApiHarnessAdaptationsCreateResponse404 = {
 
 export type simulateApiHarnessAdaptationsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202 | 404>;
+  status: Exclude<HTTPStatusCodes, 202 | 403 | 404>;
 };
 
 export type simulateApiHarnessAdaptationsCreateResponseSuccess =
@@ -61943,6 +61949,7 @@ export type simulateApiHarnessAdaptationsCreateResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessAdaptationsCreateResponseError = (
+  | simulateApiHarnessAdaptationsCreateResponse403
   | simulateApiHarnessAdaptationsCreateResponse404
   | simulateApiHarnessAdaptationsCreateResponseDefault
 ) & {
@@ -61976,8 +61983,13 @@ export const simulateApiHarnessAdaptationsCreate = async (
 };
 
 export type simulateApiHarnessAdaptationsApproveResponse202 = {
-  data: HarnessJobReadApi;
+  data: HarnessAdaptationApprovedApi;
   status: 202;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
 };
 
 export type simulateApiHarnessAdaptationsApproveResponse404 = {
@@ -61992,7 +62004,7 @@ export type simulateApiHarnessAdaptationsApproveResponse409 = {
 
 export type simulateApiHarnessAdaptationsApproveResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202 | 404 | 409>;
+  status: Exclude<HTTPStatusCodes, 202 | 403 | 404 | 409>;
 };
 
 export type simulateApiHarnessAdaptationsApproveResponseSuccess =
@@ -62000,6 +62012,7 @@ export type simulateApiHarnessAdaptationsApproveResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessAdaptationsApproveResponseError = (
+  | simulateApiHarnessAdaptationsApproveResponse403
   | simulateApiHarnessAdaptationsApproveResponse404
   | simulateApiHarnessAdaptationsApproveResponse409
   | simulateApiHarnessAdaptationsApproveResponseDefault
@@ -64785,6 +64798,11 @@ export type simulateApiHarnessHostedAgentsCreateResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessHostedAgentsCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessHostedAgentsCreateResponse404 = {
   data: ApiTextErrorResponseApi;
   status: 404;
@@ -64797,7 +64815,7 @@ export type simulateApiHarnessHostedAgentsCreateResponse409 = {
 
 export type simulateApiHarnessHostedAgentsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 404 | 409>;
+  status: Exclude<HTTPStatusCodes, 201 | 403 | 404 | 409>;
 };
 
 export type simulateApiHarnessHostedAgentsCreateResponseSuccess =
@@ -64805,6 +64823,7 @@ export type simulateApiHarnessHostedAgentsCreateResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessHostedAgentsCreateResponseError = (
+  | simulateApiHarnessHostedAgentsCreateResponse403
   | simulateApiHarnessHostedAgentsCreateResponse404
   | simulateApiHarnessHostedAgentsCreateResponse409
   | simulateApiHarnessHostedAgentsCreateResponseDefault
@@ -65757,19 +65776,26 @@ export type simulateApiHarnessReleasesFitResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessReleasesFitResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessReleasesFitResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessReleasesFitResponseSuccess =
   simulateApiHarnessReleasesFitResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessReleasesFitResponseError =
-  simulateApiHarnessReleasesFitResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessReleasesFitResponseError = (
+  | simulateApiHarnessReleasesFitResponse403
+  | simulateApiHarnessReleasesFitResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessReleasesFitResponse =
   | simulateApiHarnessReleasesFitResponseSuccess
