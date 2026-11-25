@@ -636,12 +636,18 @@ def ships_only_with_a_reason(candidate: AgentFixCandidate) -> bool:
 
 
 def refuse_outside_the_epoch(
-    *, agent_version_id: Any = None, archive_artifact_id: Any = None
+    *,
+    organization_id: Any,
+    agent_version_id: Any = None,
+    archive_artifact_id: Any = None,
 ) -> None:
     """Refuse to make the default, anywhere but its Epoch's ship route, a version that is
     an Epoch candidate the Epoch would not ship without a reason, or an upload of the
     same archive. Only the winner ships without one. A candidate only its must-pass check
-    refused ships in its Epoch, on a person's reason; any other refused one never does."""
+    refused ships in its Epoch, on a person's reason; any other refused one never does.
+
+    Only the organization's own Epochs are matched: uploads are stored per organization,
+    so the same archive id elsewhere is another upload, and its Epoch is never named."""
     match = Q(pk__in=[])
     if agent_version_id is not None:
         match |= Q(agent_version_id=agent_version_id)
@@ -660,7 +666,9 @@ def refuse_outside_the_epoch(
             )
         )
     candidates = list(
-        AgentFixCandidate.no_workspace_objects.filter(match).select_related("fix_run")
+        AgentFixCandidate.no_workspace_objects.filter(
+            match, fix_run__organization_id=organization_id
+        ).select_related("fix_run")
     )
     # The same tree an Epoch proved, whichever candidate made the version.
     if not candidates or any(

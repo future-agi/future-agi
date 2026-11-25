@@ -1198,7 +1198,10 @@ def change_agent_source(
             # Imported here: the Epoch's services import this module.
             from simulate.services.agent_fix_runs import refuse_outside_the_epoch
 
-            refuse_outside_the_epoch(archive_artifact_id=archive_artifact_id)
+            refuse_outside_the_epoch(
+                organization_id=environment.organization_id,
+                archive_artifact_id=archive_artifact_id,
+            )
         return _made(
             parent,
             environment,

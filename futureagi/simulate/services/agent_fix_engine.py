@@ -337,22 +337,36 @@ def _git(
 
 def archive_files(body: bytes) -> dict[str, bytes]:
     """An agent tree's files by their path from the agent's root, refusing a tree whose
-    unpacked size or file count is over the limit before reading it, and one with a path
-    a patch cannot name as it is: absolute, or with an empty, "." or ".." part."""
+    unpacked size, file count or entry count is over the limit before reading a file,
+    and one with a path a patch cannot name as it is: absolute, or with an empty, "."
+    or ".." part.
+
+    The headers are read one at a time, and reading stops at the first over the limit: a
+    small gzip of a huge number of entries, files, folders or links, is never expanded."""
     max_bytes = settings.AGENT_FIX_MAX_TREE_BYTES
     max_files = settings.AGENT_FIX_MAX_TREE_FILES
+    too_large = HostedHarnessError(
+        "fix_tree_too_large",
+        "the candidate's tree is over the size limit",
+        status_code=413,
+    )
     try:
         with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-            members = [member for member in archive.getmembers() if member.isfile()]
-            if (
-                len(members) > max_files
-                or sum(member.size for member in members) > max_bytes
-            ):
-                raise HostedHarnessError(
-                    "fix_tree_too_large",
-                    "the candidate's tree is over the size limit",
-                    status_code=413,
-                )
+            members: list[tarfile.TarInfo] = []
+            entries = size = 0
+            for member in archive:
+                entries += 1
+                if member.isfile():
+                    size += member.size
+                    members.append(member)
+                # A folder or link is an entry too. A tree has fewer of them than files,
+                # so twice the file limit bounds the entries of every kind.
+                if (
+                    len(members) > max_files
+                    or entries > 2 * max_files
+                    or size > max_bytes
+                ):
+                    raise too_large
             files = {}
             for member in members:
                 extracted = archive.extractfile(member)

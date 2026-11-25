@@ -193,6 +193,7 @@ export function readyEpoch(ids: Ids): Json {
     retryable: false,
     // AgentFixRunSerializer: an Epoch the engine made is no coding agent's attempt.
     attempt_of_id: null,
+    counted: null,
     limited_validation: false,
     issue: { job_id: ids.job, cluster_id: ids.cluster, project_id: PROJECT_ID, title: ISSUE_TITLE },
     from_issue: true,

@@ -10,12 +10,7 @@ import {
 } from "src/api/simulate-environments/codingAgent";
 
 import CheckLine from "./CheckLine";
-import {
-  attemptChecks,
-  attemptNote,
-  refusedBeforeChecks,
-  refusedCheck,
-} from "./attemptVerdictView";
+import { attemptChecks, attemptNote } from "./attemptVerdictView";
 
 const note = { typography: "s2", color: "text.secondary" };
 
@@ -29,9 +24,7 @@ export default function OutsideAttemptVerdict({ fix }) {
   });
   if (!enabled || !outside) return null;
   const { number, summary } = fix.request.outside_candidate;
-  const checks = refusedBeforeChecks(verdict)
-    ? [refusedCheck(fix.request)]
-    : attemptChecks(verdict, fix.request);
+  const checks = attemptChecks(verdict, fix.request);
   const said = attemptNote(verdict);
   return (
     <Box sx={{ px: 3, pt: 2.5 }}>

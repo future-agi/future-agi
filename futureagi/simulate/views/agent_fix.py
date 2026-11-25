@@ -30,7 +30,12 @@ from simulate.selectors.agent_fix import (
     launch_options,
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs
-from simulate.selectors.agent_fix_outside import attempt_verdict, coding_agent_brief
+from simulate.selectors.agent_fix_outside import (
+    attempt_verdict,
+    coding_agent_brief,
+    hidden_launch_options,
+    run_held_back,
+)
 from simulate.selectors.runs import user_runs
 from simulate.serializers.agent_fix import (
     AgentFixAttemptVerdictSerializer,
@@ -208,15 +213,20 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"], url_path="launch-options")
     def launch_options(self, request):
         """What the launch form shows and prefills for a finished run, and what would
-        refuse the launch now."""
+        refuse the launch now. Only a person's signed-in session reads the cases an Epoch
+        on the run holds back, as for an Epoch's read; a coding agent, the CLI or MCP
+        never."""
         source_run = self._source_run(
             request, request.validated_query_data["source_run_id"]
         )
         if source_run is None:
             return _not_found()
-        return Response(
-            AgentFixLaunchOptionsSerializer(launch_options(source_run)).data
-        )
+        options = launch_options(source_run)
+        if not is_browser_session(request):
+            options = hidden_launch_options(
+                options, run_held_back(source_run, options.scenarios)
+            )
+        return Response(AgentFixLaunchOptionsSerializer(options).data)
 
     @validated_request(
         query_serializer=AgentFixCodingAgentBriefQuerySerializer,

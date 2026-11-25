@@ -60,8 +60,8 @@ HandOff.propTypes = { fix: PropTypes.object.isRequired };
 // The agent the epoch changed, and, for an attempt a person's own coding agent made,
 // that it came from there. Its verdict is on the Epoch's page. Only a deployment with
 // coding-agent attempts on has such an epoch, so the mark needs no setting of its own.
-// A failed attempt with no verdict shares its number with the next one, which the
-// platform numbers the same since this one did not count.
+// An attempt that ended before a verdict on its change shares its number with the next
+// one, which the platform numbers the same since this one did not count.
 const attemptLabel = (fix) => {
   const label = `Attempt ${fix.request.outside_candidate.number} from your coding agent`;
   return isUncountedAttempt(fix) ? `${label}, not counted` : label;

@@ -269,7 +269,7 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
   it("says a change refused before any check failed the first one, without the engine's words", async () => {
     const refusal = "patch touches locked path spec.json";
     api.verdict = fixtureVerdict({
-      tiers: [],
+      tiers: [{ name: "static", status: "failed", detail: refusal }],
       summary: refusal,
       patch_available: false,
     });
@@ -304,6 +304,7 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
       failure,
       tiers: [],
       summary: failure.message,
+      counted: false,
       patch_available: false,
     });
     renderUi(
@@ -311,7 +312,7 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
     );
     expect(
       await screen.findByText(
-        "This attempt stopped before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.",
+        "This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.",
       ),
     ).toBeInTheDocument();
     const panel = screen.getByTestId("outside-attempt");
@@ -321,6 +322,36 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
       screen.queryByTestId("outside-attempt-checks"),
     ).not.toBeInTheDocument();
   });
+
+  // Only the static check's own refusal blames the change: an attempt that ended with
+  // no improvement and no check, whatever the reason, is not read as one.
+  it.each([
+    ["no_improvement", true],
+    ["out_of_budget", false],
+    ["not_reproduced", false],
+    ["stopped", false],
+  ])(
+    "never says the change did not apply when the %s attempt has no static refusal",
+    async (state, counted) => {
+      api.verdict = fixtureVerdict({
+        state,
+        ending: state,
+        tiers: [],
+        summary: "",
+        counted,
+        patch_available: state === "no_improvement",
+      });
+      renderUi(<OutsideAttemptVerdict fix={{ ...attemptFix(), state }} />);
+      const panel = await screen.findByTestId("outside-attempt");
+      await screen.findByText(
+        counted
+          ? "No check ran on this attempt."
+          : "This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.",
+      );
+      expect(panel).not.toHaveTextContent("did not apply");
+      expect(panel).not.toHaveTextContent("Future AGI checked nothing else");
+    },
+  );
 });
 
 describe("Copy for coding agent reads the brief fresh", () => {
@@ -491,24 +522,23 @@ describe("An attempt's running stages and ending", () => {
 });
 
 describe("Which attempts the Epochs list marks as not counted", () => {
-  it("is a failed attempt with no verdict on any candidate, as the platform counts", () => {
+  it("is the one the platform says does not count, whatever its state and candidates", () => {
     const fix = attemptFix();
-    const withVerdict = fix.candidates;
-    expect(
-      isUncountedAttempt({ ...fix, state: "failed", candidates: [] }),
-    ).toBe(true);
+    for (const state of ["out_of_budget", "stopped", "failed"]) {
+      expect(
+        isUncountedAttempt({ ...fix, state, candidates: [], counted: false }),
+      ).toBe(true);
+    }
+    // A failed attempt with no verdict that the platform counts is counted.
     expect(
       isUncountedAttempt({
         ...fix,
         state: "failed",
-        candidates: withVerdict.map((c) => ({ ...c, verdict: null })),
+        candidates: [],
+        counted: true,
       }),
-    ).toBe(true);
-    expect(
-      isUncountedAttempt({ ...fix, state: "failed", candidates: withVerdict }),
     ).toBe(false);
-    expect(
-      isUncountedAttempt({ ...fix, state: "no_improvement", candidates: [] }),
-    ).toBe(false);
+    // An Epoch the engine made is no attempt.
+    expect(isUncountedAttempt({ ...fix, counted: null })).toBe(false);
   });
 });

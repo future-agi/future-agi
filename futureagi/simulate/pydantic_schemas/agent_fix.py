@@ -557,6 +557,9 @@ class AttemptVerdict(BaseModel):
     failure: LaunchBlocked | None
     summary: str
     tiers: list[AttemptTier]
+    # Whether it uses one of the run's attempts: its change got a verdict, or it is still
+    # being checked (selectors.agent_fix_outside.counts_as_attempt).
+    counted: bool
     must_pass_regressions: list[str]
     patch_available: bool
     pull_request_url: str

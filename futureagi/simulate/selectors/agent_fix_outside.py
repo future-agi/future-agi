@@ -12,10 +12,10 @@ from decimal import Decimal
 from hashlib import sha256
 from typing import Any
 
-from django.db.models import Exists, OuterRef, Q, QuerySet
+from django.db.models import QuerySet
 from pydantic import ValidationError
 
-from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
+from simulate.models import AgentFixRun, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
     OUTSIDE_ATTEMPTS_MAX,
@@ -29,6 +29,8 @@ from simulate.pydantic_schemas.agent_fix import (
     FixRequest,
     FixStep,
     LaunchBlocked,
+    LaunchOptions,
+    LaunchScenario,
     OutsideAttempts,
     OutsideCandidate,
 )
@@ -76,16 +78,39 @@ def outside_attempts(source_run: HostedHarnessJob) -> QuerySet[AgentFixRun]:
     ).order_by("created_at")
 
 
-def used_attempts(source_run: HostedHarnessJob) -> QuerySet[AgentFixRun]:
-    """The outside attempts that used one of the run's attempts. One that failed with no
-    verdict on its change, the platform's failure or the agent's own, told its coding
-    agent nothing, so it does not count."""
-    verdicts = AgentFixCandidate.no_workspace_objects.filter(
-        fix_run=OuterRef("pk"), verdict__isnull=False
+# The endings an attempt can reach before any check of its change: a failure, the
+# platform's or the agent's, a baseline that passed when measured again, the budget, a
+# stop (a person's own included), or too few failing cases.
+UNCHECKED_ENDINGS = frozenset(
+    {
+        AgentFixRun.State.FAILED,
+        AgentFixRun.State.NOT_REPRODUCED,
+        AgentFixRun.State.OUT_OF_BUDGET,
+        AgentFixRun.State.STOPPED,
+        AgentFixRun.State.TOO_FEW_CASES,
+    }
+)
+
+
+def counts_as_attempt(fix_run: AgentFixRun) -> bool:
+    """Whether an outside attempt uses one of its run's attempts: its change got a verdict,
+    or it is still being checked. One that ended before any verdict on its change told its
+    coding agent nothing, so it does not count, and its tree may be sent again. A static
+    refusal ends with no improvement: that is the static check's verdict, so it counts.
+    Reads the attempt's candidates, which an Epoch read prefetches."""
+    return fix_run.state not in UNCHECKED_ENDINGS or any(
+        candidate.verdict is not None for candidate in fix_run.candidates.all()
     )
-    return outside_attempts(source_run).exclude(
-        Q(state=AgentFixRun.State.FAILED) & ~Exists(verdicts)
-    )
+
+
+def used_attempts(source_run: HostedHarnessJob) -> list[AgentFixRun]:
+    """The outside attempts on a run that use one of its attempts (counts_as_attempt),
+    oldest first."""
+    return [
+        attempt
+        for attempt in outside_attempts(source_run).prefetch_related("candidates")
+        if counts_as_attempt(attempt)
+    ]
 
 
 def attempts_used(attempts: int) -> HostedHarnessError | None:
@@ -117,8 +142,7 @@ def _attempt_scope(
         )
     seed = str(source_run.id)
     ran = scenario_results(source_run)
-    failing = set(_capped([one.key for one in ran if one.failing_sub_goals], seed))
-    by_scenario = {one.key: one.failing_sub_goals for one in ran if one.key in failing}
+    by_scenario = _failing_cases(ran, seed)
     if not by_scenario:
         raise HostedHarnessError(
             "fix_targets_passed",
@@ -151,6 +175,46 @@ def _attempt_scope(
         )
     except ValidationError as exc:
         raise _scope_refused() from exc
+
+
+def _failing_cases(ran: list[LaunchScenario], seed: str) -> dict[str, list[str]]:
+    """The failing cases an outside attempt on a run targets, with the sub-goals each
+    failed: SCENARIOS_MAX at most, picked by _capped. Its split holds back from these."""
+    failing = set(_capped([one.key for one in ran if one.failing_sub_goals], seed))
+    return {one.key: one.failing_sub_goals for one in ran if one.key in failing}
+
+
+def run_held_back(source_run: HostedHarnessJob, ran: list[LaunchScenario]) -> set[str]:
+    """Every case an Epoch on a run holds back, or an outside attempt on it would: the
+    split of the run's failing cases ``ran`` (its scenario_results), and the held-back
+    cases of each Epoch on it already, whoever started it."""
+    seed = str(source_run.id)
+    held = set(split_held_back(seed, _failing_cases(ran, seed)))
+    for request in AgentFixRun.no_workspace_objects.filter(
+        source_run=source_run
+    ).values_list("request", flat=True):
+        held.update((request or {}).get("held_back_scenario_keys") or [])
+    return held
+
+
+def hidden_launch_options(options: LaunchOptions, held_back: set[str]) -> LaunchOptions:
+    """A run's launch options with no held-back case (run_held_back) in them: the read every
+    caller but a person's signed-in session gets. A held-back case is a failing one, so
+    with it go its failed sub-goals and its place in the suggested targets."""
+    return options.model_copy(
+        update={
+            "scenarios": [one for one in options.scenarios if one.key not in held_back],
+            "suggested": options.suggested.model_copy(
+                update={
+                    "target_scenario_keys": [
+                        key
+                        for key in options.suggested.target_scenario_keys
+                        if key not in held_back
+                    ]
+                }
+            ),
+        }
+    )
 
 
 def _capped(keys: list[str], seed: str) -> list[str]:
@@ -243,7 +307,7 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
     (never a held-back one), the agent's files, the rules, and how to submit."""
     options = launch_options(source_run)
     attempts = list(outside_attempts(source_run))
-    used = used_attempts(source_run).count()
+    used = len(used_attempts(source_run))
     previous = attempts[-1] if attempts else None
     blocked = options.blocked
     request, files = None, []
@@ -393,6 +457,18 @@ def attempt_verdict(fix_run: AgentFixRun) -> AttemptVerdict:
     verdict = (candidate.verdict if candidate else None) or {}
     report = fix_run.report or {}
     step = fix_step(fix_run)
+    summary = shown_summary(
+        report,
+        outside=True,
+        candidates=int(candidate is not None),
+        failure=fix_run.failure,
+    )
+    tiers = [
+        AttemptTier.model_validate(hidden_tier(tier.model_dump()))
+        for tier in (verdict_tiers(candidate) if candidate else [])
+    ]
+    if static_refused(report, outside=True, candidates=int(candidate is not None)):
+        tiers = [AttemptTier(name="static", status="failed", detail=summary)]
     return AttemptVerdict(
         id=str(fix_run.id),
         number=request.outside_candidate.number,
@@ -402,22 +478,25 @@ def attempt_verdict(fix_run: AgentFixRun) -> AttemptVerdict:
         failure=LaunchBlocked.model_validate(fix_run.failure)
         if fix_run.failure
         else None,
-        summary=shown_summary(
-            report,
-            outside=True,
-            candidates=int(candidate is not None),
-            failure=fix_run.failure,
-        ),
-        tiers=[
-            AttemptTier.model_validate(hidden_tier(tier.model_dump()))
-            for tier in (verdict_tiers(candidate) if candidate else [])
-        ],
+        summary=summary,
+        tiers=tiers,
+        counted=counts_as_attempt(fix_run),
         must_pass_regressions=hidden_checks(
             verdict.get("must_pass_regressions") or [], held_back
         ),
         patch_available=candidate is not None,
         pull_request_url=candidate.pull_request_url if candidate else "",
     )
+
+
+def static_refused(
+    report: Mapping[str, Any], *, outside: bool, candidates: int
+) -> bool:
+    """Whether the static check refused an outside attempt's change. The engine sends no
+    static result for it: a verify run's only candidate is uploaded once its static check
+    passes, and a failed upload fails the run. So a verify run that ended with no
+    improvement and uploaded no candidate is the static check's refusal, and no other."""
+    return outside and candidates == 0 and report.get("ending") == Ending.NO_IMPROVEMENT
 
 
 def shown_summary(
@@ -429,10 +508,10 @@ def shown_summary(
 ) -> str:
     """The engine's closing summary, for a reader not given the held-back cases. It joins
     every failed tier's detail, held-back ids and rates included, and a failed engine's
-    is its own error text. So it is served only for a static refusal: a verify run that
-    uploaded no candidate and found no improvement. Any other ending reads as the
-    platform's words for its failure (agent_fix_engine._ending_failure), or blank."""
-    if outside and candidates == 0 and report.get("ending") == Ending.NO_IMPROVEMENT:
+    is its own error text. So it is served only for a static refusal (static_refused).
+    Any other ending reads as the platform's words for its failure
+    (agent_fix_engine._ending_failure), or blank."""
+    if static_refused(report, outside=outside, candidates=candidates):
         return str(report.get("summary") or "")
     return str((failure or {}).get("message") or "")
 

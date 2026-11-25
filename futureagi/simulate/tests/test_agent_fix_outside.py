@@ -21,7 +21,7 @@ from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from accounts.models import OrgApiKey
+from accounts.models import Organization, OrgApiKey
 from conftest import WorkspaceAwareAPIClient
 from simulate.models import (
     AgentFixCandidate,
@@ -30,7 +30,7 @@ from simulate.models import (
     CallExecution,
     HostedHarnessJob,
 )
-from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
+from simulate.pydantic_schemas.agent_fix import FixRequest, LaunchScenario, Surface
 from simulate.selectors.agent_fix import (
     VERDICT_TIERS,
     base_commit,
@@ -44,7 +44,11 @@ from simulate.selectors.agent_fix_outside import (
 )
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_engine import store_outside_trees
-from simulate.services.agent_fix_runs import close_fix_run
+from simulate.services.agent_fix_runs import (
+    close_fix_run,
+    refuse_outside_the_epoch,
+    split_held_back,
+)
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_agent_fix_api import ENGINE_MODEL, _armed, _engine
 from simulate.tests.test_agent_fix_api import (  # noqa: F401 - fixture
@@ -371,6 +375,87 @@ class TestSubmit:
 
         assert again.status_code == 201, again.content
 
+    @pytest.mark.parametrize(
+        "state",
+        [
+            State.FAILED,
+            State.NOT_REPRODUCED,
+            State.OUT_OF_BUDGET,
+            State.STOPPED,
+            State.TOO_FEW_CASES,
+        ],
+    )
+    def test_an_attempt_that_ended_before_a_verdict_does_not_count(
+        self, auth_client, source_run, state
+    ):
+        """Whatever ended it, a person's own Stop included: no verdict on the change told
+        the coding agent nothing, so the brief, the verdict and the Epoch read say it does
+        not count, and the same tree is checked again as the same attempt."""
+        first = _submit(auth_client, source_run)
+        assert first.status_code == 201, first.content
+        close_fix_run(
+            first.json()["id"],
+            state,
+            failure={"code": "fix_engine_failed", "message": "x"}
+            if state == State.FAILED
+            else None,
+        )
+
+        brief = auth_client.get(
+            f"{EPOCHS}/coding-agent-brief/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+        verdict = auth_client.get(f"{EPOCHS}/{first.json()['id']}/verdict/").json()
+        read = auth_client.get(f"{EPOCHS}/{first.json()['id']}/").json()
+        again = _submit(auth_client, source_run)
+
+        assert brief["attempts"]["used"] == 0
+        assert (verdict["counted"], read["counted"]) == (False, False)
+        assert again.status_code == 201, again.content
+        assert again.json()["request"]["outside_candidate"]["number"] == 1
+
+    @pytest.mark.parametrize("how", ["checking", "static-refusal", "verdict"])
+    def test_an_attempt_checking_or_with_a_verdict_counts(
+        self, auth_client, source_run, how
+    ):
+        """Still being checked, it may get a verdict, so it holds its attempt: two
+        submissions at once never pass the cap. A static refusal is the static check's
+        verdict; a stop after a verdict on the change still counts."""
+        first = _submit(auth_client, source_run)
+        attempt = AgentFixRun.no_workspace_objects.get(id=first.json()["id"])
+        if how == "static-refusal":
+            close_fix_run(attempt.id, State.NO_IMPROVEMENT)
+        elif how == "verdict":
+            AgentFixCandidate.no_workspace_objects.create(
+                fix_run=attempt,
+                attempt=1,
+                agent_version_id=attempt.base_agent_version_id,
+                patch_object_key="k",
+                verdict={"accepted": False, "reason": "", "must_pass_regressions": []},
+            )
+            close_fix_run(attempt.id, State.STOPPED)
+
+        brief = auth_client.get(
+            f"{EPOCHS}/coding-agent-brief/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+        verdict = auth_client.get(f"{EPOCHS}/{attempt.id}/verdict/").json()
+        again = _submit(auth_client, source_run)
+
+        assert brief["attempts"]["used"] == 1
+        assert verdict["counted"] is True
+        assert (again.status_code, again.json()["error"]) == (
+            409,
+            "fix_outside_tree_checked",
+        )
+
+    def test_an_engine_epoch_reads_as_no_attempt(self, auth_client, source_run):
+        fix_run = _fix_run(source_run, state=State.FAILED)
+
+        read = auth_client.get(f"{EPOCHS}/{fix_run.id}/").json()
+
+        assert read["counted"] is None
+
     def test_a_given_budget_is_kept(self, auth_client, source_run):
         response = _submit(auth_client, source_run, budget_credits=900)
 
@@ -523,6 +608,54 @@ class TestSubmit:
             400,
             "fix_tree_invalid",
         )
+
+    @pytest.mark.parametrize("kind", [tarfile.REGTYPE, tarfile.DIRTYPE])
+    def test_a_flood_of_empty_entries_is_refused_before_it_is_expanded(
+        self, auth_client, source_run, settings, kind
+    ):
+        """A small gzip of many empty files or folders: reading stops at the limit."""
+        settings.AGENT_FIX_MAX_TREE_FILES = 10
+        out = io.BytesIO()
+        with tarfile.open(fileobj=out, mode="w:gz") as archive:
+            archive.addfile(tarfile.TarInfo("source/agent.py"), io.BytesIO())
+            for n in range(5000):
+                member = tarfile.TarInfo(f"source/e{n}")
+                member.type = kind
+                archive.addfile(member, io.BytesIO())
+        read = tarfile.TarFile.next
+        headers = []
+
+        def counted(archive):
+            headers.append(1)
+            return read(archive)
+
+        with patch.object(tarfile.TarFile, "next", counted):
+            response = auth_client.post(
+                f"{EPOCHS}/coding-agent-attempts/",
+                data={
+                    "source_run_id": str(source_run.test_execution_id),
+                    "tree": SimpleUploadedFile("tree.tar.gz", out.getvalue()),
+                },
+                format="multipart",
+            )
+
+        assert (response.status_code, response.json()["error"]) == (
+            413,
+            "fix_tree_too_large",
+        )
+        assert len(headers) <= 2 * 10 + 2
+
+    def test_a_tree_at_the_limit_with_its_folders_is_read(self, settings):
+        settings.AGENT_FIX_MAX_TREE_FILES = 10
+        out = io.BytesIO()
+        with tarfile.open(fileobj=out, mode="w:gz") as archive:
+            for n in range(10):
+                folder = tarfile.TarInfo(f"source/d{n}")
+                folder.type = tarfile.DIRTYPE
+                archive.addfile(folder)
+                archive.addfile(tarfile.TarInfo(f"source/d{n}/f.py"), io.BytesIO())
+
+        assert len(engine.archive_files(out.getvalue())) == 10
 
     def test_a_file_name_that_is_not_utf8_is_refused(self, auth_client, source_run):
         out = io.BytesIO()
@@ -1032,18 +1165,70 @@ class TestVerdict:
         body = auth_client.get(f"{EPOCHS}/{attempt.id}/verdict/").json()
 
         assert body["summary"].endswith("agent.py does not parse")
+        # The static check's refusal is said as its own tier, so a reader never takes
+        # another unchecked ending for one; and it is a verdict, so it counts.
         assert (
             body["tiers"],
+            body["counted"],
             body["must_pass_regressions"],
             body["patch_available"],
         ) == (
-            [],
+            [{"name": "static", "status": "failed", "detail": body["summary"]}],
+            True,
             [],
             False,
         )
         assert body["pull_request_url"] == ""
         read = auth_client.get(f"{EPOCHS}/{attempt.id}/").json()
         assert read["report"]["summary"] == body["summary"]
+
+    @pytest.mark.parametrize(
+        ("state", "candidate"),
+        [
+            (State.FAILED, False),
+            (State.FAILED, True),
+            (State.OUT_OF_BUDGET, False),
+            (State.NOT_REPRODUCED, False),
+            (State.STOPPED, True),
+        ],
+        ids=[
+            "failed-on-our-side",
+            "failed-with-a-candidate",
+            "out-of-budget",
+            "not-reproduced",
+            "stopped",
+        ],
+    )
+    def test_only_the_static_check_s_refusal_reads_as_one(
+        self, auth_client, source_run, state, candidate
+    ):
+        """An attempt that ended unchecked, a candidate upload that failed on our side
+        included, never reads as a refusal of the change."""
+        attempt = AgentFixRun.no_workspace_objects.get(
+            id=_submit(auth_client, source_run).json()["id"]
+        )
+        if candidate:
+            AgentFixCandidate.no_workspace_objects.create(
+                fix_run=attempt,
+                attempt=1,
+                agent_version_id=attempt.base_agent_version_id,
+                patch_object_key="k",
+            )
+        AgentFixRun.no_workspace_objects.filter(id=attempt.id).update(
+            report={"ending": state, "summary": "", "winner_candidate_id": None}
+        )
+        close_fix_run(
+            attempt.id,
+            state,
+            failure={"code": "fix_engine_failed", "message": "x"}
+            if state == State.FAILED
+            else None,
+        )
+
+        body = auth_client.get(f"{EPOCHS}/{attempt.id}/verdict/").json()
+
+        assert body["tiers"] == []
+        assert body["counted"] is False
 
     def test_an_engine_epoch_has_no_attempt_verdict(self, auth_client, source_run):
         fix_run = _fix_run(source_run, state=State.NO_IMPROVEMENT)
@@ -1508,7 +1693,43 @@ class TestNoHeldBackCaseInAnyRead:
             "brief": client.get(
                 f"{EPOCHS}/coding-agent-brief/", {"source_run_id": source}
             ),
+            "launch-options": client.get(
+                f"{EPOCHS}/launch-options/", {"source_run_id": source}
+            ),
         }
+
+    @pytest.mark.parametrize(
+        ("tool", "params"),
+        [
+            ("get_epoch_launch_options", {"source_run_id": "source"}),
+            ("get_epoch", {"id": "attempt"}),
+            ("get_epoch_coding_agent_brief", {"source_run_id": "source"}),
+            ("get_epoch_attempt_verdict", {"id": "attempt"}),
+        ],
+    )
+    def test_an_mcp_tool_call_carries_no_held_back_case(
+        self, auth_client, held_everywhere, tool, params
+    ):
+        ids = {
+            "source": str(held_everywhere.source_run.test_execution_id),
+            "attempt": str(held_everywhere.id),
+        }
+        response = auth_client.post(
+            "/mcp/internal/tool-call/",
+            {
+                "tool_name": tool,
+                "params": {name: ids[one] for name, one in params.items()},
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200, response.content
+        text = json.dumps(response.json())
+        assert HELD not in text
+        assert HELD_ONLY_SUB_GOAL not in text
+        name = _scenario_name(held_everywhere.source_run, HELD)
+        assert not name or name not in text
+        assert response.json()["result"]["is_error"] is False
 
     @pytest.mark.parametrize(
         "client", ["auth_client", "key_client"], ids=["mcp", "key"]
@@ -1528,12 +1749,77 @@ class TestNoHeldBackCaseInAnyRead:
             assert not name or name not in text, read
         # The reads still carry the case the coding agent was given.
         assert SEEN in json.dumps(reads["detail"].json())
+        options = reads["launch-options"].json()
+        assert [one["key"] for one in options["scenarios"]] == [SEEN]
+        assert options["suggested"]["target_scenario_keys"] == [SEEN]
 
     def test_a_signed_in_session_still_sees_them(self, browser_client, held_everywhere):
         detail = browser_client.get(f"{EPOCHS}/{held_everywhere.id}/").json()
+        options = browser_client.get(
+            f"{EPOCHS}/launch-options/",
+            {"source_run_id": str(held_everywhere.source_run.test_execution_id)},
+        ).json()
 
         assert detail["request"]["held_back_scenario_keys"] == [HELD]
         assert HELD_ONLY_SUB_GOAL in detail["request"]["failing_sub_goals"]
+        assert {one["key"] for one in options["scenarios"]} == set(KEYS)
+        assert set(options["suggested"]["target_scenario_keys"]) == set(KEYS)
+
+
+class TestLaunchOptionsHoldBack:
+    """Launch options read before any attempt still leave out the cases the first one
+    would hold back: the split is seeded by the run, so a caller could read them ahead."""
+
+    FAILING = [f"case-{n:02d}" for n in range(15)]
+
+    def _ran(self):
+        return [
+            LaunchScenario(
+                key=key,
+                name=f"Case {key}",
+                passed=False,
+                failing_sub_goals=["refunded", "greeted"],
+            )
+            for key in self.FAILING
+        ]
+
+    def _options(self, client, source_run):
+        with patch(
+            "simulate.selectors.agent_fix.scenario_results", return_value=self._ran()
+        ):
+            response = client.get(
+                f"{EPOCHS}/launch-options/",
+                {"source_run_id": str(source_run.test_execution_id)},
+            )
+        assert response.status_code == 200, response.content
+        return response.json()
+
+    def _split(self, source_run):
+        return set(
+            split_held_back(
+                str(source_run.id),
+                {key: ["refunded", "greeted"] for key in self.FAILING},
+            )
+        )
+
+    @pytest.mark.parametrize(
+        "client", ["auth_client", "key_client"], ids=["mcp", "key"]
+    )
+    def test_a_caller_that_is_not_a_session_never_reads_the_split(
+        self, request, source_run, client
+    ):
+        options = self._options(request.getfixturevalue(client), source_run)
+        held = self._split(source_run)
+
+        assert held
+        shown = {one["key"] for one in options["scenarios"]}
+        assert shown == set(self.FAILING) - held
+        assert set(options["suggested"]["target_scenario_keys"]) == shown
+
+    def test_a_signed_in_session_reads_every_case(self, browser_client, source_run):
+        options = self._options(browser_client, source_run)
+
+        assert {one["key"] for one in options["scenarios"]} == set(self.FAILING)
 
 
 ENVIRONMENTS = "/simulate/api/harness-environments"
@@ -1635,6 +1921,22 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
         )
 
         _refused(response, refused_by)
+
+    def test_another_organization_s_same_archive_id_is_not_matched(
+        self, planted, refused_by
+    ):
+        """Uploads are stored per organization: the same archive id elsewhere is another
+        upload, and never names this organization's Epoch."""
+        archive = _candidate_archive(planted)
+        other = Organization.objects.create(name="Other org")
+
+        refuse_outside_the_epoch(organization_id=other.id, archive_artifact_id=archive)
+        with pytest.raises(HostedHarnessError) as refused:
+            refuse_outside_the_epoch(
+                organization_id=planted.organization_id, archive_artifact_id=archive
+            )
+
+        assert refused.value.code == REFUSALS[refused_by][0]
 
     def test_a_copy_uploaded_to_move_later_is_refused_at_the_move(
         self, browser_client, planted, refused_by, user, workspace, storage

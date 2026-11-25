@@ -54,7 +54,7 @@ def submit_outside_attempt(
         )
     if blocked := launch_blocker(source_run, usage=False):
         raise blocked
-    if refused := attempts_used(used_attempts(source_run).count()):
+    if refused := attempts_used(len(used_attempts(source_run))):
         raise refused
     commit = base_commit(source_run)
     if commit and sent_base_commit != commit:
@@ -85,7 +85,7 @@ def submit_outside_attempt(
         # Two submissions at once take their numbers one after the other.
         HostedHarnessJob.no_workspace_objects.select_for_update().get(id=source_run.id)
         attempts = list(outside_attempts(source_run))
-        counted = list(used_attempts(source_run))
+        counted = used_attempts(source_run)
         used = len(counted)
         if refused := attempts_used(used):
             raise refused
@@ -124,9 +124,9 @@ def submit_outside_attempt(
 def _refuse_checked_already(
     counted: list[AgentFixRun], files: dict[str, bytes]
 ) -> None:
-    """Refuse the tree an attempt that counted already submitted: its verdict would be
-    the same, and it would use up one of the run's attempts. A tree whose attempt failed
-    with no verdict was never checked, so it may be sent again."""
+    """Refuse the tree an attempt that counts (counts_as_attempt) already submitted: its
+    verdict would be the same, and it would use up one of the run's attempts. A tree whose
+    attempt ended before a verdict was never checked, so it may be sent again."""
     for attempt in counted:
         stored = submitted_archive(attempt)
         if stored is not None and archive_files(stored) == files:

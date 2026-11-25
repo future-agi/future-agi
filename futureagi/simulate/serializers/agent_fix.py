@@ -32,7 +32,7 @@ from simulate.selectors.agent_fix import (
     verdict_tiers,
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
-from simulate.selectors.agent_fix_outside import hidden_epoch
+from simulate.selectors.agent_fix_outside import counts_as_attempt, hidden_epoch
 from simulate.serializers.harness_environment import HarnessVersionPersonSerializer
 from simulate.services.harness_environment import environment_name
 
@@ -390,6 +390,9 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     # The previous outside attempt on the same run; null for the first and for an epoch
     # the engine made itself.
     attempt_of_id = serializers.UUIDField(allow_null=True)
+    # For an outside attempt, whether it uses one of its run's attempts: its change got a
+    # verdict, or it is still being checked. Null for an epoch the engine made itself.
+    counted = serializers.SerializerMethodField()
     # Some cases held back, but too few to call the fix verified, whatever its verdict
     # says. With none held back it is proven on the targets only, and this is false.
     limited_validation = serializers.SerializerMethodField()
@@ -402,6 +405,14 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_retryable(self, fix_run: AgentFixRun) -> bool:
         return is_retryable(fix_run)
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.BooleanField(allow_null=True)
+    )
+    def get_counted(self, fix_run: AgentFixRun) -> bool | None:
+        if not (fix_run.request or {}).get("outside_candidate"):
+            return None
+        return counts_as_attempt(fix_run)
 
     @swagger_serializer_method(
         serializer_or_field=AgentFixEpochIssueSerializer(allow_null=True)
@@ -503,6 +514,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "retried_from_id",
             "retryable",
             "attempt_of_id",
+            "counted",
             "limited_validation",
             "issue",
             "from_issue",
@@ -852,6 +864,9 @@ class AgentFixAttemptVerdictSerializer(serializers.Serializer):
     failure = AgentFixFailureSerializer(allow_null=True)
     summary = serializers.CharField(allow_blank=True)
     tiers = AgentFixAttemptTierSerializer(many=True)
+    # Whether it uses one of the run's attempts: its change got a verdict, or it is still
+    # being checked. One that ended before a verdict may be sent again.
+    counted = serializers.BooleanField()
     must_pass_regressions = serializers.ListField(child=serializers.CharField())
     patch_available = serializers.BooleanField()
     # Blank until a pull request is opened for it.

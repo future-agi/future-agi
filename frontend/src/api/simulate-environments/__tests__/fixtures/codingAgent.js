@@ -128,6 +128,7 @@ export const fixtureVerdict = (overrides = {}) => ({
     { name: "must-pass", status: "passed", detail: "" },
     { name: "repeats", status: "skipped", detail: "" },
   ],
+  counted: true,
   must_pass_regressions: [],
   patch_available: true,
   pull_request_url: "",
@@ -142,6 +143,7 @@ export const outsideAttemptFix = (base) => ({
   number: 7,
   source_run_id: SOURCE_RUN_ID,
   attempt_of_id: "1f2e3d4c-5b6a-4978-8a6b-5c4d3e2f1a0b",
+  counted: true,
   state: "no_improvement",
   step: "done",
   request: {

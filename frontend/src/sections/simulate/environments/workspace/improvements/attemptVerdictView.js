@@ -80,19 +80,13 @@ export function attemptChecks(verdict, request) {
   });
 }
 
-// An attempt the static check refused: it ended with no improvement and no candidate,
-// so no tier ran. The summary is not the sign: a failed attempt's summary is the
-// platform's words for its failure. The engine's words stay off the page; the check
+// An attempt the static check refused: the verdict read gives its static check as
+// failed, and no other check ran. An attempt that failed on Future AGI's side never
+// reads as a refusal of the change. The engine's words stay off the page; the check
 // it failed reads in plain words.
 export const refusedBeforeChecks = (verdict) =>
-  !!verdict && verdict.ending === "no_improvement" && !verdict.tiers.length;
-
-export const refusedCheck = (request) => ({
-  name: "static",
-  status: "failed",
-  label: checkLabel("static", request),
-  detail: STATIC_FAILED,
-});
+  !!verdict &&
+  verdict.tiers.some((t) => t.name === "static" && t.status === "failed");
 
 // The line under the checks while there is nothing, or not everything, to show. How
 // an ended attempt came out is the Epoch's own ending, further down the page.
@@ -106,15 +100,14 @@ export function attemptNote(verdict) {
   if (refusedBeforeChecks(verdict)) {
     return "Future AGI checked nothing else. Fix the change, then submit it again with fagi epoch submit.";
   }
-  // An attempt that failed with no verdict on its change told its coding agent
+  // An attempt that ended before a verdict on its change told its coding agent
   // nothing, so the platform does not count it against the run's attempts.
-  if (verdict.state === "failed" && !verdict.tiers.length) {
-    return "This attempt stopped before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.";
+  if (verdict.counted === false) {
+    return "This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.";
   }
   return verdict.tiers.length ? null : "No check ran on this attempt.";
 }
 
-// The same rule on an Epoch's own read, for the Epochs list: failed, and no candidate
-// has a verdict.
-export const isUncountedAttempt = (fix) =>
-  fix.state === "failed" && !(fix.candidates || []).some((c) => c.verdict);
+// The same rule on an Epoch's own read, for the Epochs list: the platform says whether
+// the attempt counts.
+export const isUncountedAttempt = (fix) => fix.counted === false;
