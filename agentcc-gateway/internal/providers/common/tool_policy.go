@@ -9,11 +9,12 @@ import (
 // ToolPolicySupport describes the controls a translating adapter can carry.
 // Unsupported restrictions must fail before any upstream work, not default to auto.
 type ToolPolicySupport struct {
-	Provider       string
-	ParallelCalls  bool
-	RequiredChoice bool
-	NamedChoice    bool
-	NoneChoice     bool
+	Provider               string
+	ParallelCalls          bool
+	RequiredChoice         bool
+	NamedChoice            bool
+	NoneChoice             bool
+	StructuredAllowedTools bool
 }
 
 // PrepareDirectToolPolicy returns an independent request for adapters whose
@@ -66,6 +67,10 @@ func PrepareDirectToolPolicy(req *models.ChatCompletionRequest, support ToolPoli
 	}
 	if !support.ParallelCalls && req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(out.Tools) > 0 {
 		return nil, models.ErrBadRequest("unsupported_tool_policy", support.Provider+" cannot enforce parallel_tool_calls=false")
+	}
+	if allowed != nil && support.StructuredAllowedTools {
+		// The adapter can carry the validated subset and mode together on the wire.
+		out.ToolChoice = req.ToolChoice
 	}
 	return &out, nil
 }
