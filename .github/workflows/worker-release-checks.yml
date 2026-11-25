@@ -15,4 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      # Only this workflow's own tests: the rest of scripts/ has its own
+      # workflows (the mypy and Ruff gate self-tests need their pinned tools).
+      - run: python3 -m unittest -v test_release_error_feed_worker test_verify_platform_image_tags
+        working-directory: scripts

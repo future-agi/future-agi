@@ -31,6 +31,7 @@ import {
   useGetDatasetColumns,
 } from "src/api/develop/develop-detail";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { LoadingScreen } from "src/components/loading-screen";
 
 // "all" (not "") is the sentinel for every status — an empty-string MenuItem
 // value makes MUI Select render blank (isFilled("") is false). The backend
@@ -527,12 +528,7 @@ export default function ExportToDatasetDialog({ open, onClose, queueId }) {
               </Stack>
 
               {fieldsLoading ? (
-                <Stack alignItems="center" sx={{ py: 4 }}>
-                  <CircularProgress
-                    size={24}
-                    aria-label="Loading source fields"
-                  />
-                </Stack>
+                <LoadingScreen compact message="Loading source fields" />
               ) : (
                 <Stack
                   spacing={1}

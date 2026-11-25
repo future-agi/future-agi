@@ -4,9 +4,7 @@ Tests for Temporal background task activities.
 Run with: pytest tfc/temporal/background_tasks/tests/test_activities.py -v
 """
 
-import os
-import shutil
-import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -106,59 +104,41 @@ class TestProcessHuggingFaceDatasetActivity:
 class TestDeleteCompareFolderActivity:
     """Tests for delete_compare_folder_activity."""
 
-    def test_deletes_local_folder_if_exists(self):
-        """Test that activity deletes local folder when it exists."""
+    @patch("tfc.utils.storage.delete_compare_folder")
+    def test_deletes_local_folder_if_exists(
+        self, mock_s3_delete, monkeypatch, tmp_path
+    ):
+        """The writer's directory is removed after remote deletion."""
         from tfc.temporal.background_tasks.activities import (
             delete_compare_folder_activity,
         )
         from tfc.utils.storage import get_compare_local_dir
 
-        # Create a temp directory structure
-        temp_dir = tempfile.mkdtemp()
-        compare_dir = os.path.join(temp_dir, "compare")
-        os.makedirs(compare_dir)
+        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path))
         test_compare_id = "test-compare-123"
-        test_folder = os.path.join(compare_dir, test_compare_id)
-        os.makedirs(test_folder)
+        folder = Path(get_compare_local_dir(test_compare_id))
+        folder.mkdir()
+        (folder / "test.json").write_text("{}", encoding="utf-8")
 
-        # Create a test file inside
-        with open(os.path.join(test_folder, "test.json"), "w") as f:
-            f.write("{}")
+        delete_compare_folder_activity(test_compare_id)
 
-        try:
-            # Patch the working directory and s3 delete
-            with (
-                patch("os.path.isdir") as mock_isdir,
-                patch("shutil.rmtree") as mock_rmtree,
-                patch("tfc.utils.storage.delete_compare_folder") as mock_s3_delete,
-            ):
-                mock_isdir.return_value = True
-
-                delete_compare_folder_activity(test_compare_id)
-
-                expected_dir = get_compare_local_dir(test_compare_id)
-                mock_isdir.assert_called_once_with(expected_dir)
-                mock_rmtree.assert_called_once_with(expected_dir)
-                mock_s3_delete.assert_called_once_with(test_compare_id)
-        finally:
-            shutil.rmtree(temp_dir)
+        assert not folder.exists()
+        mock_s3_delete.assert_called_once_with(test_compare_id)
 
     @patch("tfc.utils.storage.delete_compare_folder")
-    def test_skips_local_deletion_if_folder_not_exists(self, mock_s3_delete):
-        """Test that activity skips local deletion when folder doesn't exist."""
+    def test_skips_local_deletion_if_folder_not_exists(
+        self, mock_s3_delete, monkeypatch, tmp_path
+    ):
+        """A missing local root still allows remote cleanup."""
         from tfc.temporal.background_tasks.activities import (
             delete_compare_folder_activity,
         )
 
-        with (
-            patch("os.path.isdir", return_value=False) as mock_isdir,
-            patch("shutil.rmtree") as mock_rmtree,
-        ):
-            delete_compare_folder_activity("nonexistent-123")
+        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "missing"))
+        delete_compare_folder_activity("nonexistent-123")
 
-            mock_isdir.assert_called_once()
-            mock_rmtree.assert_not_called()
-            mock_s3_delete.assert_called_once_with("nonexistent-123")
+        mock_s3_delete.assert_called_once_with("nonexistent-123")
+        assert not (tmp_path / "missing").exists()
 
 
 @pytest.mark.django_db

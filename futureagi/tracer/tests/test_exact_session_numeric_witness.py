@@ -48,9 +48,10 @@ def test_numeric_witness_requires_compiler_proof_not_operator_alone(
     baseline, baseline_params = existing._source(filters, enabled=False)
     assert ("session_scalar_witness_ids AS (" in sql) is enabled
     assert params == baseline_params
-    assert sql.split("resolved_session_filter_spans AS (", 1)[1] == baseline.split(
-        "resolved_session_filter_spans AS (", 1
-    )[1]
+    assert (
+        sql.split("resolved_session_filter_spans AS (", 1)[1]
+        == baseline.split("resolved_session_filter_spans AS (", 1)[1]
+    )
 
 
 def test_multiple_leaves_and_existing_typed_admission_are_preserved():
@@ -60,7 +61,9 @@ def test_multiple_leaves_and_existing_typed_admission_are_preserved():
         (existing._filters(existing._leaf()), True),
         (existing._filters(existing._leaf("equals", 0, "number")), False),
     ):
-        plan = graph._session_membership_plan(project_id=existing.PROJECT, filters=filters)
+        plan = graph._session_membership_plan(
+            project_id=existing.PROJECT, filters=filters
+        )
         assert bool(plan.scalar_witness_predicate) is enabled
 
 
@@ -82,7 +85,9 @@ def test_numeric_witness_changes_only_identity_replay_scope(monkeypatch):
         def record(sql, params, *, _calls=calls, **options):
             _calls.append((sql, dict(params), options))
             probe = sql.lstrip().startswith("SELECT 1 AS has_raw_witness")
-            return SimpleNamespace(data=[{"has_raw_witness": 1}] if probe else [], columns=[])
+            return SimpleNamespace(
+                data=[{"has_raw_witness": 1}] if probe else [], columns=[]
+            )
 
         with monkeypatch.context() as patch:
             patch.setattr(graph, "_session_membership_plan", plan)
@@ -93,8 +98,16 @@ def test_numeric_witness_changes_only_identity_replay_scope(monkeypatch):
                 interval="day",
                 metric_id="latency",
             )
-        probes = [call for call in calls if call[0].lstrip().startswith("SELECT 1 AS has_raw_witness")]
-        full = [call for call in calls if not call[0].lstrip().startswith("SELECT 1 AS has_raw_witness")]
+        probes = [
+            call
+            for call in calls
+            if call[0].lstrip().startswith("SELECT 1 AS has_raw_witness")
+        ]
+        full = [
+            call
+            for call in calls
+            if not call[0].lstrip().startswith("SELECT 1 AS has_raw_witness")
+        ]
         assert len(probes) == int(plan is current)
         assert len(full) == 1 and result["query_count"] == len(calls)
         if probes:
@@ -108,20 +121,31 @@ def test_numeric_witness_changes_only_identity_replay_scope(monkeypatch):
     assert {key: type(value) for key, value in baseline[1].items()} == {
         key: type(value) for key, value in candidate[1].items()
     }
-    assert baseline[0].split("latest_session_filter_spans AS (", 1)[0] == candidate[
-        0
-    ].split("session_scalar_witness_ids AS (", 1)[0]
-    assert baseline[0].split("resolved_session_filter_spans AS (", 1)[1] == candidate[
-        0
-    ].split("resolved_session_filter_spans AS (", 1)[1]
-    witness = candidate[0].split("session_scalar_witness_ids AS (", 1)[1].split(
-        "latest_session_filter_spans AS (", 1
-    )[0]
-    assert all(token not in witness for token in ("LIMIT", "SAMPLE", "is_deleted", "trace_session_id"))
+    assert (
+        baseline[0].split("latest_session_filter_spans AS (", 1)[0]
+        == candidate[0].split("session_scalar_witness_ids AS (", 1)[0]
+    )
+    assert (
+        baseline[0].split("resolved_session_filter_spans AS (", 1)[1]
+        == candidate[0].split("resolved_session_filter_spans AS (", 1)[1]
+    )
+    witness = (
+        candidate[0]
+        .split("session_scalar_witness_ids AS (", 1)[1]
+        .split("latest_session_filter_spans AS (", 1)[0]
+    )
+    assert all(
+        token not in witness
+        for token in ("LIMIT", "SAMPLE", "is_deleted", "trace_session_id")
+    )
     assert "attrs_number[" in witness
     assert "physical_hour, trace_id, id" in candidate[0]
-    settings = [application_read_settings(capture[2]["settings"]) for capture in captures]
-    assert all(all(item[key] == 0 for key in UNLIMITED_STATEMENT_SETTINGS) for item in settings)
+    settings = [
+        application_read_settings(capture[2]["settings"]) for capture in captures
+    ]
+    assert all(
+        all(item[key] == 0 for key in UNLIMITED_STATEMENT_SETTINGS) for item in settings
+    )
     assert settings[0]["max_memory_usage"] == settings[1]["max_memory_usage"] > 0
     # Both routes run on the background Sessions thread budget.
     session_threads = graph.settings.EXACT_GRAPH_SESSION_READ_MAX_THREADS

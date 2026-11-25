@@ -35,6 +35,7 @@ const renderWithCtx = ({
   getViewConfig = () => ({}),
   activeTab = "traces",
   selectedTab,
+  projectSource,
   canSaveView,
   onTabChange = () => {},
 } = {}) => {
@@ -59,6 +60,7 @@ const renderWithCtx = ({
         projectId="p1"
         activeTab={activeTab}
         onTabChange={onTabChange}
+        projectSource={projectSource}
         canSaveView={canSaveView}
       />
     </ObserveHeaderContext.Provider>,
@@ -77,6 +79,51 @@ const typeAndSubmit = async (name) => {
   const saveBtn = screen.getByRole("button", { name: /save|create/i });
   fireEvent.click(saveBtn);
 };
+
+describe("ObserveTabBar — Query integration", () => {
+  beforeEach(() => {
+    mockSavedViewsList = [];
+    capabilities.denied = new Set();
+  });
+
+  it.each([undefined, "simulator"])(
+    "keeps Query visible for %s projects without shifting saved-view shortcuts",
+    (projectSource) => {
+      const onTabChange = vi.fn();
+      mockSavedViewsList = [
+        { id: "saved", name: "Saved traces", tab_type: "traces" },
+      ];
+      renderWithCtx({ projectSource, onTabChange });
+      fireEvent.click(screen.getByRole("button", { name: /^Query/ }));
+      expect(onTabChange).toHaveBeenLastCalledWith("query");
+      onTabChange.mockClear();
+      fireEvent.keyDown(document, { key: "2" });
+      if (projectSource === "simulator") {
+        expect(onTabChange).not.toHaveBeenCalled();
+        expect(screen.queryByRole("button", { name: /^Sessions/ })).toBeNull();
+        expect(screen.queryByRole("button", { name: /^Users/ })).toBeNull();
+        expect(screen.queryByRole("button", { name: /^Insights/ })).toBeNull();
+      } else {
+        expect(onTabChange).toHaveBeenLastCalledWith("sessions");
+        expect(screen.getByRole("button", { name: /^Users/ })).toBeVisible();
+      }
+      onTabChange.mockClear();
+      fireEvent.keyDown(document, { key: "a" });
+      if (projectSource === "simulator") {
+        expect(onTabChange).not.toHaveBeenCalled();
+      } else {
+        expect(onTabChange).toHaveBeenLastCalledWith("insights");
+      }
+      fireEvent.keyDown(document, { key: "4" });
+      expect(onTabChange).toHaveBeenLastCalledWith("view-saved");
+    },
+  );
+
+  it("does not create a trace-list saved view from the SQL tab", () => {
+    renderWithCtx({ activeTab: "query" });
+    expect(document.querySelector("[data-create-view-btn]")).toBeNull();
+  });
+});
 
 describe("ObserveTabBar — Save View snapshots current filters", () => {
   beforeEach(() => {
@@ -201,6 +248,31 @@ describe("ObserveTabBar — Insights tab", () => {
     expect(
       screen.getByRole("button", { name: "Insights, Enterprise feature" }),
     ).toBe(insightsTab());
+  });
+
+  it("does not reset the active Insights URL on click or shortcut", () => {
+    const onTabChange = vi.fn();
+    renderWithCtx({ activeTab: "insights", onTabChange });
+    fireEvent.click(insightsTab());
+    fireEvent.keyDown(document, { key: "a" });
+    expect(onTabChange).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-create-view-btn]")).toBeNull();
+  });
+
+  it("does not leave Query while typing the Insights shortcut", () => {
+    const onTabChange = vi.fn();
+    renderWithCtx({ activeTab: "query", onTabChange });
+    const input = document.createElement("textarea");
+    document.body.appendChild(input);
+    try {
+      input.focus();
+      fireEvent.keyDown(input, { key: "a" });
+      expect(onTabChange).not.toHaveBeenCalled();
+    } finally {
+      input.remove();
+    }
+    fireEvent.keyDown(document, { key: "a" });
+    expect(onTabChange).toHaveBeenCalledWith("insights");
   });
 
   it("shows no lock when Insights is allowed", () => {

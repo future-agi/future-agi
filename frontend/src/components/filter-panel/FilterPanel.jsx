@@ -235,7 +235,7 @@ function EnumValuePicker({
         }}
       >
         {value.length === 0 ? (
-          <Typography sx={{ fontSize: 13, color: "text.disabled", flex: 1 }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled", flex: 1 }}>
             Select values...
           </Typography>
         ) : (
@@ -527,7 +527,7 @@ function FilterRow({
             value: newField?.type === "enum" ? [] : "",
           });
         }}
-        sx={{ minWidth: 100, fontSize: 13, height: 30 }}
+        sx={{ minWidth: 100, fontSize: 12, height: 30 }}
         MenuProps={{ PaperProps: { sx: { maxHeight: 280 } } }}
       >
         {filterFields.map((f) => (
@@ -537,7 +537,6 @@ function FilterRow({
             disabled={
               f.value !== filter.field && takenSingleFields?.has(f.value)
             }
-            sx={{ fontSize: 13 }}
           >
             {f.label}
           </MenuItem>
@@ -550,10 +549,10 @@ function FilterRow({
         onChange={(e) =>
           onChange(index, { ...filter, operator: e.target.value })
         }
-        sx={{ minWidth: 110, fontSize: 13, height: 30 }}
+        sx={{ minWidth: 110, fontSize: 12, height: 30 }}
       >
         {operators.map((op) => (
-          <MenuItem key={op.value} value={op.value} sx={{ fontSize: 13 }}>
+          <MenuItem key={op.value} value={op.value}>
             {op.label}
           </MenuItem>
         ))}
@@ -583,7 +582,7 @@ function FilterRow({
           }
           sx={{
             minWidth: 100,
-            "& .MuiInputBase-root": { fontSize: 13, height: 30 },
+            "& .MuiInputBase-root": { fontSize: 12, height: 30 },
           }}
         />
       )}
@@ -941,7 +940,7 @@ const FilterPanel = ({
                     </IconButton>
                   </InputAdornment>
                 ) : null,
-              sx: { fontSize: 13, height: 32 },
+              sx: { fontSize: 12, height: 32 },
             }}
             fullWidth
           />
@@ -970,7 +969,6 @@ const FilterPanel = ({
                 py: 0.5,
                 px: 1,
                 textTransform: "none",
-                fontSize: 13,
                 fontWeight: 500,
                 minWidth: 0,
               },
@@ -999,7 +997,7 @@ const FilterPanel = ({
             )}
             {filterFields.length === 0 ? (
               <Typography
-                sx={{ color: "text.secondary", fontSize: 13, px: 0.5, py: 0.5 }}
+                sx={{ color: "text.secondary", fontSize: 12, px: 0.5, py: 0.5 }}
               >
                 No filters available for this view.
               </Typography>

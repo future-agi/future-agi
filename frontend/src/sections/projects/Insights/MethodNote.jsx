@@ -132,7 +132,11 @@ export default function MethodNote({ run, config, open, onToggle }) {
         aria-expanded={open}
         startIcon={
           <Iconify
-            icon={open ? "mdi:chevron-down" : "mdi:chevron-right"}
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={18}
           />
         }
@@ -159,14 +163,14 @@ export default function MethodNote({ run, config, open, onToggle }) {
                 component="dt"
                 variant="body2"
                 color="text.secondary"
-                sx={{ fontSize: 13 }}
+                sx={{ typography: "m3" }}
               >
                 {label}
               </Typography>
               <Typography
                 component="dd"
                 variant="body2"
-                sx={{ m: 0, fontSize: 13, overflowWrap: "anywhere" }}
+                sx={{ m: 0, typography: "s1_2", overflowWrap: "anywhere" }}
               >
                 {value}
               </Typography>

@@ -13,11 +13,12 @@ import threading
 from django.core.management.base import BaseCommand
 
 from tfc.temporal.common.activity_thread import OwnThreadActivityInterceptor
+from tfc.temporal.common.media_tool_interceptor import MediaToolActivityInterceptor
 
 # Queues in this set have their own workload-level concurrency boundary. A
 # generic local ``--all-queues`` worker must not also poll them, otherwise its
 # much higher concurrency silently defeats that admission control.
-_DEDICATED_TASK_QUEUES = frozenset({"exact_aggregation"})
+_DEDICATED_TASK_QUEUES = frozenset({"exact_aggregation", "sql_workbench"})
 
 
 # Blocking provider calls share these queues with the short polls that must keep running.
@@ -38,6 +39,16 @@ def _activity_thread_kwargs(queue_name: str) -> dict[str, list]:
     return {}
 
 
+def _worker_interceptors(queue_name: str) -> list:
+    """Every queue maps a missing ffmpeg to a non-retryable failure; some
+    queues also run each activity on its own thread."""
+
+    return [
+        MediaToolActivityInterceptor(),
+        *_activity_thread_kwargs(queue_name).get("interceptors", []),
+    ]
+
+
 def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
     """Return queue-specific Temporal workflow cache settings.
 
@@ -52,6 +63,49 @@ def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
     if queue_name == "exact_aggregation":
         return {"max_cached_workflows": 0}
     return {}
+
+
+async def _wait_for_namespace(client, shutdown_event, log, *, retry_seconds=5):
+    """Wait for persistence readiness before starting SDK worker validation.
+
+    A reachable Temporal frontend is not enough: its namespace lookup also
+    needs PostgreSQL. SDK validation is fatal after its bounded RPC retries,
+    unlike ordinary polling, so do not start workers during that outage.
+    A refused persistence connection surfaces as UNAVAILABLE, but a hung one
+    trips this probe's client timeout, which the SDK reports as CANCELLED
+    ("Timeout expired"); both are the same outage and both keep waiting.
+    """
+    from datetime import timedelta
+
+    from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
+    from temporalio.service import RPCError, RPCStatusCode
+
+    while not shutdown_event.is_set():
+        try:
+            await client.workflow_service.describe_namespace(
+                DescribeNamespaceRequest(namespace=client.namespace),
+                retry=False,
+                timeout=timedelta(seconds=5),
+            )
+            return not shutdown_event.is_set()
+        except RPCError as exc:
+            if exc.status not in (
+                RPCStatusCode.UNAVAILABLE,
+                RPCStatusCode.DEADLINE_EXCEEDED,
+                RPCStatusCode.RESOURCE_EXHAUSTED,
+                RPCStatusCode.CANCELLED,
+            ):
+                raise
+            log.warning(
+                "temporal_namespace_unavailable",
+                status=exc.status.name,
+                message=exc.message,
+            )
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=retry_seconds)
+        except TimeoutError:
+            pass
+    return False
 
 
 def disable_litellm_logging_worker() -> None:
@@ -301,6 +355,9 @@ class Command(BaseCommand):
                 interceptors=interceptors,
             )
 
+            if not await _wait_for_namespace(client, shutdown_event, log):
+                return
+
             # Send reload signal to dispatcher if enabled
             if reload_dispatcher:
                 try:
@@ -358,7 +415,7 @@ class Command(BaseCommand):
                     "max_heartbeat_throttle_interval": timedelta(seconds=5),
                 }
                 kwargs.update(_workflow_cache_kwargs(queue_name))
-                kwargs.update(_activity_thread_kwargs(queue_name))
+                kwargs["interceptors"] = _worker_interceptors(queue_name)
 
                 # Resource-based tuning is disabled by default due to a known
                 # bug where workers stop polling queues.
@@ -395,31 +452,29 @@ class Command(BaseCommand):
                 queues=queues_to_poll,
             )
 
-            # Run all workers concurrently until shutdown signal
-            async def run_single_worker(worker: Worker, queue_name: str):
-                async with worker:
-                    await shutdown_event.wait()
-                log.info("worker_shutdown", queue=queue_name)
-
-            # Start all workers concurrently
-            worker_tasks = [
-                asyncio.create_task(run_single_worker(w, q))
-                for w, q in zip(workers, queues_to_poll, strict=True)
-            ]
-
-            # Wait for shutdown signal, then wait for all workers to finish
-            await shutdown_event.wait()
-            log.info("shutdown_signal_received")
-
-            # Wait for all worker tasks to complete
-            await asyncio.gather(*worker_tasks, return_exceptions=True)
+            # Supervise runs directly. A fatal SDK validation/poller failure
+            # must reach the command, not leave a live process waiting forever
+            # on a shutdown signal with no task-queue pollers. TaskGroup also
+            # cancels sibling runs if one fails during startup or execution.
+            async with asyncio.TaskGroup() as group:
+                for worker in workers:
+                    group.create_task(worker.run())
+                await shutdown_event.wait()
+                log.info("shutdown_signal_received")
+                await asyncio.gather(*(worker.shutdown() for worker in workers))
 
             log.info("all_workers_shutdown_complete")
 
+        # Any exit other than a clean shutdown must reach the supervisor as a
+        # failure (on-failure restart policies, crash alerts). Default to
+        # failure so an unexpected BaseException cannot be reported as clean.
+        exit_code = 1
         try:
             runner.run(run_worker())
+            exit_code = 0
         except KeyboardInterrupt:
             log.info("worker_interrupted", reason="keyboard")
+            exit_code = 0
         except Exception as e:
             log.exception("worker_error", error=str(e))
             raise
@@ -431,4 +486,4 @@ class Command(BaseCommand):
             log.info("shutdown_threads", active_threads=active_threads)
 
             # Force exit to avoid hanging on any remaining threads
-            os._exit(0)
+            os._exit(exit_code)

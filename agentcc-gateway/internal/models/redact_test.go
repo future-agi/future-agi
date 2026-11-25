@@ -44,6 +44,10 @@ func TestRedactCredentials(t *testing.T) {
 		{"a password in the host", `Post https://user:` + liveKey + `@host/v1: boom`, liveKey, "user"},
 		{"a quoted URL", `Post "https://host/v1?key=` + liveKey + `": boom`, liveKey, "host/v1"},
 		{"a key beside a harmless param", `Post https://host/v1?alt=sse&key=` + liveKey, liveKey, "alt=sse"},
+		{"an AWS signed URL", `Get https://bucket.s3.amazonaws.com/c.json?X-Amz-Algorithm=AWS4&X-Amz-Credential=` + liveKey + `&X-Amz-Signature=` + liveKey + `&X-Amz-Security-Token=` + liveKey + `: boom`, liveKey, "X-Amz-Algorithm=AWS4"},
+		{"a GCS signed URL", `Get https://storage.googleapis.com/c.json?X-Goog-Credential=` + liveKey + `&X-Goog-Signature=` + liveKey + `: boom`, liveKey, "storage.googleapis.com"},
+		{"a password in an unparseable URL", `parse "http://bob:` + liveKey + `@host:badport/x": invalid port`, liveKey, "invalid port"},
+		{"a password in an unparseable URL with a query", `parse "http://bob:` + liveKey + `@host:badport/x?alt=sse": invalid port`, liveKey, "invalid port"},
 		{"two URLs in one message", `tried https://a/v1?key=` + liveKey + ` then https://b/v1?key=` + liveKey, liveKey, "https://b/v1"},
 	}
 

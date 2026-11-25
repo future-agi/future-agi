@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
+import { resolveFrontendTool } from "./resolve-frontend-tool.mjs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -53,6 +54,17 @@ const normalizeFrontendPath = (file) => {
   ) {
     return null;
   }
+  // Written by `yarn tokens:build` (design-system/tools/build_tokens.py):
+  // reformatting them would turn every rebuild into a whole-file diff.
+  if (
+    [
+      path.join("src", "theme", "ds-tokens.js"),
+      path.join("design-system", "tokens", "tokens.js"),
+      path.join("design-system", "tokens", "tokens.css"),
+    ].includes(relativeToFrontend)
+  ) {
+    return null;
+  }
 
   return relativeToFrontend;
 };
@@ -67,14 +79,14 @@ const prettierFiles = uniqueFiles.filter((file) =>
 );
 
 const run = (bin, args) => {
-  const command = path.join(frontendDir, "node_modules", ".bin", bin);
-  if (!existsSync(command)) {
+  const script = resolveFrontendTool(frontendDir, bin);
+  if (!script) {
     console.error(
       `Missing ${bin}. Run "yarn --cwd frontend install" before committing.`,
     );
     process.exit(1);
   }
-  const result = spawnSync(command, args, {
+  const result = spawnSync(process.execPath, [script, ...args], {
     cwd: frontendDir,
     stdio: "inherit",
   });
