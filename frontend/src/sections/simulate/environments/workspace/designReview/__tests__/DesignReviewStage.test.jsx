@@ -20,6 +20,10 @@ const mutation = { mutate: vi.fn(), isPending: false };
 const discard = { mutate: vi.fn(), isPending: false };
 let current = review;
 
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useNavigate: () => vi.fn(),
+}));
 vi.mock("src/api/simulate-environments/designReview", () => ({
   getDesignImpact: vi.fn(),
   useDesignReview: () => ({

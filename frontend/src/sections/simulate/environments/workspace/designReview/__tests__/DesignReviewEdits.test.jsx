@@ -6,6 +6,10 @@ import { render, screen, waitFor, within } from "src/utils/test-utils";
 import DesignReviewStage from "../DesignReviewStage";
 import { REVIEW_COPY, REVIEW_STATUS } from "../designReview.constants";
 
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useNavigate: () => vi.fn(),
+}));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
 vi.mock("src/utils/axios", async (importOriginal) => {
