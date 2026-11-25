@@ -507,9 +507,11 @@ class TestReadCost:
                 if "simulate_harness_suite_member" in query["sql"]
             ]
 
+        # Both reads with an unlocked default, so the preview reads its suite each time.
+        _suite(environment, _scenarios(25))
         one = member_reads()
-        _suite(environment, _scenarios(30))
         _lock(auth_client, environment)
+        _suite(environment, _scenarios(30))
         two = member_reads()
 
         # The default suite's preview, then every release's suite in one read.
