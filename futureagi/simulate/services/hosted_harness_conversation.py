@@ -504,6 +504,7 @@ def enqueue_message(
     payload: dict[str, Any] | None = None,
     server_payload: dict[str, Any] | None = None,
     expected_revision: str | None = None,
+    admit_authoring: bool = False,
 ) -> tuple[HostedHarnessConversation, HostedHarnessConversationMessage, bool]:
     """Queue a user command. ``server_payload`` holds the ``_`` keys only the platform
     sets; ``expected_revision`` is the environment revision when the caller read it."""
@@ -558,6 +559,11 @@ def enqueue_message(
                     status_code=409,
                 )
             return conversation, existing, False
+        if admit_authoring:
+            # Only a new post-build user command starts another billable turn.
+            from simulate.services.harness_usage import require_harness_authoring
+
+            require_harness_authoring(str(job.organization_id))
         if reply_to is not None:
             target = conversation.messages.filter(
                 id=reply_to,

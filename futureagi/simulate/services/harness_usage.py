@@ -10,6 +10,8 @@ from uuid import UUID, uuid5
 from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
+from django.db.models import FloatField, Sum
+from django.db.models.expressions import RawSQL
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -830,7 +832,28 @@ def price_fix_check_run(job_id) -> None:
     )
 
 
-def harness_consumption(job: HostedHarnessJob) -> dict | None:
+def builder_turn_credit_totals(job_ids: list[UUID]) -> dict[UUID, float]:
+    # Expand the frozen records in Postgres; only one total per job leaves the DB.
+    record_sum = RawSQL(
+        "(SELECT COALESCE(SUM((record->>'credits')::numeric), 0) "
+        "FROM jsonb_array_elements(report->'records') AS record)",
+        (),
+        output_field=FloatField(),
+    )
+    return dict(
+        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
+            job_id__in=job_ids, report__isnull=False
+        )
+        .order_by()
+        .values("job_id")
+        .annotate(total=Sum(record_sum))
+        .values_list("job_id", "total")
+    )
+
+
+def harness_consumption(
+    job: HostedHarnessJob, *, turn_totals: dict[UUID, float] | None = None
+) -> dict | None:
     metadata = job.payload.get("metadata") or {}
     legacy_reports = metadata.get(_REPORT_KEY) or {}
     legacy_authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
@@ -877,17 +900,15 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
     }
     # Builder turns after a build, each billed on its own outside any attempt: a selected
     # run's chat turn is billed too, so it is counted too.
-    turn_reports = list(
-        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
-            job_id=job.id, report__isnull=False
-        ).values_list("report", flat=True)
-    )
+    if turn_totals is None:
+        turn_totals = builder_turn_credit_totals([job.id])
+    turn_credits = turn_totals.get(job.id)
     if (
         not reports
         and not authoring_reports
         and not runtimes
         and not authoring_spend
-        and not turn_reports
+        and turn_credits is None
     ):
         return None
 
@@ -901,9 +922,9 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
                 else "voice_sim_minutes"
             )
             consumption[dimension] += item["amount"]
-    consumption["ai_credits"] = sum(
+    consumption["ai_credits"] = (turn_credits or 0) + sum(
         record["credits"]
-        for report in [*authoring_reports.values(), *turn_reports]
+        for report in authoring_reports.values()
         for record in report["records"]
     )
     authoring_estimate_unavailable = False
