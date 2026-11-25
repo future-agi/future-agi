@@ -3221,7 +3221,7 @@
 
 **Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
 
-**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+**Spec:** `flows/settings/api-key-expiry.spec.ts:34`
 
 **Tags:** —
 
