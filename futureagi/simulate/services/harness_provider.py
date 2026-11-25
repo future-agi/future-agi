@@ -1989,19 +1989,34 @@ class HostedHarnessProvider:
                 require_default_suite(
                     environment, request.validated_data.get("suite_version_id")
                 )
+            picks = VersionPicks(
+                agent_version_id=request.validated_data.get("agent_version_id"),
+                environment_version_id=request.validated_data.get(
+                    "environment_version_id"
+                ),
+                suite_version_id=request.validated_data.get("suite_version_id"),
+            )
+            if "scenario_ids" in request.validated_data:
+                scenario_keys = list(request.validated_data["scenario_ids"])
+            else:
+                # Run all: every scenario of the chosen suite, resolved here, then
+                # planned and checked as a list.
+                from simulate.selectors.held_back import held_back
+                from simulate.services.hosted_harness import all_run_keys
+
+                chosen = held_back(environment) if coder is not None else None
+                scenario_keys = all_run_keys(
+                    environment,
+                    picks=picks,
+                    hidden=chosen.scenario_keys if chosen is not None else (),
+                )
             child, created = create_selected_harness_run(
                 environment,
-                scenario_keys=list(request.validated_data["scenario_ids"]),
+                scenario_keys=scenario_keys,
                 trials=request.validated_data["trials"],
                 idempotency_key=idempotency_key,
                 seed=request.validated_data.get("seed"),
-                picks=VersionPicks(
-                    agent_version_id=request.validated_data.get("agent_version_id"),
-                    environment_version_id=request.validated_data.get(
-                        "environment_version_id"
-                    ),
-                    suite_version_id=request.validated_data.get("suite_version_id"),
-                ),
+                picks=picks,
                 coding_agent_key_id=str(coder.id) if coder is not None else None,
             )
             retry_dispatch = False

@@ -53723,7 +53723,11 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
         .min(1)
         .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsItemMax),
     )
-    .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax),
+    .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax)
+    .optional()
+    .describe(
+      "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, resolved by the server; an empty list is refused.",
+    ),
   trials: zod
     .number()
     .min(1)
@@ -57748,7 +57752,11 @@ export const SimulateApiHarnessJobsRunsBody = zod.object({
     .array(
       zod.string().min(1).max(simulateApiHarnessJobsRunsBodyScenarioIdsItemMax),
     )
-    .max(simulateApiHarnessJobsRunsBodyScenarioIdsMax),
+    .max(simulateApiHarnessJobsRunsBodyScenarioIdsMax)
+    .optional()
+    .describe(
+      "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, resolved by the server; an empty list is refused.",
+    ),
   trials: zod
     .number()
     .min(1)

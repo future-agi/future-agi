@@ -74514,10 +74514,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessRunCreate: {
-      required: ["scenario_ids"],
       type: "object",
       properties: {
         scenario_ids: {
+          description:
+            "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, resolved by the server; an empty list is refused.",
           type: "array",
           items: {
             type: "string",
