@@ -50,7 +50,7 @@ test('DASH-E2E-001: an imported numeric dataset column works in a saved widget',
   const widgetName = `e2e-dash1-sum-${suffix}`;
 
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Add Dataset', exact: true }).first().click();
+  await page.getByRole('button', { name: /^add dataset$/i }).first().click();
   await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click();
   const uploadDialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
   await uploadFixture(uploadDialog.locator('input[type="file"]'), 'catalog-regions.csv');
@@ -119,7 +119,7 @@ test('DASH-E2E-001: an imported numeric dataset column works in a saved widget',
   // supplies the unique name through the public update endpoint.
   const created = page.waitForResponse(r => new URL(r.url()).pathname === DASHBOARDS &&
     r.request().method() === 'POST', { timeout: UI_READY });
-  await page.getByRole('button', { name: 'Create Dashboard', exact: true }).click();
+  await page.getByRole('button', { name: /^create dashboard$/i }).click();
   const createdResponse = await created;
   expect(createdResponse.status()).toBe(200);
   const dashboardId = ((await createdResponse.json()) as { result: { id: string } }).result.id;
@@ -130,7 +130,7 @@ test('DASH-E2E-001: an imported numeric dataset column works in a saved widget',
     ['PUT', 'PATCH'].includes(r.request().method()), { timeout: UI_READY });
   await page.getByPlaceholder('Untitled Dashboard').press('Enter');
   expect((await named).status()).toBe(200);
-  await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+  await page.getByRole('button', { name: /^add widget$/i }).first().click();
   await page.getByText('Untitled widget', { exact: true }).click();
   await page.getByPlaceholder('Untitled widget').fill(widgetName);
   await page.getByPlaceholder('Untitled widget').press('Enter');

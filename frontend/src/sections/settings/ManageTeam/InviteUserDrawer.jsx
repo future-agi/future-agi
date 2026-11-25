@@ -10,8 +10,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { useSnackbar } from "src/components/snackbar";
+import { generateNameFromEmail } from "src/sections/auth/jwt/common";
 
 import { InviteMemberValidation } from "./validation";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const InviteUserDrawerForm = ({ onClose }) => {
   const { control, handleSubmit, setError } = useForm({
@@ -26,26 +28,32 @@ const InviteUserDrawerForm = ({ onClose }) => {
   const { enqueueSnackbar } = useSnackbar();
 
   const { mutate, isPending } = useMutation({
+    meta: { errorHandled: true },
     mutationFn: (data) =>
       axios.post(endpoints.settings.teams.inviteMember, data),
     onSuccess: (response) => {
-      // Debug: log response structure
-
-      const result = response?.data?.result || response?.result;
+      const result = response?.data?.result;
 
       // Check if there are errors in the response
       if (result?.errors && result.errors.length > 0) {
         // Display all errors
         result.errors.forEach((error) => {
-          enqueueSnackbar(error, { variant: "error" });
+          enqueueSnackbar(error.error, { variant: "error" });
         });
         return; // Don't close drawer or show success
       }
 
-      // Only show success if there were actually successful invites
-      const successCount = result?.invited?.length || 0;
-      if (successCount > 0) {
-        enqueueSnackbar(`Successfully invited ${successCount} user(s)`, {
+      const members = result?.created_members || [];
+      const warnings = members.filter((member) => member.invite_email_warning);
+      if (warnings.length > 0) {
+        warnings.forEach((member) => {
+          enqueueSnackbar(`${member.email}: ${member.invite_email_warning}`, {
+            variant: "warning",
+            persist: true,
+          });
+        });
+      } else if (members.length > 0) {
+        enqueueSnackbar(`Successfully invited ${members.length} user(s)`, {
           variant: "success",
         });
       }
@@ -53,21 +61,40 @@ const InviteUserDrawerForm = ({ onClose }) => {
       onClose();
       queryClient.invalidateQueries({ queryKey: ["member-list"], type: "all" });
     },
-    onError: (e) => {
-      // Handle actual HTTP errors (network issues, 500 errors, etc.)
-      const errorMessage = e?.message || "Failed to send invite";
+    onError: (e, variables) => {
+      const result = e?.result;
+      const submittedEmail = variables?.members?.[0]?.email
+        ?.trim()
+        .toLowerCase();
+      const memberError = Array.isArray(result?.errors)
+        ? result.errors.find(
+            (error) =>
+              typeof error?.email === "string" &&
+              error.email.trim().toLowerCase() === submittedEmail,
+          )
+        : null;
+      const errorMessage =
+        [
+          memberError?.error,
+          result?.message,
+          typeof result === "string" ? result : null,
+          e?.message,
+        ].find((message) => typeof message === "string" && message.trim()) ||
+        "Failed to send invite";
       enqueueSnackbar(errorMessage, { variant: "error" });
-
-      if (e?.result) {
-        setError("email", { message: e?.result });
-      }
+      setError("email", { message: errorMessage });
     },
   });
 
   const onFormSubmit = (formValues) =>
     mutate({
-      email: formValues.email,
-      organization_role: formValues.organizationRole,
+      members: [
+        {
+          email: formValues.email,
+          name: generateNameFromEmail(formValues.email),
+          organization_role: formValues.organizationRole,
+        },
+      ],
     });
 
   return (
@@ -93,7 +120,7 @@ const InviteUserDrawerForm = ({ onClose }) => {
           Invite User
         </Typography>
         <IconButton onClick={() => onClose()}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Box
@@ -144,20 +171,23 @@ InviteUserDrawerForm.propTypes = {
 const InviteUserDrawer = (props) => {
   const theme = useTheme();
   const { open, onClose } = props;
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "80vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 9999,
           top: "10%",
           right: 30,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           "& .MuiDrawer-paper": {
             boxShadow: theme.shadows[15],

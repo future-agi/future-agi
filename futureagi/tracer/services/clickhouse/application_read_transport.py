@@ -23,6 +23,8 @@ def create_application_read_http_client(**kwargs):
     import clickhouse_connect
     from urllib3.util import Timeout
 
+    from tfc.telemetry.instrumentation import instrument_clickhouse_client
+
     kwargs.setdefault("autogenerate_session_id", False)
     connect = kwargs.setdefault("connect_timeout", 10)
     bootstrap = kwargs.setdefault("send_receive_timeout", 10)
@@ -34,7 +36,19 @@ def create_application_read_http_client(**kwargs):
     kwargs["settings"] = application_read_settings(kwargs.get("settings"))
     client = clickhouse_connect.get_client(**kwargs)
     client.timeout = Timeout(connect=int(connect), read=None)
-    return client
+    return instrument_clickhouse_client(client)
+
+
+def create_metrics_bounded_read_transport(**kwargs):
+    """Explicit, exclusive metrics lane; never changes native application defaults.
+
+    This adapter is usable only through reader_lifetime.bounded_read, which owns
+    the caller-supplied budgets, crash-stable protection and terminal cleanup.
+    It is not enabled by application_read_context or by any rollout flag.
+    """
+    from tracer.services.derived_metrics.reader_transport import MetricsReadTransport
+
+    return MetricsReadTransport(**kwargs)
 
 
 @contextmanager

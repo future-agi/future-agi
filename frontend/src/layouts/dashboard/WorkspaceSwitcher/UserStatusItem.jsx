@@ -12,7 +12,7 @@ const UserStatusItem = ({ user, status }) => {
     <Box
       sx={{
         border: "1px solid var(--border-light)",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         padding: 1,
         display: "flex",
         flexDirection: "row",
@@ -30,7 +30,7 @@ const UserStatusItem = ({ user, status }) => {
       >
         <ShowComponent condition={status === STATUS_MAP.FAILED}>
           <SvgColor
-            sx={{ width: "14px", color: "#FB2C36" }}
+            sx={{ width: "14px", color: "status.danger.fg" }}
             src="/assets/icons/ic_critical.svg"
           />
         </ShowComponent>
@@ -42,7 +42,7 @@ const UserStatusItem = ({ user, status }) => {
             <Typography
               typography={"s2"}
               fontWeight={"fontWeightRegular"}
-              color="red.500"
+              color="status.danger.fg"
             >
               {user.reason}
             </Typography>
@@ -53,15 +53,15 @@ const UserStatusItem = ({ user, status }) => {
             label={"Added"}
             icon={
               <SvgColor
-                sx={{ width: 16, color: "green.700" }}
+                sx={{ width: 16, color: "status.success.fg" }}
                 src="/assets/icons/ic_completed.svg"
               />
             }
             sx={{
               bgcolor: "transparent",
-              color: "green.700",
+              color: "status.success.fg",
               "& .MuiChip-icon": {
-                color: "green.700",
+                color: "status.success.fg",
               },
               ":hover": {
                 backgroundColor: "transparent",
@@ -75,15 +75,15 @@ const UserStatusItem = ({ user, status }) => {
           label={"Failed"}
           icon={
             <SvgColor
-              sx={{ width: 14, color: "red.700" }}
+              sx={{ width: 14, color: "status.danger.fg" }}
               src="/assets/icons/ic_critical.svg"
             />
           }
           sx={{
-            color: "red.700",
+            color: "status.danger.fg",
             backgroundColor: "transparent",
             "& .MuiChip-icon": {
-              color: "red.700",
+              color: "status.danger.fg",
             },
             ":hover": {
               backgroundColor: "transparent",
@@ -99,15 +99,14 @@ const UserStatusItem = ({ user, status }) => {
             <SvgColor sx={{ width: 16 }} src="/assets/icons/ic_email.svg" />
           }
           sx={{
-            bgcolor: "green.50",
-            color: "green.700",
+            bgcolor: "status.success.bg",
+            color: "status.success.fg",
             px: 1,
             "& .MuiChip-icon": {
-              color: "green.700",
-              borderRadius: "4px",
+              color: "status.success.fg",
             },
             ":hover": {
-              backgroundColor: "green.50",
+              backgroundColor: "status.success.bg",
             },
           }}
         />

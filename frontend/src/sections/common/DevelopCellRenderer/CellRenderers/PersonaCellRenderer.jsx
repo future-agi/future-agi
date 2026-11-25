@@ -20,11 +20,7 @@ const PersonaCellRenderer = ({ value }) => {
 
   return (
     <CustomTooltip
-      slotProps={{
-        tooltip: {
-          sx: { backgroundColor: "var(--bg-paper) !important" },
-        },
-      }}
+      card
       show={true}
       arrow={true}
       title={

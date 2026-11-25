@@ -34,11 +34,14 @@ def _ensure_test_score_tenant_column():
 def session_count_engine(request):
     execute, insert = request.getfixturevalue("engine")
     execute("ALTER TABLE spans ADD COLUMN trace_session_id Nullable(UUID)")
-    execute("""CREATE TABLE end_users (end_user_id UUID, _version UInt64)
-        ENGINE=ReplacingMergeTree(_version) ORDER BY end_user_id""")
+    execute("""CREATE TABLE end_users (project_id UUID, end_user_id UUID, _version UInt64)
+        ENGINE=ReplacingMergeTree(_version) ORDER BY (project_id, end_user_id)""")
     execute("""CREATE TABLE trace_session_id_remap (old_id UUID, new_id UUID, _version UInt64)
         ENGINE=ReplacingMergeTree(_version) ORDER BY old_id""")
-    execute("INSERT INTO end_users VALUES (%(user)s, 1)", {"user": USER})
+    execute(
+        "INSERT INTO end_users VALUES (%(project)s, %(user)s, 1)",
+        {"project": PROJECT, "user": USER},
+    )
     execute(
         "INSERT INTO trace_session_id_remap VALUES (%(a)s,%(group)s,1),(%(b)s,%(group)s,1)",
         {"a": SESSION_A, "b": SESSION_B, "group": GROUP},

@@ -1,4 +1,4 @@
-import { Chip, Stack, Typography } from "@mui/material";
+import { Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import {
@@ -10,9 +10,9 @@ import {
 const getEvaluationMetricColor = (normalized) => {
   const numericValue = extractScore(normalized);
   if (numericValue < 50) {
-    return { backgroundColor: "red.o10", borderColor: "red.500" };
+    return "status.danger.fg";
   }
-  return { backgroundColor: "green.o10", borderColor: "green.500" };
+  return "status.success.fg";
 };
 
 export default function EvaluationsContent({ evaluationMetrics = {} }) {
@@ -42,8 +42,7 @@ export default function EvaluationsContent({ evaluationMetrics = {} }) {
         Object.keys(evaluationMetrics).map((key, index) => {
           const metric = evaluationMetrics[key];
           const normalized = normalizeEvalCellValue(metric?.score);
-          const { backgroundColor, borderColor } =
-            getEvaluationMetricColor(normalized);
+          const scoreColor = getEvaluationMetricColor(normalized);
           const numericScore = extractScore(normalized);
           const choiceLabel = extractChoiceLabel(normalized);
           const scoreText = choiceLabel
@@ -52,27 +51,12 @@ export default function EvaluationsContent({ evaluationMetrics = {} }) {
               ? "—"
               : `${numericScore}%`;
           return (
-            <Chip
+            <Typography
               key={index}
-              label={
-                <Typography
-                  typography="s2"
-                  sx={{ color: borderColor }}
-                  fontWeight={"fontWeightMedium"}
-                >{`${metric.name}: ${scoreText}`}</Typography>
-              }
-              sx={{
-                backgroundColor: backgroundColor,
-                height: "24px",
-                borderRadius: "8px",
-                margin: "4px",
-                padding: "4px",
-                "&:hover": {
-                  backgroundColor,
-                  borderColor,
-                },
-              }}
-            />
+              typography="s2"
+              fontWeight={"fontWeightMedium"}
+              sx={{ color: scoreColor, py: 0.5 }}
+            >{`${metric.name}: ${scoreText}`}</Typography>
           );
         })
       )}

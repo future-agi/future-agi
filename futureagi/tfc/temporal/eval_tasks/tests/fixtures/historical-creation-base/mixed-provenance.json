@@ -1,0 +1,14 @@
+{
+  "base": "ae0bf483a052580a2e57da454d51b5a43b90fbc2",
+  "candidate_tree": "8f3d305e6b9ca7bcdbedf88ed0ea0d39e813a367",
+  "created_at": "2026-11-22T11:56:21.504532+00:00",
+  "workflow_id": "eval-task-c91af082-cf33-4747-b8ca-32120d2f73a0",
+  "run_id": "01a2031d-4c98-764f-9145-ebabca56318d",
+  "sha256": "69c9d974ae81e4bca30b0195ed77c87a6a6306b4b152a91728ab75f88d40a2db",
+  "sanitized_derivative": {
+    "raw_sha256": "ea5893b1fbe500fa9fe45ca99c37152791a56f45ed9c4fd1283403a1aa208003",
+    "replacements": {
+      "/events/0/workflowExecutionStartedEventAttributes/identity": "0@replay-fixture"
+    }
+  }
+}

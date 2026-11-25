@@ -9,12 +9,13 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
+from accounts.authentication import viewer_denied
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.agent_definition import AgentDefinitionSerializer
 from simulate.serializers.requests.agent_definition import (
@@ -22,25 +23,52 @@ from simulate.serializers.requests.agent_definition import (
     AgentDefinitionCreateRequestSerializer,
     AgentDefinitionEditRequestSerializer,
     AgentDefinitionFilterSerializer,
+    AgentRunsQuerySerializer,
     FetchAssistantRequestSerializer,
 )
 from simulate.serializers.response.agent_definition import (
     AgentDefinitionBulkDeleteResponseSerializer,
     AgentDefinitionCreateResponseSerializer,
     AgentDefinitionDeleteResponseSerializer,
+    AgentDefinitionDetailResponseSerializer,
     AgentDefinitionEditResponseSerializer,
     AgentDefinitionListResponseSerializer,
     AgentDefinitionResponseSerializer,
+    AgentRunsResponseSerializer,
     FetchAssistantResponseSerializer,
 )
 from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
+from simulate.services.agent_connect import found_check_required
 from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
+    delete_agent,
+    delete_agents,
     is_masked,
+    merge_websocket_secrets,
     resolve_api_key_for_version,
     resolve_stored_api_key,
     sync_provider_credentials,
+)
+from simulate.services.agent_overview import (
+    annotate_agent_rows,
+    environment_refs,
+    filter_agent_rows,
+    observability_on,
+    observe_project,
+    recent_agent_runs,
+    version_list_context,
+)
+from simulate.services.harness_agent_changes import poll_interval_seconds
+from simulate.services.harness_agent_versions import (
+    connected_agent,
+    environment_owned,
+)
+from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.production_project import (
+    ProductionProjectError,
+    link_production_project,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
@@ -51,6 +79,7 @@ except ImportError:
     VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -62,11 +91,28 @@ from tracer.models.replay_session import ReplaySession
 from tracer.services.observability_providers import (
     OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
 )
-from tracer.utils.observability_provider import create_observability_provider
+from tracer.services.observability_switch import (
+    ObservabilityRefused,
+    observability_is_on,
+    refusal_body,
+    set_agent_observability,
+)
 from tracer.utils.otel import ResourceLimitError
 from tracer.utils.replay_session import link_agent_to_replay_session
 
 logger = structlog.get_logger(__name__)
+
+
+class AgentInUse(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "agent_in_use"
+
+
+def _conflict(exc: HostedHarnessError) -> Response:
+    return Response(
+        build_error_envelope(exc.message, status_code=exc.status_code, code=exc.code),
+        status=exc.status_code,
+    )
 
 
 def soft_delete_agent_definition_and_versions(agent):
@@ -114,7 +160,6 @@ class AgentDefinitionView(APIView):
 
             validated = request.validated_query_data
             search_query = validated.get("search", "").strip()
-            agent_type = validated.get("agent_type", None)
             required_agent_id = validated.get("agent_definition_id", None)
 
             # Use Subquery to get latest version info in a single query (avoid N+1)
@@ -131,15 +176,21 @@ class AgentDefinitionView(APIView):
                 .values("id")[:1]
             )
 
-            agents = AgentDefinition.objects.filter(
-                organization=user_organization,
-            ).annotate(
-                _latest_version=Subquery(latest_version_subquery),
-                _latest_version_id=Subquery(latest_version_id_subquery),
+            agents = (
+                filter_agent_rows(
+                    annotate_agent_rows(
+                        AgentDefinition.objects.filter(
+                            organization=user_organization,
+                        )
+                    ),
+                    validated,
+                )
+                .annotate(
+                    _latest_version=Subquery(latest_version_subquery),
+                    _latest_version_id=Subquery(latest_version_id_subquery),
+                )
+                .select_related("observability_provider__project", "production_project")
             )
-
-            if agent_type is not None:
-                agents = agents.filter(agent_type=agent_type)
 
             # Apply search filter
             if search_query:
@@ -176,7 +227,11 @@ class AgentDefinitionView(APIView):
                 paginator = ExtendedPageNumberPagination()
                 result_page = paginator.paginate_queryset(agents, request)
 
-            serializer = AgentDefinitionListResponseSerializer(result_page, many=True)
+            serializer = AgentDefinitionListResponseSerializer(
+                result_page,
+                many=True,
+                context={"environments": environment_refs(result_page)},
+            )
             return paginator.get_paginated_response(serializer.data)
 
         except NotFound:
@@ -186,6 +241,7 @@ class AgentDefinitionView(APIView):
                 f"Failed to retrieve agent definitions: {str(e)}"
             )
 
+    @viewer_denied("delete agents")
     @validated_request(
         request_serializer=AgentDefinitionBulkDeleteRequestSerializer,
         responses={
@@ -202,23 +258,16 @@ class AgentDefinitionView(APIView):
         try:
             agent_ids = request.validated_data["agent_ids"]
 
-            with transaction.atomic():
-                updated_agents = AgentDefinition.objects.filter(
-                    id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
-
-                updated_versions = AgentVersion.objects.filter(
-                    agent_definition_id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
+            updated_agents, updated_versions, skipped = delete_agents(
+                getattr(request, "organization", None) or request.user.organization,
+                agent_ids,
+            )
 
             response_data = {
                 "message": "Agents deleted successfully",
                 "agents_updated": updated_agents,
                 "versions_updated": updated_versions,
+                "skipped_agent_ids": skipped,
             }
             return Response(
                 AgentDefinitionBulkDeleteResponseSerializer(response_data).data,
@@ -238,6 +287,7 @@ class CreateAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @viewer_denied("create an agent")
     @validated_request(
         request_serializer=AgentDefinitionCreateRequestSerializer,
         responses={
@@ -257,19 +307,18 @@ class CreateAgentDefinitionView(APIView):
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            workspace = getattr(request.user, "workspace", None)
+            workspace = getattr(request, "workspace", None) or getattr(
+                request.user, "workspace", None
+            )
             user_id = str(request.user.id)
             commit_message = validated["commit_message"]
             description = validated.get("description", "")
             enable_observability = validated.get("observability_enabled", False)
-            project_name = validated.get("agent_name")
             assistant_id = validated.get("assistant_id")
             api_key = validated.get("api_key")
             provider = validated.get("provider")
             replay_session_id = validated.get("replay_session_id")
-            observability_provider = None
-
-            if (
+            turn_on_observability = (
                 enable_observability
                 and assistant_id != ""
                 and api_key != ""
@@ -280,69 +329,71 @@ class CreateAgentDefinitionView(APIView):
                     ProviderChoices.BLAND,
                     ProviderChoices.OTHERS,
                 ]
-            ):
-                observability_provider = create_observability_provider(
-                    enabled=True,
-                    user_id=user_id,
+            )
+
+            with transaction.atomic():
+                # Create agent definition — livekit_* fields are NOT model
+                # columns, they're routed to ProviderCredentials below.
+                agent = AgentDefinition.objects.create(
+                    agent_name=validated["agent_name"],
+                    agent_type=validated["agent_type"],
+                    description=description,
+                    provider=provider,
+                    api_key=api_key,
+                    assistant_id=assistant_id,
+                    authentication_method=validated.get("authentication_method") or "",
+                    language=validated.get("language"),
+                    languages=validated.get("languages") or ["en"],
+                    contact_number=validated.get("contact_number"),
+                    inbound=validated.get("inbound", True),
+                    target_speaks_first=validated.get("target_speaks_first"),
+                    knowledge_base_id=validated.get("knowledge_base"),
+                    model=validated.get("model"),
+                    model_details=validated.get("model_details") or {},
+                    websocket_url=validated.get("websocket_url"),
+                    websocket_headers=validated.get("websocket_headers") or {},
                     organization=organization,
                     workspace=workspace,
-                    project_name=project_name,
-                    provider=provider,
+                    observability_provider=None,
                 )
 
-            # Create agent definition — livekit_* fields are NOT model
-            # columns, they're routed to ProviderCredentials below.
-            agent = AgentDefinition.objects.create(
-                agent_name=validated["agent_name"],
-                agent_type=validated["agent_type"],
-                description=description,
-                provider=provider,
-                api_key=api_key,
-                assistant_id=assistant_id,
-                authentication_method=validated.get("authentication_method") or "",
-                language=validated.get("language"),
-                languages=validated.get("languages") or ["en"],
-                contact_number=validated.get("contact_number"),
-                inbound=validated.get("inbound", True),
-                target_speaks_first=validated.get("target_speaks_first"),
-                knowledge_base_id=validated.get("knowledge_base"),
-                model=validated.get("model"),
-                model_details=validated.get("model_details") or {},
-                websocket_url=validated.get("websocket_url"),
-                websocket_headers=validated.get("websocket_headers") or {},
-                organization=organization,
-                workspace=workspace,
-                observability_provider=observability_provider,
-            )
+                # Create the first version first so ProviderCredentials can link to it.
+                version = agent.create_version(
+                    description=description,
+                    commit_message=commit_message,
+                    status=AgentVersion.StatusChoices.ACTIVE,
+                )
 
-            # Create the first version first so ProviderCredentials can link to it.
-            version = agent.create_version(
-                description=description,
-                commit_message=commit_message,
-                status=AgentVersion.StatusChoices.ACTIVE,
-            )
+                # Route livekit/provider credentials to ProviderCredentials table,
+                # now linked to the version instead of the agent definition.
+                creds_input = ProviderCredentialsInput(
+                    provider=provider or "",
+                    api_key=api_key,
+                    assistant_id=assistant_id,
+                    livekit_url=validated.get("livekit_url"),
+                    livekit_api_key=validated.get("livekit_api_key"),
+                    livekit_api_secret=validated.get("livekit_api_secret"),
+                    livekit_agent_name=validated.get("livekit_agent_name"),
+                    livekit_config_json=validated.get("livekit_config_json"),
+                    livekit_max_concurrency=validated.get("livekit_max_concurrency"),
+                    provider_was_provided="provider" in request.data,
+                )
+                sync_provider_credentials(version, creds_input)
 
-            # Route livekit/provider credentials to ProviderCredentials table,
-            # now linked to the version instead of the agent definition.
-            creds_input = ProviderCredentialsInput(
-                provider=provider or "",
-                api_key=api_key,
-                assistant_id=assistant_id,
-                livekit_url=validated.get("livekit_url"),
-                livekit_api_key=validated.get("livekit_api_key"),
-                livekit_api_secret=validated.get("livekit_api_secret"),
-                livekit_agent_name=validated.get("livekit_agent_name"),
-                livekit_config_json=validated.get("livekit_config_json"),
-                livekit_max_concurrency=validated.get("livekit_max_concurrency"),
-                provider_was_provided="provider" in request.data,
-            )
-            sync_provider_credentials(version, creds_input)
+                if turn_on_observability:
+                    set_agent_observability(
+                        agent_definition=agent,
+                        enabled=True,
+                        user_id=user_id,
+                        organization=organization,
+                        workspace=agent.workspace,
+                    )
 
-            # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
-            version.configuration_snapshot = version.create_snapshot(
-                commit_message=version.commit_message or ""
-            )
-            version.save(update_fields=["configuration_snapshot"])
+                # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
+                version.configuration_snapshot = version.create_snapshot(
+                    commit_message=version.commit_message or ""
+                )
+                version.save(update_fields=["configuration_snapshot"])
 
             if replay_session_id:
                 link_agent_to_replay_session(
@@ -361,6 +412,8 @@ class CreateAgentDefinitionView(APIView):
             return self._gm.not_found(get_error_message("REPLAY_SESSION_NOT_FOUND"))
         except ResourceLimitError:
             return self._gm.bad_request("PROJECT CREATION LIMIT REACHED")
+        except ObservabilityRefused as error:
+            return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to create agent definition: {str(e)}"
@@ -377,7 +430,7 @@ class AgentDefinitionDetailView(APIView):
 
     @swagger_auto_schema(
         responses={
-            200: AgentDefinitionResponseSerializer,
+            200: AgentDefinitionDetailResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
@@ -387,33 +440,66 @@ class AgentDefinitionDetailView(APIView):
         Get details of a specific agent definition with version information.
         """
         try:
-            agent = AgentDefinition.objects.get(
-                id=agent_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
+            agent = (
+                annotate_agent_rows(AgentDefinition.objects.all())
+                .select_related("observability_provider__project", "production_project")
+                .get(
+                    id=agent_id,
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    deleted=False,
+                )
             )
 
             agent_data = AgentDefinitionResponseSerializer(agent).data
 
             # Get version information
-            versions = agent.get_version_history()
-            versions_data = AgentVersionListResponseSerializer(versions, many=True).data
-
-            # Get active version
+            versions = list(agent.get_version_history())
             active_version = agent.active_version
+            context = version_list_context(
+                versions
+                + (
+                    [active_version]
+                    if active_version is not None and active_version not in versions
+                    else []
+                )
+            )
+            versions_data = AgentVersionListResponseSerializer(
+                versions, many=True, context=context
+            ).data
             active_version_data = None
             if active_version:
                 active_version_data = AgentVersionListResponseSerializer(
-                    active_version
+                    active_version, context=context
                 ).data
 
+            agent_kind = getattr(agent, "_agent_kind", None)
+            source = getattr(agent, "_source", None)
             return Response(
                 {
                     **agent_data,
                     "versions": versions_data,
                     "active_version": active_version_data,
                     "version_count": agent.version_count,
+                    "agent_kind": agent_kind,
+                    "source": source,
+                    "environment_count": agent._environment_count,
+                    "observability_enabled": observability_on(agent),
+                    "observe_project": observe_project(agent, agent_kind),
+                    "connected": connected_agent(agent.id),
+                    "managed_by": (
+                        next(iter(environment_refs([agent]).get(agent.id) or []), None)
+                        if environment_owned(agent.id)
+                        else None
+                    ),
+                    "found_check": {
+                        "required": found_check_required(agent),
+                        "done_at": agent.found_checked_at,
+                    },
+                    "source_checked_at": agent.source_checked_at,
+                    "source_check_interval_seconds": (
+                        poll_interval_seconds() if source == "github" else None
+                    ),
                 },
                 status=status.HTTP_200_OK,
             )
@@ -424,6 +510,31 @@ class AgentDefinitionDetailView(APIView):
             return self._gm.internal_server_error_response(
                 f"Failed to retrieve agent definition: {str(e)}"
             )
+
+
+class AgentRunsView(APIView):
+    permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
+
+    @validated_request(
+        query_serializer=AgentRunsQuerySerializer,
+        responses={
+            200: AgentRunsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    def get(self, request, agent_id, *args, **kwargs):
+        agent = AgentDefinition.objects.filter(
+            id=agent_id,
+            organization=getattr(request, "organization", None)
+            or request.user.organization,
+            deleted=False,
+        ).first()
+        if agent is None:
+            return self._gm.not_found("Agent definition not found")
+        runs = recent_agent_runs(agent, request.validated_query_data["limit"])
+        return Response({"results": runs}, status=status.HTTP_200_OK)
 
 
 class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -496,6 +607,8 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
 
     @swagger_auto_schema(
         responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         }
@@ -504,7 +617,10 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def perform_destroy(self, instance):
-        soft_delete_agent_definition_and_versions(instance)
+        try:
+            delete_agent(instance.organization, instance.id)
+        except HostedHarnessError as exc:
+            raise AgentInUse(exc.message, code=exc.code) from exc
 
     @validated_request(
         request_serializer=FetchAssistantRequestSerializer,
@@ -651,6 +767,7 @@ class EditAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @viewer_denied("edit an agent")
     @validated_request(
         request_serializer=AgentDefinitionEditRequestSerializer,
         responses={
@@ -700,43 +817,92 @@ class EditAgentDefinitionView(APIView):
                 "websocket_url",
                 "websocket_headers",
             ]
+            changed_fields = []
             for field in update_fields:
                 if field == "api_key" and preserve_existing_api_key:
                     continue
                 if field in validated:
                     setattr(agent, field, validated[field])
+                    changed_fields.append(field)
             if "knowledge_base" in validated:
                 agent.knowledge_base_id = validated["knowledge_base"]
-            agent.save()
-
-            # Route livekit_* fields to ProviderCredentials so they
-            # actually persist (setattr on the model is a no-op for these
-            # since they aren't real columns).
-            if preserve_existing_api_key:
-                version = agent.active_version or agent.latest_version
-                existing_api_key = (
-                    resolve_api_key_for_version(version) if version else None
+                changed_fields.append("knowledge_base")
+            # Only what this request set: a full save of this copy could undo an
+            # observability link another request wrote meanwhile.
+            with transaction.atomic():
+                current = (
+                    AgentDefinition.objects.select_for_update(of=("self",))
+                    .only("id", "websocket_url", "websocket_headers")
+                    .get(pk=agent.pk)
                 )
-            else:
-                existing_api_key = None
-            version = agent.active_version or agent.latest_version
+                for field, value in merge_websocket_secrets(
+                    validated, current.websocket_url, current.websocket_headers
+                ).items():
+                    setattr(agent, field, value)
+                agent.save(update_fields=[*changed_fields, "updated_at"])
 
-            creds_input = ProviderCredentialsInput(
-                provider=validated.get("provider") or agent.provider or "",
-                api_key=existing_api_key
-                if preserve_existing_api_key
-                else validated.get("api_key"),
-                assistant_id=validated.get("assistant_id"),
-                livekit_url=validated.get("livekit_url"),
-                livekit_api_key=validated.get("livekit_api_key"),
-                livekit_api_secret=validated.get("livekit_api_secret"),
-                livekit_agent_name=validated.get("livekit_agent_name"),
-                livekit_config_json=validated.get("livekit_config_json"),
-                livekit_max_concurrency=validated.get("livekit_max_concurrency"),
-                provider_was_provided="provider" in request.data,
-            )
-            if version:
-                sync_provider_credentials(version, creds_input)
+                # Route livekit_* fields to ProviderCredentials so they
+                # actually persist (setattr on the model is a no-op for these
+                # since they aren't real columns).
+                if preserve_existing_api_key:
+                    version = agent.active_version or agent.latest_version
+                    existing_api_key = (
+                        resolve_api_key_for_version(version) if version else None
+                    )
+                else:
+                    existing_api_key = None
+                version = agent.active_version or agent.latest_version
+
+                creds_input = ProviderCredentialsInput(
+                    provider=validated.get("provider") or agent.provider or "",
+                    api_key=(
+                        existing_api_key
+                        if preserve_existing_api_key
+                        else validated.get("api_key")
+                    ),
+                    assistant_id=validated.get("assistant_id"),
+                    livekit_url=validated.get("livekit_url"),
+                    livekit_api_key=validated.get("livekit_api_key"),
+                    livekit_api_secret=validated.get("livekit_api_secret"),
+                    livekit_agent_name=validated.get("livekit_agent_name"),
+                    livekit_config_json=validated.get("livekit_config_json"),
+                    livekit_max_concurrency=validated.get("livekit_max_concurrency"),
+                    provider_was_provided="provider" in request.data,
+                )
+                if version:
+                    sync_provider_credentials(version, creds_input)
+                if "production_project_id" in validated:
+                    link_production_project(
+                        agent_definition=agent,
+                        project_id=validated["production_project_id"],
+                        workspace=getattr(request, "workspace", None),
+                    )
+                if "observability_enabled" in validated:
+                    set_agent_observability(
+                        agent_definition=agent,
+                        enabled=validated["observability_enabled"],
+                        user_id=str(request.user.id),
+                        organization=agent.organization,
+                        workspace=agent.workspace,
+                    )
+                    # The form saves from the latest copy; the active one may be older.
+                    state = observability_is_on(agent)
+                    pks = {
+                        v.pk
+                        for v in (agent.active_version, agent.latest_version)
+                        if v is not None
+                    }
+                    locked = (
+                        AgentVersion.no_workspace_objects.select_for_update()
+                        .filter(pk__in=pks)
+                        .order_by("pk")
+                    )
+                    for pk, raw in locked.values_list("pk", "configuration_snapshot"):
+                        snapshot = dict(raw) if isinstance(raw, dict) else {}
+                        snapshot["observability_enabled"] = state
+                        AgentVersion.no_workspace_objects.filter(pk=pk).update(
+                            configuration_snapshot=snapshot
+                        )
             updated_agent = agent
 
             response_data = {
@@ -747,6 +913,12 @@ class EditAgentDefinitionView(APIView):
 
         except AgentDefinition.DoesNotExist:
             return self._gm.not_found("Agent definition not found")
+        except ObservabilityRefused as error:
+            return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except CredentialsNeedReentry as error:
+            return self._gm.bad_request(error.message)
+        except ProductionProjectError as error:
+            return self._gm.bad_request(str(error))
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to update agent definition: {str(e)}"
@@ -761,9 +933,12 @@ class DeleteAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @viewer_denied("delete an agent")
     @swagger_auto_schema(
         responses={
             200: AgentDefinitionDeleteResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
@@ -780,7 +955,7 @@ class DeleteAgentDefinitionView(APIView):
                 deleted=False,
             )
 
-            soft_delete_agent_definition_and_versions(agent)
+            delete_agent(agent.organization, agent.id)
 
             response_data = {"message": "Agent definition deleted successfully"}
             return Response(
@@ -788,6 +963,8 @@ class DeleteAgentDefinitionView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except HostedHarnessError as exc:
+            return _conflict(exc)
         except AgentDefinition.DoesNotExist:
             return self._gm.not_found("Agent definition not found")
         except Exception as e:

@@ -24,9 +24,12 @@ const urlsIn = (document) =>
 // Every URL the page asks for once its inline scripts ran, plus what a
 // browser without JavaScript fetches: parsed with scripting off, <noscript>
 // content is markup.
-function googleUrls(env) {
+function googleUrls(env, url) {
   const html = build(env);
-  const withScripts = new JSDOM(html, { runScripts: "dangerously" });
+  const withScripts = new JSDOM(html, {
+    runScripts: "dangerously",
+    ...(url && { url }),
+  });
   const withoutScripts = new JSDOM(html);
   const urls = new Set([
     ...urlsIn(withScripts.window.document),
@@ -48,6 +51,33 @@ describe("index.html third-party requests", () => {
 
   it("loads Tag Manager when the build sets VITE_GTM_ID", () => {
     expect(googleUrls({ VITE_GTM_ID: "GTM-TEST" })).toEqual([
+      "https://www.googletagmanager.com/gtm.js?id=GTM-TEST",
+    ]);
+  });
+
+  it.each([
+    "https://app.example.test/auth/jwt/verify/uuid-1/token-1",
+    "https://app.example.test/AUTH/JWT/VERIFY/uuid-1/token-1",
+    "https://app.example.test/auth/jwt/invitation/accept/uuid-1/token-1",
+    "https://app.example.test/auth/jwt/invitation/set-password/uuid-1/token-1",
+    "https://app.example.test/shared/token-1",
+    "https://app.example.test/sos",
+    "https://app.example.test/sos/",
+    "https://app.example.test/dashboard?sso_token=a&refresh_token=b",
+    "https://app.example.test/dashboard?access_token=a",
+    "https://app.example.test/auth/jwt/login#access_token=a",
+    "https://app.example.test/mcp/consent?code=a",
+  ])("does not load Tag Manager on %s", (url) => {
+    expect(googleUrls({ VITE_GTM_ID: "GTM-TEST" }, url)).toEqual([]);
+  });
+
+  it.each([
+    "https://app.example.test/auth/jwt/login",
+    "https://app.example.test/auth/jwt/verify",
+    "https://app.example.test/dashboard/develop?utm_source=x",
+    "https://app.example.test/sosx",
+  ])("loads Tag Manager on %s", (url) => {
+    expect(googleUrls({ VITE_GTM_ID: "GTM-TEST" }, url)).toEqual([
       "https://www.googletagmanager.com/gtm.js?id=GTM-TEST",
     ]);
   });

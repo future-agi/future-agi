@@ -1593,7 +1593,7 @@ class TestRecordingSlotAvailability:
         assert ec.status == StatusType.FAILED.value
         call_execution.refresh_from_db()
         reason = call_execution.eval_outputs[str(ec.id)]["reason"]
-        assert "call.voice_recording" in reason  # actionable hint for the FE
+        assert "Available recordings: voice_recording" in reason
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_present_combined_recording_resolves_and_runs(
@@ -2704,19 +2704,10 @@ class TestToolEvaluationGate:
         assert not call_execution.tool_outputs
 
     @pytest.mark.requires_ee
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "TH-8055 known limit: ALK writes the tool result as "
-            "role=assistant/kind=tool_call_result; the judge only reads "
-            "role=tool with a tool_call_id -- follow-up ticket"
-        ),
-    )
     def test_harness_tool_call_is_extracted_with_its_result(self, chat_call_execution):
-        """Known gap: a harness chat call's tool result never reaches the
-        judge, because ALK writes it as `kind=tool_call_result` on a
-        `role=assistant` segment, and the judge only reads `role=tool` with
-        a `tool_call_id`."""
+        """A harness chat call's tool result reaches the judge: ALK writes it as
+        `kind=tool_call_result` on a `role=assistant` item with no
+        `tool_call_id`, and it answers the tool call before it."""
         from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
         from simulate.models.chat_message import ChatMessageModel
 
@@ -2754,8 +2745,145 @@ class TestToolEvaluationGate:
         call_data = agent._get_chat_data_from_database(chat_call_execution)
         tool_calls = agent._extract_tool_calls(call_data)
 
-        assert tool_calls
-        assert tool_calls[0]["result"] is not None
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["tool_call_id"] == "call_1"
+        assert tool_calls[0]["tool_name"] == "lookup_order"
+        assert tool_calls[0]["arguments"] == {"order_id": "123"}
+        assert tool_calls[0]["result"] == "The order shipped yesterday."
+        # The tool's output is not read back as something the agent said.
+        speech = [
+            item["content"]
+            for item in call_data["conversation_context"]
+            if item["speaker_role"] != "tool_call_result"
+        ]
+        assert "The order shipped yesterday." not in speech
+
+    def _ingest_harness_chat(self, call_execution):
+        """Store a two-tool harness transcript through ingestion itself: flat
+        `{id, name, arguments}` tool calls and id-less results, in call order."""
+        from simulate.services.alk_simulate_ingestion import (
+            _store_alk_chat_messages,
+        )
+
+        _store_alk_chat_messages(
+            call_execution,
+            [
+                {"speaker_role": "user", "content": "Where is order 123?"},
+                {
+                    "speaker_role": "tool_calls",
+                    "content": "lookup_order, track_parcel",
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "name": "lookup_order",
+                            "arguments": {"order_id": "123"},
+                        },
+                        {
+                            "id": "c2",
+                            "name": "track_parcel",
+                            "arguments": {"order_id": "123"},
+                        },
+                    ],
+                },
+                {
+                    "speaker_role": "tool_call_result",
+                    "content": '{"status": "shipped"}',
+                },
+                {"speaker_role": "tool_call_result", "content": "Out for delivery"},
+                {"speaker_role": "assistant", "content": "It is out for delivery."},
+            ],
+        )
+
+    @pytest.mark.requires_ee
+    def test_ingested_harness_tool_calls_get_their_results_in_call_order(
+        self, chat_call_execution
+    ):
+        from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
+
+        self._ingest_harness_chat(chat_call_execution)
+
+        agent = ToolEvalAgent(llm=Mock())
+        call_data = agent._get_chat_data_from_database(chat_call_execution)
+        tool_calls = sorted(
+            agent._extract_tool_calls(call_data), key=lambda c: c["tool_call_id"]
+        )
+
+        assert [
+            (c["tool_call_id"], c["tool_name"], c["arguments"], c["result"])
+            for c in tool_calls
+        ] == [
+            ("c1", "lookup_order", {"order_id": "123"}, {"status": "shipped"}),
+            ("c2", "track_parcel", {"order_id": "123"}, "Out for delivery"),
+        ]
+
+    @pytest.mark.requires_ee
+    def test_the_chat_adapter_pairs_ingested_harness_results_too(
+        self, chat_call_execution
+    ):
+        """The Temporal path reads chats through `ChatToolCallAdapter`."""
+        from ee.agenthub.tool_eval_agent.adapters import ChatToolCallAdapter
+        from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
+
+        self._ingest_harness_chat(chat_call_execution)
+
+        messages = ChatToolCallAdapter().get_tool_call_transcript(chat_call_execution)
+        assert [
+            (m.role, m.tool_call_id, m.content)
+            for m in messages
+            if m.role in ("tool_call", "tool_call_result")
+        ] == [
+            ("tool_call", "c1", "lookup_order"),
+            ("tool_call", "c2", "track_parcel"),
+            ("tool_call_result", "c1", '{"status": "shipped"}'),
+            ("tool_call_result", "c2", "Out for delivery"),
+        ]
+        assert [m.content for m in messages if m.role == "bot"] == [
+            "It is out for delivery."
+        ]
+
+        data = ToolEvalAgent(llm=Mock()).evaluate_tool_calls(messages)
+        assert [
+            (c["tool_name"], c["arguments"], c["result"])
+            for c in data["tool_calls_data"]
+        ] == [
+            ("lookup_order", {"order_id": "123"}, {"status": "shipped"}),
+            ("track_parcel", {"order_id": "123"}, "Out for delivery"),
+        ]
+
+    @pytest.mark.requires_ee
+    def test_a_native_tool_result_is_still_matched_by_its_id(self, chat_call_execution):
+        from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
+        from simulate.models.chat_message import ChatMessageModel
+
+        ChatMessageModel.objects.create(
+            call_execution=chat_call_execution,
+            role=ChatMessageModel.RoleChoices.ASSISTANT,
+            messages=[""],
+            content=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "a", "function": {"name": "one", "arguments": "{}"}},
+                        {"id": "b", "function": {"name": "two", "arguments": "{}"}},
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "b", "content": "second"},
+                {"role": "tool", "tool_call_id": "a", "content": "first"},
+            ],
+            session_id="native-chat-test",
+            organization=chat_call_execution.test_execution.run_test.organization,
+            workspace=chat_call_execution.test_execution.run_test.workspace,
+        )
+
+        agent = ToolEvalAgent(llm=Mock())
+        tool_calls = agent._extract_tool_calls(
+            agent._get_chat_data_from_database(chat_call_execution)
+        )
+        assert {c["tool_call_id"]: c["result"] for c in tool_calls} == {
+            "a": "first",
+            "b": "second",
+        }
 
 
 # --- Grading a harness run's evals again ------------------------------------
@@ -3181,3 +3309,159 @@ def test_a_call_whose_grader_could_not_be_started_does_not_hold_the_run(
         assert call.call_metadata["eval_completed"] is True
     assert mock_run.call_count == 2 - len(not_started)
     assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("runner", [_run, _run_xl])
+@pytest.mark.parametrize("source", ["voice_recording", "call.voice_recording"])
+def test_audio_signal_metrics_uses_agent_recording(
+    runner,
+    source,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "simulate.services.test_executor.close_old_connections", lambda: None
+    )
+    monkeypatch.setattr(
+        "simulate.temporal.activities.xl.close_old_connections", lambda: None
+    )
+    eval_template.name = "audio_signal_metrics"
+    eval_template.owner = "system"
+    eval_template.save()
+    ec = _make_eval({"input_audio": source}, run_test, eval_template)
+    target = (
+        "simulate.services.test_executor.run_eval_func"
+        if runner is _run
+        else "model_hub.views.utils.evals.run_eval_func"
+    )
+    with patch(target, return_value=_SUCCESS_STUB) as evaluate:
+        runner(ec, call_execution, transcript_data)
+    assert (
+        evaluate.call_args.kwargs["mappings"]["input_audio"]
+        == transcript_data["assistant_recording"]
+    )
+    ec.refresh_from_db()
+    assert ec.mapping == {"input_audio": source}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("runner", [_run, _run_xl])
+def test_audio_signal_metrics_does_not_fall_back_to_combined_audio(
+    runner, run_test, call_execution, transcript_data, eval_template, monkeypatch
+):
+    monkeypatch.setattr(
+        "simulate.services.test_executor.close_old_connections", lambda: None
+    )
+    monkeypatch.setattr(
+        "simulate.temporal.activities.xl.close_old_connections", lambda: None
+    )
+    eval_template.name = "audio_signal_metrics"
+    eval_template.owner = "system"
+    eval_template.save()
+    ec = _make_eval({"input_audio": "voice_recording"}, run_test, eval_template)
+    transcript_data["assistant_recording"] = ""
+    target = (
+        "simulate.services.test_executor.run_eval_func"
+        if runner is _run
+        else "model_hub.views.utils.evals.run_eval_func"
+    )
+    with patch(target, return_value=_SUCCESS_STUB) as evaluate:
+        with pytest.raises(ValueError, match="assistant_recording") as error:
+            runner(ec, call_execution, transcript_data)
+    evaluate.assert_not_called()
+    assert "Map it to call.voice_recording" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "owner,name,source,expected",
+    [
+        ("system", "audio_signal_metrics", "voice_recording", "assistant_recording"),
+        (
+            "system",
+            "audio_signal_metrics",
+            "call.voice_recording",
+            "assistant_recording",
+        ),
+        ("user", "audio_signal_metrics", "voice_recording", "voice_recording"),
+        ("system", "other_audio_eval", "voice_recording", "voice_recording"),
+        ("system", "audio_signal_metrics", "customer_recording", "customer_recording"),
+    ],
+)
+def test_audio_signal_metrics_mapping_surfaces(owner, name, source, expected):
+    from simulate.services.harness_evals import (
+        eval_entry,
+        regrade_mapping,
+        resolve_eval_mapping,
+    )
+
+    template = SimpleNamespace(
+        owner=owner, name=name, config={"required_keys": ["input_audio"]}
+    )
+    mapping = {"input_audio": source}
+    assert regrade_mapping(
+        SimpleNamespace(eval_template=template, mapping=mapping)
+    ) == {"input_audio": expected}
+    assert mapping == {"input_audio": source}
+    if source == "voice_recording":
+        assert resolve_eval_mapping(template, "voice") == {"input_audio": expected}
+    assert resolve_eval_mapping(template, "text") is None
+    assert regrade_mapping(SimpleNamespace(eval_template=template, mapping={})) is None
+    template.description = ""
+    template.eval_tags = ["Audio"]
+    template.eval_type = "code"
+    entry = eval_entry(template, mapping, "voice")
+    assert entry["inputs"][0]["source"] == expected
+    if expected == "assistant_recording":
+        assert entry["inputs"][0]["label"] == "Agent recording"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("assistant_url", ["s3://bucket/hosted-agent.wav", ""])
+def test_audio_signal_metrics_reads_hosted_agent_track(call_execution, assistant_url):
+    from simulate.temporal.activities.xl import _build_transcript_data
+
+    call_execution.provider_call_data = {}
+    call_execution.call_metadata = {
+        "hosted_harness_artifacts": {"recording_assistant": {"url": assistant_url}}
+    }
+    executor = TestExecutor()
+    executor.voice_service_manager = None
+    assert (
+        executor._get_call_transcript_data(call_execution, url_save_only=True)[
+            "assistant_recording"
+        ]
+        == assistant_url
+    )
+    assert (
+        _build_transcript_data(call_execution)["assistant_recording"] == assistant_url
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "owner,expected", [("system", "assistant_recording"), ("user", "voice_recording")]
+)
+def test_audio_signal_metrics_saved_mapping_responses(
+    run_test, eval_template, organization, owner, expected
+):
+    from simulate.serializers.run_test import SimulateEvalConfigSimpleSerializer
+    from simulate.views.run_test import GetEvalConfigStructureView
+
+    eval_template.name = "audio_signal_metrics"
+    eval_template.owner = owner
+    eval_template.config = {"required_keys": ["input_audio"]}
+    eval_template.save()
+    ec = _make_eval({"input_audio": "voice_recording"}, run_test, eval_template)
+    data = SimulateEvalConfigSimpleSerializer(ec).data
+    assert data["mapping"] == {"input_audio": expected}
+    response = GetEvalConfigStructureView()._get_previously_configured_structure(
+        ec, organization
+    )
+    assert response.status_code == 200
+    assert response.data["result"]["eval"]["mapping"] == {"input_audio": expected}
+    ec.refresh_from_db()
+    assert ec.mapping == {"input_audio": "voice_recording"}

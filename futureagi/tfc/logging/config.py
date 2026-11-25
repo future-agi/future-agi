@@ -13,6 +13,7 @@ from .processors import (
     add_otel_context_from_record,
     add_pid_and_tid,
     add_region_context,
+    scrub_saml_event,
 )
 
 
@@ -50,6 +51,7 @@ def get_processors():
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
+        scrub_saml_event,
         add_pid_and_tid,  # Add process/thread IDs
         add_region_context,
         structlog.stdlib.PositionalArgumentsFormatter(),
@@ -122,6 +124,7 @@ def get_logging_config(base_dir: str) -> dict:
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
+        scrub_saml_event,
         add_pid_and_tid,
         add_region_context,
         structlog.stdlib.PositionalArgumentsFormatter(),
@@ -157,6 +160,17 @@ def get_logging_config(base_dir: str) -> dict:
                 "maxBytes": 1024 * 1024 * 10,  # 10MB
                 "backupCount": 10,
                 "formatter": "structured",
+            },
+            "saml_console": {
+                "class": "logging.StreamHandler",
+                "formatter": "structured",
+                "stream": f"ext://sys.{log_stream}",
+                "filters": ["saml_dependency_redact"],
+            },
+        },
+        "filters": {
+            "saml_dependency_redact": {
+                "()": "tfc.logging.processors.SamlDependencyRedactFilter",
             },
         },
         "loggers": {
@@ -206,8 +220,16 @@ def get_logging_config(base_dir: str) -> dict:
             "anthropic": {"level": "WARNING", "propagate": False},
             "LiteLLM": {"level": "WARNING", "propagate": False},
             # SAML/XML libraries (pysaml2 dependencies)
-            "xmlschema": {"level": "WARNING", "propagate": False},
-            "saml2": {"level": "WARNING", "propagate": False},
+            "xmlschema": {
+                "handlers": ["saml_console"],
+                "level": "WARNING",
+                "propagate": False,
+            },
+            "saml2": {
+                "handlers": ["saml_console"],
+                "level": "WARNING",
+                "propagate": False,
+            },
         },
     }
 

@@ -45,6 +45,10 @@ TOOL_GROUPS = {
         "name": "Simulation",
         "description": "Agent definitions, versions, personas, scenarios, simulator agents, test runs, and call analysis",
     },
+    "epoch": {
+        "name": "Epoch",
+        "description": "Debug failures on a finished run, turn evidence into tests, and run, follow and ship an Epoch",
+    },
     "prompts": {
         "name": "Prompt Workbench",
         "description": "Manage prompt templates, versions, labels, folders, simulations, and evaluations",
@@ -74,6 +78,7 @@ DEFAULT_TOOL_GROUPS = [
     "experiments",
     "agents",
     "simulation",
+    "epoch",
     "prompts",
     "usage",
     "gateway",
@@ -85,6 +90,13 @@ RATE_LIMITS = {
     "pro": {"per_minute": 100, "per_day": 10_000, "concurrent_sessions": 5},
     "enterprise": {"per_minute": 500, "per_day": 100_000, "concurrent_sessions": None},
 }
+
+# Public OAuth token endpoint defaults (overridable via MCP_OAUTH_TOKEN_* Django settings).
+DEFAULT_OAUTH_TOKEN_IP_THROTTLE_RATE = "30/min"
+DEFAULT_OAUTH_TOKEN_CLIENT_THROTTLE_RATE = "10/min"
+DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT = 5
+DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS = 300
+DEFAULT_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS = 300
 
 SESSION_STATUS_CHOICES = [
     ("active", "Active"),

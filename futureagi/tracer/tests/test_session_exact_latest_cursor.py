@@ -146,7 +146,7 @@ def test_session_replay_uses_schema_key_and_post_collapse_microsecond_window(
         if method in {"page", "cursor", "count", "match"}
         else ("start_date_us", "end_date_us")
     )
-    key = "project_id, trace_id, id, start_time"
+    key = "project_id, toDate(created_at), trace_id, id"
     if cls is SessionListQueryBuilderV2:
         key = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
         assert f"toStartOfHour(fromUnixTimestamp64Micro(%({low})s" in sql
@@ -213,7 +213,7 @@ def _values_where(sql):
     return re.sub(r"'(?:\\.|[^'\\])*'|\b(?:SELECT|PREWHERE|WHERE)\b|[()]", token, sql)
 
 
-def _inline_execute(chdb, sql, params, rows, remaps):
+def _inline_execute(chdb, sql, params, rows, remaps, *, as_driver=False):
     context = SimpleNamespace(server_info=SimpleNamespace(get_timezone=lambda: "UTC"))
     rendered = sql % escape_params(params, context)
     # Inline remaps are already latest state and VALUES has no FINAL operator.
@@ -231,17 +231,44 @@ def _inline_execute(chdb, sql, params, rows, remaps):
     literals = escape_params(
         {"rows": tuple(rows), "remaps": tuple(remaps), "columns": columns}, context
     )
+    # Ordinary, unnamed spans retain the existing literal total/cost oracles;
+    # the native member projection also reads these schema-default components.
     spans = f"""SELECT *, start_time + INTERVAL 1 SECOND AS end_time, toInt64(1) AS total_tokens,
+        '' AS name, toInt32(0) AS prompt_tokens, toInt32(0) AS completion_tokens,
+        lengthUTF8(input) AS input_length,
         map('state', input) AS attrs_string, map('amount', cost) AS attrs_number,
         map('ok', true) AS attrs_bool, '{{}}' AS attributes_extra
         FROM values({literals["columns"]}, {literals["rows"][1:-1]})"""
     maps = (
         f"SELECT * FROM values('old_id UUID, new_id UUID', {literals['remaps'][1:-1]})"
     )
-    assert rendered.lstrip().startswith("WITH")
-    rendered = f"WITH spans AS ({spans}), trace_session_id_remap AS ({maps}), {rendered.lstrip()[4:]}"
-    result = str(chdb.query(_values_where(rendered), "JSONEachRow"))
-    return [json.loads(line) for line in result.splitlines() if line]
+    # Canonical-ID lookup is a plain SELECT; page reads have their own WITH. Keep
+    # EXPLAIN outside the statement when the selector estimates a slice first.
+    body = rendered.lstrip()
+    explain = "EXPLAIN ESTIMATE " if body.startswith("EXPLAIN ESTIMATE") else ""
+    if explain:
+        body = body[len("EXPLAIN ESTIMATE") :].lstrip()
+    assert body.startswith(("WITH", "SELECT")), body
+    tail = ", " + body[4:] if body.startswith("WITH") else " " + body
+    rendered = (
+        f"{explain}WITH spans AS ({spans}), trace_session_id_remap AS ({maps}){tail}"
+    )
+    rendered = _values_where(rendered)
+    if not as_driver:
+        result = str(chdb.query(rendered, "JSONEachRow"))
+        return [json.loads(line) for line in result.splitlines() if line]
+    envelope = json.loads(str(chdb.query(rendered, "JSON")))
+    data = envelope["data"]
+    # The public selector consumes native datetime objects (including cursor
+    # boundaries); only the direct SQL assertions above that boundary read JSON.
+    for field in envelope["meta"]:
+        if re.match(r"(?:Nullable\()?DateTime", field["type"]):
+            for row in data:
+                if row[field["name"]] is not None:
+                    row[field["name"]] = datetime.fromisoformat(row[field["name"]])
+    return SimpleNamespace(
+        data=data, columns=[field["name"] for field in envelope["meta"]]
+    )
 
 
 def _adversarial_rows(start, end):
@@ -466,7 +493,7 @@ def test_public_default_session_dispatch_uses_real_exact_builder_and_signed_cano
                     for sid, when in records
                 ]
             )
-        if "sum(cost) AS total_cost" in sql:
+        if "AS root_total_cost" in sql:
             return SimpleNamespace(
                 data=[
                     {

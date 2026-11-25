@@ -1,7 +1,7 @@
-import { Box, useTheme } from "@mui/material";
+import { Box, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { CustomTab, CustomTabs, TabWrapper } from "./SummaryStyle";
 import { ShowComponent } from "src/components/show";
 import EvalCard from "./EvalsCard";
 import PropmtCard from "./PropmtCard";
@@ -39,7 +39,6 @@ const graphData = [
 ];
 
 const SummaryTab = ({ setCurrentTabs }) => {
-  const theme = useTheme();
   const [currentTab, setCurrentTab] = useState("evals");
 
   return (
@@ -52,30 +51,21 @@ const SummaryTab = ({ setCurrentTabs }) => {
         overflowY: "hidden",
       }}
     >
-      <TabWrapper>
-        <CustomTabs
-          textColor="primary"
+      <Box sx={{ mb: 2 }}>
+        <SegmentedTabs
           value={currentTab}
           onChange={(e, value) => setCurrentTab(value)}
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-              opacity: 0.08,
-              height: "100%",
-              borderRadius: "8px",
-            },
-          }}
         >
           {tabOptions.map((tab) => (
-            <CustomTab
+            <Tab
               key={tab.value}
               label={tab.label}
               value={tab.value}
               disabled={tab.disabled}
             />
           ))}
-        </CustomTabs>
-      </TabWrapper>
+        </SegmentedTabs>
+      </Box>
       <Box sx={{ overflow: "auto", height: "calc(100vh - 200px)" }}>
         <ShowComponent condition={currentTab === "evals"}>
           <EvalCard graphData={graphData} setCurrentTab={setCurrentTabs} />

@@ -48,6 +48,7 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.EmbeddingRequest = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 
 	// Resolve timeout and apply.
@@ -65,7 +66,7 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// Resolve provider.
-	provider, err := h.resolveProvider(ctx, rc, req.Model)
+	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
 			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
@@ -79,8 +80,11 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 			models.WriteErrorFromError(w, err)
 			return
 		}
-	} else if shouldApplyOrgProviderOverride(rc) {
-		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+	} else {
+		req.Model = upstreamModel
+		if shouldApplyOrgProviderOverride(rc) {
+			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+		}
 	}
 
 	// Type-assert to EmbeddingProvider.
@@ -95,6 +99,15 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The provider forwards the typed request, not this inspection projection.
+	var inspectable bool
+	rc.SelectedGuardrailRequest, inspectable = embeddingGuardrailRequest(&req)
+	if !inspectable {
+		rc.GuardrailInputUnsupported = "embedding input is not text; token IDs and unsupported input forms cannot be inspected"
+	}
+	rc.GuardrailOutputUnsupported = "embedding output is a vector, not inspectable text"
+	rc.UserID = req.User
+
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := ep.CreateEmbedding(ctx, rc.EmbeddingRequest)
 		if err != nil {
@@ -104,7 +117,7 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processInputInspection(ctx, rc, "embeddings.create", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}

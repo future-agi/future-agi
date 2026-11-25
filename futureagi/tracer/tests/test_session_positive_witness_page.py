@@ -289,7 +289,17 @@ def engine(tmp_path, record_property):
     local = independent.LocalRMT(tmp_path / "positive-session-rmt")
     local.oracle = independent.reference.reference_session_pages
     local.execute(
-        "ALTER TABLE spans ADD COLUMN end_user_id Nullable(UUID), ADD COLUMN input String DEFAULT ''"
+        "ALTER TABLE spans ADD COLUMN end_user_id Nullable(UUID), ADD COLUMN input String DEFAULT '',"
+        # The reduced RMT also needs the native member-accounting columns.
+        # Empty names and zero token components leave the seeded cost/token
+        # oracles unchanged; no row becomes a repeated source summary.
+        " ADD COLUMN name String DEFAULT '',"
+        " ADD COLUMN prompt_tokens Int32 DEFAULT 0,"
+        " ADD COLUMN completion_tokens Int32 DEFAULT 0,"
+        " ADD COLUMN attributes_extra String DEFAULT '{}',"
+        # Materialized as in schema/002_spans_v2.sql; the session page's member
+        # pass reads it instead of the content.
+        " ADD COLUMN input_length UInt32 MATERIALIZED lengthUTF8(input)"
     )
     local.execute("""CREATE TABLE end_user_id_remap (
         old_id UUID, new_id UUID, version DateTime64(6, 'UTC')
@@ -430,7 +440,10 @@ def test_native_independent_leaves_all_aliases_and_root_metrics(engine, width):
     assert pages == [[str(UUID(int=100))], []]
     sql, params = builder(*filters).build_page_hydration_query([str(UUID(int=100))])
     metrics = engine.execute(sql, params)[0]
-    assert metrics["total_tokens"] == reference["metrics"][0]["total_tokens"] == 24
+    # The independent page oracle accounts for roots; hydration accounts for
+    # all members. Each independent child contributes exactly once across aliases.
+    assert reference["metrics"][0]["total_tokens"] == 24
+    assert metrics["total_tokens"] == 24 + width * 999
     assert datetime.fromisoformat(metrics["session_start"]).replace(
         tzinfo=UTC
     ) == START + timedelta(minutes=1)
@@ -528,7 +541,7 @@ def test_real_list_entrypoint_walks_typed_leaves_without_the_primary_witness(
 
     def execute(sql, params, **kwargs):
         calls.append((sql, params))
-        if "sum(cost) AS total_cost" in sql:
+        if "AS root_total_cost" in sql:
             return SimpleNamespace(
                 data=[
                     {

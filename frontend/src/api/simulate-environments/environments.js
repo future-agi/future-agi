@@ -16,11 +16,19 @@ import {
   deleteHarnessEnvironment,
   renameHarnessEnvironment,
   deleteAppliedEvaluation,
+  updateAppliedEvaluation,
   addRunEvaluation,
 } from "src/api/simulate-environments/harnessEnvironments";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import { harnessEnvToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
-import { LIVE_ENV_STATUSES } from "src/sections/simulate/environments/myEnvironments.constants";
+import {
+  LIVE_ENV_STATUSES,
+  NOT_PROVIDED,
+} from "src/sections/simulate/environments/myEnvironments.constants";
+import {
+  EMPTY_ENV_FILTERS,
+  buildEnvironmentListParams,
+} from "src/api/simulate-environments/environmentListParams";
 
 export const SIMULATE_ENVIRONMENTS_KEY = ["simulate-environments"];
 // The prefix every page of the list shares — invalidating it refetches whatever
@@ -29,16 +37,28 @@ export const myEnvironmentsListKey = () => [
   ...SIMULATE_ENVIRONMENTS_KEY,
   "list",
 ];
-export const myEnvironmentsQueryKey = (page = 0, pageSize = 25) => [
+// Keyed by the request it makes, so a filtered page and the unfiltered one
+// are separate cache entries and the poll refetches with the same filters.
+export const myEnvironmentsQueryKey = (
+  page = 0,
+  pageSize = 25,
+  filters = EMPTY_ENV_FILTERS,
+) => [
   ...myEnvironmentsListKey(),
-  { page, pageSize },
+  buildEnvironmentListParams({ page, pageSize, filters }),
 ];
 
 // Map the RAW paginated payload ({ count, …, results }) to the page the table
 // needs: the mapped rows plus the server's total row count for the pager.
+// `statusCounts` covers every environment, not just this page or filter;
+// NOT_PROVIDED until the backend sends it.
 const toPage = (data) => ({
   rows: (Array.isArray(data?.results) ? data.results : []).map(harnessEnvToRow),
   total: data?.count ?? 0,
+  statusCounts:
+    data && Object.hasOwn(data, "status_counts")
+      ? data.status_counts
+      : NOT_PROVIDED,
 });
 
 const LIST_REFETCH_MS = 3000;
@@ -46,10 +66,17 @@ const LIST_REFETCH_MS = 3000;
 // Server-paginated: `page` is the table's 0-indexed page, the endpoint is
 // 1-indexed. keepPreviousData holds the current page on screen while the next
 // one loads, so paging doesn't flash an empty table.
-export function useMyEnvironments({ page = 0, pageSize = 25 } = {}) {
+export function useMyEnvironments({
+  page = 0,
+  pageSize = 25,
+  filters = EMPTY_ENV_FILTERS,
+} = {}) {
   return useQuery({
-    queryKey: myEnvironmentsQueryKey(page, pageSize),
-    queryFn: () => listHarnessEnvironments({ page: page + 1, limit: pageSize }),
+    queryKey: myEnvironmentsQueryKey(page, pageSize, filters),
+    queryFn: () =>
+      listHarnessEnvironments(
+        buildEnvironmentListParams({ page, pageSize, filters }),
+      ),
     select: toPage,
     placeholderData: keepPreviousData,
     // Poll while a row on this page is still building or running, so it flips
@@ -150,6 +177,43 @@ export function useEnvironmentRunTest(runTestId, { enabled = true } = {}) {
   });
 }
 
+// Edit an eval bound to the environment. The 200 body is the edited row, so it
+// replaces that row in the run test's cached list at once — the confirm that
+// follows reads the new mapping without waiting on a refetch. The cache holds
+// the raw run-test payload (`select` runs on read), hence the unwrap here.
+//
+// Either way it settles, every run test's eval list is re-read, as a remove
+// does: a run page and the picker can each hold one, and after a failure a 404
+// means the row is gone on the server, which only a refetch drops from the
+// lists on screen.
+export function useEditAppliedEvaluation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: ({ id, evalConfigId, body }) =>
+      updateAppliedEvaluation(id, evalConfigId, body),
+    onSuccess: (updated, { evalConfigId, runTestId }) => {
+      queryClient.setQueryData(environmentRunTestKey(runTestId), (raw) =>
+        Array.isArray(raw?.simulate_eval_configs_detail)
+          ? {
+              ...raw,
+              simulate_eval_configs_detail:
+                raw.simulate_eval_configs_detail.map((c) =>
+                  c.id === evalConfigId ? updated : c,
+                ),
+            }
+          : raw,
+      );
+    },
+    onSettled: (_data, _error, { id }) => {
+      queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
+      queryClient.invalidateQueries({
+        queryKey: [...SIMULATE_ENVIRONMENTS_KEY, "run-test"],
+      });
+    },
+  });
+}
+
 // Add one eval with the person's own mapping, exactly as the simulation page
 // does. Refreshing the run test's list here is what moves the new eval out of
 // the picker's list and into its "Added evaluations" box.
@@ -189,9 +253,10 @@ export function useAddRunEvaluation() {
 
 // Create the real harness job for a build. The draft is mapped to the same
 // schema-valid body the preflight used (`draftToPreflightPayload`) — per the
-// contract, a create body equals its validated preflight body. Only the
-// server-minted job id is returned; the raw draft is never echoed back, since
-// it can carry source details that would then sit in the mutation cache.
+// contract, a create body equals its validated preflight body. The credential
+// values the preflight checked ride along write-only as `credential_values`.
+// Only the server-minted job id is returned; the raw draft is never echoed back,
+// since it can carry source details that would then sit in the mutation cache.
 //
 // A draft that cannot be built for real (`{ skipped }`) keeps the client-minted
 // id, so the mock building path is unchanged for those sources.
@@ -201,7 +266,9 @@ export function useBuildEnvironment() {
     // The caller surfaces the failure itself (a snackbar on the build page), so
     // opt out of the global mutation-error toast to avoid a double message.
     meta: { errorHandled: true },
-    mutationFn: async (draft) => {
+    // Its variables hold credential values: drop them once nothing observes it.
+    gcTime: 0,
+    mutationFn: async ({ draft, credentialValues, idempotencyKey } = {}) => {
       const built = draftToPreflightPayload(draft);
       if (built.skipped) {
         return {
@@ -209,9 +276,12 @@ export function useBuildEnvironment() {
           skipped: built.skipped,
         };
       }
+      if (credentialValues && Object.keys(credentialValues).length) {
+        built.payload.credential_values = credentialValues;
+      }
       const dto = await createHarnessJob(
         built.payload,
-        harnessIdempotencyKey(),
+        idempotencyKey || harnessIdempotencyKey(),
       );
       return { envId: dto.job.job_id };
     },
@@ -237,9 +307,11 @@ export function useBuildEnvironment() {
 // uses: the key `agent.secret_refs` is built under, the name the launch check
 // scans for, and what the sandbox reads before writing the 0600 file and
 // exporting the standard variable itself. So: upload under the plain name, then
-// keep whatever the reply calls it.
-export function useUploadSecretFile() {
+// keep whatever the reply calls it. `options` go to the mutation, e.g.
+// `gcTime: 0` so a caller's reset() drops the File from the cache at once.
+export function useUploadSecretFile(options = {}) {
   return useMutation({
+    ...options,
     meta: { errorHandled: true },
     mutationFn: async ({
       file,

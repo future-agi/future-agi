@@ -83,12 +83,7 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
             )}
           />
           {langfuseProjects.length === 1 && (
-            <Alert
-              severity="info"
-              variant="outlined"
-              icon={false}
-              sx={{ py: 0.5 }}
-            >
+            <Alert severity="info" variant="outlined" icon={false}>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 Only 1 project found. Use organization-level API keys to see all
                 Langfuse projects.
@@ -167,7 +162,9 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
           size="small"
           variant="outlined"
           onClick={onBack}
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
           sx={backButtonSx}
         >
           Back
@@ -178,7 +175,6 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
           size="small"
           onClick={onNext}
           disabled={!canContinue}
-          sx={{ fontWeight: 500 }}
         >
           Continue
         </Button>

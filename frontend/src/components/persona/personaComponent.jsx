@@ -22,7 +22,7 @@ const PersonaChip = ({ label, icon }) => {
         sx={{
           width: "16px",
           height: "16px",
-          color: "blue.500",
+          color: "status.info.fg",
           flexShrink: 0,
           mt: "2px",
         }}

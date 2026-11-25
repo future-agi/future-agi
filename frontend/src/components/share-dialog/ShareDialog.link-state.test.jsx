@@ -288,6 +288,18 @@ describe("ShareDialog retry (R2, R3)", () => {
     });
   });
 
+  it("reads the status the axios interceptor actually rejects with", () => {
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({
+        data: undefined,
+        isError: true,
+        error: { statusCode: 401, message: "Authentication required" },
+      }),
+    );
+    render(dialog());
+    expect(screen.getByText(/session has expired/i)).toBeInTheDocument();
+  });
+
   it("AC08: known statuses map to safe copy and server text is never rendered", () => {
     const serverText =
       "<script>alert('x')</script> token=abc https://evil.example";

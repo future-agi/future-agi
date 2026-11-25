@@ -16,6 +16,12 @@ vi.mock("src/api/ossSetup/oss-setup", () => ({
   }),
 }));
 
+// The URL the browser reaches the API on: the SDK's FI_BASE_URL.
+vi.mock("src/config-global", async (importOriginal) => ({
+  ...(await importOriginal()),
+  HOST_API: "http://localhost:8100/",
+}));
+
 const theme = createTheme({ palette: { amber: { 600: "#CA8A04" } } });
 
 const check = (over) => ({
@@ -185,6 +191,31 @@ describe("ValidationStep", () => {
     ).toBeNull();
   });
 
+  it("folds the passing checks into the summary and keeps the rest in view", async () => {
+    mockData = {
+      status: "issues",
+      mode: "live",
+      checks: [check(), STORAGE_DOWN, SSL_LOCAL],
+    };
+    renderStep();
+    await screen.findByText(
+      "Fix the failed systems to continue with a production launch.",
+    );
+    expect(
+      screen.getByText("1 ready · 1 failed · 1 optional"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Core application database")).toBeNull();
+    expect(screen.getByText(STORAGE_DOWN.detail)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Not needed on a local install/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Onboard systems/, expanded: false }),
+    );
+    expect(screen.getByText("Core application database")).toBeInTheDocument();
+  });
+
   it("shows the next steps once pre-flight is clear", async () => {
     mockData = { status: "ok", mode: "live", checks: [check(), SSL_LOCAL] };
     renderStep();
@@ -194,7 +225,10 @@ describe("ValidationStep", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Open Keys in the sidebar/)).toBeInTheDocument();
     expect(
-      screen.getByText("FI_BASE_URL=http://localhost:4318"),
+      screen.getByText("FI_BASE_URL=http://localhost:8100"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("FI_TRACES_URL=http://localhost:4318"),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tracing guide" })).toHaveAttribute(
       "href",
@@ -212,7 +246,10 @@ describe("ValidationStep", () => {
     };
     renderStep();
     expect(
-      await screen.findByText("FI_BASE_URL=http://localhost:4320"),
+      await screen.findByText("FI_TRACES_URL=http://localhost:4320"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("FI_BASE_URL=http://localhost:8100"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/localhost:4318/)).toBeNull();
   });

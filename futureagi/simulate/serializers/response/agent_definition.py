@@ -1,8 +1,18 @@
 from django.conf import settings
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentDefinition, AgentVersion
+from simulate.serializers.harness_environment import (
+    HarnessRunSummarySerializer,
+    RunEnvironmentRefSerializer,
+)
+from simulate.serializers.websocket_fields import (
+    WebsocketHeadersField,
+    WebsocketUrlField,
+)
+from tfc.permissions.utils import cached_is_read_only_user
 
 MASKED_CREDENTIAL_VALUE = "********"
 
@@ -20,6 +30,16 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
     livekit_config_json = serializers.SerializerMethodField()
     livekit_max_concurrency = serializers.SerializerMethodField()
     api_key = serializers.SerializerMethodField()
+    websocket_url = WebsocketUrlField(
+        read_only=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        read_only=True,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
+    )
 
     class Meta:
         model = AgentDefinition
@@ -101,6 +121,8 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
         return creds.server_url if creds else ""
 
     def get_livekit_api_key(self, obj):
+        if cached_is_read_only_user(self.context):
+            return ""
         creds = self._get_livekit_creds(obj)
         return self._get_masked_api_key(creds)
 
@@ -119,6 +141,8 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
         )
 
     def get_api_key(self, obj):
+        if cached_is_read_only_user(self.context):
+            return ""
         creds = self._get_latest_creds(obj)
         if creds and creds.provider_type != "livekit":
             return self._get_masked_api_key(creds)
@@ -156,6 +180,19 @@ class AgentDefinitionEditResponseSerializer(serializers.Serializer):
     agent = AgentDefinitionResponseSerializer(read_only=True)
 
 
+class ObserveProjectRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class AgentFoundCheckSerializer(serializers.Serializer):
+    """Whether what the first reading found still waits to be confirmed, and when
+    it was."""
+
+    required = serializers.BooleanField()  # type: ignore[assignment]  # the API field is named required, as Field's own
+    done_at = serializers.DateTimeField(allow_null=True)
+
+
 class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
     """
     Response serializer for GET /agent-definitions/ (list).
@@ -165,6 +202,26 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
 
     latest_version = serializers.SerializerMethodField()
     latest_version_id = serializers.SerializerMethodField()
+    agent_kind = serializers.CharField(
+        source="_agent_kind", allow_null=True, read_only=True
+    )
+    source = serializers.CharField(source="_source", allow_null=True, read_only=True)
+    version_count = serializers.IntegerField(source="_version_count", read_only=True)
+    environment_count = serializers.IntegerField(
+        source="_environment_count", read_only=True
+    )
+    environments = serializers.SerializerMethodField()
+    websocket_url = WebsocketUrlField(
+        read_only=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        read_only=True,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
+    )
+    observe_project = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentDefinition
@@ -191,8 +248,28 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
             "latest_version_id",
             "model_details",
             "model",
+            "agent_kind",
+            "source",
+            "version_count",
+            "environment_count",
+            "environments",
+            "observe_project",
         ]
         read_only_fields = fields
+
+    @swagger_serializer_method(
+        serializer_or_field=RunEnvironmentRefSerializer(many=True)
+    )
+    def get_environments(self, obj) -> list[dict[str, str]]:
+        return self.context.get("environments", {}).get(obj.id, [])
+
+    @swagger_serializer_method(
+        serializer_or_field=ObserveProjectRefSerializer(allow_null=True)
+    )
+    def get_observe_project(self, obj) -> dict[str, str] | None:
+        from simulate.services.agent_overview import observe_project
+
+        return observe_project(obj, getattr(obj, "_agent_kind", None))
 
     def get_latest_version(self, obj):
         """Get the latest version number for the agent."""
@@ -209,27 +286,66 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
         return version.id if version else None
 
 
-class AgentDefinitionDetailResponseSerializer(serializers.Serializer):
+class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer):
     """
     Response serializer for GET /agent-definitions/{id}/.
     Shape: {**agent_data, "versions": [...], "active_version": {...}, "version_count": N}
     """
 
-    # Agent fields are spread at top level via to_representation
     versions = serializers.ListField(read_only=True)
     active_version = serializers.DictField(read_only=True, allow_null=True)
     version_count = serializers.IntegerField(read_only=True)
+    agent_kind = serializers.CharField(read_only=True, allow_null=True)
+    source = serializers.CharField(read_only=True, allow_null=True)
+    environment_count = serializers.IntegerField(read_only=True)
+    observability_enabled = serializers.BooleanField(read_only=True)
+    observe_project = ObserveProjectRefSerializer(read_only=True, allow_null=True)
+    connected = serializers.BooleanField(read_only=True)
+    managed_by = RunEnvironmentRefSerializer(read_only=True, allow_null=True)
+    found_check = AgentFoundCheckSerializer(read_only=True)
+    source_checked_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    source_check_interval_seconds = serializers.IntegerField(
+        read_only=True, allow_null=True
+    )
+
+    class Meta(AgentDefinitionResponseSerializer.Meta):
+        fields = [
+            *AgentDefinitionResponseSerializer.Meta.fields,
+            "versions",
+            "active_version",
+            "version_count",
+            "agent_kind",
+            "source",
+            "environment_count",
+            "observability_enabled",
+            "observe_project",
+            "connected",
+            "managed_by",
+            "found_check",
+            "source_checked_at",
+            "source_check_interval_seconds",
+        ]
+        read_only_fields = fields
+
+
+class AgentRunsResponseSerializer(serializers.Serializer):
+    results = HarnessRunSummarySerializer(many=True, read_only=True)
 
 
 class AgentDefinitionBulkDeleteResponseSerializer(serializers.Serializer):
     """
     Response serializer for DELETE /agent-definitions/ (bulk delete).
-    Shape: {"message": "...", "agents_updated": N, "versions_updated": N}
+    Shape: {"message": "...", "agents_updated": N, "versions_updated": N,
+    "skipped_agent_ids": [...]}; an agent still used by an environment is
+    skipped and keeps its versions.
     """
 
     message = serializers.CharField(read_only=True)
     agents_updated = serializers.IntegerField(read_only=True)
     versions_updated = serializers.IntegerField(read_only=True)
+    skipped_agent_ids = serializers.ListField(
+        child=serializers.UUIDField(), read_only=True
+    )
 
 
 class AgentDefinitionDeleteResponseSerializer(serializers.Serializer):

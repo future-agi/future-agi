@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
@@ -8,6 +14,67 @@ import {
   filterLabelsMatchValues,
   useResolvedFilterOptions,
 } from "./useResolvedFilterOptions";
+
+const MAX_LABEL_CONTINUATION_READS = 12;
+
+const newWalk = (key) => ({ key, count: 0, cursor: null, pending: false });
+
+// An unspent cursor can wait on shared work without consuming a read. Once
+// started, this chip's request owns the cursor until progress or a new scope:
+// pending shows the skeleton; settled at the same cursor shows the raw ID.
+function useLabelContinuation(key, cursor, query) {
+  const {
+    fetchStatus,
+    isFetchNextPageError,
+    isFetchingNextPage,
+    onNextPageError,
+    tryStartNextPage,
+  } = query;
+  const [walk, setWalk] = useState(() => newWalk(key));
+  const spent = cursor === walk.cursor;
+  const failed = fetchStatus === "idle" && isFetchNextPageError;
+  if (walk.key !== key) {
+    setWalk(newWalk(key));
+  } else if (cursor && failed && !spent) {
+    // A sibling can own the failed continuation. Remember it too, but don't
+    // charge this chip or rely on the next ordinary refetch's error flags.
+    setWalk({ ...walk, cursor, pending: false });
+  }
+  const canStart =
+    cursor && !spent && !failed && walk.count < MAX_LABEL_CONTINUATION_READS;
+  const peerFailed = useRef(false);
+  useLayoutEffect(() => {
+    if (!canStart) return;
+    peerFailed.current = false;
+    // A peer can start an ordinary refetch in its settlement callback, before
+    // React ever renders the forward error. Capture it at cache dispatch.
+    return onNextPageError(cursor, () => {
+      peerFailed.current = true;
+      setWalk((current) =>
+        current.key === key && current.cursor !== cursor
+          ? { ...current, cursor, pending: false }
+          : current,
+      );
+    });
+  }, [canStart, cursor, key, onNextPageError]);
+
+  useEffect(() => {
+    if (!canStart || peerFailed.current || fetchStatus !== "idle") return;
+    const request = tryStartNextPage();
+    if (!request) return;
+
+    const active = { key, cursor, count: walk.count + 1, pending: true };
+    setWalk(active);
+    const settle = () =>
+      setWalk((current) =>
+        current === active ? { ...active, pending: false } : current,
+      );
+    // A newer cursor/selection may already own the walk by settlement time.
+    void request.then(settle, settle);
+  }, [canStart, cursor, fetchStatus, key, tryStartNextPage, walk.count]);
+
+  return cursor && (canStart || (spent ? walk.pending : isFetchingNextPage));
+}
 
 export default function FilterValueLabel({
   filter,
@@ -29,21 +96,49 @@ export default function FilterValueLabel({
   // value list is time-windowed, so a filter on an older value would miss the
   // lookup and fall back to the raw value anyway.
   const labelsAreValues = filterLabelsMatchValues(filter);
-  const { options, isLoading } = useResolvedFilterOptions(
+  const query = useResolvedFilterOptions(
     filter,
     source,
     values.length > 0 && !labelsAreValues,
   );
+  const { options, queryIdentity, isLoading, continuationKey } = query;
 
+  const byValue = useMemo(
+    () => new Map(options.map((o) => [o.value, o.label ?? o.value])),
+    [options],
+  );
   const labels = useMemo(() => {
     if (labelsAreValues) return values;
-    const byValue = new Map(options.map((o) => [o.value, o.label ?? o.value]));
     return values.map((v) => byValue.get(v) ?? v);
-  }, [labelsAreValues, options, values]);
+  }, [labelsAreValues, byValue, values]);
 
   const hasValue = values.length > 0;
+  // The value list is a time-sliced cursor chain: a bounded first page can be
+  // empty (or hold other values) while the saved ids are still further down
+  // the chain. Keep reading until every selected value has a label or the
+  // chain ends; only then fall back to the raw value.
+  // Bounded per chip: a value that no longer exists must not make every mount
+  // walk the whole workspace vocabulary.
+  // A reused widget row can switch queries without changing its selected ids.
+  // A new array with the same contents for the same query is still one budget.
+  const budgetKey = useMemo(
+    () => JSON.stringify([queryIdentity, values]),
+    [queryIdentity, values],
+  );
+  const hasUnresolved =
+    hasValue && !labelsAreValues && values.some((v) => !byValue.has(v));
+  const resolvingCursor = useLabelContinuation(
+    budgetKey,
+    hasUnresolved && query.hasNextPage && !query.cursorChainStopped
+      ? continuationKey
+      : null,
+    query,
+  );
   const isResolving =
-    hasValue && !labelsAreValues && isLoading && options.length === 0;
+    hasValue &&
+    !labelsAreValues &&
+    ((isLoading && options.length === 0) ||
+      (!byValue.has(values[0]) && resolvingCursor));
   const extra = Math.max(labels.length - 1, 0);
   const entity = (filter?.name || "item").toLowerCase();
   const entityLabel = pluralize(entity, extra);
@@ -99,7 +194,7 @@ export default function FilterValueLabel({
             flexShrink: 0,
             px: 0.625,
             py: "1px",
-            borderRadius: 0.75,
+            borderRadius: "4px",
             bgcolor: "action.selected",
             color: "text.secondary",
             whiteSpace: "nowrap",

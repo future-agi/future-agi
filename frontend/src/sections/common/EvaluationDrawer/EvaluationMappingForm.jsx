@@ -1207,9 +1207,6 @@ const EvaluationMappingForm = ({
               variant="contained"
               size="small"
               color="error"
-              sx={{
-                paddingX: theme.spacing(3),
-              }}
               onClick={() => {
                 setOpenConfirmDialog(false);
                 if (action === "back") {

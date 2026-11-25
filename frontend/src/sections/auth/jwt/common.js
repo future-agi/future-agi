@@ -6,3 +6,7 @@ export const generateNameFromEmail = (email) => {
     .replace(/\b\w/g, (char) => char.toUpperCase())
     .trim();
 };
+
+export const redirectAfterOrgSetup = (destination) => {
+  window.location.href = destination;
+};

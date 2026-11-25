@@ -1,7 +1,7 @@
 // Map a transport error to safe, fixed copy. Server-supplied text is never
 // rendered: it can carry HTML, stack traces, tokens or URLs.
 export function describeLinkError(error, action) {
-  const status = error?.response?.status ?? error?.status;
+  const status = error?.statusCode ?? error?.response?.status ?? error?.status;
   if (status === 401) {
     return "Your session has expired. Sign in again to share this item.";
   }

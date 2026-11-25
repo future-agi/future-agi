@@ -18,7 +18,6 @@ const DeleteAction = ({
   return (
     <IconButton
       size="small"
-      sx={{ p: 0 }}
       onClick={() => {
         if (isDisabled) return;
         handleDeleteRow(node.rowIndex);

@@ -74,7 +74,7 @@ export default function SelectAlertType({
             display: "flex",
             flexDirection: "column",
             gap: 0.5,
-            borderRadius: 0.5,
+            borderRadius: "4px",
           }}
         >
           <Typography

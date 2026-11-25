@@ -7,11 +7,16 @@ import json
 import math
 import re
 from collections import defaultdict
-from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
+from typing import Any, cast, get_args
 
 from django.core.cache import cache
+from django.db import connections, router
+from django.utils import timezone
 
 from model_hub.models.develop_dataset import Cell
+from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES
 from simulate.models import (
     CallExecution,
     HostedHarnessExecution,
@@ -19,11 +24,54 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
-from simulate.services.harness_scenarios import authored_scenarios_for_calls
+from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
+from simulate.services.call_provider import (
+    call_agent_provider,
+    call_agent_provider_expression,
+)
+from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_scenarios import (
+    authored_scenarios_for_calls,
+    call_row_metadata,
+    pinned_scenarios,
+)
+from simulate.services.harness_workers import recorded_worker_names
+from simulate.services.hosted_harness_ingestion import (
+    STARTED_BY_KEY,
+    STARTED_BY_TASK,
+    SUB_GOAL_PASSED,
+    WORLD_ACTIONS_KEY,
+    sub_goal_result,
+)
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
+    ERRORED_EVAL_STATUSES,
+    HARNESS_ERROR,
+    HARNESS_FAILED,
+    HARNESS_INCONCLUSIVE,
+    HARNESS_NO_SCORE,
+    HARNESS_PASSED,
+    NATIVE_FAILED,
+    NATIVE_PASSED,
+    SKIPPED_HARNESS_STATUSES,
+    EvalScoringSpec,
+    LiveEvals,
     judge_stored_eval,
     resolve_eval_scoring_spec,
+)
+from simulate.services.scoring_status import (
+    SCORING_META_KEYS,
+    CallScoring,
+    derive_call_scoring,
+    normalize_eval_entry,
+    scoring_input_from_call,
+)
+from simulate.types import (
+    SubGoalEntry,
+    SubGoalUnscored,
+    is_worker_subject,
+    worker_subject_id,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
 
@@ -33,8 +81,57 @@ OUTCOME_LABELS = {
     "passed": "Passed",
     "failed": "Failed",
     "inconclusive": "Inconclusive",
+    "no_score": "No score",
     "error": "Error",
+    # Stopped by the user: neither an error nor a failure.
+    "cancelled": "Cancelled",
 }
+
+# The call fields and call_metadata keys build_call_rows reads; a page loads only these.
+CALL_ROW_FIELDS = (
+    "id",
+    "test_execution",
+    "scenario",
+    "row_id",
+    "status",
+    "simulation_call_type",
+    "eval_outputs",
+    "provider_call_data",
+    "conversation_metrics_data",
+    "avg_agent_latency_ms",
+    "started_at",
+    "completed_at",
+    "duration_seconds",
+    "avg_stop_time_after_interruption_ms",
+    "ai_interruption_count",
+    "customer_cost_cents",
+    "stt_cost_cents",
+    "llm_cost_cents",
+    "tts_cost_cents",
+    "storage_cost_cents",
+    "ended_reason",
+    "error_message",
+    # Read by the call's scoring input.
+    "created_at",
+    "ended_at",
+    "overall_score",
+)
+CALL_ROW_SCENARIO_FIELDS = ("name", "metadata")
+CALL_ROW_METADATA_KEYS = (
+    "row_data",
+    "row_id",
+    "persona",
+    "use_case",
+    "goal",
+    "hosted_harness_receipt",
+    "sub_goals",
+    "conversation_branch",
+    "harness_outcome_status",
+    "harness_scenario_key",
+    "harness_trial_index",
+    STARTED_BY_KEY,
+    *SCORING_META_KEYS,
+)
 
 
 def _number(value: Any) -> float | None:
@@ -62,13 +159,27 @@ def _truth_value(eval_data: Any) -> bool | None:
     return None
 
 
+def _scoring_spec(
+    config: SimulateEvalConfig, specs: dict[str, EvalScoringSpec] | None
+) -> EvalScoringSpec:
+    """Resolve a config's spec, memoised in ``specs`` when a caller passes one."""
+    if specs is None:
+        return resolve_eval_scoring_spec(config)
+    key = str(config.id)
+    if key not in specs:
+        specs[key] = resolve_eval_scoring_spec(config)
+    return specs[key]
+
+
 def _eval_outcome(
-    eval_data: Any, config: SimulateEvalConfig | None = None
+    eval_data: Any,
+    config: SimulateEvalConfig | None = None,
+    specs: dict[str, EvalScoringSpec] | None = None,
 ) -> str | None:
     if not isinstance(eval_data, dict):
         return None
     status = str(eval_data.get("status") or "").strip().lower()
-    if status in {"error", "failed"}:
+    if status in ERRORED_EVAL_STATUSES:
         return "error"
     if status in {"pending", "skipped"}:
         return None
@@ -78,19 +189,22 @@ def _eval_outcome(
             return "passed" if value else "failed"
         if isinstance(value, str):
             normalized = value.strip().lower()
-            if normalized in {"pass", "passed", "true", "success", "successful"}:
+            if normalized in NATIVE_PASSED:
                 return "passed"
-            if normalized in {"fail", "failed", "false", "failure", "unsuccessful"}:
+            if normalized in NATIVE_FAILED:
                 return "failed"
         return None
 
-    return judge_stored_eval(eval_data, resolve_eval_scoring_spec(config)).outcome
+    return judge_stored_eval(eval_data, _scoring_spec(config, specs)).outcome
 
 
 def call_outcome(
-    call: CallExecution, live_eval_configs: dict[str, SimulateEvalConfig]
+    call: CallExecution,
+    live_eval_configs: dict[str, SimulateEvalConfig],
+    specs: dict[str, EvalScoringSpec] | None = None,
 ) -> str:
-    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+    metadata = call_row_metadata(call)
+    metadata = metadata if isinstance(metadata, dict) else {}
     harness_outcome = str(metadata.get("harness_outcome_status") or "").lower()
     if call.status in {
         CallExecution.CallStatus.PENDING,
@@ -102,7 +216,12 @@ def call_outcome(
         CallExecution.CallStatus.ANALYZING,
     }:
         return "in_progress"
-    if harness_outcome in {"error", "errored", "cancelled", "canceled"}:
+    if (
+        call.status in CANCELLED_CALL_STATUSES
+        and harness_outcome not in SKIPPED_HARNESS_STATUSES
+    ):
+        return "cancelled"
+    if harness_outcome in HARNESS_ERROR:
         return "error"
     if call.status in {
         CallExecution.CallStatus.FAILED,
@@ -117,45 +236,44 @@ def call_outcome(
         for eval_id, data in iter_live_eval_outputs(
             call.eval_outputs, set(live_eval_configs)
         )
-        if (
-            verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)))
-        )
+        # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+        if not (isinstance(data, dict) and is_worker_subject(data.get("subject")))
+        and (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
-    if harness_outcome in {"failed", "fail", "failure"} or "failed" in verdicts:
+    if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
+    # Platform evals arrive after the receipt; one that passed scores the call.
+    if harness_outcome in HARNESS_NO_SCORE and "passed" not in verdicts:
+        return "no_score"
     if "error" in verdicts:
         return "inconclusive"
-    if harness_outcome in {"inconclusive", "unknown", "skipped"}:
+    if harness_outcome in HARNESS_INCONCLUSIVE:
         return "inconclusive"
-    if harness_outcome in {"passed", "pass", "success", "successful"}:
+    if harness_outcome in HARNESS_PASSED:
         return "passed"
     if "passed" in verdicts:
         return "passed"
     return "inconclusive"
 
 
-def _provider(call: CallExecution) -> str | None:
-    if isinstance(call.provider_call_data, dict):
-        for name, payload in call.provider_call_data.items():
-            if isinstance(payload, dict) and payload:
-                return str(name)
-    agent = call.test_execution.agent_definition
-    return getattr(agent, "provider", None) if agent else None
-
-
 def function_calls(call: CallExecution) -> list[dict[str, Any]]:
-    """Return provider-recorded function calls without exposing provider internals."""
-    provider_data = call.provider_call_data
-    if not isinstance(provider_data, dict):
-        return []
+    """Provider-recorded function calls without provider internals; a hosted call's world actors' actions follow the
+    agent's calls, each with its `actor_id`."""
+    return recorded_calls(call.provider_call_data, call.call_metadata)
+
+
+def recorded_calls(provider_data: object, metadata: object) -> list[dict[str, Any]]:
+    """`function_calls` from a call's stored provider data and metadata, so an earlier attempt's snapshot reads alike."""
     calls: list[dict[str, Any]] = []
-    for payload in provider_data.values():
+    for payload in (provider_data if isinstance(provider_data, dict) else {}).values():
         if not isinstance(payload, dict) or not isinstance(
             payload.get("tool_calls"), list
         ):
             continue
         calls.extend(item for item in payload["tool_calls"] if isinstance(item, dict))
+    actions = (metadata if isinstance(metadata, dict) else {}).get(WORLD_ACTIONS_KEY)
+    calls.extend(one for one in actions or [] if isinstance(one, dict))
     return calls
 
 
@@ -230,36 +348,55 @@ def _harness_scenarios(
         call_execution_id__in=call_ids
     ):
         scenarios.setdefault(str(scenario.call_execution_id), scenario)
-    return scenarios
+    # A pinned run shows its suite version's content, as its grouping does.
+    keys = {}
+    for call in calls:
+        metadata = call_row_metadata(call)
+        if isinstance(metadata, dict):
+            keys[call.id] = metadata.get("harness_scenario_key")
+    pinned = pinned_scenarios(
+        calls, {call.id: scenarios.get(str(call.id)) for call in calls}, keys
+    )
+    return {
+        str(call_id): scenario
+        for call_id, scenario in pinned.items()
+        if scenario is not None
+    }
+
+
+ROW_DIMENSION_COLUMNS = (
+    "persona",
+    "use_case",
+    "goal",
+    "outcome",
+    "situation",
+    "branch",
+    "conversation_branch",
+)
 
 
 def _row_dimensions(
-    calls: list[CallExecution], extra_row_ids: set[str] | None = None
+    calls: list[CallExecution],
+    extra_row_ids: set[str] | None = None,
+    names: tuple[str, ...] = ROW_DIMENSION_COLUMNS,
 ) -> dict[str, dict[str, Any]]:
-    row_ids = {
-        str(call.row_id or (call.call_metadata or {}).get("row_id"))
-        for call in calls
-        if call.row_id
-        or (isinstance(call.call_metadata, dict) and call.call_metadata.get("row_id"))
-    }
+    row_ids: set[str] = set()
+    for call in calls:
+        metadata = call_row_metadata(call)
+        if call.row_id or (isinstance(metadata, dict) and metadata.get("row_id")):
+            row_ids.add(str(call.row_id or (metadata or {}).get("row_id")))
     row_ids |= extra_row_ids or set()
     if not row_ids:
         return {}
     dimensions: dict[str, dict[str, Any]] = defaultdict(dict)
-    cells = Cell.all_objects.filter(
-        row_id__in=row_ids,
-        column__name__in=[
-            "persona",
-            "use_case",
-            "goal",
-            "outcome",
-            "situation",
-            "branch",
-            "conversation_branch",
-        ],
-    ).select_related("column")
-    for cell in cells:
-        dimensions[str(cell.row_id)][cell.column.name] = cell.value
+    # Cell's default order, newest first: the oldest cell for a column wins.
+    cells = (
+        Cell.all_objects.filter(row_id__in=row_ids, column__name__in=names)
+        .order_by("-created_at")
+        .values_list("row_id", "column__name", "value")
+    )
+    for row_id, column_name, value in cells:
+        dimensions[str(row_id)][column_name] = value
     return dimensions
 
 
@@ -276,7 +413,12 @@ def _authored_branches(
 
 
 def eval_rows(
-    call: CallExecution, live_eval_configs: dict[str, SimulateEvalConfig]
+    call: CallExecution,
+    live_eval_configs: dict[str, SimulateEvalConfig],
+    specs: dict[str, EvalScoringSpec] | None = None,
+    *,
+    scoring: CallScoring | None = None,
+    names: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     rows = []
     for eval_id, data in iter_live_eval_outputs(
@@ -292,7 +434,7 @@ def eval_rows(
         }
         config = live_eval_configs.get(str(eval_id))
         if config is not None:
-            judgement = judge_stored_eval(data, resolve_eval_scoring_spec(config))
+            judgement = judge_stored_eval(data, _scoring_spec(config, specs))
             score = judgement.score
             verdict = (
                 judgement.outcome == "passed"
@@ -308,6 +450,13 @@ def eval_rows(
                 score = 1.0 if verdict else 0.0
             elif numeric is not None and numeric > 1:
                 score = numeric / 100
+        status = data.get("status") or "completed"
+        reason = data.get("reason") or ""
+        if scoring is not None:
+            derived = scoring.evals.get(str(eval_id))
+            status = derived.status if derived else normalize_eval_entry(data)
+            if derived is not None and derived.reason is not None:
+                reason = derived.reason
         rows.append(
             {
                 "id": str(eval_id),
@@ -316,11 +465,76 @@ def eval_rows(
                 "value": value,
                 "score": round(score, 4) if score is not None else None,
                 "passed": verdict,
-                "reason": data.get("reason") or "",
-                "status": data.get("status") or "completed",
+                "reason": reason,
+                "status": status,
             }
         )
+    if scoring is not None:
+        # An expected eval with nothing stored yet is shown as its own entry,
+        # so a cell still being scored reads apart from one that has no data.
+        for eval_id in scoring.missing:
+            derived = scoring.evals[eval_id]
+            rows.append(
+                {
+                    "id": eval_id,
+                    "name": (names or {}).get(eval_id) or eval_id,
+                    "type": "",
+                    "value": None,
+                    "score": None,
+                    "passed": None,
+                    "reason": derived.reason or "",
+                    "status": derived.status,
+                }
+            )
     return rows
+
+
+def sub_goal_entries(
+    raw_sub_goals: Iterable[object], worker_names: Mapping[str, str] | None = None
+) -> list[SubGoalEntry]:
+    """The call's sub-goals as the results list them, each with its verdict and whose check it is; ``worker_names``
+    names each worker by its contract id."""
+    entries: list[SubGoalEntry] = []
+    for item in raw_sub_goals:
+        name = item.get("name") if isinstance(item, dict) else item
+        if not name:
+            continue
+        result = sub_goal_result(item) if isinstance(item, dict) else None
+        entry: SubGoalEntry = {
+            "name": str(name),
+            "passed": SUB_GOAL_PASSED.get(result),
+            "subject_kind": "task",
+            "display_name": str(name),
+        }
+        if isinstance(item, dict):
+            if result in get_args(SubGoalUnscored):
+                entry["result"] = cast(SubGoalUnscored, result)
+                entry["reason"] = str(item.get("reason") or "")
+            if isinstance(item.get("evidence"), list):
+                # What it was decided from: world_state, tool_calls, transcript, recording.
+                entry["evidence"] = [str(one) for one in item["evidence"]]
+            if item.get("subject") not in (None, "task"):
+                entry["subject"] = str(item["subject"])
+            worker = worker_subject_id(item.get("subject"))
+            if worker is not None:
+                entry["subject_kind"] = "worker"
+                entry["worker_id"] = worker
+                entry["display_name"] = (
+                    f"{name} ({(worker_names or {}).get(worker) or worker})"
+                )
+        entries.append(entry)
+    return entries
+
+
+def receipt_sub_goals(metadata: Mapping[str, object] | None) -> list[SubGoalEntry]:
+    """The judged sub-goals a call's metadata holds, its receipt's first."""
+    receipt = (metadata or {}).get("hosted_harness_receipt")
+    raw = (receipt.get("sub_goals") if isinstance(receipt, dict) else None) or (
+        metadata or {}
+    ).get("sub_goals")
+    return sub_goal_entries(
+        raw if isinstance(raw, list) else [], recorded_worker_names(metadata)
+    )
 
 
 def receipt_sub_goal_names(metadata: Any) -> set[str]:
@@ -333,6 +547,67 @@ def receipt_sub_goal_names(metadata: Any) -> set[str]:
         for item in sub_goals or []
         if isinstance(item, dict) and item.get("name")
     }
+
+
+# Each harness eval's first output, in call (created_at, id) then key order,
+# with the receipt of the call it came from.
+_FIRST_HARNESS_OUTPUTS_SQL = f"""
+, first_outputs AS (
+    SELECT DISTINCT ON (output.key)
+        output.key, output.value, calls.created_at, calls.id, output.ordinality
+    FROM calls
+    CROSS JOIN LATERAL jsonb_each(
+        CASE WHEN jsonb_typeof(calls.eval_outputs) = 'object'
+        THEN calls.eval_outputs ELSE '{{}}'::jsonb END
+    ) WITH ORDINALITY AS output(key, value, ordinality)
+    WHERE jsonb_typeof(output.value) = 'object'
+        AND output.value -> 'source' = '"harness"'::jsonb
+    ORDER BY output.key, calls.created_at, calls.id, output.ordinality
+)
+SELECT
+    first_outputs.key,
+    first_outputs.value::text,
+    (source_call.call_metadata -> 'hosted_harness_receipt')::text
+FROM first_outputs
+JOIN {CallExecution._meta.db_table} AS source_call
+    ON source_call.id = first_outputs.id
+ORDER BY first_outputs.created_at, first_outputs.id, first_outputs.ordinality
+"""
+
+
+def _harness_columns(execution: TestExecution) -> list[dict[str, str]]:
+    """The run's harness-native columns, in first-seen order."""
+    # The catalog is execution-wide so columns never vary by page or filter.
+    # Oldest call first: saving a call must not reorder the columns, so a
+    # cached scan and a fresh one always agree.
+    alias = router.db_for_read(CallExecution)
+    calls_sql, params = (
+        CallExecution.objects.using(alias)
+        .filter(test_execution=execution)
+        .order_by()
+        .values("id", "created_at", "eval_outputs")
+        .query.get_compiler(using=alias)
+        .as_sql()
+    )
+    with connections[alias].cursor() as cursor:
+        cursor.execute(
+            f"WITH calls AS ({calls_sql}){_FIRST_HARNESS_OUTPUTS_SQL}", params
+        )
+        found = cursor.fetchall()
+    columns = []
+    for eval_id, data, receipt in found:
+        name = str(json.loads(data).get("name") or eval_id)
+        sub_goal_names = receipt_sub_goal_names(
+            {"hosted_harness_receipt": json.loads(receipt) if receipt else None}
+        )
+        columns.append(
+            {
+                "id": eval_id,
+                "name": name,
+                "kind": "sub_goal" if name in sub_goal_names else "evaluation",
+            }
+        )
+    return columns
 
 
 def build_evaluation_catalog(
@@ -368,37 +643,7 @@ def build_evaluation_catalog(
     if harness_columns is None:
         # Cache every harness column, including ones a config covers today:
         # that config may be deleted later and must not leave a gap.
-        seen = set()
-        harness_columns = []
-        # The catalog is execution-wide so columns never vary by page or filter.
-        # Oldest call first: saving a call must not reorder the columns, so a
-        # cached scan and a fresh one always agree.
-        outputs = (
-            CallExecution.objects.filter(test_execution=execution)
-            .order_by("created_at", "id")
-            .values_list("eval_outputs", "call_metadata")
-        )
-        for eval_outputs, metadata in outputs:
-            if not isinstance(eval_outputs, dict):
-                continue
-            sub_goal_names = receipt_sub_goal_names(metadata)
-            for eval_id, data in eval_outputs.items():
-                eval_id = str(eval_id)
-                if (
-                    eval_id in seen
-                    or not isinstance(data, dict)
-                    or data.get("source") != "harness"
-                ):
-                    continue
-                name = str(data.get("name") or eval_id)
-                harness_columns.append(
-                    {
-                        "id": eval_id,
-                        "name": name,
-                        "kind": "sub_goal" if name in sub_goal_names else "evaluation",
-                    }
-                )
-                seen.add(eval_id)
+        harness_columns = _harness_columns(execution)
         if harness_cache_key:
             cache.set(harness_cache_key, harness_columns, timeout=60 * 60)
 
@@ -412,15 +657,115 @@ def build_evaluation_catalog(
     return columns, live_eval_ids
 
 
+# A receipt failure's typed fields, which a reader can have without its message.
+_FAILURE_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def _failure_fields(receipt: Mapping[str, Any]) -> dict[str, str | None]:
+    failure = receipt.get("failure")
+    failure = failure if isinstance(failure, Mapping) else {}
+    domain, code = failure.get("domain"), failure.get("code")
+    return {
+        "failure_domain": domain if domain in HARNESS_FAILURE_DOMAINS else None,
+        "failure_code": (
+            code if isinstance(code, str) and _FAILURE_CODE.fullmatch(code) else None
+        ),
+    }
+
+
+# What each reason an actor did not reach the agent means, as the reader of a run reads it.
+_ACTOR_MISSING_WHY = {
+    "not_triggered": "never came in",
+    "not_delivered": "came in but never spoke",
+    "not_listed": "is not an actor in this environment",
+    "no_world_door": "could not act: this agent's tools run where no actor can act",
+    "no_private_token": "could not act in the world",
+}
+_SCENARIO_FAILURE_PREFIX = "inconclusive: scenario problem, not the agent's: "
+# A call the run was stopped before it finished, counted as cancelled.
+_STOPPED = "Stopped before it finished: the run was cancelled"
+
+
+def _scenario_failure_reason(receipt: Mapping[str, Any]) -> str | None:
+    """Why a call held as the scenario's problem (an actor that never reached the agent, worker limits the sealed
+    world could not enforce) is inconclusive, in the reader's words; None for any other failure, whose message is
+    not written for the reader."""
+    failure = receipt.get("failure")
+    if (
+        not isinstance(failure, Mapping)
+        or failure.get("code") not in SCENARIO_FAILURE_CODES
+    ):
+        return None
+    message = str(failure.get("message") or "")
+    detail = message.removeprefix(_SCENARIO_FAILURE_PREFIX)
+    if failure.get("code") == "actor_missing":
+        detail = re.sub(
+            r"\((\w+)(?::\s*([^)]*))?\)",
+            lambda found: "({}{})".format(
+                _ACTOR_MISSING_WHY.get(
+                    found.group(1), found.group(1).replace("_", " ")
+                ),
+                f": {found.group(2)}" if found.group(2) else "",
+            ),
+            detail,
+        )
+    return (
+        f"Inconclusive, a problem of the scenario, not the agent: {detail}"
+        if detail
+        else ("Inconclusive, a problem of the scenario, not the agent")
+    )
+
+
+# The unscored sub-goal results a call with no score counts, in order, each with its words.
+_UNSCORED_RESULTS = (
+    ("not_applicable", "not applicable"),
+    ("inconclusive", "inconclusive"),
+    ("unmeasured", "not measured"),
+)
+
+
+def _unscored_reason(
+    outcome: str, sub_goal_results: Sequence[SubGoalEntry]
+) -> str | None:
+    """What a call with no pass or fail has instead, counted by sub-goal result: "2 not applicable, 1 inconclusive";
+    None for any other outcome, or when no sub-goal says."""
+    if outcome != "no_score":
+        return None
+    counts = [
+        (sum(1 for goal in sub_goal_results if goal.get("result") == result), words)
+        for result, words in _UNSCORED_RESULTS
+    ]
+    return ", ".join(f"{count} {words}" for count, words in counts if count) or None
+
+
+# Failures whose message the harness writes for the reader of a run, shown as it is.
+_READER_FAILURES = frozenset({"duplicate_commit", "evidence_unmeasured"})
+
+
+def _reader_failure_reason(receipt: Mapping[str, Any]) -> str | None:
+    """A failure the harness explains in the reader's words (the agent repeated a write after its answer was lost and
+    the world committed it twice); None for any other failure."""
+    failure = receipt.get("failure")
+    if not isinstance(failure, Mapping) or failure.get("code") not in _READER_FAILURES:
+        return None
+    message = str(failure.get("message") or "").strip()
+    return message or None
+
+
 def build_call_rows(
     execution: TestExecution,
     calls: list[CallExecution] | None = None,
     columns: list[dict[str, str]] | None = None,
     live_eval_ids: set[str] | None = None,
+    live_evals: LiveEvals | None = None,
+    *,
+    runnable_ids: set[str] | None = None,
+    now: datetime | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     if calls is None:
         calls = list(
             CallExecution.objects.filter(test_execution=execution)
+            .annotate(result_provider=call_agent_provider_expression())
             .select_related("scenario", "test_execution__agent_definition")
             .order_by("-updated_at")
         )
@@ -428,12 +773,26 @@ def build_call_rows(
         catalog, catalog_live_ids = build_evaluation_catalog(execution)
         columns = catalog if columns is None else columns
         live_eval_ids = catalog_live_ids if live_eval_ids is None else live_eval_ids
-    live_eval_configs = {
-        str(config.id): config
-        for config in SimulateEvalConfig.objects.filter(
-            id__in=live_eval_ids, deleted=False
-        ).select_related("eval_template")
-    }
+    if runnable_ids is None:
+        runnable_ids = set(runnable_eval_config_ids(execution.run_test_id))
+    if now is None:
+        now = timezone.now()
+    names = {column["id"]: column["name"] for column in columns}
+    specs: dict[str, EvalScoringSpec] = {}
+    if live_evals is None:
+        live_eval_configs = {
+            str(config.id): config
+            for config in SimulateEvalConfig.objects.filter(
+                id__in=live_eval_ids, deleted=False
+            ).select_related("eval_template")
+        }
+    else:
+        live_eval_configs = {
+            eval_id: live.config
+            for eval_id, live in live_evals.items()
+            if eval_id in live_eval_ids
+        }
+        specs = {eval_id: live_evals[eval_id].spec for eval_id in live_eval_configs}
     harness_scenarios = _harness_scenarios(calls)
     dimensions = _row_dimensions(
         calls,
@@ -447,7 +806,8 @@ def build_call_rows(
     rows = []
     harness_columns: dict[str, dict[str, str]] = {}
     for call in calls:
-        metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+        metadata = call_row_metadata(call)
+        metadata = metadata if isinstance(metadata, dict) else {}
         row_data = metadata.get("row_data")
         row_data = row_data if isinstance(row_data, dict) else {}
         row_id = str(call.row_id or metadata.get("row_id") or "")
@@ -467,6 +827,9 @@ def build_call_rows(
             or row_dimensions.get("persona")
             or scenario_metadata.get("persona")
         )
+        if metadata.get(STARTED_BY_KEY) == STARTED_BY_TASK:
+            # A run the scenario's own task started has no person, whatever persona the row was provisioned with.
+            persona_details = None
         persona = persona_details.get("name") if persona_details else None
         goal = (
             getattr(call, "result_goal", None)
@@ -488,18 +851,9 @@ def build_call_rows(
             or (harness_scenario.sub_goals if harness_scenario else None)
             or []
         )
-        sub_goal_results = []
-        for item in raw_sub_goals:
-            name = item.get("name") if isinstance(item, dict) else item
-            if not name:
-                continue
-            held = item.get("held") if isinstance(item, dict) else None
-            sub_goal_results.append(
-                {
-                    "name": str(name),
-                    "passed": held if isinstance(held, bool) else None,
-                }
-            )
+        sub_goal_results = sub_goal_entries(
+            raw_sub_goals, recorded_worker_names(metadata)
+        )
         ideal_outcome = (
             row_data.get("outcome")
             or scenario_dimensions.get("outcome")
@@ -527,8 +881,18 @@ def build_call_rows(
         turn_count = _number(metrics.get("turn_count"))
         if turn_count is None:
             turn_count = _number(metrics.get("bot_message_count"))
-        evaluations = eval_rows(call, live_eval_configs)
+        scoring = derive_call_scoring(
+            scoring_input_from_call(call, metadata=call_row_metadata(call)),
+            visible_ids=live_eval_ids,
+            runnable_ids=runnable_ids,
+            run_status=execution.status,
+            now=now,
+        )
+        evaluations = eval_rows(
+            call, live_eval_configs, specs, scoring=scoring, names=names
+        )
         receipt_sub_goals = receipt_sub_goal_names(metadata)
+        outcome = call_outcome(call, live_eval_configs, specs)
         for evaluation in evaluations:
             harness_columns[evaluation["id"]] = {
                 "id": evaluation["id"],
@@ -554,13 +918,23 @@ def build_call_rows(
                 # TODO: drop once clients read sub_goal_results.
                 "sub_goals": [goal["name"] for goal in sub_goal_results],
                 "sub_goal_results": sub_goal_results,
-                "outcome": call_outcome(call, live_eval_configs),
+                "outcome": outcome,
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
+                # Why it was skipped, when the harness gave a reason; why an actor's call is inconclusive; a stopped call.
+                "outcome_reason": receipt.get("reason")
+                or _scenario_failure_reason(receipt)
+                or _reader_failure_reason(receipt)
+                or (
+                    _STOPPED
+                    if call.status == CallExecution.CallStatus.CANCELLED
+                    else None
+                )
+                or _unscored_reason(outcome, sub_goal_results),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,
-                "provider": _provider(call),
+                "provider": call_agent_provider(call),
                 "started_at": call.started_at,
                 "completed_at": call.completed_at,
                 "duration_seconds": call.duration_seconds,
@@ -582,7 +956,11 @@ def build_call_rows(
                 "csat": _csat_score(metrics),
                 "ended_reason": call.ended_reason,
                 "error_message": call.error_message,
+                **_failure_fields(receipt),
                 "evaluations": evaluations,
+                "scoring_status": scoring.status,
+                "csat_status": scoring.csat_status,
+                "csat_reason": scoring.csat_reason,
             }
         )
     columns = list(columns)

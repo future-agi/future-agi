@@ -168,9 +168,13 @@
           "type": "string",
           "description": "Public URL of the API, e.g. `https://api.futureagi.example.com` [BASE_URL, and the UI's VITE_HOST_API]. Empty: derived from `ingress.api.host` with `ingress.enabled`, else from `gatewayApi.api.host` with `gatewayApi.enabled`, else `http://localhost:8000`."
         },
+        "gateway": {
+          "type": "string",
+          "description": "[AGENTCC_GATEWAY_PUBLIC_URL] Public HTTPS base URL shown in the dashboard's gateway configuration, e.g. `https://gateway.example.com`. Empty: the backend's default URL (http://localhost:8090)."
+        },
         "otlp": {
           "type": "string",
-          "description": "[FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_BASE_URL, shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp` with `ingress.enabled`, else from `gatewayApi.otlp` with `gatewayApi.enabled`, else `http://localhost:4318` (the port-forward in the install notes)."
+          "description": "[FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_TRACES_URL (their FI_BASE_URL is `urls.api`), shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp` with `ingress.enabled`, else from `gatewayApi.otlp` with `gatewayApi.enabled`, else `http://localhost:4318` (the port-forward in the install notes)."
         },
         "objects": {
           "type": "string",
@@ -677,7 +681,7 @@
             },
             "optIn": {
               "type": "array",
-              "description": "[READ_REPLICA_OPT_IN] model class names (e.g. `Dashboard`) and `feature:` keys routed to the replica. Empty: nothing reads from it."
+              "description": "[READ_REPLICA_OPT_IN] `feature:` keys and model class names routed to the replica. Empty: nothing reads from it. A model name sends every ordinary read of that model there, so list only models whose read-after-write paths read the primary; the chart README's \"Read replica\" section has the tested list."
             }
           }
         },
@@ -1993,6 +1997,50 @@
           "type": "string",
           "description": "[VITE_HELP_LINK] where the sidebar Help entry points. Empty: the community Discord."
         },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Serve native HTTPS on the dashboard [FRONTEND_TLS_ENABLED]. Requires existingSecret and an HTTPS API URL (except localhost)."
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Existing kubernetes.io/tls Secret with the full certificate chain and private key; updated in place for hot reload."
+            },
+            "certKey": {
+              "type": "string",
+              "description": "Certificate-chain key in the Secret [FRONTEND_TLS_CERT_FILE]."
+            },
+            "keyKey": {
+              "type": "string",
+              "description": "Private-key key in the Secret [FRONTEND_TLS_KEY_FILE]."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Dashboard HTTPS container port [FRONTEND_TLS_PORT]."
+            },
+            "servicePort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Dashboard HTTPS Service port."
+            },
+            "httpEnabled": {
+              "type": "boolean",
+              "description": "Keep HTTP on port 8080 during migration [FRONTEND_HTTP_ENABLED]; requires enabled=true when false."
+            },
+            "reloadInterval": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60,
+              "description": "Certificate polling interval in seconds [FRONTEND_TLS_RELOAD_INTERVAL]; keep at most 60 for timely rotation."
+            }
+          }
+        },
         "service": {
           "type": "object",
           "additionalProperties": false,
@@ -2237,7 +2285,23 @@
         },
         "goMemLimit": {
           "type": "string",
-          "description": "[GOMEMLIMIT] soft memory limit; keep it below the memory limit."
+          "description": "[GOMEMLIMIT] soft memory limit; keep it below the memory limit. The ingest budget is derived from it."
+        },
+        "ingestBudgetMiB": {
+          "type": "integer",
+          "description": "[FI_INGEST_BUDGET_MIB] memory, in MiB, that all OTLP requests may hold at once, from reading a body to storing its spans; past it, requests wait their turn (up to 2 s), then get 503 / UNAVAILABLE, which exporters retry. A request that could never fit gets 413 / INVALID_ARGUMENT. 0: derived from `goMemLimit` (about half of it, less a fixed allowance: 391 with the default)."
+        },
+        "maxBodyMiB": {
+          "type": "integer",
+          "description": "[FI_OTLP_MAX_BODY_MIB] largest OTLP/HTTP body, in MiB, as sent and after gzip decompression (413 above it). 0: 16, lowered when the ingest budget cannot hold a body that size."
+        },
+        "grpcMaxRecvMiB": {
+          "type": "integer",
+          "description": "[FI_GRPC_MAX_RECV_MIB] largest OTLP/gRPC message, in MiB (INVALID_ARGUMENT above it). 0: the OTLP/HTTP body cap, lowered like it."
+        },
+        "maxConnections": {
+          "type": "integer",
+          "description": "[FI_OTLP_MAX_CONNECTIONS] open connections each OTLP listener (gRPC and HTTP) accepts. 0: no cap."
         },
         "resources": {
           "type": "object",
@@ -2319,7 +2383,7 @@
               "boolean"
             ]
           },
-          "description": "Extra environment variables (FI_* overrides, see fi-collector/README.md), as `NAME: value`."
+          "description": "Extra environment variables as `NAME: value`. `FI_ADMIN_ADDR: \":9500\"` moves the Pod listener, readiness and GKE check; the Service still accepts 9464. See UPGRADING.md for supported binds."
         },
         "podAnnotations": {
           "type": "object",
@@ -2430,6 +2494,57 @@
         "existingConfigMap": {
           "type": "string",
           "description": "Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`."
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Serve native HTTPS on the gateway [AGENTCC_TLS_ENABLED]. Requires existingSecret."
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Existing kubernetes.io/tls Secret with the full certificate chain and private key; updated in place for hot reload."
+            },
+            "certKey": {
+              "type": "string",
+              "description": "Certificate-chain key in the Secret [AGENTCC_TLS_CERT_FILE]."
+            },
+            "keyKey": {
+              "type": "string",
+              "description": "Private-key key in the Secret [AGENTCC_TLS_KEY_FILE]."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Gateway HTTPS container port [AGENTCC_TLS_PORT]."
+            },
+            "servicePort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Gateway HTTPS Service port."
+            },
+            "httpEnabled": {
+              "type": "boolean",
+              "description": "Keep HTTP on the configured server port during migration [AGENTCC_HTTP_ENABLED]; requires enabled=true when false."
+            },
+            "minVersion": {
+              "type": "string",
+              "enum": [
+                "1.2",
+                "1.3"
+              ],
+              "description": "Minimum TLS version [AGENTCC_TLS_MIN_VERSION]: 1.2 or 1.3."
+            },
+            "reloadInterval": {
+              "type": "string",
+              "pattern": "^([+]?(([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|\u00b5s|\u03bcs|ms|s|m|h))+)?$",
+              "description": "Certificate polling interval, a Go duration [AGENTCC_TLS_RELOAD_INTERVAL]. Must be greater than zero and at most 1m, as the gateway requires."
+            }
+          }
         },
         "config": {
           "type": "object",
@@ -3198,7 +3313,7 @@
               "properties": {
                 "enabled": {
                   "type": "boolean",
-                  "description": "GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its admin port 9464, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs)."
+                  "description": "GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its configured Pod admin port, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs)."
                 }
               }
             }

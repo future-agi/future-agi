@@ -15,6 +15,7 @@ def _config(mapping, *, owner="system", required_keys=("conversation", "agent_pr
     return SimpleNamespace(
         mapping=mapping,
         eval_template=SimpleNamespace(
+            name="test_eval",
             owner=owner,
             config=None
             if required_keys is None

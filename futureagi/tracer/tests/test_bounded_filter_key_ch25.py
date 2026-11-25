@@ -205,7 +205,8 @@ def eval_latest_table(ch_client, request):
         "is_deleted UInt8, _version UInt64"
         if request.param == "v2"
         else (
-            "deleted Nullable(UInt8), _peerdb_is_deleted UInt8, _peerdb_version Int64"
+            "deleted Nullable(UInt8), _peerdb_is_deleted UInt8, _peerdb_version Int64, "
+            "status Nullable(String) DEFAULT 'completed'"
         )
     )
     ch_client.execute(

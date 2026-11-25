@@ -356,34 +356,31 @@ const FilterChip = ({ filter, onRemove }) => {
 
   return (
     <Box
-      sx={(theme) => ({
+      sx={() => ({
         display: "inline-flex",
         alignItems: "center",
         gap: 0.5,
         px: 0.75,
         py: 0.25,
-        bgcolor:
-          theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.06)"
-            : "rgba(0,0,0,0.04)",
+        bgcolor: "background.neutral",
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "6px",
-        fontSize: 11,
+        fontSize: 12,
         color: "text.primary",
         whiteSpace: "nowrap",
         minHeight: 26,
       })}
     >
       <Iconify
-        icon="mdi:filter-variant"
+        icon="solar:filter-linear"
         width={12}
         sx={{ color: "text.disabled" }}
       />
       <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
         {filter.fieldName || filter.fieldLabel || filter.field}
       </Typography>
-      <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+      <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
         {opLabel}
       </Typography>
       <Typography
@@ -399,7 +396,7 @@ const FilterChip = ({ filter, onRemove }) => {
         {valueStr}
       </Typography>
       <Iconify
-        icon="mdi:close"
+        icon="solar:close-linear"
         width={12}
         sx={{
           cursor: "pointer",
@@ -600,12 +597,8 @@ const TaskFilterBar = ({
             onClick={openPanel}
             variant="outlined"
             size="small"
-            startIcon={<Iconify icon="mdi:filter-variant" width={14} />}
+            startIcon={<Iconify icon="solar:filter-linear" width={14} />}
             sx={{
-              textTransform: "none",
-              fontWeight: 500,
-              fontSize: "12px",
-              height: 30,
               width: "fit-content",
               flexShrink: 0,
               borderColor: "divider",
@@ -643,7 +636,7 @@ const TaskFilterBar = ({
               component="button"
               type="button"
               onClick={openPanel}
-              sx={(theme) => ({
+              sx={() => ({
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -653,23 +646,17 @@ const TaskFilterBar = ({
                 border: "1px solid",
                 borderColor: "divider",
                 borderRadius: "6px",
-                bgcolor:
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.04)"
-                    : "background.paper",
+                bgcolor: "background.paper",
                 color: "text.secondary",
                 cursor: "pointer",
                 "&:hover": {
                   color: "text.primary",
-                  bgcolor:
-                    theme.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.08)"
-                      : "action.hover",
+                  bgcolor: "action.hover",
                   borderColor: "text.disabled",
                 },
               })}
             >
-              <Iconify icon="mdi:plus" width={14} />
+              <Iconify icon="solar:add-linear" width={14} />
             </Box>
           )}
 
@@ -678,8 +665,6 @@ const TaskFilterBar = ({
             size="small"
             onClick={handleClear}
             sx={{
-              textTransform: "none",
-              fontSize: 12,
               color: "text.secondary",
               minWidth: "auto",
               p: 0,

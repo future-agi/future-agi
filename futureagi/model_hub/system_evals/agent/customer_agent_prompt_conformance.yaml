@@ -16,7 +16,8 @@ criteria: "You are evaluating whether the agent follows its system prompt instru
   \ 1.0 if it fully adheres across all turns.\n\n## Inputs\n\n<system_prompt>{{system_prompt}}</system_prompt>\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
-- Conversation
+- Voice
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

@@ -164,7 +164,7 @@ TOO_LARGE_ERROR_CODES = ("export_too_large", "items_too_large")
 class ApiTooLargeErrorSerializer(ApiTextErrorResponseSerializer):
     """413 cap-exceeded envelope with ``code`` narrowed to the contracted set."""
 
-    code = serializers.ChoiceField(
+    code = serializers.ChoiceField(  # type: ignore[assignment]  # DRF field narrows the base serializer's code field
         choices=TOO_LARGE_ERROR_CODES, required=False, allow_blank=True
     )
 
@@ -175,11 +175,22 @@ class DatasetLimitCheckFailedErrorSerializer(ApiTextErrorResponseSerializer):
     The code tells the client this 5xx carries a message for the user.
     """
 
-    code = serializers.ChoiceField(
+    code = serializers.ChoiceField(  # type: ignore[assignment]  # DRF field narrows the base serializer's code field
         choices=(ApiErrorCode.DATASET_LIMIT_CHECK_FAILED.value,),
         required=False,
         allow_blank=True,
     )
+
+
+class ViewerReadOnlyErrorSerializer(ApiDetailErrorResponseSerializer):
+    """403 of a simulation write a Viewer can't make, naming what they tried."""
+
+    code = serializers.ChoiceField(  # type: ignore[assignment]  # DRF field narrows the base serializer's code field
+        choices=(ApiErrorCode.VIEWER_READ_ONLY.value,),
+        required=False,
+        allow_blank=True,
+    )
+    action = serializers.CharField(required=False, allow_blank=True)
 
 
 class ApiSelectionTooLargeDetailSerializer(serializers.Serializer):

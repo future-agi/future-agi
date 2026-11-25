@@ -624,6 +624,9 @@ class SecretKeyListItemSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     enabled = serializers.BooleanField()
     type = serializers.CharField()
+    can_switch = serializers.BooleanField()
+    expires_at = serializers.DateTimeField(allow_null=True)
+    is_expired = serializers.BooleanField()
 
 
 class SecretKeyListResultSerializer(serializers.Serializer):
@@ -643,6 +646,7 @@ class SecretKeyCreateResultSerializer(serializers.Serializer):
     masked_api_key = serializers.CharField()
     secret_key = serializers.CharField()
     masked_secret_key = serializers.CharField()
+    expires_at = serializers.DateTimeField(allow_null=True)
 
 
 class SecretKeyCreateResponseSerializer(serializers.Serializer):
@@ -696,6 +700,7 @@ class UserInfoResponseSerializer(serializers.Serializer):
     two_factor_methods = UserInfoTwoFactorMethodsSerializer(required=False)
     org_2fa_required = serializers.BooleanField(required=False)
     org_2fa_grace_ends_at = serializers.DateTimeField(required=False)
+    restrict_simulate_to_environments = serializers.BooleanField()
 
 
 class AccountOrganizationDetailSerializer(serializers.Serializer):
@@ -920,8 +925,18 @@ class TeamCreateErrorItemSerializer(serializers.Serializer):
     error = serializers.CharField()
 
 
+class TeamCreatedMemberResponseSerializer(AccountUserItemResponseSerializer):
+    goals = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_null=True
+    )
+    invite_email_warning = serializers.CharField(
+        required=False,
+        help_text="Member was added, but the invitation email could not be sent.",
+    )
+
+
 class TeamCreateResultSerializer(serializers.Serializer):
-    created_members = AccountUserItemResponseSerializer(many=True)
+    created_members = TeamCreatedMemberResponseSerializer(many=True)
     workspace = WorkspaceSummarySerializer()
     errors = TeamCreateErrorItemSerializer(many=True, required=False)
 
@@ -929,6 +944,31 @@ class TeamCreateResultSerializer(serializers.Serializer):
 class TeamCreateResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = TeamCreateResultSerializer()
+
+
+class TeamCreateErrorResultField(AccountsErrorResultField):
+    """Preserve validation strings and structured per-member partial outcomes."""
+
+    class Meta:
+        swagger_schema_fields = {
+            **ACCOUNTS_ERROR_RESULT_SCHEMA,
+            "properties": {
+                **ACCOUNTS_ERROR_RESULT_SCHEMA["properties"],
+                "created_members": {
+                    "type": "array",
+                    "items": {"$ref": "#/definitions/TeamCreatedMemberResponse"},
+                },
+                "workspace": {"$ref": "#/definitions/WorkspaceSummary"},
+                "errors": {
+                    "type": "array",
+                    "items": {"$ref": "#/definitions/TeamCreateErrorItem"},
+                },
+            },
+        }
+
+
+class TeamCreateErrorResponseSerializer(AccountsErrorResponseSerializer):
+    result = TeamCreateErrorResultField(required=False, allow_null=True)
 
 
 class TeamRemoveResultSerializer(serializers.Serializer):

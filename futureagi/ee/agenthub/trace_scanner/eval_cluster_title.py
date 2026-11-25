@@ -167,9 +167,7 @@ def generate_eval_cluster_meta(
         {"role": "system", "content": _SYSTEM},
         {
             "role": "user",
-            "content": (
-                f"eval={eval_name} | reasoning={reasoning.strip()[:1500]}"
-            ),
+            "content": (f"eval={eval_name} | reasoning={reasoning.strip()[:1500]}"),
         },
     ]
     return _parse_meta(_invoke(messages, eval_name))
@@ -398,9 +396,7 @@ def _parse_severity(raw: Optional[str]) -> Optional[str]:
     return sev if sev in _SEVERITIES else None
 
 
-def generate_scan_cluster_severity(
-    category: str, brief: str
-) -> Optional[str]:
+def generate_scan_cluster_severity(category: str, brief: str) -> Optional[str]:
     """User-impact severity (critical|high|medium|low) for a scanner cluster's
     seed issue. None on OSS/no-gateway/LLM-failure so the caller defaults."""
     if not (category or brief):

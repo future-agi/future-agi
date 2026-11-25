@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -284,6 +285,37 @@ func TestGetOrCreate_PrivateBaseURLNeedsOptIn(t *testing.T) {
 	}
 }
 
+// APIFormat refuses what the config alone shows the build would refuse, and
+// resolves no host: a host name is checked when the provider is built.
+func TestAPIFormat_RefusesWithoutResolving(t *testing.T) {
+	orig := lookupIP
+	lookupIP = func(host string) ([]net.IP, error) {
+		t.Errorf("APIFormat looked up %q", host)
+		return nil, errors.New("no lookup expected")
+	}
+	t.Cleanup(func() { lookupIP = orig })
+
+	cache := NewOrgProviderCache(map[string]config.ProviderConfig{"layered": {APIFormat: "systemone"}}, false)
+	for _, tt := range []struct {
+		id, baseURL string
+		want        bool
+	}{
+		{"custom", "https://judge.example", true},
+		{"typesafe", "", true},               // TypeSafe's default upstream
+		{"custom", "", false},                // a custom System One endpoint needs a base_url
+		{"layered", "", false},               // and so does config.yaml's entry
+		{"custom", "http://10.1.2.3", false}, // private, without the opt-in
+		{"custom", "http://metadata.google.internal", false},
+		{"custom", "http://[fe80::1%25en0]", false},  // a zoned link-local literal
+		{"custom", "http://[::1%25lo0]:8080", false}, // a zoned loopback literal
+	} {
+		pcfg := &tenant.ProviderConfig{APIKey: "org-key", APIFormat: "systemone", BaseURL: tt.baseURL, Enabled: true}
+		if format, ok := cache.APIFormat(tt.id, pcfg); ok != tt.want || (ok && format != APIFormatSystemOne) {
+			t.Errorf("APIFormat(%s, %q) = %q, %v; want ok %v", tt.id, tt.baseURL, format, ok, tt.want)
+		}
+	}
+}
+
 func TestResolveOrgConfig_NeverInheritsOperatorCredentials(t *testing.T) {
 	baseCfg := config.ProviderConfig{
 		BaseURL:            "https://bedrock-runtime.us-east-1.amazonaws.com",
@@ -387,6 +419,11 @@ func TestValidateBaseURL(t *testing.T) {
 	policy.DNS["empty-answer"] = nil
 	policy.URLs = append(policy.URLs, urlCase{"", "public"}, urlCase{"http://empty-answer", "unresolvable"})
 	stubLookupIP(t, policy.DNS)
+	stubbed, lookups := lookupIP, 0
+	lookupIP = func(host string) ([]net.IP, error) {
+		lookups++
+		return stubbed(host)
+	}
 
 	const pass = -1
 	reasons := map[string]BaseURLRejection{
@@ -400,7 +437,19 @@ func TestValidateBaseURL(t *testing.T) {
 
 	check := func(t *testing.T, url string, allowPrivate bool, want BaseURLRejection) {
 		t.Helper()
+		lookups = 0
 		err := validateBaseURL(url, allowPrivate)
+		// Without resolving, a URL is refused exactly when it is refused
+		// before any lookup; one whose host has to be looked up passes.
+		resolved := lookups > 0
+		lookups = 0
+		unresolved := checkBaseURL(url, allowPrivate, false)
+		if lookups > 0 {
+			t.Errorf("checkBaseURL(%q, resolve=false) looked the host up", url)
+		}
+		if (resolved && unresolved != nil) || (!resolved && fmt.Sprint(unresolved) != fmt.Sprint(err)) {
+			t.Errorf("checkBaseURL(%q, allowPrivate=%v, resolve=false) = %v, validateBaseURL = %v", url, allowPrivate, unresolved, err)
+		}
 		if want == pass {
 			if err != nil {
 				t.Errorf("validateBaseURL(%q, allowPrivate=%v) = %v, want nil", url, allowPrivate, err)

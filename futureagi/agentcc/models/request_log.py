@@ -80,6 +80,14 @@ class AgentccRequestLog(BaseModel):
                 opclasses=["jsonb_path_ops"],
             ),
         ]
+        constraints = [
+            # One row per request: the gateway resends a batch it timed out on.
+            models.UniqueConstraint(
+                fields=["organization", "request_id"],
+                condition=models.Q(deleted=False) & ~models.Q(request_id=""),
+                name="agentcc_req_log_live_request_uniq",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.request_id} ({self.model})"

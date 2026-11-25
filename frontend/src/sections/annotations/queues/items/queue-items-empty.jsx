@@ -14,7 +14,7 @@ export default function QueueItemsEmpty({ onAddClick }) {
         sx={{
           width: 48,
           height: 48,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           border: "2px solid",
           borderColor: "divider",
 
@@ -43,7 +43,7 @@ export default function QueueItemsEmpty({ onAddClick }) {
         <Button
           variant="contained"
           color="primary"
-          startIcon={<Iconify icon="mingcute:add-line" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           onClick={onAddClick}
         >
           Add Items

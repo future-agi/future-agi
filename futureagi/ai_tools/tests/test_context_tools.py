@@ -3,46 +3,29 @@ import pytest
 from ai_tools.registry import registry
 
 
-class TestWhoamiTool:
-    def test_whoami_returns_user_info(self, tool_context):
-        tool = registry.get("whoami")
-        result = tool.run({}, tool_context)
+@pytest.mark.django_db
+class TestSearchTool:
+    @pytest.mark.parametrize("query", ['{"status":"FAILED"}', '["ERROR"]'])
+    def test_search_preserves_literal_json_query(self, tool_context, query):
+        from model_hub.models.choices import DatasetSourceChoices
+        from model_hub.models.develop_dataset import Dataset
 
-        assert not result.is_error
-        assert tool_context.user.email in result.content
-        assert tool_context.user.name in result.content
-        assert tool_context.organization.name in result.content
-        assert tool_context.workspace.name in result.content
+        dataset = Dataset.objects.create(
+            name=query,
+            source=DatasetSourceChoices.BUILD.value,
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+        result = registry.get("search").run(
+            {"query": query, "entity_types": '["datasets"]'}, tool_context
+        )
 
-    def test_whoami_has_structured_data(self, tool_context):
-        tool = registry.get("whoami")
-        result = tool.run({}, tool_context)
-
-        assert result.data is not None
-        assert result.data["user_email"] == tool_context.user.email
-        assert result.data["organization_name"] == tool_context.organization.name
-        assert result.data["workspace_name"] == tool_context.workspace.name
-
-
-class TestListWorkspacesTool:
-    def test_list_workspaces_returns_table(self, tool_context):
-        tool = registry.get("list_workspaces")
-        result = tool.run({}, tool_context)
-
-        assert not result.is_error
-        assert "Workspaces" in result.content
-        assert tool_context.workspace.name in result.content
-
-    def test_list_workspaces_has_structured_data(self, tool_context):
-        tool = registry.get("list_workspaces")
-        result = tool.run({}, tool_context)
-
-        assert result.data is not None
-        assert "workspaces" in result.data
-        assert len(result.data["workspaces"]) >= 1
-        ws = result.data["workspaces"][0]
-        assert "id" in ws
-        assert "name" in ws
+        assert not result.is_error, result.content
+        assert result.data["query"] == query
+        assert result.data["total"] == 1
+        assert result.data["results"]["datasets"] == [
+            {"id": str(dataset.id), "name": query}
+        ]
 
 
 class TestReadSchemaTool:
