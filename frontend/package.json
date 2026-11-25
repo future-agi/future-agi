@@ -152,12 +152,12 @@
     "strip-ansi": "6.0.1",
     "protobufjs": "^7.5.5",
     "form-data": "^4.0.6",
-    "tar": "^7.5.22"
+    "tar": "7.5.22"
   },
   "overrides": {
     "protobufjs": "^7.5.5",
     "form-data": "^4.0.6",
-    "tar": "^7.5.22"
+    "tar": "7.5.22"
   },
   "devDependencies": {
     "@storybook/addon-docs": "^9.1.20",
