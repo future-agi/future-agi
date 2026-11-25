@@ -24,7 +24,8 @@ import { useConnectedAgents, useSimStore } from "../store";
 import { LiveConsentCard } from "../agents/AgentLiveConsent";
 import { proofKindOf } from "../_mock/rsiModel";
 import CostPartsTable from "../improvements/CostPartsTable";
-import { SHOW_RUN_COST } from "../_mock/costFlags";
+import { SHOW_RUN_COST, SHOW_EPOCH_COST } from "../_mock/costFlags";
+import EpochCostLine from "../improvements/EpochCostLine";
 import { ConstraintPicker } from "../improvements/ImprovementConstraints";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { useRebuildForAgent } from "../workspace/useRebuildForAgent";
@@ -651,6 +652,13 @@ export default function FixStartDialog({
               {scenariosRow}
               <Row k="Budget">
                 <Typography sx={{ typography: "s2" }}>{budgetLine}</Typography>
+                {SHOW_EPOCH_COST && (
+                  <EpochCostLine
+                    estimate={estimate}
+                    spend={spend}
+                    candidates={estimate?.runs}
+                  />
+                )}
                 {liveConsent && (
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
@@ -823,6 +831,13 @@ export default function FixStartDialog({
                   >
                     {budgetLine}
                   </Typography>
+                  {SHOW_EPOCH_COST && (
+                    <EpochCostLine
+                      estimate={estimate}
+                      spend={spend}
+                      candidates={estimate?.runs}
+                    />
+                  )}
                   {/* A cost breakdown before the epoch starts is Later (costFlags). */}
                   {SHOW_RUN_COST && (
                     <Box sx={{ mt: 1 }}>

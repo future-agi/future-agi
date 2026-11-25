@@ -31,7 +31,7 @@ import {
   selectionNoun,
   selectionTracesOf,
 } from "../../_mock/observeSelection";
-import { ensureTag, groupPatch, groupsOf } from "../../_mock/scenarioOrg";
+import { ensureTag, groupPatch } from "../../_mock/scenarioOrg";
 import {
   EVIDENCE_KINDS,
   parseDataset,
@@ -121,7 +121,19 @@ export default function ProductionReplayImport({
   const [picked, setPicked] = useState({});
   const [step, setStep] = useState(sel ? "freeze" : "pick");
   const [frozen, setFrozen] = useState(() => selTraces.map((t) => t.id));
-  const [goal, setGoal] = useState("reproduce");
+  /* What the new scenarios are — one or more kinds at once (Chintan,
+     25 Nov); the first is the lead for the command line and old drafts. */
+  const [goals, setGoals] = useState(["reproduce"]);
+  const goal = goals[0] || "reproduce";
+  const setGoal = (g) => setGoals([g]);
+  const toggleGoal = (g) =>
+    setGoals((list) =>
+      list.includes(g)
+        ? list.length > 1
+          ? list.filter((x) => x !== g)
+          : list
+        : [...list, g],
+    );
   const [group, setGroup] = useState("");
   const [tags, setTags] = useState("");
   const { patch } = useEnvState(env?.id);
@@ -178,6 +190,7 @@ export default function ProductionReplayImport({
           frozen,
           traceIds: frozenTraces.map((t) => t.traceId),
           goal,
+          goals,
           group,
           tags,
         },
@@ -191,7 +204,7 @@ export default function ProductionReplayImport({
     setDraftId(d.id);
     if (d.src && kinds.includes(d.src)) setSrc(d.src);
     setFrozen(d.frozen);
-    setGoal(d.goal);
+    setGoals(d.goals || [d.goal]);
     setGroup(d.group || "");
     setTags(d.tags || "");
     setStep("freeze");
@@ -207,7 +220,14 @@ export default function ProductionReplayImport({
   const noState = frozenTraces.filter((t) => !t.evidence.startingState);
   const passedTraces = frozenTraces.filter((t) => t.outcome === "passed");
   const noTools = frozenTraces.filter((t) => !t.evidence.tools);
-  const groups = groupsOf(envState);
+  /* Every chosen kind's drafts, one copy each (a passed trace under
+     Reproduce and under Keep a success is the same regression). */
+  const draftsFor = (importInfo) => {
+    const seen = new Set();
+    return goals
+      .flatMap((g) => traceDraftsOf(frozenTraces, g, env, importInfo))
+      .filter((r) => (seen.has(r.id) ? false : seen.add(r.id)));
+  };
 
   const create = () => {
     const importInfo = {
@@ -250,7 +270,7 @@ export default function ProductionReplayImport({
         .filter((t) => t.expected)
         .map((t) => [t.traceId, t.expected]),
     );
-    const rows = traceDraftsOf(frozenTraces, goal, env, importInfo)
+    const rows = draftsFor(importInfo)
       .filter((r) => !alreadyIn.has(r.id))
       .map((r) => {
         const e = expectedOf.get(r.traceImport?.sourceIds?.[0]);
@@ -468,17 +488,23 @@ export default function ProductionReplayImport({
             {/* What the new scenarios represent. */}
             <Box>
               <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
-                What should the new scenarios be?
+                What should the new scenarios be?{" "}
+                <Box
+                  component="span"
+                  sx={{ fontWeight: 400, color: "text.tertiary" }}
+                >
+                  Pick one or more.
+                </Box>
               </Typography>
               <Stack spacing={0.75}>
                 {TRACE_GOALS.map((g) => {
                   const off = (g.min || 1) > frozenTraces.length;
-                  const on = goal === g.id;
+                  const on = goals.includes(g.id);
                   return (
                     <Box
                       key={g.id}
-                      {...clickable(() => !off && setGoal(g.id), {
-                        role: "radio",
+                      {...clickable(() => !off && toggleGoal(g.id), {
+                        role: "checkbox",
                         checked: on,
                       })}
                       sx={{
@@ -502,10 +528,22 @@ export default function ProductionReplayImport({
                       >
                         <Stack
                           direction="row"
-                          alignItems="baseline"
+                          alignItems="center"
                           spacing={1}
                           sx={{ minWidth: 0 }}
                         >
+                          <Iconify
+                            icon={
+                              on
+                                ? "solar:check-square-bold"
+                                : "solar:stop-linear"
+                            }
+                            width={16}
+                            sx={{
+                              flexShrink: 0,
+                              color: on ? "text.primary" : "text.disabled",
+                            }}
+                          />
                           <Typography
                             noWrap
                             sx={{
@@ -534,7 +572,7 @@ export default function ProductionReplayImport({
               </Stack>
               {/* A trace that passed has no failure to reproduce — said
                   before anything is created, and drafted as a regression. */}
-              {goal === "reproduce" && passedTraces.length > 0 && (
+              {goals.includes("reproduce") && passedTraces.length > 0 && (
                 <Typography
                   sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
                 >
@@ -542,7 +580,7 @@ export default function ProductionReplayImport({
                 </Typography>
               )}
               {/* Missing evidence, said before anything is created. */}
-              {goal === "reproduce" && noState.length > 0 && (
+              {goals.includes("reproduce") && noState.length > 0 && (
                 <Typography
                   sx={{
                     typography: "s3",
@@ -553,7 +591,7 @@ export default function ProductionReplayImport({
                   {`${noState.length} ${noState.length === 1 ? "has" : "have"} no starting state — drafted as synthetic; add real data at review.`}
                 </Typography>
               )}
-              {goal === "replay" && noTools.length > 0 && (
+              {goals.includes("replay") && noTools.length > 0 && (
                 <Typography
                   sx={{
                     typography: "s3",
@@ -573,25 +611,11 @@ export default function ProductionReplayImport({
               </Typography>
               <Stack spacing={1}>
                 <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                  {`Into ${env?.name} — as drafts to review before they join the suite.`}
+                  {`Into ${env?.name} — as drafts to review before they join its scenarios.`}
                 </Typography>
                 <Stack direction="row" spacing={1.5}>
-                  <TextField
-                    size="small"
-                    label="Suite"
-                    value={group}
-                    onChange={(e) => setGroup(e.target.value)}
-                    placeholder={groups[0]?.name || "e.g. Refund regressions"}
-                    helperText={
-                      groups.length
-                        ? `Existing: ${groups
-                            .slice(0, 3)
-                            .map((g) => g.name)
-                            .join(", ")}`
-                        : "A new suite is made if it doesn't exist"
-                    }
-                    sx={{ flex: 1 }}
-                  />
+                  {/* No Suite field for now (Chintan, 25 Nov: suites aren't
+                      in scope); tags still organise the drafts. */}
                   <TextField
                     size="small"
                     label="Tags"
@@ -652,8 +676,8 @@ export default function ProductionReplayImport({
             startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
           >
             {(() => {
-              const n = traceDraftsOf(frozenTraces, goal, env, {}).length;
-              return `Create ${n} draft${n === 1 ? "" : "s"} · ${goalMeta?.label.toLowerCase()}`;
+              const n = draftsFor({}).length;
+              return `Create ${n} draft${n === 1 ? "" : "s"}${goals.length === 1 ? ` · ${goalMeta?.label.toLowerCase()}` : ""}`;
             })()}
           </Button>
         </Stack>

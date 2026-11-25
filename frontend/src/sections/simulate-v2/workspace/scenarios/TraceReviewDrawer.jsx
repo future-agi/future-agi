@@ -16,6 +16,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Typography,
+  Link,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
@@ -76,6 +77,26 @@ const CHECKBOX_SX = {
   "&.Mui-checked": { color: "text.primary" },
 };
 const plural = (n, one, many = `${one}s`) => (n === 1 ? one : many);
+/* The starting-data choices in plain words (Chintan, 25 Nov: the four
+   options read as jargon). The evidence class still says it exactly. */
+const STARTING_DATA = {
+  synthetic: {
+    label: "Make it up",
+    note: "We fill in the accounts and records, and label every result as made up.",
+  },
+  fixture: {
+    label: "Use data you add",
+    note: "Pick the records the tools should find.",
+  },
+  replay: {
+    label: "Replay what the tools answered",
+    note: "Plays back the tool answers from the trace.",
+  },
+  conversation: {
+    label: "Skip it",
+    note: "Tests only the conversation; record checks aren't measured.",
+  },
+};
 
 /* A review action — a real button, never text that reads as a label. */
 function ActBtn({ onClick, children }) {
@@ -199,6 +220,8 @@ export default function TraceReviewDrawer({
   /* Drafts left out of this add — they keep waiting. */
   const [skipped, setSkipped] = useState(() => new Set());
   const [added, setAdded] = useState(0);
+  /* The starting-data choices stay folded until Change is pressed. */
+  const [changingState, setChangingState] = useState(false);
   useEffect(() => {
     if (!open) return;
     setOpenId(null);
@@ -690,7 +713,9 @@ export default function TraceReviewDrawer({
                   </Section>
 
                   {missingState && (
-                    <Section title="Starting state — the trace didn't record it">
+                    <Section title="Starting data">
+                      {/* One line: what the trace is missing and what we do
+                          about it, then Change for the other ways. */}
                       <Typography
                         sx={{
                           typography: "s2",
@@ -698,13 +723,35 @@ export default function TraceReviewDrawer({
                           mb: 0.75,
                         }}
                       >
-                        {review.stateMode === "synthetic"
-                          ? "The records the tools read first weren't recorded, so the draft makes them up and labels them synthetic: the test is not an exact replay."
-                          : `${STATE_MODES[review.stateMode].evidence}.`}
+                        {
+                          "The trace didn't record the data the tools read first. "
+                        }
+                        <Box
+                          component="span"
+                          sx={{ color: "text.primary", fontWeight: 600 }}
+                        >
+                          {(STARTING_DATA[review.stateMode] || {}).label ||
+                            STATE_MODES[review.stateMode]?.label}
+                        </Box>
+                        {`: ${(STARTING_DATA[review.stateMode] || {}).note || ""} `}
+                        <Link
+                          component="button"
+                          type="button"
+                          underline="hover"
+                          onClick={() => setChangingState((v) => !v)}
+                          sx={{ typography: "s2", verticalAlign: "baseline" }}
+                        >
+                          {changingState ? "Done" : "Change"}
+                        </Link>
                       </Typography>
-                      <Stack spacing={0.5}>
-                        {["fixture", "replay", "synthetic", "conversation"].map(
-                          (m) => {
+                      {changingState && (
+                        <Stack spacing={0.5}>
+                          {[
+                            "synthetic",
+                            "fixture",
+                            "replay",
+                            "conversation",
+                          ].map((m) => {
                             const off = m === "replay" && !hasTools;
                             return (
                               <Stack
@@ -735,23 +782,23 @@ export default function TraceReviewDrawer({
                                   sx={{ p: 0 }}
                                 />
                                 <Typography sx={{ typography: "s2" }}>
-                                  {STATE_MODES[m].label}
+                                  {STARTING_DATA[m].label}
                                 </Typography>
-                                {off && (
-                                  <Typography
-                                    sx={{
-                                      typography: "s3",
-                                      color: "text.tertiary",
-                                    }}
-                                  >
-                                    — no tool responses were recorded
-                                  </Typography>
-                                )}
+                                <Typography
+                                  sx={{
+                                    typography: "s3",
+                                    color: "text.tertiary",
+                                  }}
+                                >
+                                  {off
+                                    ? "No tool answers were recorded."
+                                    : STARTING_DATA[m].note}
+                                </Typography>
                               </Stack>
                             );
-                          },
-                        )}
-                      </Stack>
+                          })}
+                        </Stack>
+                      )}
                       {review.stateMode === "fixture" && (
                         <Select
                           size="small"

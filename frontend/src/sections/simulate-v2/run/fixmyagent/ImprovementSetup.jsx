@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { SHOW_RUN_COST } from "../../_mock/costFlags";
+import { SHOW_RUN_COST, SHOW_EPOCH_COST } from "../../_mock/costFlags";
+import EpochCostLine from "../../improvements/EpochCostLine";
 import { voiceFixOf } from "../../_mock/voiceFix";
 import { useEffect, useMemo, useState } from "react";
 import { enqueueSnackbar } from "notistack";
@@ -1422,29 +1423,41 @@ export default function ImprovementSetup({
               >
                 {budgetLine}
               </Typography>
-              {overBudget && trials > 1 && (
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.primary",
-                    mt: 0.5,
-                    ...NUM,
-                  }}
-                >
-                  {`This budget may stop after ${Math.max(1, Math.min(trials - 1, Math.floor(spend / (estimate.likely / trials))))} of ${trials} candidates.`}
-                </Typography>
-              )}
-              {estimate.minutes > 0 && (
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    mt: 0.5,
-                    ...NUM,
-                  }}
-                >
-                  {`About ${estimate.minutes} min`}
-                </Typography>
+              {/* Estimated cost before it starts, and a warning when the
+                  budget is below it (Kartik). Without it: when it may stop. */}
+              {SHOW_EPOCH_COST ? (
+                <EpochCostLine
+                  estimate={estimate}
+                  spend={spend}
+                  candidates={trials}
+                />
+              ) : (
+                <>
+                  {overBudget && trials > 1 && (
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.primary",
+                        mt: 0.5,
+                        ...NUM,
+                      }}
+                    >
+                      {`This budget may stop after ${Math.max(1, Math.min(trials - 1, Math.floor(spend / (estimate.likely / trials))))} of ${trials} candidates.`}
+                    </Typography>
+                  )}
+                  {estimate.minutes > 0 && (
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        mt: 0.5,
+                        ...NUM,
+                      }}
+                    >
+                      {`About ${estimate.minutes} min`}
+                    </Typography>
+                  )}
+                </>
               )}
             </ConfirmRow>
           </Box>
