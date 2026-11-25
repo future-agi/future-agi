@@ -71,6 +71,21 @@ describe("AddNewDataset", () => {
 
   // ── End-to-end: form submit → POST payload ──────────────────────────────
 
+  it("shows the plan limit to the submitter without a websocket message", async () => {
+    const message = "Dataset creation limit has been reached for your plan.";
+    POST.mockRejectedValueOnce({ statusCode: 429, result: message });
+    renderComponent();
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText("Enter new dataset name"), "full");
+    await user.click(screen.getByRole("button", { name: /add to dataset/i }));
+
+    await vi.waitFor(() =>
+      expect(snackbarSpy).toHaveBeenCalledWith(message, { variant: "error" }),
+    );
+    expect(DEFAULT_PROPS.handleclose).not.toHaveBeenCalled();
+    expect(DEFAULT_PROPS.onSuccess).not.toHaveBeenCalled();
+  });
+
   it("sends the correct POST payload on submit", async () => {
     POST.mockResolvedValueOnce({
       data: {
