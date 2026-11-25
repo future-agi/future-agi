@@ -233,7 +233,7 @@ const EvalAccordion = ({
                                   minHeight: "80px",
                                   background: "transparent",
                                   resize: "none",
-                                  fontSize: "13px",
+                                  fontSize: "12px",
                                   color: theme.palette.text.primary,
                                   fontFamily: theme.typography.fontFamily,
                                   verticalAlign: "top",

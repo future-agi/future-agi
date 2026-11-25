@@ -76,6 +76,7 @@ def promote_hosted_harness_conversation_checkpoint(
             "scenario_key_taken",
             "draft_changed",
             "conversation_checkpoint_stale",
+            "starting_record_not_as_seeded",
         }:
             # The person has to act (rename, or ask again), so they need to see why.
             report_checkpoint_rejection(conversation_id, exc.message)

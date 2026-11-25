@@ -17,6 +17,7 @@ import structlog
 from livekit.api import ListEgressRequest, LiveKitAPI
 from livekit.protocol.egress import EgressStatus
 
+from tfc.utils.media_tools import require_ffmpeg
 from tfc.utils.storage import upload_stream_to_s3
 
 if TYPE_CHECKING:
@@ -192,6 +193,7 @@ def stream_egress_to_s3(
         response = client.get_object(Bucket=config.egress_bucket, Key=object_key)
         return upload_stream_to_s3(response["Body"], s3_key)
 
+    require_ffmpeg("call recording channel split")
     source_iter = _s3_stream_iter(config, object_key)
 
     # Pipe through ffmpeg: S3 → stdin → stdout → S3

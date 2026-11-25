@@ -12,8 +12,10 @@ Strategy:
 """
 
 import json
+from collections.abc import Callable
+from typing import Any, NamedTuple
+
 import structlog
-from typing import Any, Optional
 
 logger = structlog.get_logger(__name__)
 
@@ -41,24 +43,48 @@ def fit_to_context(
     Returns:
         Formatted string that fits within the context window
     """
+    return fit_to_context_with_metadata(
+        data, max_total_chars, max_field_chars, label
+    ).text
+
+
+class ContextWindowResult(NamedTuple):
+    text: str
+    truncated: bool
+
+
+def fit_to_context_with_metadata(
+    data: Any,
+    max_total_chars: int = DEFAULT_MAX_TOTAL_CHARS,
+    max_field_chars: int = DEFAULT_MAX_FIELD_CHARS,
+    label: str = "data",
+) -> ContextWindowResult:
+    """Format data and report content shortened or omitted by the formatter."""
+    truncated = False
+
+    def mark_truncated() -> None:
+        nonlocal truncated
+        truncated = True
+
     if data is None:
-        return ""
-
-    if isinstance(data, str):
-        return _truncate_string(data, max_total_chars)
-
-    if isinstance(data, dict):
-        return _format_dict(data, max_total_chars, max_field_chars)
-
-    if isinstance(data, list):
-        return _format_list(data, max_total_chars, max_field_chars)
-
-    # Fallback: serialize and truncate
-    try:
-        serialized = json.dumps(data, indent=2, default=str)
-        return _truncate_string(serialized, max_total_chars)
-    except Exception:
-        return _truncate_string(str(data), max_total_chars)
+        text = ""
+    elif isinstance(data, str):
+        text = _truncate_string(data, max_total_chars, mark_truncated)
+    elif isinstance(data, dict):
+        text = _format_dict(
+            data, max_total_chars, max_field_chars, on_truncate=mark_truncated
+        )
+    elif isinstance(data, list):
+        text = _format_list(
+            data, max_total_chars, max_field_chars, on_truncate=mark_truncated
+        )
+    else:
+        try:
+            serialized = json.dumps(data, indent=2, default=str)
+        except Exception:
+            serialized = str(data)
+        text = _truncate_string(serialized, max_total_chars, mark_truncated)
+    return ContextWindowResult(text, truncated)
 
 
 def fit_trace_to_context(
@@ -82,7 +108,8 @@ def fit_trace_to_context(
     }
     trace_meta_str = _format_dict(
         {k: v for k, v in trace_meta.items() if v},
-        max_total=2000, max_field=500,
+        max_total=2000,
+        max_field=500,
     )
     parts.append(f"## Trace\n{trace_meta_str}")
     used += len(parts[-1])
@@ -93,7 +120,9 @@ def fit_trace_to_context(
         if val:
             field_budget = min((budget - used) // 2, 8000)
             if field_budget > 100:
-                formatted = fit_to_context(val, max_total_chars=field_budget, label=field)
+                formatted = fit_to_context(
+                    val, max_total_chars=field_budget, label=field
+                )
                 parts.append(f"### Trace {field.title()}\n{formatted}")
                 used += len(parts[-1])
 
@@ -155,7 +184,9 @@ def fit_span_to_context(
     attrs = span_data.get("span_attributes") or span_data.get("eval_attributes")
     if attrs and used < budget - 1000:
         attr_budget = min(budget - used - 500, 5000)
-        formatted = fit_to_context(attrs, max_total_chars=attr_budget, label="attributes")
+        formatted = fit_to_context(
+            attrs, max_total_chars=attr_budget, label="attributes"
+        )
         parts.append(f"### Attributes\n{formatted}")
         used += len(parts[-1])
 
@@ -163,7 +194,9 @@ def fit_span_to_context(
     metadata = span_data.get("metadata")
     if metadata and used < budget - 500:
         meta_budget = min(budget - used - 200, 2000)
-        formatted = fit_to_context(metadata, max_total_chars=meta_budget, label="metadata")
+        formatted = fit_to_context(
+            metadata, max_total_chars=meta_budget, label="metadata"
+        )
         parts.append(f"### Metadata\n{formatted}")
 
     result = "\n\n".join(parts)
@@ -220,7 +253,9 @@ def chunk_large_text(
         chunk = text[start:end]
         chunk_num = len(chunks) + 1
         total_chunks = (len(text) + chunk_size - 1) // chunk_size
-        header = f"[Chunk {chunk_num}/{total_chunks}, chars {start}-{end} of {len(text)}]\n"
+        header = (
+            f"[Chunk {chunk_num}/{total_chunks}, chars {start}-{end} of {len(text)}]\n"
+        )
 
         chunks.append(header + chunk)
         start = end - overlap  # Overlap for context continuity
@@ -230,11 +265,26 @@ def chunk_large_text(
 
 # ─── Private helpers ───
 
-def _truncate_string(s: str, max_chars: int) -> str:
-    """Truncate a string with a marker."""
+
+def _truncate_string(
+    s: str, max_chars: int, on_truncate: Callable[[], None] | None = None
+) -> str:
+    """Truncate a string with a marker, guaranteeing output length <= max_chars."""
+    if max_chars < 0:
+        raise ValueError("max_chars must be non-negative")
     if len(s) <= max_chars:
         return s
-    return s[:max_chars - 30] + f"\n... [truncated, {len(s)} total chars]"
+    if on_truncate is not None:
+        on_truncate()
+    logger.debug(
+        "context_window_field_truncated", original_length=len(s), limit=max_chars
+    )
+    marker = f"\n... [truncated, {len(s)} total chars]"
+    if max_chars < len(marker):
+        # Keep a useful prefix when even the marker cannot fit.
+        return s[:max_chars]
+    prefix_len = max_chars - len(marker)
+    return s[:prefix_len] + marker
 
 
 def _format_dict(
@@ -242,9 +292,12 @@ def _format_dict(
     max_total: int = DEFAULT_MAX_TOTAL_CHARS,
     max_field: int = DEFAULT_MAX_FIELD_CHARS,
     depth: int = 0,
+    on_truncate: Callable[[], None] | None = None,
 ) -> str:
     """Format a dict with field-level truncation."""
     if depth > DEFAULT_MAX_DEPTH:
+        if d and on_truncate is not None:
+            on_truncate()
         return "{...}"
 
     parts = []
@@ -255,29 +308,45 @@ def _format_dict(
             remaining = len(d) - len(parts)
             if remaining > 0:
                 parts.append(f"... [{remaining} more fields]")
+                if on_truncate is not None:
+                    on_truncate()
             break
 
         field_budget = min(max_field, max_total - used - 50)
         if field_budget < 50:
             parts.append(f"... [{len(d) - len(parts)} more fields]")
+            if on_truncate is not None:
+                on_truncate()
             break
 
         if value is None:
             continue
         elif isinstance(value, str):
-            val_str = _truncate_string(value, field_budget)
+            val_str = _truncate_string(value, field_budget, on_truncate)
         elif isinstance(value, dict):
             if depth < 2 and len(json.dumps(value, default=str)) < field_budget:
-                val_str = _format_dict(value, max_total=field_budget, max_field=field_budget // 2, depth=depth + 1)
+                val_str = _format_dict(
+                    value,
+                    max_total=field_budget,
+                    max_field=field_budget // 2,
+                    depth=depth + 1,
+                    on_truncate=on_truncate,
+                )
             else:
                 val_str = f"{{...}} ({len(value)} keys)"
+                if value and on_truncate is not None:
+                    on_truncate()
         elif isinstance(value, list):
-            if len(value) <= 3 and all(isinstance(v, (str, int, float, bool)) for v in value):
+            if len(value) <= 3 and all(
+                isinstance(v, (str, int, float, bool)) for v in value
+            ):
                 val_str = str(value)
             else:
                 val_str = f"[...] ({len(value)} items)"
+                if value and on_truncate is not None:
+                    on_truncate()
         else:
-            val_str = _truncate_string(str(value), field_budget)
+            val_str = _truncate_string(str(value), field_budget, on_truncate)
 
         line = f"**{key}:** {val_str}"
         parts.append(line)
@@ -290,6 +359,7 @@ def _format_list(
     lst: list,
     max_total: int = DEFAULT_MAX_TOTAL_CHARS,
     max_field: int = DEFAULT_MAX_FIELD_CHARS,
+    on_truncate: Callable[[], None] | None = None,
 ) -> str:
     """Format a list with item-level truncation."""
     parts = []
@@ -299,19 +369,28 @@ def _format_list(
         if used >= max_total - 100:
             remaining = len(lst) - i
             parts.append(f"... [{remaining} more items]")
+            if on_truncate is not None:
+                on_truncate()
             break
 
         item_budget = min(max_field, (max_total - used) // max(1, len(lst) - i))
         if item_budget < 50:
             parts.append(f"... [{len(lst) - i} more items]")
+            if on_truncate is not None:
+                on_truncate()
             break
 
         if isinstance(item, dict):
-            item_str = _format_dict(item, max_total=item_budget, max_field=item_budget // 3)
+            item_str = _format_dict(
+                item,
+                max_total=item_budget,
+                max_field=item_budget // 3,
+                on_truncate=on_truncate,
+            )
         elif isinstance(item, str):
-            item_str = _truncate_string(item, item_budget)
+            item_str = _truncate_string(item, item_budget, on_truncate)
         else:
-            item_str = _truncate_string(str(item), item_budget)
+            item_str = _truncate_string(str(item), item_budget, on_truncate)
 
         parts.append(f"{i + 1}. {item_str}")
         used += len(parts[-1]) + 1
@@ -344,7 +423,7 @@ def _format_spans(spans: list, max_chars: int = 20000) -> str:
         tokens = span.get("total_tokens", span.get("totalTokens", ""))
         status = span.get("status", "")
 
-        line = f"  {i+1}. [{obs_type}] {name}"
+        line = f"  {i + 1}. [{obs_type}] {name}"
         if model:
             line += f" (model: {model})"
         if latency:
@@ -363,7 +442,11 @@ def _format_spans(spans: list, max_chars: int = 20000) -> str:
             for field in ["input", "output"]:
                 val = span.get(field)
                 if val:
-                    val_str = json.dumps(val, default=str) if isinstance(val, (dict, list)) else str(val)
+                    val_str = (
+                        json.dumps(val, default=str)
+                        if isinstance(val, (dict, list))
+                        else str(val)
+                    )
                     if len(val_str) > 200:
                         val_str = val_str[:200] + "..."
                     parts.append(f"     {field}: {val_str}")

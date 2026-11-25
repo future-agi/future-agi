@@ -9,6 +9,7 @@ from tfc.ee_gates import (
     jev_gate_for_template,
 )
 from tfc.utils.api_errors import build_error_envelope
+from evaluations.decision_models import has_decision_prefix, is_decision_model
 
 
 def validate_jev_template_save(
@@ -20,12 +21,12 @@ def validate_jev_template_save(
     choice_scores=None,
     multi_choice=False,
 ):
-    jev_prefix = isinstance(model, str) and model.lower().startswith("jev-")
-    if jev_prefix and (not is_jev_model(model) or model != previous_model):
+    jev_prefix = has_decision_prefix(model)
+    if jev_prefix and (not is_decision_model(model) or model != previous_model):
         gate = jev_gate_for_template(model)
         if gate is not None:
             return gate
-    if not is_jev_model(model) and not mapping_provided:
+    if not is_decision_model(model) and not mapping_provided:
         return None
     try:
         from ee.jev.mapping import JevMappingError, validate_jev_mapping
@@ -45,15 +46,18 @@ def validate_jev_template_save(
             output=config.get("output", "Pass/Fail"),
             choice_scores=choice_scores,
             multi_choice=multi_choice,
-            config=config,
+            config={**config, "model": model},
         )
     except JevMappingError as exc:
+        native = is_jev_model(model)
         return Response(
             build_error_envelope(
-                exc.detail,
-                code="JEV_MAPPING_INVALID",
+                exc.detail
+                if native
+                else exc.detail.replace("Jev", "This decision model"),
+                code="JEV_MAPPING_INVALID" if native else "DECISION_MAPPING_INVALID",
                 details=exc.details,
-                extra={"feature": "jev"},
+                extra={"feature": "jev" if native else "decision_models"},
             ),
             status=400,
         )
@@ -68,10 +72,10 @@ def drop_jev_model_from_code_eval(template) -> bool:
     if config.get("eval_type_id") != "CustomCodeEval":
         return False
     dropped = False
-    if is_jev_model(template.model):
+    if is_decision_model(template.model):
         template.model = None
         dropped = True
-    if is_jev_model(config.get("model")):
+    if is_decision_model(config.get("model")):
         config.pop("model", None)
         dropped = True
     if config.pop("jev_mapping", None) is not None:
@@ -105,7 +109,7 @@ def validate_jev_binding(template, *, model, runtime_config=None):
     gate = jev_gate_for_template(effective_model)
     if gate is not None:
         return gate
-    if not is_jev_model(effective_model):
+    if not is_decision_model(effective_model):
         return None
     config = deepcopy(template.config or {})
     config.update(runtime.get("config") or {})
@@ -128,7 +132,11 @@ def jev_error_response(exc):
     described = describe_jev_error(exc)
     if described is None:
         return None
-    extra = {"feature": "jev"}
+    extra = {
+        "feature": "decision_models"
+        if described["code"].startswith("DECISION_")
+        else "jev"
+    }
     if described["attr"]:
         extra["attr"] = described["attr"]
     return Response(

@@ -1,13 +1,16 @@
 """Fix my agent over HTTP: the user's fixes, the engine's calls from its sandbox, and
 the run lists that leave a fix's check runs out."""
 
+import base64
 import json
+import os
 import subprocess
 from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import quote
 from uuid import uuid4, uuid5
 
 import httpx
@@ -21,6 +24,7 @@ from accounts.models import Organization, Workspace
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    CallExecution,
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
@@ -31,7 +35,9 @@ from simulate.selectors.agent_fix import (
     default_max_minutes,
     engine_brief,
 )
+from simulate.serializers.agent_fix import AgentFixLaunchSerializer
 from simulate.services import agent_fix_engine as engine
+from simulate.services import agent_fix_github
 from simulate.services.agent_fix_agents import VersionedSourceAgent
 from simulate.services.agent_fix_runs import close_fix_run, retry_fix_run
 from simulate.services.harness_environment import (
@@ -46,20 +52,24 @@ from simulate.services.run_results_v3_queries import (
     build_run_comparison,
     run_calls_queryset,
 )
+from simulate.services.run_traces_v3 import CallUsage
 from simulate.tests.test_agent_fix_services import (
     BASE_AGENT,
     KEYS,
     PATCH,
+    TRACED,
     _applied,
     _candidate,
     _check,
     _executions,
     _fix_run,
+    _measured_by_the_sandbox,
     _receipt,
     _receipts,
     _run,
     _runtime,
     _tree,
+    _usage,
 )
 from simulate.tests.test_agent_fix_services import (
     any_suite_may_launch as any_suite_may_launch,
@@ -78,7 +88,9 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.views.run_results_v3 import _execution_payload
+from tfc.capabilities.service import CapabilityDecision, denial_message
 from tfc.ee_gating import EEFeature, FeatureUnavailable
+from tfc.licensing.types import DenialReason
 
 pytestmark = pytest.mark.django_db
 
@@ -140,6 +152,126 @@ def _git(cwd, *args):
     return subprocess.run(
         ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
     ).stdout.strip()
+
+
+def _reply(status, body, headers=None):
+    return SimpleNamespace(
+        status_code=status,
+        json=lambda: body,
+        text=json.dumps(body),
+        headers=headers or {},
+    )
+
+
+class _GitData:
+    """GitHub's Git Data API over a bare repository: objects kept by their content, a
+    commit made as GitHub makes one for an App, and a ref created once, never moved.
+    ``fail`` answers the next write of a kind with ``(status, body, headers)``."""
+
+    def __init__(self, bare):
+        self.bare = bare
+        self.writes = []
+        self.made = []
+        self.fail = {}
+        self.before_ref = None
+
+    def __call__(self, method, url, **kwargs):
+        kind, _, rest = url.split("/repos/acme/agent/git/", 1)[1].partition("/")
+        if method == "GET":
+            return self._ref(rest) if kind == "ref" else self._commit(rest)
+        body = kwargs["json"]
+        self.writes.append((kind, body))
+        if kind in self.fail:
+            return _reply(*self.fail.pop(kind))
+        return getattr(self, f"_{kind}")(body)
+
+    def _run(self, *args, env=None, data=None):
+        return (
+            subprocess.run(
+                ["git", *args],
+                cwd=self.bare,
+                env=env,
+                input=data,
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
+
+    def _head(self, ref):
+        found = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", ref],
+            cwd=self.bare,
+            capture_output=True,
+            text=True,
+        )
+        return found.stdout.strip() or None
+
+    def _ref(self, rest):
+        sha = self._head(f"refs/{rest}")
+        if sha is None:
+            return _reply(404, {"message": "Not Found"})
+        return _reply(200, {"object": {"sha": sha}})
+
+    def _commit(self, sha):
+        lines = self._run("cat-file", "-p", sha).splitlines()
+        tree = next(line.split()[1] for line in lines if line.startswith("tree "))
+        parents = [line.split()[1] for line in lines if line.startswith("parent ")]
+        return _reply(
+            200,
+            {
+                "sha": sha,
+                "tree": {"sha": tree},
+                "parents": [{"sha": p} for p in parents],
+            },
+        )
+
+    def _blobs(self, body):
+        content = base64.b64decode(body["content"])
+        return _reply(
+            201, {"sha": self._run("hash-object", "-w", "--stdin", data=content)}
+        )
+
+    def _trees(self, body):
+        index = self.bare / "fake-index"
+        env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+        self._run("read-tree", body["base_tree"], env=env)
+        # A bare repository has no work tree: entries go in as index lines, and a
+        # removed path as mode 0 with the null sha.
+        lines = "".join(
+            f"{entry['mode'] if entry['sha'] else 0} {entry['sha'] or '0' * 40}"
+            f"\t{entry['path']}\n"
+            for entry in body["tree"]
+        )
+        self._run("update-index", "--index-info", env=env, data=lines.encode())
+        sha = self._run("write-tree", env=env)
+        index.unlink()
+        return _reply(201, {"sha": sha})
+
+    def _commits(self, body):
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "acme[bot]",
+            "GIT_AUTHOR_EMAIL": "7+acme[bot]@users.noreply.github.com",
+            "GIT_COMMITTER_NAME": "GitHub",
+            "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }
+        parents = [arg for parent in body["parents"] for arg in ("-p", parent)]
+        sha = self._run(
+            "commit-tree", body["tree"], *parents, "-m", body["message"], env=env
+        )
+        self.made.append(sha)
+        return _reply(201, {"sha": sha, "verification": {"verified": True}})
+
+    def _refs(self, body):
+        if self.before_ref is not None:
+            self.before_ref(body["sha"])
+            self.before_ref = None
+        if self._head(body["ref"]) is not None:
+            return _reply(422, {"message": "Reference already exists"})
+        self._run("update-ref", body["ref"], body["sha"])
+        return _reply(201, {"ref": body["ref"], "object": {"sha": body["sha"]}})
 
 
 def _engine_candidate(client, fix_run, tree, patch_body):
@@ -208,6 +340,12 @@ class TestEngineAuthentication:
                 "transcript",
                 "failure",
                 "duration_s",
+                "models",
+                "spans_seen",
+                "agent_cost_usd",
+                "unpriced_models",
+                "instrumentation_partial",
+                "reply_latency_ms",
             }
         ]
 
@@ -299,6 +437,9 @@ class TestEngineCalls:
             "failure": None,
             "records": [],
             "parallelism": None,
+            # The unsealed check run's one conversation, held at the worst case.
+            "committed_usd": 0.05,
+            "usage_unreadable": False,
         }
 
         ended = _engine(
@@ -430,6 +571,29 @@ class TestEngineCalls:
         tiers = [
             {"name": "static", "status": "passed", "detail": "1 file changed"},
             {"name": "target", "status": "failed", "detail": "0 of 1 passed"},
+            # A tier that holds several checks keeps each one's own status.
+            {
+                "name": "ceilings",
+                "status": "skipped",
+                "detail": "latency within; cost not verified",
+                "parts": [
+                    {"name": "reply latency", "status": "passed", "detail": "within"},
+                    {"name": "agent cost", "status": "skipped", "detail": "untraced"},
+                ],
+                # The numbers it was decided on, which the screens show.
+                "latency": {
+                    "baseline": 13.22,
+                    "candidate": 10.87,
+                    "allowed": 16.53,
+                    "limit": None,
+                },
+                "cost": {
+                    "baseline": None,
+                    "candidate": None,
+                    "allowed": None,
+                    "limit": 0.005,
+                },
+            },
         ]
 
         response = _engine(
@@ -477,7 +641,9 @@ class TestEngineCalls:
             0,
         )
         assert read["diagnosis"] == {"causes": ["It never refunds before closing"]}
-        assert read["candidates"][0]["verdict"]["tiers"] == tiers
+        assert read["candidates"][0]["verdict"]["tiers"] == [
+            {"parts": [], "latency": None, "cost": None, **tier} for tier in tiers
+        ]
 
     def test_a_check_run_past_the_organizations_limit_is_refused_with_its_reason(
         self, api_client, source_run, temporal
@@ -516,6 +682,21 @@ class TestEngineCalls:
         response = _engine(api_client, "get", fix_run, f"check-runs/{source_run.id}/")
 
         assert (response.status_code, response.json()["error"]) == (404, "not_found")
+
+    def test_a_retry_reading_a_run_its_failed_fix_finished_gets_its_own_spend(
+        self, api_client, source_run
+    ):
+        failed = _fix_run(source_run)
+        run = _check(failed, label="baseline")  # Unsealed: held at the worst case.
+        AgentFixRun.no_workspace_objects.filter(id=failed.id).update(
+            state=AgentFixRun.State.FAILED
+        )
+        retried = _armed(_fix_run(source_run, retried_from=failed))
+
+        body = _engine(api_client, "get", retried, f"check-runs/{run.id}/").json()
+
+        # The retry's budget holds only its own check runs, none yet.
+        assert body["committed_usd"] == 0.0
 
 
 class TestEngineModelCalls:
@@ -779,6 +960,96 @@ class TestUserApi:
         brief = _engine(api_client, "get", _armed(fix_run), "brief/").json()
         assert brief["request"]["protected_scenario_keys"] == [KEYS[1]]
 
+    def test_a_fix_reads_back_what_it_is_held_to(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(
+                source_run,
+                allowed_models=["model-a", "model-b"],
+                reply_latency_margin_pct=40,
+                cost_margin_pct=10,
+                cost_limit_usd=0.02,
+            ),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        read = auth_client.get(f"{BASE}/{response.json()['id']}/").json()["request"]
+        assert read["allowed_models"] == ["model-a", "model-b"]
+        assert (
+            read["reply_latency_margin_pct"],
+            read["cost_margin_pct"],
+            read["cost_limit_usd"],
+        ) == (40, 10, 0.02)
+        assert {"observes_models", "meters_agent_cost"} <= set(read)
+
+    def test_an_omitted_margin_is_left_to_the_launch_default(
+        self, auth_client, source_run
+    ):
+        body = _launch_body(source_run)
+        # The launch serializer leaves an omitted margin out, so the service decides it.
+        launch = AgentFixLaunchSerializer(data=body)
+        assert launch.is_valid(), launch.errors
+        assert not {"reply_latency_margin_pct", "cost_margin_pct"} & set(
+            launch.validated_data
+        )
+
+        response = auth_client.post(f"{BASE}/", body, format="json")
+
+        assert response.status_code == 201, response.content
+        stored = AgentFixRun.no_workspace_objects.get(id=response.json()["id"]).request
+        assert (stored["reply_latency_margin_pct"], stored["cost_margin_pct"]) == (
+            25,
+            25,
+        )
+
+    def test_a_zero_margin_stays_zero(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, reply_latency_margin_pct=0, cost_margin_pct=0),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        stored = AgentFixRun.no_workspace_objects.get(id=response.json()["id"]).request
+        assert (stored["reply_latency_margin_pct"], stored["cost_margin_pct"]) == (
+            0,
+            0,
+        )
+
+    def test_a_fix_from_before_its_limits_reads_as_untraced(
+        self, auth_client, source_run
+    ):
+        response = auth_client.post(f"{BASE}/", _launch_body(source_run), format="json")
+        fix_run = AgentFixRun.no_workspace_objects.get(id=response.json()["id"])
+        limits = {
+            "allowed_models",
+            "reply_latency_margin_pct",
+            "cost_margin_pct",
+            "cost_limit_usd",
+            "observes_models",
+            "meters_agent_cost",
+        }
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={k: v for k, v in fix_run.request.items() if k not in limits}
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["request"]
+        assert (
+            read["allowed_models"],
+            read["observes_models"],
+            read["meters_agent_cost"],
+        ) == (
+            [],
+            False,
+            False,
+        )
+        assert (
+            read["reply_latency_margin_pct"],
+            read["cost_margin_pct"],
+            read["cost_limit_usd"],
+        ) == (25, 25, None)
+
     @pytest.mark.parametrize(
         ("protected", "code"),
         [
@@ -885,18 +1156,28 @@ class TestUserApi:
             ("settings", True),
             ("code", True),
         ]
+        # A GitHub agent is not traced: no model it called can be seen.
         assert options["defaults"] == {
             "surfaces": ["prompt"],
             "budget_credits": 1500,
             "max_minutes": 180,
+            "allowed_models": [],
+            "agent_cost_metered": False,
+            "agent_calls_unmeasured": False,
+            "reply_latency_margin_pct": 25,
+            "cost_margin_pct": 25,
         }
         assert options["limits"] == {
             "budget_credits_max": 50000,
             "max_minutes_max": 1440,
             "scenarios_min": 1,
+            "cases_min": 1,
+            "variations_per_case": 3,
+            "verified_cases_min": 6,
             "scenarios_max": 200,
         }
         assert options["blocked"] is None
+        assert options["variations_blocked"] is None
 
     @pytest.mark.parametrize(
         ("cases", "minutes"),
@@ -904,6 +1185,88 @@ class TestUserApi:
     )
     def test_the_default_time_limit_grows_with_the_suite(self, cases, minutes):
         assert default_max_minutes(cases) == minutes
+
+    @pytest.mark.parametrize(
+        ("field", "refused", "taken"),
+        [
+            ("cost_limit_usd", 0, 0.01),
+            ("cost_limit_usd", "Infinity", 0.01),
+            ("cost_limit_usd", "NaN", 0.01),
+            ("reply_latency_margin_pct", 1001, 1000),
+            ("cost_margin_pct", -1, 0),
+            ("allowed_models", ["m" * 201], ["m" * 200]),
+        ],
+    )
+    def test_a_constraint_out_of_bounds_starts_nothing(
+        self, auth_client, source_run, field, refused, taken
+    ):
+        bad = auth_client.post(
+            f"{BASE}/", _launch_body(source_run, **{field: refused}), format="json"
+        )
+        assert not AgentFixRun.no_workspace_objects.exists()
+        good = auth_client.post(
+            f"{BASE}/", _launch_body(source_run, **{field: taken}), format="json"
+        )
+
+        assert (bad.status_code, good.status_code) == (400, 201)
+        assert AgentFixRun.no_workspace_objects.get().request[field] == taken
+
+    def test_a_fix_from_a_run_the_sandbox_measured_tells_the_page_so(
+        self, auth_client, source_run
+    ):
+        # The epoch page shows its "Measured automatically" notice from this field.
+        _measured_by_the_sandbox(source_run)
+        measured = {
+            str(one.call_execution_id): CallUsage(
+                models=["gpt-5"], llm_spans=1, cost_usd=0.01
+            )
+            for one in _executions(source_run)
+        }
+        with patch(TRACED, _usage(measured)):
+            launched = auth_client.post(
+                f"{BASE}/", _launch_body(source_run), format="json"
+            )
+            assert launched.status_code == 201, launched.content
+            read = auth_client.get(f"{BASE}/{launched.json()['id']}/").json()
+
+        assert (
+            launched.json()["request"].get("measured_automatically"),
+            read["request"].get("measured_automatically"),
+        ) == (True, True)
+
+    def test_a_launch_keeps_the_constraints_it_was_given(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(
+                source_run,
+                allowed_models=["gpt-5-mini"],
+                reply_latency_margin_pct=10,
+                cost_margin_pct=40,
+                cost_limit_usd=0.02,
+            ),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        request = AgentFixRun.no_workspace_objects.get().request
+        assert {
+            key: request[key]
+            for key in (
+                "allowed_models",
+                "reply_latency_margin_pct",
+                "cost_margin_pct",
+                "cost_limit_usd",
+                "observes_models",
+                "meters_agent_cost",
+            )
+        } == {
+            "allowed_models": ["gpt-5-mini"],
+            "reply_latency_margin_pct": 10,
+            "cost_margin_pct": 40,
+            "cost_limit_usd": 0.02,
+            "observes_models": False,
+            "meters_agent_cost": False,
+        }
 
     def test_a_launch_without_a_time_limit_gets_the_suggested_one(
         self, auth_client, source_run
@@ -1022,16 +1385,21 @@ class TestUserApi:
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
             read.pop("eval_warnings")
+            read.pop("eval_grading")
             assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
         # The engine's $0.25, and two unsealed check conversations held at $0.50 each.
         assert shown() == (25.0, 125.0)
-        # Sealed, the check run counts at what it billed and its hold goes.
+        # Sealed and settled, the check run counts at what it and its evals billed, and
+        # its hold goes.
         HostedHarnessJob.no_workspace_objects.filter(id=check.id).update(
-            fix_cost_usd=Decimal("0.094")
+            fix_cost_usd=Decimal("0.094"), fix_eval_cost_usd=Decimal("0.01")
         )
-        assert shown() == (34.4, 34.4)
+        Execution.objects.filter(id=check.test_execution_id).update(
+            status=Execution.ExecutionStatus.COMPLETED
+        )
+        assert shown() == (35.4, 35.4)
         read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
         assert read["request"]["budget_credits"] == 500.0
 
@@ -1125,6 +1493,65 @@ class TestUserApi:
         )
         temporal.start.assert_called_once_with(retried["id"])
         assert auth_client.get(f"{BASE}/{failed.id}/").json()["retryable"] is False
+
+    def test_a_failed_retry_offers_and_takes_no_second_retry(
+        self, auth_client, source_run, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(
+            source_run,
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_failed", "message": "m"},
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = auth_client.post(
+                f"{BASE}/{failed.id}/retry/", {}, format="json"
+            ).json()
+        AgentFixRun.no_workspace_objects.filter(id=retried["id"]).update(
+            state=AgentFixRun.State.FAILED,
+            started_at=timezone.now(),
+            failure={"code": "fix_engine_failed", "message": "m"},
+        )
+
+        read = auth_client.get(f"{BASE}/{retried['id']}/").json()
+        again = auth_client.post(f"{BASE}/{retried['id']}/retry/", {}, format="json")
+
+        assert read["retryable"] is False
+        assert (again.status_code, again.json()["error"]) == (409, "fix_not_retryable")
+        assert (
+            AgentFixRun.no_workspace_objects.filter(
+                environment=failed.environment
+            ).count()
+            == 2
+        )
+
+    def test_a_retry_that_never_started_offers_the_retry_again(
+        self, auth_client, source_run, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(
+            source_run,
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_failed", "message": "m"},
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            first = auth_client.post(
+                f"{BASE}/{failed.id}/retry/", {}, format="json"
+            ).json()
+        # Its workflow could not be scheduled, so it ended before it started.
+        AgentFixRun.no_workspace_objects.filter(id=first["id"]).update(
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_dispatch_failed", "message": "m"},
+        )
+
+        offered = [
+            auth_client.get(f"{BASE}/{fix_id}/").json()["retryable"]
+            for fix_id in (failed.id, first["id"])
+        ]
+        with django_capture_on_commit_callbacks(execute=True):
+            again = auth_client.post(f"{BASE}/{first['id']}/retry/", {}, format="json")
+
+        assert offered == [True, True]
+        assert again.status_code == 201, again.content
+        assert again.json()["retried_from_id"] == str(failed.id)
 
     def test_a_candidates_patch_downloads(self, auth_client, source_run, storage):
         fix_run = _fix_run(source_run)
@@ -1294,18 +1721,40 @@ class TestUserApi:
         HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
             payload=payload
         )
+        self.git_data = _GitData(bare)
         return SimpleNamespace(bare=bare, commit=commit)
 
-    def _ship(self, auth_client, fix_run, candidate, replies, **body):
-        """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn."""
+    # The repository's Git Data API, once the github fixture made the repository.
+    git_data = None
+
+    def _ship(
+        self, auth_client, fix_run, candidate, replies, *, head=None, tag=None, **body
+    ):
+        """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn.
+        A branch's head and a tag's commit are the fix's commit unless ``head`` or ``tag``
+        says otherwise; the repository's default branch is main. The commit and its
+        branch go through the repository's Git Data API, kept out of the calls."""
         calls = []
+        source = HostedHarnessJob.no_workspace_objects.get(id=fix_run.source_run_id)
+        commit = (source.payload.get("source") or {}).get("commit_sha")
+        reads = {
+            "/git/ref/heads/main": {"object": {"sha": head or commit}},
+            "/repos/acme/agent/commits/": {"sha": tag or commit},
+        }
 
         def answer(method, url, **kwargs):
+            if "/repos/acme/agent/git/" in url and not url.endswith("/heads/main"):
+                return self.git_data(method, url, **kwargs)
+            if method == "GET":
+                found = next(
+                    (body for part, body in reads.items() if part in url), None
+                )
+                if found is None and url.endswith("/repos/acme/agent"):
+                    found = {"default_branch": "main"}
+                if found is not None:
+                    return _reply(200, found)
             calls.append((method, url, kwargs))
-            status, body = replies.pop(0)
-            return SimpleNamespace(
-                status_code=status, json=lambda: body, text=json.dumps(body)
-            )
+            return _reply(*replies.pop(0))
 
         with patch(
             "simulate.services.agent_fix_github.requests.request", side_effect=answer
@@ -1337,6 +1786,13 @@ class TestUserApi:
             _git(github.bare, "show", f"{branch}:agent.py") == "PROMPT = 'refund first'"
         )
         assert _git(github.bare, "rev-parse", f"{branch}~1") == github.commit
+        # GitHub signs a commit the App makes with no author, committer or signature of
+        # its own: it reads Verified, under the App's name and icon.
+        [made] = [body for kind, body in self.git_data.writes if kind == "commits"]
+        assert (sorted(made), made["parents"]) == (
+            ["message", "parents", "tree"],
+            [github.commit],
+        )
         [(method, url, sent)] = calls
         assert (method, url) == (
             "POST",
@@ -1400,6 +1856,9 @@ class TestUserApi:
         self, auth_client, source_run, github
     ):
         fix_run, candidate = self._proven(source_run, "github")
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "held_back_scenario_keys": ["held-0", "held-1"]}
+        )
 
         response, [(_, _, sent)] = self._ship(
             auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
@@ -1409,9 +1868,37 @@ class TestUserApi:
         assert sent["json"]["draft"] is True
         assert "limited validation" in sent["json"]["title"]
         assert sent["json"]["body"].startswith("**Limited validation.**")
-        assert "Proven by" not in sent["json"]["body"]
+        assert "Verified by" not in sent["json"]["body"]
 
-    def test_a_verified_fix_ships_as_a_normal_pull_request(
+    def test_a_fix_with_nothing_held_back_ships_as_a_draft_proven_on_the_targets_only(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        # With nothing held back the verdict has only the targets' rate.
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            verdict={"reason": "passed every tier", "target_pass_rate": [0, 0.625]}
+        )
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["draft"] is True
+        assert "proven on the targets only" in sent["json"]["title"]
+        assert sent["json"]["body"].startswith(
+            "**Proven on the targets only.** No failing cases were held back from the"
+            " epoch to verify it; it takes 4 or more."
+        )
+        assert (
+            "Checked by Epoch: target pass rate 0% → 63%, broke none\n"
+            in (sent["json"]["body"])
+        )
+        assert "### Verdict: Proven on the targets only" in sent["json"]["body"]
+        assert "limited validation" not in sent["json"]["body"].lower()
+        assert "Verified" not in sent["json"]["body"]
+
+    def test_a_normal_result_ships_as_a_ready_pull_request_with_no_label(
         self, auth_client, source_run, github
     ):
         fix_run, candidate = self._proven(source_run, "github")
@@ -1436,14 +1923,16 @@ class TestUserApi:
 
         assert response.status_code == 200, response.content
         assert sent["json"]["draft"] is False
-        assert "limited validation" not in sent["json"]["title"].lower()
-        assert "limited validation" not in sent["json"]["body"].lower()
+        # A normal result carries no strength label, and never says Verified.
+        for label in ("limited validation", "proven on the targets only", "verified"):
+            assert label not in sent["json"]["title"].lower()
+            assert label not in sent["json"]["body"].lower()
         assert (
-            "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 63%; "
-            "passed every tier" in sent["json"]["body"]
+            "Checked by Epoch: held-back pass rate 0% → 61%, target pass rate"
+            " 0% → 63%, broke none\n" in sent["json"]["body"]
         )
-        title = sent["json"]["title"]
-        assert len(title) <= 120 and title.endswith("r asked for…")
+        # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
+        assert sent["json"]["title"] == "Epoch: change agent.py"
 
     def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
         self, auth_client, source_run, github
@@ -1465,7 +1954,7 @@ class TestUserApi:
 
         assert response.status_code == 200, response.content
         assert [sent["json"]["draft"] for _, _, sent in calls] == [True, False]
-        assert "limited validation" in calls[1][2]["json"]["title"]
+        assert "proven on the targets only" in calls[1][2]["json"]["title"]
 
     def test_a_pull_request_github_already_has_is_found_not_duplicated(
         self, auth_client, source_run, github
@@ -1475,10 +1964,12 @@ class TestUserApi:
         branch = _git(
             github.bare, "rev-parse", f"futureagi/fix-{str(fix_run.id)[:8]}-1"
         )
-        # The URL was not kept: the same commit is pushed again and GitHub's PR is found.
+        # The URL was not kept: the branch already holds the change, so nothing is
+        # written again, and GitHub's PR is found.
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
             pull_request_url=""
         )
+        written = len(self.git_data.writes)
 
         response, calls = self._ship(
             auth_client,
@@ -1503,6 +1994,137 @@ class TestUserApi:
             _git(github.bare, "rev-parse", f"futureagi/fix-{str(fix_run.id)[:8]}-1")
             == branch
         )
+        assert len(self.git_data.writes) == written
+
+    def test_a_retry_whose_description_changed_keeps_the_branch_it_pushed(
+        self, auth_client, source_run, github
+    ):
+        # The body says more once the evals finish grading; the change is the same.
+        fix_run, candidate = self._proven(source_run, "github")
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        self.git_data.fail["refs"] = (500, {"message": "Server Error"})
+        failed, _ = self._ship(auth_client, fix_run, candidate, [])
+        self.git_data.fail.clear()
+        # The ref did go through on GitHub's side before it answered.
+        [sha] = self.git_data.made
+        _git(github.bare, "update-ref", f"refs/heads/{branch}", sha)
+
+        with patch.object(
+            agent_fix_github, "_description", return_value=("Epoch: change", "new")
+        ):
+            response, calls = self._ship(
+                auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+            )
+
+        assert (failed.status_code, failed.json()["error"]) == (
+            502,
+            "fix_github_push_failed",
+        )
+        assert response.status_code == 200, response.content
+        assert _git(github.bare, "rev-parse", branch) == sha
+        assert self.git_data.made == [sha]
+
+    def test_a_branch_made_by_another_ship_at_the_same_time_is_kept(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        # Another ship of the same candidate made the branch first, with the same change.
+        self.git_data.before_ref = lambda sha: _git(
+            github.bare, "update-ref", f"refs/heads/{branch}", sha
+        )
+
+        response, _ = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        assert (
+            _git(github.bare, "show", f"{branch}:agent.py") == "PROMPT = 'refund first'"
+        )
+
+    @pytest.mark.parametrize(
+        ("kind", "reply", "refusal"),
+        [
+            (
+                "blobs",
+                (403, {"message": "Resource not accessible by integration"}),
+                (422, "fix_github_no_write_access", False),
+            ),
+            (
+                "blobs",
+                (
+                    403,
+                    {"message": "API rate limit exceeded"},
+                    {"x-ratelimit-remaining": "0"},
+                ),
+                (502, "fix_github_rate_limited", True),
+            ),
+            (
+                "trees",
+                (429, {"message": "secondary rate limit"}, {"retry-after": "60"}),
+                (502, "fix_github_rate_limited", True),
+            ),
+            (
+                "trees",
+                (502, {"message": "Bad Gateway"}),
+                (502, "fix_github_push_failed", True),
+            ),
+            (
+                "commits",
+                (422, {"message": "Tree SHA does not exist"}),
+                (502, "fix_github_push_failed", False),
+            ),
+            # GitHub's tree is not the one the patch made here: nothing is committed.
+            ("trees", (201, {"sha": "0" * 40}), (502, "fix_github_push_failed", False)),
+        ],
+    )
+    def test_a_write_github_refuses_fails_the_ship_and_moves_no_branch(
+        self, auth_client, source_run, github, kind, reply, refusal
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        self.git_data.fail[kind] = reply
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [])
+
+        status, code, retryable = refusal
+        assert (
+            response.status_code,
+            response.json()["error"],
+            response.json().get("retryable", False),
+            calls,
+        ) == (status, code, retryable, [])
+        assert "refs" not in [kind for kind, _ in self.git_data.writes]
+        assert self.git_data._head(f"refs/heads/{branch}") is None
+
+    def test_a_candidate_that_deletes_a_file_ships_without_it(
+        self, api_client, auth_client, source_run, storage, github
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        tree = {"policy.md": b"Refund first.\n"}
+        # Only the tree is checked; the engine's patch is beside it.
+        engine_patch = (
+            b"diff --git a/agent.py b/agent.py\ndeleted file mode 100644\n"
+            b"--- a/agent.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-PROMPT = ''\n"
+        )
+        candidate = _engine_candidate(api_client, fix_run, tree, engine_patch)
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=AgentFixCandidate.Outcome.WINNER
+        )
+        close_fix_run(fix_run.id, AgentFixRun.State.READY)
+
+        response, _ = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        assert _git(github.bare, "ls-tree", "-r", "--name-only", branch) == "policy.md"
+        [trees] = [body for kind, body in self.git_data.writes if kind == "trees"]
+        assert {"path": "agent.py", "mode": "100644", "type": "blob", "sha": None} in (
+            trees["tree"]
+        )
 
     def test_a_branch_someone_changed_is_not_overwritten(
         self, auth_client, source_run, github, tmp_path
@@ -1523,6 +2145,8 @@ class TestUserApi:
             [],
         )
         assert _git(github.bare, "show", f"{branch}:agent.py") == "PROMPT = 'mine'"
+        # Checked before anything is uploaded.
+        assert self.git_data.writes == []
 
     def test_a_repository_name_that_could_leave_its_path_is_refused(
         self, auth_client, source_run, github
@@ -1674,11 +2298,12 @@ class TestUserApi:
         )
         pull = sent["json"]
         assert pull["draft"] is True
-        assert pull["title"].startswith("Fix my agent (known regression): ")
+        assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
-        assert f"- `{self.REGRESSED}`" in pull["body"]
+        key, check = self.REGRESSED.split(": ")
+        assert f"- Must-pass case “{key}”: its “{check}” check" in pull["body"]
         assert f"> {self.REASON}" in pull["body"]
-        assert "Proven by" not in pull["body"]
+        assert "Verified by" not in pull["body"]
         after = self._override(auth_client, fix_run)
         assert (after["allowed"], after["reason"], after["by"]["id"]) == (
             True,
@@ -1746,6 +2371,101 @@ class TestUserApi:
 
         assert self._override(auth_client, fix_run)["allowed"] is True
         assert (response.status_code, len(calls)) == (200, 1)
+
+    @pytest.mark.parametrize(
+        ("ceilings", "lock"),
+        [("skipped", "skipped"), ("passed", "skipped"), ("skipped", "passed")],
+        ids=["nothing-measured", "lock-not-verified", "cost-not-verified"],
+    )
+    def test_a_check_that_could_not_be_measured_does_not_stop_an_override(
+        self, auth_client, source_run, github, ceilings, lock
+    ):
+        def allowed(ceilings, lock):
+            AgentFixRun.no_workspace_objects.all().delete()
+            tiers = [
+                *self._final(skip=("ceilings",)),
+                {"name": "ceilings", "status": ceilings},
+                {"name": "model-lock", "status": lock},
+            ]
+            fix_run, _ = self._vetoed(source_run, "github", tiers=tiers)
+            return self._override(auth_client, fix_run)["allowed"]
+
+        # A measured breach still refuses it.
+        assert (
+            allowed(ceilings, lock),
+            allowed("failed", lock),
+            allowed(ceilings, "failed"),
+        ) == (True, False, False)
+
+    def test_a_verdict_from_before_the_model_lock_tier_reads_as_it_always_did(
+        self, auth_client, source_run, github
+    ):
+        def override(tiers):
+            AgentFixRun.no_workspace_objects.all().delete()
+            fix_run, _ = self._vetoed(source_run, "github", tiers=tiers)
+            [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+            return shown["verdict"]["tiers"], shown["override"]["allowed"]
+
+        old = self._final()
+        # The old engine's six tiers, only must-pass failed: it ships on a reason.
+        shown, allowed = override(old)
+        # Its skipped ceilings were never run, not unverified: that still refuses it.
+        _, unrun = override(
+            [*old[:5], {"name": "ceilings", "status": "skipped", "detail": ""}]
+        )
+
+        # Its ceilings judged an unmetered agent's reply time alone: the cost reads unknown.
+        assert [(one["name"], one["status"]) for one in shown] == [
+            (one["name"], "skipped" if one["name"] == "ceilings" else one["status"])
+            for one in old
+        ]
+        assert (allowed, unrun) == (True, False)
+
+    @pytest.mark.parametrize(
+        ("metered", "status", "parts"),
+        [
+            (
+                False,
+                "skipped",
+                [
+                    {"name": "reply latency", "status": "passed", "detail": ""},
+                    {"name": "agent cost", "status": "skipped", "detail": ""},
+                ],
+            ),
+            (True, "passed", []),
+        ],
+        ids=["unmetered", "metered"],
+    )
+    def test_an_older_engines_ceilings_read_its_cost_as_unknown_unless_metered(
+        self, auth_client, source_run, github, metered, status, parts
+    ):
+        detail = "cost not measurable; latency 32.6s (baseline 55.4s, ceiling 3600s)"
+        tiers = [
+            *self._final(failed="", skip=("ceilings",)),
+            {"name": "ceilings", "status": "passed", "detail": detail},
+        ]
+        fix_run, candidate = self._vetoed(source_run, "github", tiers=tiers)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "meters_agent_cost": metered}
+        )
+        stored = AgentFixCandidate.no_workspace_objects.get(id=candidate.id).verdict
+
+        [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+
+        assert shown["verdict"]["tiers"][-1] == {
+            "name": "ceilings",
+            "status": status,
+            "detail": detail,
+            "parts": parts,
+            # An older engine sent no medians.
+            "latency": None,
+            "cost": None,
+        }
+        # Only the read changes: the stored verdict, which decides, is as the engine sent it.
+        assert (
+            AgentFixCandidate.no_workspace_objects.get(id=candidate.id).verdict
+            == stored
+        )
 
     def _final(self, failed="must-pass", skip=()):
         return [
@@ -1893,9 +2613,114 @@ class TestUserApi:
         override = self._override(auth_client, fix_run)
         assert (override["reason"], override["by"]["id"]) == (self.REASON, str(user.id))
 
+    def test_an_uploaded_fix_is_not_shipped_over_a_default_that_moved_even_on_a_reason(
+        self, auth_client, environment, source_run
+    ):
+        fix_run, candidate = self._vetoed(source_run, "archive")
+        # Another fix from the same run shipped first.
+        _, shipped = self._proven(source_run, "archive")
+        auth_client.post(
+            f"{BASE}/{shipped.fix_run_id}/candidates/{shipped.id}/make-default/",
+            {},
+            format="json",
+        )
+
+        response = auth_client.post(
+            f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/",
+            {"override_reason": self.REASON},
+            format="json",
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            409,
+            "fix_base_moved",
+        )
+        environment.refresh_from_db()
+        assert environment.agent_version_id == shipped.agent_version_id
+        assert self._override(auth_client, fix_run)["reason"] == ""
+
+    def _pin(self, source_run, ref):
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=source_run.agent_version_id
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            source={**runtime.source, "ref": ref}
+        )
+
+    # A tag ref that names no tag has no commit to compare, as a commit has none.
+    @pytest.mark.parametrize("pin", ["refs/tags/v1", "commit", "refs/tags/"])
+    def test_a_github_agent_pinned_to_a_tag_or_commit_ships_while_main_moves(
+        self, auth_client, source_run, github, pin
+    ):
+        self._pin(source_run, github.commit if pin == "commit" else pin)
+        fix_run, candidate = self._proven(source_run, "github")
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [(201, {"html_url": self.PULL})],
+            head="f" * 40,
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["base"] == "main"
+
+    def test_a_github_agent_pinned_to_a_tag_that_moved_is_not_shipped(
+        self, auth_client, source_run, github
+    ):
+        self._pin(source_run, "refs/tags/v1")
+        fix_run, candidate = self._proven(source_run, "github")
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [], tag="e" * 40)
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            409,
+            "fix_base_moved",
+            [],
+        )
+        assert "v1 @ eeeeeee" in response.json()["message"]
+
+    @pytest.mark.parametrize("reason", ["", "the regression is a flaky check"])
+    def test_a_github_fix_is_not_shipped_when_its_branch_moved(
+        self, auth_client, source_run, github, reason
+    ):
+        fix_run, candidate = (
+            self._vetoed(source_run, "github")
+            if reason
+            else self._proven(source_run, "github")
+        )
+        body = {"override_reason": reason} if reason else {}
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], head="f" * 40, **body
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            409,
+            "fix_base_moved",
+            [],
+        )
+        assert f"main @ {github.commit[:7]}" in response.json()["message"]
+        assert "main @ fffffff" in response.json()["message"]
+        # Nothing was pushed, and no reason was recorded.
+        assert _git(github.bare, "for-each-ref", "refs/heads/futureagi") == ""
+        assert self._override(auth_client, fix_run)["reason"] == ""
+
+
+def test_a_plan_refusal_names_the_feature_epoch():
+    """The plan and licence gate names the feature the way every screen does."""
+    refusal = CapabilityDecision(
+        allowed=False,
+        feature_id="fix_my_agent",
+        reason_code=DenialReason.PLAN_FEATURE_MISSING.value,
+    )
+
+    assert denial_message(refusal) == "Epoch isn't included in your plan."
+
 
 @pytest.mark.parametrize(
-    "held_back, limited", [(0, True), (3, True), (4, False), (6, False)]
+    "held_back, limited", [(0, False), (3, True), (4, False), (6, False)]
 )
 def test_too_few_held_back_cases_limit_a_fix_s_validation(
     auth_client, environment, source_run, held_back, limited
@@ -1938,20 +2763,90 @@ class TestEvalWarnings:
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
             outcome=outcome
         )
-        base = _check(fix_run, label="base", keys=keys, trials=self.TRIALS)
+        # The base version's baseline and the winner's final check: the runs compared.
+        base = _check(fix_run, label="baseline-r1", keys=keys, trials=self.TRIALS)
         mine = _check(
             fix_run,
-            label="c1",
+            label="c1-finalist-r1",
             version_id=candidate.agent_version_id,
             keys=(KEYS[0],),
             trials=self.TRIALS,
         )
         return fix_run, base, mine, _mapped_eval(source_run)
 
-    def _warnings(self, auth_client, fix_run):
+    def _read(self, auth_client, fix_run):
         read = auth_client.get(f"{BASE}/{fix_run.id}/")
         assert read.status_code == 200, read.content
-        return read.json()["eval_warnings"]
+        return read.json()
+
+    def _warnings(self, auth_client, fix_run):
+        return self._read(auth_client, fix_run)["eval_warnings"]
+
+    @staticmethod
+    def _finished(*runs):
+        """The runs' calls finished, as grading needs them."""
+        CallExecution.objects.filter(
+            id__in=[one.call_execution_id for run in runs for one in _executions(run)]
+        ).update(status=CallExecution.CallStatus.COMPLETED)
+
+    def test_the_winner_s_screens_are_not_compared(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        screen = _check(
+            fix_run,
+            label="c1-target-r1",
+            version_id=mine.agent_version_id,
+            trials=self.TRIALS,
+        )
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=self.TRIALS)
+        _judged(screen, config, passes=0)
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_grading_is_pending_while_a_job_holds_a_call_open(
+        self, auth_client, source_run
+    ):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=3)
+        self._finished(base, mine)
+        call = _executions(mine)[0].call_execution
+        call.eval_outputs = {str(config.id): {"status": "pending"}}
+        call.save(update_fields=["eval_outputs"])
+
+        read = self._read(auth_client, fix_run)
+
+        # Pending is not clean: nothing is said about the evals until they finish.
+        assert (read["eval_grading"], read["eval_warnings"]) == ("pending", [])
+
+    def test_grading_is_done_once_every_graded_call_holds_a_verdict(
+        self, auth_client, source_run
+    ):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=3)
+        self._finished(base, mine)
+
+        read = self._read(auth_client, fix_run)
+
+        assert read["eval_grading"] == "done"
+        assert [one["name"] for one in read["eval_warnings"]] == [config.name]
+
+    def test_a_verdict_grading_lost_reads_incomplete(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=self.TRIALS)
+        self._finished(base, mine)
+        call = _executions(mine)[0].call_execution
+        call.eval_outputs = {str(config.id): {"status": "timed_out"}}
+        call.save(update_fields=["eval_outputs"])
+
+        assert self._read(auth_client, fix_run)["eval_grading"] == "incomplete"
+
+    def test_a_fix_with_no_winner_grades_nothing(self, auth_client, source_run):
+        fix_run, *_ = self._arms(source_run, outcome="rejected")
+
+        assert self._read(auth_client, fix_run)["eval_grading"] == "none"
 
     def test_the_read_warns_when_the_winner_does_worse_on_a_platform_eval(
         self, auth_client, source_run
@@ -2260,9 +3155,81 @@ class TestEngineMemory:
             "summary": "nothing held up",
             "failure": None,
             "winner_candidate_id": None,
+            "flaky_protected": [],
         }
         assert list(fix_run.engine_notes["lost_models"]) == ["deepseek/flash"]
         assert fix_run.engine_notes["last_error"] == "hung"
+
+    def test_the_protected_cases_a_fix_could_not_be_held_to_reach_the_read(
+        self, api_client, auth_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        flaky = [
+            {
+                "key": KEYS[1],
+                "name": "Escalate a large order",
+                "sub_goal": "refunded",
+                "passed": 2,
+                "runs": 3,
+            }
+        ]
+
+        self._report(
+            api_client,
+            fix_run,
+            ending="no_improvement",
+            summary="nothing held up",
+            flaky_protected=flaky,
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        assert read["flaky_protected"] == flaky
+
+    def test_no_flaky_case_fails_the_final_report_it_arrives_with(
+        self, api_client, auth_client, source_run
+    ):
+        # Scenario keys run to 255 characters, sub-goals are free text and an unnamed
+        # scenario's name is "". The list is only shown, so none of these may refuse the
+        # ending.
+        fix_run = _armed(_fix_run(source_run))
+        flaky = [
+            {
+                "key": "k" * 255,
+                "name": "n" * 255,
+                "sub_goal": " ".join(["the agent"] * 60),
+                "passed": 1,
+                "runs": 3,
+            },
+            {"key": "unnamed", "name": "", "sub_goal": "done", "passed": 1, "runs": 2},
+        ]
+
+        self._report(
+            api_client,
+            fix_run,
+            ending="no_improvement",
+            summary="nothing held up",
+            flaky_protected=flaky,
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        assert read["flaky_protected"] == flaky
+        assert read["ending"] == "no_improvement"
+
+    def test_a_report_from_before_flaky_protected_reads_as_none(
+        self, api_client, auth_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(
+            api_client, fix_run, ending="no_improvement", summary="nothing held up"
+        )
+        fix_run.refresh_from_db()
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            report={k: v for k, v in fix_run.report.items() if k != "flaky_protected"}
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        assert read["flaky_protected"] == []
+        assert read["summary"] == "nothing held up"
 
     def test_a_relaunch_s_brief_names_every_model_an_earlier_launch_lost(
         self, api_client, source_run
@@ -2369,3 +3336,17 @@ class TestEngineMemory:
 
         assert brief["lost_models"] == []
         assert retried.engine_notes is None
+
+
+@pytest.mark.parametrize("branch", ["feat/a#b", "fix/50%-off", "release?v2"])
+def test_a_branch_head_is_read_with_the_branch_name_quoted(branch):
+    with patch.object(agent_fix_github, "_api") as api:
+        api.return_value.json.return_value = {"object": {"sha": "a" * 40}}
+        head = agent_fix_github._ref_head(
+            "acme/agent", f"refs/heads/{branch}", branch, "token"
+        )
+
+    assert head == "a" * 40
+    (method, path, token), _ = api.call_args
+    assert path == f"/repos/acme/agent/git/ref/heads/{quote(branch, safe='/')}"
+    assert "#" not in path and "?" not in path

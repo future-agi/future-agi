@@ -29,6 +29,7 @@ from ee.agenthub.eval_orchestrator.scout import EvalScout, _SAFE_DEFAULTS
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_config(**overrides) -> EvalConfig:
     defaults = dict(
         criteria="Is the response polite?",
@@ -70,6 +71,7 @@ def _make_orchestrator(config=None, brief=None, **oc_overrides) -> EvalOrchestra
 # ── Scout tests ──────────────────────────────────────────────────────────────
 # ---------------------------------------------------------------------------
 
+
 class TestEvalScoutParsing(unittest.TestCase):
     """EvalScout._parse_response / _validate_brief"""
 
@@ -86,8 +88,17 @@ class TestEvalScoutParsing(unittest.TestCase):
             "complexity": "simple",
             "recommended_model": "flash",
             "criteria_needs_formalization": False,
-            "data_plan": {"sufficient": True, "needs_drill_down": [], "relevant_areas": []},
-            "resource_plan": {"use_kb": False, "kb_query_hints": [], "use_feedback": False, "use_mcp_tools": []},
+            "data_plan": {
+                "sufficient": True,
+                "needs_drill_down": [],
+                "relevant_areas": [],
+            },
+            "resource_plan": {
+                "use_kb": False,
+                "kb_query_hints": [],
+                "use_feedback": False,
+                "use_mcp_tools": [],
+            },
             "reasoning": "ok",
         }
         result = self._parse(json.dumps(payload))
@@ -96,25 +107,48 @@ class TestEvalScoutParsing(unittest.TestCase):
         self.assertFalse(result["criteria_needs_formalization"])
 
     def test_markdown_fenced_json(self):
-        payload = {"complexity": "moderate", "recommended_model": "small",
-                   "criteria_needs_formalization": True,
-                   "data_plan": {"sufficient": True, "needs_drill_down": [], "relevant_areas": []},
-                   "resource_plan": {"use_kb": False, "kb_query_hints": [], "use_feedback": False, "use_mcp_tools": []},
-                   "reasoning": "needs work"}
+        payload = {
+            "complexity": "moderate",
+            "recommended_model": "small",
+            "criteria_needs_formalization": True,
+            "data_plan": {
+                "sufficient": True,
+                "needs_drill_down": [],
+                "relevant_areas": [],
+            },
+            "resource_plan": {
+                "use_kb": False,
+                "kb_query_hints": [],
+                "use_feedback": False,
+                "use_mcp_tools": [],
+            },
+            "reasoning": "needs work",
+        }
         fenced = f"```json\n{json.dumps(payload)}\n```"
         result = self._parse(fenced)
         self.assertEqual(result["complexity"], "moderate")
         self.assertTrue(result["criteria_needs_formalization"])
 
     def test_json_embedded_in_prose(self):
-        inner = json.dumps({
-            "complexity": "complex",
-            "recommended_model": "large",
-            "criteria_needs_formalization": False,
-            "data_plan": {"sufficient": False, "needs_drill_down": ["t1"], "relevant_areas": []},
-            "resource_plan": {"use_kb": True, "kb_query_hints": ["policy"], "use_feedback": False, "use_mcp_tools": []},
-            "reasoning": "complex eval",
-        })
+        inner = json.dumps(
+            {
+                "complexity": "complex",
+                "recommended_model": "large",
+                "criteria_needs_formalization": False,
+                "data_plan": {
+                    "sufficient": False,
+                    "needs_drill_down": ["t1"],
+                    "relevant_areas": [],
+                },
+                "resource_plan": {
+                    "use_kb": True,
+                    "kb_query_hints": ["policy"],
+                    "use_feedback": False,
+                    "use_mcp_tools": [],
+                },
+                "reasoning": "complex eval",
+            }
+        )
         result = self._parse(f"Here is my analysis:\n{inner}\nEnd of analysis.")
         self.assertEqual(result["complexity"], "complex")
         self.assertEqual(result["recommended_model"], "large")
@@ -122,20 +156,44 @@ class TestEvalScoutParsing(unittest.TestCase):
     # ── invalid enum values are coerced ──────────────────────────────────────
 
     def test_invalid_complexity_coerced_to_moderate(self):
-        payload = {"complexity": "ultra_hard", "recommended_model": "small",
-                   "criteria_needs_formalization": False,
-                   "data_plan": {"sufficient": True, "needs_drill_down": [], "relevant_areas": []},
-                   "resource_plan": {"use_kb": False, "kb_query_hints": [], "use_feedback": False, "use_mcp_tools": []},
-                   "reasoning": ""}
+        payload = {
+            "complexity": "ultra_hard",
+            "recommended_model": "small",
+            "criteria_needs_formalization": False,
+            "data_plan": {
+                "sufficient": True,
+                "needs_drill_down": [],
+                "relevant_areas": [],
+            },
+            "resource_plan": {
+                "use_kb": False,
+                "kb_query_hints": [],
+                "use_feedback": False,
+                "use_mcp_tools": [],
+            },
+            "reasoning": "",
+        }
         result = self._parse(json.dumps(payload))
         self.assertEqual(result["complexity"], "moderate")
 
     def test_invalid_model_coerced_to_small(self):
-        payload = {"complexity": "simple", "recommended_model": "giant",
-                   "criteria_needs_formalization": False,
-                   "data_plan": {"sufficient": True, "needs_drill_down": [], "relevant_areas": []},
-                   "resource_plan": {"use_kb": False, "kb_query_hints": [], "use_feedback": False, "use_mcp_tools": []},
-                   "reasoning": ""}
+        payload = {
+            "complexity": "simple",
+            "recommended_model": "giant",
+            "criteria_needs_formalization": False,
+            "data_plan": {
+                "sufficient": True,
+                "needs_drill_down": [],
+                "relevant_areas": [],
+            },
+            "resource_plan": {
+                "use_kb": False,
+                "kb_query_hints": [],
+                "use_feedback": False,
+                "use_mcp_tools": [],
+            },
+            "reasoning": "",
+        }
         result = self._parse(json.dumps(payload))
         self.assertEqual(result["recommended_model"], "small")
 
@@ -156,7 +214,9 @@ class TestEvalScoutParsing(unittest.TestCase):
     def test_garbage_returns_safe_defaults(self):
         result = self._parse("LOL this is not JSON at all!!!")
         self.assertEqual(result["complexity"], _SAFE_DEFAULTS["complexity"])
-        self.assertEqual(result["recommended_model"], _SAFE_DEFAULTS["recommended_model"])
+        self.assertEqual(
+            result["recommended_model"], _SAFE_DEFAULTS["recommended_model"]
+        )
 
     def test_partial_json_returns_safe_defaults(self):
         result = self._parse('{"complexity": "simple"')  # unclosed brace
@@ -166,11 +226,23 @@ class TestEvalScoutParsing(unittest.TestCase):
     # ── resource_plan flags ───────────────────────────────────────────────────
 
     def test_resource_plan_use_kb_true(self):
-        payload = {"complexity": "complex", "recommended_model": "large",
-                   "criteria_needs_formalization": False,
-                   "data_plan": {"sufficient": True, "needs_drill_down": [], "relevant_areas": []},
-                   "resource_plan": {"use_kb": True, "kb_query_hints": ["PII policy"], "use_feedback": True, "use_mcp_tools": ["grammarly"]},
-                   "reasoning": "needs kb"}
+        payload = {
+            "complexity": "complex",
+            "recommended_model": "large",
+            "criteria_needs_formalization": False,
+            "data_plan": {
+                "sufficient": True,
+                "needs_drill_down": [],
+                "relevant_areas": [],
+            },
+            "resource_plan": {
+                "use_kb": True,
+                "kb_query_hints": ["PII policy"],
+                "use_feedback": True,
+                "use_mcp_tools": ["grammarly"],
+            },
+            "reasoning": "needs kb",
+        }
         result = self._parse(json.dumps(payload))
         self.assertTrue(result["resource_plan"]["use_kb"])
         self.assertTrue(result["resource_plan"]["use_feedback"])
@@ -196,9 +268,13 @@ class TestEvalScoutBuildPrompt(unittest.TestCase):
         prompt = self.scout._build_prompt(
             "Check policy",
             "span",
-            {"knowledge_bases": [{"id": "kb1", "name": "PII Policy", "description": "handles PII"}],
-             "feedback_count": 5,
-             "mcp_tools": []},
+            {
+                "knowledge_bases": [
+                    {"id": "kb1", "name": "PII Policy", "description": "handles PII"}
+                ],
+                "feedback_count": 5,
+                "mcp_tools": [],
+            },
         )
         self.assertIn("PII Policy", prompt)
         self.assertIn("Feedback examples: 5", prompt)
@@ -207,9 +283,11 @@ class TestEvalScoutBuildPrompt(unittest.TestCase):
         prompt = self.scout._build_prompt(
             "Check grammar",
             "span",
-            {"knowledge_bases": [],
-             "feedback_count": 0,
-             "mcp_tools": [{"name": "Grammarly", "description": "grammar checker"}]},
+            {
+                "knowledge_bases": [],
+                "feedback_count": 0,
+                "mcp_tools": [{"name": "Grammarly", "description": "grammar checker"}],
+            },
         )
         self.assertIn("Grammarly", prompt)
         self.assertIn("grammar checker", prompt)
@@ -218,6 +296,7 @@ class TestEvalScoutBuildPrompt(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # ── Orchestrator unit tests ──────────────────────────────────────────────────
 # ---------------------------------------------------------------------------
+
 
 class TestOrchestratorToolDispatch(unittest.TestCase):
     """_execute_tool dispatches correctly and handles errors."""
@@ -253,7 +332,9 @@ class TestOrchestratorToolDispatch(unittest.TestCase):
 
         self.orch._execute_tool.__func__  # ensure it's a bound method
         original = self.orch._tool_inspect_data
-        self.orch._tool_inspect_data = lambda **kw: (_ for _ in ()).throw(ValueError("DB is down"))
+        self.orch._tool_inspect_data = lambda **kw: (_ for _ in ()).throw(
+            ValueError("DB is down")
+        )
         result = self.orch._execute_tool(
             "inspect_data",
             {"target_type": "span", "target_id": "x", "depth": "overview"},
@@ -296,19 +377,30 @@ class TestOrchestratorParseToolCall(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_malformed_json_in_tool_call_returns_none(self):
-        content = '<tool_call>\n{bad json here\n</tool_call>'
+        content = "<tool_call>\n{bad json here\n</tool_call>"
         result = EvalOrchestrator._parse_tool_call_from_response(content)
         self.assertIsNone(result)
 
     def test_nested_json_params(self):
-        payload = {"tool": "run_eval", "params": {"criteria": "Is it OK?", "data": "Hello", "choices": ["Passed", "Failed"], "model": "flash"}}
-        content = f'<tool_call>\n{json.dumps(payload)}\n</tool_call>'
+        payload = {
+            "tool": "run_eval",
+            "params": {
+                "criteria": "Is it OK?",
+                "data": "Hello",
+                "choices": ["Passed", "Failed"],
+                "model": "flash",
+            },
+        }
+        content = f"<tool_call>\n{json.dumps(payload)}\n</tool_call>"
         result = EvalOrchestrator._parse_tool_call_from_response(content)
         self.assertEqual(result["params"]["choices"], ["Passed", "Failed"])
 
     def test_extra_whitespace_around_json(self):
-        payload = {"tool": "submit_result", "params": {"result": "Passed", "confidence": 0.95, "explanation": "Good"}}
-        content = f'<tool_call>   \n\n{json.dumps(payload)}\n\n   </tool_call>'
+        payload = {
+            "tool": "submit_result",
+            "params": {"result": "Passed", "confidence": 0.95, "explanation": "Good"},
+        }
+        content = f"<tool_call>   \n\n{json.dumps(payload)}\n\n   </tool_call>"
         result = EvalOrchestrator._parse_tool_call_from_response(content)
         self.assertIsNotNone(result)
         self.assertEqual(result["tool"], "submit_result")
@@ -321,15 +413,21 @@ class TestOrchestratorJSONParsing(unittest.TestCase):
         self.orch = _make_orchestrator()
 
     def test_bare_json(self):
-        r = self.orch._parse_json_response('{"result": "Passed", "confidence": 0.9, "explanation": "ok"}')
+        r = self.orch._parse_json_response(
+            '{"result": "Passed", "confidence": 0.9, "explanation": "ok"}'
+        )
         self.assertEqual(r["result"], "Passed")
 
     def test_markdown_fenced(self):
-        r = self.orch._parse_json_response('```json\n{"result": "Failed", "confidence": 0.8, "explanation": "bad"}\n```')
+        r = self.orch._parse_json_response(
+            '```json\n{"result": "Failed", "confidence": 0.8, "explanation": "bad"}\n```'
+        )
         self.assertEqual(r["result"], "Failed")
 
     def test_json_embedded_in_prose(self):
-        r = self.orch._parse_json_response('After analysis: {"result": "Passed", "confidence": 0.7, "explanation": "fine"} That is my verdict.')
+        r = self.orch._parse_json_response(
+            'After analysis: {"result": "Passed", "confidence": 0.7, "explanation": "fine"} That is my verdict.'
+        )
         self.assertEqual(r["result"], "Passed")
 
     def test_empty_string_returns_empty_dict(self):
@@ -399,10 +497,23 @@ class TestOrchestratorContextCompaction(unittest.TestCase):
         self.orch = _make_orchestrator()
 
     def _make_messages(self, n_tool_results: int) -> list:
-        msgs = [{"role": "system", "content": "sys"}, {"role": "user", "content": "start"}]
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "start"},
+        ]
         for i in range(n_tool_results):
-            msgs.append({"role": "assistant", "content": f"<tool_call>{{\"tool\": \"inspect_data\", \"params\": {{}}}}</tool_call>"})
-            msgs.append({"role": "user", "content": f"Tool result for inspect_data:\n" + ("x" * 500)})
+            msgs.append(
+                {
+                    "role": "assistant",
+                    "content": f'<tool_call>{{"tool": "inspect_data", "params": {{}}}}</tool_call>',
+                }
+            )
+            msgs.append(
+                {
+                    "role": "user",
+                    "content": f"Tool result for inspect_data:\n" + ("x" * 500),
+                }
+            )
         return msgs
 
     def test_no_compaction_when_under_limit(self):
@@ -417,8 +528,14 @@ class TestOrchestratorContextCompaction(unittest.TestCase):
         msgs = self._make_messages(keep + 2)
         self.orch._compact_old_tool_results(msgs)
         # At least the first tool-result user message should be compacted
-        tool_result_msgs = [m for m in msgs if m.get("role") == "user" and "Tool result for" in m.get("content", "")]
-        compacted = [m for m in tool_result_msgs if "_compacted" in m.get("content", "")]
+        tool_result_msgs = [
+            m
+            for m in msgs
+            if m.get("role") == "user" and "Tool result for" in m.get("content", "")
+        ]
+        compacted = [
+            m for m in tool_result_msgs if "_compacted" in m.get("content", "")
+        ]
         self.assertGreater(len(compacted), 0)
 
     def test_compacted_messages_contain_summary(self):
@@ -443,9 +560,21 @@ class TestOrchestratorContextCompaction(unittest.TestCase):
         for i in range(EvalOrchestrator.COMPACT_KEEP_RECENT + 2):
             msgs.append({"role": "assistant", "content": "..."})
             if i == 0:
-                msgs.append({"role": "user", "content": json.dumps({"_compacted": True, "summary": "already done"})})
+                msgs.append(
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {"_compacted": True, "summary": "already done"}
+                        ),
+                    }
+                )
             else:
-                msgs.append({"role": "user", "content": "Tool result for inspect_data:\n" + "y" * 500})
+                msgs.append(
+                    {
+                        "role": "user",
+                        "content": "Tool result for inspect_data:\n" + "y" * 500,
+                    }
+                )
         self.orch._compact_old_tool_results(msgs)
         # The already-compacted message should still have _compacted=True
         for m in msgs:
@@ -464,7 +593,13 @@ class TestOrchestratorBuildToolList(unittest.TestCase):
     def test_base_tools_always_present(self):
         orch = _make_orchestrator()
         names = [t["function"]["name"] for t in orch.tools]
-        for required in ["inspect_data", "search_data", "formalize_criteria", "run_eval", "submit_result"]:
+        for required in [
+            "inspect_data",
+            "search_data",
+            "formalize_criteria",
+            "run_eval",
+            "submit_result",
+        ]:
             self.assertIn(required, names)
 
     def test_kb_tool_added_when_kb_id_set(self):
@@ -479,19 +614,28 @@ class TestOrchestratorBuildToolList(unittest.TestCase):
         self.assertNotIn("search_kb", names)
 
     def test_feedback_tool_added_when_feedback_count_positive(self):
-        brief = _make_scout_brief(available_resources={"feedback_count": 5, "mcp_tools": []})
+        brief = _make_scout_brief(
+            available_resources={"feedback_count": 5, "mcp_tools": []}
+        )
         orch = _make_orchestrator(brief=brief)
         names = [t["function"]["name"] for t in orch.tools]
         self.assertIn("get_feedback_examples", names)
 
     def test_feedback_tool_absent_without_feedback(self):
-        brief = _make_scout_brief(available_resources={"feedback_count": 0, "mcp_tools": []})
+        brief = _make_scout_brief(
+            available_resources={"feedback_count": 0, "mcp_tools": []}
+        )
         orch = _make_orchestrator(brief=brief)
         names = [t["function"]["name"] for t in orch.tools]
         self.assertNotIn("get_feedback_examples", names)
 
     def test_mcp_tool_added_when_mcp_tools_present(self):
-        brief = _make_scout_brief(available_resources={"feedback_count": 0, "mcp_tools": [{"name": "Grammarly"}]})
+        brief = _make_scout_brief(
+            available_resources={
+                "feedback_count": 0,
+                "mcp_tools": [{"name": "Grammarly"}],
+            }
+        )
         orch = _make_orchestrator(brief=brief)
         names = [t["function"]["name"] for t in orch.tools]
         self.assertIn("call_mcp_tool", names)
@@ -529,7 +673,11 @@ class TestOrchestratorBuildFinalResult(unittest.TestCase):
 
     def test_with_submitted_result(self):
         orch = _make_orchestrator()
-        orch._final_result = {"result": "Passed", "confidence": 0.9, "explanation": "Great."}
+        orch._final_result = {
+            "result": "Passed",
+            "confidence": 0.9,
+            "explanation": "Great.",
+        }
         orch._model_used = "small"
         orch._eval_calls = 1
         orch._orchestrator_turns = 3
@@ -556,6 +704,7 @@ class TestOrchestratorBuildFinalResult(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # ── Integration tests (mocked LLM) ──────────────────────────────────────────
 # ---------------------------------------------------------------------------
+
 
 class TestOrchestratorFullLoopMocked(unittest.TestCase):
     """
@@ -584,14 +733,16 @@ class TestOrchestratorFullLoopMocked(unittest.TestCase):
         orch.turing_client.token_usage = {"prompt_tokens": 100, "completion_tokens": 50}
 
         # Patch inspect_data so it doesn't hit the DB
-        orch._tool_inspect_data = MagicMock(return_value={
-            "span_id": "span-abc",
-            "name": "test_span",
-            "type": "llm",
-            "status": "success",
-            "input": "Hello!",
-            "output": "Hello there! How can I help?",
-        })
+        orch._tool_inspect_data = MagicMock(
+            return_value={
+                "span_id": "span-abc",
+                "name": "test_span",
+                "type": "llm",
+                "status": "success",
+                "input": "Hello!",
+                "output": "Hello there! How can I help?",
+            }
+        )
 
         return orch.run()
 
@@ -617,13 +768,20 @@ class TestOrchestratorFullLoopMocked(unittest.TestCase):
 
         orch.turing_client = MagicMock()
         orch.turing_client.chat_completion.side_effect = fake_chat_completion
-        orch.turing_client.token_usage = {"prompt_tokens": 200, "completion_tokens": 100}
+        orch.turing_client.token_usage = {
+            "prompt_tokens": 200,
+            "completion_tokens": 100,
+        }
 
         orch._tool_inspect_data = MagicMock(return_value={"output": "Hello there!"})
-        orch._tool_run_eval = MagicMock(return_value={
-            "result": "Passed", "confidence": 0.95,
-            "explanation": "Polite and helpful.", "model_used": "turing_small",
-        })
+        orch._tool_run_eval = MagicMock(
+            return_value={
+                "result": "Passed",
+                "confidence": 0.95,
+                "explanation": "Polite and helpful.",
+                "model_used": "turing_small",
+            }
+        )
 
         result = orch.run()
         self.assertEqual(result["result"]["result"], "Passed")
@@ -634,7 +792,9 @@ class TestOrchestratorFullLoopMocked(unittest.TestCase):
         """If the model returns no <tool_call>, loop should terminate gracefully."""
         orch = _make_orchestrator()
         orch.turing_client = MagicMock()
-        orch.turing_client.chat_completion.return_value = "I have completed my analysis. The response is polite."
+        orch.turing_client.chat_completion.return_value = (
+            "I have completed my analysis. The response is polite."
+        )
         orch.turing_client.token_usage = {"prompt_tokens": 50, "completion_tokens": 20}
 
         result = orch.run()
@@ -656,7 +816,9 @@ class TestOrchestratorFullLoopMocked(unittest.TestCase):
         orch.turing_client = MagicMock()
         orch.turing_client.chat_completion.side_effect = fake_keep_calling
         orch.turing_client.token_usage = {"prompt_tokens": 10, "completion_tokens": 5}
-        orch._tool_inspect_data = MagicMock(return_value={"span_id": "x", "status": "success"})
+        orch._tool_inspect_data = MagicMock(
+            return_value={"span_id": "x", "status": "success"}
+        )
 
         result = orch.run()
         self.assertEqual(result["orchestrator_turns"], 3)
@@ -685,6 +847,7 @@ class TestOrchestratorFullLoopMocked(unittest.TestCase):
         ]
 
         call_idx = [0]
+
         def fake_chat(model, messages, **kwargs):
             idx = call_idx[0]
             call_idx[0] += 1
@@ -694,16 +857,22 @@ class TestOrchestratorFullLoopMocked(unittest.TestCase):
         orch.turing_client.chat_completion.side_effect = fake_chat
         orch.turing_client.token_usage = {"prompt_tokens": 100, "completion_tokens": 50}
 
-        orch._tool_formalize_criteria = MagicMock(return_value={
-            "formalized_criteria": "Evaluate whether the response is helpful and polite.",
-            "choices": ["Passed", "Failed"],
-            "response_format": "boolean",
-            "reasoning": "Expanded.",
-        })
-        orch._tool_run_eval = MagicMock(return_value={
-            "result": "Passed", "confidence": 0.88,
-            "explanation": "Good response.", "model_used": "turing_small",
-        })
+        orch._tool_formalize_criteria = MagicMock(
+            return_value={
+                "formalized_criteria": "Evaluate whether the response is helpful and polite.",
+                "choices": ["Passed", "Failed"],
+                "response_format": "boolean",
+                "reasoning": "Expanded.",
+            }
+        )
+        orch._tool_run_eval = MagicMock(
+            return_value={
+                "result": "Passed",
+                "confidence": 0.88,
+                "explanation": "Good response.",
+                "model_used": "turing_small",
+            }
+        )
 
         result = orch.run()
         orch._tool_formalize_criteria.assert_called_once()
@@ -725,14 +894,19 @@ class TestOrchestratorBuildEvalPrompt(unittest.TestCase):
         self.assertIn("Failed", p)
 
     def test_prompt_includes_supplementary_context(self):
-        p = self.orch._build_eval_prompt("criteria", "data", ["Yes", "No"],
-                                          supplementary_context="Policy doc section 3.")
+        p = self.orch._build_eval_prompt(
+            "criteria",
+            "data",
+            ["Yes", "No"],
+            supplementary_context="Policy doc section 3.",
+        )
         self.assertIn("Policy doc section 3.", p)
 
     def test_prompt_includes_fewshots(self):
         fewshots = [{"input": "Hi", "label": "Passed", "feedback": "Polite"}]
-        p = self.orch._build_eval_prompt("criteria", "data", ["Passed", "Failed"],
-                                          fewshots=fewshots)
+        p = self.orch._build_eval_prompt(
+            "criteria", "data", ["Passed", "Failed"], fewshots=fewshots
+        )
         self.assertIn("Example 1", p)
         self.assertIn("Polite", p)
 
@@ -746,8 +920,8 @@ class TestOrchestratorBuildEvalPrompt(unittest.TestCase):
 # ── Edge case / regression tests ────────────────────────────────────────────
 # ---------------------------------------------------------------------------
 
-class TestEdgeCases(unittest.TestCase):
 
+class TestEdgeCases(unittest.TestCase):
     def test_submit_result_confidence_as_string(self):
         """Confidence passed as string should be coerced to float."""
         orch = _make_orchestrator()
@@ -771,6 +945,7 @@ class TestEdgeCases(unittest.TestCase):
             '<tool_call>\n{"tool": "submit_result", "params": {"result": "Passed", "confidence": 0.9, "explanation": "ok"}}\n</tool_call>',
         ]
         call_idx = [0]
+
         def fake_chat(model, messages, **kwargs):
             idx = call_idx[0]
             call_idx[0] += 1
@@ -778,7 +953,10 @@ class TestEdgeCases(unittest.TestCase):
 
         orch.turing_client = MagicMock()
         orch.turing_client.chat_completion.side_effect = fake_chat
-        orch.turing_client.token_usage = {"prompt_tokens": 300, "completion_tokens": 150}
+        orch.turing_client.token_usage = {
+            "prompt_tokens": 300,
+            "completion_tokens": 150,
+        }
 
         orch.run()
         self.assertGreater(orch._orchestrator_token_usage["prompt_tokens"], 0)
@@ -787,6 +965,7 @@ class TestEdgeCases(unittest.TestCase):
         orch = _make_orchestrator()
         cfg = orch._resolve_model_config("unknown_tier")
         from agentic_eval.core.utils.model_config import ModelConfigs
+
         self.assertEqual(cfg, ModelConfigs.TURING_SMALL)
 
     def test_choices_with_single_option(self):

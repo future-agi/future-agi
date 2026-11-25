@@ -99,8 +99,8 @@ def get_combined_call_executions_and_snapshots_query(
         JOIN simulate_scenarios s2 ON ce2.scenario_id = s2.id
         WHERE te2.run_test_id = %s
         AND ces.rerun_type = 'call_and_eval'
-        {search_conditions.replace('ce.', 'ce2.').replace('s.name', 's2.name')}
-        {status_conditions.replace('ce.status', 'ces.status')}
+        {search_conditions.replace("ce.", "ce2.").replace("s.name", "s2.name")}
+        {status_conditions.replace("ce.status", "ces.status")}
     )
     SELECT * FROM combined_items
     ORDER BY timestamp DESC
@@ -167,8 +167,8 @@ def get_combined_call_executions_and_snapshots_count_query(
         JOIN simulate_scenarios s2 ON ce2.scenario_id = s2.id
         WHERE te2.run_test_id = %s
         AND ces.rerun_type = 'call_and_eval'
-        {search_conditions.replace('ce.', 'ce2.').replace('s.name', 's2.name')}
-        {status_conditions.replace('ce.status', 'ces.status')}
+        {search_conditions.replace("ce.", "ce2.").replace("s.name", "s2.name")}
+        {status_conditions.replace("ce.status", "ces.status")}
     ) as total_count
     """
 

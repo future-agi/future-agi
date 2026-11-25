@@ -205,9 +205,13 @@ def test_attr_filter_start_date_bound_in_all_families(family: str) -> None:
     # subqueries other filter types (scores/evals/end-user) can emit.
     b = _builder(filters=ATTR_FILTER)
     if family == "value":
-        sql, params = b.build_metric_value_query(MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END)
+        sql, params = b.build_metric_value_query(
+            MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END
+        )
     elif family == "historical":
-        sql, params = b.build_historical_stats_query(MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END)
+        sql, params = b.build_historical_stats_query(
+            MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END
+        )
     else:
         sql, params = b.build_time_series_query(
             MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END, 3600
