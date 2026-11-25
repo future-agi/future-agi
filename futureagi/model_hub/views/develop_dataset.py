@@ -15142,7 +15142,10 @@ class AddCompareExperimentEvalView(APIView):
     def post(self, request, dataset_id, *args, **kwargs):
         organization = _request_organization(request)
         request_data = request.validated_data
-        dataset_ids = [str(dataset_id), *(str(did) for did in request_data["dataset_ids"])]
+        dataset_ids = [
+            str(dataset_id),
+            *(str(did) for did in request_data["dataset_ids"]),
+        ]
         datasets = _request_compare_datasets(request, dataset_ids, lock=True)
         if datasets is None:
             return _compare_not_found_response(self._gm)
@@ -15570,7 +15573,9 @@ class ComparePreviewRunEvalView(APIView):
             if datasets is None:
                 return _compare_not_found_response(self._gm)
             if not (dataset_info and isinstance(dataset_info, dict)):
-                return self._gm.bad_request(get_error_message("NO_DATASET_INFO_PROVIDED"))
+                return self._gm.bad_request(
+                    get_error_message("NO_DATASET_INFO_PROVIDED")
+                )
             rows = _compare_preview_rows(dataset_info, datasets)
             if rows is None:
                 return _compare_not_found_response(self._gm)

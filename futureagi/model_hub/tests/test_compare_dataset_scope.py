@@ -25,7 +25,9 @@ def _state(dataset):
         Dataset.no_workspace_objects.get(pk=dataset.pk).column_order,
         *(
             list(
-                model.no_workspace_objects.filter(dataset=dataset).order_by("pk").values()
+                model.no_workspace_objects.filter(dataset=dataset)
+                .order_by("pk")
+                .values()
             )
             for model in (Column, Row, Cell, UserEvalMetric)
         ),
