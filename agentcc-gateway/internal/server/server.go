@@ -344,7 +344,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
+			noteRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
@@ -442,7 +442,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 			rc.Provider = provider.ID()
 
 			providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-				noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
+				noteRouteDrops(nil, callRC, provider, callRC.Request)
 				resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 				if err != nil {
 					return err
@@ -655,7 +655,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
+			noteRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
