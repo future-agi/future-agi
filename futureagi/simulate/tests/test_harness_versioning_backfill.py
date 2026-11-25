@@ -2311,7 +2311,9 @@ def test_folders_differing_only_in_spelling_are_never_read_as_one():
     entry = {"scenario_key": "Refund_A"}
     suite = {
         "scenarios.json": json.dumps([entry]).encode(),
-        "scenarios/refund-a/scenario.json": json.dumps({"instruction": "dash"}).encode(),
+        "scenarios/refund-a/scenario.json": json.dumps(
+            {"instruction": "dash"}
+        ).encode(),
         "scenarios/refund_a/scenario.json": json.dumps(
             {"instruction": "underscore"}
         ).encode(),
@@ -2351,7 +2353,9 @@ def test_an_upgrade_keeps_the_proofs_of_unchanged_scenarios(monkeypatch):
     monkeypatch.setattr(
         versions.HarnessSuiteValidation,
         "no_workspace_objects",
-        _Rows([SimpleNamespace(proofs=dict.fromkeys(stored, proof), suite_version_id=1)]),
+        _Rows(
+            [SimpleNamespace(proofs=dict.fromkeys(stored, proof), suite_version_id=1)]
+        ),
     )
     monkeypatch.setattr(
         versions.HarnessSuiteMember,
@@ -2365,12 +2369,19 @@ def test_an_upgrade_keeps_the_proofs_of_unchanged_scenarios(monkeypatch):
         "refund": {"name": "Refund", "instruction": "x", "folder": "scenarios/refund"},
         "cancel": {"name": "Cancel", "instruction": "y", "folder": "scenarios/cancel"},
         "moved": {"name": "Moved", "instruction": "z", "folder": "scenarios/moved"},
-        "edited": {"name": "Edited", "instruction": "new", "folder": "scenarios/edited"},
+        "edited": {
+            "name": "Edited",
+            "instruction": "new",
+            "folder": "scenarios/edited",
+        },
     }
 
     carried = versions._carried_proofs(
         object(),
-        [(SimpleNamespace(scenario_key=key), document) for key, document in now.items()],
+        [
+            (SimpleNamespace(scenario_key=key), document)
+            for key, document in now.items()
+        ],
     )
 
     assert set(carried) == {"refund", "cancel"}

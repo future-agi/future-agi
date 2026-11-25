@@ -1264,9 +1264,14 @@ def scenario_entries_meant(
         for matches in (
             lambda one: str(one.get("name") or "") == label,
             lambda one: str(one.get("scenario_key") or "") == label,
-            lambda one: bool(token)
-            and token
-            in {_scenario_token(one.get("name")), _scenario_token(one.get("scenario_key"))},
+            lambda one: (
+                bool(token)
+                and token
+                in {
+                    _scenario_token(one.get("name")),
+                    _scenario_token(one.get("scenario_key")),
+                }
+            ),
         ):
             if label and (hits := [one for one in suite if matches(one)]):
                 return hits

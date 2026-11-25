@@ -471,7 +471,9 @@ def test_folders_differing_only_in_spelling_are_two_scenarios_at_the_start():
     assert identity({"folder": "scenarios/refund-a"}) != identity(
         {"folder": "scenarios/refund_a"}
     )
-    assert identity({"folder": "refund_a"}) == identity({"folder": "scenarios/refund_a"})
+    assert identity({"folder": "refund_a"}) == identity(
+        {"folder": "scenarios/refund_a"}
+    )
 
 
 def test_a_case_takes_the_folder_named_for_it_never_a_copy_carrying_its_key(

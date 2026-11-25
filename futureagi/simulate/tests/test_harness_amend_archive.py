@@ -614,11 +614,15 @@ def test_folders_differing_only_in_spelling_stay_two():
     body = out.getvalue()
 
     assert (
-        _rewritten_authoring_archive(body, [{"scenario_key": "REFUND_A", "tests": "new"}])
+        _rewritten_authoring_archive(
+            body, [{"scenario_key": "REFUND_A", "tests": "new"}]
+        )
         is None
     )
     after = _read(
-        _rewritten_authoring_archive(body, [{"scenario_key": "refund_a", "tests": "new"}])
+        _rewritten_authoring_archive(
+            body, [{"scenario_key": "refund_a", "tests": "new"}]
+        )
     )
     assert json.loads(after["scenarios/refund_a/scenario.json"])["tests"] == "new"
     assert not any(path.startswith("scenarios/Refund-A/") for path in after)

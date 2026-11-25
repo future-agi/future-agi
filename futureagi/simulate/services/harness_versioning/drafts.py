@@ -922,7 +922,9 @@ def write_suite_edit(
         # The stored scenario in the folder this one names, when only one is; two
         # folders may share a key or a name.
         folder = folder_name(doc.get("folder"))
-        held = [one for one in stored if folder and folder_name(one.get("folder")) == folder]
+        held = [
+            one for one in stored if folder and folder_name(one.get("folder")) == folder
+        ]
         if len(held) == 1:
             return held[0]
         return by_said.get(str(doc.get("scenario_key") or doc.get("name") or ""))

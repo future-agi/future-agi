@@ -233,9 +233,7 @@ def _archive_scenarios(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
         document = {**one.record, **(one.document or {})}
         if one.folder:
             document["folder"] = one.record["folder"]
-        document["scenario_key"] = str(
-            document.get("scenario_key") or one.folder or ""
-        )
+        document["scenario_key"] = str(document.get("scenario_key") or one.folder or "")
         scenarios.append(document)
     return scenarios
 
