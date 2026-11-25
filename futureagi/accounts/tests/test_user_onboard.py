@@ -190,7 +190,9 @@ class TestCreateDemoTracesAndSpans:
         writes = client.insert.call_args_list
         assert [call.args[0] for call in writes] == ["traces", "spans"]
         assert len(writes[1].args[1]) == 35
-        for call, column in zip(writes, ("session_id", "trace_session_id"), strict=True):
+        for call, column in zip(
+            writes, ("session_id", "trace_session_id"), strict=True
+        ):
             index = call.kwargs["column_names"].index(column)
             assert all(str(row[index]) == str(missing_id) for row in call.args[1])
 
