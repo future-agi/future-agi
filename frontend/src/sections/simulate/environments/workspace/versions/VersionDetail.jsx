@@ -177,74 +177,71 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
 
   return (
     <Stack spacing={2} data-testid="version-detail">
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        spacing={2}
-        alignItems={{ sm: "center" }}
-        flexWrap="wrap"
-        useFlexGap
-      >
-        <Typography sx={{ typography: "s1", fontWeight: 500, flex: 1 }}>
-          {detail.changes}
-        </Typography>
-        {(parent || others.length > 0) && (
-          <TextField
-            select
-            size="small"
-            label={detail.compareWith}
-            value={against}
-            onChange={(e) => setAgainst(e.target.value)}
-            sx={{ minWidth: 200 }}
-            // The empty value is "its previous version"; show it, not a blank box.
-            SelectProps={{ displayEmpty: true }}
-            InputLabelProps={{ shrink: true }}
-            inputProps={{ "data-testid": "compare-with" }}
-          >
-            <MenuItem value="">
-              {parent ? detail.previousNamed(named(parent)) : detail.previous}
-            </MenuItem>
-            {others.map((one) => (
-              <MenuItem key={one.id} value={one.id}>
-                {optionLabel(one)}
-              </MenuItem>
-            ))}
-          </TextField>
-        )}
-      </Stack>
-      {/* The row already says its own summary; say it again only when the
-          comparison gives a different one. */}
-      {data?.summary &&
-        !first &&
-        !empty &&
-        data.summary !== version.summary && (
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {data.summary}
+      <Stack spacing={1}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={2}
+          alignItems={{ sm: "center" }}
+          flexWrap="wrap"
+          useFlexGap
+        >
+          <Typography sx={{ typography: "s1", fontWeight: 500, flex: 1 }}>
+            {detail.changes}
           </Typography>
+          {(parent || others.length > 0) && (
+            <TextField
+              select
+              size="small"
+              label={detail.compareWith}
+              value={against}
+              onChange={(e) => setAgainst(e.target.value)}
+              sx={{ minWidth: 200 }}
+              // The empty value is "its previous version"; show it, not a blank box.
+              SelectProps={{ displayEmpty: true }}
+              InputLabelProps={{ shrink: true }}
+              inputProps={{ "data-testid": "compare-with" }}
+            >
+              <MenuItem value="">
+                {parent ? detail.previousNamed(named(parent)) : detail.previous}
+              </MenuItem>
+              {others.map((one) => (
+                <MenuItem key={one.id} value={one.id}>
+                  {optionLabel(one)}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
+        </Stack>
+        {/* The row already says its own summary; say it again only when the
+          comparison gives a different one. */}
+        {data?.summary &&
+          !first &&
+          !empty &&
+          data.summary !== version.summary && (
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              {data.summary}
+            </Typography>
+          )}
+        {piece === "agent" && (
+          <PreflightReport report={version.preflightReport} />
         )}
-      {first && version.summary && (
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {version.summary}
-        </Typography>
-      )}
-      {piece === "agent" && (
-        <PreflightReport report={version.preflightReport} />
-      )}
-      <Box aria-busy={updating} sx={{ position: "relative" }}>
-        {updating && (
-          <LinearProgress
-            aria-label={detail.loading}
-            sx={{
-              position: "absolute",
-              top: -10,
-              left: 0,
-              right: 0,
-              height: 2,
-              borderRadius: 1,
-            }}
-          />
-        )}
-        {body()}
-      </Box>
+        <Box aria-busy={updating} sx={{ position: "relative" }}>
+          {updating && (
+            <LinearProgress
+              aria-label={detail.loading}
+              sx={{
+                position: "absolute",
+                top: -6,
+                left: 0,
+                right: 0,
+                height: 2,
+                borderRadius: 1,
+              }}
+            />
+          )}
+          {body()}
+        </Box>
+      </Stack>
       {piece === "suite" && <SuiteMembers envId={envId} version={version} />}
     </Stack>
   );

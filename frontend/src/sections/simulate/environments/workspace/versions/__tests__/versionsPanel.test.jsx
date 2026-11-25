@@ -921,7 +921,7 @@ describe("VersionsPanel", () => {
     }
   });
 
-  it("keeps the oldest version's stored summary next to the first-version note", async () => {
+  it("doesn't repeat the oldest version's summary under its row", async () => {
     const user = userEvent.setup();
     state.versions = {
       ...VERSIONS,
@@ -942,10 +942,10 @@ describe("VersionsPanel", () => {
       within(detail).getByText(/This is the first version/),
     ).toBeInTheDocument();
     expect(
-      within(detail).getByText(
+      screen.getAllByText(
         "Recorded from the environment as it stood before versioning",
       ),
-    ).toBeInTheDocument();
+    ).toHaveLength(1);
   });
 
   it("names an unnumbered suite version in its scenarios line", async () => {
