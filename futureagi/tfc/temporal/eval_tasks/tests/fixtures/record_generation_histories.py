@@ -20,6 +20,7 @@ its in-memory server, so the suite never depends on re-recorded files.
 
 import argparse
 import asyncio
+import copy
 import json
 import os
 import sys
@@ -133,8 +134,10 @@ def _scenarios(label: str) -> dict:
 
 class _Stubs:
     def __init__(self, scenarios: dict) -> None:
+        # Deep copies: two scenarios may share a batch list, and the claim
+        # stub consumes it.
         self.by_task = {
-            f"task-{name}": dict(scenario, state_calls=0)
+            f"task-{name}": dict(copy.deepcopy(scenario), state_calls=0)
             for name, (_, _, scenario) in scenarios.items()
         }
 

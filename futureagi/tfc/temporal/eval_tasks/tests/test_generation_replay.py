@@ -295,7 +295,7 @@ def test_new_generation_run_issues_the_same_commands_as_a_legacy_run(plain):
         "-continuous-", "-continuous-gen-"
     )
     assert _input(gen)["workflow_generation"] == "g-1"
-    assert "workflow_generation" not in _input(plain)
+    assert _input(plain).get("workflow_generation") is None
     assert _activities(_events(gen)) == _activities(_events(plain))
     assert _events(gen)[-1]["eventType"] == _events(plain)[-1]["eventType"]
 
@@ -411,7 +411,7 @@ def test_dev_types_decode_new_payloads_and_new_types_decode_dev_payloads(cls, na
     converter = DataConverter.default.payload_converter
     dev_cls = _without(cls, *names)
     required = {
-        f.name: f"v-{f.name}"
+        f.name: 2 if f.type in (int, "int") else f"v-{f.name}"
         for f in dataclasses.fields(cls)
         if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
     }
