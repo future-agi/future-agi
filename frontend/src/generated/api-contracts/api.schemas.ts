@@ -23709,7 +23709,7 @@ export interface HarnessRunReportManifestApi {
   environment: HarnessRunReportManifestApiEnvironmentItem[];
   suite: HarnessRunReportManifestApiSuite;
   binding: HarnessRunReportManifestApiBinding;
-  binding_proof: HarnessRunReportManifestApiBindingProof;
+  binding_proof?: HarnessRunReportManifestApiBindingProof;
   agent: HarnessRunReportManifestApiAgent;
   selection: HarnessRunReportManifestApiSelection;
   simulator: HarnessRunReportManifestApiSimulator;

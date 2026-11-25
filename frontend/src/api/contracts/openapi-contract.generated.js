@@ -116975,7 +116975,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "environment",
         "suite",
         "binding",
-        "binding_proof",
         "agent",
         "selection",
         "simulator",
@@ -117022,7 +117021,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             "x-nullable": true,
           },
-          "x-nullable": true,
         },
         agent: {
           title: "Agent",

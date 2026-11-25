@@ -460,7 +460,7 @@ class TestRuns:
         report = response.json()
         assert [one["scenario_key"] for one in report["scenarios"]] == ["gone", "kept"]
         assert report["manifest"]["suite"]["digest"] == parent.digest
-        assert report["manifest"]["binding_proof"] is None
+        assert "binding_proof" not in report["manifest"]
         assert report["coverage"]["unscorable"] == []
         assert report["coverage"]["suite_scenarios"] == 2
 
