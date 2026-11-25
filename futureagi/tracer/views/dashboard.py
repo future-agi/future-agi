@@ -680,9 +680,16 @@ class _RetainedLookup:
     deadline: ReadDeadline
 
 
-# Guards _retained_lookup and the slot hand-over, never a ClickHouse read.
-_RETAINED_LOOKUP_LOCK = Lock()
-_retained_lookup: _RetainedLookup | None = None
+class _RetainedLookupInFlight:
+    """Process-wide holder for the one in-flight lookup pages may join."""
+
+    def __init__(self) -> None:
+        # Guards ``current`` and the slot hand-over, never a ClickHouse read.
+        self.lock = Lock()
+        self.current: _RetainedLookup | None = None
+
+
+_RETAINED = _RetainedLookupInFlight()
 
 
 def _retained_lookup_refused_reason() -> str | None:
@@ -735,8 +742,6 @@ def _batched_span_system_retained_window_start(
     queue delays can still reduce the time left at page entry. Every span-table
     first page (fixed-scope and workspace lanes) uses this bounded path.
     """
-    global _retained_lookup
-
     # Anchor before sampling the parent so setup cannot renew either wall.
     lookup_deadline = ReadDeadline.start(ATTRIBUTE_READ_METADATA_TIMEOUT_MS)
     try:
@@ -767,13 +772,13 @@ def _batched_span_system_retained_window_start(
         lookup_deadline, total_ms=min(budget, lookup_deadline.total_ms)
     )
 
-    with _RETAINED_LOOKUP_LOCK:
-        joined = _retained_lookup
+    with _RETAINED.lock:
+        joined = _RETAINED.current
         if joined is None:
             if not _RETAINED_LOOKUP_SLOT.acquire(blocking=False):
                 return _FILTER_VALUE_RETAINED_START
             leader = _RetainedLookup(Future(), window_end, lookup_deadline)
-            _retained_lookup = leader
+            _RETAINED.current = leader
 
     if joined is not None:
         # Concurrent first pages share the in-flight read instead of skipping
@@ -808,11 +813,9 @@ def _batched_span_system_retained_window_start(
     future = leader.future
 
     def finish():
-        global _retained_lookup
-
-        with _RETAINED_LOOKUP_LOCK:
-            if _retained_lookup is leader:
-                _retained_lookup = None
+        with _RETAINED.lock:
+            if _RETAINED.current is leader:
+                _RETAINED.current = None
             _RETAINED_LOOKUP_SLOT.release()
 
     def lookup():
