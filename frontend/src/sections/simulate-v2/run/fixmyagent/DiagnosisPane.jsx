@@ -27,6 +27,7 @@ import CallScanStrip from "./CallScanStrip";
 import OmegaHandoff from "../OmegaHandoff";
 import ImaginePane from "./ImaginePane";
 import CopyBriefButton from "../../components/CopyBriefButton";
+import CodingAgentBriefDrawer from "../../components/CodingAgentBriefDrawer";
 import { useSimStore, useConnectedAgents } from "../../store";
 import {
   envAgentKey,
@@ -283,6 +284,7 @@ export default function DiagnosisPane({
     setPhase("running");
   };
   const [handoff, setHandoff] = useState(false);
+  const [briefOpen, setBriefOpen] = useState(false);
   const [previousAnchor, setPreviousAnchor] = useState(null);
   const [moreAnchor, setMoreAnchor] = useState(null);
   const [open, setOpen] = useState({});
@@ -1650,6 +1652,23 @@ export default function DiagnosisPane({
                 earlier full-width outlined button read as an equal
                 alternative, which it isn't.
               */}
+                {/* Your own coding agent writes the change instead; the drawer
+                    shows what is copied and who pays for the checks. */}
+                {!voiceFix && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
+                    disabled={running || !sorted.length}
+                    onClick={() => setBriefOpen(true)}
+                    startIcon={
+                      <Iconify icon="solar:programming-linear" width={16} />
+                    }
+                    sx={{ borderColor: "divider", flexShrink: 0 }}
+                  >
+                    Copy for coding agent
+                  </Button>
+                )}
                 <Button
                   size="small"
                   disabled={running || !included.length}
@@ -1663,6 +1682,11 @@ export default function DiagnosisPane({
           </Stack>
         </>
       )}
+      <CodingAgentBriefDrawer
+        open={briefOpen}
+        onClose={() => setBriefOpen(false)}
+        getText={brief}
+      />
     </Stack>
   );
 }

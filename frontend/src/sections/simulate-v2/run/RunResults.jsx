@@ -118,9 +118,7 @@ import { TraceSheet } from "./TraceWaterfall";
 import { runTracingOf, runIssueImprovement } from "../errorFeed/runIssueFix";
 import { startImproverSession, useIntegrations } from "../_mock/integrations";
 import { useSimStore, useConnectedAgents } from "../store";
-import { voiceFixOf } from "../_mock/voiceFix";
 import { versionNameOf } from "../_mock/codeRefs";
-import { optimisable } from "../_mock/optimize";
 import { envAgentKey } from "../_mock/agentRegistry";
 import { membersOf, rereadFor } from "../_mock/improvementPolicy";
 import { recordOutsideChange } from "../_mock/nudgeEffects";
@@ -146,7 +144,6 @@ import { runSkillsLineOf } from "../_mock/skillLibrary";
 import { scenarioAtVersion } from "../_mock/decoupled";
 import MeteredText from "./RunRecord";
 import ShareMenu from "./ShareMenu";
-import { codingAgentBrief } from "../_mock/codingAgentBrief";
 import CopyIdButton from "../components/CopyIdButton";
 import CopyCommandButton from "../components/CopyCommandButton";
 import { OnTheCall } from "./SubActorRows";
@@ -818,46 +815,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
      Debug failures → Improve reaches. Nothing is read first, so nothing
      is charged here. */
   const [fixSetup, setFixSetup] = useState(false);
-  /* Opened from the header's Run Epoch rather than an Insights finding. */
-  const [fixDirect, setFixDirect] = useState(false);
-  /* Copy for coding agent: hand the failures to your own coding agent
-     instead; the drawer shows what is copied. */
-  const [briefOpen, setBriefOpen] = useState(false);
-  /* An agent built in a voice platform's dashboard can't be changed by an
-     Epoch — the button stays, disabled with the reason. */
+  /* For the version line: a code agent's version reads as its commit. */
   const { agents: connectedAgents } = useConnectedAgents();
-  /* What an Epoch can work on — the same set Debug failures counts: flaky
-     scenarios whose flakiness comes from the simulated caller are left out. */
-  const epochFailingCount = new Set(
-    optimisable(debugTasks).map((t) => t.scenarioId || t.id),
-  ).size;
-  const callerFlaky = failingScenarioIds.length - epochFailingCount;
-  const briefText = () =>
-    codingAgentBrief({
-      agent: envState?.agent
-        ? {
-            name: envState.agent.name,
-            key: envAgentKey(envState.agent, env?.id),
-          }
-        : null,
-      env,
-      issue: {
-        title: `Failing scenarios in ${identity?.ordinal ? `Run ${identity.ordinal}` : "this run"}`,
-      },
-      runId,
-      failingScenarios: debugTasks
-        .filter((t) => t.status === "failed" || t.status === "flaky")
-        .map((t) => scenarioTitle(t.title) || t.id),
-    });
-  const epochBlocked = (() => {
-    const key = envAgentKey(envState?.agent, env?.id);
-    const vf = voiceFixOf(connectedAgents.find((a) => a.key === key) || null);
-    if (vf)
-      return `Built in ${vf.where}, so an Epoch can't change it. Use Debug failures.`;
-    if (!epochFailingCount)
-      return "Only the simulated caller was flaky. Nothing for an Epoch to fix.";
-    return null;
-  })();
   const openImprove = (ids) => {
     setDebugIds(ids);
     setFixOptId(null);
@@ -2248,155 +2207,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               Repeat
             </Button>
           ))}
-        {/* Run Epoch straight on the run: every failing scenario, no
-            Debug failures first — the Epoch finds the causes itself.
-            Nothing is read before the setup, so nothing is charged here. */}
-        {!candidate &&
-          !trialMeta &&
-          !fixFirst &&
-          failingScenarioIds.length > 0 && (
-            <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
-              <Tooltip
-                arrow
-                title={
-                  epochBlocked ||
-                  `Starts from all ${epochFailingCount} failing. The Epoch finds the causes.${callerFlaky > 0 ? ` ${callerFlaky} flaky from the caller left out.` : ""}`
-                }
-              >
-                <span>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    disabled={!!epochBlocked}
-                    onClick={() => {
-                      setFixDirect(true);
-                      openImprove(null);
-                    }}
-                    startIcon={<Iconify icon="solar:play-linear" width={16} />}
-                    sx={{ color: "text.primary", borderColor: "divider" }}
-                  >
-                    Run Epoch
-                  </Button>
-                </span>
-              </Tooltip>
-              <Tooltip
-                arrow
-                title={
-                  epochBlocked ||
-                  "Your coding agent fixes it; each attempt is checked here."
-                }
-              >
-                <span>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    disabled={!!epochBlocked}
-                    onClick={() => setBriefOpen(true)}
-                    startIcon={
-                      <Iconify icon="solar:programming-linear" width={16} />
-                    }
-                    sx={{ color: "text.primary", borderColor: "divider" }}
-                  >
-                    Copy for coding agent
-                  </Button>
-                </span>
-              </Tooltip>
-            </Stack>
-          )}
-        <SideDrawer
-          open={briefOpen}
-          onClose={() => setBriefOpen(false)}
-          width={520}
-        >
-          <Stack sx={{ height: "100%", minHeight: 0 }}>
-            <Stack
-              direction="row"
-              alignItems="flex-start"
-              spacing={1}
-              sx={{
-                px: 2.5,
-                pt: 2,
-                pb: 1.5,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-                  Copy for coding agent
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                  Paste this into your coding agent.
-                </Typography>
-              </Box>
-              <IconButton
-                size="small"
-                aria-label="Close"
-                onClick={() => setBriefOpen(false)}
-              >
-                <Iconify icon="solar:close-linear" width={18} />
-              </IconButton>
-            </Stack>
-            <Box
-              sx={{ px: 2.5, py: 2, flex: 1, minHeight: 0, display: "flex" }}
-            >
-              <Box
-                component="pre"
-                sx={{
-                  m: 0,
-                  p: 1.5,
-                  flex: 1,
-                  minWidth: 0,
-                  overflow: "auto",
-                  fontFamily: "monospace",
-                  fontSize: 12,
-                  lineHeight: "18px",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  bgcolor: "background.neutral",
-                }}
-              >
-                {briefOpen ? briefText() : ""}
-              </Box>
-            </Box>
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1}
-              sx={{
-                px: 2.5,
-                py: 2,
-                borderTop: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Typography
-                sx={{ typography: "s3", color: "text.secondary", flex: 1 }}
-              >
-                Your coding agent&apos;s attempts are checked here and charged
-                to this workspace&apos;s credits.
-              </Typography>
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                startIcon={<Iconify icon="solar:copy-linear" width={14} />}
-                onClick={() => {
-                  navigator.clipboard?.writeText(briefText());
-                  enqueueSnackbar("Copied for your coding agent", {
-                    variant: "success",
-                  });
-                  setBriefOpen(false);
-                }}
-              >
-                Copy
-              </Button>
-            </Stack>
-          </Stack>
-        </SideDrawer>
+        {/* Run Epoch and Copy for coding agent live in Debug failures, not
+            here: one way in from a run, and the header stays uncrowded
+            (Chintan, Kartik, 25 Nov). */}
         {/*
           The primary action after a failed run is not to run it again —
           the same agent against the same graders returns the same
@@ -3864,13 +3677,11 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       <FixMyAgentDrawer
         open={fixOpen}
         openSetup={fixSetup}
-        direct={fixDirect}
         onClose={() => {
           setFixOpen(false);
           setFixOptId(null);
           setDebugIds(null);
           setFixSetup(false);
-          setFixDirect(false);
           /* Drop ?improve so "From Improvement run N" opens it again, and Back
              doesn't stop on the same run with the drawer shut. */
           if (params.get("improve")) {
@@ -4656,21 +4467,18 @@ function StatusFilterChips({ value, counts, onChange, blocked = [] }) {
                 "&:hover": disabled ? {} : { bgcolor: "action.hover" },
               }}
             >
-              {chip.id !== "all" && (
-                <Box
-                  sx={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    bgcolor: dot,
-                    flexShrink: 0,
-                  }}
-                />
-              )}
-              {/* The same words as the goal rows ("2 flaky · 1 failed"), so
-                  each colour is named where it's used. */}
+              {/* The word in its colour, no dot: on this page a dot is
+                  always one trial. Same words as the goal rows. */}
               <Typography
-                sx={{ typography: "s2", fontWeight: 600, whiteSpace: "nowrap" }}
+                sx={{
+                  typography: "s2",
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  color:
+                    chip.id === "all" || disabled
+                      ? "inherit"
+                      : String(dot).replace(/\.solid$/, ".fg"),
+                }}
               >
                 {SEGMENT_WORD[chip.id] || chip.label}
               </Typography>
