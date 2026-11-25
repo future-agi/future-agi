@@ -5,6 +5,7 @@ import re
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 
 from clickhouse_driver.util.escape import escape_params
@@ -89,13 +90,18 @@ def _bounded_statement(sql, params):
         elif type(value) is int:
             kind = "UInt64" if value > 2**63 - 1 else "Int64"
         else:
-            kind = {str: "String", float: "Float64", bool: "Bool"}.get(type(value))
-            if kind is None:
+            scalar_kind: str | None = {
+                str: "String",
+                float: "Float64",
+                bool: "Bool",
+            }.get(type(value))
+            if scalar_kind is None:
                 if value is None:
                     return "NULL"
                 raise CohortStatementTooLarge(
                     "Cannot bind this oversized cohort statement"
                 )
+            kind = scalar_kind
         binds[name] = value
         return "{" + name + ":" + kind + "}"
 
@@ -132,7 +138,11 @@ def _identity_constraint(item):
 
 def _catalog_for_groups(identities, groups):
     """Separate positive load witnesses from identities that can exclude a trace."""
-    positives, excluded, exclusion_groups = [], {}, set()
+    positives = []
+    excluded: dict[
+        tuple[int, frozenset[Any]], list[tuple[str, str, str]]
+    ] = {}
+    exclusion_groups = set()
     for key, group in groups.items():
         loads = [item for item in group if item["column_id"] not in _TRACE_SELECTORS]
         if not loads or _selects_failed_load(group):

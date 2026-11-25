@@ -2030,7 +2030,7 @@ class ClickHouseFilterBuilder:
             or not 1 <= batch_size <= SKILL_REPLAY_BATCH_SIZE
         ):
             raise ValueError("Invalid skill load replay batch size")
-        scope = (
+        scope: dict[str, Any] = (
             {"project_ids": tuple(self.project_ids)}
             if self._org_scoped
             else {"project_id": self.project_ids[0]}
@@ -2049,9 +2049,9 @@ class ClickHouseFilterBuilder:
             verified_identities_param=verified_identities_param,
         )
         limit = batch_size + 1
-        seen = set()
+        seen: set[tuple[str, str, str]] = set()
         seen_bytes = 0
-        after = {}
+        after: dict[str, Any] = {}
         while True:
             sql = self._skill_key_page_sql(
                 identity_cte, condition, continued=bool(after)
@@ -2074,7 +2074,7 @@ class ClickHouseFilterBuilder:
             continued = len(page) == limit
             if continued:
                 page.pop()
-            keys = []
+            keys: list[tuple[str, str, str]] = []
             array_bytes = 2
             for row in page:
                 if row["trace_id"] is None or row["id"] is None:

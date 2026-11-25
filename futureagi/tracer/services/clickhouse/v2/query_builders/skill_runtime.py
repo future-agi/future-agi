@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime
 from itertools import product
 from operator import itemgetter
+from typing import Any
 from uuid import UUID
 
 from model_hub.services.skills_hub.errors import SkillsHubError
@@ -61,7 +62,8 @@ class _FactPages(dict):
 
 def _array_batches(values):
     """Disjoint input sets bounded by *escaped bytes*, not by row count."""
-    batch, size = [], 2  # the array brackets
+    batch: list[Any] = []
+    size = 2  # the array brackets
     for key in dict.fromkeys(values):
         fields = key if isinstance(key, tuple) else (key,)
         # Each UTF-8 byte can at most double under native string escaping.
@@ -669,7 +671,7 @@ class RuntimeReadSession:
         def read_keys(query, binds):
             return self._read(query, binds).data
 
-        rows = []
+        rows: list[dict[str, Any]] = []
         started_ms = self.deadline.elapsed_ms()
         for page_sql, page_binds in params.statements(sql, read_keys):
             page = self._read(page_sql, page_binds)

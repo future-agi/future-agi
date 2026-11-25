@@ -5356,6 +5356,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             start, end = builder.parse_time_range(filters)
+            assert start is not None and end is not None
             window = SkillEvidenceWindow.from_bounds(start, end, filters)
             compiler = ClickHouseFilterBuilderV2(project_id=str(project_id))
             calls = rows = payload_bytes = 0

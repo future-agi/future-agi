@@ -1557,13 +1557,12 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
         residual_predicate = "1 = 1"
         if residual_filters:
-            window = (
-                SkillEvidenceWindow.from_bounds(
+            window = None
+            if any(is_skill_filter(item) for item in residual_filters):
+                assert request_start is not None and request_end is not None
+                window = SkillEvidenceWindow.from_bounds(
                     request_start, request_end, self.filters
                 )
-                if any(is_skill_filter(item) for item in residual_filters)
-                else None
-            )
             org_scope = self.project_ids is not None
             if org_scope:
                 requires_project_label_sets = any(

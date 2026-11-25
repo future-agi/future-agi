@@ -232,6 +232,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
 
         if self.start_date is None or self.end_date is None:
             self.start_date, self.end_date = self.parse_time_range(self.filters)
+        assert self.start_date is not None and self.end_date is not None
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
         if self.split_by:
@@ -1058,6 +1059,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             raise ValueError("exact trace contribution batch exceeds 5000 identities")
         if self.start_date is None or self.end_date is None:
             self.start_date, self.end_date = self.parse_time_range(self.filters)
+        assert self.start_date is not None and self.end_date is not None
         # CH25 replaces versions by ``toStartOfHour(start_time)``. A newer poll
         # may correct the producer timestamp across the exact request boundary
         # while remaining in that same physical identity. Scan both boundary
@@ -1166,6 +1168,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             raise ValueError("exact span partitions require an exact span builder")
         if self.start_date is None or self.end_date is None:
             self.start_date, self.end_date = self.parse_time_range(self.filters)
+        assert self.start_date is not None and self.end_date is not None
         if not (
             partition_start < partition_end
             and partition_start.minute == 0

@@ -4547,13 +4547,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         residual_predicate = "1 = 1"
         if residual_filters:
-            window = (
-                SkillEvidenceWindow.from_bounds(
+            window = None
+            if any(is_skill_filter(item) for item in residual_filters):
+                assert request_start is not None and request_end is not None
+                window = SkillEvidenceWindow.from_bounds(
                     request_start, request_end, match_filters
                 )
-                if any(is_skill_filter(item) for item in residual_filters)
-                else None
-            )
             has_eval_residual = any(
                 (item.get("column_id") or item.get("columnId")) == "has_eval"
                 for item in residual_filters

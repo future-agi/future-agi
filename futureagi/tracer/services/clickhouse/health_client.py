@@ -69,7 +69,14 @@ class HealthCheckClient(ClickHouseClient):
 
     @staticmethod
     def _execute_native_read_with_remaining_timeout(
-        client, query, params, *, query_settings, started_at, timeout_ms
+        client,
+        query,
+        params,
+        *,
+        query_settings,
+        started_at,
+        timeout_ms,
+        retained_until=None,
     ):
         # Unlike application reads, a diagnostic must always have a wall budget.
         if timeout_ms is None:

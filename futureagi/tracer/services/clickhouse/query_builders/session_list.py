@@ -627,11 +627,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         filter_batches = [
             [item] for item in relational_filters if not is_skill_filter(item)
         ]
-        window = (
-            SkillEvidenceWindow.from_bounds(*self._bounded_request_window, self.filters)
-            if skill_items
-            else None
-        )
+        window = None
+        if skill_items:
+            request_start, request_end = self._bounded_request_window
+            assert request_start is not None and request_end is not None
+            window = SkillEvidenceWindow.from_bounds(
+                request_start, request_end, self.filters
+            )
         if skill_items:
             filter_batches.append(skill_items)
         predicates_by_leaf: list[list[str]] = [[] for _ in filter_batches]
