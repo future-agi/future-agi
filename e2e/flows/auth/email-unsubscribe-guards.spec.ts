@@ -26,7 +26,7 @@ test('AUTH-E2E-019: unsubscribe links act only when valid, recent and pressed, a
       'the one-click POST adds exactly the automation_rule_runs opt-out to the actor in PG accounts_user.config',
     ],
   }),
-}, async ({ page, actor, probe }, testInfo) => {
+}, async ({ page, actor, probe, request }, testInfo) => {
   test.setTimeout(300_000); // four UI_READY steps plus three seeds.
   const [user] = await probe.pg<{ id: string }>(
     'SELECT id FROM accounts_user WHERE email = $1', [actor.email]);
@@ -56,20 +56,20 @@ test('AUTH-E2E-019: unsubscribe links act only when valid, recent and pressed, a
       await expect(page.locator('main p')).toHaveText(INVALID);
       await expect(page.getByRole('button')).toHaveCount(0);
       // The page's own buttons are the only way to act; a one-click POST is refused too.
-      const post = await page.request.post(link, { form: ONE_CLICK });
+      const post = await request.post(link, { form: ONE_CLICK });
       expect(post.status()).toBe(400);
       expect(await optOuts()).toEqual(before);
     }, { timeout: UI_READY });
   }
 
   await test.step('a POST with no button pressed changes nothing', async () => {
-    const post = await page.request.post(valid, { form: {} });
+    const post = await request.post(valid, { form: {} });
     expect(post.status()).toBe(400);
     expect(await optOuts()).toEqual(before);
   }, { timeout: UI_READY });
 
   await test.step('the mail client\'s one-click POST unsubscribes', async () => {
-    const post = await page.request.post(valid, { form: ONE_CLICK });
+    const post = await request.post(valid, { form: ONE_CLICK });
     expect(post.status()).toBe(200);
     expect(await optOuts()).toEqual(withCategory);
     await page.goto(valid);

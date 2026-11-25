@@ -32,7 +32,7 @@ test('ANNOT-E2E-008: the annotation digest\'s snooze and older unsubscribe links
       'a 31-day-old snooze link leaves the state unchanged',
     ],
   }),
-}, async ({ page, actor, probe }, testInfo) => {
+}, async ({ page, actor, probe, request }, testInfo) => {
   test.setTimeout(420_000); // six UI_READY steps plus seeding.
   const [user] = await probe.pg<{ id: string }>(
     'SELECT id FROM accounts_user WHERE email = $1', [actor.email]);
@@ -96,7 +96,7 @@ test('ANNOT-E2E-008: the annotation digest\'s snooze and older unsubscribe links
     await page.goto(expiredSnooze);
     await expect(page.getByRole('heading')).toHaveText(['Link expired'], { timeout: UI_READY });
     await expect(page.getByRole('button')).toHaveCount(0);
-    const post = await page.request.post(expiredSnooze, { form: { action: 'snooze' } });
+    const post = await request.post(expiredSnooze, { form: { action: 'snooze' } });
     expect(await post.text()).toContain('<h1>Link expired</h1>');
     expect(before).not.toBeNull();
     expect(await snoozedUntil()).toBe(before);
