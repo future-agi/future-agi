@@ -139,9 +139,10 @@ def test_org_switch_that_loses_the_insert_race_gets_the_winners_workspace():
     user = _owner(organization)
     race, state = _lose_the_insert_race(organization, winner_user)
 
-    with race, patch(
-        "accounts.views.organization_selection.logger"
-    ) as selection_logger:
+    with (
+        race,
+        patch("accounts.views.organization_selection.logger") as selection_logger,
+    ):
         workspace = SwitchOrganizationView()._resolve_workspace_for_org(
             user, organization
         )

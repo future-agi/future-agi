@@ -309,9 +309,7 @@ class SwitchOrganizationView(APIView):
         # 2. Org's default workspace, created if missing. A concurrent first
         # login may create it first; the helper then returns that workspace.
         try:
-            ws, created = get_or_create_default_workspace(
-                organization, created_by=user
-            )
+            ws, created = get_or_create_default_workspace(organization, created_by=user)
             if not created:
                 return ws
             # Ensure workspace membership
