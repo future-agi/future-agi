@@ -47,11 +47,8 @@ const SaveViewPopover = ({
       slotProps={{
         paper: {
           sx: {
-            width: 280,
-            borderRadius: "4px",
-            border: "1px solid",
-            borderColor: "divider",
-            boxShadow: "1px 1px 12px 10px rgba(0,0,0,0.04)",
+            width: 320,
+            borderRadius: "8px",
             p: 1,
             mt: 0.5,
           },
@@ -71,7 +68,7 @@ const SaveViewPopover = ({
         <Box sx={{ flex: 1 }}>
           <Typography
             sx={{
-              fontSize: 15,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.primary",
               fontFamily: "'IBM Plex Sans', sans-serif",
@@ -91,8 +88,8 @@ const SaveViewPopover = ({
             Save your current trace view for quick access later.
           </Typography>
         </Box>
-        <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
-          <Iconify icon="mdi:close" width={16} />
+        <IconButton size="small" onClick={handleClose}>
+          <Iconify icon="solar:close-linear" width={16} />
         </IconButton>
       </Box>
 
@@ -118,11 +115,13 @@ const SaveViewPopover = ({
             if (e.key === "Enter") handleSave();
           }}
           error={isDuplicate}
-          helperText={isDuplicate ? "A view with this name already exists." : ""}
+          helperText={
+            isDuplicate ? "A view with this name already exists." : ""
+          }
           autoFocus
           InputLabelProps={{
             sx: {
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 500,
               fontFamily: "'IBM Plex Sans', sans-serif",
               color: "text.secondary",
@@ -130,7 +129,7 @@ const SaveViewPopover = ({
           }}
           InputProps={{
             sx: {
-              fontSize: 14,
+              fontSize: 12,
               fontFamily: "'IBM Plex Sans', sans-serif",
               borderRadius: "4px",
             },
@@ -155,15 +154,9 @@ const SaveViewPopover = ({
           variant="outlined"
           onClick={handleClose}
           sx={{
-            textTransform: "none",
-            fontSize: 12,
-            fontWeight: 500,
             fontFamily: "'IBM Plex Sans', sans-serif",
             borderColor: "text.disabled",
             color: "text.primary",
-            borderRadius: "2px",
-            px: 2,
-            py: 0.25,
           }}
         >
           Cancel
@@ -174,13 +167,7 @@ const SaveViewPopover = ({
           onClick={handleSave}
           disabled={!trimmed || isDuplicate || isLoading}
           sx={{
-            textTransform: "none",
-            fontSize: 12,
-            fontWeight: 500,
             fontFamily: "'IBM Plex Sans', sans-serif",
-            borderRadius: "2px",
-            px: 2,
-            py: 0.25,
             "&.Mui-disabled": {
               bgcolor: "text.disabled",
               color: "background.paper",

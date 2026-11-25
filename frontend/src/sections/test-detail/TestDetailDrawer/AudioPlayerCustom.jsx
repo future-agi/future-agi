@@ -14,6 +14,7 @@ import { normalizeRecordings } from "src/utils/utils";
 import useStereoChannels from "src/hooks/use-stereo-channels";
 import RecordingFailure from "src/components/multi-track-audio-player/RecordingFailure";
 import { UNAVAILABLE } from "src/components/multi-track-audio-player/failureVariants";
+import { statusColors } from "src/utils/runStatus";
 
 const isUpdatedWithinTwoMinutes = (timestamp) => {
   if (!timestamp) return false;
@@ -62,7 +63,7 @@ export const SingleTrackPlayer = ({ url }) => (
       sx={{
         minWidth: "32px",
         mr: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
         bgcolor: "background.paper",
       }}
     />
@@ -94,7 +95,8 @@ export const StereoMultiTrackPlayer = ({
       ? theme.palette.primary.light
       : theme.palette.primary.main;
   const assistantColor = primary;
-  const customerColor = theme.palette.mode === "dark" ? "#FF9933" : "#E9690C";
+  // The caller is info, as in the transcript and talk ratio.
+  const customerColor = statusColors(theme, "info").fg;
 
   const {
     assistantUrl: stereoAssistant,

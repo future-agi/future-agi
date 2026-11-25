@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
 import SettingsPanel from "../SettingsPanel";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 
@@ -40,6 +41,14 @@ function renderPanel({ backed = true, locked = false, seedDetail = true } = {}) 
 }
 
 beforeEach(() => mutate.mockClear());
+
+describe("SettingsPanel — layout", () => {
+  it("opens on its content, with no heading repeating the tab", () => {
+    renderPanel();
+    expect(screen.queryByText(/How this environment was built/)).toBeNull();
+    expect(screen.getByText("Environment info")).toBeInTheDocument();
+  });
+});
 
 describe("SettingsPanel — environment variables (§11, read-only)", () => {
   it("renders secrets + config in the flat env-vars list with a kind chip", () => {
@@ -115,6 +124,18 @@ describe("SettingsPanel — rename (§8)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Rename$/ }));
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(mutate.mock.calls[0][0]).toEqual({ id: "env-1", name: "New name" });
+  });
+});
+
+describe("SettingsPanel — as a Viewer", () => {
+  it("shows the name read-only, with Rename locked", () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({ canEdit: false, canRun: false });
+    renderPanel();
+
+    const input = screen.getByRole("textbox");
+    expect(input).toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: /^Rename$/ })).toBeDisabled();
+    vi.mocked(useSimulationAccess).mockReturnValue({ canEdit: true, canRun: true });
   });
 });
 

@@ -46,9 +46,7 @@ def _get_experiment_or_error(experiment_id, organization, gm):
     return experiment, None
 
 
-def _get_experiment_metric_or_error(
-    experiment, organization, user_eval_metric_id, gm
-):
+def _get_experiment_metric_or_error(experiment, organization, user_eval_metric_id, gm):
     """Validate the metric belongs to the organization and this experiment."""
     try:
         user_eval_metric = experiment.user_eval_template_ids.select_related(
@@ -96,7 +94,10 @@ class ExperimentFeedbackGetTemplateV2View(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ExperimentFeedbackTemplateResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: ExperimentFeedbackTemplateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, experiment_id):
         try:
@@ -145,7 +146,10 @@ class ExperimentFeedbackCreateV2View(APIView):
 
     @validated_request(
         request_serializer=FeedbackSerializer,
-        responses={200: ExperimentFeedbackCreateResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ExperimentFeedbackCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, experiment_id):
@@ -186,11 +190,14 @@ class ExperimentFeedbackCreateV2View(APIView):
             )
             if err:
                 return err
-            if row_id and not Row.objects.filter(
-                id=row_id,
-                dataset_id=experiment.snapshot_dataset_id,
-                deleted=False,
-            ).exists():
+            if (
+                row_id
+                and not Row.objects.filter(
+                    id=row_id,
+                    dataset_id=experiment.snapshot_dataset_id,
+                    deleted=False,
+                ).exists()
+            ):
                 return self._gm.bad_request(
                     get_error_message("FAILED_TO_CREATE_FEEDBACK")
                 )
@@ -219,7 +226,10 @@ class ExperimentFeedbackDetailsV2View(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ExperimentFeedbackDetailsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: ExperimentFeedbackDetailsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, experiment_id):
         try:
@@ -250,9 +260,7 @@ class ExperimentFeedbackDetailsV2View(APIView):
                     experiment, organization, user_eval_metric_id, self._gm
                 )
                 if err:
-                    return self._gm.success_response(
-                        {"feedback": [], "total_count": 0}
-                    )
+                    return self._gm.success_response({"feedback": [], "total_count": 0})
                 experiment_columns = [
                     column
                     for column in experiment_columns
@@ -304,7 +312,10 @@ class ExperimentFeedbackSubmitV2View(APIView):
 
     @validated_request(
         request_serializer=ExperimentFeedbackSubmitRequestSerializer,
-        responses={200: ExperimentFeedbackSubmitResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ExperimentFeedbackSubmitResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, experiment_id):
@@ -368,11 +379,14 @@ class ExperimentFeedbackSubmitV2View(APIView):
             )
             if err:
                 return self._gm.bad_request("Evaluation column not found.")
-            if feedback.row_id and not Row.objects.filter(
-                id=feedback.row_id,
-                dataset_id=snapshot_dataset_id,
-                deleted=False,
-            ).exists():
+            if (
+                feedback.row_id
+                and not Row.objects.filter(
+                    id=feedback.row_id,
+                    dataset_id=snapshot_dataset_id,
+                    deleted=False,
+                ).exists()
+            ):
                 return self._gm.bad_request("Feedback not found.")
 
             feedback.eval_template = user_eval_metric.template
@@ -397,6 +411,9 @@ class ExperimentFeedbackSubmitV2View(APIView):
 
             row_dict["feedback_comment"] = feedback.explanation
             row_dict["feedback_value"] = feedback.value
+            # Stable identity so a retune tombstones the prior vector for
+            # this Feedback record instead of orphaning it.
+            row_dict["feedback_id"] = str(feedback.id)
 
             # Embed feedback for RAG few-shot
             futureagi_eval = (

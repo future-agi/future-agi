@@ -92,7 +92,7 @@ def scrub_saml_event(logger, method_name: str, event_dict: dict) -> dict:
 
     del logger, method_name
     name = str(event_dict.get("logger", ""))
-    if name == "saml2_auth.security" or name.startswith("saml2_auth."):
+    if name == "saml2_auth.security":
         scrubbed = {
             key: str(value)[:128]
             for key, value in event_dict.items()

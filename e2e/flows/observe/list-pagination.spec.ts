@@ -1,19 +1,14 @@
 import { request } from '@playwright/test';
 import type { APIRequestContext, Locator, Page, Request, Response } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { fetchRoute } from '../../lib/backend-request';
 import { sendTrace } from '../../lib/otlp';
 import { POLL, StateProbe } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
-import { seedCallExecutions } from '../../lib/simulate-seed';
+import { PAGER_VIEWPORT, UI_READY, openObserveList, pagerButton, readPager, selectPageSize, waitForCurrentPage } from '../../lib/pager';
 import type { TestActor } from '../../lib/provisioning';
-
-// AG Grid virtualises rows outside the viewport even within one server-side
-// page — the default 800x600-ish viewport only paints ~14 rows regardless of
-// page size. Tall enough that a full 25-row page (the largest this spec asks
-// for) paints in one screen, so row-count assertions reflect the loaded page
-// rather than scroll position.
-test.use({ viewport: { width: 1440, height: 1700 } });
+test.use({ viewport: PAGER_VIEWPORT }); // why this size: lib/pager.ts
 
 // The trace list request the Observe trace table issues, pinned off the running
 // app (frontend TraceGrid.jsx `loadTraceObservePage` -> endpoints.project.getTracesForObserveProject).
@@ -41,33 +36,9 @@ const TOTAL_TRACES = 45;
 const LAST_PAGE = 5;
 const LAST_PAGE_ROWS = TOTAL_TRACES - PAGE_SIZE * (LAST_PAGE - 1);
 
-// Browser-side waits. Modelled on span-filter-parity.spec.ts: the local stack
-// slows several-fold under parallel specs, so this is sized off whole-flow
-// wall time, not the 10s expect default.
-const UI_READY = 60_000;
 // Ingest-visibility poll for 45 traces (90 spans) across parallel batches —
 // wider than POLL.SPAN_VISIBLE (sized for a single 2-span trace).
 const SEED_VISIBLE = { timeout: 45_000, intervals: [1000, 2000, 3000] };
-
-interface PagerState {
-  numbers: number[];
-  current: number | null;
-  leadingEllipsis: boolean;
-  trailingEllipsis: boolean;
-  nextDisabled: boolean;
-  prevDisabled: boolean;
-}
-
-// Primary and compare grids (and their trace/span variants) all stay mounted
-// so view state survives tab switches, each with its own CursorGridPagination
-// instance. `getByRole` is accessibility-tree aware — MUI hides the inactive
-// grid's Box with `display: none`, which removes it from the tree — so
-// `.filter({ visible: true })` is a belt-and-braces second check, not the
-// only one, unlike the raw CSS `:visible` pseudo-class the plain
-// `button[aria-label=...]` selectors below needed.
-function pagerButton(page: Page, name: string | RegExp) {
-  return page.getByRole('button', { name }).filter({ visible: true });
-}
 
 /** The `<Stack>` that owns Previous, the page numbers, both ellipses and
  * Next — the "pager subtree" INT-01/INT-02/INT-03 attach listeners and
@@ -78,60 +49,6 @@ function pagerRoot(page: Page): Locator {
   return pagerButton(page, 'Previous page').locator(
     'xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " MuiStack-root ")][1]',
   );
-}
-
-/** Picks a results-per-page value from the pager's own select.
- *
- * The select is disabled while the list is loading, and its root is a `<div>`,
- * so Playwright's actionability checks never see "disabled" — a click landing
- * a moment early is swallowed by MUI and the menu simply never opens, leaving
- * the option locator to burn the whole test timeout. AG Grid keeps fetching
- * after the first rows render (a next-block prefetch, and on the DRF call-log
- * screen a probe for a page that does not exist), so that window is real and
- * the class is the only signal MUI gives for it. Retried as a unit: the list
- * can go back to loading between the check and the click. */
-async function selectPageSize(page: Page, size: number | string): Promise<void> {
-  const select = page.locator('[aria-label="Results per page"]:visible');
-  await expect(async () => {
-    await expect(select).not.toHaveClass(/Mui-disabled/);
-    await select.click();
-    await expect(page.getByRole('listbox')).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: UI_READY });
-  await page.getByRole('option', { name: String(size), exact: true }).click();
-}
-
-function waitForCurrentPage(page: Page, pageNumber: number) {
-  return expect(
-    pagerButton(page, `Go to page ${pageNumber}`).and(page.locator('[aria-current="page"]')),
-  ).toBeVisible({ timeout: UI_READY });
-}
-
-async function readPager(page: Page): Promise<PagerState> {
-  // The pager keeps "Loading page…" up until the datasource has published the
-  // page and AG Grid has painted it, so this is the only point at which the
-  // window, the ellipses and Next are all settled. Reading before it can catch
-  // the optimistic mid-transition state.
-  await expect(page.getByText('Loading page…')).toHaveCount(0, { timeout: UI_READY });
-  const pageButtons = pagerButton(page, /^Go to page \d+$/);
-  const count = await pageButtons.count();
-  const numbers: number[] = [];
-  let current: number | null = null;
-  for (let i = 0; i < count; i += 1) {
-    const button = pageButtons.nth(i);
-    const label = await button.getAttribute('aria-label');
-    const n = Number((label ?? '').replace('Go to page ', ''));
-    numbers.push(n);
-    if ((await button.getAttribute('aria-current')) === 'page') current = n;
-  }
-  numbers.sort((a, b) => a - b);
-  return {
-    numbers,
-    current,
-    leadingEllipsis: (await page.getByTestId('pager-leading-ellipsis').filter({ visible: true }).count()) > 0,
-    trailingEllipsis: (await page.getByTestId('pager-trailing-ellipsis').filter({ visible: true }).count()) > 0,
-    nextDisabled: await pagerButton(page, 'Next page').isDisabled(),
-    prevDisabled: await pagerButton(page, 'Previous page').isDisabled(),
-  };
 }
 
 /**
@@ -179,14 +96,6 @@ async function seedTraceProject(
   return projectId;
 }
 
-/** Hides the dev-only React Query Devtools toggle, which floats over the
- * pager in attach mode (Vite dev server) and intercepts its clicks — see
- * task-8-report.md workaround #3. Not part of the product. */
-async function openObserveList(page: Page, url: string) {
-  await page.goto(url, { waitUntil: 'domcontentloaded' });
-  await page.addStyleTag({ content: '.tsqd-parent-container { display: none !important; }' });
-}
-
 /**
  * Installs capture-phase `pointerdown`/`pointerup`/`click` counters on the
  * pager root (INT-01/INT-02). Capture phase so a remounted label between
@@ -219,72 +128,45 @@ async function readDwellCounters(page: Page): Promise<{ pointerdown: number; poi
   ).__dwellCounts);
 }
 
-/**
- * A raw mouse press-dwell-release on `button`, standing in for a real user's
- * imprecise click. `locator.click()` cannot reproduce the bug INT-01/INT-02
- * exist for: it resolves the element and presses+releases within a single
- * tick, so it passes even on a build where the label remounts between press
- * and release. A dwell gives an in-flight ancestor re-render (the pager's
- * parent re-renders ~26x/s from AG Grid's `ColumnAnimationService` loop — see
- * `assertAncestorIsChurning`) a real window to land inside.
- */
+// INT-06: cellHeight is a URL-backed display preference on LLMTracingView.
+// TraceGrid renders both the `cell-wrap` class on its root Box and the pager
+// below it. A transition of that class proves a React commit, not merely an
+// AG Grid animation. Notify the router without moving the pressed mouse,
+// opening a menu over the click target, or navigating to a new document.
+async function driveGridRenders(page: Page, cycles: number): Promise<void> {
+  const root = page.locator('.clean-data-table:visible').locator('xpath=..')
+    .filter({ has: pagerButton(page, 'Next page') });
+  await expect(root).not.toContainClass('cell-wrap'); // default Short height
+  for (let i = 0; i < cycles; i += 1) {
+    for (const height of ['Medium', 'Short']) {
+      await page.evaluate((value) => {
+        const url = new URL(location.href);
+        url.searchParams.set('cellHeight', value);
+        history.replaceState(history.state, '', url);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+      }, height);
+      const commit = expect(root, `INT-06: TraceGrid must render ${height} rows`);
+      if (height === 'Medium') await commit.toContainClass('cell-wrap');
+      else await commit.not.toContainClass('cell-wrap');
+      // Pace the observation (~1.5s for ten cycles, ~300ms for two).
+      // The assertion above, not this delay, acknowledges each render.
+      await page.waitForTimeout(75);
+    }
+  }
+}
+
 async function dwellClick(page: Page, button: Locator): Promise<void> {
+  await expect(button).toBeEnabled();
+  await button.scrollIntoViewIfNeeded();
   const box = await button.boundingBox();
   if (!box) throw new Error('dwellClick: button has no bounding box (not visible?)');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  // Deliberate dwell — the only hardcoded wait in this file. 250-400ms gives
-  // the ~26/s ancestor re-render loop several chances to land between
-  // pointerdown and pointerup, which is exactly the window the pre-fix build
-  // loses the click in (see CursorGridPagination.jsx's BackLabel/NextLabel
-  // comment and commit e7256001b). A shorter dwell risks missing every
-  // re-render by luck; a longer one buys nothing back.
-  await page.waitForTimeout(300);
-  await page.mouse.up();
-}
-
-// The ~26/s ancestor re-render loop INT-01/INT-02/INT-03 depend on is a
-// pre-existing AG Grid `ColumnAnimationService` feedback loop, not something
-// this suite drives — so a quiet render tree (e.g. a future fix that damps
-// it) must not make these tests pass vacuously. `.clean-data-table`'s own
-// parent Box is the nearest true DOM ancestor of *both* the grid and the
-// pager (siblings under the same `gridElementRef` in TraceGrid.jsx), so
-// mutations there track the same re-render frequency that broke the pager.
-const CHURN_WINDOW_MS = 1_000;
-const CHURN_MIN_MUTATIONS = 10;
-
-function observeAncestor(page: Page): Locator {
-  return page.locator('.clean-data-table:visible').locator('xpath=..');
-}
-
-/**
- * INT-06 guard: proves the pager's ancestor is actually re-rendering before
- * INT-01/INT-02 trust a passing dwell-click. If this loop is ever damped or
- * fixed, those tests would otherwise silently degrade into plain click tests
- * that pass whether or not the label-remount bug is still guarded against.
- * Skips (with a clear reason) instead of asserting nothing.
- */
-async function assertAncestorIsChurning(page: Page): Promise<void> {
-  const handle = await observeAncestor(page).elementHandle();
-  if (!handle) throw new Error('assertAncestorIsChurning: pager ancestor not found');
-  const mutations = await handle.evaluate((el, windowMs) => new Promise<number>((resolve) => {
-    let count = 0;
-    const observer = new MutationObserver((records) => {
-      count += records.length;
-    });
-    observer.observe(el, { childList: true, subtree: true, attributes: true });
-    setTimeout(() => {
-      observer.disconnect();
-      resolve(count);
-    }, windowMs);
-  }), CHURN_WINDOW_MS);
-  test.skip(
-    mutations < CHURN_MIN_MUTATIONS,
-    `pager ancestor did not churn (${mutations} DOM mutations/${CHURN_WINDOW_MS}ms, need >= `
-    + `${CHURN_MIN_MUTATIONS}) — the pre-existing AG Grid re-render loop this guard depends on `
-    + 'was not observed, so INT-01/INT-02 would pass vacuously rather than exercising the '
-    + 'label-remount race. Skipping instead of asserting nothing (brief: implement INT-06 as a guard).',
-  );
+  try {
+    await driveGridRenders(page, 2);
+  } finally {
+    await page.mouse.up();
+  }
 }
 
 // Pinned off the running app (2026-09-07 capture against Sessions, 136 rows at
@@ -730,7 +612,7 @@ test('OBS-E2E-030: has_more without a strictly greater total promises no page nu
         await route.continue(); return;
       }
       rewritten = true;
-      const response = await route.fetch();
+      const response = await fetchRoute(route);
       const body = await response.json();
       const seen = SIZE * 2; // page 1 (10 rows) + this page (10 rows)
       body.result.metadata.has_more = true;
@@ -766,8 +648,8 @@ test('OBS-E2E-031: the Next label DOM node survives ~1.5s of ancestor re-render 
     userGoal: "A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it",
     steps: ['seed 15 traces into one project over OTLP',
             "open the project's trace list at page size 10 (Next enabled)",
-            "confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)",
-            "capture the Next label's DOM node and watch the pager subtree for ~1.5s",
+            "capture the Next label's DOM node and observe it while alternating row heights for ~1.5s",
+            'verify each row-height change re-renders the pager ancestor (INT-06)',
             'confirm the node is never removed from the DOM and stays connected'],
     backendChecks: ['all 15 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project'],
   }),
@@ -790,37 +672,25 @@ test('OBS-E2E-031: the Next label DOM node survives ~1.5s of ancestor re-render 
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
   expect((await readPager(page)).nextDisabled).toBe(false);
 
-  await assertAncestorIsChurning(page);
-
-  const nextButton = pagerButton(page, 'Next page');
-  const buttonHandle = await nextButton.elementHandle();
-  if (!buttonHandle) throw new Error('Next button not found');
-  const labelHandle = await nextButton.evaluateHandle((el) => el.querySelector('div'));
-
-  // Watch specifically for *this* node being removed, not just "something
-  // changed" in the button's subtree — MUI's own ripple `<span>` legitimately
-  // mounts/unmounts on focus/hover independent of this bug, so a raw
-  // mutation/removedNodes *count* would over-fire on a correct build. ~1.5s
-  // of live churn is long enough to comfortably exceed the >= 10
-  // mutations/1s the INT-06 guard above already proved is happening, giving
-  // several ancestor re-renders a real chance to have remounted this node if
-  // the label were still an inline-arrow `slots` component (pre-fix shape).
-  const labelSurvived = await buttonHandle.evaluate((button, label) => new Promise<boolean>((resolve) => {
+  // Install the observer before the first commit and keep it armed through
+  // the last one, even on a slow runner. Ripple spans aren't label remounts.
+  const observation = await pagerButton(page, 'Next page').evaluateHandle((button) => {
+    const label = button.querySelector('div');
+    if (!label) throw new Error('Next button has no label');
     let removed = false;
     const observer = new MutationObserver((records) => {
-      for (const record of records) {
-        if (Array.from(record.removedNodes).includes(label as Node)) removed = true;
-      }
+      if (records.some((r) => Array.from(r.removedNodes).some((node) => node.contains(label)))) removed = true;
     });
     observer.observe(button, { childList: true, subtree: true });
-    setTimeout(() => {
+    return () => {
       observer.disconnect();
-      resolve(!removed);
-    }, 1500);
-  }), labelHandle);
-
-  expect(labelSurvived).toBe(true);
-  expect(await labelHandle.evaluate((el) => el?.isConnected)).toBe(true);
+      return { removed, connected: label.isConnected, sameLabel: button.querySelector('div') === label };
+    };
+  });
+  await driveGridRenders(page, 10);
+  expect(await observation.evaluate((finish) => finish())).toEqual({
+    removed: false, connected: true, sameLabel: true,
+  });
 
   await req.dispose();
 });
@@ -832,10 +702,10 @@ test('OBS-E2E-032: a real dwell-click on Next/Back actually fires a click, not j
     userGoal: "A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render",
     steps: ['seed 15 traces into one project over OTLP',
             "open the project's trace list at page size 10",
-            "confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)",
             'install capture-phase pointer/click counters on the pager root',
-            'press-dwell-release on Next and confirm the page advanced with pointerdown === click === 1',
-            'repeat the same dwell-click on Back'],
+            'hold Next down while changing row heights and verifying the ancestor re-renders, then release',
+            'confirm the page advanced with one press, release and click',
+            'repeat the same dwell-click on Back and confirm the pager returns to page 1'],
     backendChecks: ['all 15 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -856,24 +726,20 @@ test('OBS-E2E-032: a real dwell-click on Next/Back actually fires a click, not j
   await resized;
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
 
-  await assertAncestorIsChurning(page);
   await installDwellCounters(page);
 
   await test.step('INT-01/INT-02: dwell-click Next actually advances the page', async () => {
     await resetDwellCounters(page);
-    const advanced = page.waitForResponse(
-      (r) => isTraceListResponse(r, { project_id: projectId }),
-      { timeout: UI_READY });
-    await dwellClick(page, pagerButton(page, 'Next page'));
-    await advanced;
+    await Promise.all([
+      page.waitForResponse((r) => isTraceListResponse(r, { project_id: projectId }), { timeout: UI_READY }),
+      dwellClick(page, pagerButton(page, 'Next page')),
+    ]);
     await waitForCurrentPage(page, 2);
     const counts = await readDwellCounters(page);
     // INT-02: distinguishes "the press landed but no click fired" (the bug)
     // from "the click fired and the handler was wrong" — assert the raw
     // counters, not just that the page moved.
-    expect(counts.pointerdown).toBe(1);
-    expect(counts.click).toBe(1);
-    expect(counts.click).toBe(counts.pointerdown);
+    expect(counts).toEqual({ pointerdown: 1, pointerup: 1, click: 1 });
   });
 
   await test.step('INT-01/INT-02: dwell-click Back actually returns to page 1', async () => {
@@ -886,9 +752,7 @@ test('OBS-E2E-032: a real dwell-click on Next/Back actually fires a click, not j
     await dwellClick(page, pagerButton(page, 'Previous page'));
     await waitForCurrentPage(page, 1);
     const counts = await readDwellCounters(page);
-    expect(counts.pointerdown).toBe(1);
-    expect(counts.click).toBe(1);
-    expect(counts.click).toBe(counts.pointerdown);
+    expect(counts).toEqual({ pointerdown: 1, pointerup: 1, click: 1 });
   });
 
   await req.dispose();
@@ -932,64 +796,6 @@ test('OBS-E2E-033: changing page size changes the outbound page_size, the render
   expect(pager.prevDisabled).toBe(true);
 
   await req.dispose();
-});
-
-test('OBS-E2E-034: the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row', {
-  tag: ['@flow'],
-  annotation: flowAnnotation({
-    id: 'OBS-E2E-034', area: 'observe',
-    userGoal: "A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract",
-    steps: ["seed 12 completed CallExecution rows for one fresh AgentDefinition/AgentVersion directly through the backend (no simulate/voice infra runs in this harness — see e2e/lib/simulate-seed.ts)",
-            "open the agent's Call Logs tab for that version",
-            'see all 12 calls on one page at the default 25 per page',
-            'switch to 10 per page and confirm more than one page is offered',
-            'walk forward to the last page'],
-    backendChecks: ['the seeded CallExecution rows are scoped to the seeded AgentVersion, status=completed, non-empty eval_outputs — exactly what AgentVersionCallExecutionView filters for',
-                    'AgentVersionCallExecutionView honours the page_size the grid sends'],
-  }),
-}, async ({ page, actor }, testInfo) => {
-  test.setTimeout(120_000);
-  const CALL_EXECUTION_COUNT = 12;
-  const seed = seedCallExecutions({
-    organizationId: actor.organizationId,
-    workspaceId: actor.workspaceId,
-    count: CALL_EXECUTION_COUNT,
-  });
-  await openObserveList(
-    page,
-    `/dashboard/simulate/agent-definitions/${seed.agentDefinitionId}?activeTab=CallLogs&version=${seed.agentVersionId}`,
-  );
-
-  const callRows = page.locator('.clean-data-table:visible .ag-row');
-  // The grid sends page_size, as it does to the trace lists. The view used to
-  // read only `limit` and served 10 rows whatever was asked, while the grid
-  // counted pages at 25 and ran out of pages early. At the default 25 all 12
-  // calls must fit on one page.
-  await expect(callRows).toHaveCount(CALL_EXECUTION_COUNT, { timeout: UI_READY });
-  expect((await readPager(page)).nextDisabled).toBe(true);
-
-  await selectPageSize(page, '10');
-  await expect(callRows).toHaveCount(10, { timeout: UI_READY });
-  await waitForCurrentPage(page, 1);
-
-  const pager = await readPager(page);
-  // PAG-05: this screen's response has no `has_more` field at all — a plain
-  // DRF `count`/`next`/`previous` payload (ExtendedPageNumberPagination,
-  // futureagi/tfc/utils/pagination.py) — yet the shared CursorGridPagination
-  // still offers a real second page for it.
-  expect(pager.numbers.length).toBeGreaterThan(1);
-  expect(pager.nextDisabled).toBe(false);
-
-  // The grid prefetches the next page ahead of the visible one, so this click
-  // is served from that cache rather than guaranteed to hit the wire — wait
-  // on the pager's own DOM state, not a response (same reasoning as the
-  // cached-page legs in OBS-E2E-028/OBS-E2E-032).
-  await pagerButton(page, 'Next page').click();
-  await waitForCurrentPage(page, 2);
-
-  await expect(callRows).toHaveCount(seed.callExecutionCount - 10, { timeout: UI_READY });
-  const finalPager = await readPager(page);
-  expect(finalPager.nextDisabled).toBe(true);
 });
 
 test('OBS-E2E-035: changing the date filter resets pagination to page 1 and drops the old cursor', {

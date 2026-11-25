@@ -104,9 +104,7 @@ def _reviewer_pending_by_queue(
     """Return ``{queue_id: {queue, count, oldest}}`` for review work."""
     # Queues where the user can review: explicit reviewers and managers.
     review_queue_ids = list(
-        AnnotationQueueAnnotator.objects.filter(
-            user=user, deleted=False
-        )
+        AnnotationQueueAnnotator.objects.filter(user=user, deleted=False)
         .filter(
             annotation_queue_role_q(
                 AnnotatorRole.REVIEWER.value,
@@ -210,9 +208,10 @@ def _send_realtime_for_user(user, now: datetime) -> bool:
         return False
 
     # Throttle: at most 1 realtime email per hour per user.
-    if state.last_realtime_digest_at and (
-        now - state.last_realtime_digest_at
-    ) < REALTIME_THROTTLE:
+    if (
+        state.last_realtime_digest_at
+        and (now - state.last_realtime_digest_at) < REALTIME_THROTTLE
+    ):
         return False
 
     since = state.last_realtime_digest_at
@@ -342,9 +341,10 @@ def _send_daily_for_user(user, now: datetime) -> bool:
     if local_hour != state.daily_digest_hour_local:
         return False
 
-    if state.last_daily_digest_at and (
-        now - state.last_daily_digest_at
-    ) < DAILY_MIN_GAP:
+    if (
+        state.last_daily_digest_at
+        and (now - state.last_daily_digest_at) < DAILY_MIN_GAP
+    ):
         return False
 
     # Current-state snapshot — pass since=None so we count everything pending,

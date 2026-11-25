@@ -158,7 +158,9 @@ const FileCellRenderer = ({
       isPublic: true,
       name: fileName,
       type: fileType,
-      url: dataset ? valueInfos?.documentUrl : valueInfos?.cellValue,
+      // The dataset and experiment APIs return snake_case document metadata.
+      // Keep the older camelCase shape readable, with the cell URL as fallback.
+      url: valueInfos?.document_url || valueInfos?.documentUrl || value,
     });
   };
 
@@ -400,7 +402,7 @@ const FileCellRenderer = ({
                       component="span"
                       sx={{
                         color: theme.palette.text.secondary,
-                        fontSize: "0.7rem",
+                        fontSize: "0.75rem",
                       }}
                     >
                       (PDF, DOCX, DOC, TXT)

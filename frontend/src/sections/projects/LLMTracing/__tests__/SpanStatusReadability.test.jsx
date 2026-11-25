@@ -16,7 +16,10 @@ import { CELL_TYPES } from "../Renderers/common";
 // the trace list and every other StatusChip consumer keep their prior styling.
 //
 // These are jsdom token-resolution tests: they prove WHICH palette token reaches the chip
-// in each context. The actual ≥4.5:1 contrast on the rendered grid background is proved
+// in each context. The status is drawn by the shared design-system StatusBadge
+// (a neutral state is a dot + label whose text is text.secondary by default; OK and
+// ERROR are tinted badges whose text takes the status role colour), so the label
+// element carries the colour, not a MUI Chip root. The actual ≥4.5:1 contrast on the rendered grid background is proved
 // separately by the Chrome harness recorded on the ticket (AC-01..AC-03), not here.
 
 const hexToRgb = (hex) => {
@@ -52,7 +55,13 @@ const statusParams = (value, entityType) => ({
   context: { entityType, canEditTags: false },
 });
 
-const chipRoot = (container) => container.querySelector(".MuiChip-root");
+// The status badge's label element: the innermost element holding the status text.
+const chipRoot = (container) => {
+  const labels = [...container.querySelectorAll("span")].filter(
+    (el) => el.children.length === 0 && el.textContent.trim() !== "",
+  );
+  return labels[0] || null;
+};
 const chipColor = (container) =>
   window.getComputedStyle(chipRoot(container)).color;
 
@@ -71,14 +80,17 @@ describe("TH-4088 span-list neutral status readability", () => {
       expect(chipColor(container)).toBe(tokens(mode).secondary);
     });
 
-    it("UNSET on the trace list keeps text.disabled (sibling isolation, AC-12)", () => {
+    it("UNSET on the trace list never gets text.disabled (sibling isolation, AC-12)", () => {
       const { container } = render(
         <CustomTraceRenderer {...statusParams("UNSET", "trace")} />,
         {
           theme: themeFor(mode),
         },
       );
-      expect(chipColor(container)).toBe(tokens(mode).disabled);
+      // The shared badge no longer draws neutral text with text.disabled at all, so the
+      // trace list keeps the badge's own default (text.secondary), not the disabled token.
+      expect(chipColor(container)).toBe(tokens(mode).secondary);
+      expect(chipColor(container)).not.toBe(tokens(mode).disabled);
     });
   });
 
@@ -91,8 +103,15 @@ describe("TH-4088 span-list neutral status readability", () => {
       <CustomTraceRenderer {...statusParams("ERROR", "span")} />,
       { theme },
     );
-    expect(chipColor(ok.container)).toBe(hexToRgb(theme.palette.green[500]));
-    expect(chipColor(err.container)).toBe(hexToRgb(theme.palette.red[500]));
+    // Tinted badge: the text colour is set on the badge root and inherited by the label.
+    const badgeColor = (c) =>
+      window.getComputedStyle(chipRoot(c).parentElement).color;
+    expect(badgeColor(ok.container)).toBe(
+      hexToRgb(theme.palette.status.success.fg),
+    );
+    expect(badgeColor(err.container)).toBe(
+      hexToRgb(theme.palette.status.danger.fg),
+    );
     expect(chipRoot(ok.container).textContent).toBe("OK");
     expect(chipRoot(err.container).textContent).toBe("ERROR");
   });
@@ -131,11 +150,26 @@ describe("TH-4088 span-list neutral status readability", () => {
           status="UNSET"
           label="UNSET"
           disabled
-          neutralTextColor="text.secondary"
+          // A token distinct from the badge default, so a leak would show.
+          neutralTextColor="error.main"
         />
       </ThemeProvider>,
     );
-    expect(chipColor(container)).toBe(tokens("dark").disabled);
+    // A disabled chip is dimmed (opacity) and keeps the badge's own neutral colour.
+    expect(chipColor(container)).toBe(tokens("dark").secondary);
+    expect(chipColor(container)).not.toBe(hexToRgb(theme.palette.error.main));
+
+    // Control: the same token does apply when the chip is not disabled.
+    const live = render(
+      <ThemeProvider theme={theme}>
+        <StatusChip
+          status="UNSET"
+          label="UNSET"
+          neutralTextColor="error.main"
+        />
+      </ThemeProvider>,
+    );
+    expect(chipColor(live.container)).toBe(hexToRgb(theme.palette.error.main));
   });
 
   it("a direct StatusChip without the opt-in prop is unchanged (R4 default)", () => {
@@ -145,6 +179,8 @@ describe("TH-4088 span-list neutral status readability", () => {
         <StatusChip status="UNSET" label="UNSET" />
       </ThemeProvider>,
     );
-    expect(chipColor(container)).toBe(tokens("light").disabled);
+    // Without the opt-in the neutral chip keeps the badge default and never text.disabled.
+    expect(chipColor(container)).toBe(tokens("light").secondary);
+    expect(chipColor(container)).not.toBe(tokens("light").disabled);
   });
 });

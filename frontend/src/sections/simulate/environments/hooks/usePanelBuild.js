@@ -5,16 +5,19 @@ import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { useRuntimePreflight } from "src/api/simulate-environments/useRuntimePreflight";
 import { useBuildEnvironment } from "src/api/simulate-environments/environments";
+import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { prepareSourceForBuild } from "./prepareSourceForBuild";
 import { clampParallelism } from "../parallelism.constants";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
+import { clearBuildDrafts } from "../buildDrawer/buildDraft";
 
 /**
- * The inline build machine shared by every source panel. A panel calls:
- *   - `runPreflight(source)` when the user clicks "Run preflight" — exchanges the
- *     source's secrets, then POSTs hosted preflight; the credential report
- *     feeds <RuntimePreflight>.
+ * The inline build machine shared by every Build environment drawer form. A
+ * form calls:
+ *   - `runPreflight(source)` when the user clicks "Run preflight" — POSTs hosted
+ *     preflight with the source's credential values (write-only); the
+ *     credential report feeds the form's preflight result.
  *   - `resetPreflight()` on any form edit — a green result for one source must
  *     never build a different one.
  *   - `commitBuild()` on "Build environment" (only enabled once `readyToSubmit`)
@@ -36,14 +39,19 @@ export default function usePanelBuild() {
   // The create POST is a real network step, so the CTA shows a pending state
   // through it and the guard blocks a second submit until it resolves.
   const [committing, setCommitting] = useState(false);
-  // The redacted + exchanged draft of the last successful run — reused verbatim
-  // at commit so the built job is the one that passed preflight.
+  // The redacted draft of the last successful run — reused verbatim at commit so
+  // the built job is the one that passed preflight.
   const [prepared, setPrepared] = useState(null);
-  // The secret exchange inside prepareSourceForBuild is a real network call, so
-  // there is a window between the click and the mutation. `preparing` disables
-  // the trigger through it (no double-exchange); `runSeq` supersedes a run whose
-  // exchange is still in flight when the user edits or re-runs — without it a
-  // stale exchange would resolve and mutate the source the user just changed.
+  // The credential values that run checked, sent again with the create. Held in a
+  // ref only, never in the draft or the persisted store.
+  const heldValues = useRef(null);
+  // One idempotency key per checked build, kept across a failed create, so a
+  // retry replays the job the failed attempt may already have made.
+  const buildKey = useRef(null);
+  // prepareSourceForBuild is async, so there is a window between the click and
+  // the mutation. `preparing` disables the trigger through it; `runSeq`
+  // supersedes a run still in flight when the user edits or re-runs — without it
+  // a stale run would resolve and mutate the source the user just changed.
   const [preparing, setPreparing] = useState(false);
   const runSeq = useRef(0);
   const [parallelismInput, setParallelismInput] = useState("1");
@@ -64,24 +72,33 @@ export default function usePanelBuild() {
         }
         return;
       }
-      // Superseded by an edit (resetPreflight) or a newer run while we exchanged.
+      // Superseded by an edit (resetPreflight) or a newer run meanwhile.
       if (seq !== runSeq.current) return;
       setPreparing(false);
       // Only the redacted draft is staged for build; the raw credentialValues
-      // ride the preflight request (write-only probe) and are never persisted.
+      // ride the preflight and create requests (write-only) and are never persisted.
       setPrepared(result.draft);
-      preflight.mutate({ draft: result.draft, credentialValues: result.credentialValues });
+      heldValues.current =
+        result.buildCredentialValues ?? result.credentialValues;
+      buildKey.current = harnessIdempotencyKey();
+      preflight.mutate({
+        draft: result.draft,
+        credentialValues: result.credentialValues,
+      });
     },
     [preflight, parallelism],
   );
 
   const resetPreflight = useCallback(() => {
-    // Invalidate any in-flight exchange so its late resolve can't re-green a
-    // source that has since changed.
+    // Invalidate any in-flight run so its late resolve can't re-green a source
+    // that has since changed.
     runSeq.current += 1;
     setPreparing(false);
-    if (preflight.data || preflight.error || preflight.isPending) preflight.reset();
+    if (preflight.data || preflight.error || preflight.isPending)
+      preflight.reset();
     setPrepared(null);
+    heldValues.current = null;
+    buildKey.current = null;
   }, [preflight]);
 
   const setParallelism = useCallback(
@@ -93,8 +110,16 @@ export default function usePanelBuild() {
   );
 
   const commitBuild = useCallback(() => {
-    if (!prepared || !preflight.data?.ready_to_submit || !preflight.data?.credentials || committing) return;
-    const agentName = preflight.data.credentials.probe?.find((p) => p.ok && p.target_name)?.target_name;
+    if (
+      !prepared ||
+      !preflight.data?.ready_to_submit ||
+      !preflight.data?.credentials ||
+      committing
+    )
+      return;
+    const agentName = preflight.data.credentials.probe?.find(
+      (p) => p.ok && p.target_name,
+    )?.target_name;
     const draft = {
       ...(parallelismEnabled ? prepared : { ...prepared, parallelism: 1 }),
       ...(agentName ? { agentName } : {}),
@@ -103,41 +128,64 @@ export default function usePanelBuild() {
     // on a back-navigation; the create call below is what actually builds it.
     setDraft(draft);
     setCommitting(true);
-    build.mutate(draft, {
-      onSuccess: ({ envId, skipped }) => {
-        // A skipped (un-preflightable) draft never reaches here — preflight
-        // rejects it before ready_to_submit — but guard rather than route to an
-        // id the workspace can't resolve.
-        if (skipped || !envId) {
+    build.mutate(
+      {
+        draft,
+        credentialValues: heldValues.current || {},
+        idempotencyKey: buildKey.current,
+      },
+      {
+        onSuccess: ({ envId, skipped }) => {
+          heldValues.current = null;
+          buildKey.current = null;
+          // A skipped (un-preflightable) draft never reaches here — preflight
+          // rejects it before ready_to_submit — but guard rather than route to an
+          // id the workspace can't resolve.
+          if (skipped || !envId) {
+            setCommitting(false);
+            enqueueSnackbar("This source can't be built yet.", {
+              variant: "error",
+            });
+            return;
+          }
+          clearBuildDrafts();
+          navigate(paths.dashboard.simulate.environments.detail(envId));
+        },
+        // A create failure (e.g. the sandbox is unavailable) must surface, not
+        // silently strand the user on the form.
+        onError: (error) => {
           setCommitting(false);
-          enqueueSnackbar("This source can't be built yet.", { variant: "error" });
-          return;
-        }
-        navigate(paths.dashboard.simulate.environments.detail(envId));
+          if (!handleCreditError(error)) {
+            enqueueSnackbar(errorMessage(error), { variant: "error" });
+          }
+        },
       },
-      // A create failure (e.g. the sandbox is unavailable) must surface, not
-      // silently strand the user on the form.
-      onError: (error) => {
-        setCommitting(false);
-        if (!handleCreditError(error)) {
-          enqueueSnackbar(errorMessage(error), { variant: "error" });
-        }
-      },
-    });
-  }, [prepared, preflight.data, committing, parallelismEnabled, setDraft, build, navigate, handleCreditError]);
+    );
+  }, [
+    prepared,
+    preflight.data,
+    committing,
+    parallelismEnabled,
+    setDraft,
+    build,
+    navigate,
+    handleCreditError,
+  ]);
 
-  const status = preparing || preflight.isPending
-    ? "running"
-    : preflight.error
-      ? "error"
-      : preflight.data
-        ? "done"
-        : "idle";
+  const status =
+    preparing || preflight.isPending
+      ? "running"
+      : preflight.error
+        ? "error"
+        : preflight.data
+          ? "done"
+          : "idle";
 
   return {
     status,
     result: preflight.data,
-    readyToSubmit: preflight.data?.ready_to_submit === true && !!preflight.data?.credentials,
+    readyToSubmit:
+      preflight.data?.ready_to_submit === true && !!preflight.data?.credentials,
     committing,
     parallelism,
     parallelismInput,

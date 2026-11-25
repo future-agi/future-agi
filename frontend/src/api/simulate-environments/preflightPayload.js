@@ -112,6 +112,17 @@ export function environmentNameFor(draft) {
   return "agent";
 }
 
+const SUBFOLDER_PATTERN = /^(?!.*(^|\/)\.{1,2}(\/|$))[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+const SUBFOLDER_MAX_LENGTH = 512;
+
+export const normalizeSubfolder = (value) =>
+  String(value || "").trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
+
+export const isValidSubfolder = (value) => {
+  const folder = normalizeSubfolder(value);
+  return !folder || (folder.length <= SUBFOLDER_MAX_LENGTH && SUBFOLDER_PATTERN.test(folder));
+};
+
 // parsed.ref (from a pasted tree URL) beats the panel's default "main"; an
 // explicitly typed non-default branch beats both. Empty on both sides → omit.
 function resolveRef(parsedRef, draftRef) {
@@ -129,13 +140,20 @@ function envelope(draft, name) {
     // to the default when a draft predates the field.
     scenario_count: draft.scenarioCount ?? SCENARIO_COUNT,
     artifacts: { ...ARTIFACTS },
-    metadata: { name, authoring_key: name },
+    metadata: {
+      name: String(draft.displayName || "").trim() || name,
+      authoring_key: name,
+    },
   };
   const parallelism = Math.min(
     MAX_PARALLELISM,
     Math.max(1, Math.trunc(Number(draft.parallelism) || 1)),
   );
   if (parallelism > 1) payload.runtime = { parallelism };
+  // Only code sources have an agent the platform can observe once it reads it.
+  if (draft.observabilityEnabled === true && (draft.kind === "repo" || draft.kind === "upload")) {
+    payload.metadata.observability_enabled = true;
+  }
   const domains = parseEgressDomains(draft.egress);
   if (domains.length) {
     payload.security = {
@@ -160,6 +178,11 @@ function repoPayload(draft, name) {
   };
   const ref = resolveRef(parsed.ref, draft.ref);
   if (ref) source.ref = ref;
+  const subfolder = normalizeSubfolder(draft.subfolder);
+  if (subfolder) source.subfolder = subfolder;
+  if (/^[0-9a-f]{40}$/i.test(draft.commitSha || "")) {
+    source.commit_sha = draft.commitSha;
+  }
   if (draft.visibility === "private" && String(draft.installationId || "").trim()) {
     source.installation_id = String(draft.installationId).trim();
   }
@@ -200,6 +223,21 @@ function platformPayload(draft, name) {
       target_system_prompt: prompt,
       ...(contact ? { inbound: true, target_speaks_first: Boolean(contact.agentSpeaksFirst) } : {}),
     };
+  } else if (connector === PREFLIGHT_CONNECTOR.LIVEKIT) {
+    const prompt = String(draft.prompt || "").trim();
+    if (!prompt) return { skipped: "LiveKit needs the agent's system prompt" };
+    config = phoneNumber
+      ? {
+          phone_number: phoneNumber,
+          target_system_prompt: prompt,
+          ...(contact ? { inbound: true, target_speaks_first: Boolean(contact.agentSpeaksFirst) } : {}),
+        }
+      : {
+          agent_name: draft.agentId,
+          livekit_url: String(draft.livekitUrl || "").trim(),
+          target_system_prompt: prompt,
+          ...callBehaviour(contact),
+        };
   } else {
     const idKey = connector === PREFLIGHT_CONNECTOR.VAPI ? "assistant_id" : "agent_id";
     config = {
@@ -208,10 +246,12 @@ function platformPayload(draft, name) {
       ...callBehaviour(contact),
     };
   }
-  // Others is always inbound (the platform dials the number), so it sends that
-  // direction rather than whatever the toggle last held.
+  // Others and LiveKit by phone are always inbound (the platform dials the
+  // number), so they send that direction rather than whatever the toggle last held.
   const callDirection =
-    connector === PREFLIGHT_CONNECTOR.PHONE ? "inbound" : draft.callDirection;
+    connector === PREFLIGHT_CONNECTOR.PHONE || (connector === PREFLIGHT_CONNECTOR.LIVEKIT && phoneNumber)
+      ? "inbound"
+      : draft.callDirection;
   const base = envelope(draft, name);
   // The provider's own name for the agent (read back by preflight) labels the
   // environment; `name`/`authoring_key` keep the ID as the stable identity.

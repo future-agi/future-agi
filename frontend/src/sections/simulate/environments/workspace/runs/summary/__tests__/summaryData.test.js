@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSummaryRow, buildEvalSeries, countCoveredScenarios, deriveEvals, EVAL_COLORS } from "../summaryData";
+import { buildSummaryRow, buildEvalSeries, countCoveredScenarios, deriveEvals } from "../summaryData";
 
 // A run row as produced by `mapExecutions` (newest-first ordinal already
 // stamped), extended with the run-level duration the summary table shows.
@@ -14,35 +14,38 @@ const run = {
   total: 20,
   passed: 15,
   failed: 5,
+  passRate: 75,
   agentVersion: "v2",
   durationS: 11.9,
 };
 
 describe("buildSummaryRow", () => {
-  it("derives pass rate and tasks from the run and keeps its identity", () => {
+  it("carries the run's pass rate and tasks and keeps its identity", () => {
     const row = buildSummaryRow(run, { task_success: 49, policy: 28 });
     expect(row.ordinal).toBe(2);
     expect(row.label).toBe("Run 2");
     expect(row.agentVersion).toBe("v2");
     expect(row.tasks).toBe(20);
-    expect(row.passRate).toBe(75); // 15 / 20
+    expect(row.passRate).toBe(75);
     expect(row.durationS).toBe(11.9);
     expect(row.at).toBe("2026-01-13T16:42:10.000Z"); // finishedAt preferred
     expect(row.scores).toEqual({ task_success: 49, policy: 28 });
   });
 
-  it("nulls the columns the backend does not provide (no fabricated values)", () => {
+  it("leaves tokens and cost empty: the runs list has no field for them", () => {
     const row = buildSummaryRow(run, {});
     expect(row.tokens).toBeNull();
     expect(row.cost).toBeNull();
-    expect(row.saidNotDone).toBeNull();
-    expect(row.meanReturn).toBeNull();
   });
 
-  it("does not divide by zero on an empty run", () => {
-    const row = buildSummaryRow({ ...run, total: 0, passed: 0 }, undefined);
-    expect(row.passRate).toBe(0);
-    expect(row.scores).toEqual({});
+  it("carries no columns the API has no data for", () => {
+    const row = buildSummaryRow(run, {});
+    expect(row).not.toHaveProperty("saidNotDone");
+    expect(row).not.toHaveProperty("meanReturn");
+  });
+
+  it("shows no rate for a run the server scored nothing in", () => {
+    expect(buildSummaryRow({ ...run, passRate: null }, {}).passRate).toBeNull();
   });
 });
 
@@ -52,14 +55,14 @@ describe("buildEvalSeries", () => {
     { label: "Run 2", scores: { task_success: 49 } }, // policy missing → gap
   ];
   const evals = [
-    { id: "task_success", name: "Task success", color: "#16A34A" },
-    { id: "policy", name: "Policy adherence", color: "#7857FC" },
+    { id: "task_success", name: "Task success", colorIndex: 0 },
+    { id: "policy", name: "Policy adherence", colorIndex: 1 },
   ];
 
-  it("builds one series per applied eval, carrying name and colour", () => {
+  it("builds one series per applied eval, carrying name and colour index", () => {
     const series = buildEvalSeries(rowsChrono, evals);
     expect(series).toHaveLength(2);
-    expect(series[0]).toMatchObject({ id: "task_success", name: "Task success", color: "#16A34A" });
+    expect(series[0]).toMatchObject({ id: "task_success", name: "Task success", colorIndex: 0 });
   });
 
   it("reads each run's score for the eval and leaves a null gap when absent", () => {
@@ -90,10 +93,10 @@ describe("deriveEvals", () => {
     expect(second.name).toBe("Policy adherence");
   });
 
-  it("assigns a distinct palette colour per eval, in order", () => {
+  it("assigns a distinct data-palette index per eval, in order", () => {
     const evals = deriveEvals(rows);
-    expect(evals[0].color).toBe(EVAL_COLORS[0]);
-    expect(evals[1].color).toBe(EVAL_COLORS[1]);
+    expect(evals[0].colorIndex).toBe(0);
+    expect(evals[1].colorIndex).toBe(1);
   });
 
   it("is empty when no run carries any score", () => {

@@ -37,7 +37,7 @@ global:
   storageClass: ""
   # -- Air-gapped install: turns off the platform's own calls to the internet. Turns telemetry off [FUTURE_AGI_TELEMETRY_DISABLED=true] (one minimal registration attempt remains; offline it fails harmlessly and is retried), the license heartbeat off unless `license.heartbeat` is `true` [FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED=true], sets [LITELLM_LOCAL_MODEL_COST_MAP=True] on the Python pods and serving, and [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1] on serving, whose models must then be pre-seeded on `serving.persistence` (examples/airgap.yaml). Mirror the images first (`hack/list-images.sh`) and set `global.imageRegistry` and `global.imagePullSecrets`.
   airgap: false
-  # Outbound HTTP(S) proxy for the Future AGI pods (backend, workers, bootstrap job, frontend, fi-collector, agentcc-gateway, serving; never the code sandbox). The LLM gateway (agentcc-gateway) gets the variables but its provider connections do not use them yet: allow its egress to the providers directly.
+  # Outbound HTTP(S) proxy for the Future AGI pods (backend, workers, bootstrap job, frontend, fi-collector, agentcc-gateway, serving; never the code sandbox). The LLM gateway (agentcc-gateway) uses them for every decision call (System One and OpenAI-format models, from config.yaml providers, organization providers and calls made with the caller's own key) and its speech relay; its chat providers do not: allow their egress directly.
   proxy:
     # -- [HTTP_PROXY, http_proxy] e.g. `http://proxy.example.com:3128`. Empty: no proxy.
     httpProxy: ""
@@ -79,7 +79,9 @@ urls:
   app: ""
   # -- Public URL of the API, e.g. `https://api.futureagi.example.com` [BASE_URL, and the UI's VITE_HOST_API]. Empty: derived from `ingress.api.host` with `ingress.enabled`, else from `gatewayApi.api.host` with `gatewayApi.enabled`, else `http://localhost:8000`.
   api: ""
-  # -- [FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_BASE_URL, shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp` with `ingress.enabled`, else from `gatewayApi.otlp` with `gatewayApi.enabled`, else `http://localhost:4318` (the port-forward in the install notes).
+  # -- [AGENTCC_GATEWAY_PUBLIC_URL] Public HTTPS base URL shown in the dashboard's gateway configuration, e.g. `https://gateway.example.com`. Empty: the backend's default URL (http://localhost:8090).
+  gateway: ""
+  # -- [FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_TRACES_URL (their FI_BASE_URL is `urls.api`), shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp` with `ingress.enabled`, else from `gatewayApi.otlp` with `gatewayApi.enabled`, else `http://localhost:4318` (the port-forward in the install notes).
   otlp: ""
   # -- Public URL browsers download stored files from [MINIO_URL]; used when `objectStorage.backend` is `minio`. Empty: derived from `ingress.objects.host` with `ingress.enabled`, else the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>` (9005).
   objects: ""
@@ -292,7 +294,10 @@ postgres:
     port: 5432
     # -- [PG_READ_DB] database on the replica. Empty: `postgres.database`.
     database: ""
-    # -- [READ_REPLICA_OPT_IN] model class names (e.g. `Dashboard`) and `feature:` keys routed to the replica. Empty: nothing reads from it.
+    # -- [READ_REPLICA_OPT_IN] `feature:` keys and model class names routed to the replica. Empty: nothing reads from it. A model name sends every ordinary read of that model there, so list only models whose read-after-write paths read the primary; the chart README's "Read replica" section has the tested list.
+    # A `feature:` key moves one listing to the replica. A model name moves
+    # every read the router decides for that model, including a re-read of a
+    # row written a moment ago, so an unaudited model reads stale rows.
     optIn: []
   bundled:
     image:
@@ -315,8 +320,8 @@ postgres:
       storageClass: ""
     # -- Resources of the bundled PostgreSQL.
     resources:
-      requests: {cpu: 250m, memory: 512Mi}
-      limits: {cpu: "2", memory: 2Gi}
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { cpu: "2", memory: 2Gi }
     # -- Node selector of the bundled PostgreSQL. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled PostgreSQL. Empty: the top-level `tolerations`.
@@ -369,8 +374,8 @@ clickhouse:
       storageClass: ""
     # -- Resources of the bundled ClickHouse.
     resources:
-      requests: {cpu: 500m, memory: 1Gi}
-      limits: {cpu: "2", memory: 3Gi}
+      requests: { cpu: 500m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
     # -- Node selector of the bundled ClickHouse. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled ClickHouse. Empty: the top-level `tolerations`.
@@ -421,8 +426,8 @@ redis:
       storageClass: ""
     # -- Resources of the bundled Redis.
     resources:
-      requests: {cpu: 50m, memory: 64Mi}
-      limits: {cpu: 500m, memory: 512Mi}
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 512Mi }
     # -- Node selector of the bundled Redis. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled Redis. Empty: the top-level `tolerations`.
@@ -463,8 +468,8 @@ temporal:
     goMemLimit: 512MiB
     # -- Resources of the bundled Temporal server.
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {cpu: "1", memory: 1Gi}
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
     # -- Node selector of the bundled Temporal. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled Temporal. Empty: the top-level `tolerations`.
@@ -522,8 +527,8 @@ objectStorage:
       downloadPort: 9005
     # -- Resources of the bundled object storage.
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {cpu: "1", memory: 1Gi}
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
     # -- Node selector of the bundled object storage. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled object storage. Empty: the top-level `tolerations`.
@@ -574,8 +579,8 @@ backend:
     annotations: {}
   # -- Resources of each API pod.
   resources:
-    requests: {cpu: 250m, memory: 768Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "2", memory: 2Gi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the API.
     enabled: false
@@ -651,8 +656,8 @@ worker:
     maxConcurrentWorkflowTasks: 50
     # -- Resources of each all-queues worker pod.
     resources:
-      requests: {cpu: 250m, memory: 1Gi}
-      limits: {cpu: "2", memory: 3Gi}
+      requests: { cpu: 250m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
     autoscaling:
       # -- HorizontalPodAutoscaler for the all-queues worker.
       enabled: false
@@ -671,8 +676,8 @@ worker:
     enabled: true
     # -- Resources of the exact-aggregation worker.
     resources:
-      requests: {cpu: 100m, memory: 512Mi}
-      limits: {cpu: "1", memory: 1536Mi}
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { cpu: "1", memory: 1536Mi }
   # -- Dedicated per-queue Deployments, added to the all-queues worker (which stops polling them, see `allQueues.excludeDedicatedQueues`), e.g. `[{name: tasks_s, replicas: 2, maxConcurrentActivities: 200}]`; examples/sizes/large.yaml has a full split. Each entry: name (required), replicas, maxConcurrentActivities, maxConcurrentWorkflowTasks, resources, image, extraEnv (wins over `worker.extraEnv` and the chart's own values), autoscaling {enabled, minReplicas, maxReplicas, targetCPUUtilizationPercentage, targetMemoryUtilizationPercentage, behavior} (gaps filled from `allQueues.autoscaling`), gracefulShutdownSeconds, preStopSleepSeconds, pdb {enabled, maxUnavailable}, and nodeSelector, tolerations, affinity, topologySpreadConstraints, priorityClassName, podAnnotations, podLabels (each falling back to the `worker` one).
   queues: []
   pdb:
@@ -719,6 +724,23 @@ frontend:
   replicas: 1
   # -- [VITE_HELP_LINK] where the sidebar Help entry points. Empty: the community Discord.
   helpLink: ""
+  tls:
+    # -- Serve native HTTPS on the dashboard [FRONTEND_TLS_ENABLED]. Requires existingSecret and an HTTPS API URL (except localhost).
+    enabled: false
+    # -- Existing kubernetes.io/tls Secret with the full certificate chain and private key; updated in place for hot reload.
+    existingSecret: ""
+    # -- Certificate-chain key in the Secret [FRONTEND_TLS_CERT_FILE].
+    certKey: tls.crt
+    # -- Private-key key in the Secret [FRONTEND_TLS_KEY_FILE].
+    keyKey: tls.key
+    # -- Dashboard HTTPS container port [FRONTEND_TLS_PORT].
+    port: 8443
+    # -- Dashboard HTTPS Service port.
+    servicePort: 443
+    # -- Keep HTTP on port 8080 during migration [FRONTEND_HTTP_ENABLED]; requires enabled=true when false.
+    httpEnabled: true
+    # -- Certificate polling interval in seconds [FRONTEND_TLS_RELOAD_INTERVAL]; keep at most 60 for timely rotation.
+    reloadInterval: 30
   service:
     # -- Service type of the UI.
     type: ClusterIP
@@ -728,8 +750,8 @@ frontend:
     annotations: {}
   # -- Resources of each UI pod.
   resources:
-    requests: {cpu: 50m, memory: 64Mi}
-    limits: {cpu: 500m, memory: 256Mi}
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the UI.
     enabled: false
@@ -794,12 +816,20 @@ fiCollector:
     httpPort: 4318
     # -- Service annotations (e.g. for a cloud load balancer).
     annotations: {}
-  # -- [GOMEMLIMIT] soft memory limit; keep it below the memory limit.
+  # -- [GOMEMLIMIT] soft memory limit; keep it below the memory limit. The ingest budget is derived from it.
   goMemLimit: 900MiB
+  # -- [FI_INGEST_BUDGET_MIB] memory, in MiB, that all OTLP requests may hold at once, from reading a body to storing its spans; past it, requests wait their turn (up to 2 s), then get 503 / UNAVAILABLE, which exporters retry. A request that could never fit gets 413 / INVALID_ARGUMENT. 0: derived from `goMemLimit` (about half of it, less a fixed allowance: 391 with the default).
+  ingestBudgetMiB: 0
+  # -- [FI_OTLP_MAX_BODY_MIB] largest OTLP/HTTP body, in MiB, as sent and after gzip decompression (413 above it). 0: 16, lowered when the ingest budget cannot hold a body that size.
+  maxBodyMiB: 0
+  # -- [FI_GRPC_MAX_RECV_MIB] largest OTLP/gRPC message, in MiB (INVALID_ARGUMENT above it). 0: the OTLP/HTTP body cap, lowered like it.
+  grpcMaxRecvMiB: 0
+  # -- [FI_OTLP_MAX_CONNECTIONS] open connections each OTLP listener (gRPC and HTTP) accepts. 0: no cap.
+  maxConnections: 0
   # -- Resources of each collector pod.
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: "1", memory: 1Gi}
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 1Gi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the collector.
     enabled: false
@@ -818,7 +848,7 @@ fiCollector:
     enabled: true
     # -- At most this many collector pods down during voluntary disruptions.
     maxUnavailable: 1
-  # -- Extra environment variables (FI_* overrides, see fi-collector/README.md), as `NAME: value`.
+  # -- Extra environment variables as `NAME: value`. `FI_ADMIN_ADDR: ":9500"` moves the Pod listener, readiness and GKE check; the Service still accepts 9464. See UPGRADING.md for supported binds.
   extraEnv: {}
   # -- Pod annotations.
   podAnnotations: {}
@@ -861,6 +891,25 @@ agentccGateway:
   terminationGracePeriodSeconds: 45
   # -- Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`.
   existingConfigMap: ""
+  tls:
+    # -- Serve native HTTPS on the gateway [AGENTCC_TLS_ENABLED]. Requires existingSecret.
+    enabled: false
+    # -- Existing kubernetes.io/tls Secret with the full certificate chain and private key; updated in place for hot reload.
+    existingSecret: ""
+    # -- Certificate-chain key in the Secret [AGENTCC_TLS_CERT_FILE].
+    certKey: tls.crt
+    # -- Private-key key in the Secret [AGENTCC_TLS_KEY_FILE].
+    keyKey: tls.key
+    # -- Gateway HTTPS container port [AGENTCC_TLS_PORT].
+    port: 8443
+    # -- Gateway HTTPS Service port.
+    servicePort: 8443
+    # -- Keep HTTP on the configured server port during migration [AGENTCC_HTTP_ENABLED]; requires enabled=true when false.
+    httpEnabled: true
+    # -- Minimum TLS version [AGENTCC_TLS_MIN_VERSION]: 1.2 or 1.3.
+    minVersion: "1.2"
+    # -- Certificate polling interval, a Go duration [AGENTCC_TLS_RELOAD_INTERVAL]. Must be greater than zero and at most 1m, as the gateway requires.
+    reloadInterval: 30s
   # -- Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too.
   config:
     server:
@@ -918,8 +967,8 @@ agentccGateway:
   goMemLimit: 450MiB
   # -- Resources of each gateway pod.
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: "1", memory: 512Mi}
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the gateway.
     enabled: false
@@ -977,8 +1026,8 @@ serving:
   replicas: 1
   # -- Resources of each model server pod (add `nvidia.com/gpu` for the GPU image).
   resources:
-    requests: {cpu: 500m, memory: 2Gi}
-    limits: {cpu: "4", memory: 6Gi}
+    requests: { cpu: 500m, memory: 2Gi }
+    limits: { cpu: "4", memory: 6Gi }
   persistence:
     # -- Keep downloaded models on a volume (ReadWriteOnce: one replica). Off: an emptyDir, downloaded again after each restart.
     enabled: false
@@ -1023,8 +1072,8 @@ codeExecutor:
   replicas: 1
   # -- Resources of each sandbox pod.
   resources:
-    requests: {cpu: 250m, memory: 256Mi}
-    limits: {cpu: "2", memory: 1Gi}
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi }
   # -- With `networkPolicy.enabled`: let eval code reach the internet (every private, link-local and metadata range stays blocked). `false` blocks all egress but DNS.
   allowInternetEgress: true
   # -- Extra environment variables, as `NAME: value`.
@@ -1061,8 +1110,8 @@ bootstrap:
   ttlSecondsAfterFinished: 86400
   # -- Resources of the bootstrap job.
   resources:
-    requests: {cpu: 250m, memory: 768Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "2", memory: 2Gi }
   serviceAccount:
     # -- Create a dedicated ServiceAccount for the job (it exists before any other resource on install).
     create: true
@@ -1164,7 +1213,7 @@ gatewayApi:
     websocket: 24h
   gke:
     healthChecks:
-      # -- GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its admin port 9464, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs).
+      # -- GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its configured Pod admin port, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs).
       enabled: false
 
 networkPolicy:

@@ -1,5 +1,4 @@
-// Folder upload, matching the product's Create-RL-environment "Upload folder"
-// (HarnessCreate): a webkitdirectory input sends a copy of a local folder to the
+// Folder upload: a webkitdirectory input sends a copy of a local folder to the
 // isolated runner, leaving .env and generated dependency folders behind.
 export const CODE_UPLOAD_COPY = {
   title: "Upload your agent folder",
@@ -9,7 +8,8 @@ export const CODE_UPLOAD_COPY = {
   uploaded: "Files",
   emptyHint: "Choose a folder to continue",
   uploadingHint: "Uploading your folder to the runner…",
-  entryHelper: "Which file defines the agent's step function?",
+  entryHelper: "The file that starts the agent. Leave it empty and we find it.",
+  nameHelper: "Names the environment and its agent.",
   // The runner rejects an upload whose form-field count exceeds the server
   // limit; each file contributes two fields, so very large folders trip it.
   tooManyFiles:

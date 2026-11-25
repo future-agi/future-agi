@@ -4,6 +4,7 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient, force_authenticate
 
+from accounts.models.auth_token import AuthToken
 from accounts.models.organization_membership import OrganizationMembership
 from saml2_auth.models import SAMLMetadataModel
 from tfc.constants.levels import Level
@@ -105,6 +106,34 @@ def test_config_update_foreign_is_404_and_row_stays(saml_tenants, idp_b):
     assert idp_b.name == original_name
     assert idp_b.security_generation == original_generation
     assert idp_b.deleted is False
+
+
+def test_noop_config_update_preserves_generation_and_saml_tokens(
+    saml_tenants, idp_a, make_saml_token
+):
+    _row, _token = make_saml_token(saml_tenants.a1, saml_tenants.org_a, idp_a)
+    client = _as_org_owner(saml_tenants.a1)
+    idp_a.refresh_from_db()
+    generation = idp_a.security_generation
+
+    response = client.put(
+        f"/saml2_auth/idp-uploads/{idp_a.id}/",
+        {
+            "identity_type": str(idp_a.identity_type),
+            "is_enabled": str(idp_a.is_enabled).lower(),
+            "file": SimpleUploadedFile(
+                "idp.xml", idp_a.meta.encode(), content_type="application/xml"
+            ),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 200, response.content
+    idp_a.refresh_from_db()
+    assert idp_a.security_generation == generation
+    assert AuthToken.no_workspace_objects.filter(
+        origin_idp=idp_a, is_active=True
+    ).exists()
 
 
 def test_config_update_ignores_posted_organization(saml_tenants, idp_b):

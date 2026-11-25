@@ -1,4 +1,6 @@
-import { useReducer } from "react";
+import PropTypes from "prop-types";
+import { useEffect, useReducer } from "react";
+import { readBuildDraft, saveBuildDraft } from "../buildDrawer/buildDraft";
 import { Box, Stack, Typography } from "@mui/material";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import Field from "../components/Field";
@@ -16,6 +18,8 @@ import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import ParallelismField from "./ParallelismField";
 import usePanelBuild from "../hooks/usePanelBuild";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 import { ENTRY_AGENT_TYPES } from "../agentTypes";
 import { HOSTED_PLATFORMS_BY_TYPE, HOSTED_EMPTY_ROSTER_COPY } from "../hostedPlatforms";
 
@@ -23,20 +27,23 @@ import { HOSTED_PLATFORMS_BY_TYPE, HOSTED_EMPTY_ROSTER_COPY } from "../hostedPla
    of agent is being connected. Default to voice (what we integrate with today)
    and seed the platform to that type's first entry. `simMode` is web (WebRTC) or
    phone (PSTN); `inboundCalls` is the old call-direction binary (on = inbound);
-   `agentSpeaksFirst` waits for the agent's greeting. `otherPrompt` is the
-   Others-only system prompt. */
+   `agentSpeaksFirst` waits for the agent's greeting. `systemPrompt` is the
+   pasted prompt Others and LiveKit need, since neither exposes one to fetch;
+   `livekitUrl` and `apiSecret` are LiveKit-only. */
 const initial = {
   agentType: AGENT_TYPES.VOICE,
   platform: (HOSTED_PLATFORMS_BY_TYPE[AGENT_TYPES.VOICE] || [])[0]?.id || "",
   id: "",
   key: "",
+  apiSecret: "",
+  livekitUrl: "",
   repoUrl: "",
   simMode: "web",
   countryIso: "US",
   contactNumber: "",
   inboundCalls: true,
   agentSpeaksFirst: false,
-  otherPrompt: "",
+  systemPrompt: "",
   scenarioCount: DEFAULT_SCENARIOS,
 };
 
@@ -46,17 +53,43 @@ function reducer(s, a) {
   return { ...s, [a.field]: value };
 }
 
-export default function PanelHostedPlatform() {
-  const [form, dispatch] = useReducer(reducer, initial);
+const UNSAVED_FIELDS = ["key", "apiSecret"];
+
+const withoutSecrets = (form) =>
+  Object.fromEntries(
+    Object.entries(form).filter(([field]) => !UNSAVED_FIELDS.includes(field)),
+  );
+
+export default function PanelHostedPlatform({ platformByType, onBusyChange, draftKey }) {
+  const lockedTypes = platformByType ? Object.keys(platformByType) : null;
+  const [form, dispatch] = useReducer(reducer, lockedTypes, (types) => {
+    const start = types?.length
+      ? {
+          ...initial,
+          agentType: types[0],
+          platform: platformByType[types[0]],
+        }
+      : initial;
+    const saved = draftKey ? readBuildDraft(draftKey) : null;
+    return saved ? { ...start, ...withoutSecrets(saved) } : start;
+  });
+  useEffect(() => {
+    if (draftKey) saveBuildDraft(draftKey, withoutSecrets(form));
+  }, [draftKey, form]);
   const build = usePanelBuild();
+  useEffect(() => {
+    onBusyChange?.(build.committing);
+  }, [build.committing, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+  const { canEdit } = useSimulationAccess();
   // Any edit invalidates a prior preflight result, so re-disable Build.
   const set = (field) => (value) => {
     dispatch({ field, value });
     build.resetPreflight();
   };
   const {
-    agentType, platform, id, key, repoUrl,
-    simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, otherPrompt,
+    agentType, platform, id, key, apiSecret, livekitUrl, repoUrl,
+    simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, systemPrompt,
     scenarioCount,
   } = form;
   const platforms = HOSTED_PLATFORMS_BY_TYPE[agentType] || [];
@@ -69,27 +102,50 @@ export default function PanelHostedPlatform() {
   /* When agent type flips, snap to the first platform of the new type and clear
      the credentials so we do not carry a key into another provider's form. */
   const pickAgentType = (nextType) => {
-    const first = (HOSTED_PLATFORMS_BY_TYPE[nextType] || [])[0];
+    const first = platformByType
+      ? { id: platformByType[nextType] }
+      : (HOSTED_PLATFORMS_BY_TYPE[nextType] || [])[0];
     set("agentType")(nextType);
     set("platform")(first?.id || "");
     set("id")("");
     set("key")("");
+    set("apiSecret")("");
+    set("livekitUrl")("");
     set("repoUrl")("");
-    set("otherPrompt")("");
+    set("systemPrompt")("");
   };
 
   const chosen = platforms.find((p) => p.id === platform) || platforms[0];
   const isOther = !!chosen?.isOther;
+  const isLiveKit = !!chosen?.isLiveKit;
+  const livekitPhone = isLiveKit && simMode === "phone";
+  const promptOnly = isOther || livekitPhone;
   // Others has no WebRTC path, so it requires a number regardless of simMode;
   // other voice envs only require it in Phone mode.
-  const phoneRequired = agentType === AGENT_TYPES.VOICE && (isOther || simMode === "phone");
+  const phoneRequired =
+    agentType === AGENT_TYPES.VOICE && (isOther || simMode === "phone");
   const phoneOk =
     !phoneRequired || isValidPhoneNumber(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber);
   const phoneError = phoneRequired
     ? phoneNumberError(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber)
     : null;
-  const preflightBlockedReason = phoneError ? `Contact number: ${phoneError}` : null;
-  const credsOk = isOther ? !!otherPrompt.trim() : (!!id.trim() && !!key.trim());
+  const hasPrompt = !!systemPrompt.trim();
+  const routingFields = [id, livekitUrl, key, apiSecret].map((value) => value.trim());
+  const routingStarted = livekitPhone && routingFields.some(Boolean);
+  const routingComplete = livekitPhone && routingFields.every(Boolean);
+  const routingError =
+    routingStarted && !routingComplete
+      ? "Fill all four fields to run the check, or clear them to skip it"
+      : null;
+  const preflightBlockedReason = phoneError
+    ? `Contact number: ${phoneError}`
+    : routingError
+      ? `LiveKit check: ${routingError}`
+      : null;
+  const credsOk = promptOnly
+    ? hasPrompt && (!routingStarted || routingComplete)
+    : !!id.trim() && !!key.trim() &&
+      (!isLiveKit || (!!apiSecret.trim() && !!livekitUrl.trim() && hasPrompt));
   const canGo = !!chosen && credsOk && phoneOk;
 
   const buildSource = () => ({
@@ -97,19 +153,36 @@ export default function PanelHostedPlatform() {
     agentType,
     provider: chosen?.id,
     scenarioCount: Number(scenarioCount) || undefined,
-    ...(isOther
-      ? { agentMode: "prompt", prompt: otherPrompt.trim() }
+    ...(promptOnly
+      ? { agentMode: "prompt", prompt: systemPrompt.trim() }
       : { agentId: id.trim(), apiKey: key.trim() }),
+    ...(livekitPhone ? { preflightOnlyCredentials: true } : {}),
+    ...(routingComplete
+      ? {
+          apiKey: key.trim(),
+          apiSecret: apiSecret.trim(),
+          verifyLivekitUrl: livekitUrl.trim(),
+          verifyAgentName: id.trim(),
+        }
+      : {}),
+    ...(isLiveKit && !livekitPhone
+      ? {
+          apiSecret: apiSecret.trim(),
+          livekitUrl: livekitUrl.trim(),
+          prompt: systemPrompt.trim(),
+        }
+      : {}),
     ...(repoUrl.trim() ? { repoUrl: repoUrl.trim() } : {}),
     ...(agentType === AGENT_TYPES.VOICE
       ? (() => {
           const contactMode = isOther ? "phone" : simMode;
+          const inbound = isOther || livekitPhone || inboundCalls;
           return {
-            // Others is always inbound; its toggle is locked on.
-            callDirection: isOther || inboundCalls ? "inbound" : "outbound",
+            // Others and LiveKit on Phone are always inbound; their toggle is locked on.
+            callDirection: inbound ? "inbound" : "outbound",
             contact: {
               mode: contactMode,
-              inboundCalls: isOther || inboundCalls,
+              inboundCalls: inbound,
               agentSpeaksFirst,
               ...(contactMode === "phone"
                 ? {
@@ -125,11 +198,22 @@ export default function PanelHostedPlatform() {
   });
 
   return (
-    <Stack spacing={1.75} sx={{ p: 2.5 }}>
+    <Stack
+      spacing={1.5}
+      useFlexGap={!!platformByType}
+      sx={
+        platformByType
+          ? { px: 2.5, pt: 2.5, pb: 0, minHeight: "100%" }
+          : { p: 1.5 }
+      }
+    >
+      {(!lockedTypes || lockedTypes.length > 1) && (
       <Box>
         <Label>Agent type</Label>
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
-          {ENTRY_AGENT_TYPES.map((t) => (
+          {ENTRY_AGENT_TYPES.filter(
+            (t) => !lockedTypes || lockedTypes.includes(t.id),
+          ).map((t) => (
             <ChipCard
               key={t.id}
               icon={t.icon}
@@ -141,6 +225,8 @@ export default function PanelHostedPlatform() {
           ))}
         </Box>
       </Box>
+      )}
+      {!platformByType && (
       <Box>
         <Label>Platform</Label>
         {platforms.length === 0 ? (
@@ -154,7 +240,7 @@ export default function PanelHostedPlatform() {
                 key={p.id}
                 /* "Others" has no brand logo — render its Solar icon instead. */
                 icon={p.isOther ? p.icon : undefined}
-                logo={p.isOther ? undefined : <PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
+                logo={p.isOther ? undefined : <PlatformLogo id={p.id} name={p.name} />}
                 /* Wordmark logos already spell the name — don't repeat it. */
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
                 comingSoon={p.comingSoon}
@@ -165,17 +251,64 @@ export default function PanelHostedPlatform() {
           </Box>
         )}
       </Box>
+      )}
       {chosen && (
         <>
-          {isOther ? (
-            <Field
-              label="System prompt"
-              required
-              placeholder="You are a friendly returns agent for Acme…"
-              value={otherPrompt} onChange={set("otherPrompt")}
-              multiline
-              helper="The platform dials the number below with its own telephony. The prompt only seeds scenarios; it never changes the live agent."
-            />
+          {promptOnly ? (
+            <>
+              <Field
+                label="System prompt"
+                required
+                placeholder="You are a friendly returns agent for Acme…"
+                value={systemPrompt} onChange={set("systemPrompt")}
+                multiline
+                helper={livekitPhone
+                  ? "LiveKit doesn't expose your agent's prompt, so paste it here. We call the number below from our own line, and your LiveKit dispatch rule picks the agent that answers. The prompt only seeds scenarios; it never changes the live agent."
+                  : "The platform dials the number below with its own telephony. The prompt only seeds scenarios; it never changes the live agent."}
+              />
+              {livekitPhone && (
+                <Stack spacing={1.5} sx={{ p: 1.5, borderRadius: "8px", border: "1px solid", borderColor: "divider" }}>
+                  <Box>
+                    <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                      Check the number reaches your agent (optional)
+                    </Typography>
+                    <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+                      Fill all four and preflight checks, read-only, that your LiveKit project routes this number to this agent and no other. They are used for that check only and are not saved.
+                    </Typography>
+                  </Box>
+                  <Field
+                    label={chosen.idLabel || "Agent name"}
+                    placeholder={chosen.idPlaceholder}
+                    value={id} onChange={set("id")}
+                    autoComplete="new-password"
+                    mono
+                  />
+                  <Field
+                    label="LiveKit URL"
+                    placeholder="wss://your-project.livekit.cloud"
+                    value={livekitUrl} onChange={set("livekitUrl")}
+                    mono
+                  />
+                  <Field
+                    label={chosen.keyLabel || "API key"}
+                    placeholder="sk-…"
+                    value={key} onChange={set("key")}
+                    type="password"
+                    autoComplete="new-password"
+                    mono
+                  />
+                  <Field
+                    label="LiveKit API secret"
+                    placeholder="secret…"
+                    value={apiSecret} onChange={set("apiSecret")}
+                    type="password"
+                    autoComplete="new-password"
+                    mono
+                    error={routingError}
+                  />
+                </Stack>
+              )}
+            </>
           ) : (
             <>
               <Field
@@ -186,6 +319,15 @@ export default function PanelHostedPlatform() {
                 autoComplete="new-password"
                 mono
               />
+              {isLiveKit && (
+                <Field
+                  label="LiveKit URL"
+                  required
+                  placeholder="wss://your-project.livekit.cloud"
+                  value={livekitUrl} onChange={set("livekitUrl")}
+                  mono
+                />
+              )}
               <Field
                 label={chosen.keyLabel || "API key"}
                 required
@@ -196,6 +338,27 @@ export default function PanelHostedPlatform() {
                 mono
                 helper="Stored encrypted; used only to invoke the agent on your behalf."
               />
+              {isLiveKit && (
+                <>
+                  <Field
+                    label="LiveKit API secret"
+                    required
+                    placeholder="secret…"
+                    value={apiSecret} onChange={set("apiSecret")}
+                    type="password"
+                    autoComplete="new-password"
+                    mono
+                  />
+                  <Field
+                    label="System prompt"
+                    required
+                    placeholder="You are a friendly returns agent for Acme…"
+                    value={systemPrompt} onChange={set("systemPrompt")}
+                    multiline
+                    helper="LiveKit doesn't expose your agent's prompt, so paste it here. It only seeds scenarios; it never changes the live agent."
+                  />
+                </>
+              )}
             </>
           )}
           {agentType === AGENT_TYPES.VOICE && (
@@ -206,6 +369,7 @@ export default function PanelHostedPlatform() {
               inboundCalls={inboundCalls} onInboundCalls={set("inboundCalls")}
               agentSpeaksFirst={agentSpeaksFirst} onAgentSpeaksFirst={set("agentSpeaksFirst")}
               phoneOnly={isOther}
+              inboundOnly={isLiveKit}
             />
           )}
           <Field
@@ -227,8 +391,8 @@ export default function PanelHostedPlatform() {
       />
       <RuntimePreflight
         status={build.status}
-        canRun={canGo}
-        blockedReason={preflightBlockedReason}
+        canRun={canEdit && canGo}
+        blockedReason={!canEdit ? WORKSPACE_COPY.viewer.create : preflightBlockedReason}
         onRun={() => build.runPreflight(buildSource())}
         result={build.result}
         error={build.error}
@@ -239,11 +403,18 @@ export default function PanelHostedPlatform() {
         onDismiss={build.creditExhaustion.onDismiss}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
+        disabled={!canEdit || !build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
-        hint={build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
+        hint={!canEdit ? WORKSPACE_COPY.viewer.create : build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
         onClick={build.commitBuild}
+        sticky={!!platformByType}
       />
     </Stack>
   );
 }
+
+PanelHostedPlatform.propTypes = {
+  platformByType: PropTypes.objectOf(PropTypes.string),
+  onBusyChange: PropTypes.func,
+  draftKey: PropTypes.string,
+};

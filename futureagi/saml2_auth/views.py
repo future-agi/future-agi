@@ -62,6 +62,7 @@ from saml2_auth.services import (
     resolve_assertion_user,
     resolve_login_idp,
     resolve_login_user,
+    stale_binder_cookies,
     store_candidate,
     update_attempt_request_id,
     validate_next_path,
@@ -332,9 +333,11 @@ class IDPLoginView(APIView):
     )
     def get(self, request, *args, **kwargs):
         msg = "SSO is not enabled for your organisation. Please contact to your administration."
+        stale_cookie_names = []
         try:
             if not settings.SAML_LOGIN_ENABLED:
                 raise SamlDenied("idp_unavailable")
+            stale_cookie_names = stale_binder_cookies(request.COOKIES)
             work_email = request.validated_query_data.get("email", "")
             user = resolve_login_user(work_email)
             if user is None:
@@ -343,8 +346,12 @@ class IDPLoginView(APIView):
             if idp is None:
                 raise SamlDenied("idp_unavailable")
             cookie_names = [
-                name for name in request.COOKIES if name.startswith("fai_saml_b_")
+                name
+                for name in request.COOKIES
+                if name.startswith("fai_saml_b_") and name not in stale_cookie_names
             ]
+            # All live pending/claimed tabs keep their binders. At capacity the
+            # browser must finish a login or wait for expiry; never evict a claim.
             if len(cookie_names) >= settings.SAML_MAX_PENDING_COOKIES_PER_BROWSER:
                 raise SamlDenied("browser_capacity")
             binder = secrets.token_urlsafe(32)
@@ -371,20 +378,22 @@ class IDPLoginView(APIView):
                 secure=settings.ENV_TYPE not in {"local", "test", "development"},
                 path="/saml2_auth/",
             )
-            return response
         except SamlDenied as exc:
             security_logger.warning("saml_login_denied", reason=exc.reason)
-            return self._gm.bad_request(msg)
+            response = self._gm.bad_request(msg)
         except StopIteration:
             security_logger.warning("saml_login_denied", reason="idp_unavailable")
-            return self._gm.bad_request(msg)
+            response = self._gm.bad_request(msg)
         except Exception as exc:
             security_logger.warning(
                 "saml_login_denied",
                 reason="idp_unavailable",
                 exc_type=type(exc).__name__,
             )
-            return self._gm.bad_request(msg)
+            response = self._gm.bad_request(msg)
+        for name in stale_cookie_names:
+            response.delete_cookie(name, path="/saml2_auth/")
+        return response
 
 
 class AvailableIDPs(APIView):
@@ -466,6 +475,11 @@ class IDPUploadViews(viewsets.ModelViewSet):
         if not form.is_valid():
             return None, _format_form_errors(form.errors)
         data = form.cleaned_data.copy()
+        # ChoiceField returns strings, while the persisted field is an integer.
+        if data.get("identity_type"):
+            data["identity_type"] = int(data["identity_type"])
+        else:
+            data.pop("identity_type", None)
         metadata_file = data.pop("file", None)
         data.pop("organization", None)
         data.pop("relay_state", None)
@@ -648,20 +662,26 @@ class IDPUploadViews(viewsets.ModelViewSet):
         data, error = self._request_data(request)
         if data is None:
             return self._gm.bad_request(error)
-        if (
-            data.get("identity_type")
-            and int(original.identity_type) != int(data["identity_type"])
-            and "meta" not in data
-        ):
-            return self._gm.bad_request("Please select a XML file.")
-        changed_fields = [
-            field for field, value in data.items() if getattr(original, field) != value
-        ]
         with transaction.atomic():
             row = self.get_queryset().select_for_update().get(id=original.id)
-            for field, value in data.items():
-                setattr(row, field, value)
+            if (
+                "identity_type" in data
+                and row.identity_type != data["identity_type"]
+                and "meta" not in data
+            ):
+                return self._gm.bad_request("Please select a XML file.")
+            # A concurrent edit may have committed since get_object(). Both
+            # validation and the security-generation decision use the locked row.
+            # The optional name has historically been stored as either NULL or "".
+            current = {field: getattr(row, field) for field in data}
+            if "name" in current:
+                current["name"] = current["name"] or ""
+            changed_fields = [
+                field for field, value in data.items() if current[field] != value
+            ]
             if changed_fields:
+                for field in changed_fields:
+                    setattr(row, field, data[field])
                 row.security_generation += 1
                 row.save(update_fields=[*changed_fields, "security_generation"])
                 self._revoke_idp_tokens(row)
@@ -679,7 +699,7 @@ class IDPUploadViews(viewsets.ModelViewSet):
 
 import urllib.parse  # noqa: E402
 
-from jose import jwt  # noqa: E402
+from saml2_auth.google_oauth import verify_google_id_token  # noqa: E402
 
 
 class Auth0LoginView(APIView):
@@ -733,7 +753,7 @@ class Auth0LoginView(APIView):
             if onboarding_token:
                 params["state"] = encode_oauth_state(onboarding_token)
             auth_url = f"{GITHUB_OAUTH_URL}/authorize?" + urllib.parse.urlencode(params)
-            logger.info(f"Redirecting user to GitHub auth URL: {auth_url}")
+            logger.info("oauth_redirect_started", provider="github")
             return self._gm.success_response({"url": auth_url})
         elif provider == "microsoft":
             params = {
@@ -746,7 +766,7 @@ class Auth0LoginView(APIView):
             auth_url = f"{MICROSOFT_OAUTH_URL}/authorize?" + urllib.parse.urlencode(
                 params
             )
-            logger.info(f"Redirecting user to Microsoft auth URL: {auth_url}")
+            logger.info("oauth_redirect_started", provider="microsoft")
             return self._gm.success_response({"url": auth_url})
         else:
             return self._gm.bad_request("Not Implemented")
@@ -803,7 +823,7 @@ class Auth0CallbackView(APIView):
             if not code:
                 logger.error("No code provided in callback.")
                 raise Exception("Authorization code not provided.")
-            logger.info(f"CODE: {code}")
+            logger.info("oauth_callback_received", provider="auth0")
 
             # Exchange code for access token
             token_url = f"https://{AUTH0_DOMAIN}/token"
@@ -817,23 +837,23 @@ class Auth0CallbackView(APIView):
             }
 
             response = requests.post(token_url, json=token_payload, timeout=10)
-            logger.info(f"RESPONSE: {response}")
-            logger.info(f"RESPONSE JSON: {response.text}")
+            logger.info(
+                "oauth_token_exchange_completed",
+                provider="auth0",
+                status_code=response.status_code,
+            )
 
+            if response.status_code != 200:
+                raise ValueError("Google token exchange failed")
             tokens = response.json()
             id_token = tokens.get("id_token")
 
-            # Decode the ID token
             if id_token:
                 access_token = tokens.get("access_token")
-                decoded = jwt.decode(
-                    id_token,
-                    options={"verify_signature": False},
-                    key=AUTH0_CLIENT_ID,
-                    audience=AUTH0_CLIENT_ID,
-                    access_token=access_token,
+                decoded = verify_google_id_token(
+                    id_token, AUTH0_CLIENT_ID, access_token
                 )
-                logger.info(f"DECODED: {decoded}")
+                logger.info("oauth_identity_decoded", provider="auth0")
 
                 user_email = decoded.get("email")
                 onboarding_token = read_oauth_state(
@@ -842,11 +862,18 @@ class Auth0CallbackView(APIView):
 
                 name = decoded.get("name")
                 if not name:
-                    get_name_google = (
-                        f"{GOOGLE_USERINFO_API}?alt=json&access_token={access_token}"
+                    # Keep credentials out of URLs, including HTTP debug logs.
+                    user_info_response = requests.get(
+                        GOOGLE_USERINFO_API,
+                        params={"alt": "json"},
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        timeout=10,
                     )
-                    user_info_response = requests.get(get_name_google, timeout=10)
-                    logger.info(f"GOOGLE NAME RESPONSE: {user_info_response.text}")
+                    logger.info(
+                        "oauth_profile_exchange_completed",
+                        provider="google",
+                        status_code=user_info_response.status_code,
+                    )
                     if user_info_response.status_code == 200:
                         name = user_info_response.json().get("name")
                     else:
@@ -895,9 +922,13 @@ class Auth0CallbackView(APIView):
             encoded = urlsafe_base64_encode(b"Unable to Process your request currently")
             redirect_url = f"{default_error_next_url}&reason={encoded}"
             return HttpResponseRedirect(redirect_url)
-        except Exception as e:
-            traceback.print_exc()
-            encoded = urlsafe_base64_encode(str(e).encode("utf-8"))
+        except Exception as exc:
+            logger.error(
+                "oauth_callback_failed",
+                provider="auth0",
+                error_class=type(exc).__name__,
+            )
+            encoded = urlsafe_base64_encode(b"Unable to process OAuth callback")
             redirect_url = f"{default_error_next_url}&reason={encoded}"
             return HttpResponseRedirect(redirect_url)
 
@@ -920,7 +951,7 @@ class GithubCallbackView(APIView):
                 # return self._gm.error_response("Authorization code not provided.", status=400)
                 raise Exception("Authorization code not provided.")
 
-            logger.info(f"GitHub callback received with code: {code}")
+            logger.info("oauth_callback_received", provider="github")
 
             token_url = f"{GITHUB_OAUTH_URL}/access_token"
             token_payload = {
@@ -1027,9 +1058,13 @@ class GithubCallbackView(APIView):
             response["new_org"] = new_org
             return response
 
-        except Exception as e:
-            traceback.print_exc()
-            encoded = urlsafe_base64_encode(str(e).encode("utf-8"))
+        except Exception as exc:
+            logger.error(
+                "oauth_callback_failed",
+                provider="github",
+                error_class=type(exc).__name__,
+            )
+            encoded = urlsafe_base64_encode(b"Unable to process OAuth callback")
             redirect_url = f"{default_error_next_url}&reason={encoded}"
             return HttpResponseRedirect(redirect_url)
 
@@ -1051,7 +1086,7 @@ class MicrosoftCallbackView(APIView):
                 logger.error("No code provided in callback.")
                 raise Exception("Authorization code not provided.")
 
-            logger.info(f"Microsoft callback received with code: {code}")
+            logger.info("oauth_callback_received", provider="microsoft")
 
             # Exchange code for access token
             token_url = f"{MICROSOFT_OAUTH_URL}/token"
@@ -1070,7 +1105,11 @@ class MicrosoftCallbackView(APIView):
                 token_url, data=token_payload, headers=headers
             )
             if token_response.status_code != 200:
-                logger.error(f"Token response error: {token_response.text}")
+                logger.error(
+                    "oauth_token_exchange_failed",
+                    provider="microsoft",
+                    status_code=token_response.status_code,
+                )
                 raise Exception("Failed to retrieve access token.")
 
             token_json = token_response.json()
@@ -1086,11 +1125,15 @@ class MicrosoftCallbackView(APIView):
             }
             user_response = requests.get(user_api_url, headers=user_headers)
             if user_response.status_code != 200:
-                logger.error(f"User info response error: {user_response.text}")
+                logger.error(
+                    "oauth_profile_exchange_failed",
+                    provider="microsoft",
+                    status_code=user_response.status_code,
+                )
                 raise Exception("Failed to retrieve user information.")
 
             microsoft_user = user_response.json()
-            logger.info(f"Microsoft user info: {microsoft_user}")
+            logger.info("oauth_profile_loaded", provider="microsoft")
 
             # Extract user information
             user_email = microsoft_user.get("mail") or microsoft_user.get(
@@ -1155,8 +1198,12 @@ class MicrosoftCallbackView(APIView):
             response["new_org"] = new_org
             return response
 
-        except Exception as e:
-            traceback.print_exc()
-            encoded = urlsafe_base64_encode(str(e).encode("utf-8"))
+        except Exception as exc:
+            logger.error(
+                "oauth_callback_failed",
+                provider="microsoft",
+                error_class=type(exc).__name__,
+            )
+            encoded = urlsafe_base64_encode(b"Unable to process OAuth callback")
             redirect_url = f"{default_error_next_url}&reason={encoded}"
             return HttpResponseRedirect(redirect_url)

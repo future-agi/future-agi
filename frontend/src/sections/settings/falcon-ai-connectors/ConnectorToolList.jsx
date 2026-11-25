@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import Dialog from "@mui/material/Dialog";
@@ -16,6 +17,7 @@ import {
   discoverConnectorTools,
   updateConnectorTools,
 } from "src/sections/falcon-ai/hooks/useFalconAPI";
+import ContentSkeleton from "src/components/content-skeleton";
 
 export default function ConnectorToolList({ open, connector, onClose }) {
   const _theme = useTheme();
@@ -70,7 +72,13 @@ export default function ConnectorToolList({ open, connector, onClose }) {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         <Box display="flex" alignItems="center" justifyContent="space-between">
           <Typography variant="h6" component="span">
@@ -90,19 +98,15 @@ export default function ConnectorToolList({ open, connector, onClose }) {
       <DialogContent dividers>
         {loading ? (
           <Box display="flex" justifyContent="center" py={4}>
-            <CircularProgress size={28} />
+            <ContentSkeleton variant="rows" />
           </Box>
         ) : tools.length === 0 ? (
-          <Box py={4} textAlign="center">
-            <Iconify
-              icon="mdi:tools"
-              width={36}
-              sx={{ color: "text.disabled", mb: 1 }}
-            />
-            <Typography variant="body2" color="text.disabled">
-              No tools discovered. Try refreshing.
-            </Typography>
-          </Box>
+          <EmptyState
+            icon="solar:toolbox-linear"
+            title="No tools yet"
+            description="Try refreshing to discover tools."
+            sx={{ pt: 4, pb: 4 }}
+          />
         ) : (
           tools.map((tool, index) => (
             <React.Fragment key={tool.name || index}>
@@ -112,7 +116,7 @@ export default function ConnectorToolList({ open, connector, onClose }) {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  py: 1.5,
+                  py: 1,
                   px: 0.5,
                 }}
               >
@@ -121,7 +125,8 @@ export default function ConnectorToolList({ open, connector, onClose }) {
                     variant="subtitle2"
                     sx={{
                       color: "text.primary",
-                      fontSize: 13,
+                      fontSize: 12,
+                      fontWeight: 500,
                     }}
                   >
                     {tool.name}
@@ -130,7 +135,7 @@ export default function ConnectorToolList({ open, connector, onClose }) {
                     <Typography
                       variant="caption"
                       sx={{
-                        color: "text.secondary",
+                        color: "text.tertiary",
                         display: "block",
                         mt: 0.25,
                       }}
@@ -154,7 +159,7 @@ export default function ConnectorToolList({ open, connector, onClose }) {
         <Button
           onClick={loadTools}
           disabled={loading}
-          startIcon={<Iconify icon="mdi:refresh" width={18} />}
+          startIcon={<Iconify icon="solar:refresh-linear" width={20} />}
           sx={{ mr: "auto" }}
         >
           Refresh

@@ -15,43 +15,29 @@ import App from "./app";
 import { bootstrapSamlSession } from "./auth/saml-bootstrap";
 import { SplashScreen } from "./components/loading-screen";
 import {
-  CellSelectionModule,
-  ClipboardModule,
-  MasterDetailModule,
-  MenuModule,
-  RichSelectModule,
-  ServerSideRowModelApiModule,
-  ServerSideRowModelModule,
-  StatusBarModule,
-} from "ag-grid-enterprise";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
-
-ModuleRegistry.registerModules([
-  AllCommunityModule,
-  ServerSideRowModelModule,
-  ServerSideRowModelApiModule,
-  StatusBarModule,
-  MasterDetailModule,
-  RichSelectModule,
-  MenuModule,
-  ClipboardModule,
-  CellSelectionModule,
-]);
-import { LicenseManager } from "ag-grid-enterprise";
-import {
   CURRENT_ENVIRONMENT,
   GOOGLE_SITE_KEY,
   HOST_API,
   SENTRY_DSN,
 } from "./config-global";
-import { worker } from "./_mock/api/browser";
 import * as Sentry from "@sentry/react";
+import {
+  samlUrlPrivacyIntegration,
+  scrubSamlBreadcrumb,
+  scrubSamlSpan,
+  scrubSamlTelemetryEvent,
+} from "./utils/saml-telemetry-urls";
 import logger from "./utils/logger";
 import { GoogleReCaptchaProvider } from "react-google-recaptcha-v3";
 import { initPostHog } from "./utils/PostHog";
-import { initGoogleAds } from "./utils/googleAds";
-import { initReddit } from "./utils/redditAds";
-import { initTwitter } from "./utils/twitterAds";
+import { initGoogleAnalytics } from "./utils/googleAnalytics";
+// Google Ads, Reddit and X (Twitter) pixels are disabled. Google Analytics
+// loads from VITE_GA_ID (googleAnalytics.js) and Google Tag Manager from
+// VITE_GTM_ID (index.html). To restore a pixel, uncomment its import and call
+// below.
+// import { initGoogleAds } from "./utils/googleAds";
+// import { initReddit } from "./utils/redditAds";
+// import { initTwitter } from "./utils/twitterAds";
 import { applyTranslationDomGuard } from "./utils/translationDomGuard";
 
 applyTranslationDomGuard();
@@ -124,9 +110,7 @@ Sentry.init({
           url,
         ),
     }),
-    // Mask text and media in session replays so we never stream customer
-    // content (prompts, PII, uploads) to a third party.
-    Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true }),
+    samlUrlPrivacyIntegration(),
   ],
   // 100% tracing in production is expensive and noisy; sample at 10% there and
   // keep full fidelity in lower environments. Override via VITE_SENTRY_TRACES_SAMPLE_RATE.
@@ -138,6 +122,10 @@ Sentry.init({
   // Ignore noise injected by browser extensions / third-party scripts.
   denyUrls: [/extensions\//i, /^chrome:\/\//i, /^moz-extension:\/\//i],
   tracePropagationTargets: [HOST_API],
+  beforeBreadcrumb: scrubSamlBreadcrumb,
+  // Standalone SDK span envelopes are sent without beforeSendTransaction.
+  beforeSendSpan: scrubSamlSpan,
+  beforeSendTransaction: scrubSamlTelemetryEvent,
   // Drop Vite dev-server dep-optimizer artifacts: when Vite re-bundles
   // .vite/deps it forces a reload, and an in-flight dep chunk can transiently
   // be null (e.g. "Cannot read properties of null (reading 'useContext')").
@@ -162,35 +150,35 @@ Sentry.init({
       ),
     );
     if (fromSessionRecorder) return null;
-    return event;
+    return scrubSamlTelemetryEvent(event);
   },
 });
 
 // Initialize PostHog (autocapture, session replay, web vitals)
 initPostHog();
 
-// Initialize Google Ads + GA4 (no-op if env vars are unset)
-initGoogleAds();
+// Google Analytics 4 (no-op unless the build sets VITE_GA_ID).
+initGoogleAnalytics();
 
-// Initialize Reddit pixel (no-op if env vars are unset)
-initReddit();
-
-// Initialize Twitter (X) pixel (no-op if env vars are unset)
-initTwitter();
+// Ad pixels are disabled (see the imports above).
+// initGoogleAds();
+// initReddit();
+// initTwitter();
 
 if (
   CURRENT_ENVIRONMENT === "local" &&
   import.meta.env.VITE_ENABLE_MSW !== "false"
 ) {
   logger.debug("STARTING MOCK SERVER");
-  worker.start({ onUnhandledRequest: "bypass" });
+  // Loaded only here so the mock server never ships in the first-load bundle.
+  import("./_mock/api/browser").then(({ worker }) =>
+    worker.start({ onUnhandledRequest: "bypass" }),
+  );
 }
-
-LicenseManager.setLicenseKey(import.meta.env.VITE_AG_GRID_LICENSE_KEY);
 
 // Register service worker in production
 if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
+  const registerServiceWorker = () => {
     navigator.serviceWorker
       .register("/service-worker.js")
       .then((registration) => {
@@ -238,10 +226,53 @@ if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
         // instead of a Sentry error (FRONTEND-1DQ / FRONTEND-13X).
         logger.warn("ServiceWorker registration failed:", error);
       });
-  });
+  };
+  // This module is imported after the page guards run, so the window load
+  // event may already have fired by the time it executes.
+  if (document.readyState === "complete") {
+    registerServiceWorker();
+  } else {
+    window.addEventListener("load", registerServiceWorker);
+  }
 }
 
 // ----------------------------------------------------------------------
+
+// Schedule from a committed React tree, then yield the animation frame to paint.
+// Replay only buffers from this point; earlier errors still reach Sentry but
+// cannot include a replay of the interval before the integration was added.
+function AfterFirstPaint() {
+  React.useEffect(() => {
+    let timer;
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        const client = Sentry.getClient();
+        const canStartReplay = () =>
+          !cancelled &&
+          client === Sentry.getClient() &&
+          client?.getTransport() &&
+          client.getOptions().enabled !== false &&
+          !client.getIntegrationByName("Replay");
+        if (!canStartReplay()) return;
+        import("./utils/sentry-replay")
+          .then(({ createSentryReplay }) => {
+            // Recheck after loading: the client may have been disabled or closed.
+            if (canStartReplay()) Sentry.addIntegration(createSentryReplay());
+          })
+          .catch((error) =>
+            logger.warn("Failed to load Sentry Replay:", error),
+          );
+      }, 0);
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, []);
+  return null;
+}
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 
@@ -249,6 +280,7 @@ bootstrapSamlSession();
 
 root.render(
   <HelmetProvider>
+    <AfterFirstPaint />
     <BrowserRouter>
       <GoogleReCaptchaProvider reCaptchaKey={GOOGLE_SITE_KEY}>
         <Suspense fallback={<SplashScreen />}>

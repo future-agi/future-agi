@@ -2,6 +2,8 @@
 // CallAnalyticsView. Keep these pure (no React) so they're trivial to
 // unit-test and reuse.
 
+import { OTHER_PARTY_FALLBACK, ACTOR_CHANNEL_LABELS } from "./constants";
+
 export const formatClock = (seconds) => {
   if (seconds == null || !Number.isFinite(seconds)) return "0:00";
   const s = Math.max(0, Math.floor(seconds));
@@ -18,6 +20,14 @@ export const normalizeRole = (role) => {
   if (r === "tool" || r === "function") return "tool";
   return r || "unknown";
 };
+
+const OTHER_ROLES = new Set(["actor", "world_actor"]);
+export const isOtherRole = (role) => OTHER_ROLES.has(role);
+
+export const otherPartyLabel = ({ speakerName, actorRole } = {}) =>
+  [speakerName || OTHER_PARTY_FALLBACK, actorRole].filter(Boolean).join(" · ");
+
+export const channelLabel = (channel) => ACTOR_CHANNEL_LABELS[channel] || "";
 
 export const getContent = (item) => {
   const raw = item?.content ?? item?.message ?? item?.text ?? "";
@@ -114,6 +124,10 @@ export const enrichTurns = (
       id: item.id ?? `turn-${i}`,
       role,
       rawRole: item.speaker_role || item.role,
+      speakerName: item.speaker_name || "",
+      actorId: item.actor_id || "",
+      actorRole: item.actor_role || "",
+      channel: item.channel || "",
       content: getContent(item),
       toolCalls: Array.isArray(item.tool_calls) ? item.tool_calls : [],
       start,
@@ -207,14 +221,12 @@ export const enrichTurns = (
     return a.start - b.start;
   });
 
-  // Step 7: silence + overlap between consecutive spoken turns. A tool call
-  // sits inline at the moment it ran, often mid-turn; it is not speech, so it
-  // neither interrupts nor splits the gap between the turns around it.
+  // Step 7: silence + overlap between spoken turns; tool calls and actor actions are not speech.
   let prev = null;
   for (const cur of sorted) {
     cur.silenceBefore = null;
     cur.overlapsPrev = false;
-    if (cur.role === "tool") continue;
+    if (cur.role === "tool" || cur.role === "world_actor") continue;
     if (prev && prev.end != null && cur.start != null) {
       const gap = cur.start - prev.end;
       if (gap < -0.1) {
@@ -234,7 +246,8 @@ export const computeTotals = (turns) => {
   let total = 0;
   for (const t of turns) {
     if (t.duration == null) continue;
-    byRole[t.role] = (byRole[t.role] || 0) + t.duration;
+    const key = isOtherRole(t.role) ? "others" : t.role;
+    byRole[key] = (byRole[key] || 0) + t.duration;
     total += t.duration;
   }
   return { byRole, total };

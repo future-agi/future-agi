@@ -69,7 +69,7 @@ const ConfigureDatasetModal = ({
         PaperProps={{
           sx: {
             p: theme.spacing(2),
-            width: "480px",
+            width: "560px",
             height: "180px",
           },
         }}
@@ -93,12 +93,11 @@ const ConfigureDatasetModal = ({
             sx={{
               padding: 0,
               width: "24px",
-              height: "24px",
               display: "flex",
               alignItems: "center",
             }}
           >
-            <Iconify icon="line-md:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </DialogTitle>
         <DialogContent
@@ -150,20 +149,14 @@ const ConfigureDatasetModal = ({
             onClick={handleDelete}
             size="small"
             startIcon={
-              <SvgColor
-                sx={{
-                  width: "16px",
-                  height: "16px",
-                }}
-                src="/assets/icons/ic_delete.svg"
-              />
+              <SvgColor width={16} src="/assets/icons/ic_delete.svg" />
             }
             sx={{
-              bgcolor: "red.500",
+              bgcolor: "status.danger.solid",
               color: "common.white",
               minWidth: "90px",
               ":hover": {
-                bgcolor: "red.700",
+                bgcolor: "status.danger.solid",
               },
             }}
           >
@@ -182,7 +175,7 @@ const ConfigureDatasetModal = ({
             }}
             startIcon={
               <Iconify
-                icon="grommet-icons:update"
+                icon="solar:refresh-linear"
                 width={14}
                 height={14}
                 sx={{

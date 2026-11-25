@@ -157,7 +157,7 @@ describe("VoiceRightPanel", () => {
     getContext.mockRestore();
   });
 
-  describe("Fix with Falcon on the Evals tab", () => {
+  describe("Fix with AI on the Evals tab", () => {
     const failingEval = {
       id: "call-2",
       module: "simulate",
@@ -178,16 +178,46 @@ describe("VoiceRightPanel", () => {
     it("shows by default, on the summary bar and on the expanded failing eval", async () => {
       renderWithQueryClient(<VoiceRightPanel data={failingEval} />);
       await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
-      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(1);
+      expect(screen.getAllByText("Fix with AI")).toHaveLength(1);
       await userEvent.click(screen.getByText("Concise replies"));
-      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(2);
+      expect(screen.getAllByText("Fix with AI")).toHaveLength(2);
+    });
+
+    it("keeps the eval list and Falcon when the call also carries a rollup", async () => {
+      const withRollup = {
+        ...failingEval,
+        eval_rollup: {
+          scope: "trace",
+          evals: [
+            {
+              eval_config_id: "eval-1",
+              eval_name: "Concise replies",
+              aggregate: { pass: 0, fail: 1 },
+              spans: [{ span_id: "root", span_name: "call", value: "Failed" }],
+            },
+          ],
+        },
+      };
+      renderWithQueryClient(<VoiceRightPanel data={withRollup} />);
+      await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+      expect(
+        screen.getByPlaceholderText("Search evals..."),
+      ).toBeInTheDocument();
+      expect(screen.getAllByText("Fix with AI")).toHaveLength(1);
+      await userEvent.click(screen.getByText("Concise replies"));
+      expect(screen.getAllByText("Fix with AI")).toHaveLength(2);
+      expect(
+        screen.getByRole("button", { name: /per-span breakdown/i }),
+      ).toBeInTheDocument();
     });
 
     it("hides when the host has no Falcon flow wired", async () => {
-      renderWithQueryClient(<VoiceRightPanel data={failingEval} showFixWithFalcon={false} />);
+      renderWithQueryClient(
+        <VoiceRightPanel data={failingEval} showFixWithFalcon={false} />,
+      );
       await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
       await userEvent.click(screen.getByText("Concise replies"));
-      expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
+      expect(screen.queryByText("Fix with AI")).not.toBeInTheDocument();
     });
   });
 
@@ -219,7 +249,12 @@ describe("VoiceRightPanel", () => {
           provider: "livekit",
           transcript: [],
           scenario_columns: {},
-          persona_details: { name: "Siddharth Nair", voice: null, age: null, traits: [] },
+          persona_details: {
+            name: "Siddharth Nair",
+            voice: null,
+            age: null,
+            traits: [],
+          },
         }}
       />,
     );
@@ -277,6 +312,8 @@ describe("VoiceRightPanel", () => {
         }}
       />,
     );
-    expect(screen.queryByRole("tab", { name: "Scenario" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Scenario" }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -252,6 +252,9 @@ def test_ch25_trace_contribution_collapses_complete_boundary_hour() -> None:
                 start_time DateTime64(6, 'UTC'),
                 trace_id String,
                 id String,
+                name String DEFAULT '',
+                parent_span_id String DEFAULT '',
+                attrs_string Map(LowCardinality(String), String) DEFAULT map(),
                 latency_ms Int64,
                 total_tokens Int64,
                 cost Float64,
@@ -310,7 +313,12 @@ def test_ch25_trace_contribution_collapses_complete_boundary_hour() -> None:
             ),
         ]
         for row in rows:
-            admin.execute("INSERT INTO spans VALUES", [row])
+            admin.execute(
+                "INSERT INTO spans (project_id, observation_type, service_name, "
+                "start_time, trace_id, id, latency_ms, total_tokens, cost, "
+                "prompt_tokens, completion_tokens, status, is_deleted, _version) VALUES",
+                [row],
+            )
         assert admin.execute("SELECT count() FROM spans") == [(2,)]
 
         builder = TimeSeriesQueryBuilder(

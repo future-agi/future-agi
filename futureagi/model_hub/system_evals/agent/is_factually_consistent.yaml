@@ -14,8 +14,9 @@ criteria: "You are evaluating whether the output is factually consistent with th
   \ contradictions or fabrications. Return 'Failed' if any claim contradicts, misrepresents, or goes beyond what the context\
   \ supports.\n\n## Inputs\n\n<input>{{input}}</input>\n\n<output>{{output}}</output>\n\n<context>{{context}}</context>"
 eval_tags:
-- Hallucination
-- NLP Metrics
+- Accuracy
+- Consistency
+offered_in_environments: true
 visible_ui: false
 permissions:
   allow_edit: false

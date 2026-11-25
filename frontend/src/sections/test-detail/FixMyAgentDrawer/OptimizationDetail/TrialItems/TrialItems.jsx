@@ -1,6 +1,7 @@
 import { Box, Typography } from "@mui/material";
 import { useMemo } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import SvgColor from "../../../../../components/svg-color";
 import { useQuery } from "@tanstack/react-query";
@@ -103,7 +104,7 @@ const TrialItems = ({ optimizationId, trialId }) => {
           display: "flex",
           alignItems: "center",
           gap: 1,
-          backgroundColor: "blue.o5",
+          backgroundColor: "status.info.bg",
           paddingX: "12px",
           paddingY: "4px",
           borderRadius: "4px",
@@ -111,7 +112,7 @@ const TrialItems = ({ optimizationId, trialId }) => {
       >
         <SvgColor
           src="/assets/icons/ic_info.svg"
-          sx={{ width: 16, height: 16, color: "blue.500" }}
+          sx={{ width: 16, height: 16, color: "status.info.fg" }}
         />
         <Typography typography="s2">
           Iterations ran to optimize the prompt

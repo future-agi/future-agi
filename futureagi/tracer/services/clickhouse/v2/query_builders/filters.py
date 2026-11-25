@@ -82,6 +82,8 @@ _EVAL_LEGACY_COLUMN_MARKERS = {
     "eval_scan._peerdb_version": "eval_scan.__eval_legacy_version__",
     "latest_eval._peerdb_is_deleted": "latest_eval.__eval_legacy_cdc_deleted__",
     "latest_eval._peerdb_version": "latest_eval.__eval_legacy_version__",
+    "physical_eval._peerdb_is_deleted": "physical_eval.__eval_legacy_cdc_deleted__",
+    "physical_eval._peerdb_version": "physical_eval.__eval_legacy_version__",
     "candidate_eval._peerdb_is_deleted": "candidate_eval.__eval_legacy_cdc_deleted__",
     "candidate_eval._peerdb_version": "candidate_eval.__eval_legacy_version__",
 }
@@ -588,42 +590,13 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         """
 
         project_scope = self._project_scope_predicate("eu")
-        return f"""
-            WITH
-            matching_end_user_ids AS (
-                SELECT DISTINCT eu.end_user_id
+        return self._expand_end_user_ids_through_remap(
+            f"""SELECT DISTINCT eu.end_user_id
                 FROM end_users AS eu FINAL
                 WHERE {project_scope}
                   AND ({inner})
-                  AND eu.is_deleted = 0
-            ),
-            matching_end_user_group_ids AS (
-                SELECT DISTINCT remap_match.new_id
-                FROM end_user_id_remap AS remap_match FINAL
-                WHERE remap_match.old_id IN (
-                    SELECT end_user_id FROM matching_end_user_ids
-                )
-                   OR remap_match.new_id IN (
-                    SELECT end_user_id FROM matching_end_user_ids
-                )
-            ),
-            expanded_matching_end_user_ids AS (
-                SELECT arrayJoin(arrayDistinct(arrayConcat(
-                    groupArray(remap.old_id),
-                    [remap.new_id]
-                ))) AS expanded_end_user_id
-                FROM end_user_id_remap AS remap FINAL
-                WHERE remap.new_id IN (
-                    SELECT new_id FROM matching_end_user_group_ids
-                )
-                GROUP BY remap.new_id
-            )
-            SELECT end_user_id AS expanded_end_user_id
-            FROM matching_end_user_ids
-            UNION DISTINCT
-            SELECT expanded_end_user_id
-            FROM expanded_matching_end_user_ids
-        """
+                  AND eu.is_deleted = 0"""
+        )
 
     @staticmethod
     def _rewrite_filter_fragment(sql: str) -> str:

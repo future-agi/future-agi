@@ -7,7 +7,7 @@ import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { captureAnnotationHttp, type Receipt } from '../../lib/annotation-http';
-
+import { waitForScoreOutbox } from '../../lib/score-outbox-barrier';
 // Pins: AnnotationSidebarContent/scores.js, annotation_queues.py, WidgetEditorView.
 // Endpoints: api/scores/scores.js, hooks/useDashboards.js and the scoped DRF views.
 // Native Count + Is only. Text aggregation-menu and presence-control gaps remain
@@ -609,6 +609,7 @@ test('DASH-E2E-012: a saved trace annotation widget retains exact text membershi
           call_execution_id: null, prototype_run_id: null, dataset_row_id: null, organization_id: actors[seed.project].organizationId,
           workspace_id: actors[seed.project].workspaceId, deleted: false }))));
         try {
+          await waitForScoreOutbox(probe, submissions.map(({ receipt }) => receipt.body!.result.scores[0].id), attach);
           await expect.poll(async () => {
             initialCHScores = await readCH();
             return { scores: initialCHScores.map(semanticScore), labels: await probe.pg(labelSql, [labelName, labelIds]),
@@ -624,7 +625,7 @@ test('DASH-E2E-012: a saved trace annotation widget retains exact text membershi
 
       await test.step('2 create and name a Table widget with 7D and Day', async () => {
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
-        let since = Date.now(); await page.getByRole('button', { name: 'Create Dashboard', exact: true }).click();
+        let since = Date.now(); await page.getByRole('button', { name: /^create dashboard$/i }).click();
         const created = await readNative<{ result: { id: string } }>(DASHBOARDS, undefined, since);
         dashboardId = created.body!.result.id; expect(dashboardId).toMatch(/^[0-9a-f-]{36}$/); await attach('dashboard-id', { dashboardId, dashboardName, widgetName });
         await page.getByRole('heading', { name: 'Untitled', exact: true }).click(); await page.getByPlaceholder('Untitled Dashboard').fill(dashboardName);
@@ -635,12 +636,22 @@ test('DASH-E2E-012: a saved trace annotation widget retains exact text membershi
         for (const method of new Set(receipts.filter(r => r.path === path && r.startedAt >= since && ['PATCH', 'PUT'].includes(r.method)).map(r => r.method))) {
           const named = await readNative<unknown>(path, undefined, since, method); expect(named.input).toMatchObject({ name: dashboardName });
         }
-        await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+        await page.getByRole('button', { name: /^add widget$/i }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click(); await page.getByPlaceholder('Untitled widget').fill(widgetName);
         await page.getByPlaceholder('Untitled widget').press('Enter');
-        await page.getByRole('combobox').filter({ hasText: 'Line' }).click(); await page.getByRole('option', { name: 'Table', exact: true }).click();
-        await page.getByText('7D', { exact: true }).click(); await page.getByRole('combobox').filter({ hasText: 'Day' }).click();
-        await page.getByRole('option', { name: 'Day', exact: true }).click();
+        await page.getByRole('combobox').filter({ hasText: 'Line' }).click();
+        // MUI Grow can move an option between pointerdown/up; keyboard activation
+        // avoids that coordinate race. Acknowledge both selection and menu closure.
+        const tableOption = page.getByRole('listbox').getByRole('option', { name: 'Table', exact: true });
+        await tableOption.focus(); await tableOption.press('Enter');
+        await uiExpect(page.getByRole('combobox').filter({ hasText: 'Table' })).toHaveText('Table');
+        await uiExpect(page.getByRole('listbox')).toHaveCount(0);
+        await page.getByText('7D', { exact: true }).click();
+        await page.getByRole('combobox').filter({ hasText: 'Day' }).click();
+        const dayOption = page.getByRole('listbox').getByRole('option', { name: 'Day', exact: true });
+        await dayOption.focus(); await dayOption.press('Enter');
+        await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toHaveText('Day');
+        await uiExpect(page.getByRole('listbox')).toHaveCount(0);
       }, { timeout: UI_READY });
 
       await test.step('3 discover text annotation and Traces with exact scope', async () => {

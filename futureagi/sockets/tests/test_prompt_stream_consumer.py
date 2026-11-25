@@ -30,11 +30,16 @@ from sockets.prompt_stream_consumer import (
     PromptStreamConsumer,
 )
 
+
 @pytest.fixture(autouse=True)
 def bypass_database_connection_management(monkeypatch):
     """The Workspace ORM calls are mocked; no real DB connection is needed."""
-    monkeypatch.setattr("sockets.workspace_access.database_sync_to_async", sync_to_async)
-    monkeypatch.setattr("sockets.prompt_stream_consumer.database_sync_to_async", sync_to_async)
+    monkeypatch.setattr(
+        "sockets.workspace_access.database_sync_to_async", sync_to_async
+    )
+    monkeypatch.setattr(
+        "sockets.prompt_stream_consumer.database_sync_to_async", sync_to_async
+    )
 
 
 def _make_consumer(workspace_id=None, user=None):

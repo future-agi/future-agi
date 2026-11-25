@@ -273,7 +273,7 @@ func TestOrgProviderBuildFailureLoggedOncePerRequest(t *testing.T) {
 		orgID, orgCfg := srv.handlers.resolveOrgConfig(rc)
 		var err error
 		logged := orgProviderBuildFailures(func() {
-			_, err = srv.handlers.resolveProviderWithOrgFallback(context.Background(), rc, orgID, orgCfg, "mock-custom")
+			_, _, err = srv.handlers.resolveProviderWithOrgFallback(context.Background(), rc, orgID, orgCfg, "mock-custom")
 		})
 
 		var apiErr *models.APIError

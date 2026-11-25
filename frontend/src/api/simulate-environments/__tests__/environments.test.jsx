@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import PropTypes from "prop-types";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/api/harness/harness", () => ({
   createHarnessJob: vi.fn(),
+  preflightHarnessJob: vi.fn(),
   harnessIdempotencyKey: () => "idem-test",
   uploadHarnessSecretFile: vi.fn(),
 }));
@@ -14,6 +15,7 @@ vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   renameHarnessEnvironment: vi.fn(),
   getHarnessEnvironment: vi.fn(),
   deleteAppliedEvaluation: vi.fn(),
+  updateAppliedEvaluation: vi.fn(),
   addRunEvaluation: vi.fn(),
 }));
 vi.mock("src/utils/axios", () => ({
@@ -26,9 +28,12 @@ vi.mock("src/utils/axios", () => ({
   },
 }));
 
-const { createHarnessJob, uploadHarnessSecretFile } = await import(
-  "src/api/harness/harness"
+const { NOT_PROVIDED } = await import(
+  "src/sections/simulate/environments/myEnvironments.constants"
 );
+const { createHarnessJob, preflightHarnessJob, uploadHarnessSecretFile } =
+  await import("src/api/harness/harness");
+const { useRuntimePreflight } = await import("../useRuntimePreflight");
 const {
   listHarnessEnvironments,
   deleteHarnessEnvironment,
@@ -144,6 +149,61 @@ describe("useMyEnvironments", () => {
     });
   });
 
+  it("reads status counts, or marks them missing", async () => {
+    const counts = { building: 1, running: 0, completed: 30, failed: 6 };
+    listHarnessEnvironments.mockResolvedValue({
+      count: 0,
+      results: [],
+      status_counts: counts,
+    });
+    const first = makeWrapper();
+    const withCounts = renderHook(() => useMyEnvironments(), {
+      wrapper: first.Wrapper,
+    });
+    await waitFor(() => expect(withCounts.result.current.isSuccess).toBe(true));
+    expect(withCounts.result.current.data.statusCounts).toEqual(counts);
+
+    listHarnessEnvironments.mockResolvedValue({ count: 0, results: [] });
+    const second = makeWrapper();
+    const without = renderHook(() => useMyEnvironments(), {
+      wrapper: second.Wrapper,
+    });
+    await waitFor(() => expect(without.result.current.isSuccess).toBe(true));
+    expect(without.result.current.data.statusCounts).toBe(NOT_PROVIDED);
+  });
+
+  it("keeps the filters on the polled request", async () => {
+    listHarnessEnvironments.mockResolvedValue({
+      count: 1,
+      results: [
+        {
+          id: "env-b",
+          name: "b",
+          agent_type: "chat",
+          status: "building",
+          stage: "building",
+        },
+      ],
+    });
+    const { Wrapper } = makeWrapper();
+    const filters = { search: "", status: "", agentType: "", agentId: "u1" };
+    renderHook(() => useMyEnvironments({ page: 0, pageSize: 25, filters }), {
+      wrapper: Wrapper,
+    });
+    await waitFor(
+      () =>
+        expect(
+          listHarnessEnvironments.mock.calls.length,
+        ).toBeGreaterThanOrEqual(2),
+      {
+        timeout: 5000,
+      },
+    );
+    for (const [args] of listHarnessEnvironments.mock.calls) {
+      expect(args).toEqual({ page: 1, limit: 25, agentDefinitionId: "u1" });
+    }
+  }, 10000);
+
   it("requests the 1-indexed page for a later table page", async () => {
     const { Wrapper } = makeWrapper();
     renderHook(() => useMyEnvironments({ page: 2, pageSize: 10 }), {
@@ -164,7 +224,11 @@ describe("useMyEnvironments", () => {
       wrapper: Wrapper,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual({ rows: [], total: 0 });
+    expect(result.current.data).toEqual({
+      rows: [],
+      total: 0,
+      statusCounts: NOT_PROVIDED,
+    });
   });
 
   describe("polling", () => {
@@ -261,8 +325,7 @@ describe("useBuildEnvironment", () => {
       wrapper: Wrapper,
     });
     const out = await result.current.mutateAsync({
-      kind: "repo",
-      value: "acme/agent",
+      draft: { kind: "repo", value: "acme/agent" },
     });
 
     expect(createHarnessJob).toHaveBeenCalledTimes(1);
@@ -273,12 +336,28 @@ describe("useBuildEnvironment", () => {
     });
     expect(body.agent.connector).toBe("auto");
     expect(idem).toBe("idem-test");
+    expect("credential_values" in body).toBe(false);
     // The real job id is returned, never the raw draft.
     expect(out.envId).toBe("job-real");
     expect(out.source).toBeUndefined();
   });
 
-  it("carries the exchanged hosted credential into the create body's secret_refs", async () => {
+  it("sends the checked values write-only as credential_values", async () => {
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useBuildEnvironment(), {
+      wrapper: Wrapper,
+    });
+    await result.current.mutateAsync({
+      draft: { kind: "platform", provider: "vapi", agentId: "asst_1" },
+      credentialValues: { VAPI_API_KEY: "sk-x" },
+    });
+
+    const [body] = createHarnessJob.mock.calls[0];
+    expect(body.credential_values).toEqual({ VAPI_API_KEY: "sk-x" });
+    expect(body.agent.secret_refs).toEqual({});
+  });
+
+  it("carries a draft's stored refs into the create body's secret_refs", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useBuildEnvironment(), {
       wrapper: Wrapper,
@@ -292,10 +371,13 @@ describe("useBuildEnvironment", () => {
       },
     };
     await result.current.mutateAsync({
-      kind: "platform",
-      provider: "vapi",
-      agentId: "asst_1",
-      secret_refs: secretRefs,
+      draft: {
+        kind: "platform",
+        provider: "vapi",
+        agentId: "asst_1",
+        secret_refs: secretRefs,
+      },
+      credentialValues: {},
     });
 
     const [body] = createHarnessJob.mock.calls[0];
@@ -311,12 +393,31 @@ describe("useBuildEnvironment", () => {
     });
     // A platform draft with no recognised provider cannot be built for real.
     const out = await result.current.mutateAsync({
-      kind: "platform",
-      apiKey: "sk-secret",
+      draft: { kind: "platform", apiKey: "sk-secret" },
     });
     expect(createHarnessJob).not.toHaveBeenCalled();
     expect(out.envId).toMatch(/^env-/);
     expect(out.source).toBeUndefined();
+  });
+});
+
+describe("credential values in the mutation cache", () => {
+  it.each([
+    ["build", () => useBuildEnvironment(), createHarnessJob],
+    ["preflight", () => useRuntimePreflight(), preflightHarnessJob],
+  ])("drops the %s variables once unmounted", async (_, hook, request) => {
+    request.mockResolvedValue({ job: { job_id: "job-real" } });
+    const { queryClient, Wrapper } = makeWrapper();
+    const { result, unmount } = renderHook(hook, { wrapper: Wrapper });
+    await result.current.mutateAsync({
+      draft: { kind: "platform", provider: "vapi", agentId: "asst_1" },
+      credentialValues: { VAPI_API_KEY: "sk-x" },
+    });
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
+    unmount();
+    await waitFor(() =>
+      expect(queryClient.getMutationCache().getAll()).toHaveLength(0),
+    );
   });
 });
 
@@ -361,6 +462,29 @@ describe("useUploadSecretFile", () => {
     expect(out.name).toBe("creds.json");
     expect(out.size).toBe(42);
     expect(out).not.toHaveProperty("contents");
+  });
+
+  it("drops the file from the cache on reset when asked to keep nothing", async () => {
+    uploadHarnessSecretFile.mockResolvedValue({
+      secret_ref: { key: "ref-9" },
+      environment_name: "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+      size: 42,
+    });
+    const { Wrapper, queryClient } = makeWrapper();
+    const { result } = renderHook(() => useUploadSecretFile({ gcTime: 0 }), {
+      wrapper: Wrapper,
+    });
+    const file = new File(["{}"], "creds.json", { type: "application/json" });
+    await result.current.mutateAsync({ file });
+    const [mutation] = queryClient.getMutationCache().getAll();
+    expect(mutation.state.variables.file).toBe(file);
+    expect(mutation.options.meta).toEqual({ errorHandled: true });
+
+    act(() => result.current.reset());
+
+    await waitFor(() =>
+      expect(queryClient.getMutationCache().getAll()).toHaveLength(0),
+    );
   });
 
   it("surfaces a rejected upload rather than swallowing it", async () => {

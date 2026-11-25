@@ -26,10 +26,13 @@ from simulate.serializers.response.scenarios import ScenarioResponseSerializer
 from simulate.serializers.simulator_agent import SimulatorAgentSerializer
 from simulate.services.eval_config_edit import has_own_mapping
 from simulate.services.harness_evals import (
+    effective_simulation_mapping,
     harness_run_test_ids,
     is_harness_run_test,
     regrade_mapping,
 )
+from tfc.permissions.utils import cached_is_read_only_user
+from tracer.services.observability_switch import snapshot_as_shown
 
 logger = structlog.get_logger(__name__)
 
@@ -80,6 +83,14 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
             "regradable",
             "editable",
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if isinstance(data["mapping"], dict):
+            data["mapping"] = effective_simulation_mapping(
+                instance.eval_template, data["mapping"]
+            )
+        return data
 
     def get_eval_group(self, obj):
         """
@@ -318,11 +329,14 @@ class RunTestSerializer(serializers.ModelSerializer):
                     agent_version_data = {
                         "id": instance.agent_version.id,
                         "name": instance.agent_version.version_name,
-                        "configuration_snapshot": snapshot,
+                        "configuration_snapshot": snapshot_as_shown(
+                            snapshot, instance.agent_definition
+                        ),
                     }
                     try:
                         creds = instance.agent_version.credentials
-                        agent_version_data["api_key"] = creds.get_masked_api_key()
+                        if not cached_is_read_only_user(self.context):
+                            agent_version_data["api_key"] = creds.get_masked_api_key()
                     except Exception:
                         pass
                     data["agent_version"] = agent_version_data
@@ -352,11 +366,16 @@ class RunTestSerializer(serializers.ModelSerializer):
                         agent_version_data = {
                             "id": latest_version.id,
                             "name": latest_version.version_name,
-                            "configuration_snapshot": snapshot,
+                            "configuration_snapshot": snapshot_as_shown(
+                                snapshot, instance.agent_definition
+                            ),
                         }
                         try:
                             creds = latest_version.credentials
-                            agent_version_data["api_key"] = creds.get_masked_api_key()
+                            if not cached_is_read_only_user(self.context):
+                                agent_version_data["api_key"] = (
+                                    creds.get_masked_api_key()
+                                )
                         except Exception:
                             pass
                         data["agent_version"] = agent_version_data

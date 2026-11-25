@@ -13,12 +13,27 @@ from django.db import migrations, models
 # constraint and index names are the ones Django generates for these fields.
 ORG_FK = "accounts_auth_token_scoped_organization__888d7361_fk_accounts_"
 IDP_FK = "accounts_auth_token_origin_idp_id_100204e0_fk_saml_meta_id"
+INDEXES = [
+    ("accounts_auth_token_origin_idp_id_100204e0", '"origin_idp_id"'),
+    (
+        "accounts_auth_token_origin_idp_id_100204e0_like",
+        '"origin_idp_id" varchar_pattern_ops',
+    ),
+    (
+        "accounts_auth_token_scoped_organization_id_888d7361",
+        '"scoped_organization_id"',
+    ),
+]
 
 
 def _add_foreign_key(name, column, target):
     return f"""
         DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{name}') THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = '{name}'
+                  AND conrelid = '"accounts_auth_token"'::regclass
+            ) THEN
                 ALTER TABLE "accounts_auth_token" ADD CONSTRAINT "{name}"
                     FOREIGN KEY ("{column}") REFERENCES {target}
                     DEFERRABLE INITIALLY DEFERRED NOT VALID;
@@ -41,21 +56,78 @@ FORWARD = [
     "RESET lock_timeout",
     f'ALTER TABLE "accounts_auth_token" VALIDATE CONSTRAINT "{IDP_FK}"',
     f'ALTER TABLE "accounts_auth_token" VALIDATE CONSTRAINT "{ORG_FK}"',
-    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "accounts_auth_token_origin_idp_id_100204e0"'
-    ' ON "accounts_auth_token" ("origin_idp_id")',
-    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "accounts_auth_token_origin_idp_id_100204e0_like"'
-    ' ON "accounts_auth_token" ("origin_idp_id" varchar_pattern_ops)',
-    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "accounts_auth_token_scoped_organization_id_888d7361"'
-    ' ON "accounts_auth_token" ("scoped_organization_id")',
 ]
 
 BACKWARD = [
+    "SET lock_timeout = '5s'",
+    # Rollback destroys provenance. Commit revocation FIRST, including malformed
+    # or soft-deleted SAML rows, so an interrupted DROP cannot upgrade a token.
+    # The guard also permits retry after DROP committed but before the migration
+    # recorder was updated. Ordinary tokens must keep their existing status.
+    """
+        DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_attribute
+                WHERE attrelid = '"accounts_auth_token"'::regclass
+                  AND attname = 'auth_origin' AND NOT attisdropped
+            ) THEN
+                UPDATE "accounts_auth_token" SET "is_active" = FALSE
+                WHERE "auth_origin" = 'saml' AND "is_active" = TRUE;
+            END IF;
+        END $$;
+    """,
     'ALTER TABLE "accounts_auth_token"'
     ' DROP COLUMN IF EXISTS "scoped_organization_id" CASCADE,'
     ' DROP COLUMN IF EXISTS "origin_idp_generation" CASCADE,'
     ' DROP COLUMN IF EXISTS "origin_idp_id" CASCADE,'
     ' DROP COLUMN IF EXISTS "auth_origin" CASCADE',
 ]
+
+
+def forwards(apps, schema_editor):
+    try:
+        for statement in FORWARD:
+            schema_editor.execute(statement)
+        for name, columns in INDEXES:
+            with schema_editor.connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT indisvalid FROM pg_index
+                    WHERE indexrelid = to_regclass(%s)
+                      AND indrelid = '"accounts_auth_token"'::regclass
+                    """,
+                    [name],
+                )
+                existing = cursor.fetchone()
+            if existing and existing[0]:
+                continue
+            if existing:
+                # Failed concurrent builds leave INVALID indexes; IF NOT EXISTS
+                # would silently skip them forever. Only remove our invalid
+                # index, not valid indexes completed by an earlier attempt.
+                schema_editor.execute(f'DROP INDEX CONCURRENTLY IF EXISTS "{name}"')
+            # No IF NOT EXISTS here: a conflicting object not belonging to this
+            # table must fail rather than be mistaken for the required index.
+            schema_editor.execute(
+                f'CREATE INDEX CONCURRENTLY "{name}"'
+                f' ON "accounts_auth_token" ({columns})'
+            )
+    finally:
+        # SET is session-scoped in this non-atomic migration, including on a
+        # failed ALTER. Do not leak the timeout into later work on this session.
+        schema_editor.execute("RESET lock_timeout")
+
+
+def backwards(apps, schema_editor):
+    # Quiesce token issuance and complete this revocation BEFORE old code serves
+    # traffic. Old workers/positive auth caches must also be drained/invalidated:
+    # changing DB rows does not evict cached authorization. The old release need
+    # not contain any SAML-specific revocation command.
+    try:
+        for statement in BACKWARD:
+            schema_editor.execute(statement)
+    finally:
+        schema_editor.execute("RESET lock_timeout")
 
 
 class Migration(migrations.Migration):
@@ -71,7 +143,9 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.SeparateDatabaseAndState(
-            database_operations=[migrations.RunSQL(FORWARD, BACKWARD)],
+            database_operations=[
+                migrations.RunPython(forwards, backwards, atomic=False)
+            ],
             state_operations=[
                 migrations.AddField(
                     model_name="authtoken",

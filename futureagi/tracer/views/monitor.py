@@ -14,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import (
     BaseModelViewSetMixin,
@@ -29,12 +29,17 @@ from tracer.models.monitor import (
     UserAlertMonitorLog,
 )
 from tracer.models.project import Project
+from tracer.permissions.metrics import MonitorWritePermission
 from tracer.serializers.monitor import (
     UserAlertMonitorBulkMuteRequestSerializer,
+    UserAlertMonitorCreateResponseSerializer,
     UserAlertMonitorDetailSerializer,
     UserAlertMonitorDuplicateResponseSerializer,
     UserAlertMonitorDuplicateSerializer,
+    UserAlertMonitorEntitlementResponseSerializer,
     UserAlertMonitorGraphResponseSerializer,
+    UserAlertMonitorListQuerySerializer,
+    UserAlertMonitorListResponseSerializer,
     UserAlertMonitorLogResolveRequestSerializer,
     UserAlertMonitorLogResolveResponseSerializer,
     UserAlertMonitorLogSerializer,
@@ -72,7 +77,7 @@ def _parse_page_params(query_params, default_size: int = 30) -> tuple[int, int]:
 
 class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, MonitorWritePermission]
     serializer_class = UserAlertMonitorSerializer
 
     def _current_organization(self):
@@ -146,7 +151,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return query_Set.filter(id=user_alert_id)
 
         search_text = self.request.query_params.get("search_text")
-        page_number, page_size = _parse_page_params(self.request.query_params)
+        page_params = getattr(
+            self.request, "validated_query_data", self.request.query_params
+        )
+        page_number, page_size = _parse_page_params(page_params)
         project_ids = self.request.query_params.getlist("project_id")
         status_filters = self.request.query_params.getlist("status")
         metric_type_filters = self.request.query_params.getlist("metric_type")
@@ -459,14 +467,17 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 f"Error occurred while updating User Alerts: {str(e)}"
             )
 
-    @action(detail=False, methods=["get"])
+    @validated_request(
+        query_serializer=UserAlertMonitorListQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+        responses={
+            200: UserAlertMonitorListResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
     def list_monitors(self, request, *args, **kwargs):
-        try:
-            _page_number, page_size = _parse_page_params(self.request.query_params)
-        except ValueError:
-            return self._gm.bad_request(
-                {"pagination": "page_number and page_size must be integers."}
-            )
+        page_size = request.validated_query_data["page_size"]
         try:
             queryset, total_records = self.get_queryset()
             queryset = queryset.prefetch_related("useralertmonitorlog_set")
@@ -522,9 +533,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         except Exception as e:
             # Server-side failure: log the detail, return a generic 5xx (a 400
             # with raw str(e) both misclassifies it and leaks internals).
-            logger.error(
-                "monitor_list_failed", error=str(e), exc_info=True
-            )
+            logger.error("monitor_list_failed", error=str(e), exc_info=True)
             return self._gm.internal_server_error_response(
                 "Failed to fetch monitors list"
             )
@@ -532,6 +541,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @validated_request(
         request_serializer=UserAlertMonitorSerializer,
         strict_request_validation=False,
+        responses={
+            200: UserAlertMonitorCreateResponseSerializer,
+            402: UserAlertMonitorEntitlementResponseSerializer,
+        },
     )
     def create(self, request, *args, **kwargs):
         from tfc.ee_gating import EEResource, check_ee_can_create
@@ -663,6 +676,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             notification_emails=monitor.notification_emails,
             slack_webhook_url=monitor.slack_webhook_url,
             slack_notes=monitor.slack_notes,
+            webhook_url=monitor.webhook_url,
             is_mute=False,
             filters=monitor.filters,
             logs=[
@@ -707,7 +721,11 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "output_type": "system_metric",
                 }
                 for value, label in MonitorMetricTypeChoices.choices
-                if value != MonitorMetricTypeChoices.EVALUATION_METRICS.value
+                if value
+                not in {
+                    MonitorMetricTypeChoices.EVALUATION_METRICS.value,
+                    MonitorMetricTypeChoices.DERIVED_METRIC.value,
+                }
             ]
 
             eval_options = [
@@ -890,7 +908,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
 class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, MonitorWritePermission]
     serializer_class = UserAlertMonitorLogSerializer
 
     def _current_organization(self):

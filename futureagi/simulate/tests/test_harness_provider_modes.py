@@ -1,10 +1,14 @@
+from types import SimpleNamespace
+
 import pytest
 
 from simulate.serializers.harness_job import (
     HarnessAgentSerializer,
     HarnessJobCreateSerializer,
+    HarnessPreflightSerializer,
 )
 from simulate.services.harness_provider import _validate_phone_connectivity
+from simulate.services.hosted_harness import _target_agent_prompt
 from simulate.services.phone_telephony import platform_phone_telephony
 
 
@@ -285,3 +289,230 @@ def test_provider_import_rejects_route_traversal():
     )
     assert not serializer.is_valid()
     assert "config" in serializer.errors
+
+
+LIVEKIT_TARGET_REFS = {
+    alias: {
+        "manager": "platform-vault",
+        "key": f"ref-{alias}",
+        "purpose": "target_provider",
+    }
+    for alias in ("LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+}
+
+
+def _livekit_job(config=None, mode="connect_only", refs=None):
+    return HarnessJobCreateSerializer(
+        data={
+            "schema_version": "futureagi.harness-job.v1",
+            "agent": {
+                "connector": "livekit",
+                "mode": mode,
+                "config": {
+                    "agent_name": "returns-agent",
+                    "livekit_url": "wss://demo.livekit.cloud",
+                    "target_system_prompt": "You handle returns.",
+                    **(config or {}),
+                },
+                "secret_refs": LIVEKIT_TARGET_REFS if refs is None else refs,
+            },
+            "scenario_count": 1,
+            "artifacts": {"level": "full"},
+        }
+    )
+
+
+def test_livekit_connect_only_accepts_agent_name_and_prompt_without_source():
+    serializer = _livekit_job()
+
+    assert serializer.is_valid(), serializer.errors
+    agent = serializer.validated_data["agent"]
+    assert agent["connector"] == "livekit"
+    assert agent["mode"] == "connect_only"
+    assert serializer.validated_data["source"]["kind"] == "provider"
+
+
+@pytest.mark.parametrize(
+    "config,mode,message",
+    [
+        ({"agent_name": " "}, "connect_only", "agent_name is required"),
+        (
+            {"target_system_prompt": ""},
+            "connect_only",
+            "target_system_prompt is required",
+        ),
+        (
+            {"target_system_prompt": "x" * 65537},
+            "connect_only",
+            "target_system_prompt is required",
+        ),
+        ({}, "provider_import", "LiveKit targets support connect_only only"),
+        ({}, "environment_backed", "LiveKit targets support connect_only only"),
+    ],
+)
+def test_livekit_hosted_target_rejects_incomplete_or_unsupported_input(
+    config, mode, message
+):
+    serializer = _livekit_job(config=config, mode=mode)
+
+    assert not serializer.is_valid()
+    assert message in str(serializer.errors)
+
+
+def test_livekit_hosted_target_requires_the_full_credential_family():
+    serializer = _livekit_job(
+        refs={"LIVEKIT_API_KEY": LIVEKIT_TARGET_REFS["LIVEKIT_API_KEY"]}
+    )
+
+    assert not serializer.is_valid()
+    assert "LIVEKIT_API_SECRET" in str(serializer.errors)
+
+
+def test_livekit_without_a_mode_still_needs_source_code():
+    serializer = _livekit_job(mode=None)
+
+    assert not serializer.is_valid()
+    assert "hosted agent ID or phone number" in str(serializer.errors)
+
+
+def _livekit_phone_job(config=None, mode="connect_only", refs=None):
+    return HarnessJobCreateSerializer(
+        data={
+            "schema_version": "futureagi.harness-job.v1",
+            "agent": {
+                "connector": "livekit",
+                "mode": mode,
+                "config": {
+                    "phone_number": "+14155551234",
+                    "target_system_prompt": "You handle returns.",
+                    **(config or {}),
+                },
+                "secret_refs": refs or {},
+            },
+            "scenario_count": 1,
+            "artifacts": {"level": "full"},
+        }
+    )
+
+
+def test_livekit_agent_with_a_phone_number_runs_as_a_phone_target():
+    serializer = _livekit_phone_job(config={"target_speaks_first": True})
+
+    assert serializer.is_valid(), serializer.errors
+    agent = serializer.validated_data["agent"]
+    assert agent["connector"] == "phone"
+    assert agent["mode"] == "connect_only"
+    assert agent["config"] == {
+        "phone_number": "+14155551234",
+        "target_system_prompt": "You handle returns.",
+        "target_speaks_first": True,
+    }
+    assert agent["secret_refs"] == {}
+    assert serializer.validated_data["source"]["kind"] == "provider"
+
+
+@pytest.mark.parametrize(
+    "config,mode,refs,message",
+    [
+        (
+            {"agent_name": "returns-agent"},
+            "connect_only",
+            None,
+            "needs only phone_number and target_system_prompt",
+        ),
+        (
+            {},
+            "connect_only",
+            LIVEKIT_TARGET_REFS,
+            "needs only phone_number and target_system_prompt",
+        ),
+        (
+            {"livekit_url": "wss://demo.livekit.cloud"},
+            "connect_only",
+            None,
+            "platform-owned",
+        ),
+        ({"phone_number": "5551234"}, "connect_only", None, "E.164"),
+        ({"target_system_prompt": ""}, "connect_only", None, "is required"),
+        ({}, "provider_import", None, "LiveKit targets support connect_only only"),
+        ({}, None, None, "LiveKit targets support connect_only only"),
+    ],
+)
+def test_livekit_agent_with_a_phone_number_rejects_webrtc_inputs(
+    config, mode, refs, message
+):
+    serializer = _livekit_phone_job(config=config, mode=mode, refs=refs)
+
+    assert not serializer.is_valid()
+    assert message in str(serializer.errors)
+
+
+def _authored_job(connector, config):
+    return SimpleNamespace(
+        payload={"agent": {"connector": connector, "config": config}},
+        stage_outputs=[
+            {"kind": "contract", "data": {"system_prompt_excerpt": "Excerpt."}}
+        ],
+    )
+
+
+@pytest.mark.parametrize("connector", ["phone", "livekit"])
+def test_pasted_prompt_wins_over_the_authored_excerpt(connector):
+    job = _authored_job(connector, {"target_system_prompt": " Full pasted prompt. "})
+
+    assert _target_agent_prompt(job, {"agent_prompt": "Guest excerpt."}) == (
+        "Full pasted prompt."
+    )
+
+
+def test_livekit_built_from_source_keeps_the_authored_prompt():
+    job = _authored_job("livekit", {})
+
+    assert _target_agent_prompt(job, {}) == "Excerpt."
+
+
+ROUTING_CREDENTIALS = {
+    "LIVEKIT_URL": "wss://demo.livekit.cloud",
+    "LIVEKIT_API_KEY": "APIdemo",
+    "LIVEKIT_API_SECRET": "s" * 32,
+    "LIVEKIT_AGENT_NAME": "returns-agent",
+}
+
+
+def _livekit_phone_request(serializer_class):
+    return serializer_class(
+        data={
+            "schema_version": "futureagi.harness-job.v1",
+            "agent": {
+                "connector": "livekit",
+                "mode": "connect_only",
+                "config": {
+                    "phone_number": "+14155551234",
+                    "target_system_prompt": "You handle returns.",
+                },
+            },
+            "credential_values": ROUTING_CREDENTIALS,
+            "scenario_count": 1,
+            "artifacts": {"level": "full"},
+        }
+    )
+
+
+def test_preflight_takes_livekit_routing_values_for_a_phone_target_without_keeping_them():
+    serializer = _livekit_phone_request(HarnessPreflightSerializer)
+
+    assert serializer.is_valid(), serializer.errors
+    agent = serializer.validated_data["agent"]
+    assert agent["connector"] == "phone"
+    assert agent["secret_refs"] == {}
+    assert serializer.validated_data["credential_values"] == ROUTING_CREDENTIALS
+
+
+def test_build_refuses_livekit_routing_values_for_a_phone_target():
+    serializer = _livekit_phone_request(HarnessJobCreateSerializer)
+
+    assert not serializer.is_valid()
+    assert list(serializer.errors["agent"]) == ["secret_refs"]
+    assert "needs only phone_number and target_system_prompt" in str(
+        serializer.errors["agent"]["secret_refs"]
+    )

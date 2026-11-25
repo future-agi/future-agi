@@ -21,22 +21,28 @@ import {
   TableRow,
   Skeleton,
   Tooltip,
-  Card,
-  CardContent,
 } from "@mui/material";
+import Section from "src/components/section";
+import StatusBadge from "src/components/status-badge";
 import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import useRequestDetail from "./hooks/useRequestDetail";
 import FeedbackWidget from "../guardrails/FeedbackWidget";
-import { formatCost } from "../utils/formatters";
+import {
+  formatCost,
+  isUnpriced,
+  UNPRICED_LABEL,
+  UNPRICED_TOOLTIP,
+} from "../utils/formatters";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const DRAWER_WIDTH = { xs: "100vw", sm: "60vw" };
-const DRAWER_MIN_WIDTH = 400;
-const DRAWER_MAX_WIDTH = 800;
+const DRAWER_MIN_WIDTH = 480;
+const DRAWER_MAX_WIDTH = 960;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,14 +109,14 @@ function JsonViewer({ data, label }) {
             onClick={handleCopy}
             sx={{ position: "absolute", top: 8, right: 8 }}
           >
-            <Iconify icon="mdi:content-copy" width={18} />
+            <Iconify icon="solar:copy-linear" width={20} />
           </IconButton>
         </Tooltip>
         <pre
           style={{
             margin: 0,
             fontFamily: "monospace",
-            fontSize: "0.8rem",
+            fontSize: "12px",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
           }}
@@ -136,7 +142,7 @@ function HeadersAccordion({ title, headers }) {
     return (
       <Accordion>
         <AccordionSummary
-          expandIcon={<Iconify icon="mdi:chevron-down" width={20} />}
+          expandIcon={<Iconify icon="solar:alt-arrow-down-linear" width={20} />}
         >
           <Typography variant="subtitle2">{title}</Typography>
         </AccordionSummary>
@@ -152,7 +158,7 @@ function HeadersAccordion({ title, headers }) {
   return (
     <Accordion>
       <AccordionSummary
-        expandIcon={<Iconify icon="mdi:chevron-down" width={20} />}
+        expandIcon={<Iconify icon="solar:alt-arrow-down-linear" width={20} />}
       >
         <Typography variant="subtitle2">{title}</Typography>
       </AccordionSummary>
@@ -167,13 +173,13 @@ function HeadersAccordion({ title, headers }) {
           <TableBody>
             {Object.entries(headers).map(([key, value]) => (
               <TableRow key={key}>
-                <TableCell sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+                <TableCell sx={{ fontFamily: "monospace", fontSize: "12px" }}>
                   {key}
                 </TableCell>
                 <TableCell
                   sx={{
                     fontFamily: "monospace",
-                    fontSize: "0.8rem",
+                    fontSize: "12px",
                     wordBreak: "break-all",
                   }}
                 >
@@ -202,31 +208,31 @@ function OverviewTab({ log }) {
       key: "isStream",
       label: "Streaming",
       value: log.is_stream,
-      icon: <Iconify icon="mdi:arrow-right-bold-outline" width={18} />,
+      icon: <Iconify icon="solar:arrow-right-linear" width={20} />,
     },
     {
       key: "cacheHit",
       label: "Cache Hit",
       value: log.cache_hit,
-      icon: <Iconify icon="mdi:cached" width={18} />,
+      icon: <Iconify icon="solar:refresh-linear" width={20} />,
     },
     {
       key: "fallbackUsed",
       label: "Fallback Used",
       value: log.fallback_used,
-      icon: <Iconify icon="mdi:swap-horizontal" width={18} />,
+      icon: <Iconify icon="solar:transfer-horizontal-linear" width={20} />,
     },
     {
       key: "guardrailTriggered",
       label: "Guardrail Triggered",
       value: log.guardrail_triggered,
-      icon: <Iconify icon="mdi:shield-outline" width={18} />,
+      icon: <Iconify icon="solar:shield-linear" width={20} />,
     },
     {
       key: "isError",
       label: "Error",
       value: log.is_error,
-      icon: <Iconify icon="mdi:alert-circle-outline" width={18} />,
+      icon: <Iconify icon="solar:danger-circle-linear" width={20} />,
     },
   ];
 
@@ -395,20 +401,34 @@ function GuardrailsTab({ log }) {
     );
   }
 
+  const monitorOnly = checks.every((entry) => entry.mode === "monitor");
+  const outcomeLabels = {
+    blocked: "Blocked",
+    redacted: "Redacted",
+    warned: "Warned",
+    logged: "Logged",
+    would_block: "Would block",
+    would_redact: "Would redact",
+    would_warn: "Would warn",
+  };
+
   return (
     <Stack spacing={2} p={2}>
+      {monitorOnly && (
+        <Alert severity="info">Monitor only, request not changed</Alert>
+      )}
       {/* Overall action banner */}
-      {overallAction && (
+      {!monitorOnly && overallAction && (
         <Alert
           severity={overallAction === "block" ? "error" : "warning"}
           icon={
             <Iconify
               icon={
                 overallAction === "block"
-                  ? "mdi:shield-off-outline"
-                  : "mdi:shield-alert-outline"
+                  ? "solar:shield-cross-linear"
+                  : "solar:shield-warning-linear"
               }
-              width={22}
+              width={20}
             />
           }
         >
@@ -420,43 +440,65 @@ function GuardrailsTab({ log }) {
 
       {/* Individual check cards */}
       {checks.map((gr, idx) => (
-        <Card key={idx} variant="outlined">
-          <CardContent>
-            <Stack spacing={1}>
-              <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                justifyContent="space-between"
-              >
-                <Typography variant="subtitle2">{gr.name}</Typography>
-                <Chip
-                  label={gr.action}
-                  size="small"
-                  color={gr.action === "block" ? "error" : "warning"}
-                  variant="outlined"
-                />
-              </Stack>
-              {(gr.score != null || gr.confidence != null) && (
-                <Typography variant="body2" color="text.secondary">
-                  Score: {gr.score ?? gr.confidence}
-                  {gr.threshold != null ? ` / Threshold: ${gr.threshold}` : ""}
-                </Typography>
-              )}
-              {gr.latency_ms != null && (
-                <Typography variant="body2" color="text.secondary">
-                  Latency: {gr.latency_ms}ms
-                </Typography>
-              )}
-              {(gr.message || gr.details) && (
-                <Typography variant="body2" color="text.secondary">
-                  {gr.message || gr.details}
-                </Typography>
-              )}
-              <FeedbackWidget requestLogId={log.id} checkName={gr.name} />
+        <Section variant="panel" key={idx}>
+          <Stack spacing={1}>
+            <Stack
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              justifyContent="space-between"
+            >
+              <Typography variant="subtitle2">{gr.name}</Typography>
+              <StatusBadge
+                status={gr.outcome || gr.action}
+                label={outcomeLabels[gr.outcome] || gr.action}
+                role={
+                  gr.outcome?.startsWith("would_")
+                    ? "info"
+                    : gr.action === "block"
+                      ? "danger"
+                      : "neutral"
+                }
+              />
             </Stack>
-          </CardContent>
-        </Card>
+            {(gr.policy_name || gr.policy_scope || gr.mode) && (
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography variant="s1" color="text.secondary">
+                  {gr.policy_name ||
+                    (gr.policy_scope === "org"
+                      ? "Organization guardrails"
+                      : "Key policy")}
+                  {gr.policy_scope &&
+                    ` · ${gr.policy_scope === "org" ? "Org" : "Key"}`}
+                </Typography>
+                {gr.mode && (
+                  <StatusBadge
+                    status={gr.mode}
+                    label={gr.mode === "monitor" ? "Monitor" : "Enforce"}
+                    role={gr.mode === "monitor" ? "info" : "warning"}
+                  />
+                )}
+              </Stack>
+            )}
+            {(gr.score != null || gr.confidence != null) && (
+              <Typography variant="body2" color="text.secondary">
+                Score: {gr.score ?? gr.confidence}
+                {gr.threshold != null ? ` / Threshold: ${gr.threshold}` : ""}
+              </Typography>
+            )}
+            {gr.latency_ms != null && (
+              <Typography variant="body2" color="text.secondary">
+                Latency: {gr.latency_ms}ms
+              </Typography>
+            )}
+            {(gr.message || gr.details) && (
+              <Typography variant="body2" color="text.secondary">
+                {gr.message || gr.details}
+              </Typography>
+            )}
+            <FeedbackWidget requestLogId={log.id} checkName={gr.name} />
+          </Stack>
+        </Section>
       ))}
     </Stack>
   );
@@ -489,6 +531,8 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
     tabs.push({ label: "Guardrails", value: 4 });
   }
 
+  const covered = useDrawerCovered(open);
+
   // =========================================================================
   // Render
   // =========================================================================
@@ -499,6 +543,7 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
       open={open}
       onClose={onClose}
       sx={{
+        ...coveredDrawerSx(covered),
         "& .MuiDrawer-paper": {
           width: DRAWER_WIDTH,
           minWidth: DRAWER_MIN_WIDTH,
@@ -548,7 +593,7 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
         </Stack>
 
         <IconButton onClick={onClose} edge="end">
-          <Iconify icon="mdi:close" width={20} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </Stack>
 
@@ -598,9 +643,22 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
             <Typography variant="caption" color="text.secondary">
               Cost
             </Typography>
-            <Typography variant="body2" fontWeight={600}>
-              {formatCost(log.cost)}
-            </Typography>
+            {isUnpriced(log) ? (
+              <Box sx={{ mt: 0.25 }}>
+                <Tooltip title={UNPRICED_TOOLTIP} placement="top" arrow>
+                  <Chip
+                    label={UNPRICED_LABEL}
+                    size="small"
+                    variant="outlined"
+                    color="warning"
+                  />
+                </Tooltip>
+              </Box>
+            ) : (
+              <Typography variant="body2" fontWeight={600}>
+                {formatCost(log.cost)}
+              </Typography>
+            )}
           </Box>
           <Box>
             <Typography variant="caption" color="text.secondary">
@@ -630,24 +688,24 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
       )}
 
       {/* ---- Loading spinner ---- */}
-      {isLoading && (
-        <LoadingScreen variant="orbit" sx={{ flex: 1 }} />
-      )}
+      {isLoading && <LoadingScreen variant="orbit" sx={{ flex: 1 }} />}
 
       {/* ---- Detail content ---- */}
       {!isLoading && log && (
         <>
-          <Tabs
-            value={activeTab}
-            onChange={(_e, v) => setActiveTab(v)}
-            variant="scrollable"
-            scrollButtons="auto"
-            sx={{ px: 2, borderBottom: 1, borderColor: "divider" }}
-          >
-            {tabs.map((t) => (
-              <Tab key={t.value} label={t.label} value={t.value} />
-            ))}
-          </Tabs>
+          <Box sx={{ px: 2, borderBottom: 1, borderColor: "divider" }}>
+            <Tabs
+              sx={{ boxShadow: "none" }}
+              value={activeTab}
+              onChange={(_e, v) => setActiveTab(v)}
+              variant="scrollable"
+              scrollButtons="auto"
+            >
+              {tabs.map((t) => (
+                <Tab key={t.value} label={t.label} value={t.value} />
+              ))}
+            </Tabs>
+          </Box>
 
           <Box sx={{ flex: 1, overflowY: "auto" }}>
             {activeTab === 0 && <OverviewTab log={log} />}

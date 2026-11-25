@@ -1,6 +1,12 @@
+import { uploadHarnessSource } from "src/api/harness/harness";
+import { CODE_UPLOAD_COPY } from "src/sections/simulate/environments/codeUpload.constants";
+
 const ignoredDirectories = new Set([
   ".git",
+  ".mypy_cache",
   ".next",
+  ".pytest_cache",
+  ".ruff_cache",
   ".venv",
   "__pycache__",
   "build",
@@ -20,6 +26,35 @@ const safeEnvironmentTemplates = new Set([
 // part plus one `paths` field, so an over-large folder is rejected server-side
 // before anything is stored. Reject it here first, with a clear message, so the
 // picker never fires a doomed upload.
+const ENTRY_FILE_NAMES = [
+  "main.py",
+  "app.py",
+  "agent.py",
+  "server.py",
+  "bot.py",
+  "index.ts",
+  "main.ts",
+  "server.ts",
+  "index.js",
+  "main.js",
+  "server.js",
+];
+const CODE_FILE = /\.(py|ts|js|mjs)$/;
+const NOT_ENTRY_DIR = /(^|\/)(tests?|__tests__|examples?|docs?)\//;
+
+// The file that most likely starts the agent, or "" so the reader finds it;
+// never a lock file or README just because it sorts first.
+export function guessEntryFile(fileNames = []) {
+  const code = fileNames
+    .map(String)
+    .filter((path) => CODE_FILE.test(path) && !NOT_ENTRY_DIR.test(path));
+  for (const name of ENTRY_FILE_NAMES) {
+    const hit = code.find((path) => path.split("/").at(-1) === name);
+    if (hit) return hit;
+  }
+  return "";
+}
+
 export const MAX_UPLOAD_FILES = 1000;
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
@@ -61,3 +96,25 @@ export function prepareSourceFolder(selectedFiles) {
     totalBytes,
   };
 }
+
+// Sends a prepared folder as one upload, each file with its `paths` field, and
+// reports progress in percent.
+export function uploadSourceFolder(prepared, onPercent) {
+  const formData = new FormData();
+  prepared.files.forEach((file, i) => {
+    formData.append("files", file, file.name);
+    formData.append("paths", prepared.paths[i]);
+  });
+  formData.append("name", prepared.name);
+  return uploadHarnessSource(formData, (evt) => {
+    if (evt?.total) onPercent(Math.round((evt.loaded / evt.total) * 100));
+  });
+}
+
+// A 400 here is almost always the runner's per-request field-count limit (each
+// file sends two fields), so name that cause instead of `otherwise`'s words.
+// The axios interceptor exposes the status as `statusCode` (not response.status).
+export const uploadErrorText = (error, otherwise) =>
+  (error?.statusCode ?? error?.response?.status) === 400
+    ? CODE_UPLOAD_COPY.tooManyFiles
+    : otherwise(error);

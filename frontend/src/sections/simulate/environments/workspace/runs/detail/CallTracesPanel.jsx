@@ -1,0 +1,194 @@
+import { useEffect, useLayoutEffect, useState } from "react";
+import PropTypes from "prop-types";
+import { Box, ButtonBase, Stack, Typography } from "@mui/material";
+import { fDateTime } from "src/utils/format-time";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { formatLatency } from "src/sections/projects/LLMTracing/formatters";
+import { useLLMTracingStoreShallow } from "src/sections/projects/LLMTracing/states";
+import LLMTracingTraceDetailDrawer from "src/sections/projects/LLMTracing/LLMTracingTraceDetailDrawer";
+import EmptyState from "../../../components/EmptyState";
+import { CALL_TRACES_COPY } from "./callTraces.constants";
+
+const MONO = "ui-monospace, Menlo, monospace";
+
+// A span status as the tracer sends it ("OK", "ERROR"), in sentence case.
+const statusLabel = (status) =>
+  status.toUpperCase() === "OK"
+    ? "OK"
+    : status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+
+export default function CallTracesPanel({
+  traces,
+  projectId,
+  testExecutionId,
+  isError = false,
+  onMountedChange,
+  openTrace = null,
+}) {
+  const { setTraceDetailDrawerOpen, setVisibleTraces, resetStates } =
+    useLLMTracingStoreShallow((state) => ({
+      setTraceDetailDrawerOpen: state.setTraceDetailDrawerOpen,
+      setVisibleTraces: state.setVisibleTraces,
+      resetStates: state.resetStates,
+    }));
+
+  useEffect(() => {
+    setVisibleTraces(
+      traces.map((trace) => ({ traceId: trace.traceId, projectId })),
+    );
+  }, [traces, projectId, setVisibleTraces]);
+
+  // Before the effects below can open a trace: an open trace with no panel mounted is cleared as stale.
+  useLayoutEffect(() => {
+    onMountedChange?.(true);
+    return () => {
+      onMountedChange?.(false);
+      // resetStates leaves the URL key behind; the setter removes it.
+      setTraceDetailDrawerOpen(null);
+      resetStates();
+    };
+  }, [onMountedChange, setTraceDetailDrawerOpen, resetStates]);
+
+  // A trace asked for from another tab (a Participants step) opens with the panel, which mounts per request.
+  const [opening] = useState(openTrace);
+  useEffect(() => {
+    if (!opening) return;
+    setTraceDetailDrawerOpen({
+      traceId: opening.traceId,
+      projectId,
+      testExecutionId,
+      // The step's own span, so the trace opens on it rather than at its root.
+      ...(opening.spanId ? { spanId: opening.spanId } : {}),
+    });
+  }, [opening, projectId, testExecutionId, setTraceDetailDrawerOpen]);
+
+  if (isError && traces.length === 0) {
+    return (
+      <EmptyState
+        icon="solar:danger-triangle-linear"
+        title={CALL_TRACES_COPY.error}
+      />
+    );
+  }
+
+  return (
+    <Stack sx={{ minHeight: 0, flex: 1 }}>
+      {traces.length === 0 ? (
+        <EmptyState
+          icon="solar:graph-new-linear"
+          title={CALL_TRACES_COPY.empty}
+        />
+      ) : (
+        <Stack
+          divider={
+            <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+          }
+        >
+          {traces.map((trace) => (
+            <TraceRow
+              key={trace.traceId}
+              trace={trace}
+              onOpen={() =>
+                setTraceDetailDrawerOpen({
+                  traceId: trace.traceId,
+                  projectId,
+                  testExecutionId,
+                })
+              }
+            />
+          ))}
+        </Stack>
+      )}
+      <LLMTracingTraceDetailDrawer readOnly />
+    </Stack>
+  );
+}
+CallTracesPanel.propTypes = {
+  traces: PropTypes.arrayOf(
+    PropTypes.shape({
+      traceId: PropTypes.string.isRequired,
+      name: PropTypes.string,
+      startTime: PropTypes.string,
+      status: PropTypes.string,
+      latencyMs: PropTypes.number,
+    }),
+  ).isRequired,
+  projectId: PropTypes.string,
+  testExecutionId: PropTypes.string,
+  isError: PropTypes.bool,
+  onMountedChange: PropTypes.func,
+  openTrace: PropTypes.shape({
+    traceId: PropTypes.string.isRequired,
+    spanId: PropTypes.string,
+  }),
+};
+
+function TraceRow({ trace, onOpen }) {
+  const hasRoot = trace.name != null;
+  return (
+    <ButtonBase
+      onClick={onOpen}
+      sx={{
+        width: "100%",
+        display: "block",
+        textAlign: "left",
+        px: 1,
+        py: 1,
+        "&:hover": { bgcolor: "action.hover" },
+      }}
+    >
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Typography
+          noWrap
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            typography: "s2",
+            fontWeight: "fontWeightSemiBold",
+            fontFamily: MONO,
+            color: hasRoot ? "text.primary" : "text.subtitle",
+          }}
+        >
+          {hasRoot ? trace.name : CALL_TRACES_COPY.noRoot}
+        </Typography>
+        {trace.status && (
+          <StatusBadge
+            status={trace.status}
+            label={statusLabel(trace.status)}
+            variant="dot"
+          />
+        )}
+      </Stack>
+      <Stack
+        direction="row"
+        spacing={1.5}
+        sx={{
+          mt: 0.25,
+          typography: "s3",
+          color: "text.subtitle",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {trace.startTime && <span>{fDateTime(trace.startTime)}</span>}
+        {trace.latencyMs != null && (
+          <span>{formatLatency(trace.latencyMs)}</span>
+        )}
+        {!hasRoot && (
+          <Box component="span" sx={{ fontFamily: MONO }}>
+            {trace.traceId}
+          </Box>
+        )}
+      </Stack>
+    </ButtonBase>
+  );
+}
+TraceRow.propTypes = {
+  trace: PropTypes.shape({
+    traceId: PropTypes.string.isRequired,
+    name: PropTypes.string,
+    startTime: PropTypes.string,
+    status: PropTypes.string,
+    latencyMs: PropTypes.number,
+  }).isRequired,
+  onOpen: PropTypes.func.isRequired,
+};

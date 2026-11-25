@@ -1,23 +1,29 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from django.conf import settings
 from rest_framework import serializers
 
-from tfc.utils.serializer_fields import JsonValueField
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB, MAX_SEED
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
-
-from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.services.harness_credentials import agent_version_secret_ref
+from tfc.utils.api_serializers import StrictInputSerializer
+from tfc.utils.serializer_fields import JsonValueField
 
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
 # The declared fixed port is unknowable platform-side (the bundle is authored
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
 
 _LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
+
+# A folder inside the repository, relative to its root: no leading slash, no "." or
+# ".." segment, no empty segment, no trailing slash. Empty means the root.
+SUBFOLDER_PATTERN = r"^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -31,6 +37,73 @@ RUNNER_RESERVED_ENVIRONMENT = {
     "PATH",
     "PYTHONPATH",
 }
+
+
+def _check_variable_values(values: Mapping[str, Any]) -> list[str]:
+    """What is wrong with a map of variable values, by name; never a value."""
+    if len(values) > 100:
+        return ["at most 100 values may be stored at once"]
+    invalid = [
+        name
+        for name in values
+        if not name
+        or not name.replace("_", "").isalnum()
+        or name[0].isdigit()
+        or name in RUNNER_RESERVED_ENVIRONMENT
+    ]
+    if invalid:
+        return [
+            "invalid or runner-reserved environment names: "
+            f"{', '.join(sorted(invalid))}"
+        ]
+    secret_bytes = sum(
+        len(value.encode("utf-8"))
+        for value in values.values()
+        if isinstance(value, str)
+    )
+    if secret_bytes > 1_048_576:
+        return ["environment values may not exceed 1 MiB"]
+    return []
+
+
+def check_credential_values(values: Mapping[str, Any]) -> list[str]:
+    problems = _check_variable_values(values)
+    reserved = sorted(name for name in values if str(name).startswith("SIMULATOR_"))
+    if reserved:
+        problems.append(
+            "SIMULATOR_ names are reserved for platform-managed credentials: "
+            f"{', '.join(reserved)}"
+        )
+    not_text = sorted(
+        name for name, value in values.items() if not isinstance(value, str)
+    )
+    if not_text:
+        problems.append(f"values must be strings: {', '.join(not_text)}")
+    return problems
+
+
+# An agent's own chat reply deadline in the harness job's agent config, as `voice_call_timeout_seconds` is for voice.
+CHAT_CALL_TIMEOUT_KEY = "chat_call_timeout_seconds"
+# The harness never waits past a build's own budget.
+MAX_CHAT_CALL_TIMEOUT_SECONDS = 3300
+
+
+def _chat_call_timeout(raw: object) -> bool:
+    """Whether a chat reply deadline is a number of seconds, or a number written as text, the harness can use."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return False
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return False
+    return 0 < seconds <= MAX_CHAT_CALL_TIMEOUT_SECONDS
+
+
+class RunVersionLabelSerializer(serializers.Serializer):
+    """A pinned version as a run shows it: its id and label such as "v3"."""
+
+    id = serializers.UUIDField(read_only=True)
+    label = serializers.CharField(read_only=True, allow_null=True)
 
 
 class SecretReferenceSerializer(serializers.Serializer):
@@ -54,6 +127,13 @@ class HarnessSourceSerializer(serializers.Serializer):
     installation_id = serializers.CharField(
         max_length=255, required=False, allow_null=True
     )
+    subfolder = serializers.RegexField(
+        SUBFOLDER_PATTERN,
+        max_length=512,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
     archive_artifact_id = serializers.UUIDField(required=False, allow_null=True)
     endpoint = serializers.URLField(required=False, allow_null=True)
     visibility = serializers.ChoiceField(
@@ -69,6 +149,16 @@ class HarnessSourceSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         kind = attrs["kind"]
+        if attrs.get("subfolder") and kind != "github":
+            raise serializers.ValidationError(
+                {"subfolder": "only a github source names a folder"}
+            )
+        if attrs.get("subfolder") and not getattr(
+            settings, "HARNESS_SOURCE_SUBFOLDER_ENABLED", False
+        ):
+            raise serializers.ValidationError(
+                {"subfolder": "not supported yet; builds use the repository root"}
+            )
         if kind == "github":
             if not attrs.get("repository"):
                 raise serializers.ValidationError(
@@ -94,7 +184,17 @@ class HarnessSourceSerializer(serializers.Serializer):
 VOICE_CONNECTORS = ("livekit", "vapi", "retell", "phone")
 
 # Connectors that reach an already-running agent, so the run carries no source tree.
-PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone"}
+PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone", "livekit"}
+
+
+def names_agent_version(agent, metadata) -> bool:
+    metadata = metadata or {}
+    return (
+        agent.get("connector") == "auto"
+        and bool(metadata.get("agent_definition_id"))
+        and bool(metadata.get("agent_version_id"))
+    )
+
 
 # Mirrors the SDK's own E.164 rule so a malformed number is refused at admission.
 _E164 = re.compile(r"^\+[1-9]\d{6,14}$")
@@ -119,6 +219,18 @@ def phone_number_error(value: str) -> str | None:
 
 
 TARGET_SYSTEM_PROMPT_MAX_CHARS = 65_536
+
+
+class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
+    phone_number = serializers.CharField(max_length=512, required=False)
+    agent_name = serializers.CharField(max_length=512, required=False)
+    target_speaks_first = serializers.BooleanField(required=False)
+
+    def validate_phone_number(self, value):
+        error = phone_number_error(value)
+        if error:
+            raise serializers.ValidationError(error)
+        return value.strip()
 
 
 class HarnessAgentSerializer(serializers.Serializer):
@@ -159,6 +271,14 @@ class HarnessAgentSerializer(serializers.Serializer):
         for name in ("inbound", "target_speaks_first"):
             if name in value and not isinstance(value[name], bool):
                 raise serializers.ValidationError(f"{name} must be a boolean")
+        # How long one chat reply may take; absent, the harness keeps its 300 s default. Capped at the build's budget.
+        if CHAT_CALL_TIMEOUT_KEY in value and not _chat_call_timeout(
+            value[CHAT_CALL_TIMEOUT_KEY]
+        ):
+            raise serializers.ValidationError(
+                f"{CHAT_CALL_TIMEOUT_KEY} must be a number of seconds above 0 and at most "
+                f"{MAX_CHAT_CALL_TIMEOUT_SECONDS}"
+            )
         secret_names = ("token", "secret", "password", "api_key", "private_key")
         invalid = []
         for key, item in value.items():
@@ -220,6 +340,23 @@ class HarnessAgentSerializer(serializers.Serializer):
                     )
                 }
             )
+        if "phone_number" in config and connector == "livekit":
+            if mode != "connect_only":
+                raise serializers.ValidationError(
+                    {"mode": "LiveKit targets support connect_only only"}
+                )
+            needs_only = (
+                "a LiveKit agent reached by phone needs only phone_number and "
+                "target_system_prompt"
+            )
+            if str(config.get("agent_name") or "").strip():
+                raise serializers.ValidationError({"config": needs_only})
+            if attrs.get("secret_refs") and not getattr(
+                self.root, "checks_phone_routing", False
+            ):
+                raise serializers.ValidationError({"secret_refs": needs_only})
+            attrs["secret_refs"] = {}
+            attrs["connector"] = connector = provider_connector = "phone"
         if "phone_number" in config and connector != "phone":
             if connector not in {"vapi", "retell"} or mode != "connect_only":
                 raise serializers.ValidationError(
@@ -247,6 +384,23 @@ class HarnessAgentSerializer(serializers.Serializer):
                 )
             if not has_id:
                 attrs["connector"] = connector = provider_connector = "phone"
+        if connector == "livekit" and mode is not None:
+            if mode != "connect_only":
+                raise serializers.ValidationError(
+                    {"mode": "LiveKit targets support connect_only only"}
+                )
+            if not str(config.get("agent_name") or "").strip():
+                raise serializers.ValidationError(
+                    {"config": "agent_name is required for a connected LiveKit agent"}
+                )
+            prompt = str(config.get("target_system_prompt") or "").strip()
+            if not prompt or len(prompt) > TARGET_SYSTEM_PROMPT_MAX_CHARS:
+                raise serializers.ValidationError(
+                    {
+                        "config": "target_system_prompt is required (maximum 65536 characters)"
+                    }
+                )
+            return attrs
         if mode and provider_connector not in {"vapi", "retell", "phone"}:
             raise serializers.ValidationError(
                 {"mode": "provider mode is supported only for Vapi, Retell, and phone"}
@@ -387,6 +541,10 @@ class HarnessArtifactSerializer(serializers.Serializer):
     )
 
 
+# One limit for a credential value at preflight and at create.
+CREDENTIAL_VALUE_MAX_CHARS = 65_536
+
+
 class HarnessJobCreateSerializer(serializers.Serializer):
     # Create refuses a job whose connector has no credentials; preflight reports them as
     # unmet requirements instead, so the readiness panel can tell the user what to add.
@@ -415,13 +573,53 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     platform_run_id = serializers.CharField(
         max_length=255, required=False, allow_null=True
     )
-    metadata = serializers.DictField(default=dict)
+    metadata = serializers.DictField(
+        child=JsonValueField(allow_null=True), default=dict
+    )
+    credential_values = serializers.DictField(
+        child=serializers.CharField(
+            max_length=CREDENTIAL_VALUE_MAX_CHARS, trim_whitespace=False
+        ),
+        required=False,
+        write_only=True,
+        help_text=(
+            "Agent credential values by name; stored with the environment's first"
+            " agent version, never echoed."
+        ),
+    )
+
+    def to_internal_value(self, data):
+        # Names are checked, then seeded as names-only refs, before the fields
+        # validate: the agent's own checks see a typed credential as configured.
+        if isinstance(data, Mapping) and isinstance(
+            data.get("credential_values"), Mapping
+        ):
+            secret_values = data["credential_values"]
+            problems = check_credential_values(secret_values)
+            if problems:
+                raise serializers.ValidationError({"credential_values": problems})
+            agent = data.get("agent")
+            refs = agent.get("secret_refs") if isinstance(agent, Mapping) else None
+            if isinstance(agent, Mapping) and isinstance(refs or {}, Mapping):
+                refs = dict(refs or {})
+                for name in sorted(secret_values):
+                    if secret_values[name]:
+                        # A given value wins over a ref under the same name.
+                        refs[name] = agent_version_secret_ref(name)
+                data = {**data, "agent": {**agent, "secret_refs": refs}}
+        return super().to_internal_value(data)
 
     def validate_metadata(self, value):
         reserved = {
+            "agent_definition_owner",
+            "agent_source_repository_id",
+            "agent_source_seen",
             "attempt_cycle_start",
+            "build_agent_version_id",
             "parallelism_clamped",
             "parallelism_warnings",
+            "observability_refusal",
+            "requested_agent_definition_id",
         }
         if reserved.intersection(value):
             raise serializers.ValidationError(
@@ -445,7 +643,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         }
         if source is None:
             if (
-                agent["connector"] not in {"vapi", "retell", "retell_chat", "phone"}
+                agent["connector"] not in PROVIDER_TARGET_CONNECTORS
                 or not provider_target_mode
             ):
                 raise serializers.ValidationError(
@@ -454,13 +652,17 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                     }
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}
-        elif source["kind"] == "provider" and (
-            agent["connector"] not in {"vapi", "retell", "retell_chat", "phone"}
-            or not provider_target_mode
+        elif (
+            source["kind"] == "provider"
+            and not names_agent_version(agent, attrs.get("metadata"))
+            and (
+                agent["connector"] not in PROVIDER_TARGET_CONNECTORS
+                or not provider_target_mode
+            )
         ):
             raise serializers.ValidationError(
                 {
-                    "source": "provider sources require a connected Vapi/Retell agent or phone number"
+                    "source": "provider sources require a connected Vapi/Retell/LiveKit agent or phone number"
                 }
             )
         # Voice scenarios are intentionally sequential by default and may each consume the
@@ -604,8 +806,6 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         attrs["metadata"] = metadata
 
 
-
-
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
 CONNECTOR_ALIASES = {
     "livekit": LIVEKIT_ALIASES,
@@ -672,6 +872,35 @@ class HarnessJobActionSerializer(serializers.Serializer):
     )
 
 
+_SEED_DIGITS = len(str(MAX_SEED))
+
+
+class RunSeedField(serializers.Field[int, Any, str, Any]):
+    """A run seed, published as decimal text: seeds go up to 2^63 - 1, past what a JSON number keeps exactly."""
+
+    default_error_messages = {
+        "invalid_seed": "A seed is a whole number from 0 to 2^63 - 1."
+    }
+
+    def to_internal_value(self, data: Any) -> int:
+        text = (
+            str(data).strip()
+            if isinstance(data, (str, int)) and not isinstance(data, bool)
+            else ""
+        )
+        digits = text.isascii() and text.isdigit() and len(text) <= _SEED_DIGITS
+        if not digits or int(text) > MAX_SEED:
+            self.fail("invalid_seed")
+        return int(text)
+
+    def to_representation(self, value: int) -> str:
+        return str(value)
+
+    class Meta:
+        # Only its type: the server refuses any other text with its own message, so no client gate holds a seed back.
+        swagger_schema_fields = {"type": "string", "minLength": 1}
+
+
 class HarnessRunCreateSerializer(serializers.Serializer):
     scenario_ids = serializers.ListField(
         child=serializers.CharField(max_length=255),
@@ -679,6 +908,36 @@ class HarnessRunCreateSerializer(serializers.Serializer):
         max_length=1000,
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+    # The run's seed: the same seed draws the same personas and variations again. Absent or null keeps the
+    # environment's own.
+    seed = RunSeedField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "The same seed draws the same personas and variations again; absent keeps the environment's. A whole"
+            " number from 0 to 2^63 - 1, as decimal text."
+        ),
+    )
+    # Absent or null runs the environment's default for that piece.
+    agent_version_id = serializers.UUIDField(required=False, allow_null=True)
+    environment_version_id = serializers.UUIDField(required=False, allow_null=True)
+    suite_version_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class HarnessRunPinnedVersionsSerializer(serializers.Serializer):
+    """The versions a run is pinned to; null for a piece it has none of."""
+
+    agent = RunVersionLabelSerializer(allow_null=True)
+    environment = RunVersionLabelSerializer(allow_null=True)
+    suite = RunVersionLabelSerializer(allow_null=True)
+
+
+class HarnessRunWarningSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    message = serializers.CharField()
+    piece = serializers.ChoiceField(
+        choices=("agent", "environment", "suite"), allow_null=True
+    )
 
 
 class HarnessRunCreateResponseSerializer(serializers.Serializer):
@@ -692,14 +951,19 @@ class HarnessRunCreateResponseSerializer(serializers.Serializer):
     total_calls = serializers.IntegerField(min_value=1)
     state = serializers.CharField()
     stage = serializers.CharField()
+    versions = HarnessRunPinnedVersionsSerializer()
+    warnings = HarnessRunWarningSerializer(many=True)
 
 
 class HarnessPreflightSerializer(HarnessJobCreateSerializer):
     reject_missing_credentials = False
+    checks_phone_routing = True
     # Raw target-provider values the form holds before Run stores them. Preflight exercises
     # them against the provider and discards them; they are never persisted or echoed.
     credential_values = serializers.DictField(
-        child=serializers.CharField(allow_blank=True, max_length=4096),
+        child=serializers.CharField(
+            allow_blank=True, max_length=CREDENTIAL_VALUE_MAX_CHARS
+        ),
         required=False,
         write_only=True,
         help_text="Target-provider values to verify live; used for this check only.",
@@ -744,6 +1008,10 @@ class HarnessJobAdjustmentSerializer(serializers.Serializer):
     client_request_id = serializers.CharField(
         max_length=128, required=False, allow_blank=False
     )
+    target_stage = serializers.ChoiceField(
+        choices=("understand", "environment", "scenarios"), required=False
+    )
+    scenario_delta = serializers.IntegerField(min_value=1, required=False)
 
 
 class HarnessJobExtendSerializer(serializers.Serializer):
@@ -787,33 +1055,36 @@ class HarnessSecretFileUploadResponseSerializer(serializers.Serializer):
 class HarnessSecretValuesSerializer(serializers.Serializer):
     environment_values = serializers.DictField(
         child=serializers.CharField(max_length=65_536, trim_whitespace=False),
-        allow_empty=False,
+        allow_empty=True,
+        help_text=(
+            "Values by name; may be empty only when an environment's files are given."
+        ),
+    )
+    environment_id = serializers.UUIDField(
+        help_text=(
+            "Change this environment's agent credentials: the values make its next"
+            " agent version."
+        ),
+    )
+    files = serializers.ListField(
+        child=SecretReferenceSerializer(),
+        required=False,
+        max_length=10,
+        help_text="Credential files staged through secret-files/, by their refs.",
     )
 
+    def validate(self, attrs):
+        if not attrs["environment_values"] and not attrs.get("files"):
+            raise serializers.ValidationError(
+                {"environment_values": "give at least one value or file"}
+            )
+        return attrs
+
     def validate_environment_values(self, values):
-        if len(values) > 100:
-            raise serializers.ValidationError(
-                "at most 100 values may be stored at once"
-            )
-        invalid = [
-            name
-            for name in values
-            if not name
-            or not name.replace("_", "").isalnum()
-            or name[0].isdigit()
-            or name in RUNNER_RESERVED_ENVIRONMENT
-        ]
-        if invalid:
-            raise serializers.ValidationError(
-                f"invalid or runner-reserved environment names: {', '.join(sorted(invalid))}"
-            )
-        if sum(len(value.encode("utf-8")) for value in values.values()) > 1_048_576:
-            raise serializers.ValidationError("environment values may not exceed 1 MiB")
+        problems = _check_variable_values(values)
+        if problems:
+            raise serializers.ValidationError(problems[0])
         return values
-
-
-class HarnessSecretValuesResponseSerializer(serializers.Serializer):
-    secret_refs = serializers.DictField(child=SecretReferenceSerializer())
 
 
 # ── Read DTO response serializers ───────────────────────────────────────
@@ -823,7 +1094,7 @@ class HarnessJobInfoSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
     run_id = serializers.UUIDField()
     source = serializers.DictField()
-    metadata = serializers.DictField()
+    metadata = serializers.DictField(child=JsonValueField(allow_null=True))
     runtime = serializers.DictField(required=False)
     run_test_id = serializers.UUIDField(allow_null=True)
     test_execution_id = serializers.UUIDField(allow_null=True)
@@ -870,6 +1141,66 @@ class HarnessScenarioChangeSerializer(serializers.Serializer):
 class HarnessScenarioAmendSerializer(serializers.Serializer):
     changes = HarnessScenarioChangeSerializer(many=True, allow_empty=False)
     rework = serializers.BooleanField(required=False, default=True)
+
+
+SCENARIO_AMEND_CODES = (
+    "applied",
+    "fault_invalid",
+    "needs_rework",
+    "not_editable",
+    "scenario_unknown",
+    "unknown_change",
+    "edit_invalid",
+    "not_saved",
+)
+
+
+class HarnessFaultProblemSerializer(serializers.Serializer):
+    """Why the test world cannot apply one test condition."""
+
+    index = serializers.IntegerField(
+        allow_null=True,
+        help_text="Its place in the scenario's list; null when the list itself is unreadable.",
+    )
+    field = serializers.CharField(
+        allow_null=True,
+        help_text="The test-condition field it is shown under; null when it is no one field's.",
+    )
+    message = serializers.CharField()
+
+
+class HarnessScenarioAmendReceiptSerializer(serializers.Serializer):
+    """What became of one change to one scenario."""
+
+    scenario = serializers.CharField(allow_blank=True)
+    outcome = serializers.ChoiceField(choices=("applied", "queued", "refused"))
+    why = serializers.CharField()
+    code = serializers.ChoiceField(
+        choices=SCENARIO_AMEND_CODES,
+        help_text="applied (also when queued); fault_invalid: the test world cannot apply the test condition; "
+        "needs_rework: the change needs a re-proof; not_editable; scenario_unknown; unknown_change; edit_invalid: "
+        "the edited scenario fails its checks; not_saved: the edit could not be written, nothing changed.",
+    )
+    field = serializers.CharField(
+        allow_null=True,
+        help_text="The scenario field the receipt is about: `faults` for a test condition, `persona`, or the set "
+        "field; null for a whole-scenario change.",
+    )
+    problems = HarnessFaultProblemSerializer(
+        many=True,
+        help_text="For fault_invalid: every test condition the world cannot apply, each by its place in the list; "
+        "empty on any other receipt.",
+    )
+
+
+class HarnessScenarioAmendDraftSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    revision = serializers.IntegerField()
+
+
+class HarnessScenarioAmendResponseSerializer(serializers.Serializer):
+    receipts = HarnessScenarioAmendReceiptSerializer(many=True)
+    draft = HarnessScenarioAmendDraftSerializer(required=False, allow_null=True)
 
 
 class HarnessStageOutputSerializer(serializers.Serializer):
@@ -926,6 +1257,13 @@ class HarnessConsumptionSerializer(serializers.Serializer):
     sandbox_seconds = serializers.FloatField(min_value=0)
 
 
+class HarnessVersioningFlagsSerializer(serializers.Serializer):
+    """Whether environment versioning and its nudges are switched on."""
+
+    enabled = serializers.BooleanField()
+    nudges_enabled = serializers.BooleanField()
+
+
 class HarnessJobReadSerializer(serializers.Serializer):
     """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
 
@@ -941,3 +1279,4 @@ class HarnessJobReadSerializer(serializers.Serializer):
     conversation = HarnessConversationReadSerializer(allow_null=True, required=False)
     consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
     usage_limit = serializers.JSONField(required=False, allow_null=True)
+    versioning = HarnessVersioningFlagsSerializer(required=False)

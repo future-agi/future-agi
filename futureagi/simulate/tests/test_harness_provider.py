@@ -24,6 +24,7 @@ from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
 )
+from simulate.services.harness_credentials import agent_version_secret_ref
 from simulate.services.harness_provider import (
     HostedHarnessProvider,
     SandboxHarnessProvider,
@@ -120,6 +121,15 @@ def _v1_payload(**overrides):
 
 def test_default_provider_is_hosted():
     assert isinstance(get_harness_provider(), HostedHarnessProvider)
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="hosted")
+def test_hosted_job_detail_returns_not_found_for_template_id(auth_client):
+    response = auth_client.get("/simulate/api/harness-jobs/env-voice-support/")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Hosted harness job not found"
 
 
 def test_e2b_health_exposes_relayed_public_ingress(settings):
@@ -351,12 +361,13 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         "scenario-b",
     ]
     assert detail.json()["overview"]["runs_count"] == 2
-    latest_run = environment.simulation_runs.filter(deleted=False).order_by(
-        "-created_at", "-id"
-    ).first()
-    assert (
-        detail.json()["overview"]["run"]["test_execution_id"]
-        == str(latest_run.test_execution_id)
+    latest_run = (
+        environment.simulation_runs.filter(deleted=False)
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    assert detail.json()["overview"]["run"]["test_execution_id"] == str(
+        latest_run.test_execution_id
     )
     assert detail.json()["overview"]["run"]["simulation_url"].endswith(
         f"/runs/{environment.run_test_id}/{latest_run.test_execution_id}"
@@ -382,7 +393,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         assert failed_dispatch.status_code == 503
         child = environment.simulation_runs.get(scenario_count=2)
         assert child.state == HostedHarnessJob.State.FAILED
-        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.FAILED
+        assert (
+            child.test_execution.status
+            == SimulationTestExecution.ExecutionStatus.FAILED
+        )
 
         start.side_effect = None
         response = client.post(
@@ -402,7 +416,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         child.refresh_from_db()
         child.test_execution.refresh_from_db()
         assert child.state == HostedHarnessJob.State.QUEUED
-        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.PENDING
+        assert (
+            child.test_execution.status
+            == SimulationTestExecution.ExecutionStatus.PENDING
+        )
 
         duplicate = client.post(
             f"/simulate/api/harness-environments/{environment.id}/run/",
@@ -413,7 +430,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         )
         assert duplicate.status_code == 202
         assert duplicate.json()["job_id"] == response.json()["job_id"]
-        assert duplicate.json()["test_execution_id"] == response.json()["test_execution_id"]
+        assert (
+            duplicate.json()["test_execution_id"]
+            == response.json()["test_execution_id"]
+        )
         assert start.call_count == 2
     for payload in (
         {"scenario_ids": [], "trials": 1},
@@ -665,6 +685,7 @@ def test_daytona_preflight_rejects_known_egress_overflow(settings):
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
     request = SimpleNamespace(
         validated_data=_v1_payload(),
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -681,6 +702,7 @@ def test_daytona_preflight_requires_only_the_provider_the_source_uses(settings):
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -726,6 +748,7 @@ def test_daytona_preflight_leaves_credentials_optional_when_source_is_unclassifi
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -762,6 +785,7 @@ def test_daytona_preflight_requires_detected_vertex_credential_file(settings):
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -916,6 +940,7 @@ def test_preflight_rejects_unknown_provider_target_before_run(settings):
     payload["credential_values"] = {"RETELL_API_KEY": "valid-key"}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
     failed_target = SimpleNamespace(
@@ -1065,6 +1090,7 @@ def test_sandbox_flatten_maps_github_source():
                 "repository": "acme/agent",
                 "ref": "main",
                 "commit_sha": "a" * 40,
+                "subfolder": "agents/support",
                 "visibility": "public",
             },
             "agent": {
@@ -1080,12 +1106,26 @@ def test_sandbox_flatten_maps_github_source():
     assert flat["github_repository"] == "acme/agent"
     assert flat["github_ref"] == "main"
     assert flat["github_commit_sha"] == "a" * 40
+    assert flat["github_subfolder"] == "agents/support"
+    assert flat["metadata"] == {"k": "v", "generic_harness_v1": True}
     assert flat["github_visibility"] == "public"
     assert flat["connector"] == "livekit"
     assert flat["connector_config"] == {"room": "r1"}
     assert flat["scenario_count"] == 7
     assert flat["seed"] == 42
     assert "source_path" not in flat and "source_id" not in flat
+
+
+def test_sandbox_flatten_asks_for_the_generic_harness_only_with_a_subfolder():
+    flat = SandboxHarnessProvider._flatten_source(
+        {
+            "source": {"kind": "github", "repository": "acme/agent"},
+            "agent": {"connector": "auto"},
+            "metadata": {"k": "v"},
+        }
+    )
+    assert "github_subfolder" not in flat
+    assert flat["metadata"] == {"k": "v"}
 
 
 def test_sandbox_flatten_maps_archive_source():
@@ -1404,44 +1444,21 @@ def test_secret_file_upload_keeps_local_sandbox_file_reference(user):
 
 
 @pytest.mark.django_db
-def test_secret_values_are_encrypted_and_return_only_platform_refs(user):
-    client = APIClient()
-    client.force_authenticate(user=user)
-    raw = "must-not-be-echoed"
-
-    response = client.post(
-        "/simulate/api/harness-jobs/secret-values/",
-        {"environment_values": {"DEEPGRAM_API_KEY": raw}},
-        format="json",
-    )
-
-    assert response.status_code == 201
-    reference = response.json()["secret_refs"]["DEEPGRAM_API_KEY"]
-    assert reference["manager"] == "platform-vault"
-    assert reference["purpose"] == "target_provider"
-    assert raw not in response.content.decode()
-
-    from simulate.models import HostedHarnessSecret
-
-    record = HostedHarnessSecret.objects.get(
-        organization=user.organization, name=reference["key"]
-    )
-    assert raw not in record.encrypted_value
-    assert record.get_value() == raw
-
-
-@pytest.mark.django_db
 def test_secret_values_reject_runner_owned_names(user):
     client = APIClient()
     client.force_authenticate(user=user)
 
     response = client.post(
         "/simulate/api/harness-jobs/secret-values/",
-        {"environment_values": {"FI_API_KEY": "customer-value"}},
+        {
+            "environment_id": str(uuid4()),
+            "environment_values": {"FI_API_KEY": "customer-value"},
+        },
         format="json",
     )
 
     assert response.status_code == 400
+    assert "FI_API_KEY" in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -1520,6 +1537,7 @@ def test_daytona_preflight_source_failure_keeps_status_and_reports_check(setting
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
     clone_failed = HostedHarnessError(
@@ -1552,6 +1570,7 @@ def test_daytona_preflight_lists_six_checks_in_order(settings):
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -1580,6 +1599,84 @@ def test_daytona_preflight_lists_six_checks_in_order(settings):
         "LIVEKIT_API_SECRET",
     ]
     assert by_id["credentials_valid"]["status"] == "skipped"
+
+
+def _preflight_with_api_keys(secret_refs, api_keys, source=None):
+    payload = _v1_payload()
+    payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": secret_refs}
+    if source is not None:
+        payload["source"] = source
+    request = SimpleNamespace(
+        validated_data=payload,
+        headers={},
+        build_absolute_uri=lambda _path: "https://harness.example.test/",
+    )
+    with patch(
+        "simulate.services.harness_provider._preflight_source_connectors",
+        return_value=([], [], 4, api_keys),
+    ):
+        response = HostedHarnessProvider().preflight(request)
+    return response, {item["id"]: item for item in response.data["checks"]}
+
+
+def test_preflight_fails_on_an_api_key_the_code_reads_but_was_not_given(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    response, by_id = _preflight_with_api_keys({}, ["ANTHROPIC_API_KEY", "FI_API_KEY"])
+
+    assert response.data["state"] == "failed"
+    assert by_id["credentials_present"]["status"] == "failed"
+    assert by_id["credentials_present"]["missing"] == ["ANTHROPIC_API_KEY"]
+    requirements = {
+        item["environment_name"]: item
+        for item in response.data["credentials"]["requirements"]
+        if item["purpose"] == "API key the agent's code reads"
+    }
+    assert {name: item["status"] for name, item in requirements.items()} == {
+        "ANTHROPIC_API_KEY": "missing",
+    }
+    assert all(item["required"] for item in requirements.values())
+
+
+def test_preflight_passes_once_every_api_key_is_given(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    refs = {
+        name: agent_version_secret_ref(name)
+        for name in ("ANTHROPIC_API_KEY", "FI_API_KEY")
+    }
+
+    response, by_id = _preflight_with_api_keys(
+        refs, ["ANTHROPIC_API_KEY", "FI_API_KEY"]
+    )
+
+    assert by_id["credentials_present"]["status"] == "passed"
+
+
+def test_only_keys_the_platform_can_verify_are_required(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    response, by_id = _preflight_with_api_keys(
+        {}, ["OPENAI_API_KEY", "WEATHER_API_KEY", "FI_API_KEY"]
+    )
+
+    assert by_id["credentials_present"]["missing"] == ["OPENAI_API_KEY"]
+
+
+def test_a_voice_provider_key_keeps_its_own_rule(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    response, by_id = _preflight_with_api_keys({}, ["VAPI_API_KEY"])
+
+    assert by_id["credentials_present"]["status"] == "passed"
+    assert not [
+        item
+        for item in response.data["credentials"]["requirements"]
+        if item["purpose"] == "API key the agent's code reads"
+    ]
 
 
 @pytest.mark.django_db

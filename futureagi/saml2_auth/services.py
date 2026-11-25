@@ -6,9 +6,11 @@ import hashlib
 import hmac
 import os
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 from xml.etree import ElementTree
 
 from django.conf import settings
@@ -144,6 +146,19 @@ def require_active_membership(
         raise SamlDenied("no_membership") from None
 
 
+def _saml_deadline(value: Any) -> datetime | None:
+    if value in (None, 0, "0"):
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=UTC)
+    if isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    raise ValueError("Unsupported SAML deadline")
+
+
 def verify_assertion_bindings(
     authn_response: Any, attempt: Any, idp: SAMLMetadataModel
 ) -> AssertionFacts:
@@ -200,9 +215,22 @@ def verify_assertion_bindings(
         for data in bearer_data
     ):
         raise SamlDenied("response_invalid")
-    not_on_or_after = getattr(authn_response, "not_on_or_after", None)
-    if isinstance(not_on_or_after, (int, float)):
-        not_on_or_after = datetime.fromtimestamp(not_on_or_after, tz=UTC)
+    # pysaml2's aggregate not_on_or_after is 0 when Conditions has no expiry;
+    # it is not the Unix epoch, nor does it include bearer confirmation expiry.
+    # Carry the earliest explicit signed deadline through to final issuance.
+    deadlines = [data.not_on_or_after for data in bearer_data]
+    if getattr(conditions, "not_on_or_after", None):
+        deadlines.append(conditions.not_on_or_after)
+    try:
+        expiries = [_saml_deadline(value) for value in deadlines]
+        expiries = [expiry for expiry in expiries if expiry is not None]
+        if not expiries:
+            raise ValueError("Missing SAML expiry")
+    except (ValueError, TypeError, AttributeError, OverflowError):
+        raise SamlDenied("response_invalid") from None
+    not_on_or_after = min(expiries).astimezone(UTC)
+    if not_on_or_after <= timezone.now():
+        raise SamlDenied("response_invalid")
     return AssertionFacts(not_on_or_after=not_on_or_after)
 
 
@@ -224,6 +252,50 @@ def validate_next_path(value: str | None) -> str:
     if not value.startswith("/") or value.startswith("//") or "\\" in value:
         return default
     return value
+
+
+def stale_binder_cookies(cookies: Mapping[str, str]) -> list[str]:
+    """Find stale browser binders without scanning the attempt table or evicting rows.
+
+    Check at most one browser-cap batch per request. Unchecked cookies continue
+    to count toward capacity, and a denied start still clears the checked stale
+    ones. UUID prefix ranges use the primary-key index, not a text prefix cast.
+    """
+
+    from saml2_auth.models import SamlLoginAttempt
+
+    now = timezone.now()
+    names = [name for name in cookies if name.startswith("fai_saml_b_")]
+    stale = []
+    for name in names[: settings.SAML_MAX_PENDING_COOKIES_PER_BROWSER]:
+        prefix = name.removeprefix("fai_saml_b_")
+        if len(prefix) != 16 or any(char not in "0123456789abcdef" for char in prefix):
+            stale.append(name)
+            continue
+        attempts = list(
+            SamlLoginAttempt.objects.filter(
+                id__gte=UUID(hex=prefix + "0" * 16),
+                id__lte=UUID(hex=prefix + "f" * 16),
+            ).only("binder_hash", "state", "expires_at")[:2]
+        )
+        # Preserve an ambiguous prefix rather than risk clearing a live binder.
+        if len(attempts) > 1:
+            continue
+        attempt = attempts[0] if attempts else None
+        if (
+            attempt is None
+            or attempt.expires_at <= now
+            or attempt.state
+            not in {
+                SamlLoginAttempt.State.PENDING,
+                SamlLoginAttempt.State.CLAIMED,
+            }
+            or not hmac.compare_digest(
+                hashlib.sha256(cookies[name].encode()).hexdigest(), attempt.binder_hash
+            )
+        ):
+            stale.append(name)
+    return stale
 
 
 def admit_attempt(
@@ -435,6 +507,13 @@ def issue_token(
             if cursor.fetchone() is None:
                 raise SamlDenied("no_membership")
         _tx_b_barrier("after_member")
+        # User/membership locks can block past the deadline checked above.
+        # Re-read the clock only after all authorization locks are held.
+        now = timezone.now()
+        if attempt.expires_at <= now or (
+            not_on_or_after is not None and not_on_or_after <= now
+        ):
+            raise SamlDenied("attempt_unavailable")
         token = AuthToken.objects.create(
             user=user,
             auth_type=AuthTokenType.ACCESS.value,
