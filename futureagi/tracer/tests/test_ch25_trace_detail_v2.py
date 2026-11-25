@@ -306,6 +306,160 @@ def test_trace_detail_eval_aliases_are_not_columns_or_select_aliases():
             assert alias not in select_aliases, (table, alias)
 
 
+# The eval read on tracer_eval_logger: one trace-scoped scan, each record's
+# latest version picked before its span is tested against the live spans.
+# This statement was measured on production-shaped tables; whitespace is not
+# significant.
+_V1_EVAL_SQL = """
+WITH %(detail_eval_config_ids)s AS detail_eval_config_set
+SELECT
+    latest_span_id AS span_id,
+    toString(latest_eval_config_id) AS eval_config_id,
+    latest_output_float AS output_float,
+    latest_output_bool AS output_bool,
+    latest_output_str AS output_str,
+    latest_output_str_list AS output_str_list,
+    latest_eval_explanation AS eval_explanation,
+    latest_error AS error,
+    latest_error_message AS error_message,
+    latest_status AS status,
+    latest_skipped_reason AS skipped_reason,
+    latest_created_at AS created_at,
+    latest_target_type AS target_type,
+    toString(grouped_eval_id) AS log_id
+FROM (
+    SELECT
+        id AS grouped_eval_id,
+        argMax(tuple(observation_span_id), _peerdb_version).1 AS latest_span_id,
+        argMax(custom_eval_config_id, _peerdb_version) AS latest_eval_config_id,
+        argMax(tuple(output_float), _peerdb_version).1 AS latest_output_float,
+        argMax(tuple(output_bool), _peerdb_version).1 AS latest_output_bool,
+        argMax(tuple(output_str), _peerdb_version).1 AS latest_output_str,
+        argMax(tuple(output_str_list), _peerdb_version).1 AS latest_output_str_list,
+        argMax(tuple(eval_explanation), _peerdb_version).1
+            AS latest_eval_explanation,
+        argMax(error, _peerdb_version) AS latest_error,
+        argMax(tuple(error_message), _peerdb_version).1 AS latest_error_message,
+        argMax(status, _peerdb_version) AS latest_status,
+        argMax(tuple(skipped_reason), _peerdb_version).1 AS latest_skipped_reason,
+        argMax(created_at, _peerdb_version) AS latest_created_at,
+        argMax(target_type, _peerdb_version) AS latest_target_type,
+        greatest(argMax(_peerdb_is_deleted, _peerdb_version),
+                 coalesce(argMax(deleted, _peerdb_version), 0)) AS latest_is_deleted
+    FROM tracer_eval_logger
+    PREWHERE trace_id = %(detail_eval_trace_id)s
+      AND toString(custom_eval_config_id) IN detail_eval_config_set
+    GROUP BY id
+) AS latest_trace_evals
+WHERE latest_is_deleted = 0
+  AND latest_span_id IN %(detail_eval_span_ids)s
+  AND toString(latest_eval_config_id) IN detail_eval_config_set
+ORDER BY span_id ASC, eval_config_id ASC
+LIMIT 5001
+"""
+# The eval read on tracer_eval_logger_v2: still scoped to the trace/span
+# candidates in PREWHERE, with the config list bound once.
+_V2_CANDIDATE_EVAL_SQL = """
+WITH %(detail_eval_config_ids)s AS detail_eval_config_set
+SELECT
+    latest_span_id AS span_id,
+    toString(latest_eval_config_id) AS eval_config_id,
+    latest_output_float AS output_float,
+    latest_output_bool AS output_bool,
+    latest_output_str AS output_str,
+    latest_output_str_list AS output_str_list,
+    latest_eval_explanation AS eval_explanation,
+    latest_error AS error,
+    latest_error_message AS error_message,
+    latest_status AS status,
+    latest_skipped_reason AS skipped_reason,
+    latest_created_at AS created_at,
+    latest_target_type AS target_type,
+    toString(grouped_eval_id) AS log_id
+FROM (
+    SELECT
+        id AS grouped_eval_id,
+        argMax(observation_span_id, _version) AS latest_span_id,
+        argMax(custom_eval_config_id, _version) AS latest_eval_config_id,
+        argMax(tuple(output_float), _version).1 AS latest_output_float,
+        argMax(tuple(output_bool), _version).1 AS latest_output_bool,
+        argMax(tuple(output_str), _version).1 AS latest_output_str,
+        argMax(tuple(output_str_list), _version).1 AS latest_output_str_list,
+        argMax(tuple(eval_explanation), _version).1 AS latest_eval_explanation,
+        argMax(error, _version) AS latest_error,
+        argMax(tuple(error_message), _version).1 AS latest_error_message,
+        'completed' AS latest_status,
+        CAST(NULL AS Nullable(String)) AS latest_skipped_reason,
+        argMax(created_at, _version) AS latest_created_at,
+        argMax(target_type, _version) AS latest_target_type,
+        argMax(is_deleted, _version) AS latest_is_deleted
+    FROM tracer_eval_logger_v2
+    PREWHERE trace_id = %(detail_eval_trace_id)s
+      AND observation_span_id IN %(detail_eval_span_ids)s
+      AND toString(custom_eval_config_id) IN detail_eval_config_set
+    GROUP BY id
+) AS latest_trace_evals
+WHERE latest_is_deleted = 0
+  AND toString(latest_eval_config_id) IN detail_eval_config_set
+ORDER BY span_id ASC, eval_config_id ASC
+LIMIT 5001
+"""
+
+
+@pytest.mark.unit
+def test_trace_detail_v1_eval_query_is_the_latest_first_statement():
+    query, _params = _eval_query("tracer_eval_logger", configs=2, spans=2)
+
+    assert " ".join(query.split()) == " ".join(_V1_EVAL_SQL.split())
+
+
+@pytest.mark.unit
+def test_trace_detail_v2_eval_query_keeps_the_candidate_scoped_statement():
+    query, _params = _eval_query("tracer_eval_logger_v2", configs=2, spans=2)
+
+    assert " ".join(query.split()) == " ".join(_V2_CANDIDATE_EVAL_SQL.split())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("table", ["tracer_eval_logger"])
+def test_trace_detail_eval_plain_argmax_columns_are_not_nullable(table):
+    # argMax skips NULL, so a plain argMax over a Nullable column could take its
+    # value from an older version than the rest of the row. Nullable columns
+    # are read with argMax(tuple(column), version).1; the coalesce()-guarded
+    # legacy ``deleted`` flag is the one exception.
+    query, _params = _eval_query(table, configs=2, spans=2)
+    types = _ddl_column_types(_eval_table_ddl()[table])
+
+    guarded = set(re.findall(r"coalesce\(argMax\((\w+),", query))
+    plain = set(re.findall(r"\bargMax\((\w+),", query)) - guarded
+
+    assert {"custom_eval_config_id", "created_at"} <= plain
+    for column in plain:
+        assert not types[column].startswith("Nullable("), (column, types[column])
+
+
+@pytest.mark.unit
+@_EVAL_TABLES
+def test_trace_detail_eval_query_params_are_unchanged(table):
+    builder = TraceDetailReadBuilder(project_ids=["P1"], trace_id="T1")
+
+    with override_settings(CH25_EVAL_LOGGER_TABLE=table):
+        query, params = builder.build_eval_query(
+            project_id="P1",
+            span_ids=["S1", "S2", "S1"],
+            eval_config_ids=["C1", "C1", "C2"],
+        )
+
+    assert params == {
+        "detail_eval_trace_id": "T1",
+        "detail_eval_span_ids": ("S1", "S2"),
+        "detail_eval_config_ids": ("C1", "C2"),
+        "detail_project_id": "P1",
+    }
+    # The handler fakes route the eval read by this subquery alias.
+    assert "latest_trace_evals" in query
+
+
 class _FakeAnalytics:
     """Stands in for AnalyticsQueryService; routes by the SQL it is handed."""
 

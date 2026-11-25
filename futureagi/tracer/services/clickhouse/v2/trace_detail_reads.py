@@ -5,8 +5,15 @@ logical span version is identified by ``(project_id, trace_id, id,
 start_time)``; a bare span id or ``FINAL`` is not a safe identity. This module
 first discovers a bounded set of light physical identities, then hydrates only
 those exact identities in small partition-pruned batches. Eval and annotation
-reads are scoped to the same trace/span candidates and resolve versions with
-``argMax`` instead of merging an unbounded table with ``FINAL``.
+reads resolve versions with ``argMax`` instead of merging an unbounded table
+with ``FINAL``.
+
+Eval reads on ``tracer_eval_logger`` are scoped to the trace, pick the latest
+version of each record (``argMax(tuple(...), version).1`` keeps a NULL span)
+and only then require that latest span to be one of the trace's live spans.
+Filtering spans before the collapse would resurrect an older version after its
+newest version left the span. Eval reads on ``tracer_eval_logger_v2`` are
+scoped to the same trace/span candidates.
 """
 
 from __future__ import annotations
@@ -331,6 +338,27 @@ class TraceDetailReadBuilder:
                 f"coalesce(argMax(deleted, {version}), 0))"
             )
         )
+        if v2:
+            # tracer_eval_logger_v2 is not sorted by trace_id, so a trace-scoped
+            # scan is not bounded by its primary key. It keeps the span
+            # candidate filter until it has its own latest-first read.
+            span_aggregate = f"argMax(observation_span_id, {version})"
+            span_candidate_filter = (
+                "AND observation_span_id IN %(detail_eval_span_ids)s"
+            )
+            live_span_filter = ""
+        else:
+            # tracer_eval_logger is sorted by trace_id first: one trace-scoped
+            # scan reads only this trace's granules, so every version of an id
+            # is read and the latest one is chosen before its span is tested.
+            # In PREWHERE the live-span check would drop a newer version that
+            # moved to a NULL, tombstoned or foreign span, and argMax would then
+            # serve the older version still on a live span. ``tuple(...).1``
+            # keeps a NULL latest span (plain argMax skips NULLs), so the outer
+            # IN drops it.
+            span_aggregate = f"argMax(tuple(observation_span_id), {version}).1"
+            span_candidate_filter = ""
+            live_span_filter = "AND latest_span_id IN %(detail_eval_span_ids)s"
         return (
             f"""
             WITH %(detail_eval_config_ids)s AS {self._EVAL_CONFIG_SET}
@@ -352,7 +380,7 @@ class TraceDetailReadBuilder:
             FROM (
                 SELECT
                     id AS grouped_eval_id,
-                    argMax(observation_span_id, {version}) AS latest_span_id,
+                    {span_aggregate} AS latest_span_id,
                     argMax(custom_eval_config_id, {version})
                         AS latest_eval_config_id,
                     argMax(tuple(output_float), {version}).1 AS latest_output_float,
@@ -372,12 +400,13 @@ class TraceDetailReadBuilder:
                     {deleted} AS latest_is_deleted
                 FROM {table}
                 PREWHERE trace_id = %(detail_eval_trace_id)s
-                  AND observation_span_id IN %(detail_eval_span_ids)s
+                  {span_candidate_filter}
                   AND toString(custom_eval_config_id)
                         IN {self._EVAL_CONFIG_SET}
                 GROUP BY id
             ) AS latest_trace_evals
             WHERE latest_is_deleted = 0
+              {live_span_filter}
               AND toString(latest_eval_config_id)
                     IN {self._EVAL_CONFIG_SET}
             ORDER BY span_id ASC, eval_config_id ASC
