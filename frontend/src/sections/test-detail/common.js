@@ -760,14 +760,6 @@ export const extractKpis = (data, agentType) => {
     delete systemMetrics?.agent_talk_percentage;
     delete systemMetrics?.customer_talk_percentage;
   }
-  if (
-    systemMetrics?.connected_calls !== undefined &&
-    systemMetrics?.calls_attempted !== undefined
-  ) {
-    systemMetrics.percentage_attempted = Math.round(
-      (systemMetrics?.connected_calls / systemMetrics?.calls_attempted) * 100,
-    );
-  }
 
   return {
     systemMetrics,
