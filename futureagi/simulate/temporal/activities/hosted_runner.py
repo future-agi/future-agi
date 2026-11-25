@@ -21,7 +21,8 @@ import json
 import os
 import shutil
 import tempfile
-from typing import Any
+from collections.abc import Callable
+from typing import Any, ParamSpec, TypeVar
 
 from asgiref.sync import sync_to_async
 from django.conf import settings
@@ -67,7 +68,11 @@ _CHILD_SLOT_HEARTBEAT_SECONDS = float(
 )
 
 
-async def _run_db(fn, /, *args, **kwargs):
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+async def _run_db(fn: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
     """Recycle the ORM connection and run ``fn`` on the query's own thread.
 
     ``close_old_connections()`` must fire INSIDE the ``thread_sensitive``
@@ -76,7 +81,7 @@ async def _run_db(fn, /, *args, **kwargs):
     the executor's stale (server-closed) handle in place.
     """
 
-    def _call():
+    def _call() -> R:
         close_old_connections()
         return fn(*args, **kwargs)
 
