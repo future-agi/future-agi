@@ -25,6 +25,7 @@ from simulate.services.scoring_status import (
     REASON_EVAL_RUN_CANCELLED,
     normalize_eval_entry,
 )
+from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, UNSCORED_OUTPUTS
 
 State = SimulateEvalResult.State
 
@@ -36,9 +37,18 @@ def state_of_stored_verdict(slot: Mapping[str, Any]) -> tuple[str, str]:
         return State.CANCELLED, "denied"
     status = normalize_eval_entry(slot)
     if status == "succeeded":
-        if slot.get("output") is None:
+        output = slot.get("output")
+        if output is None:
             # Stored as finished, with nothing it finished with.
             return State.UNMAPPED, "no_output"
+        if isinstance(output, str) and output in UNSCORED_OUTPUTS:
+            # The evaluator said it could not grade this call: no pass rate
+            # counts it (eval_summary.UNSCORED_OUTPUTS), so neither is it
+            # answered here. The cause says which of the two it said.
+            cause = (
+                "inconclusive" if output == INCONCLUSIVE_OUTPUT else "not_applicable"
+            )
+            return State.NOT_APPLICABLE, cause
         return State.ANSWERED, ""
     if status == "failed":
         return State.GRADING_ERROR, ""
