@@ -228,7 +228,7 @@ export default function AgentVersionsTab() {
           enqueueSnackbar(
             moved
               ? `${v.label} is now in production; ${moved} environment${moved === 1 ? "" : "s"} following production moved to it.`
-              : `${v.label} is now in production. Pinned environments keep the version each is pinned to.`,
+              : `${v.label} is now in production. Environments that didn't move keep their version and are offered it.`,
             { variant: "success" },
           );
         },
@@ -474,8 +474,8 @@ export default function AgentVersionsTab() {
         content={
           <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
             It becomes the version in production. Environments that follow
-            production move to it; pinned ones keep their version and are
-            offered this one.
+            production move to it when the change keeps their world working; the
+            others keep their version and are offered this one.
           </Typography>
         }
         action={

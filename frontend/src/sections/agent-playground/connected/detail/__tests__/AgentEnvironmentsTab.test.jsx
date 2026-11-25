@@ -162,7 +162,7 @@ describe("AgentEnvironmentsTab", () => {
       "Default v3 · v5 in production",
     );
     expect(screen.getByTestId("policy-e9999999")).toHaveTextContent(
-      "Default: production",
+      "Following production",
     );
   });
 
@@ -257,7 +257,7 @@ describe("AgentEnvironmentsTab", () => {
     };
     renderTab();
     expect(screen.getByTestId("policy-e5391b8a")).toHaveTextContent(
-      "Default: production",
+      "Following production (v3)",
     );
     expect(screen.getByTestId("policy-e7777777")).toHaveTextContent(
       "Default v1 · v3 in production",
@@ -297,6 +297,28 @@ describe("AgentEnvironmentsTab", () => {
     );
     expect(currentLocation.pathname).toBe(
       "/dashboard/agents/connected/a1/environments",
+    );
+  });
+
+  it("names the version a follower is really on after production rolls back", () => {
+    agentState.current = { environmentCount: 1, activeVersionNumber: 1 };
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [
+        { ...TESTED, agentVersion: { id: "v2", number: 2 }, policy: "follow" },
+      ],
+    };
+    renderTab();
+    expect(screen.getByTestId("policy-e5391b8a")).toHaveTextContent(
+      "Follows production · on v2, v1 offered",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Default to production" }),
+    );
+    expect(policyMutate).toHaveBeenCalledWith(
+      { environmentId: "e5391b8a", policy: "follow" },
+      expect.any(Object),
     );
   });
 

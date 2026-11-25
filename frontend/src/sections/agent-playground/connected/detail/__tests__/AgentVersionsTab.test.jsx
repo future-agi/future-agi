@@ -405,7 +405,7 @@ describe("AgentVersionsTab", () => {
     );
     await waitFor(() =>
       expect(enqueueSnackbar).toHaveBeenCalledWith(
-        "v1 is now in production. Pinned environments keep the version each is pinned to.",
+        "v1 is now in production. Environments that didn't move keep their version and are offered it.",
         { variant: "success" },
       ),
     );
