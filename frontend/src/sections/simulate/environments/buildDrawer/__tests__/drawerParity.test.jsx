@@ -170,3 +170,41 @@ describe("the drawer sends what the Build tab sent", () => {
   });
 
 });
+
+describe("a browser environment's sites", () => {
+  it("are sent with preflight and create, apart from the egress domains", async () => {
+    const drawer = await capture(
+      <RepoForm />,
+      () => {
+        change(box("Repository link"), "https://github.com/acme/agent");
+        change(box("Additional egress domains"), "api.example.com");
+        change(box("Browser sites"), "shop.example.com, *.docs.example.org");
+      },
+      { build: true },
+    );
+    const [preflight] = drawer.preflight;
+    const [created] = drawer.create;
+    for (const body of [preflight, created]) {
+      expect(body.browser).toEqual({
+        allowed_sites: ["shop.example.com", "*.docs.example.org"],
+      });
+      expect(body.security.allowed_egress_domains).toEqual(["api.example.com"]);
+    }
+  });
+
+  it("asks for every host the site needs, with *. for the hosts under a name", () => {
+    render(<RepoForm />);
+    expect(
+      screen.getByText(
+        /List every host the site needs \(sign-in, API, files\): host names, or \*\.example\.com for the hosts under a name\. At most 10\./,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("are left out when the field is empty", async () => {
+    const drawer = await capture(<RepoForm />, () => {
+      change(box("Repository link"), "https://github.com/acme/agent");
+    });
+    expect("browser" in drawer.preflight[0]).toBe(false);
+  });
+});

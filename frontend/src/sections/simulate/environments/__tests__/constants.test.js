@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_ENTRY_TAB } from "../environmentOptions";
 import { CODE_UPLOAD_COPY } from "../codeUpload.constants";
-import { ENTRY_AGENT_TYPES } from "../agentTypes";
+import { ENTRY_AGENT_TYPES, MODALITY } from "../agentTypes";
 import { HOSTED_PLATFORMS_BY_TYPE } from "../hostedPlatforms";
 import { REPO_PROVIDERS } from "../repoProviders";
 import { ENV_STATUS, STATUS_META } from "../myEnvironments.constants";
@@ -25,10 +25,18 @@ describe("agentTypes", () => {
   it("gates the agent-type roster", () => {
     expect(liveIds(ENTRY_AGENT_TYPES)).toEqual(["voice", "text"]);
     expect(comingSoonIds(ENTRY_AGENT_TYPES)).toEqual([
+      "browser",
       "computer",
       "code",
       "robotics",
     ]);
+  });
+
+  it("offers Browser as its own entry and keeps Computer use", () => {
+    const labels = ENTRY_AGENT_TYPES.map((t) => t.label);
+    expect(labels).toContain("Browser");
+    expect(labels).toContain("Computer use");
+    expect(MODALITY.browser).toMatchObject({ id: "browser", label: "Browser" });
   });
 });
 

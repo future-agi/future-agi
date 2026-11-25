@@ -137,6 +137,36 @@ describe("draftToPreflightPayload — repo", () => {
     });
   });
 
+  it("names a browser environment's sites apart from its egress", () => {
+    const { payload } = draftToPreflightPayload(
+      repoDraft({
+        egress: "api.acme.com",
+        browserSites: " Shop.Acme.com, *.docs.acme.org\nshop.acme.com ",
+      }),
+    );
+    expect(payload.browser).toStrictEqual({
+      allowed_sites: ["shop.acme.com", "*.docs.acme.org"],
+    });
+    expect(payload.security.allowed_egress_domains).toStrictEqual([
+      "api.acme.com",
+    ]);
+  });
+
+  it("sends a wrong site as typed, so the server refuses it rather than the page dropping it", () => {
+    const { payload } = draftToPreflightPayload(
+      repoDraft({ browserSites: "shop.acme.com, https://acme.com/path" }),
+    );
+    expect(payload.browser.allowed_sites).toStrictEqual([
+      "shop.acme.com",
+      "https://acme.com/path",
+    ]);
+  });
+
+  it.each([null, "", " ,\n "])("names no browser for sites %j", (browserSites) => {
+    const { payload } = draftToPreflightPayload(repoDraft({ browserSites }));
+    expect("browser" in payload).toBe(false);
+  });
+
   it("never emits security for an empty egress", () => {
     const { payload } = draftToPreflightPayload(repoDraft());
     expect("security" in payload).toBe(false);
