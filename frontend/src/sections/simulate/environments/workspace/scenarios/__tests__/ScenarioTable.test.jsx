@@ -160,6 +160,37 @@ describe("ScenarioTable actors", () => {
       ],
     });
     expect(screen.getAllByText("With Rowan")).toHaveLength(1);
+    expect(screen.getByText("With Rowan").closest("td")).toHaveTextContent(
+      rows[0].name || rows[0].title,
+    );
+  });
+});
+
+describe("ScenarioTable source chip", () => {
+  const built = {
+    id: "s1",
+    label: "v1",
+    origin: "authoring",
+    createdAt: "2026-11-20T10:00:00Z",
+    createdBy: "Asha Rao",
+  };
+
+  it("marks each row Derived when the build wrote the only scenario version", () => {
+    renderTable({ batch: { version: built, latest: true, only: true } });
+    expect(screen.getAllByText("Derived")).toHaveLength(rows.length);
+  });
+
+  it("leaves the chip out when later versions changed the suite", () => {
+    renderTable({ batch: { version: built, latest: true, only: false } });
+    expect(screen.queryByText("Derived")).toBeNull();
+  });
+
+  it("leaves the chip out on an unsaved addition", () => {
+    renderTable({
+      rows: [{ ...rows[0], draftChange: "added" }, rows[1]],
+      batch: { version: built, latest: true, only: true },
+    });
+    expect(screen.getAllByText("Derived")).toHaveLength(1);
   });
 });
 

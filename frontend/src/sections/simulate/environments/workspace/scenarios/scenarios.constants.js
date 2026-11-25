@@ -87,6 +87,39 @@ export const unsavedCheckboxProps = (row) =>
       }
     : {};
 
+export const SCENARIO_SOURCE_CHIP = {
+  authoring: "Derived",
+  extend: "Extended",
+  chat: "Chat",
+  manual: "By hand",
+  nudge: "Rebuild",
+};
+
+const newestOf = (versions) =>
+  versions.reduce(
+    (best, one) =>
+      !best || new Date(one.createdAt || 0) > new Date(best.createdAt || 0)
+        ? one
+        : best,
+    null,
+  );
+
+export const scenarioBatch = (suiteVersions) => {
+  const list = Array.isArray(suiteVersions) ? suiteVersions : [];
+  const version = list.find((one) => one.isDefault);
+  if (!version) return null;
+  return {
+    version,
+    latest: newestOf(list)?.id === version.id,
+    only: list.length === 1,
+  };
+};
+
+export const rowSourceLabel = (row, batch) =>
+  batch?.only && !isUnsavedAddition(row)
+    ? SCENARIO_SOURCE_CHIP[batch.version?.origin] || null
+    : null;
+
 // The three axes a reader scans scenarios by. The trace table on the run view
 // uses the same three, so a scenarios-tab "Persona" bucket matches the trace
 // table's "Persona" bucket after a run.

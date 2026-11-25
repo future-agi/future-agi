@@ -84,6 +84,18 @@ export const GROUP_SHAPE = PropTypes.shape({
   rows: PropTypes.arrayOf(SCENARIO_SHAPE),
 });
 
+export const BATCH_SHAPE = PropTypes.shape({
+  version: PropTypes.shape({
+    id: PropTypes.string,
+    label: PropTypes.string,
+    origin: PropTypes.string,
+    createdAt: PropTypes.string,
+    createdBy: PropTypes.string,
+  }).isRequired,
+  latest: PropTypes.bool,
+  only: PropTypes.bool,
+});
+
 export const ENV_SHAPE = PropTypes.shape({
   id: PropTypes.string,
   name: PropTypes.string,

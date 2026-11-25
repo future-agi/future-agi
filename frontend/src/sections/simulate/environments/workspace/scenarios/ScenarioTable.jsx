@@ -28,6 +28,7 @@ import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import {
   ClampCell,
+  SourceChip,
   SubTasksCell,
   TruncTooltip,
   UnsavedMark,
@@ -36,10 +37,15 @@ import {
   ROW_HEIGHTS,
   SCENARIOS_COPY,
   isUnsavedAddition,
+  rowSourceLabel,
   unsavedCheckboxProps,
 } from "./scenarios.constants";
 import { personaSubline } from "./personaLabels";
-import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
+import {
+  BATCH_SHAPE,
+  GROUP_SHAPE,
+  SCENARIO_SHAPE,
+} from "./scenarios.shapes";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // on the table carries this on a tooltip so the disabled state reads as
@@ -149,6 +155,7 @@ export default function ScenarioTable({
   lockTooltip = LOCK_TOOLTIP,
   rowHeight = "Short",
   envId = null,
+  batch = null,
 }) {
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
   const [widths, setWidths] = useState(readWidths);
@@ -552,6 +559,7 @@ export default function ScenarioTable({
                           {row.name || row.title}
                         </Typography>
                       </TruncTooltip>
+                      <SourceChip label={rowSourceLabel(row, batch)} />
                       {row.critical && (
                         <Tooltip arrow title={SCENARIOS_COPY.critical}>
                           <Box sx={{ display: "flex" }}>
@@ -712,5 +720,6 @@ ScenarioTable.propTypes = {
   locked: PropTypes.bool,
   lockTooltip: PropTypes.string,
   envId: PropTypes.string,
+  batch: BATCH_SHAPE,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
 };
