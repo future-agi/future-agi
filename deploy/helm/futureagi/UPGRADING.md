@@ -27,6 +27,15 @@ Kubernetes transition: storage, controllers and recovery procedures differ.
    Pin the chart digest and the target release's signing identity together. Retain
    the verification record beside the reviewed change, without credentials.
 
+### Check dataset comparison bucket permissions
+
+Before upgrading an S3 deployment, grant the application storage role
+`s3:GetBucketPolicy` and `s3:GetBucketAcl` on the private comparison bucket
+itself (not its object ARNs). These read permissions let the backend verify
+that neither a policy nor an ACL grants public access. If a read is denied,
+comparison requests return HTTP 503 (`compare_storage_permission_missing`)
+and name the permission to grant. Do not make the bucket public.
+
 ### Check the collector admin address
 
 A saved `fiCollector.extraEnv.FI_ADMIN_ADDR: ":9500"` now moves the collector's

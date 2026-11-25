@@ -336,7 +336,10 @@ from tfc.utils.storage import (
     upload_file_to_s3,
     upload_image_to_s3,
 )
-from tfc.utils.storage_client import PrivateBucketMissing
+from tfc.utils.storage_client import (
+    PrivateBucketMissing,
+    PrivateBucketPermissionMissing,
+)
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -759,15 +762,20 @@ def _compare_not_found_response(gm):
     )
 
 
-def _compare_storage_unavailable_response():
+def _compare_storage_unavailable_response(error):
     # The comparison may well still exist: answering it as not found would
     # make the client rebuild it. CompareStorageUnavailable is logged where it
     # is raised.
+    # Reads wrap storage failures; builds may propagate the preflight error directly.
+    cause = error.__cause__ if isinstance(error, CompareStorageUnavailable) else error
+    permission_missing = isinstance(cause, PrivateBucketPermissionMissing)
     return Response(
         build_error_envelope(
-            COMPARE_STORAGE_UNAVAILABLE_MESSAGE,
+            str(cause) if permission_missing else COMPARE_STORAGE_UNAVAILABLE_MESSAGE,
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            code=COMPARE_STORAGE_UNAVAILABLE_CODE,
+            code="compare_storage_permission_missing"
+            if permission_missing
+            else COMPARE_STORAGE_UNAVAILABLE_CODE,
         ),
         status=status.HTTP_503_SERVICE_UNAVAILABLE,
     )
@@ -932,7 +940,7 @@ def _prepare_compare_dataset_impl(
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=4)
 
-    except PrivateBucketMissing:
+    except (PrivateBucketMissing, PrivateBucketPermissionMissing):
         raise
     except Exception as e:
         logger.exception(f"Error in preparing compare dataset: {str(e)}")
@@ -13873,8 +13881,8 @@ class GetCompareDatasetRow(APIView):
 
             return self._gm.success_response(response)
 
-        except CompareStorageUnavailable:
-            return _compare_storage_unavailable_response()
+        except (CompareStorageUnavailable, PrivateBucketPermissionMissing) as exc:
+            return _compare_storage_unavailable_response(exc)
         except Exception as e:
             logger.exception(f"Error in fetching compare dataset row: {str(e)}")
             return self._gm.internal_server_error_response(COMPARE_ROW_ERROR_MESSAGE)
@@ -13953,8 +13961,8 @@ class GetCompareDatasetRow(APIView):
             return self._gm.success_response(
                 {"message": "File(s) deleted successfully"}
             )
-        except CompareStorageUnavailable:
-            return _compare_storage_unavailable_response()
+        except (CompareStorageUnavailable, PrivateBucketPermissionMissing) as exc:
+            return _compare_storage_unavailable_response(exc)
         except Exception as e:
             logger.exception(f"Error in deleting compare dataset file: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -14862,8 +14870,8 @@ class CompareDatasetsView(APIView):
                 ),
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        except CompareStorageUnavailable:
-            return _compare_storage_unavailable_response()
+        except (CompareStorageUnavailable, PrivateBucketPermissionMissing) as exc:
+            return _compare_storage_unavailable_response(exc)
         except Exception as e:
             logger.exception(f"Error in comparing the datasets: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_COMPARE_DATASETS"))
@@ -15009,8 +15017,8 @@ class DownloadComparisonDatasetView(APIView):
 
         except Http404:
             return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
-        except CompareStorageUnavailable:
-            return _compare_storage_unavailable_response()
+        except (CompareStorageUnavailable, PrivateBucketPermissionMissing) as exc:
+            return _compare_storage_unavailable_response(exc)
         except Exception as e:
             logger.exception(f"Error in downloading the dataset: {str(e)}")
             return self._gm.internal_server_error_response(

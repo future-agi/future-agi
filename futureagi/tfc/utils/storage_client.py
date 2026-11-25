@@ -429,6 +429,35 @@ class PrivateBucketRefused(Exception):
         self.bucket_name = bucket_name
 
 
+class PrivateBucketPermissionMissing(PrivateBucketRefused):
+    """The storage role could not inspect the bucket's access settings."""
+
+    def __init__(self, bucket_name: str, permission: str):
+        super().__init__(
+            bucket_name,
+            f"Cannot verify comparison bucket privacy. The storage role needs {permission} "
+            "on the comparison bucket.",
+        )
+
+
+def _privacy_read_denied(exc: Exception) -> bool:
+    # S3-compatible services vary in their error codes; honor the HTTP status
+    # as well (without treating an unsupported API as a permission problem).
+    return (
+        isinstance(exc, PermissionError)
+        or getattr(getattr(exc, "response", None), "status", None) in (401, 403)
+        or getattr(exc, "code", None)
+        in (
+            "AccessDenied",
+            "Forbidden",
+            "Unauthorized",
+            "InvalidAccessKeyId",
+            "SignatureDoesNotMatch",
+            "ExpiredToken",
+        )
+    )
+
+
 class PrivateBucketMissing(PrivateBucketRefused):
     """A private bucket that has to be created in advance and does not exist."""
 
@@ -593,6 +622,10 @@ def _require_private_s3_acl(client: Minio, bucket_name: str) -> None:
         )
     except Exception as exc:
         logger.error("storage_private_bucket_acl_unreadable", bucket=bucket_name)
+        if _privacy_read_denied(exc):
+            raise PrivateBucketPermissionMissing(
+                bucket_name, "s3:GetBucketAcl"
+            ) from exc
         raise PrivateBucketRefused(bucket_name) from exc
     if public:
         logger.error("storage_private_bucket_public_acl", bucket=bucket_name)
@@ -629,8 +662,12 @@ def _check_private_bucket(client: Minio, bucket_name: str) -> None:
         policy = client.get_bucket_policy(bucket_name)
     except Exception as exc:
         code = getattr(exc, "code", None)
-        if code in ("AccessDenied", "NotImplemented"):
-            # A denied or unsupported policy read cannot establish privacy.
+        if _privacy_read_denied(exc):
+            raise PrivateBucketPermissionMissing(
+                bucket_name, "s3:GetBucketPolicy"
+            ) from exc
+        if code == "NotImplemented":
+            # An unsupported policy read cannot establish privacy.
             logger.error("storage_private_bucket_policy_unreadable", bucket=bucket_name)
             raise PrivateBucketRefused(bucket_name) from exc
         if code != "NoSuchBucketPolicy":
