@@ -12,6 +12,10 @@ vi.mock("../../agents/AgentVersionsPanel", () => ({
     <div data-testid="agent-versions-panel">{env.id}</div>
   ),
 }));
+// The Release card reads the versions query and has its own tests.
+vi.mock("../ReleaseCard", () => ({
+  default: ({ envId }) => <div data-testid="release-card">{envId}</div>,
+}));
 import { HardRulesCard } from "../OverviewCards";
 
 const connectedState = {
@@ -231,6 +235,21 @@ describe("OverviewPanel", () => {
     };
     const manage = () =>
       screen.queryByRole("button", { name: "Manage versions" });
+
+    it("shows the Release card while versioning is on", () => {
+      renderPanel({ env: versioned });
+
+      expect(screen.getByTestId("release-card")).toHaveTextContent("env-1");
+    });
+
+    it("keeps the Release card out while building or without versioning", () => {
+      const { unmount } = renderPanel({ env: versioned, buildMode: true });
+      expect(screen.queryByTestId("release-card")).toBeNull();
+      unmount();
+
+      renderPanel();
+      expect(screen.queryByTestId("release-card")).toBeNull();
+    });
 
     it("opens the agent versions in a drawer while versioning is on", async () => {
       const user = userEvent.setup();

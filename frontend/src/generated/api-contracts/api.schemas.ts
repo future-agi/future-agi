@@ -22345,10 +22345,49 @@ export type HarnessDraftSaveResponseApiSaved = {
   [key: string]: HarnessVersionApi;
 };
 
+export interface HarnessReleaseApi {
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  environment_version_id: string;
+  /** @minLength 1 */
+  environment_label: string;
+  suite_version_id: string;
+  /** @minLength 1 */
+  suite_label: string;
+  locked_at: string;
+  locked_by: HarnessVersionPersonApi;
+  unlocked_at: string;
+  unlocked_by: HarnessVersionPersonApi;
+  train: number;
+  test: number;
+}
+
+export interface HarnessRefusalApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface HarnessLockPreviewApi {
+  environment_version_id: string;
+  suite_version_id: string;
+  /** The suite version passed its proofs against this environment version. */
+  proved: boolean;
+  can_lock: boolean;
+  refusal: HarnessRefusalApi;
+  train: number;
+  test: number;
+  test_target: number;
+}
+
 export interface HarnessVersionsApi {
   agent: HarnessVersionApi[];
   environment: HarnessVersionApi[];
   suite: HarnessVersionApi[];
+  releases: HarnessReleaseApi[];
+  lock: HarnessLockPreviewApi;
 }
 
 export interface HarnessDraftSaveResponseApi {
@@ -23318,6 +23357,13 @@ export interface HarnessAgentCredentialsResponseApi {
   agent_version: HarnessVersionApi;
 }
 
+export interface HarnessLockReleaseApi {
+  /** The default environment version the caller saw. */
+  environment_version_id: string;
+  /** The default suite version the caller saw. */
+  suite_version_id: string;
+}
+
 export interface HarnessSuiteMemberApi {
   /** @minLength 1 */
   scenario_key: string;
@@ -23327,6 +23373,10 @@ export interface HarnessSuiteMemberApi {
   /** @minLength 1 */
   issue_cluster_id: string;
   issue_project_id: string;
+}
+
+export interface HarnessUnlockReleaseApi {
+  release_id: string;
 }
 
 export interface HarnessDefaultMoveApi {

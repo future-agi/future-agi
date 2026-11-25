@@ -20,7 +20,11 @@ describe("useSimulationAccess", () => {
   it.each([ROLES.VIEWER, ROLES.WORKSPACE_VIEWER])(
     "gives a %s no edit or run",
     (role) => {
-      expect(accessFor(role)).toEqual({ canEdit: false, canRun: false });
+      expect(accessFor(role)).toEqual({
+        canEdit: false,
+        canRun: false,
+        canUnlockRelease: false,
+      });
     },
   );
 
@@ -31,10 +35,28 @@ describe("useSimulationAccess", () => {
     ROLES.WORKSPACE_ADMIN,
     ROLES.WORKSPACE_MEMBER,
   ])("lets a %s edit and run", (role) => {
-    expect(accessFor(role)).toEqual({ canEdit: true, canRun: true });
+    expect(accessFor(role)).toMatchObject({ canEdit: true, canRun: true });
   });
 
+  it.each([ROLES.OWNER, ROLES.ADMIN, ROLES.WORKSPACE_ADMIN])(
+    "lets a %s unlock a release",
+    (role) => {
+      expect(accessFor(role).canUnlockRelease).toBe(true);
+    },
+  );
+
+  it.each([ROLES.MEMBER, ROLES.WORKSPACE_MEMBER])(
+    "keeps a %s from unlocking a release",
+    (role) => {
+      expect(accessFor(role).canUnlockRelease).toBe(false);
+    },
+  );
+
   it("gives an unknown role nothing", () => {
-    expect(accessFor(undefined)).toEqual({ canEdit: false, canRun: false });
+    expect(accessFor(undefined)).toEqual({
+      canEdit: false,
+      canRun: false,
+      canUnlockRelease: false,
+    });
   });
 });

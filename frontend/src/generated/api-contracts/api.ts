@@ -698,6 +698,7 @@ import type {
   HarnessJobCreateApi,
   HarnessJobExtendApi,
   HarnessJobReadApi,
+  HarnessLockReleaseApi,
   HarnessManifestApi,
   HarnessNudgeAnswerApi,
   HarnessNudgeApi,
@@ -719,6 +720,7 @@ import type {
   HarnessStartingRecordReworkWriteApi,
   HarnessStartingRecordsApi,
   HarnessSuiteMemberApi,
+  HarnessUnlockReleaseApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
   HarnessVerifyCreateApi,
@@ -62098,9 +62100,14 @@ export type simulateApiHarnessEnvironmentsDeleteResponse403 = {
   status: 403;
 };
 
+export type simulateApiHarnessEnvironmentsDeleteResponse409 = {
+  data: void;
+  status: 409;
+};
+
 export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204 | 403>;
+  status: Exclude<HTTPStatusCodes, 204 | 403 | 409>;
 };
 
 export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
@@ -62109,6 +62116,7 @@ export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
   };
 export type simulateApiHarnessEnvironmentsDeleteResponseError = (
   | simulateApiHarnessEnvironmentsDeleteResponse403
+  | simulateApiHarnessEnvironmentsDeleteResponse409
   | simulateApiHarnessEnvironmentsDeleteResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -64355,6 +64363,62 @@ export const simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersion =
     );
   };
 
+export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponse200 = {
+  data: HarnessVersionsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsLockReleaseResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponseError = (
+  | simulateApiHarnessEnvironmentsVersionsLockReleaseResponse403
+  | simulateApiHarnessEnvironmentsVersionsLockReleaseResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponse =
+  | simulateApiHarnessEnvironmentsVersionsLockReleaseResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsLockReleaseResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsLockReleaseUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/lock/`;
+};
+
+/**
+ * Lock the default environment and suite versions into a release with train and
+test splits; returns every version and release.
+ */
+export const simulateApiHarnessEnvironmentsVersionsLockRelease = async (
+  id: string,
+  harnessLockReleaseApi: HarnessLockReleaseApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsLockReleaseResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsLockReleaseResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsLockReleaseUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessLockReleaseApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse200 =
   {
     data: HarnessSuiteMemberApi[];
@@ -64405,6 +64469,63 @@ export const simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembers = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse200 = {
+  data: HarnessVersionsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponseError = (
+  | simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse403
+  | simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse =
+  | simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsUnlockReleaseUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/unlock/`;
+};
+
+/**
+ * Unlock a release, as a workspace admin or owner. Its versions, splits and
+scores stay; returns every version and release.
+ */
+export const simulateApiHarnessEnvironmentsVersionsUnlockRelease = async (
+  id: string,
+  harnessUnlockReleaseApi: HarnessUnlockReleaseApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsUnlockReleaseUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessUnlockReleaseApi),
     },
   );
 };

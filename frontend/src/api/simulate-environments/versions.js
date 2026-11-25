@@ -35,6 +35,14 @@ const suiteMembersPath = (envId, versionId) =>
     { id: envId, version_id: versionId },
   );
 
+const lockReleasePath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/versions/lock/", {
+    id: envId,
+  });
+const unlockReleasePath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/versions/unlock/", {
+    id: envId,
+  });
 const moveDefaultPath = (envId, piece, versionId) =>
   apiPath(
     "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/",
@@ -140,6 +148,18 @@ export const moveDefault = async (envId, piece, versionId, expectedDefaultId) =>
       expected_default_id: expectedDefaultId ?? null,
     })
   ).data;
+
+// The default pair the user saw rides along; a newer one refuses the lock (409).
+export const lockRelease = async (envId, { environmentVersionId, suiteVersionId }) =>
+  (
+    await axios.post(lockReleasePath(envId), {
+      environment_version_id: environmentVersionId,
+      suite_version_id: suiteVersionId,
+    })
+  ).data;
+
+export const unlockRelease = async (envId, releaseId) =>
+  (await axios.post(unlockReleasePath(envId), { release_id: releaseId })).data;
 
 export const discardAgentVersion = async (envId, versionId) =>
   (await axios.post(discardAgentPath(envId, versionId), {})).data;
@@ -363,6 +383,33 @@ export const versionFromApi = (item = {}) => ({
   discardable: Boolean(item.discardable),
 });
 
+export const releaseFromApi = (item = {}) => ({
+  id: item.id,
+  label: item.label,
+  environmentVersionId: item.environment_version_id,
+  environmentLabel: item.environment_label || null,
+  suiteVersionId: item.suite_version_id,
+  suiteLabel: item.suite_label || null,
+  lockedAt: item.locked_at || null,
+  lockedBy: item.locked_by?.name || null,
+  unlockedAt: item.unlocked_at || null,
+  unlockedBy: item.unlocked_by?.name || null,
+  train: item.train ?? 0,
+  test: item.test ?? 0,
+});
+
+// Whether the default pair can be locked now, why not, and its splits.
+export const lockFromApi = (item = {}) => ({
+  environmentVersionId: item.environment_version_id || null,
+  suiteVersionId: item.suite_version_id || null,
+  proved: Boolean(item.proved),
+  canLock: Boolean(item.can_lock),
+  refusal: item.refusal || null,
+  train: item.train ?? null,
+  test: item.test ?? null,
+  testTarget: item.test_target ?? null,
+});
+
 // A check still pending after this long is stuck: offered again, not polled.
 export const STUCK_AFTER_MS = 15 * 60 * 1000;
 // The check's latest start: the version's creation, its last check, or the
@@ -425,7 +472,10 @@ export const toVersions = (data = {}) => {
     ]),
   );
   const empty = VERSION_PIECES.every((piece) => lists[piece].length === 0);
-  return { ...lists, defaults, empty };
+  const releases = (Array.isArray(data?.releases) ? data.releases : []).map(
+    releaseFromApi,
+  );
+  return { ...lists, defaults, empty, releases, lock: lockFromApi(data?.lock) };
 };
 
 export function useEnvironmentVersions(envId, { enabled = true } = {}) {
@@ -533,6 +583,32 @@ export function useMoveDefault(envId) {
     },
   });
 }
+
+// Lock or unlock a release. The answer is every version and release, so it seeds
+// the list. A conflict or a refusal means what the user saw is out of date:
+// refresh so the card shows the current state and its reason.
+const useReleaseAction = (envId, action) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (args) => action(envId, args),
+    onSuccess: (data) => {
+      if (data) queryClient.setQueryData(environmentVersionsKey(envId), data);
+    },
+    onError: (error) => {
+      if ([404, 409, 422].includes(errorStatus(error))) {
+        queryClient.invalidateQueries({
+          queryKey: environmentVersionsKey(envId),
+        });
+      }
+    },
+  });
+};
+
+export const useLockRelease = (envId) => useReleaseAction(envId, lockRelease);
+
+export const useUnlockRelease = (envId) =>
+  useReleaseAction(envId, (id, { releaseId }) => unlockRelease(id, releaseId));
 
 // The agent version actions answer with every version: seed the list with it,
 // then ask again for the queries nested under it.

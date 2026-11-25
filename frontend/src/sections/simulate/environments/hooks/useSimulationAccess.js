@@ -1,5 +1,12 @@
 import { useAuthContext } from "src/auth/hooks";
-import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  PERMISSIONS,
+  ROLES,
+  RolePermission,
+} from "src/utils/rolePermissionMapping";
+
+// Unlocking a release is stricter than locking it: owners and admins only.
+const RELEASE_ADMINS = [ROLES.OWNER, ROLES.ADMIN, ROLES.WORKSPACE_ADMIN];
 
 export default function useSimulationAccess() {
   const { role } = useAuthContext();
@@ -7,5 +14,6 @@ export default function useSimulationAccess() {
   return {
     canEdit: Boolean(permissions[PERMISSIONS.UPDATE][role]),
     canRun: Boolean(permissions[PERMISSIONS.RUN_SIMULATION_TEST][role]),
+    canUnlockRelease: RELEASE_ADMINS.includes(role),
   };
 }

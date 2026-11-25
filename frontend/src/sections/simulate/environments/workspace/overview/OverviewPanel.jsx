@@ -26,6 +26,7 @@ import AgentSummarySection from "./AgentSummarySection";
 import SourceReadCard from "./SourceReadCard";
 import NextStepsChecklist from "./NextStepsChecklist";
 import StateSummary from "./StateSummary";
+import ReleaseCard from "./ReleaseCard";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { DependsOnCard, SeededDataCard } from "./WorldCards";
 
@@ -203,6 +204,11 @@ export default function OverviewPanel({
         latestRun={latestRun}
         onGo={onGo}
       />
+
+      {/* The release: lock the default versions so scores on them stay
+          comparable. Real data only, so only while versioning is on, and not
+          while the environment builds (Vel's placement: after the summary). */}
+      {canManageVersions && !buildMode && <ReleaseCard envId={env.id} />}
 
       {/* Getting-started checklist for envs that haven't been seeded yet. A
           scratch env arrives carrying a derived world, so the same checklist

@@ -213,3 +213,54 @@ export const CHECKLIST_COPY = {
 // aren't the agent's world, so they stay out of Seeded data.
 export const isHarnessTable = (name = "") => name.startsWith("_") || name.startsWith("harness_");
 export const worldTables = (env) => (env?.seed?.tables || []).filter((t) => !isHarnessTable(t.name));
+
+// The Release card: lock the default versions so scores on them stay comparable.
+export const RELEASE_COPY = {
+  title: (label) => (label ? `Release ${label}` : "Release"),
+  subtitleLocked:
+    "Frozen so scores stay comparable. Edits make a new, unlocked version.",
+  subtitleOpen: "Lock these versions so scores on them stay comparable.",
+  status: { locked: "Locked", ready: "Ready", blocked: "Can't lock yet" },
+  head: { check: "Check", proves: "What it proves", result: "Result" },
+  reference: {
+    label: "Reference passes",
+    proves: "The reference solution passes every scenario.",
+    passed: "Passed",
+    unproved: "Not proved",
+  },
+  lockedLine: (at, train, test, environmentLabel) =>
+    `Locked ${at} · Train ${train} · Test ${test} tasks · scorer environment ${environmentLabel}.`,
+  readyLine: (train, test) =>
+    `Train ${train} · Test ${test} tasks once locked. Lock to freeze tasks, splits and the scorer.`,
+  lock: "Lock this release",
+  unlock: "Unlock",
+  lockTitle: "Lock this release?",
+  lockBody:
+    "Its tasks, train and test splits and scorer freeze, so every score on it stays comparable. Each task keeps its split in every later release. Edits make a new, unlocked version.",
+  lockAction: "Lock release",
+  unlockTitle: (label) => `Unlock release ${label}?`,
+  unlockBody:
+    "Its scores stay, but they're no longer a locked comparison. The train/test split of each task never changes.",
+  unlockAction: "Unlock release",
+  earlier: "Earlier releases",
+  earlierLine: (release) =>
+    `${release.label} · environment ${release.environmentLabel} · scenarios ${release.suiteLabel} · Train ${release.train} · Test ${release.test} · ${release.unlockedAt ? "unlocked" : "locked"}`,
+};
+
+// agent vN · repo@ref · commit · environment vN · scenarios vN
+export const versionLine = (defaults) => {
+  const source = defaults?.agent?.source || {};
+  const repo = source.repository
+    ? [source.repository, source.ref].filter(Boolean).join("@")
+    : null;
+  return [
+    defaults?.agent?.label && `agent ${defaults.agent.label}`,
+    repo,
+    source.commit_sha?.slice(0, 7),
+    defaults?.environment?.label &&
+      `environment ${defaults.environment.label}`,
+    defaults?.suite?.label && `scenarios ${defaults.suite.label}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1206,
+  endpointCount: 1208,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -30477,6 +30477,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/versions/lock/": {
+      post: {
+        operationId: "simulate_api_harness-environments_versions_lock_release",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessLockRelease",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessVersions",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
       {
         get: {
@@ -30499,6 +30521,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/versions/unlock/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_versions_unlock_release",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessUnlockRelease",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessVersions",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
       {
         post: {
@@ -73174,6 +73219,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessLockRelease: {
+      required: ["environment_version_id", "suite_version_id"],
+      type: "object",
+      properties: {
+        environment_version_id: {
+          title: "Environment version id",
+          description: "The default environment version the caller saw.",
+          type: "string",
+          format: "uuid",
+        },
+        suite_version_id: {
+          title: "Suite version id",
+          description: "The default suite version the caller saw.",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
     HarnessManifest: {
       required: [
         "schema_version",
@@ -74259,6 +74322,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessUnlockRelease: {
+      required: ["release_id"],
+      type: "object",
+      properties: {
+        release_id: {
+          title: "Release id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
     HarnessUsageRequest: {
       required: ["operation"],
       type: "object",
@@ -74472,7 +74546,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessVersions: {
-      required: ["agent", "environment", "suite"],
+      required: ["agent", "environment", "suite", "releases", "lock"],
       type: "object",
       properties: {
         agent: {
@@ -74492,6 +74566,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessVersion",
           },
+        },
+        releases: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRelease",
+          },
+        },
+        lock: {
+          $ref: "#/definitions/HarnessLockPreview",
         },
       },
     },
@@ -116770,6 +116853,137 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessLockPreview: {
+      required: [
+        "environment_version_id",
+        "suite_version_id",
+        "proved",
+        "can_lock",
+        "refusal",
+        "train",
+        "test",
+        "test_target",
+      ],
+      type: "object",
+      properties: {
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        suite_version_id: {
+          title: "Suite version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        proved: {
+          title: "Proved",
+          description:
+            "The suite version passed its proofs against this environment version.",
+          type: "boolean",
+        },
+        can_lock: {
+          title: "Can lock",
+          type: "boolean",
+        },
+        refusal: {
+          $ref: "#/definitions/HarnessRefusal",
+        },
+        train: {
+          title: "Train",
+          type: "integer",
+          "x-nullable": true,
+        },
+        test: {
+          title: "Test",
+          type: "integer",
+          "x-nullable": true,
+        },
+        test_target: {
+          title: "Test target",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessRelease: {
+      required: [
+        "id",
+        "label",
+        "environment_version_id",
+        "environment_label",
+        "suite_version_id",
+        "suite_label",
+        "locked_at",
+        "locked_by",
+        "unlocked_at",
+        "unlocked_by",
+        "train",
+        "test",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        environment_label: {
+          title: "Environment label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        suite_version_id: {
+          title: "Suite version id",
+          type: "string",
+          format: "uuid",
+        },
+        suite_label: {
+          title: "Suite label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        locked_at: {
+          title: "Locked at",
+          type: "string",
+          format: "date-time",
+        },
+        locked_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        unlocked_at: {
+          title: "Unlocked at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        unlocked_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        train: {
+          title: "Train",
+          type: "integer",
+        },
+        test: {
+          title: "Test",
+          type: "integer",
+        },
+      },
+    },
     HuggingFaceDatasetConfigResult: {
       required: ["message", "dataset_info"],
       type: "object",
@@ -139431,6 +139645,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    HarnessRefusal: {
+      required: ["code", "message"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     HuggingFaceDatasetDetail: {
       required: ["id", "name", "description", "downloads", "likes", "tags"],
