@@ -51,15 +51,17 @@ vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
 });
 
 // The launch form has its own tests; here it only shows which run and environment it opens on.
+// It stays mounted and toggles `open` (so the drawer slides); closed, it shows nothing.
 vi.mock("../LaunchFixDialog", () => ({
   // eslint-disable-next-line react/prop-types
-  default: ({ envId, sourceRunId }) => (
-    <div
-      data-testid="launch-fix-dialog"
-      data-env={envId}
-      data-source={sourceRunId}
-    />
-  ),
+  default: ({ open, envId, sourceRunId }) =>
+    open && (
+      <div
+        data-testid="launch-fix-dialog"
+        data-env={envId}
+        data-source={sourceRunId}
+      />
+    ),
 }));
 
 const axios = (await import("src/utils/axios")).default;
@@ -102,8 +104,9 @@ const shipPosts = () =>
     /make-default|pull-request/.test(url),
   );
 
+// The ship button and its confirm say the same: Open pull request or Make default.
 async function confirmShip(user, button) {
-  await user.click(await screen.findByRole("button", { name: "Ship" }));
+  await user.click(await screen.findByRole("button", { name: button }));
   const dialog = await screen.findByRole("dialog");
   return {
     dialog,
@@ -124,6 +127,24 @@ describe("FixVerdict", () => {
     expect(screen.getByText("Proven on the targets only")).toBeInTheDocument();
     expect(screen.queryByText("Held back")).toBeNull();
     expect(screen.queryByText("Overfit gap")).toBeNull();
+    expect(screen.queryByText("Limited validation")).toBeNull();
+    expect(listResult(fixOf("fix-ready-no-held")).note).toMatch(
+      /^Proven on the targets only · /,
+    );
+  });
+
+  it("does not say proven on the targets only when cases were held back but have no rate", () => {
+    renderUi(
+      <FixVerdict
+        fix={fixOf("fix-ready-no-held", {
+          request: {
+            ...fixOf("fix-ready-no-held").request,
+            held_back_scenario_keys: ["a", "b", "c", "d"],
+          },
+        })}
+      />,
+    );
+    expect(screen.queryByText("Proven on the targets only")).toBeNull();
     expect(screen.queryByText("Limited validation")).toBeNull();
   });
 
@@ -263,8 +284,8 @@ describe("FixVerdict", () => {
     expect(screen.getByText("How it was decided")).toBeInTheDocument();
   });
 
-  it("labels limited validation, with the held-back tally only when cases were held back", async () => {
-    const { unmount } = renderUi(
+  it("labels limited validation, with the held-back tally", async () => {
+    renderUi(
       <FixVerdict
         fix={fixOf("fix-ready-archive", { limited_validation: true })}
       />,
@@ -275,14 +296,6 @@ describe("FixVerdict", () => {
         "Too few to tell · Fixed 1 of 2 failing scenarios it never saw — it takes 4 or more to tell.",
       ),
     ).toBeInTheDocument();
-    unmount();
-    renderUi(
-      <FixVerdict
-        fix={fixOf("fix-ready-no-held", { limited_validation: true })}
-      />,
-    );
-    expect(screen.getByText("Limited validation")).toBeInTheDocument();
-    expect(screen.queryByText(/Too few to tell/)).toBeNull();
     expect(screen.queryByText("Proven on the targets only")).toBeNull();
     expect(
       listResult(fixOf("fix-ready-archive", { limited_validation: true })).note,
@@ -572,7 +585,11 @@ describe("FixFinishedView", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("The fix did not finish.")).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Ship$/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: /^(Open pull request|Make default)$/,
+      }),
+    ).toBeNull();
   });
 
   it("offers Retry on a retryable failed fix and opens the new fix", async () => {
@@ -595,7 +612,10 @@ describe("FixFinishedView", () => {
 });
 
 describe("Ship, while the evals grade the winner", () => {
-  const shipButton = () => screen.findByRole("button", { name: "Ship" });
+  const shipButton = () =>
+    screen.findByRole("button", {
+      name: /^(Open pull request|Make default)$/,
+    });
 
   it("waits until grading finishes, and says why", async () => {
     updateFixtureFixRun("fix-ready-github", (f) => ({
@@ -676,6 +696,46 @@ describe("Ship", () => {
     expect(shipPosts()[0][0]).toMatch(/make-default\/$/);
   });
 
+  it.each([
+    [
+      "a pull request with nothing held back",
+      "fix-ready-github",
+      "Open pull request",
+      { held_back_scenario_keys: [] },
+      false,
+      "Proven on the targets only: it opens as a draft pull request, marked Proven on the targets only in its title and body.",
+    ],
+    [
+      "a version with nothing held back",
+      "fix-ready-archive",
+      "Make default",
+      { held_back_scenario_keys: [] },
+      false,
+      "Proven on the targets only: nothing was held back to prove this change.",
+    ],
+    [
+      "a pull request with too few held back",
+      "fix-ready-github",
+      "Open pull request",
+      {},
+      true,
+      "Limited validation: it opens as a draft pull request, marked Limited validation in its title and body.",
+    ],
+  ])(
+    "says how strong the result is before it ships %s",
+    async (_, id, button, request, limited, note) => {
+      const user = userEvent.setup();
+      updateFixtureFixRun(id, (f) => ({
+        ...f,
+        request: { ...f.request, ...request },
+        limited_validation: limited,
+      }));
+      renderPage(id);
+      const { dialog } = await confirmShip(user, button);
+      expect(within(dialog).getByText(note)).toBeInTheDocument();
+    },
+  );
+
   it("shows the server's message when the version cannot be activated", async () => {
     hooks.ship = {
       isPending: false,
@@ -691,7 +751,11 @@ describe("Ship", () => {
     expect(
       await screen.findByText("Could not activate v11"),
     ).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Ship" })).toBeEnabled();
+    // The confirm says Make default too: wait for it to close first.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      await screen.findByRole("button", { name: "Make default" }),
+    ).toBeEnabled();
   });
 
   it("offers the patch when the repository cannot take a pull request", async () => {

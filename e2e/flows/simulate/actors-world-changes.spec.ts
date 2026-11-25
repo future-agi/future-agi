@@ -95,7 +95,7 @@ test('SIM-E2E-010: an actor with no channel is named on Scenarios, and World sta
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}/runs/${seed.runTestId}`
       + `/${seed.testExecutionId}?rowId=${seed.callExecutionId}`);
     await page.getByRole('tab', { name: 'World state' }).click({ timeout: UI_READY });
-    await expect(page.getByText(/1 read/)).toBeVisible({ timeout: UI_READY });
-    await expect(page.getByText('Committed: issue_refund')).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByLabel(/1 read/)).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByLabel('Committed: issue_refund')).toBeVisible({ timeout: UI_READY });
   });
 });

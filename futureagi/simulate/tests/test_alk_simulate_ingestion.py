@@ -1220,6 +1220,87 @@ class TestResultIngest:
         call = CallExecution.objects.get(id=call_ids[0])
         assert call.call_metadata["eval_completed"] is True
 
+    def test_a_worker_s_own_check_is_stored_as_that_worker_s(
+        self, auth_client, run_test
+    ):
+        """A worker's check keeps its subject on the stored result and its reason unchanged."""
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        with patch(
+            "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": True},
+                            {
+                                "name": "lookup_read_only",
+                                "passed": False,
+                                "reason": "it wrote an order",
+                                "subject": "worker:order_lookup",
+                            },
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        outputs = CallExecution.objects.get(id=call_ids[0]).eval_outputs or {}
+        by_name = {one["name"]: one for one in outputs.values()}
+        assert by_name["lookup_read_only"]["subject"] == "worker:order_lookup"
+        # The reason is stored as the harness gave it; whose check it is lives in `subject` alone.
+        assert by_name["lookup_read_only"]["reason"] == "it wrote an order"
+        assert "subject" not in by_name["ride_booked"]
+
+    def test_a_worker_s_check_named_like_the_task_s_is_its_own_result_and_never_localized(
+        self, auth_client, run_test
+    ):
+        """A worker check sharing a task sub-goal's name and template is stored apart, and no localizer task is made."""
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        template = SimpleNamespace(id=uuid.uuid4())
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion._resolve_harness_eval_template",
+                return_value=template,
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion._get_or_create_harness_eval_config",
+                return_value=SimpleNamespace(id=uuid.uuid4(), error_localizer=True),
+            ),
+            patch(
+                "model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate"
+            ) as localize,
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "read_only", "passed": True},
+                            {
+                                "name": "read_only",
+                                "passed": False,
+                                "subject": "worker:order_lookup",
+                            },
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        outputs = CallExecution.objects.get(id=call_ids[0]).eval_outputs or {}
+        assert len([one for one in outputs.values() if one["name"] == "read_only"]) == 2
+        # Only the task's check makes a localizer task.
+        assert localize.call_count == 1
+
     def test_a_harness_receipt_with_the_switch_on_dispatches_instead(
         self, auth_client, run_test
     ):
@@ -2009,6 +2090,86 @@ class TestTextModeIngestion:
         # turn_count = number of ASSISTANT rows (one agent turn in the fixture).
         cmd = call.conversation_metrics_data or {}
         assert cmd.get("turn_count") == 1
+
+    def test_text_result_ingest_keeps_the_receipt_times_on_chat_messages(
+        self, auth_client, text_run_test
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from simulate.models.chat_message import ChatMessageModel
+
+        started = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+        _, call_ids = _start_and_batch(auth_client, text_run_test)
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "started_at": started.isoformat(),
+                "ended_at": (started + timedelta(seconds=10)).isoformat(),
+                "duration_seconds": 10,
+                "transcript": [
+                    {"speaker_role": "user", "content": "Where is my order?"},
+                    {"speaker_role": "assistant", "content": "It ships today."},
+                    {"speaker_role": "user", "content": "Can I change the address?"},
+                    {"speaker_role": "assistant", "content": "Yes, done."},
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.started_at == started
+        assert call.duration_seconds == 10
+        rows = list(
+            ChatMessageModel.objects.filter(call_execution=call).order_by("created_at")
+        )
+        # The transcript carries no per-message offsets, so each message is one
+        # second after the previous one, starting at the receipt's start time.
+        assert [(r.role, r.messages, r.created_at) for r in rows] == [
+            ("user", ["Where is my order?"], started),
+            ("assistant", ["It ships today."], started + timedelta(seconds=1)),
+            ("user", ["Can I change the address?"], started + timedelta(seconds=2)),
+            ("assistant", ["Yes, done."], started + timedelta(seconds=3)),
+        ]
+
+        detail = auth_client.get(f"/simulate/call-executions/{call.id}/")
+        assert detail.status_code == 200, detail.content
+        body = detail.json()
+        body = body.get("result", body)
+        assert body["start_time"].startswith("2026-01-02T03:04:05")
+        assert body["duration_seconds"] == 10
+        assert body["duration"] == 3.0
+
+    def test_text_result_ingest_places_chat_messages_at_their_receipt_offsets(
+        self, auth_client, text_run_test
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from simulate.models.chat_message import ChatMessageModel
+
+        started = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+        _, call_ids = _start_and_batch(auth_client, text_run_test)
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "started_at": started.isoformat(),
+                "ended_at": (started + timedelta(seconds=15)).isoformat(),
+                "transcript": _transcript_payload(),
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        rows = ChatMessageModel.objects.filter(call_execution_id=call_ids[0]).order_by(
+            "created_at"
+        )
+        assert [(r.role, r.created_at) for r in rows] == [
+            ("user", started),
+            ("assistant", started + timedelta(seconds=6)),
+            ("user", started + timedelta(seconds=12)),
+        ]
 
     def test_text_result_ingest_folds_tool_calls_into_agent_turn(
         self, auth_client, text_run_test

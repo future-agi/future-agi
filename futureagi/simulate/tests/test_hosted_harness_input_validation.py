@@ -5,7 +5,7 @@ import hashlib
 import io
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -371,6 +371,13 @@ def test_receipt_replay_normalizes_timestamps_before_chat_arithmetic(
             capability.attempt, projected, digest_body=body, replay_usage=False
         )
         assert created
+        first_delivery_times = list(
+            ChatMessageModel.objects.filter(
+                call_execution=job.scenario_registrations.get().call_execution
+            )
+            .order_by("created_at")
+            .values_list("created_at", flat=True)
+        )
         replay, created = ingest_result_receipt(
             capability.attempt, projected, digest_body=body, replay_usage=False
         )
@@ -387,11 +394,17 @@ def test_receipt_replay_normalizes_timestamps_before_chat_arithmetic(
         ChatMessageModel.objects.filter(call_execution=call).order_by("created_at")
     )
     assert len(rows) == 4
-    assert scheduled_times[0] == scheduled_times[1]
-    first, reply, second, second_reply = scheduled_times[0]
-    assert first == reply == call.started_at
-    assert second == second_reply
-    assert (second - first).total_seconds() == 1
+    # Check the stored times, not the values handed to bulk_create: created_at
+    # is auto_now_add, which used to discard the intended times on insert, so
+    # ingestion now writes each row's own time back after the insert. Each
+    # message gets its own time in conversation order from the receipt start.
+    assert [len(times) for times in scheduled_times] == [4, 4]
+    stored_times = [row.created_at for row in rows]
+    assert [row.role for row in rows] == ["user", "assistant", "user", "assistant"]
+    assert stored_times == first_delivery_times
+    assert stored_times == [
+        call.started_at + timedelta(seconds=offset) for offset in range(4)
+    ]
 
 
 def _ingest_text_receipt(job, capability, body):

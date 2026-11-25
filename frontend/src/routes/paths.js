@@ -59,6 +59,12 @@ export const paths = {
     tasks: `${ROOTS.DASHBOARD}/tasks`,
     users: `${ROOTS.DASHBOARD}/users`,
     evals: `${ROOTS.DASHBOARD}/evaluations`,
+    metrics: {
+      root: `${ROOTS.DASHBOARD}/metrics`,
+      new: `${ROOTS.DASHBOARD}/metrics/new`,
+      detail: (metricId) => `${ROOTS.DASHBOARD}/metrics/${metricId}`,
+      edit: (metricId) => `${ROOTS.DASHBOARD}/metrics/${metricId}/edit`,
+    },
     docs: `${ROOTS.DASHBOARD}/docs`,
     sync: `${ROOTS.DASHBOARD}/sync`,
     develop: `${ROOTS.DASHBOARD}/develop`,
@@ -89,11 +95,6 @@ export const paths = {
       test: `${ROOTS.DASHBOARD}/simulate/test`,
       testCallDetails: (testId, executionId) =>
         `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
-      harness: {
-        root: `${ROOTS.DASHBOARD}/simulate/harness`,
-        new: `${ROOTS.DASHBOARD}/simulate/harness/new`,
-        detail: (jobId) => `${ROOTS.DASHBOARD}/simulate/harness/${jobId}`,
-      },
       environments: {
         root: `${ROOTS.DASHBOARD}/simulate/environments`,
         templates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
@@ -113,6 +114,7 @@ export const paths = {
       root: `${ROOTS.DASHBOARD}/error-feed`,
       detail: (id) => `${ROOTS.DASHBOARD}/error-feed/${id}`,
     },
+    derivedMetrics: `${ROOTS.DASHBOARD}/derived-metrics`,
     dashboards: {
       root: `${ROOTS.DASHBOARD}/dashboards`,
       detail: (id) => `${ROOTS.DASHBOARD}/dashboards/${id}`,

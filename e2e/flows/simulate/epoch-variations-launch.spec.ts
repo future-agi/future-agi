@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { fetchRoute } from '../../lib/backend-request';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { exactPath } from '../../lib/url';
-
 // The isolated E2E stack has no Enterprise license (fix_my_agent is
 // requires_license), no builder and no simulation runner, so it cannot hold a
 // finished run or an epoch. Stub only those responses here, as FEED-E2E-001
@@ -184,7 +184,7 @@ async function stubEpochApi(page: Page, executionId: string, fixId: string) {
 
   // The real capabilities, with only fix_my_agent switched on.
   await page.route(endsWith('/api/capabilities/'), async (route: Route) => {
-    const response = await route.fetch();
+    const response = await fetchRoute(route);
     const json = await response.json();
     json.features = { ...json.features, fix_my_agent: { ...json.features?.fix_my_agent, allowed: true } };
     await route.fulfill({ response, json });

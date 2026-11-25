@@ -2,14 +2,14 @@ import PropTypes from "prop-types";
 import { Box, Chip, Typography, useTheme } from "@mui/material";
 import Section from "src/components/section";
 import PlatformLogo from "../PlatformLogo";
-import { PLATFORMS } from "../constants";
+import { INSTALL_FLOWS, PLATFORMS } from "../constants";
 
-export default function StepPlatformSelect({ data, onUpdate, onNext, onSelectSlack }) {
+export default function StepPlatformSelect({ data, onUpdate, onNext, onSelectInstall }) {
   const theme = useTheme();
 
   const handleSelect = (platformId) => {
-    if (platformId === "slack") {
-      onSelectSlack();
+    if (INSTALL_FLOWS[platformId]) {
+      onSelectInstall(platformId);
       return;
     }
     onUpdate({ platform: platformId });
@@ -73,5 +73,5 @@ StepPlatformSelect.propTypes = {
   data: PropTypes.object.isRequired,
   onUpdate: PropTypes.func.isRequired,
   onNext: PropTypes.func.isRequired,
-  onSelectSlack: PropTypes.func.isRequired,
+  onSelectInstall: PropTypes.func.isRequired,
 };
