@@ -281,6 +281,7 @@ describe("CompareData API response", () => {
       col: { origin_type: "evaluation" },
     });
     const menu = grid.props.getMainMenuItems({
+      defaultItems: [],
       column: { colDef: evaluation.children[0] },
     });
     expect(menu).toContainEqual(
