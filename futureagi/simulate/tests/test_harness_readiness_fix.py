@@ -180,7 +180,11 @@ class TestFixGroup:
     @pytest.mark.parametrize(
         ("contract", "action"),
         [
-            (PRODUCTION_ONLY, "Point issue_refund at the test world"),
+            (
+                PRODUCTION_ONLY,
+                "Upload a new agent version that serves issue_refund from its tools"
+                " service, or remove it",
+            ),
             (UNREACHABLE, UNREACHABLE_ACTION),
         ],
     )

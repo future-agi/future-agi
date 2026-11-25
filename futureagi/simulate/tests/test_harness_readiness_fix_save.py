@@ -1342,6 +1342,9 @@ class TestNotSaved:
             ) as validate,
         ):
             _check(environment)
+            # The pairing is certified, but the new set's scenarios are proved again.
+            _certify_set(environment, storage)
+            _check(environment)
 
         assert (validate.call_count, promote.call_count) == (1, 2)
         _assert_unsaved(run, environment, "defaults_moved")
