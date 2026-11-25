@@ -140,3 +140,10 @@ func TestConsumerBoundsRecoveryPollByRetryWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestTransportFailureRetriesTimeouts(t *testing.T) {
+	var transient transientFailure
+	if err := transportFailure(context.DeadlineExceeded, "request failed"); !errors.As(err, &transient) {
+		t.Fatalf("timeout not retried: %v", err)
+	}
+}
