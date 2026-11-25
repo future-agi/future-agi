@@ -259,6 +259,7 @@ export default function UploadConnectFlow({ onComplete, draftKey }) {
             }}
             manualLabel={WHOLE_UPLOAD}
             failedManualLabel={WHOLE_UPLOAD}
+            rootLabel="the whole folder"
           />
         )}
       </>
