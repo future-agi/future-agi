@@ -70,6 +70,19 @@ class SourceAgent(TypedDict, total=False):
 class SourceUsed(TypedDict):
     kind: str
     id: str
+    # For an imported file, the row it read; None for the whole file.
+    row: NotRequired[int | None]
+    # For an imported file, its name as a person reads it ("orders.csv").
+    name: NotRequired[str]
+
+
+class UsedFile(TypedDict):
+    """An imported file a write read: the file, and its row (None for the whole file)."""
+
+    file_id: str
+    row: NotRequired[int | None]
+    # The file's name; the last part of `file_id` (its path in the environment) when not given.
+    name: NotRequired[str]
 
 
 class ChangeSource(TypedDict):
@@ -606,8 +619,17 @@ def _shown_fields(fields: list[str]) -> list[str]:
 
 def _summary(action: str, item: Item, fields: list[str]) -> str:
     noun = item.kind.replace("_", " ")
-    # A rule's key is a hash of its text, so the text names it; who last edited an item is not a change to it.
-    name = f'"{item.value}"' if item.kind == "rule" else item.key
+    # A rule's key is a hash of its text, so the text names it; a scenario reads by its name, its key when it has none.
+    if item.kind == "rule":
+        name = f'"{item.value}"'
+    elif (
+        item.kind == "scenario"
+        and isinstance(item.value, dict)
+        and str(item.value.get("name") or "").strip()
+    ):
+        name = str(item.value["name"]).strip()
+    else:
+        name = item.key
     shown = _shown_fields(fields)
     if action == "changed" and shown:
         return f"Change {', '.join(shown)} of {noun} {name}"

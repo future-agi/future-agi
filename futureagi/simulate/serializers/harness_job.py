@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, get_args
 
 from django.conf import settings
 from rest_framework import serializers
@@ -16,6 +16,7 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 from simulate.services.harness_credentials import agent_version_secret_ref
+from simulate.types import UnprovedNext
 from tfc.utils.api_serializers import StrictInputSerializer
 from tfc.utils.serializer_fields import JsonValueField
 
@@ -928,6 +929,11 @@ class HarnessRunWarningSerializer(serializers.Serializer):
     piece = serializers.ChoiceField(
         choices=("agent", "environment", "suite"), allow_null=True
     )
+    scenario_keys = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Every scenario the warning is about, when it names scenarios.",
+    )
 
 
 class HarnessCapabilityExcludedSerializer(serializers.Serializer):
@@ -974,9 +980,30 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
     count = serializers.IntegerField(min_value=0)
     keys = serializers.ListField(child=serializers.CharField())
     truncated = serializers.BooleanField()
+    names = serializers.DictField(
+        child=serializers.CharField(),
+        help_text="Each listed case's current name, by its key; a case without one is shown by its key.",
+    )
     by = serializers.DictField(
         child=serializers.IntegerField(min_value=0),
-        help_text="Held-back cases per readiness row that held them.",
+        help_text=(
+            "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, "
+            "no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and "
+            "unreadable for a case whose cited seed records could not be read just now)."
+        ),
+    )
+    by_key = serializers.DictField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+    )
+    reason_by_key = serializers.DictField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof"
+            " failed, archived, seed records unread): show it for that case instead of the row's `reasons`."
+        ),
     )
 
 
@@ -987,6 +1014,12 @@ class HarnessRunReadinessSelectionSerializer(HarnessCapabilityScopeSerializer):
     reasons = serializers.DictField(
         child=serializers.CharField(),
         help_text="Each holding row's reason, in plain words.",
+    )
+    next = serializers.ChoiceField(
+        choices=get_args(UnprovedNext),
+        allow_null=True,
+        required=False,
+        help_text="As the run preview's selection.next.",
     )
 
 

@@ -2178,6 +2178,10 @@ def test_an_environment_sealed_before_actor_rules_never_offers_the_harness_s_own
     assert listed["knowledge_sources"] == {
         "files": ["docs/discount-policy.md"],
         "records": [{"store": "world_db", "collection": "deals"}],
+        # No attached file has a role.
+        "roles": {},
+        # A release sealed before the rules said whether seed records reach the agent says nothing.
+        "seed_records_loaded": None,
     }
     assert [one["action"] for one in listed["actions"]] == sorted(
         one["action"] for one in listed["actions"] if "." in one["action"]

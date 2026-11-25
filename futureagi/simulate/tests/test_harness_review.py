@@ -310,6 +310,30 @@ def test_a_scenario_summary_names_its_check_files_in_words_and_never_its_index_e
     ]
 
 
+def test_a_scenario_summary_names_the_scenario_by_its_name_and_by_its_key_without_one():
+    named = {"name": "Refund a late order", "tests": "refunds once"}
+    unnamed = {"tests": "looks up"}
+    default = _tree(
+        {},
+        **{
+            "scenarios/refund_late/scenario.json": named,
+            "scenarios/lookup/scenario.json": unnamed,
+        },
+    )
+    draft = _tree(
+        {},
+        **{
+            "scenarios/refund_late/scenario.json": {**named, "tests": "refunds twice"},
+            "scenarios/lookup/scenario.json": {**unnamed, "tests": "looks up twice"},
+        },
+    )
+
+    assert sorted(one["summary"] for one in compute_changes(default, draft)) == [
+        "Change tests of scenario Refund a late order",
+        "Change tests of scenario lookup",
+    ]
+
+
 def test_an_actor_share_change_names_its_values_and_grades_nothing():
     from simulate.services.harness_versioning.review_items import graded
 
@@ -1273,6 +1297,82 @@ def test_the_older_scenario_folder_is_read_only_when_the_suite_has_no_scenarios_
     assert [key for key in item_index(files) if key.startswith("scenario:")] == [
         "scenario:s1"
     ]
+
+
+def test_a_file_import_cites_file_and_row():
+    from simulate.services.harness_versioning.review_saved import record_sources
+
+    default = _tree({"tools": TOOLS})
+    edited = _tree(
+        {"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]}
+    )
+    [source] = record_sources(
+        None,
+        default,
+        edited,
+        origin="import",
+        user=None,
+        revision=2,
+        at="t",
+        used_files=[
+            {"file_id": "knowledge/orders.csv", "row": 7},
+            {"file_id": "f-2", "row": None, "name": "Refund policy.pdf"},
+            {"file_id": "", "row": 3},
+            {"file_id": "C:\\data\\refunds.csv", "row": 1},
+            {"file_id": "s3://b/rates.csv?v=2#top", "row": 2},
+            {"file_id": "/", "row": 5},
+        ],
+    )["tool:issue_refund"]
+    # Each file carries the name a person reads: given, or the last part of its path in the environment.
+    assert source["used"] == [
+        {"kind": "file", "id": "knowledge/orders.csv", "row": 7, "name": "orders.csv"},
+        {"kind": "file", "id": "f-2", "row": None, "name": "Refund policy.pdf"},
+        {
+            "kind": "file",
+            "id": "C:\\data\\refunds.csv",
+            "row": 1,
+            "name": "refunds.csv",
+        },
+        {
+            "kind": "file",
+            "id": "s3://b/rates.csv?v=2#top",
+            "row": 2,
+            "name": "rates.csv",
+        },
+        {"kind": "file", "id": "/", "row": 5, "name": "/"},
+    ]
+
+
+def test_a_retry_adds_no_second_file_source():
+    from simulate.services.harness_versioning.review_saved import record_sources
+
+    default = _tree({"tools": TOOLS})
+    edited = _tree(
+        {"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]}
+    )
+    files = [{"file_id": "f-1", "row": 7}]
+    first = record_sources(
+        None,
+        default,
+        edited,
+        origin="import",
+        user=None,
+        revision=2,
+        at="t1",
+        used_files=files,
+    )
+    again = record_sources(
+        first,
+        default,
+        edited,
+        origin="import",
+        user=None,
+        revision=2,
+        at="t2",
+        used_files=files,
+    )
+    assert again == first
+    assert len(again["tool:issue_refund"]) == 1
 
 
 def test_stored_review_records_are_read_into_their_shapes_and_bad_entries_left_out():

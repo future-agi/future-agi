@@ -41,6 +41,7 @@ from simulate.services.harness_versioning.drafts import (
     open_drafts,
     require_revisions,
     require_saveable,
+    without_archived,
 )
 from simulate.services.harness_versioning.review import DraftReview
 from simulate.services.harness_versioning.versions import (
@@ -145,6 +146,8 @@ def create_candidates(
         )
         for piece in DRAFT_PIECES
     }
+    if "suite" in opened:
+        files["suite"] = without_archived(locked, files["suite"])
     _, prepared = prepare_tree(locked, {**files["environment"], **files["suite"]})
     revisions = {piece: draft.revision for piece, draft in opened.items()}
     versions = {}
@@ -231,6 +234,7 @@ def validate_drafts(
                 for piece, draft in opened.items()
             },
             "review_digest": reviewed["review_digest"],
+            "decisions_digest": review.decisions_digest(opened),
             "job_id": str(started.job.id) if started.job is not None else None,
             "at": timezone.now().isoformat(),
         }

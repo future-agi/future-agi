@@ -15,6 +15,7 @@ from simulate.services.harness_readiness import selection
 from simulate.tests.test_harness_affected_scenarios import (
     LOOKUP_KEYS,
     REFUND_KEYS,
+    _proved_on,
     _suite,
     _ten,
     _ten_certified,
@@ -237,7 +238,9 @@ class TestDoneWhen:
             "keys": REFUND_KEYS,
             "truncated": False,
         }
-        assert routing["fix"]["action"] == "Point issue_refund at the test world"
+        assert routing["fix"]["action"] == (
+            "Upload a new agent version that serves issue_refund from its tools service, or remove it"
+        )
         assert before["selection"]["blocked"] == 4
 
         e2 = _redirected(environment)
@@ -248,6 +251,8 @@ class TestDoneWhen:
                 environment, environment_version_id=e2.id
             ),
         )
+        # A validation of the new pairing certifies it and proves its cases.
+        _proved_on(environment, e2)
         after = _get(auth_client, environment.id, environment_version_id=e2.id).json()
 
         routing = _rows(after)["tool_routing"]

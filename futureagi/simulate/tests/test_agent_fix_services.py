@@ -167,8 +167,13 @@ def temporal():
 
 @pytest.fixture
 def environment(user, workspace, storage):
-    """Backfilled to A1/E1/S1: a GitHub agent with two scenarios."""
-    return _environment(user, workspace, "fix-env", storage)
+    """Backfilled to A1/E1/S1: a GitHub agent with two scenarios, proved on that pair
+    so a run sends them."""
+    from simulate.tests.test_harness_affected_scenarios import _proved_on
+
+    built = _environment(user, workspace, "fix-env", storage)
+    _proved_on(built, built.environment_version)
+    return built
 
 
 @pytest.fixture
@@ -1522,7 +1527,7 @@ class TestCheckRunStatus:
                     "sub_goals": [{"name": "refunded", "held": None}],
                 },
                 "error",
-                "the judge decided nothing on refunded",
+                "the trial ended errored",
                 {},
             ),
         ],

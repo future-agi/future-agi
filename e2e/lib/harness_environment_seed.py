@@ -493,6 +493,8 @@ def seed_environment(
     certified=True,
     production_only=None,
     failed_check=None,
+    proofs=None,
+    archived=(),
     actors=False,
     trial=False,
     tool_detail=False,
@@ -500,7 +502,12 @@ def seed_environment(
     refund_worker_budget=False,
 ):
     """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; ``trial`` picks a
-    ``TRIAL_STATES`` variant for its finished trial."""
+    ``TRIAL_STATES`` variant for its finished trial.
+
+    ``proofs`` (``{key: format-2 entry}``) is the default pair's validation; without it every
+    case is proved, so a flow about something else is not held back for validation. A key the
+    dict leaves out has no proof. ``archived`` keys are archived with their content kept.
+    """
     from simulate.models import (
         AgentDefinition,
         AgentVersion,
@@ -615,6 +622,8 @@ def seed_environment(
         raise RuntimeError("backfill cached no certified bundle")
     if failed_check:
         _fail_check(environment, failed_check)
+    _prove(environment, documents, proofs)
+    _archive(environment, documents, archived)
     trial_ids = (
         _finished_trial(environment, definition, documents[0], TRIAL_STATES[trial])
         if trial
@@ -630,6 +639,54 @@ def seed_environment(
         "refundKeys": [d["scenario_key"] for d in documents[:refunds]],
         "lookupKeys": [d["scenario_key"] for d in documents[refunds:]],
     }
+
+
+PROVED = {"format": 2, "holds": True, "proved": True, "assumed": [], "blocked_reason": None}
+
+
+def _key_of(documents, key):
+    """A seeded key, or ``@n`` for the n-th document's (from 0): a flow names cases before their keys exist."""
+    if isinstance(key, str) and key.startswith("@"):
+        return documents[int(key[1:])]["scenario_key"]
+    return key
+
+
+def _prove(environment, documents, proofs):
+    """The default pair's proofs, as a validation records them."""
+    from django.utils import timezone
+
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.versions import _validation_status
+
+    if proofs is None:
+        proofs = {document["scenario_key"]: PROVED for document in documents}
+    proofs = {_key_of(documents, key): entry for key, entry in proofs.items()}
+    HarnessSuiteValidation.no_workspace_objects.update_or_create(
+        suite_version_id=environment.suite_version_id,
+        environment_version_id=environment.environment_version_id,
+        defaults={
+            "status": _validation_status(proofs, [d["scenario_key"] for d in documents]),
+            "proofs": proofs,
+            "proved_at": timezone.now(),
+        },
+    )
+
+
+def _archive(environment, documents, keys):
+    """Archive ``keys`` as the Archive action does, keeping each one's content to restore."""
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessScenario
+
+    by_key = {document["scenario_key"]: document for document in documents}
+    for key in (_key_of(documents, one) for one in keys or ()):
+        HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment, scenario_key=key
+        ).update(
+            archived_at=timezone.now(),
+            archive_reason="e2e seed",
+            archived_content=by_key.get(key) or {},
+        )
 
 
 def _finished_trial(environment, definition, document, trial_state):

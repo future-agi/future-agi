@@ -117,6 +117,10 @@ const actorValidationPath = (envId) =>
 
 const runPlanPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/run-plan/", { id: envId });
+const capabilitiesPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/capabilities/", {
+    id: envId,
+  });
 
 // A run's version picks ({agent, environment, suite} → version id) as request
 // fields; a piece left unpicked is left out, so the server uses its default.
@@ -170,6 +174,24 @@ export const changeCredentials = async (envId, environmentValues, files) =>
 // the new agent version, checked next.
 export const createAgentVersion = async (envId, body) =>
   (await axios.post(agentVersionsPath(envId), body)).data;
+
+// Which of the picked cases would run on these versions, and why the rest are held back. A named
+// selection goes in the POST body, so any number of keys fits.
+export const getRunSelection = async (envId, picks, keys) => {
+  const data = keys
+    ? (
+        await axios.post(capabilitiesPath(envId), {
+          ...versionPickFields(picks),
+          scenario_ids: keys,
+        })
+      ).data
+    : (
+        await axios.get(capabilitiesPath(envId), {
+          params: versionPickFields(picks),
+        })
+      ).data;
+  return data?.selection ?? data;
+};
 
 // No scenarioKeys means every scenario.
 export const getRunPlan = async (envId, picks, scenarioKeys) =>
@@ -521,6 +543,16 @@ export function useRunPlan(
   return useQuery({
     queryKey: runPlanKey(envId, picks, scenarioKeys),
     queryFn: () => getRunPlan(envId, picks, scenarioKeys),
+    enabled: Boolean(envId) && enabled,
+    retry: retryServerFailures,
+    meta: { errorHandled: true },
+  });
+}
+
+export function useRunSelection(envId, picks, keys, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: [...runPlanKey(envId, picks), "selection", keys ?? null],
+    queryFn: () => getRunSelection(envId, picks, keys),
     enabled: Boolean(envId) && enabled,
     retry: retryServerFailures,
     meta: { errorHandled: true },

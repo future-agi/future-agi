@@ -12,6 +12,7 @@ from simulate.models import (
 )
 from simulate.services import harness_readiness
 from simulate.services.harness_readiness import selection
+from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_readiness import (
     NOT_PROBED,
@@ -87,7 +88,24 @@ def _ten():
     ] + [_doc(key, solution=(LOOKUP,)) for key in LOOKUP_KEYS]
 
 
-def _suite(environment, documents, *, members=True, numbers=None, sub_goals=SUB_GOALS):
+PROVED = {
+    "format": 2,
+    "holds": True,
+    "proved": True,
+    "assumed": [],
+    "blocked_reason": None,
+}
+
+
+def _suite(
+    environment,
+    documents,
+    *,
+    members=True,
+    numbers=None,
+    sub_goals=SUB_GOALS,
+    proved=True,
+):
     """Give the default suite version these scenarios and the default environment
     version this sub-goal catalogue; ``numbers`` renumbers the members."""
     suite = environment.suite_version
@@ -112,8 +130,26 @@ def _suite(environment, documents, *, members=True, numbers=None, sub_goals=SUB_
                 number=number,
                 content={"name": document["name"], "persona": document["persona"]},
             )
+    if members and proved:
+        # Every case proved on the default pair, so run selection weighs only its rows.
+        HarnessSuiteValidation.no_workspace_objects.update_or_create(
+            suite_version=suite,
+            environment_version=target,
+            defaults={
+                "status": "passed",
+                "proved_at": timezone.now(),
+                "proofs": {one["scenario_key"]: PROVED for one in documents},
+            },
+        )
     environment.refresh_from_db()
     cache.clear()
+
+
+def _proved_on(environment, environment_version, suite_version=None):
+    """Every member proved on this pair, as a validation that certifies and proves writes it."""
+    from simulate.tests.harness_validation import prove_pair
+
+    prove_pair(environment, environment_version, suite_version)
 
 
 def _select(environment, keys=None, *, trials=1, pairing=None):
@@ -205,9 +241,7 @@ class TestBuckets:
         assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
         assert chosen["lists"]["eligible"]["keys"] == LOOKUP_KEYS
 
-    def test_unproved_case_is_stale(self, user, workspace, storage):
-        environment = _environment(user, workspace, storage, "as-unproved")
-        _suite(environment, _ten())
+    def _proofs(self, environment, proofs):
         HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
             state="pending", object_key=None
         )
@@ -218,25 +252,79 @@ class TestBuckets:
             defaults={
                 "status": "partial",
                 "proved_at": timezone.now(),
-                "proofs": {
-                    key: {"holds": key != LOOKUP_KEYS[0]}
-                    for key in REFUND_KEYS + LOOKUP_KEYS
-                },
+                "proofs": proofs,
             },
+        )
+
+    def test_unvalidated_case_is_held_back(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "as-unproved")
+        _suite(environment, _ten())
+        self._proofs(
+            environment,
+            {key: PROVED for key in REFUND_KEYS + LOOKUP_KEYS if key != LOOKUP_KEYS[0]},
         )
 
         pairing = _pairing(environment)
         chosen = _select(environment, pairing=pairing)["selection"]
         page = harness_readiness.case_page(
-            pairing, keys=None, trials=1, bucket="stale", row=None, cursor=None
+            pairing, keys=None, trials=1, bucket="blocked", row=None, cursor=None
         )
 
-        assert (chosen["stale"], chosen["eligible"]) == (1, 9)
+        assert (chosen["blocked"], chosen["eligible"]) == (1, 9)
         assert [(one["key"], one["by"]) for one in page["items"]] == [
-            (LOOKUP_KEYS[0], ["not_proved_here"])
+            (LOOKUP_KEYS[0], ["not_validated"])
         ]
 
-    def test_ready_pair_bundle_counts_as_proved(self, user, workspace, storage):
+    def test_kept_as_written_runs_with_warning(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "as-assumed")
+        _suite(environment, _ten())
+        kept = {
+            "format": 2,
+            "holds": True,
+            "proved": False,
+            "assumed": [LOOKUP],
+            "solution_steps": 1,
+            "kept_as_written": True,
+            "blocked_reason": "solution_assumed",
+        }
+        leaked = {
+            **kept,
+            "kept_as_written": False,
+            "blocked_reason": "answer_leaked",
+            "leaks": [
+                {
+                    "who": "simulated person",
+                    "field": "instruction",
+                    "grader_field": "tests",
+                    "excerpt": "x",
+                }
+            ],
+        }
+        proofs = dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED)
+        proofs[LOOKUP_KEYS[0]] = kept
+        proofs[LOOKUP_KEYS[1]] = leaked
+        self._proofs(environment, proofs)
+
+        views = scenario_lifecycle(
+            environment,
+            suite_version=environment.suite_version,
+            environment_version=environment.environment_version,
+        )
+        chosen = _select(environment)["selection"]
+
+        assert (views[LOOKUP_KEYS[0]]["state"], views[LOOKUP_KEYS[0]]["warning"]) == (
+            "kept_as_written",
+            "solution_assumed",
+        )
+        assert (views[LOOKUP_KEYS[1]]["state"], views[LOOKUP_KEYS[1]]["reason"]) == (
+            "draft",
+            "answer_leaked",
+        )
+        assert (chosen["blocked"], chosen["eligible"]) == (1, 9)
+
+    def test_certified_pair_without_proofs_is_not_proved(
+        self, user, workspace, storage
+    ):
         environment = _ten_certified(user, workspace, storage, "as-ready-proves")
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version=environment.suite_version
@@ -244,7 +332,24 @@ class TestBuckets:
 
         chosen = _select(environment)["selection"]
 
-        assert (chosen["stale"], chosen["eligible"]) == (0, 10)
+        assert (chosen["blocked"], chosen["eligible"]) == (10, 0)
+
+    def test_archived_case_is_held_back(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "as-archived")
+        HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment, scenario_key=LOOKUP_KEYS[0]
+        ).update(archived_at=timezone.now(), archive_reason="retired route")
+        pairing = _pairing(environment)
+
+        chosen = _select(environment, pairing=pairing)["selection"]
+        page = harness_readiness.case_page(
+            pairing, keys=None, trials=1, bucket="blocked", row=None, cursor=None
+        )
+
+        assert chosen["blocked"] == 1
+        assert [(one["key"], one["by"]) for one in page["items"]] == [
+            (LOOKUP_KEYS[0], ["scenario_archived"])
+        ]
 
     def test_buckets_sum_to_requested(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "as-sum")
@@ -270,11 +375,13 @@ class TestBuckets:
         chosen = _select(environment)["selection"]
 
         counts = {bucket: chosen[bucket] for bucket in selection.BUCKETS}
-        assert counts == {"blocked": 4, "stale": 1, "untested": 1, "eligible": 4}
+        # A case with no proof on the pair is held back as not validated (section 4.9), no
+        # longer sent as stale.
+        assert counts == {"blocked": 5, "stale": 0, "untested": 1, "eligible": 4}
         assert sum(counts.values()) == chosen["requested"] == 10
         assert chosen["lists"]["untested"]["keys"] == [LOOKUP_KEYS[-1]]
         # Blocked and not proved here: the first match wins.
-        assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
+        assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS + [LOOKUP_KEYS[0]]
         assert chosen["grading"]["not_gradable"] == [
             {"key": LOOKUP_KEYS[-1], "reason": "check_unreadable"}
         ]
@@ -655,6 +762,280 @@ def _run_metadata(run):
     return run.payload["metadata"]
 
 
+def test_a_case_held_for_two_reasons_is_counted_once():
+    """A refund case missing its tool is held by the tool's reach and by its proof's needs: one case, one line."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        PROOF_FAILED_ROW,
+        TOOL_MISSING_ROW,
+        _held_back,
+    )
+
+    def held(key, by, why):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key, name=key),
+            bucket="blocked",
+            by=by,
+            lifecycle_reason=why,
+            hold=SimpleNamespace(held=False, reason=None),
+        )
+
+    needs = "Needs issue_refund, which agent version v14 doesn't have."
+    placement = SimpleNamespace(
+        placed=[
+            held("refund-1", ["tool_discovery", TOOL_MISSING_ROW], needs),
+            held("refund-2", ["tool_discovery", TOOL_MISSING_ROW], needs),
+            held(
+                "lookup-1", [PROOF_FAILED_ROW], "The expected way fails its own checks."
+            ),
+        ],
+        dropped=[],
+    )
+    rows = [
+        {
+            "id": "tool_discovery",
+            "reason": "Not in this agent version: issue_refund",
+            "label": "Tools",
+        }
+    ]
+
+    keys, by, reasons = _held_back(placement, rows, [])
+
+    assert sum(by.values()) == len(keys) == 3
+    # Under the case's own reason, the clearer of the two.
+    assert dict(by) == {TOOL_MISSING_ROW: 2, PROOF_FAILED_ROW: 1}
+    assert reasons[TOOL_MISSING_ROW] == needs
+    assert set(reasons) == set(by)
+
+
+def test_a_blocked_row_holds_back_only_the_cases_it_blocks():
+    """A missing tool blocks the cases that use it; a case it only reads stale for runs, and a case held for another
+    reason is not held by it, so the row's count names only the cases the tool holds back. A row that is not blocked
+    still counts every case it holds."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        NOT_VALIDATED_ROW,
+        _row_holds,
+    )
+
+    def placed(key, bucket, by):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key),
+            bucket=bucket,
+            by=by,
+            held_by=frozenset({"tool_discovery", "tool_routing"}),
+        )
+
+    cases = [
+        placed("refund", "blocked", ["tool_discovery", NOT_VALIDATED_ROW]),
+        placed("lookup", "blocked", [NOT_VALIDATED_ROW]),
+        placed("status", "stale", ["tool_routing"]),
+    ]
+
+    assert _row_holds({"id": "tool_discovery", "status": "blocked"}, cases) == [
+        "refund"
+    ]
+    assert _row_holds({"id": "tool_routing", "status": "stale"}, cases) == [
+        "refund",
+        "lookup",
+        "status",
+    ]
+
+
+def test_cases_held_for_something_to_fix_are_listed_before_those_only_awaiting_validation():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        NOT_VALIDATED_ROW,
+        TOOL_MISSING_ROW,
+        _held_back,
+    )
+
+    def held(key, by):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key, name=key),
+            bucket="blocked",
+            by=by,
+            lifecycle_reason=None,
+            hold=SimpleNamespace(held=False, reason=None),
+        )
+
+    placement = SimpleNamespace(
+        placed=[
+            held("lookup-1", [NOT_VALIDATED_ROW]),
+            held("refund-1", ["tool_discovery", TOOL_MISSING_ROW]),
+            held("lookup-2", [NOT_VALIDATED_ROW]),
+            held("refund-2", ["tool_discovery", TOOL_MISSING_ROW]),
+        ],
+        dropped=[],
+    )
+
+    keys, _, _ = _held_back(placement, [], [])
+
+    assert keys == ["refund-1", "refund-2", "lookup-1", "lookup-2"]
+
+
+@pytest.mark.parametrize(
+    ("stale_because", "blocked_by", "kind"),
+    [
+        (None, None, "ready"),
+        ("agent_version", None, "stale"),
+        (None, "start", "unchecked"),
+    ],
+)
+def test_a_missing_tool_no_selected_case_uses_keeps_its_evidence_s_own_standing(
+    stale_because, blocked_by, kind
+):
+    """The cases do not use the tool the agent lacks, so the row no longer blocks them; evidence measured with
+    another version or behind a gate still reads stale or unchecked, never ready."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import _selected_answer
+
+    row = {
+        "id": "tool_discovery",
+        "status": "blocked",
+        "measured": True,
+        "reason_code": "tool_not_in_agent",
+        "targets": [{"kind": "tool", "name": "issue_refund", "result": "failed"}],
+        "affected": {"count": 0},
+        "stale_because": stale_because,
+        "blocked_by": blocked_by,
+    }
+    placed = [SimpleNamespace(case=SimpleNamespace(recorded=True, unknown=False))]
+
+    found = _selected_answer(
+        {"kind": "blocked", "worst": "blocked", "reason_code": None},
+        [row],
+        placed,
+        blocked_workers=0,
+    )
+
+    assert found["kind"] == kind
+
+
+def test_each_listed_held_case_names_the_row_it_is_counted_under():
+    """The run plan's list says which case is held for which reason, the same row its counts use; a dropped case
+    reads dropped, and a case past the list's cap is counted but not listed."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        DROPPED_ROW,
+        LIST_LIMIT,
+        NOT_VALIDATED_ROW,
+        TOOL_MISSING_ROW,
+        _held_back,
+        _held_list,
+        _held_rows,
+    )
+
+    def held(key, by):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key, name=key),
+            bucket="blocked",
+            by=by,
+            lifecycle_reason=None,
+            hold=SimpleNamespace(held=False, reason=None),
+        )
+
+    unproved = [held(f"case-{n:03d}", [NOT_VALIDATED_ROW]) for n in range(LIST_LIMIT)]
+    placement = SimpleNamespace(
+        placed=[held("refund", ["tool_discovery", TOOL_MISSING_ROW]), *unproved],
+        dropped=[{"key": "gone", "code": "scenario_dropped"}],
+    )
+
+    keys, by, _ = _held_back(placement, [], [])
+    listed = _held_list(keys, {}, _held_rows(placement))
+
+    assert listed["truncated"] is True and len(listed["keys"]) == LIST_LIMIT
+    assert set(listed["by_key"]) == set(listed["keys"])
+    assert listed["by_key"]["refund"] == TOOL_MISSING_ROW
+    assert listed["by_key"]["case-000"] == NOT_VALIDATED_ROW
+    # Held for something to fix comes first: the dropped case is listed; the last validate-only one is past the cap.
+    assert listed["by_key"]["gone"] == DROPPED_ROW
+    assert f"case-{LIST_LIMIT - 1:03d}" not in listed["by_key"]
+    assert dict(by) == {
+        TOOL_MISSING_ROW: 1,
+        NOT_VALIDATED_ROW: LIST_LIMIT,
+        DROPPED_ROW: 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("placed_by", "expected"),
+    [
+        # Two holding rows: the case's own lifecycle row wins, as in the counts.
+        (["tool_discovery", "not_validated"], "not_validated"),
+        # Two pairing rows and no lifecycle row: the first holding row.
+        (["tool_routing", "tool_discovery"], "tool_routing"),
+        # A worker holds it: its worker key.
+        (["worker:researcher"], "worker:researcher"),
+    ],
+)
+def test_a_held_case_s_row_is_the_one_it_is_counted_under(placed_by, expected):
+    from collections import Counter
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import _held_back, _held_rows
+
+    placement = SimpleNamespace(
+        placed=[
+            SimpleNamespace(
+                case=SimpleNamespace(key="refund / late #1", name=""),
+                bucket="blocked",
+                by=placed_by,
+                lifecycle_reason=None,
+                hold=SimpleNamespace(held=False, reason=None),
+            ),
+            SimpleNamespace(
+                case=SimpleNamespace(key="runs", name=""),
+                bucket="stale",
+                by=["tool_routing"],
+                lifecycle_reason=None,
+                hold=SimpleNamespace(held=False, reason=None),
+            ),
+        ],
+        dropped=[],
+    )
+
+    keys, by, _ = _held_back(placement, [], [])
+    rows = _held_rows(placement)
+
+    assert keys == ["refund / late #1"]
+    assert rows == {"refund / late #1": expected}
+    assert Counter(rows.values()) == by
+
+
+def test_nothing_held_lists_no_rows():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import _held_list, _held_rows
+
+    placement = SimpleNamespace(placed=[], dropped=[])
+
+    assert _held_list([], {}, _held_rows(placement))["by_key"] == {}
+
+
+def test_held_back_cases_are_listed_with_their_current_names():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import _case_names, _held_list
+
+    placed = [
+        SimpleNamespace(case=SimpleNamespace(key="refuse-30", name="refuse_20_days")),
+        SimpleNamespace(case=SimpleNamespace(key="lookup", name="")),
+    ]
+
+    held = _held_list(["refuse-30", "lookup"], _case_names(placed))
+
+    assert (held["keys"], held["names"]) == (
+        ["refuse-30", "lookup"],
+        {"refuse-30": "refuse_20_days"},
+    )
+
+
 class TestHoldBack:
     def test_a_run_holds_back_the_blocked_cases_and_names_them(
         self, user, workspace, storage
@@ -671,7 +1052,9 @@ class TestHoldBack:
             "count": 4,
             "keys": REFUND_KEYS,
             "truncated": False,
+            "names": {key: key for key in REFUND_KEYS},
             "by": {"tool_routing": 4},
+            "by_key": dict.fromkeys(REFUND_KEYS, "tool_routing"),
         }
         assert "issue_refund reaches production" in chosen["reasons"]["tool_routing"]
         sent = [entry["scenario_key"] for entry in metadata["execution_manifest"]]
@@ -1001,7 +1384,13 @@ class TestAgentGapCases:
         # Without the gap the lookup cases are Stale; the gap must not make them eligible.
         assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
         assert chosen["lists"]["stale"]["keys"] == LOOKUP_KEYS
-        assert routing["affected"]["count"] == 10
+        # The blocked row holds back the cases it blocks; the lookup cases it reads stale for still run.
+        assert routing["affected"]["count"] == len(REFUND_KEYS)
+        # Its case list names the same cases its count does.
+        page = harness_readiness.case_page(
+            pairing, keys=None, trials=1, bucket=None, row="tool_routing", cursor=None
+        )
+        assert [one["key"] for one in page["items"]] == REFUND_KEYS
 
     def test_a_changed_signature_with_a_stale_failure_holds_both(
         self, user, workspace, storage
@@ -1201,6 +1590,15 @@ def test_a_production_only_tool_holds_its_cases_for_another_agent_version_too(
     sent = [one["scenario_key"] for one in _run_metadata(run)["execution_manifest"]]
 
     assert (routing["status"], routing["reason_code"]) == ("blocked", "production_only")
+    # Only a new agent version moves the tool off production: the fix opens the agent's versions, never a re-check.
+    assert routing["fix"] == {
+        "type": "production_only",
+        "category": "agent_version",
+        "target": REFUND,
+        "action": f"Upload a new agent version that serves {REFUND} from its tools service, or remove it",
+        "would": f"{REFUND} runs in the test world instead of reaching production",
+        "recheck": None,
+    }
     assert not set(REFUND_KEYS) & set(sent)
     assert set(LOOKUP_KEYS) <= set(sent)
 
@@ -1283,3 +1681,44 @@ def test_a_case_beside_a_tool_row_s_targets_keeps_what_its_evidence_says(
     )
 
     assert selection._status_for(row, lookup) == expected
+
+
+def test_each_held_case_carries_its_own_reason_never_the_others_under_its_row():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        NOT_VALIDATED_ROW,
+        _held_back,
+        _held_list,
+        _held_rows,
+        _own_reasons,
+    )
+
+    def held(key, reason):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key, name=""),
+            bucket="blocked",
+            by=[NOT_VALIDATED_ROW],
+            lifecycle_reason=reason,
+            hold=SimpleNamespace(held=False, reason=None),
+        )
+
+    placement = SimpleNamespace(
+        placed=[
+            held("refund", "Its checks pass when the agent does nothing."),
+            held("late", "Validation did not finish this case; validate again."),
+            held("plain", None),
+        ],
+        dropped=[],
+    )
+
+    keys, by, reasons = _held_back(placement, [], [])
+    listed = _held_list(keys, {}, _held_rows(placement), _own_reasons(placement))
+
+    assert listed["reason_by_key"] == {
+        "refund": "Its checks pass when the agent does nothing.",
+        "late": "Validation did not finish this case; validate again.",
+    }
+    # The row keeps its label and count; each case reads its own reason.
+    assert by[NOT_VALIDATED_ROW] == 3
+    assert set(listed["by_key"].values()) == {NOT_VALIDATED_ROW}
