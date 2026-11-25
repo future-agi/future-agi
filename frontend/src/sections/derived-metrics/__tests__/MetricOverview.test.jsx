@@ -109,6 +109,10 @@ it("shows the actual asymmetric difference interval without claiming significanc
 });
 
 it.each([
+  [
+    "metric_schema_not_installed",
+    "Metrics schema not installed. An administrator needs to install it before metrics can be calculated or read.",
+  ],
   ["user_reads_unavailable", "User-level metrics are not available yet."],
   [
     "window_not_calculated",

@@ -62,7 +62,12 @@ export function metricTrendPoints(results) {
   }));
 }
 
+/** Metrics are on but their ClickHouse schema is not installed yet. */
+export const METRIC_SCHEMA_NOT_INSTALLED =
+  "Metrics schema not installed. An administrator needs to install it before metrics can be calculated or read.";
+
 const unavailableMessages = {
+  metric_schema_not_installed: METRIC_SCHEMA_NOT_INSTALLED,
   user_reads_unavailable: "User-level metrics are not available yet.",
   user_projection_unavailable:
     "User-level metric values are not available yet.",

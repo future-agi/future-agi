@@ -185,6 +185,7 @@ from simulate.services.test_executor import (
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
 from simulate.utils.agent_optimiser import (
+    analysis_on_its_way,
     create_optimiser_run_for_test_execution,
     get_latest_optimiser_result,
     get_or_create_optimiser_for_test_execution,
@@ -6490,6 +6491,19 @@ class RunTestEvalExplanationSummaryView(APIView):
             )
 
 
+# A run still being graded: verdicts may still arrive, so an analysis made
+# now would miss them, and a Refresh is refused until grading ends.
+_STILL_GRADED = (
+    TestExecution.ExecutionStatus.PENDING,
+    TestExecution.ExecutionStatus.RUNNING,
+    TestExecution.ExecutionStatus.EVALUATING,
+    TestExecution.ExecutionStatus.CANCELLING,
+)
+_STILL_GRADED_MESSAGE = (
+    "This run is still being graded. Refresh once grading has finished."
+)
+
+
 class RunTestEvalExplanationSummaryRefreshView(APIView):
     """
     API View to refresh evaluation explanation summary by recalculating it.
@@ -6505,7 +6519,9 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
         responses={
             200: EvalExplanationSummaryRefreshResponseSerializer,
             404: ApiTextErrorResponseSerializer,
+            409: ApiTextErrorResponseSerializer,
             500: ApiTextErrorResponseSerializer,
+            503: ApiTextErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -6526,31 +6542,41 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                 run_test__organization=organization,
                 run_test__deleted=False,
             )
-            # A person asked: the pane waits while the status says running.
+            if test_execution.status in _STILL_GRADED:
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT, _STILL_GRADED_MESSAGE
+                )
+            # The summary's model calls start here, when a person presses
+            # Refresh, and nowhere else (the Fix My Agent job makes one as a
+            # step of the analysis a person started). The pane waits while
+            # the status says running.
+            before = test_execution.eval_explanation_summary_status
             test_execution.eval_explanation_summary_status = (
                 EvalExplanationSummaryStatus.RUNNING
             )
             test_execution.save(update_fields=["eval_explanation_summary_status"])
             try:
                 run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-                message = "Summary refresh initiated successfully"
             except Exception as dispatch_error:
                 logger.exception(
                     "eval_summary_refresh_dispatch_failed",
                     test_execution_id=str(test_execution.id),
                     error=str(dispatch_error),
                 )
-                # No job is coming, so the pane must not wait for one.
-                test_execution.eval_explanation_summary_status = (
-                    EvalExplanationSummaryStatus.PENDING
-                )
-                test_execution.save(update_fields=["eval_explanation_summary_status"])
-                message = (
-                    "Summary refresh marked pending; async dispatch failed "
-                    "and can be retried"
+                # No job is coming: the summary goes back to what it was, so
+                # the pane stops waiting and a current one stays current.
+                TestExecution.objects.filter(
+                    id=test_execution.id,
+                    eval_explanation_summary_status=EvalExplanationSummaryStatus.RUNNING,
+                ).update(eval_explanation_summary_status=before)
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "The summary could not be started. Please try again.",
                 )
 
-            return self._gm.success_response({"message": message})
+            return self._gm.success_response(
+                {"message": "Summary refresh initiated successfully"}
+            )
 
         except (TestExecution.DoesNotExist, Http404):
             return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
@@ -6624,6 +6650,7 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
             200: OptimiserAnalysisRefreshResponseSerializer,
             400: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
+            409: ApiTextErrorResponseSerializer,
             500: ApiTextErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -6644,6 +6671,21 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
                 run_test__organization=organization,
                 run_test__deleted=False,
             )
+
+            if test_execution.status in _STILL_GRADED:
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT, _STILL_GRADED_MESSAGE
+                )
+            waiting = analysis_on_its_way(test_execution.agent_optimiser)
+            if waiting is not None:
+                # Each analysis is a chain of paid model calls: a second
+                # press starts nothing and says how the first one stands.
+                return self._gm.success_response(
+                    {
+                        "message": "An analysis is already on its way",
+                        "status": waiting.status,
+                    }
+                )
 
             optimiser = get_or_create_optimiser_for_test_execution(test_execution)
 

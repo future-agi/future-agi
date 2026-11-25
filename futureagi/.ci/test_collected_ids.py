@@ -1130,6 +1130,27 @@ class ProducerIdentityTest(unittest.TestCase):
                         with self.assertRaises((ValueError, KeyError)):
                             checker.verify_artifact(artifact, "repo")
 
+    def test_an_extra_services_receipt_changes_no_verdict(self):
+        # service_receipt.py adds services.json to the same artifact. The
+        # verifier reads named members only, so the result is identical.
+        results = []
+        for extra in (False, True):
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w") as archive:
+                archive.writestr("receipt.json", '{"group":1,"suite":"main"}')
+                archive.writestr("terminal.jsonl", "[]\n")
+                archive.writestr("collected-ids.txt", "some-id\n")
+                archive.writestr("eligible.json", "[]")
+                archive.writestr("inventory-exit.txt", b"0\n")
+                if extra:
+                    archive.writestr("services.json", '{"schema":1,"services":{}}\n')
+            raw = stream.getvalue()
+            artifact = {"id": 1, "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}
+            done = subprocess.CompletedProcess([], 0, stdout=raw, stderr=b"")
+            with patch.object(checker.subprocess, "run", return_value=done):
+                results.append(checker.verify_artifact(artifact, "repo"))
+        self.assertEqual(results[0], results[1])
+
     def test_raw_archive_digest_is_mandatory(self):
         wrong = subprocess.CompletedProcess([], 0, stdout=b"wrong bytes", stderr=b"")
         with (
