@@ -29,7 +29,7 @@ def _stub_config():
     )
     config.get_plan.return_value = SimpleNamespace(usage_caps="hard")
     config.get_dimension.return_value = SimpleNamespace(
-        native_to_display_divisor=1, display_name="AI credits", native_unit="credits"
+        native_to_display_divisor=1, display_name="credits", native_unit="credits"
     )
     config.get_free_allowance.return_value = _ALLOWANCE
     return config
