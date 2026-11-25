@@ -2219,8 +2219,15 @@ class TestReport:
 
 
 class TestClose:
+    @pytest.fixture
+    def gateway_cancel(self):
+        with patch(
+            "simulate.services.hosted_harness_gateway.HostedHarnessGateway.cancel"
+        ) as cancel:
+            yield cancel
+
     def test_closing_cancels_open_check_runs_and_sets_aside_unproven_candidates(
-        self, source_run, temporal
+        self, source_run, temporal, gateway_cancel
     ):
         fix_run = _fix_run(source_run)
         candidates = {
@@ -2252,7 +2259,9 @@ class TestClose:
             "fix_ended",
         )
         assert finished_run.state == "completed"
+        assert finished_run.cancel_requested_at is None
         temporal.cancel_run.assert_called_once_with(str(open_run.id))
+        gateway_cancel.assert_not_called()
         assert {
             outcome: (
                 AgentFixCandidate.no_workspace_objects.get(id=one.id).outcome,
@@ -2302,7 +2311,9 @@ class TestClose:
             AgentFixRun.no_workspace_objects.get(id=fix_run.id).state == State.STOPPED
         )
 
-    def test_a_cancel_that_fails_does_not_stop_the_close(self, source_run, temporal):
+    def test_a_cancel_that_fails_does_not_stop_the_close(
+        self, source_run, temporal, gateway_cancel
+    ):
         fix_run = _fix_run(source_run)
         open_run = _check(fix_run)
         temporal.cancel_run.side_effect = RuntimeError("temporal is down")
@@ -2319,6 +2330,22 @@ class TestClose:
             "fix_engine_died",
         )
         assert open_run.state == "cleaning_up"
+        gateway_cancel.assert_called_once_with(open_run, reason="fix_ended")
+
+    def test_gateway_cancel_failure_does_not_skip_the_next_run(
+        self, source_run, temporal, gateway_cancel
+    ):
+        fix_run = _fix_run(source_run)
+        runs = [_check(fix_run), _check(fix_run, label="second")]
+        temporal.cancel_run.side_effect = RuntimeError("temporal is down")
+        gateway_cancel.side_effect = [RuntimeError("gateway unavailable"), None]
+
+        closed = close_fix_run(fix_run.id, State.STOPPED)
+
+        assert closed.state == State.STOPPED
+        assert gateway_cancel.call_count == len(runs)
+        for run in runs:
+            gateway_cancel.assert_any_call(run, reason="fix_ended")
 
 
 class TestStop:

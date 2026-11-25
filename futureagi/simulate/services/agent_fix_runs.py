@@ -59,6 +59,7 @@ from simulate.services.hosted_harness import (
     request_cancellation,
 )
 from simulate.services.hosted_harness_conversation import CHAT_CHECKPOINT_MAX_SCENARIOS
+from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 from simulate.temporal.client import (
     cancel_agent_fix_workflow,
     cancel_hosted_harness_gateway_workflow,
@@ -486,8 +487,14 @@ def _cancel_open_check_runs(fix_run: AgentFixRun) -> None:
         request_cancellation(run, "fix_ended")
         try:
             cancel_hosted_harness_gateway_workflow(str(run.id))
-        except Exception:  # noqa: BLE001 - the run's own deadline still ends it
+        except Exception:  # noqa: BLE001 - fall back when the workflow cannot be reached
             logger.exception("agent_fix_check_run_cancel_failed", run=str(run.id))
+            try:
+                HostedHarnessGateway(require_provider=False).cancel(run, reason="fix_ended")
+            except Exception:  # noqa: BLE001 - continue closing the other check runs
+                logger.exception(
+                    "agent_fix_check_run_gateway_cancel_failed", run=str(run.id)
+                )
 
 
 def _set_aside_rejected(fix_run: AgentFixRun) -> None:
