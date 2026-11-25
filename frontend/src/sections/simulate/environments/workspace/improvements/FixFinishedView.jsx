@@ -11,6 +11,10 @@ import {
   useCodingAgentAttemptsEnabled,
 } from "src/api/simulate-environments/codingAgent";
 
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
+
 import CandidatesTable from "./CandidatesTable";
 import CopyForCodingAgentButton from "./CopyForCodingAgentButton";
 import EpochEnding from "./EpochEnding";
@@ -119,6 +123,7 @@ NoSafeNumbers.propTypes = { fix: PropTypes.object.isRequired };
 // agent. Each is an action the product already has.
 function WhatToTryNext({ fix, onTab, onLaunch }) {
   const [deciding, setDeciding] = useState(false);
+  const { canRun } = useSimulationAccess();
   const tried = (fix.candidates || []).length > 0;
   const line = { typography: "s2", color: "text.secondary" };
   return (
@@ -150,9 +155,11 @@ function WhatToTryNext({ fix, onTab, onLaunch }) {
               Pick other failing cases, or let an epoch change other parts of
               the agent.
             </Typography>
-            <Button size="small" onClick={onLaunch}>
-              Run a new epoch
-            </Button>
+            <ViewerLock locked={!canRun} title={WORKSPACE_COPY.viewer.run}>
+              <Button size="small" disabled={!canRun} onClick={onLaunch}>
+                Run a new epoch
+              </Button>
+            </ViewerLock>
           </Stack>
         )}
       </Stack>
@@ -174,7 +181,9 @@ WhatToTryNext.propTypes = {
 
 // An ending's one way on: retry a failed epoch the platform lets you retry,
 // else run a new one where Run Epoch lives, on the issue it came from or the
-// run it started from. With neither left, the sentence says what to do.
+// run it started from. With neither left, the sentence says what to do. A
+// no-safe ending offers only the issue's: its run's is in What to try next.
+// A viewer sees each one locked, with why.
 // An attempt from a person's own coding agent goes on in that agent: its one way on
 // is the brief to paste there, never a retry or Run Epoch.
 function AttemptPrimary({ fix }) {
@@ -190,7 +199,7 @@ function AttemptPrimary({ fix }) {
 }
 AttemptPrimary.propTypes = { fix: PropTypes.object.isRequired };
 
-function endingPrimary(fix, onLaunch) {
+function endingPrimary(fix, onLaunch, canRun) {
   if (isOutsideAttempt(fix)) return <AttemptPrimary fix={fix} />;
   // Retry lives here, never in the header: the ending's one primary.
   if (fix.state === "failed" && fix.retryable) return <RetryButton fix={fix} />;
@@ -198,10 +207,12 @@ function endingPrimary(fix, onLaunch) {
     size: "small",
     variant: "contained",
     color: "primary",
+    disabled: !canRun,
     startIcon: <Iconify icon="solar:play-linear" width={16} />,
   };
+  let button = null;
   if (fix.issue) {
-    return (
+    button = (
       <Button
         {...again}
         component={RouterLink}
@@ -210,12 +221,18 @@ function endingPrimary(fix, onLaunch) {
         Run Epoch again
       </Button>
     );
+  } else if (fix.source_run_id && fix.state !== "no_improvement") {
+    button = (
+      <Button {...again} onClick={onLaunch}>
+        Run Epoch again
+      </Button>
+    );
   }
-  if (!fix.source_run_id) return null;
+  if (!button) return null;
   return (
-    <Button {...again} onClick={onLaunch}>
-      Run Epoch again
-    </Button>
+    <ViewerLock locked={!canRun} title={WORKSPACE_COPY.viewer.run}>
+      {button}
+    </ViewerLock>
   );
 }
 
@@ -223,6 +240,7 @@ function endingPrimary(fix, onLaunch) {
 // ending reads in the one ending layout, says why it ended, and ships nothing.
 export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
   const [launching, setLaunching] = useState(false);
+  const { canRun } = useSimulationAccess();
   const ready = fix.state === "ready" && !!winnerOf(fix);
   const trials = fix.candidates || [];
   // An attempt's no-safe ending names its next step itself: it has no engine search
@@ -244,7 +262,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
           danger={endingBroke(fix)}
           sentence={endingSentence(fix)}
           spent={endingSpent(fix)}
-          primary={noSafe ? null : endingPrimary(fix, launch)}
+          primary={endingPrimary(fix, launch, canRun)}
         >
           {noSafe && (
             <>

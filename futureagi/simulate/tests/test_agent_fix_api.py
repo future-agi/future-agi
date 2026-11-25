@@ -36,7 +36,10 @@ from simulate.selectors.agent_fix import (
     default_max_minutes,
     engine_brief,
 )
-from simulate.serializers.agent_fix import AgentFixLaunchSerializer
+from simulate.serializers.agent_fix import (
+    AgentFixLaunchSerializer,
+    AgentFixListQuerySerializer,
+)
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_agents import VersionedSourceAgent
@@ -1427,6 +1430,46 @@ class TestUserApi:
 
         assert response.status_code == 400, response.content
         assert "shipped" in response.content.decode()
+
+    @pytest.mark.parametrize("state", [",,", "ready,", " , "])
+    def test_an_empty_state_is_refused_with_the_states_to_use(
+        self, auth_client, environment, source_run, state
+    ):
+        # Read as no state, ",," once listed every fix.
+        _fix_run(source_run, state=AgentFixRun.State.READY)
+
+        response = auth_client.get(
+            f"{BASE}/", {"environment_id": str(environment.id), "state": state}
+        )
+
+        assert response.status_code == 400, response.content
+        body = response.content.decode()
+        assert all(one in body for one in AgentFixRun.State.values), body
+
+    def test_the_state_param_names_every_state(self):
+        help_text = AgentFixListQuerySerializer().fields["state"].help_text
+        assert all(one in help_text for one in AgentFixRun.State.values)
+
+    @pytest.mark.parametrize("deleted", ["execution", "job"])
+    def test_a_fix_from_a_deleted_run_names_no_run(
+        self, auth_client, environment, source_run, deleted
+    ):
+        fix = _fix_run(source_run, state=AgentFixRun.State.STOPPED)
+        if deleted == "execution":
+            # What deleting the run from its page does (run_test views).
+            source_run.test_execution.delete()
+        else:
+            HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+                deleted=True
+            )
+
+        detail = auth_client.get(f"{BASE}/{fix.id}/").json()
+        listed = auth_client.get(
+            f"{BASE}/", {"environment_id": str(environment.id)}
+        ).json()["results"][0]
+
+        for body in (detail, listed):
+            assert (body["source_run_id"], body["source_run_number"]) == (None, None)
 
     def test_a_fix_shows_its_limit_and_spend_in_credits(
         self, auth_client, environment, source_run, settings

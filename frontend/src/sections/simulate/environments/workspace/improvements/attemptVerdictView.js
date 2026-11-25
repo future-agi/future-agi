@@ -1,6 +1,7 @@
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 
 import { checkLabel } from "./fixRunView";
+import { mustPassScenarioKeys } from "./scenarioOutcomes";
 
 // What the Epoch page says about an attempt from a person's own coding agent, from
 // its verdict read (GET agent-fix-runs/{id}/verdict/) alone: never from the Epoch's
@@ -43,7 +44,11 @@ function mustPassLine(status, broke) {
 function checkLine(tier, verdict) {
   if (tier.status === "pending") return "Not run yet.";
   if (tier.name === "must-pass") {
-    return mustPassLine(tier.status, verdict.must_pass_regressions.length);
+    // One scenario is named once per check: the count is of scenarios.
+    return mustPassLine(
+      tier.status,
+      mustPassScenarioKeys(verdict.must_pass_regressions).size,
+    );
   }
   const said = PLAIN[tier.name]?.[tier.status];
   if (said) return said;

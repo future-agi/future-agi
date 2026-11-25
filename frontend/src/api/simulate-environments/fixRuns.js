@@ -4,6 +4,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import axios, { endpoints } from "src/utils/axios";
@@ -52,6 +53,24 @@ export async function getFixRun(fixId) {
 export const isNotFound = (error) =>
   (error?.response?.status ?? error?.statusCode) === 404;
 
+// Only a list showing a live fix polls, so a list of other statuses (Ready for
+// review, say) would miss the fix that just reached it. The list that saw it
+// live refreshes every list of the environment once it ends.
+function useRefreshWhenAFixEnds(envId, results) {
+  const queryClient = useQueryClient();
+  const live = useRef(new Set());
+  useEffect(() => {
+    const fixes = results ?? [];
+    const ended = fixes.some(
+      (f) => live.current.has(f.id) && !FIX_LIVE_STATES.has(f.state),
+    );
+    live.current = new Set(
+      fixes.filter((f) => FIX_LIVE_STATES.has(f.state)).map((f) => f.id),
+    );
+    if (ended) queryClient.invalidateQueries({ queryKey: fixRunsKey(envId) });
+  }, [envId, results, queryClient]);
+}
+
 // 0-based page in, like the other environment lists; count is the server's
 // total across pages, of the given states when there are some. Polls while a
 // fix on the visible page is live. Asks nothing when the org lacks Fix my
@@ -87,6 +106,7 @@ export function useEnvironmentFixRuns(
         ? FIX_POLL_MS
         : false,
   });
+  useRefreshWhenAFixEnds(envId, data?.results);
   const fixes = data?.results ?? [];
   return {
     fixes,

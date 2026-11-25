@@ -154,8 +154,8 @@ describe("a job that ended before its epoch", () => {
 
 describe("a launched epoch", () => {
   it("says the stage while it runs, in the epoch page's words, and opens the epoch", () => {
-    // A search with no diagnosis yet is still diagnosing.
-    const status = launched();
+    // A search the engine names Diagnose, with no diagnosis yet, is diagnosing.
+    const status = launched({ stage: "Diagnose" });
     expect(epochLabel(status)).toBe("Running");
     expect(epochSentence(status)).toBe("Epoch 3 is diagnosing the failures.");
     expect(primaryAction(status)).toEqual({
@@ -165,7 +165,10 @@ describe("a launched epoch", () => {
     expect(epochIcon(status).tip).toBe("Epoch 3 · Running · Diagnosing");
     expect(epochIcon(status).role).toBe("info");
 
-    const proposing = launched({ diagnosis: { causes: ["a cause"] } });
+    const proposing = launched({
+      stage: "Diagnose",
+      diagnosis: { causes: ["a cause"] },
+    });
     expect(epochSentence(proposing)).toBe("Epoch 3 is proposing changes.");
     expect(epochIcon(proposing).tip).toBe("Epoch 3 · Running · Proposing");
     // The job's summary carries no diagnosis: it reads as the search.

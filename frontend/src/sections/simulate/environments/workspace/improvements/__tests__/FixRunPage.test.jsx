@@ -69,7 +69,7 @@ function renderPage(fixId, { runTestId } = {}) {
     <QueryClientProvider client={client}>
       <SnackbarProvider>
         <MemoryRouter>
-          <FixRunPage envId="env-1" fixId={fixId} runTestId={runTestId} />
+          <FixRunPage fixId={fixId} runTestId={runTestId} />
         </MemoryRouter>
       </SnackbarProvider>
     </QueryClientProvider>,
@@ -151,7 +151,12 @@ describe("FixRunPage", () => {
   it("heads a running fix with its name, state and stage", async () => {
     renderPage("fix-search");
     expect(await screen.findByText("Epoch 13")).toBeInTheDocument();
-    expect(screen.getByText("Running")).toBeInTheDocument();
+    // The header's status, beside its stage; the candidates table says Running too.
+    expect(
+      within(screen.getByTestId("epoch-stage").parentElement).getByText(
+        "Running",
+      ),
+    ).toBeInTheDocument();
     // The stage in the design's words, never the engine's own stage name.
     expect(screen.getByTestId("epoch-stage")).toHaveTextContent("Proposing");
     expect(screen.queryByText("Searching")).toBeNull();
@@ -193,13 +198,14 @@ describe("FixRunPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("goes back to the Epochs tab", async () => {
+  it("goes back to the Epochs tab of the epoch's own environment", async () => {
+    // The fake API reads the fixture's environment, env-fixture.
     renderPage("fix-search");
     expect(
       await screen.findByRole("link", { name: "Back to epochs" }),
     ).toHaveAttribute(
       "href",
-      "/dashboard/simulate/environments/env-1?tab=improvements",
+      "/dashboard/simulate/environments/env-fixture?tab=improvements",
     );
   });
 
@@ -237,6 +243,19 @@ describe("FixRunPage", () => {
     expect(screen.queryByText(/S-1A2B3C4D/)).toBeNull();
     // Nor is the environment named twice.
     expect(screen.getAllByText(/new env/)).toHaveLength(1);
+  });
+
+  it("crumbs the epoch's own environment, the one it names", () => {
+    pin({ environment_id: "env-2" });
+    renderPage("fix-search");
+    expect(screen.getByTestId("epoch-environment-crumb")).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-2",
+    );
+    expect(screen.getByTestId("epoch-epochs-crumb")).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-2?tab=improvements",
+    );
   });
 
   it("links an issue's epoch to its issue by title", () => {

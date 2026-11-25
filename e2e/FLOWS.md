@@ -3735,3 +3735,28 @@
 - the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
 - B reading A's import answers 404, through A's environment and through B's own
 - a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending
+
+### SIM-E2E-037 — a developer narrows an environment's Epochs list to one status and sees only the epochs in it
+
+**Goal:** A developer narrows an environment's Epochs list to one status and sees only the epochs in it
+
+**Spec:** `flows/simulate/epochs-status-filter.spec.ts:93`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the environment's Epochs tab
+2. read every epoch under All statuses
+3. choose Running
+4. choose No safe improvement
+5. choose Ready for review
+6. choose All statuses again
+
+**Browser observations:**
+
+- All statuses asks the list with no state and shows exactly the three minted epochs, newest first
+- Running asks for state=queued,running,stopping and shows exactly the stopping epoch
+- No safe improvement asks for state=no_improvement and shows exactly that epoch
+- Ready for review asks for state=ready and says no epoch has that status
+- All statuses again shows the three epochs

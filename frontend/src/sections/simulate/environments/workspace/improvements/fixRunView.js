@@ -1,6 +1,8 @@
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import { isOutsideAttempt } from "src/api/simulate-environments/codingAgent";
 
+import { mustPassScenarioKeys } from "./scenarioOutcomes";
+
 // What the fix page says about a fix, derived from one contract read
 // (GET /simulate/api/agent-fix-runs/{id}/). Only simple differences are
 // computed here; every number comes from the platform or the engine.
@@ -69,15 +71,19 @@ const ATTEMPT_STAGES = ["reproduce", "search", "verify"].map((id) => ({
   label: ATTEMPT_STAGE_LABEL[id],
 }));
 
-// The engine has no diagnose step: it diagnoses as its search starts. A search
-// with no diagnosis and no candidate yet is still diagnosing; the report's
-// diagnosis is optional, so a candidate means it has moved on. The issue job's
-// summary of an epoch carries neither, so it reads as the search. An attempt
-// never diagnoses.
+// The engine has no diagnose step: it diagnoses as its search starts, and names
+// that stage Diagnose. A search reads as diagnosing only while the engine says
+// so and nothing it found has arrived, so one that skipped its diagnosis reads
+// as the search. The issue job's summary of an epoch carries no stage, so it
+// reads as the search. An attempt never diagnoses.
 export function stageOf(fix) {
   if (fix.step !== "search" || fix.summary || isOutsideAttempt(fix))
     return fix.step;
-  return fix.diagnosis || (fix.candidates || []).length ? "search" : "diagnose";
+  const diagnosing =
+    /^Diagnose/.test(fix.stage || "") &&
+    !fix.diagnosis &&
+    !(fix.candidates || []).length;
+  return diagnosing ? "diagnose" : "search";
 }
 
 // The stage a running epoch is in, beside its status.
@@ -155,6 +161,11 @@ export const winnerOf = (fix) =>
 export const isShipped = (fix, candidate) =>
   !!candidate &&
   candidate.agent_version_id === fix.environment?.default_agent_version_id;
+
+// The must-pass scenarios a verdict counted as broken: it names each one once
+// per check, so the count is of scenarios, not checks.
+const brokeCount = (verdict) =>
+  mustPassScenarioKeys(verdict?.must_pass_regressions).size;
 
 const brokeText = (n) =>
   n
@@ -257,7 +268,7 @@ export function headline(fix) {
   }
   if (fix.state !== "ready" || !winner || !fix.plan) return endingText(fix);
   const { verdict } = winner;
-  const broke = brokeText(verdict.must_pass_regressions.length);
+  const broke = brokeText(brokeCount(verdict));
   if (verdict.held_back_pass_rate) {
     return `Held-back pass rate ${rateChange(verdict.held_back_pass_rate)}. ${broke}`;
   }
@@ -416,6 +427,11 @@ const CEILING_CARDS = [
   { id: "latency", part: "reply latency", label: "Reply time" },
 ];
 
+const CEILING_VALUE = {
+  passed: "Within the limit",
+  failed: "Over the limit",
+};
+
 const signedPct = (n) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)}%`;
 
 // The winner's cost and reply time against the current version's, from the
@@ -441,13 +457,16 @@ export function ceilingCards(fix) {
       ];
     }
     if (numbers?.candidate == null || !numbers?.baseline) {
+      // Only a part that passed is within the limit; one not decided yet says so.
+      const value = CEILING_VALUE[part.status];
       return [
         {
           id,
           label,
-          value:
-            part.status === "failed" ? "Over the limit" : "Within the limit",
-          note: "against the current version",
+          value: value || "Not checked yet",
+          note: value
+            ? "against the current version"
+            : "the check has not run on this candidate",
         },
       ];
     }
@@ -511,7 +530,7 @@ function tierLine(tier, verdict, plan, request) {
           : " on scenarios the epoch never saw",
       );
     case "must-pass": {
-      const broke = (verdict?.must_pass_regressions || []).length;
+      const broke = brokeCount(verdict);
       if (!passed)
         return broke ? brokeText(broke) : "A must-pass scenario broke.";
       const kept = plan?.protected
@@ -623,7 +642,7 @@ const NO_SAFE_WHY = {
   },
   // The same words as the candidates' group heading.
   ceilings: { did: "went over the reply-time or cost limit" },
-  "model-lock": { did: "called a model outside the approved list" },
+  "model-lock": { did: "didn't keep to the approved models" },
 };
 
 const whyClause = (name, count, request) => {
@@ -738,7 +757,8 @@ const GROUP_HEADING = {
   repeats: "Didn't hold over repeat runs",
   target: "Didn't improve the target scenarios",
   ceilings: "Went over the reply-time or cost limit",
-  "model-lock": "Called a model outside the approved list",
+  // The lock also fails on what the change names, with no call observed.
+  "model-lock": "Didn't keep to the approved models",
   static: "The change wasn't valid",
 };
 
@@ -751,8 +771,7 @@ const ATTEMPT_GROUP_HEADING = {
   repeats: "Your coding agent's change didn't hold over repeat runs",
   target: "Your coding agent's change didn't improve the target scenarios",
   ceilings: "Your coding agent's change went over the reply-time or cost limit",
-  "model-lock":
-    "Your coding agent's change called a model outside the approved list",
+  "model-lock": "Your coding agent's change didn't keep to the approved models",
   static: "Your coding agent's change wasn't valid",
 };
 
@@ -773,7 +792,7 @@ function candidateResult(c, group, fix, live) {
   if (group === "rejected")
     return { result: oldVerdictLine(c.verdict), broke: false };
   if (group === "must-pass") {
-    const n = (c.verdict?.must_pass_regressions || []).length;
+    const n = brokeCount(c.verdict);
     return {
       result: n
         ? `Broke ${n} must-pass ${n === 1 ? "scenario" : "scenarios"}`
@@ -811,13 +830,18 @@ export function candidateGroups(fix) {
       },
     ]);
   });
+  // While the epoch runs, the candidate being checked leads, open.
+  const rank = (id) => (live && id === "pending" ? -1 : groupRank(id));
   return [...groups.entries()]
-    .sort(([a], [b]) => groupRank(a) - groupRank(b))
+    .sort(([a], [b]) => rank(a) - rank(b))
     .map(([id, rows]) => ({
       id,
       label: groupLabel(id, fix, live),
       // With no winner, the closest calls were stopped at held back.
-      open: OPEN_GROUPS.has(id) || (!hasWinner && id === "held-back"),
+      open:
+        OPEN_GROUPS.has(id) ||
+        (!hasWinner && id === "held-back") ||
+        (live && id === "pending"),
       rows: rows.sort(
         (a, b) =>
           (b.target?.score ?? -1) - (a.target?.score ?? -1) ||
@@ -1108,7 +1132,7 @@ function verdictResult(fix) {
   const winner = winnerOf(fix);
   if (fix.state !== "ready" || !winner || !fix.plan) return null;
   const { verdict } = winner;
-  const broke = verdict.must_pass_regressions.length;
+  const broke = brokeCount(verdict);
   if (verdict.held_back_pass_rate) {
     return {
       text: `Held back ${rateChange(verdict.held_back_pass_rate)}`,

@@ -28,11 +28,16 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
 }));
 
 const axios = (await import("src/utils/axios")).default;
-const { FIX_RUN_FIXTURES, fixtureFixRun, resetFixRunFixtures } = await import(
-  "./fixtures/fixRuns"
-);
+const {
+  FIX_RUN_FIXTURES,
+  fixtureFixRun,
+  resetFixRunFixtures,
+  updateFixtureFixRun,
+} = await import("./fixtures/fixRuns");
 const {
   useEnvironmentFixRuns,
+  fixRunsKey,
+  FIX_RUNS_PAGE_SIZE,
   fixPollInterval,
   FIX_POLL_MS,
   fixErrorOf,
@@ -208,6 +213,37 @@ describe("fix-run list", () => {
     await waitFor(() =>
       expect(result.current.fixes.map((f) => f.state)).toEqual(["failed"]),
     );
+  });
+
+  it("refreshes a list of other statuses once a live fix it lacks ends", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    // The workspace's unfiltered list, and the Epochs tab filtered to Ready.
+    const { result } = renderHook(
+      () => ({
+        all: useEnvironmentFixRuns("env-1"),
+        ready: useEnvironmentFixRuns("env-1", { states: ["ready"] }),
+      }),
+      { wrapper: Wrapper },
+    );
+    await waitFor(() =>
+      expect(result.current.ready.fixes.length).toBeGreaterThan(0),
+    );
+    const readyIds = () => result.current.ready.fixes.map((f) => f.id);
+    expect(readyIds()).not.toContain("fix-search");
+
+    updateFixtureFixRun("fix-search", (f) => ({ ...f, state: "ready" }));
+    // Only the unfiltered list polls (it shows a live fix): its next read.
+    await client.refetchQueries({
+      queryKey: fixRunsKey("env-1", 0, FIX_RUNS_PAGE_SIZE, []),
+      exact: true,
+    });
+    await waitFor(() => expect(readyIds()).toContain("fix-search"));
   });
 
   it("asks nothing when the org lacks Fix my agent", async () => {

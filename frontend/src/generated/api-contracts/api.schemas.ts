@@ -47152,7 +47152,7 @@ export type SimulateApiAgentFixRunsListParams = {
    */
   limit?: number;
   /**
-   * Comma-separated fix states to list.
+   * Comma-separated fix states to list, any of: queued, running, stopping, ready, no_improvement, not_reproduced, out_of_budget, stopped, failed, too_few_cases.
    * @minLength 1
    */
   state?: string;
