@@ -1091,6 +1091,62 @@ def test_a_case_held_unresolved_for_an_earlier_reword_reads_not_validated(
     assert view["reason"] == "not_validated"
 
 
+def test_a_real_change_shares_its_empty_ref_with_an_unresolved_source_and_still_reads_source_changed(
+    user, workspace, storage
+):
+    """Two rules cited with ref "": one names words no version holds, the other a rule this version reworded. The
+    reworded one is a real change, so the ref reads Source changed, as Compare shows it."""
+    import hashlib
+
+    def rid(rule):
+        return "rule-" + hashlib.sha256(rule.encode()).hexdigest()[:12]
+
+    was, now = "Refund within 10 days.", "Refund within 7 days."
+    environment = _environment(user, workspace, storage, "lc-shared-empty-ref")
+    _suite(environment, _ten())
+    parent = _with_rules_and_files(environment.environment_version, [was], {})
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, [now], {})
+    documents = dict(child.documents)
+    documents["contract"] = {
+        **documents["contract"],
+        "amendment_records": [
+            {
+                "kind": "rule",
+                "key": rid(was),
+                "action": "removed",
+                "replaced_by": rid(now),
+                "text": was,
+            },
+            {
+                "kind": "rule",
+                "key": rid(now),
+                "action": "added",
+                "previous": rid(was),
+                "text": now,
+            },
+        ],
+    }
+    HarnessEnvironmentVersion._base_manager.filter(id=child.id).update(
+        documents=documents
+    )
+    child.refresh_from_db()
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "", "quote": "words no rule held"},
+                {"kind": "rule", "ref": "", "quote": "Refund within"},
+            ]
+        },
+    )
+    _proofs(environment, {}, version=child)
+
+    view = _views(environment, version=child)[REFUND_KEYS[0]]
+
+    assert view["source_changed"] == [""]
+
+
 def test_counts_call_only_a_run_proof_proved():
     from simulate.services.harness_scenario_lifecycle import lifecycle_counts
 

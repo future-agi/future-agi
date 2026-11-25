@@ -751,7 +751,8 @@ def scenario_lifecycle(
             for one in replaced
             if _reworded_here(one["quote"], environment_version, parent_documents)
         ]
-        # A rule source neither version resolves already reads source_unresolved; Compare has nothing to show for it.
+        # A ref whose every rule source neither version resolves already reads source_unresolved; Compare has
+        # nothing to show for it. A ref shared with a source that does resolve (two rules cited with ref "") stays.
         unresolved = {
             one["ref"]
             for one in view["sources"]
@@ -766,6 +767,10 @@ def scenario_lifecycle(
                 parent_documents,
             )
             == (None, None)
+        } - {
+            one["ref"]
+            for one in view["sources"]
+            if one["kind"] == "rule" and one["resolved"]
         }
         view["source_changed"] = list(
             dict.fromkeys(
