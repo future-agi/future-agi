@@ -1676,6 +1676,23 @@ def test_a_case_not_validated_yet_names_the_tool_this_agent_version_lacks(
     assert views[LOOKUP_KEYS[0]]["reason"] == "not_validated"
 
 
+def test_a_case_validation_cannot_reach_here_names_the_tool_this_agent_version_lacks(
+    user, workspace, storage, monkeypatch
+):
+    from simulate.services.harness_versioning import validation
+
+    environment = _environment(user, workspace, storage, "tool-unavailable")
+    _suite(environment, _ten())
+    _proofs(environment, {})
+    agent = _on_agent(environment, monkeypatch, ["lookup_order"])
+    monkeypatch.setattr(validation, "can_validate", lambda *a, **k: False)
+
+    views = _views_with(environment, agent)
+
+    assert views[REFUND_KEYS[0]]["reason"] == "tool_not_on_agent"
+    assert views[LOOKUP_KEYS[0]]["reason"] == "validation_unavailable"
+
+
 def test_a_case_proved_by_a_check_that_never_read_the_agent_is_not_active(
     user, workspace, storage, monkeypatch
 ):

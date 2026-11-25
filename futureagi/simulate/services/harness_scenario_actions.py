@@ -17,6 +17,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from simulate.constants.hosted_harness import VALIDATION_SETTLES
 from simulate.models import (
     AgentVersion,
     HarnessEnvironmentVersion,
@@ -170,18 +171,11 @@ class ValidationStatus(TypedDict):
 
 # A case held for one of these has no proof of its own on the pair yet: never proved, not reached, or proved with
 # another agent version. Validate proves these; a case whose proof ran keeps it until its content or versions change.
-UNPROVED_REASONS = frozenset(
-    {
-        "not_validated",
-        "validation_incomplete",
-        "proved_on_other_agent",
-        "tools_unread",
-        "validation_failed",
-        "validation_ended_on_our_side",
-        "proofs_unread",
-        "validation_unavailable",
-    }
-)
+UNPROVED_REASONS = VALIDATION_SETTLES | {
+    "tools_unread",
+    "proofs_unread",
+    "validation_unavailable",
+}
 # How long a validation's progress counts are kept between polls of a large suite.
 PROGRESS_CACHE_SECONDS = 10
 

@@ -16,7 +16,7 @@ from typing import Any, Literal, NotRequired, TypedDict, cast
 import structlog
 from django.db.models import F
 
-from simulate.constants.hosted_harness import SCENARIO_KEY
+from simulate.constants.hosted_harness import SCENARIO_KEY, VALIDATION_SETTLES
 from simulate.models import (
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
@@ -1184,17 +1184,8 @@ def archived_view(archived_at: datetime | None, archive_reason: str) -> Lifecycl
     return view
 
 
-# Draft reasons a validation with the pairing's agent version would settle, unless that version lacks a tool the case
-# uses: then the tool is the reason.
-_VALIDATION_SETTLES = frozenset(
-    {
-        "not_validated",
-        "validation_incomplete",
-        "validation_failed",
-        "validation_ended_on_our_side",
-        "proved_on_other_agent",
-    }
-)
+# A validation that cannot run here would not run a case its agent lacks a tool for either: the tool is its reason.
+_VALIDATION_SETTLES = VALIDATION_SETTLES | {"validation_unavailable"}
 
 
 def parent_version_documents(

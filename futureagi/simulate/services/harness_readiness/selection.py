@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, NotRequired, TypedDict, cast
 from uuid import UUID
 
+from simulate.constants.hosted_harness import VALIDATION_SETTLES
 from simulate.models import (
     HarnessAssembledBundle,
     HarnessSuiteMember,
@@ -91,16 +92,7 @@ SEED_UNREAD_ROW = "unreadable"
 # Held-back key for a case whose reference calls a tool the pairing's agent version does not have.
 TOOL_MISSING_ROW = "tool_not_on_agent"
 # The Draft reasons a validation can settle; any other Draft reason is a proof's verdict on the case itself.
-UNVALIDATED_REASONS = frozenset(
-    {
-        "not_validated",
-        "validation_incomplete",
-        "validation_failed",
-        "validation_ended_on_our_side",
-        "proved_on_other_agent",
-        "tools_unread",
-    }
-)
+UNVALIDATED_REASONS = VALIDATION_SETTLES | {"tools_unread"}
 LIFECYCLE_LABELS = {
     NOT_VALIDATED_ROW: "Validation",
     PROOF_FAILED_ROW: "Proof",
