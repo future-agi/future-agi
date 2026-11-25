@@ -1,3 +1,4 @@
+import copy
 import json
 
 import jsonpatch
@@ -59,6 +60,68 @@ def test_a_changed_tool_is_one_change_whose_patch_applies_only_to_what_was_read(
     # Another save changed the same tool underneath: the decision cannot land on content nobody saw.
     with pytest.raises(jsonpatch.JsonPatchTestFailed):
         jsonpatch.apply_patch({**TOOLS[1], "description": "Refund"}, change["patch"])
+
+
+def test_a_list_edit_that_shifts_indexes_tests_each_value_where_its_op_meets_it():
+    # An add before a replace moves the replaced value to a later index than the saved document has.
+    before = {**TOOLS[1], "examples": ["f", "a"]}
+    after = {**TOOLS[1], "examples": ["y", "f", "e"]}
+    default = _tree({"tools": [TOOLS[0], before]})
+    draft = _tree({"tools": [TOOLS[0], after]})
+
+    [change] = compute_changes(default, draft)
+
+    assert jsonpatch.apply_patch(before, change["patch"]) == after
+    assert any(op["op"] == "test" for op in change["patch"])
+    # Still refused when the scenario changed underneath.
+    with pytest.raises(jsonpatch.JsonPatchTestFailed):
+        jsonpatch.apply_patch({**before, "examples": ["f", "b"]}, change["patch"])
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # jsonpatch's diff here fails to apply: its replace lands on a string after the add shifts the list.
+        (["a", {"k": "a"}], ["b", {"k": "b"}, "a"]),
+        # Here its diff applies but builds another value than the draft's.
+        (["a", {"k": "a"}, "b", "a"], ["b", {"k": "b"}]),
+    ],
+)
+def test_a_dict_moved_and_edited_in_a_list_gives_a_patch_that_builds_the_draft(
+    was, now
+):
+    before = {**TOOLS[1], "examples": was}
+    after = {**TOOLS[1], "examples": now}
+
+    [change] = compute_changes(
+        _tree({"tools": [TOOLS[0], before]}), _tree({"tools": [TOOLS[0], after]})
+    )
+
+    assert jsonpatch.apply_patch(before, change["patch"]) == after
+    with pytest.raises(jsonpatch.JsonPatchTestFailed):
+        jsonpatch.apply_patch({**before, "examples": ["c"]}, change["patch"])
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # jsonpatch's remove raises TypeError on this diff: it must fall back, never 500.
+        ([{"k": "a"}, ["a", "b"], "a", {"k": "a"}], ["a", ["a"]]),
+        # Its diff adds the draft's own objects, and a later op edited them: the check must not compare a changed draft.
+        ([{"k": "b"}, "b", ["a"]], ["b", {"k": ["a"]}, ["a", "b"], {"k": "b"}]),
+    ],
+)
+def test_a_patch_is_checked_on_copies_and_leaves_the_draft_as_it_was(was, now):
+    before = {**TOOLS[1], "examples": was}
+    after = {**TOOLS[1], "examples": now}
+    draft = _tree({"tools": [TOOLS[0], after]})
+    seen = copy.deepcopy(after)
+
+    [change] = compute_changes(_tree({"tools": [TOOLS[0], before]}), draft)
+
+    # The draft's own value is as it was before the review read it.
+    assert after == seen
+    assert jsonpatch.apply_patch(copy.deepcopy(before), change["patch"]) == seen
 
 
 def test_reordering_items_is_not_a_change_and_an_unchanged_draft_has_none():

@@ -9,6 +9,7 @@ underneath it.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections.abc import Mapping
@@ -555,16 +556,39 @@ def world_rows(
     return out
 
 
+def _patch(before: Any, after: Any) -> list[JsonPatchOp]:
+    """The ops that turn ``before`` into ``after``. jsonpatch's own diff can misplace a dict moved and edited in a list
+    (its ops fail, or land in another order), so a diff that does not rebuild ``after`` replaces the whole value."""
+    patch: list[JsonPatchOp] = jsonpatch.make_patch(before, after).patch
+    try:
+        # A trial on copies: the diff's added values are the draft's own objects, which a later op could edit.
+        if jsonpatch.apply_patch(copy.deepcopy(before), copy.deepcopy(patch)) == after:
+            return copy.deepcopy(patch)
+    except (
+        jsonpatch.JsonPatchException,
+        jsonpatch.JsonPointerException,
+        TypeError,
+        KeyError,
+        IndexError,
+    ):
+        pass
+    return [{"op": "replace", "path": "", "value": copy.deepcopy(after)}]
+
+
 def _tested(before: Any, patch: list[JsonPatchOp]) -> list[JsonPatchOp]:
-    """The patch with a `test` on each value it replaces or removes, so it applies only to what was read."""
-    tests: list[JsonPatchOp] = []
+    """The patch with a `test` on each value it replaces or removes, so it applies only to what was read. Each test sits
+    just before its op and reads the document as the earlier ops left it: an earlier add or remove shifts list indexes."""
+    doc = copy.deepcopy(before)
+    out: list[JsonPatchOp] = []
     for op in patch:
         if op["op"] in ("replace", "remove"):
-            pointer = jsonpatch.JsonPointer(op["path"])
-            tests.append(
-                {"op": "test", "path": op["path"], "value": pointer.resolve(before)}
+            value = jsonpatch.JsonPointer(op["path"]).resolve(doc)
+            out.append(
+                {"op": "test", "path": op["path"], "value": copy.deepcopy(value)}
             )
-    return tests + patch
+        out.append(copy.deepcopy(op))
+        doc = jsonpatch.apply_patch(doc, [copy.deepcopy(op)], in_place=True)
+    return out
 
 
 def _fields(before: Any, after: Any) -> list[str]:
@@ -767,7 +791,7 @@ def compute_changes(
         elif new is None:
             patch = [{"op": "test", "path": "", "value": old.value}]
         else:
-            patch = _tested(old.value, jsonpatch.make_patch(old.value, new.value).patch)
+            patch = _tested(old.value, _patch(old.value, new.value))
         fields = _fields(old.value if old else None, new.value if new else None)
         rows = (
             world_rows(item.key, old.raw if old else None, new.raw if new else None)

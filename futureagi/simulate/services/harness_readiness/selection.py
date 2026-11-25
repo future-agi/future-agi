@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, NotRequired, TypedDict, cast
 from uuid import UUID
 
+from simulate.constants.hosted_harness import VALIDATION_SETTLES
 from simulate.models import (
     HarnessAssembledBundle,
     HarnessSuiteMember,
@@ -91,16 +92,7 @@ SEED_UNREAD_ROW = "unreadable"
 # Held-back key for a case whose reference calls a tool the pairing's agent version does not have.
 TOOL_MISSING_ROW = "tool_not_on_agent"
 # The Draft reasons a validation can settle; any other Draft reason is a proof's verdict on the case itself.
-UNVALIDATED_REASONS = frozenset(
-    {
-        "not_validated",
-        "validation_incomplete",
-        "validation_failed",
-        "validation_ended_on_our_side",
-        "proved_on_other_agent",
-        "tools_unread",
-    }
-)
+UNVALIDATED_REASONS = VALIDATION_SETTLES | {"tools_unread"}
 LIFECYCLE_LABELS = {
     NOT_VALIDATED_ROW: "Validation",
     PROOF_FAILED_ROW: "Proof",
@@ -306,7 +298,7 @@ def selection_report(
     not_gradable = [one.gradable for one in placed if one.gradable is not None]
     rows: list[SelectionRowView] = []
     for row in report["rows"]:
-        held = [one.case.key for one in placed if row["id"] in one.held_by]
+        held = _row_holds(row, placed)
         rows.append(
             {
                 **row,
@@ -390,6 +382,19 @@ def _worker_keys(hold: CaseHold) -> list[str]:
     """The `worker:<id>` keys a held case is held by: the workers ALK sealed as unheld for it; `worker_limits` with
     its sealed cause when it named none, or sealed before it named them."""
     return [f"worker:{one}" for one in hold.unheld or ()] or [WORKER_LIMITS_HELD]
+
+
+def _holds(row: Any, one: Placed) -> bool:
+    """Whether a row holds this case back: a blocked row a case it blocks, never one it only reads stale or untested
+    for; any other row every case it holds."""
+    if row["status"] == "blocked":
+        return one.bucket == "blocked" and row["id"] in one.by
+    return row["id"] in one.held_by
+
+
+def _row_holds(row: Any, placed: list[Placed]) -> list[str]:
+    """The selected cases a row holds back."""
+    return [one.case.key for one in placed if _holds(row, one)]
 
 
 def _held_by(
@@ -574,6 +579,8 @@ def _held_back(
     # Each case counts once, under its own lifecycle reason when it has one, else the first row holding it, so the
     # counts add up to the cases held back.
     primary = _held_rows(placement)
+    # A case held only until it is validated comes after one held for something to fix, so the list leads with those.
+    held.sort(key=lambda key: primary.get(key) == NOT_VALIDATED_ROW)
     by = Counter(primary.values())
     reasons = {
         row["id"]: row["reason"] or row["label"] for row in rows if row["id"] in by
@@ -695,11 +702,16 @@ def case_page(
         evidence=evidence,
         workers=report["workers"],
     ).placed
+    # A row's cases are the ones its count names (`_holds`); a key that is no report row matches as before.
+    shown = next((one for one in report["rows"] if one["id"] == row), None)
     matching = [
         one
         for one in placed
         if (bucket is None or one.bucket == bucket)
-        and (row is None or row in one.held_by)
+        and (
+            row is None
+            or (_holds(shown, one) if shown is not None else row in one.held_by)
+        )
         and (cursor is None or one.case.number > cursor)
     ]
     page = matching[:PAGE_SIZE]
@@ -771,7 +783,9 @@ def changed_since_last_run(
 
 
 def _supported(row: SelectionRowView) -> SelectionRowView:
-    supported: SelectionRowView = {**row, "status": "supported"}
+    """The row as the selected cases read it when none uses the tools it fails on: its stale or untested evidence
+    still counts."""
+    supported: SelectionRowView = {**row, "status": _status_unused(row)}
     return supported
 
 
@@ -979,13 +993,19 @@ def _status_for(row: RowView, case: CaseNeeds) -> Status:
             for target in row["targets"]
         )
     ):
-        if (
-            row["stale_because"] in ("built_with_unknown", "saved_without_check")
-            or row["blocked_by"]
-        ):
-            return "untested"
-        return "stale" if row["stale_because"] else "supported"
+        return _status_unused(row)
     return row["status"]
+
+
+def _status_unused(row: Any) -> Status:
+    """A tool row's status for a case that uses none of the tools it fails on: Supported, unless its evidence is
+    Stale or waits on its gate."""
+    if (
+        row["stale_because"] in ("built_with_unknown", "saved_without_check")
+        or row["blocked_by"]
+    ):
+        return "untested"
+    return "stale" if row["stale_because"] else "supported"
 
 
 def _place(

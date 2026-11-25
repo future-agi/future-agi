@@ -907,6 +907,274 @@ def test_a_case_citing_a_reworded_rule_reads_source_changed_and_an_orphaned_one_
     assert views[REFUND_KEYS[3]]["reason"] == "source_unresolved"
 
 
+def test_source_changed_and_compare_agree_on_a_version_that_changed_no_rule(
+    user, workspace, storage
+):
+    """A case quoting a rule's words from before an earlier rewording: on a later version that changed no rule, the
+    rule reads the same in both, so it is not Source changed, and Compare lists nothing. Words no version holds are
+    still a change for `changed_refs`: a run compare must never blame the agent for them."""
+    import hashlib
+    from unittest.mock import patch
+
+    from simulate.services import harness_scenario_actions
+    from simulate.services.harness_scenario_lifecycle import changed_refs
+
+    def rid(rule):
+        return "rule-" + hashlib.sha256(rule.encode()).hexdigest()[:12]
+
+    old, new = "Refund within 14 days.", "Refund within 10 days."
+    environment = _environment(user, workspace, storage, "lc-reworded-earlier")
+    _suite(environment, _ten())
+    parent = _with_rules_and_files(environment.environment_version, [old], {})
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, [new], {})
+    records = [
+        {
+            "kind": "rule",
+            "key": rid(old),
+            "action": "removed",
+            "replaced_by": rid(new),
+            "text": old,
+        },
+        {
+            "kind": "rule",
+            "key": rid(new),
+            "action": "added",
+            "previous": rid(old),
+            "text": new,
+        },
+    ]
+    documents = dict(child.documents)
+    documents["contract"] = {**documents["contract"], "amendment_records": records}
+    HarnessEnvironmentVersion._base_manager.filter(id=child.id).update(
+        documents=documents
+    )
+    child.refresh_from_db()
+    later = _copy(
+        child, HarnessEnvironmentVersion, parent=child, hash=child.hash[:-5] + "later"
+    )
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "rule:0", "quote": "Refund within 14 days"}
+            ],
+            REFUND_KEYS[1]: [
+                {"kind": "rule", "ref": "rule:0", "quote": "words no rule held"}
+            ],
+        },
+    )
+    _proofs(environment, dict.fromkeys(KEYS, PROVED), version=later)
+
+    views = _views(environment, version=later)
+    with patch.object(
+        harness_scenario_actions, "_file_texts", lambda version, paths: {}
+    ):
+        compared = harness_scenario_actions.source_changes(environment, later.id)
+    contents = {
+        key: {"sources": [{"kind": "rule", "ref": "rule:0", "quote": quote}]}
+        for key, quote in (
+            (REFUND_KEYS[0], "Refund within 14 days"),
+            (REFUND_KEYS[1], "words no rule held"),
+        )
+    }
+
+    assert views[REFUND_KEYS[0]]["source_changed"] == []
+    assert [one for one in compared["changes"] if one["kind"] == "rule"] == []
+    assert set(changed_refs(later, contents)) == {REFUND_KEYS[1]}
+
+
+def _reworded_before_the_parent(environment):
+    """Versions where a rule was reworded (14 to 10 days) one version back, then a version that changed no rule."""
+    import hashlib
+
+    def rid(rule):
+        return "rule-" + hashlib.sha256(rule.encode()).hexdigest()[:12]
+
+    old, new = "Refund within 14 days.", "Refund within 10 days."
+    parent = _with_rules_and_files(environment.environment_version, [old], {})
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, [new], {})
+    documents = dict(child.documents)
+    documents["contract"] = {
+        **documents["contract"],
+        "amendment_records": [
+            {
+                "kind": "rule",
+                "key": rid(old),
+                "action": "removed",
+                "replaced_by": rid(new),
+                "text": old,
+            },
+            {
+                "kind": "rule",
+                "key": rid(new),
+                "action": "added",
+                "previous": rid(old),
+                "text": new,
+            },
+        ],
+    }
+    HarnessEnvironmentVersion._base_manager.filter(id=child.id).update(
+        documents=documents
+    )
+    child.refresh_from_db()
+    return _copy(
+        child, HarnessEnvironmentVersion, parent=child, hash=child.hash[:-5] + "later"
+    )
+
+
+def test_words_neither_version_holds_are_a_change_for_a_run_compare(
+    user, workspace, storage
+):
+    from simulate.services.harness_scenario_lifecycle import changed_refs
+
+    environment = _environment(user, workspace, storage, "lc-none-none-compare")
+    later = _reworded_before_the_parent(environment)
+    cited = {
+        "sources": [{"kind": "rule", "ref": "rule:1", "quote": "words no rule held"}]
+    }
+
+    assert changed_refs(later, {REFUND_KEYS[0]: cited}) == {REFUND_KEYS[0]: ["rule:1"]}
+
+
+def test_a_case_citing_words_no_version_holds_reads_unresolved_not_source_changed(
+    user, workspace, storage
+):
+    environment = _environment(user, workspace, storage, "lc-none-none-view")
+    _suite(environment, _ten())
+    later = _reworded_before_the_parent(environment)
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "rule:1", "quote": "words no rule held"}
+            ]
+        },
+    )
+    _proofs(environment, {}, version=later)
+
+    view = _views(environment, version=later)[REFUND_KEYS[0]]
+
+    assert view["sources"][0]["resolved"] is False
+    assert view["source_changed"] == []
+
+
+def test_a_case_held_unresolved_for_an_earlier_reword_reads_not_validated(
+    user, workspace, storage
+):
+    """Its proof read the old words unresolved; the contract records the reword, so the case is just not validated
+    against the new rule yet, whichever version reworded it."""
+    environment = _environment(user, workspace, storage, "lc-earlier-reword-held")
+    _suite(environment, _ten())
+    later = _reworded_before_the_parent(environment)
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "rule:0", "quote": "Refund within 14 days"}
+            ]
+        },
+    )
+    held = {
+        **PROVED,
+        "proved": False,
+        "blocked_reason": "source_unresolved",
+        "sources": [
+            {"kind": "rule", "ref": "rule:0", "resolved": False, "problem": "no rule"}
+        ],
+    }
+    _proofs(environment, {REFUND_KEYS[0]: held}, version=later)
+
+    view = _views(environment, version=later)[REFUND_KEYS[0]]
+
+    assert view["reason"] == "not_validated"
+
+
+def test_a_real_change_shares_its_empty_ref_with_an_unresolved_source_and_still_reads_source_changed(
+    user, workspace, storage
+):
+    """Two rules cited with ref "": one names words no version holds, the other a rule this version reworded. The
+    reworded one is a real change, so the ref reads Source changed, as Compare shows it."""
+    import hashlib
+
+    def rid(rule):
+        return "rule-" + hashlib.sha256(rule.encode()).hexdigest()[:12]
+
+    was, now = "Refund within 10 days.", "Refund within 7 days."
+    environment = _environment(user, workspace, storage, "lc-shared-empty-ref")
+    _suite(environment, _ten())
+    parent = _with_rules_and_files(environment.environment_version, [was], {})
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, [now], {})
+    documents = dict(child.documents)
+    documents["contract"] = {
+        **documents["contract"],
+        "amendment_records": [
+            {
+                "kind": "rule",
+                "key": rid(was),
+                "action": "removed",
+                "replaced_by": rid(now),
+                "text": was,
+            },
+            {
+                "kind": "rule",
+                "key": rid(now),
+                "action": "added",
+                "previous": rid(was),
+                "text": now,
+            },
+        ],
+    }
+    HarnessEnvironmentVersion._base_manager.filter(id=child.id).update(
+        documents=documents
+    )
+    child.refresh_from_db()
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "", "quote": "words no rule held"},
+                {"kind": "rule", "ref": "", "quote": "Refund within"},
+            ]
+        },
+    )
+    _proofs(environment, {}, version=child)
+
+    view = _views(environment, version=child)[REFUND_KEYS[0]]
+
+    assert view["source_changed"] == [""]
+
+
+def test_a_dropped_rule_shares_its_empty_ref_with_an_unresolved_source_and_still_reads_source_changed(
+    user, workspace, storage
+):
+    """Two rules cited with ref "": one names words no version holds, the other quotes a rule this version dropped
+    with nothing recorded in its place. The dropped rule is a real change, so the ref reads Source changed."""
+    environment = _environment(user, workspace, storage, "lc-shared-ref-dropped")
+    _suite(environment, _ten())
+    parent = _with_rules_and_files(
+        environment.environment_version, ["Refund within 10 days."], {}
+    )
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, ["Refund within 7 days."], {})
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "", "quote": "words no rule held"},
+                {"kind": "rule", "ref": "", "quote": "Refund within 10 days"},
+            ]
+        },
+    )
+    _proofs(environment, {}, version=child)
+
+    view = _views(environment, version=child)[REFUND_KEYS[0]]
+
+    assert view["source_changed"] == [""]
+
+
 def test_counts_call_only_a_run_proof_proved():
     from simulate.services.harness_scenario_lifecycle import lifecycle_counts
 
@@ -1617,6 +1885,80 @@ def test_a_case_whose_reference_needs_a_tool_the_agent_dropped_is_held_until_it_
     assert plan.view["held_back"]["by"]["tool_not_on_agent"] == 1
     assert "Needs issue_refund" in plan.view["reasons"]["tool_not_on_agent"]
     assert back[REFUND_KEYS[0]]["state"] == "active"
+
+
+def test_a_case_validated_with_another_agent_version_names_the_tool_this_one_lacks(
+    user, workspace, storage, monkeypatch
+):
+    """Validating with this agent version would not run a case that uses a tool it lacks: the tool is the reason, and
+    the run dialog says so. A case this version can run reads validated with another agent version."""
+    from simulate.services.harness_readiness import selection
+    from simulate.services.harness_readiness.report import resolve_pairing
+
+    environment = _environment(user, workspace, storage, "tool-other-agent")
+    _suite(environment, _ten())
+    built_with = str(environment.agent_version_id)
+    _proofs(
+        environment,
+        {
+            key: {**PROVED, "agent_version_id": built_with}
+            for key in REFUND_KEYS + LOOKUP_KEYS
+        },
+    )
+    agent = _on_agent(environment, monkeypatch, ["lookup_order"])
+
+    views = _views_with(environment, agent)
+    plan = selection.select_for_run(
+        resolve_pairing(environment, agent_version_id=agent.id),
+        keys=[REFUND_KEYS[0], LOOKUP_KEYS[0]],
+        trials=1,
+    )
+
+    assert views[REFUND_KEYS[0]]["reason"] == "tool_not_on_agent"
+    assert views[REFUND_KEYS[0]]["reason_text"] == (
+        f"Needs issue_refund, which agent version v{agent.version_number} doesn't have."
+    )
+    assert views[LOOKUP_KEYS[0]]["reason"] == "proved_on_other_agent"
+    assert plan.view["held_back"]["by_key"][REFUND_KEYS[0]] == "tool_not_on_agent"
+    assert (
+        "Needs issue_refund" in plan.view["held_back"]["reason_by_key"][REFUND_KEYS[0]]
+    )
+
+
+def test_a_case_not_validated_yet_names_the_tool_this_agent_version_lacks(
+    user, workspace, storage, monkeypatch
+):
+    """Validating would not run a case that uses a tool this agent version lacks, so the tool is its reason, not
+    "not validated yet"; a case this version can run still reads not validated."""
+    environment = _environment(user, workspace, storage, "tool-not-validated")
+    _suite(environment, _ten())
+    _proofs(environment, {})
+    agent = _on_agent(environment, monkeypatch, ["lookup_order"])
+
+    views = _views_with(environment, agent)
+
+    assert views[REFUND_KEYS[0]]["reason"] == "tool_not_on_agent"
+    assert views[REFUND_KEYS[0]]["reason_text"] == (
+        f"Needs issue_refund, which agent version v{agent.version_number} doesn't have."
+    )
+    assert views[LOOKUP_KEYS[0]]["reason"] == "not_validated"
+
+
+def test_a_case_validation_cannot_reach_here_names_the_tool_this_agent_version_lacks(
+    user, workspace, storage, monkeypatch
+):
+    from simulate.services.harness_versioning import validation
+
+    environment = _environment(user, workspace, storage, "tool-unavailable")
+    _suite(environment, _ten())
+    _proofs(environment, {})
+    agent = _on_agent(environment, monkeypatch, ["lookup_order"])
+    monkeypatch.setattr(validation, "can_validate", lambda *a, **k: False)
+
+    views = _views_with(environment, agent)
+
+    assert views[REFUND_KEYS[0]]["reason"] == "tool_not_on_agent"
+    assert views[LOOKUP_KEYS[0]]["reason"] == "validation_unavailable"
 
 
 def test_a_case_proved_by_a_check_that_never_read_the_agent_is_not_active(
