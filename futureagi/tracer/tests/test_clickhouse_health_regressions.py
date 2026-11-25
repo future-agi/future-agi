@@ -284,6 +284,41 @@ def test_health_reads_clamp_and_restore_native_ping_timeout(fails):
 
 
 @pytest.mark.unit
+def test_health_client_forwards_retained_read_deadline(monkeypatch):
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.health_client import HealthCheckClient
+
+    observed = {}
+    connection = SimpleNamespace(sync_request_timeout=5, receive_packet=lambda: None)
+    driver = Mock(connection=connection)
+
+    def execute(*_args, **kwargs):
+        observed.update(kwargs)
+        return "result"
+
+    monkeypatch.setattr(
+        ClickHouseClient,
+        "_execute_native_read_with_remaining_timeout",
+        staticmethod(execute),
+    )
+    retained_until = monotonic() + 0.5
+    assert (
+        HealthCheckClient._execute_native_read_with_remaining_timeout(
+            driver,
+            "SELECT 1",
+            {},
+            query_settings=None,
+            started_at=monotonic(),
+            timeout_ms=1000,
+            retained_until=retained_until,
+        )
+        == "result"
+    )
+    assert observed["retained_until"] == retained_until
+    assert connection.sync_request_timeout == 5
+
+
+@pytest.mark.unit
 def test_health_progress_packets_share_one_deadline(monkeypatch):
     from tracer.services.clickhouse import health_client
 
