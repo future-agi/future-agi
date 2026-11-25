@@ -214,10 +214,10 @@ const CompareData = ({
     // const isGroupColumn = params.column && params.column.getColDef().children;
     const allMenuItems = setMenuIcons(params);
     const menuItems = allMenuItems;
-    const column = params.column.colDef.col;
+    const column = params.column?.colDef?.col;
     const extraMenuItems = [];
     if (
-      column.origin_type === "evaluation" &&
+      column?.origin_type === "evaluation" &&
       !column.name.includes("-reason")
     ) {
       const isSummaryShown = showSummary.vals.find((v) => {

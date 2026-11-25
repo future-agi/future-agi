@@ -58,7 +58,7 @@ vi.mock("src/utils/utils", () => ({
   resetDLabels: vi.fn(),
 }));
 vi.mock("src/utils/MenuIconSet/setMeniIcons", () => ({
-  setMenuIcons: vi.fn(() => []),
+  setMenuIcons: vi.fn(({ defaultItems }) => defaultItems),
 }));
 vi.mock("../CustomCompareColumnHeader", () => ({ default: Null }));
 vi.mock("src/sections/common/DevelopCellRenderer/CustomCellRender", () => ({
@@ -885,6 +885,20 @@ describe("CompareData terminal zero snapshot", () => {
     }
     expect(post).toHaveBeenCalledTimes(2);
     expect(api.refreshServerSide).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the sort menu available on the empty rollover header", async () => {
+    setup();
+    post.mockResolvedValueOnce(response()).mockResolvedValueOnce(empty());
+    await getPage();
+    await getPage(10);
+
+    const [colDef] = grid.props.columnDefs;
+    expect(colDef.colId).toBe("compare-join-key");
+    const defaultItems = ["sortAscending", "sortDescending"];
+    expect(grid.props.getMainMenuItems({ column: { colDef }, defaultItems })).toEqual(
+      defaultItems,
+    );
   });
 
   it("ignores competing fresh zero IDs and never rerequests uncached empty metadata", async () => {
