@@ -559,15 +559,10 @@ def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
         ) from exc
 
 
-_PROVIDER_PREFIX = re.compile(r"^[a-z_-]+:")
-
-
 def model_key(name: str) -> str:
     """A model's name as the lock compares it, without its provider: the engine counts
-    "vertex_ai/gemini-3.8-flash" and "gateway:gemini-3.8-flash" as the allowed
-    "gemini-3.8-flash". Only a leading provider name ends in a colon; a colon later
-    in the id, as in "…-v1:0", is the model's own."""
-    return _PROVIDER_PREFIX.sub("", name.lower()).rsplit("/", 1)[-1]
+    "vertex_ai/gemini-3.8-flash" as the allowed "gemini-3.8-flash"."""
+    return name.lower().rsplit("/", 1)[-1]
 
 
 def models_called(usage: Mapping[str, CallUsage]) -> list[str]:

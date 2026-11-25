@@ -1353,25 +1353,15 @@ def test_the_engine_may_call_every_model_in_its_profile(model):
     assert model in django_settings.AGENT_FIX_ENGINE_MODELS
 
 
-@pytest.mark.parametrize(
-    ("name", "key"),
-    [
-        ("gateway:gpt-4o-mini", "gpt-4o-mini"),
-        ("gateway:openai/gpt-4o-mini", "gpt-4o-mini"),
-        ("vertex_ai/gemini-3.8-flash", "gemini-3.8-flash"),
-        # A colon inside the model's own id is not a provider prefix.
-        (
-            "anthropic.claude-3-haiku-20240307-v1:0",
-            "anthropic.claude-3-haiku-20240307-v1:0",
-        ),
-        (
-            "openrouter/meta-llama/llama-3.3-70b-instruct:free",
-            "llama-3.3-70b-instruct:free",
-        ),
-    ],
-)
-def test_the_lock_compares_a_model_without_its_provider(name, key):
-    assert model_key(name) == key
+def test_the_lock_drops_a_vendor_path_but_keeps_a_model_s_own_tag():
+    # A self-hosted "name:tag" is the model's own id: two tags are two models.
+    assert [
+        model_key(name) for name in ("llama3:8b", "mistral:latest", "openai/gpt-4o")
+    ] == [
+        "llama3:8b",
+        "mistral:latest",
+        "gpt-4o",
+    ]
 
 
 def test_a_check_run_s_evals_have_a_source_of_their_own(source_run):
@@ -2882,13 +2872,7 @@ class TestLaunchConstraints:
     ):
         usage = self._source_usage(
             source_run,
-            [
-                CallUsage(
-                    models=["gateway:m3", "m1", "vertex_ai/m2"],
-                    llm_spans=3,
-                    cost_usd=0.01,
-                )
-            ],
+            [CallUsage(models=["m1", "vertex_ai/m2"], llm_spans=2, cost_usd=0.01)],
         )
 
         def launch(allowed):
@@ -2908,18 +2892,14 @@ class TestLaunchConstraints:
                 launch(["m1"])
             assert not AgentFixRun.no_workspace_objects.exists()
             # A provider prefix does not count, as in the engine's lock.
-            fix_run = launch(["m1", "M2", "m3"])
+            fix_run = launch(["m1", "M2"])
 
         assert (refused.value.code, refused.value.status_code) == (
             "fix_models_exclude_source",
             400,
         )
-        assert refused.value.message.endswith(": gateway:m3, vertex_ai/m2")
-        assert FixRequest.model_validate(fix_run.request).allowed_models == [
-            "m1",
-            "M2",
-            "m3",
-        ]
+        assert refused.value.message.endswith(": vertex_ai/m2")
+        assert FixRequest.model_validate(fix_run.request).allowed_models == ["m1", "M2"]
 
     def test_a_traced_agent_s_fix_with_no_model_allowed_is_refused(
         self, source_run, user

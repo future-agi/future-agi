@@ -185,9 +185,14 @@ def run_usage_sql() -> str:
     counts for the call it names, else for the call its trace names, as in the list."""
     call_mark = f"{cols.ATTRS_STRING}['{CALL_MARK_KEY}']"
     has_call_mark = f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')"
-    # The request model a span names, else the model column, for an instrumentor that
-    # names its model in another convention.
-    model = f"if({cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
+    # The model a Future AGI instrumentor names, which is the one priced; else the
+    # request model, which some runtimes prefix with their own provider id; else the
+    # model column, for an instrumentor that names its model in another convention.
+    model_name = f"{cols.ATTRS_STRING}['llm.model_name']"
+    model = (
+        f"multiIf({model_name} != '', {model_name}, "
+        f"{cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
+    )
     return (
         "SELECT call_execution_id, "
         "groupUniqArrayIf(span_model, is_llm AND span_model != '') AS models, "

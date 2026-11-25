@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import _ch_test_native_client, _ch_test_owned_database
+from simulate.selectors.agent_fix import models_called
 from simulate.services import run_traces_v3
 from simulate.services.run_traces_v3 import CallUsage, RunTracesSource
 from tracer.services.clickhouse.v2 import get_v2_config
@@ -179,30 +180,59 @@ def test_a_span_counts_for_the_call_it_names_before_its_trace_s(spans, monkeypat
 
 
 @pytest.mark.integration
-def test_a_span_exported_twice_counts_once_with_its_priced_copy(spans, monkeypatch):
+def test_a_span_exported_twice_counts_once_by_its_priced_copy_s_model(
+    spans, monkeypatch
+):
     _traced(monkeypatch)
     call, trace = str(uuid.uuid4()), str(uuid.uuid4())
     spans(trace, call=call)
-    # An agent with two exporters sends each model call twice, under two service
-    # names: one copy unpriced, the other priced. The table keeps both rows.
+    # A runtime with two exporters sends each model call twice under two service
+    # names, which the table keeps apart. Both name the request model with the
+    # runtime's own provider id; only the Future AGI copy names the bare model, and
+    # only it is priced.
     for cost in (0.01, 0.02):
         span_id = str(uuid.uuid4())
-        spans(trace, kind="llm", model="m1", service="omega", span_id=span_id)
         spans(
             trace,
             kind="llm",
-            model="m1",
+            model="gateway:gpt-4o-mini",
+            model_column="gateway:gpt-4o-mini",
+            service="omega",
+            span_id=span_id,
+        )
+        spans(
+            trace,
+            kind="llm",
+            model="gateway:gpt-4o-mini",
+            model_column="gpt-4o-mini",
             cost=cost,
             service="agent",
             span_id=span_id,
-            extra={"fi.span.kind": "LLM", "llm.model_name": "m1"},
+            extra={"llm.model_name": "gpt-4o-mini", "fi.span.kind": "LLM"},
         )
 
     usage = run_traces_v3.run_usage(SimpleNamespace())
 
     assert usage == {
-        call: CallUsage(models=["m1"], llm_spans=2, cost_usd=pytest.approx(0.03))
+        call: CallUsage(
+            models=["gpt-4o-mini"], llm_spans=2, cost_usd=pytest.approx(0.03)
+        )
     }
+    # The lock compares these names, so a lock on gpt-4o-mini accepts the run.
+    assert models_called(usage) == ["gpt-4o-mini"]
+
+
+@pytest.mark.integration
+def test_a_span_that_names_only_its_request_model_is_counted_by_it(spans, monkeypatch):
+    _traced(monkeypatch)
+    call, trace = str(uuid.uuid4()), str(uuid.uuid4())
+    # A plain OpenTelemetry instrumentor names no llm.model_name.
+    spans(trace, call=call)
+    spans(trace, kind="llm", model="gpt-4o", model_column="gpt-4o", cost=0.01)
+
+    usage = run_traces_v3.run_usage(SimpleNamespace())
+
+    assert usage[call].models == ["gpt-4o"]
 
 
 @pytest.mark.integration
