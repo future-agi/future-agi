@@ -84,7 +84,7 @@ The [EvalTask reference fixture](../../scripts/update_rehearsal_eval_task_refere
 
 **Feature update (2026-11-19):** `simulate/0116_agent_fix_issue_job` adds `EvidenceImport.source_issue`, a relation to the registered `tracer_trace_error_group` table. Like `0118`'s relation, it is relation coverage, **not an Error Feed backfill**: the migration writes no Error Feed rows. Qualification now selects `tracer_trace_error_group` from v1.58.0 as well, so the complete v1.58.0 intersection is Trace/ObservationSpan/EvalTask/APICallLog/**TraceErrorGroup**. The existing Error Feed reference chunk in [update_rehearsal_shipping.py](../../scripts/update_rehearsal_shipping.py) seeds it, because reference seeding is chosen by table, not by journey. The latest-stable automatic-upgrade rehearsal on that branch seeded it at 100,000 rows (95 MB); that run is not qualification evidence.
 
-**Feature update (2026-11-25):** `simulate/0117_environment_version_browser_allowed_sites` adds a nullable `browser_allowed_sites` JSON column to `simulate_harnessenvironmentversion`, which is not a registered high-volume table. It adds no relation and writes no rows, so qualification selects no new table and the v1.58.0 intersection is unchanged.
+**Feature update (2026-11-25):** `simulate/0117_environment_version_browser_allowed_sites` adds a nullable `browser_allowed_sites` JSON column to `simulate_harness_environment_version`, which is not a registered high-volume table. It adds no relation and writes no rows, so qualification selects no new table and the v1.58.0 intersection is unchanged.
 
 ## 3. What changes require extra work?
 
