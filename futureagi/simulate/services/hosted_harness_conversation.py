@@ -995,12 +995,26 @@ def ingest_conversation_events(
 ) -> dict[str, Any]:
     # Validate the entire raw batch before digest encoding or acknowledgement writes.
     validate_jsonb_strings(events, field="events")
+    from simulate.services.harness_releases import adaptation_of
+
     with transaction.atomic():
+        adaptation = None
+        if adaptation_of(conversation.job) is not None and any(
+            event["kind"] in {"question_requested", "confirmation_requested"}
+            for event in events
+        ):
+            # The question may be its approval, kept on the job. Locked before the
+            # conversation, as complete_adaptation locks them.
+            adaptation = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=conversation.job_id
+            )
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update().get(
                 id=conversation.id
             )
         )
+        if adaptation is not None:
+            conversation.job = adaptation
         lease = (
             HostedHarnessConversationLease.no_workspace_objects.select_for_update().get(
                 conversation=conversation
@@ -1157,6 +1171,8 @@ ASKED_AGAIN = (
 def _project_event(
     conversation: HostedHarnessConversation, event: dict[str, Any]
 ) -> None:
+    from simulate.services.harness_releases import adaptation_of, record_approval
+
     kind = event["kind"]
     payload = event.get("payload") or {}
     message_id = event.get("message_id")
@@ -1243,6 +1259,12 @@ def _project_event(
             role=HostedHarnessConversationMessage.Role.USER, reply_to=message_id
         ).exists():
             # Asked again after a restart, but already answered.
+            if adaptation_of(conversation.job) is not None:
+                # With the answer it takes now: an earlier attempt's approval was cleared.
+                answer = conversation.messages.filter(
+                    role=HostedHarnessConversationMessage.Role.USER, reply_to=message_id
+                ).order_by("sequence")[0]
+                record_approval(conversation.job, payload, answer.content)
             return
         # An answer still queued for another question can't be taken any more: that question is closed and the builder
         # asks this one in its place, so the person answers this one. The answer says why it stopped.

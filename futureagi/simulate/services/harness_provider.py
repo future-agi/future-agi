@@ -1464,7 +1464,8 @@ def _environment_agent_maker(
     version_bound=False,
 ):
     """Check a creation's credentials now; the returned hook makes its agent and first
-    version inside the job's transaction."""
+    version inside the job's transaction. An adaptation binds a version that exists, and its
+    composition reads the same stored secrets: it is checked, but gets no agent of its own."""
     from simulate.services.harness_agent_versions import (
         CreationCheck,
         check_creation_credentials,
@@ -1490,6 +1491,9 @@ def _environment_agent_maker(
             organization, payload, secret_submitted, analysis
         )
     )
+
+    if (payload.get("metadata") or {}).get("adaptation"):
+        return _secret_ref_minter(secret_values)
 
     def make(job) -> None:
         ensure_environment_agent(
@@ -1999,6 +2003,7 @@ class HostedHarnessProvider:
             HostedHarnessError,
             VersionPicks,
             create_selected_harness_run,
+            fail_unscheduled_run,
         )
         from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
@@ -2116,34 +2121,11 @@ class HostedHarnessProvider:
                 "selected harness Run dispatch failed environment=%s", environment.id
             )
             if "child" in locals():
-                failure = {
-                    "domain": "infrastructure",
-                    "stage": "queued",
-                    "code": "scheduler_unavailable",
-                    "message": "Selected harness Run could not be scheduled",
-                }
-                with transaction.atomic():
-                    marked_failed = HostedHarnessJob.no_workspace_objects.filter(
-                        id=child.id,
-                        state=HostedHarnessJob.State.QUEUED,
-                    ).update(
-                        state=HostedHarnessJob.State.FAILED,
-                        current_stage="failed",
-                        terminal_at=timezone.now(),
-                        failure=failure,
+                if fail_unscheduled_run(child):
+                    return Response(
+                        {"detail": "Hosted harness scheduler is unavailable"},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
                     )
-                    if marked_failed:
-                        TestExecution.no_workspace_objects.filter(
-                            id=child.test_execution_id
-                        ).update(
-                            status=TestExecution.ExecutionStatus.FAILED,
-                            completed_at=timezone.now(),
-                            error_reason=failure["message"],
-                        )
-                        return Response(
-                            {"detail": "Hosted harness scheduler is unavailable"},
-                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        )
                 child.refresh_from_db()
                 if (
                     child.state == HostedHarnessJob.State.FAILED

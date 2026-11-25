@@ -22,6 +22,7 @@ MANIFEST_FIELDS = (
     "environment",
     "suite",
     "binding",
+    "binding_proof",
     "agent",
     "selection",
     "simulator",
@@ -167,7 +168,8 @@ def run_report(
         }
     return {
         "run_mode": composition["binding"]["mode"],
-        "manifest": {field: manifest[field] for field in MANIFEST_FIELDS},
+        # Only a tool-routed run's manifest has a binding proof.
+        "manifest": {field: manifest.get(field) for field in MANIFEST_FIELDS},
         "comparability": comparability,
         "coverage": _coverage(environment.organization, composition, suite),
         "use_cases": [

@@ -1803,6 +1803,33 @@ def keep_delivered_attempt(attempt: HostedHarnessAttempt) -> bool:
     return True
 
 
+def fail_unscheduled_run(run: HostedHarnessJob) -> bool:
+    """Fail a Run whose workflow could not be started, and say whether it was still queued."""
+    failure = {
+        "domain": "infrastructure",
+        "stage": "queued",
+        "code": "scheduler_unavailable",
+        "message": "Selected harness Run could not be scheduled",
+    }
+    with transaction.atomic():
+        failed = HostedHarnessJob.no_workspace_objects.filter(
+            id=run.id,
+            state=HostedHarnessJob.State.QUEUED,
+        ).update(
+            state=HostedHarnessJob.State.FAILED,
+            current_stage="failed",
+            terminal_at=timezone.now(),
+            failure=failure,
+        )
+        if failed:
+            TestExecution.no_workspace_objects.filter(id=run.test_execution_id).update(
+                status=TestExecution.ExecutionStatus.FAILED,
+                completed_at=timezone.now(),
+                error_reason=failure["message"],
+            )
+    return bool(failed)
+
+
 def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
     """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
 
@@ -1959,6 +1986,8 @@ def register_attempt(
     snapshot_name: str | None = None,
     snapshot_digest: str | None = None,
 ) -> AttemptCapability:
+    from simulate.services.harness_releases import reset_approval
+
     now = timezone.now()
     token = secrets.token_urlsafe(32)
     fence = secrets.token_urlsafe(32)
@@ -2005,6 +2034,8 @@ def register_attempt(
         job.current_attempt_number = attempt_number
         if attempt_number == 1:
             _freeze_build_pin(job)
+        else:
+            reset_approval(job)
         job.state = HostedHarnessJob.State.PROVISIONING
         # A retry is a fresh active attempt. Do not keep presenting the previous
         # attempt's terminal state while Daytona is launching (or even running)
@@ -3100,6 +3131,8 @@ def record_cleanup(
     retry_pending: bool = False,
     details: dict[str, Any] | None = None,
 ) -> HostedHarnessJob:
+    from simulate.services.harness_releases import adaptation_settled
+
     if not verified_absent:
         raise HostedHarnessError(
             "sandbox_cleanup_unverified",
@@ -3143,6 +3176,10 @@ def record_cleanup(
             id=attempt.job_id
         )
         if attempt.attempt_number < job.current_attempt_number:
+            return job
+        if adaptation_settled(job):
+            if hidden := finish_deferred_delete(job):
+                job.save(update_fields=[*hidden, "updated_at"])
             return job
         missing = (
             executions_without_result(job, attempt.attempt_number)

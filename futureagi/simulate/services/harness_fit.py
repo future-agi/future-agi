@@ -15,6 +15,8 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from functools import lru_cache
 from typing import Any
 
@@ -24,18 +26,17 @@ from django.core.cache import cache
 
 from simulate.models import (
     HarnessSuiteRelease,
-    HostedHarnessConversation,
     HostedHarnessJob,
 )
 from simulate.services.harness_environment import _TERMINAL_FAILED
 from simulate.services.harness_releases import (
-    ADAPTATION_APPROVAL_PREFIX,
     _chain,
     _download,
     _error,
     _visible,
     adaptation_of,
     archive_files,
+    open_approval,
     organization_agent_version,
     scenario_documents,
 )
@@ -195,6 +196,20 @@ def _world_digest(suite) -> str:
     return ":".join(release.digest for release in _chain(suite))
 
 
+def _post(url: str, *, timeout: float, **options: Any) -> httpx.Response:
+    """`httpx.post` in `timeout` seconds overall: httpx's own timeout is for each phase, so a
+    slow connection followed by a slow answer would wait several of them."""
+    worker = ThreadPoolExecutor(max_workers=1)
+    try:
+        return worker.submit(httpx.post, url, timeout=timeout, **options).result(
+            timeout
+        )
+    except FutureTimeoutError as exc:
+        raise httpx.TimeoutException("the fit's model budget is spent") from exc
+    finally:
+        worker.shutdown(wait=False)
+
+
 def _ask_model(task: str, material: dict[str, Any]) -> dict[str, Any]:
     """One JSON answer from the model the environment builder uses, through AgentCC."""
     url, key = platform_model_gateway()
@@ -220,11 +235,11 @@ def _ask_model(task: str, material: dict[str, Any]) -> dict[str, Any]:
         if remaining < 1:
             raise httpx.TimeoutException("the fit's model budget is spent")
         try:
-            response = httpx.post(
+            response = _post(
                 f"{url}/v1/chat/completions",
+                timeout=remaining,
                 json=body,
                 headers={"Authorization": f"Bearer {key}"},
-                timeout=remaining,
             )
         except httpx.TransportError:
             if attempt == 2:
@@ -526,21 +541,16 @@ def adaptation_design(job) -> dict[str, Any]:
     catalogue = (environment.manifest.get("metadata") or {}).get("catalogue") or {}
     rules = (environment.policy or {}).get("rules") or []
     result = (job.payload.get("metadata") or {}).get("adaptation_result") or {}
-    question = (
-        HostedHarnessConversation.no_workspace_objects.filter(job=job)
-        .values_list("blocking_input", flat=True)
-        .first()
-    ) or {}
-    asked = str(question.get("prompt") or "").startswith(ADAPTATION_APPROVAL_PREFIX)
+    question = open_approval(job)
     state = (
         "ready"
         if job.state == HostedHarnessJob.State.COMPLETED
         else "failed"
         if job.state in _TERMINAL_FAILED
+        else "awaiting_approval"
+        if question is not None
         else "building"
         if adaptation.get("approved_at")
-        else "awaiting_approval"
-        if asked
         else "checking"
     )
     return {
@@ -582,5 +592,5 @@ def adaptation_design(job) -> dict[str, Any]:
             suite, agent_version, adaptation.get("pairing"), frozen=True
         ),
         "conflicts": release_conflicts(suite, agent_version),
-        "check": question.get("data") if asked else None,
+        "check": question.get("data") if question is not None else None,
     }

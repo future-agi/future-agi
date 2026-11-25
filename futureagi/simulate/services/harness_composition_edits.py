@@ -31,6 +31,7 @@ from simulate.models import (
 from simulate.services.harness_releases import (
     _checked_binding,
     _checked_suite,
+    _digest_of,
     _download,
     _error,
     _hex,
@@ -42,6 +43,7 @@ from simulate.services.harness_releases import (
     member_bytes,
     proof_digest,
     scenario_documents,
+    unscorable_in,
 )
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -162,7 +164,7 @@ def _applied(
     environment_digest = composition["environment"][-1]["digest"]
     suite_dir = change / "suite"
     suite, personas = _checked_suite(suite_dir, environment_digest)
-    if (suite.get("parent") or {}).get("digest") != current or suite[
+    if _digest_of(suite.get("parent")) != current or suite[
         "digest"
     ] != summary.get("suite"):
         raise _error(
@@ -184,8 +186,9 @@ def _applied(
     )
     # The change records the digest of the proof it sealed (agent-learning-kit's
     # `prepare_change`): a proof file that is not that proof is refused.
-    sealed = (summary.get("binding_proof") or {}).get("digest")
-    if proof is not None and sealed and proof_digest(proof) != sealed:
+    if binding["mode"] == "tool_routed" and proof_digest(proof) != _digest_of(
+        summary.get("binding_proof")
+    ):
         raise _error(
             "composition_change_invalid",
             "binding-proof.json is not the proof the change names",
@@ -208,11 +211,7 @@ def _applied(
         updated["binding_proof"] = proof
         updated["alignment"] = {
             **(composition.get("alignment") or {}),
-            "unscorable": [
-                {"scenario_key": key, "reason": entry.get("reason") or ""}
-                for key, entry in sorted(((proof or {}).get("scenarios") or {}).items())
-                if entry.get("status") == "unscorable"
-            ],
+            "unscorable": unscorable_in(proof),
         }
     return updated, suite, personas
 
@@ -295,6 +294,7 @@ def promote_composition_checkpoint(
                             suite, lambda path: (suite_dir / path).read_bytes()
                         ),
                         prune=True,
+                        strict_keys=True,
                     )
                     _bind_added_scenarios(
                         environment,

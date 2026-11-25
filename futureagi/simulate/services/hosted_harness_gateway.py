@@ -369,6 +369,27 @@ def _ask_harness_to_adapt(
     schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
 
 
+# The sealed documents of an adaptation are far smaller: more is not its output.
+_ADAPTATION_MAX_BYTES = 64 * 1024 * 1024
+_ADAPTATION_TOO_LARGE_EXIT = 90
+
+
+def _extract_adaptation(body: bytes, directory: str) -> bool:
+    """Unpack an adaptation's output, or say that it can't be: the builder's session writes the
+    directory it is packed from."""
+    try:
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+            total = 0
+            for member in archive:
+                total += member.size
+                if total > _ADAPTATION_MAX_BYTES:
+                    return False
+            archive.extractall(directory, filter="data")
+    except (tarfile.TarError, OSError, EOFError, zlib.error):
+        return False
+    return True
+
+
 def _read_verified(sandbox: Any, path: str) -> dict[str, Any] | None:
     """The adaptation control process's record at `path`, or None when it left none (a failed
     adaptation, or an image that does not write one): the platform then accepts no binding from
@@ -2923,9 +2944,12 @@ class HostedHarnessGateway:
         )
         from simulate.services.harness_capacity import configured_capacity
 
-        # The export decision needs the selected snapshot, so capacity comes first.
+        # The export decision needs the selected snapshot, so capacity comes first. A release
+        # run's manifest froze the runtime its whole selection runs on, whatever it runs again.
         try:
-            capacity = configured_capacity(scope_dispatch_to_rerun(payload))
+            capacity = configured_capacity(
+                payload if release is not None else scope_dispatch_to_rerun(payload)
+            )
         except ValueError as exc:
             raise HostedHarnessError(
                 "sandbox_capacity_unavailable",
@@ -4999,6 +5023,16 @@ class HostedHarnessGateway:
             }:
                 return job
 
+        from simulate.services.harness_releases import (
+            adaptation_of,
+            adaptation_settled,
+            complete_adaptation,
+        )
+
+        if adaptation_settled(job):
+            # A worker died after recording it: only its run and its sandbox's end are left.
+            return self._end_adaptation(attempt, complete_adaptation(job, None))
+
         try:
             observation = self.inspect(attempt)
         except SandboxNotFoundError:
@@ -5101,8 +5135,6 @@ class HostedHarnessGateway:
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
-        from simulate.services.harness_releases import adaptation_of
-
         if exit_code in {0, 2} and adaptation_of(job) is not None:
             return self._finish_adaptation(attempt)
 
@@ -5341,28 +5373,32 @@ class HostedHarnessGateway:
         verified = _read_verified(sandbox, ADAPTATION_VERIFIED)
         packed = sandbox.process.exec(
             f"mkdir -p {ADAPTATION_OUTPUT} && "
-            f"tar -czf /tmp/adaptation.tar.gz -C {ADAPTATION_OUTPUT} .",
+            f"tar -czf /tmp/adaptation.tar.gz -C {ADAPTATION_OUTPUT} . && "
+            '{ test "$(stat -c %s /tmp/adaptation.tar.gz)" '
+            f"-le {_ADAPTATION_MAX_BYTES} || (exit {_ADAPTATION_TOO_LARGE_EXIT}); }}",
             timeout=180,
         )
-        if packed.exit_code:
+        if packed.exit_code and packed.exit_code != _ADAPTATION_TOO_LARGE_EXIT:
             raise HostedHarnessError(
                 "adaptation_pack_failed",
                 str(packed.result or "")[-500:],
                 status_code=502,
                 retryable=True,
             )
-        body = sandbox.fs.download_file("/tmp/adaptation.tar.gz", 300)
         with tempfile.TemporaryDirectory() as directory:
-            output: Path | None = Path(directory)
-            try:
-                with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-                    archive.extractall(directory, filter="data")
-            except tarfile.TarError:
-                output = None
+            output: Path | None = None
+            if not packed.exit_code:
+                body = sandbox.fs.download_file("/tmp/adaptation.tar.gz", 300)
+                if _extract_adaptation(body, directory):
+                    output = Path(directory)
             job = complete_adaptation(attempt.job, output, verified)
-        attempt.terminal_stage = (
-            "completed" if job.state == HostedHarnessJob.State.COMPLETED else "failed"
-        )
+        return self._end_adaptation(attempt, job)
+
+    def _end_adaptation(
+        self, attempt: HostedHarnessAttempt, job: HostedHarnessJob
+    ) -> HostedHarnessJob:
+        """End the attempt of a settled adaptation as its job ended, and clean up."""
+        attempt.terminal_stage = job.state
         attempt.terminal_failure = job.failure
         attempt.save(update_fields=["terminal_stage", "terminal_failure", "updated_at"])
         return self._delete_and_record(attempt)
