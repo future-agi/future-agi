@@ -46,9 +46,6 @@ const RefreshStatus = [
   "PartialRun",
 ];
 
-const getCompareRowId = ({ data, rowPinned }) =>
-  rowPinned ? `compare-${rowPinned}-summary` : data.row_id;
-
 const CompareData = ({
   gridApiRef,
   baseColumn,
@@ -813,7 +810,6 @@ const CompareData = ({
             rowModelType="serverSide"
             getRowId={getRowId}
             serverSideDatasource={dataSource}
-            getRowId={getCompareRowId}
             pagination={false}
             cacheBlockSize={10}
             statusBar={statusBar}
