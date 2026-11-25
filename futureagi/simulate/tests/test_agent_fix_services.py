@@ -3073,7 +3073,9 @@ class TestWinnerGrading:
             TestCase.captureOnCommitCallbacks(execute=True),
             transaction.atomic(),
         ):
-            queue_evals_for_finished_calls(run.test_execution, [first, second])
+            queue_evals_for_finished_calls(
+                run.test_execution, [first, second], keep_replaced=False
+            )
 
         assert [call.kwargs["args"][0] for call in hand_off.call_args_list] == calls[:2]
         assert sorted(
