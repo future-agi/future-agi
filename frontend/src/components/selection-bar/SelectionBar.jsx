@@ -81,7 +81,14 @@ export default function SelectionBar({
           );
           return a.tooltip ? (
             <Tooltip key={a.label} title={a.tooltip} placement="top" arrow>
-              <span>{btn}</span>
+              <span
+                {...(a.disabled && {
+                  tabIndex: 0,
+                  "aria-label": `${a.label}: ${a.tooltip}`,
+                })}
+              >
+                {btn}
+              </span>
             </Tooltip>
           ) : (
             btn
