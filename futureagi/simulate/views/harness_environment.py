@@ -661,6 +661,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             return self._not_found()
         return Response(harness_actor_reads.read_actors(job))
 
+    @viewer_denied("change actors")
     @validated_request(
         request_serializer=HarnessActorWriteSerializer,
         responses={200: HarnessActorListSerializer},
@@ -695,6 +696,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("change actors")
     @validated_request(
         request_serializer=HarnessActorWriteSerializer,
         responses={200: HarnessActorListSerializer},
@@ -708,6 +710,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """Replace one actor in the draft, as a whole record or as changes to it; its id never changes."""
         return self._actor_edit(request, pk, op="replace", actor_id=actor_id)
 
+    @viewer_denied("change actors")
     @validated_request(
         query_serializer=HarnessActorDeleteQuerySerializer,
         responses={200: HarnessActorListSerializer},
@@ -719,6 +722,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """Take one actor out of the draft; refused while a scenario includes it."""
         return self._actor_edit(request, pk, op="delete", actor_id=actor_id)
 
+    @viewer_denied("change actors")
     @validated_request(
         request_serializer=HarnessActorValidateSerializer,
         responses={200: HarnessActorValidationSerializer},
@@ -759,6 +763,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("change actor limits")
     @validated_request(
         request_serializer=HarnessActorLimitsWriteSerializer,
         responses={200: HarnessActorListSerializer},
@@ -785,6 +790,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("change actors")
     @validated_request(
         request_serializer=HarnessActorUnresolvedAcceptSerializer,
         responses={200: HarnessActorListSerializer},
