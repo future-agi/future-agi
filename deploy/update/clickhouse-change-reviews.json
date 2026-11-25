@@ -30,8 +30,8 @@
     },
     {
       "path": "futureagi/tracer/services/clickhouse/client.py",
-      "before_sha256": "5ab6c1c9055271764551c8c6ff5b5f014b582dfd1c0521d3b25e29cfe36aa8cd",
-      "after_sha256": "bb9ca329c5e3562b8995ac97c157249d5b22707811b75a5e424fb864294f9793",
+      "before_sha256": "bb9ca329c5e3562b8995ac97c157249d5b22707811b75a5e424fb864294f9793",
+      "after_sha256": "23074785f6f2ef0e97d5a014625335cb6d6359af7d10e336de59db8c12732880",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -43,8 +43,8 @@
           "clickhouse:tracer_eval_logger",
           "clickhouse:tracer_trace"
         ],
-        "mitigation": "The unchanged CREATE DATABASE IF NOT EXISTS is database-level and repeatable; it creates an empty namespace and does not change any table. The named table reads are metadata and CDC lag checks. This PR changes native streamed reads, not the DDL. Roll back the client code if needed; do not drop a retained database to reverse a code rollout.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "mitigation": "The unchanged CREATE DATABASE IF NOT EXISTS is database-level and repeatable; it creates an empty namespace and changes no table. This PR changes read admission only: the optional retained-window metadata read gets a bounded budget and is skipped rather than starving the page read, native driver logs for these reads are quieted, and the send guard restores pooled policy after ping/reconnect. The named table reads remain metadata and CDC lag checks. Roll back the client code if needed; no stored state changes.",
+        "review": "https://github.com/future-agi/future-agi/pull/4231#discussion_r4688933888",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
