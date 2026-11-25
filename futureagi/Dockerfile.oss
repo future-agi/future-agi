@@ -179,6 +179,9 @@ ARG EXTRAS=""
 # run fetched and verified once (futureagi/.ci/lock_wheels.py); a requirement
 # whose wheel is there installs from that file, still against the lock's hash.
 # The directory holds no wheel in an ordinary build, which downloads as before.
+# --no-config: pyproject.toml's [tool.uv] constraint-dependencies are `>=`
+# floors, which hash mode rejects; the export already pins every package to
+# its locked version (and so satisfies them). The index is PyPI either way.
 # A COPY, not a RUN --mount, so builders without BuildKit still work; this is
 # the builder stage, so the wheel never reaches the runtime image.
 COPY docker/lock-wheels/ /tmp/lock-wheels/
@@ -193,8 +196,8 @@ RUN . docker/image-variant.sh \
             [ -e "$wheel" ] || continue; \
             sed -i "s#@ https://[^ ]*/$(basename "$wheel") #@ file://$wheel #" /tmp/extras-requirements.txt; \
         done \
-        && uv pip install --system --require-hashes -r /tmp/extras-requirements.txt \
-            --compile-bytecode --no-cache; \
+        && uv pip install --system --no-config --require-hashes \
+            -r /tmp/extras-requirements.txt --compile-bytecode --no-cache; \
     fi
 
 # Trim site-packages here, before the runtime stage copies it (measured on

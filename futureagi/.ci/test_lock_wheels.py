@@ -393,10 +393,11 @@ class ImageWiringTest(unittest.TestCase):
     def test_the_extras_install_requires_every_lock_hash(self):
         self.assertNotIn("--no-hashes", self.dockerfile)
         install = self.dockerfile.split("-o /tmp/extras-requirements.txt", 1)[1]
-        self.assertIn(
-            "uv pip install --system --require-hashes -r /tmp/extras-requirements.txt",
-            install,
-        )
+        # --no-config: [tool.uv] constraint-dependencies are `>=` floors that
+        # hash mode rejects ("must have their versions pinned with `==`"), as
+        # E2E run 45557067322 showed; the exported pins already satisfy them.
+        self.assertIn("uv pip install --system --no-config --require-hashes", install)
+        self.assertIn("-r /tmp/extras-requirements.txt", install)
         # A placed wheel replaces only its lock URL; the hash line stays.
         self.assertIn('@ file://$wheel #" /tmp/extras-requirements.txt', install)
         copy = self.dockerfile.index("COPY docker/lock-wheels/ /tmp/lock-wheels/\n")
