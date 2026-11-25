@@ -53,6 +53,8 @@ import WinnerDrawer from "./WinnerDrawer";
 import FromImprovement from "./FromImprovement";
 import AppliedEvalsDrawer from "../workspace/evals/AppliedEvalsDrawer";
 import { allMetrics, deltaAgainst, statsDeltaOf } from "../_mock/winner";
+import { heldFixedAcross } from "../_mock/compareHeld";
+import { runPlanHref } from "../_mock/runPlanLink";
 import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
 import { runCreditsOf } from "../_mock/usageLedger";
 import { resolveEval } from "../_mock/evals";
@@ -99,6 +101,17 @@ const runTimeLabel = (r) => {
    the delta's tooltip says "vs Run N". */
 const againstName = (a) =>
   a ? (a.kind === "trial" ? `Run ${a.trialN}` : `Run ${a.ordinal}`) : undefined;
+
+/* A change inside the noise two runs carry — or a rate moving under 5 pts —
+   is grey, whichever column it is in. */
+const calm = (d, r, against) => {
+  if (!d || d.flat) return d;
+  const st = statsOf(r);
+  const was = against && against.id !== r.id ? statsOf(against) : null;
+  const within = !!(st && was && statsDeltaOf(st, was)?.within);
+  const pts = /pts$/.test(String(d.text)) ? parseFloat(d.text) : null;
+  return within || (pts != null && pts < 5) ? { ...d, muted: true } : d;
+};
 
 export default function RunsSummary({ env, envState, onGo, onStart }) {
   /* Each finished run's charge, priced as its Cost tab. */
@@ -395,6 +408,43 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     [evals],
   );
 
+  /* Runs whose setup differs from the run before them (same environment
+     version) — shown on the row and as a hollow, unjoined point on the
+     chart. The agent and the trial count are the change being tested, so
+     they never count; soft pins (suite, limits) still read as the same test. */
+  const setupDiffs = useMemo(() => {
+    const main = finishedRuns.filter((r) => r.kind !== "trial");
+    const out = {};
+    main.forEach((r) => {
+      const prev = previousRunOf(main, r, versionOf);
+      if (!prev) return;
+      const differs = (
+        heldFixedAcross([prev, r], env, envState)?.differs || []
+      ).filter((d) => d.hard && d.id !== "agent" && d.id !== "trials");
+      if (!differs.length) return;
+      out[r.id] = {
+        from: againstName(prev),
+        labels: differs.map((d) => d.label),
+        faults: differs.some((d) => d.id === "toolEnv" || d.id === "fidelity"),
+      };
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finishedRuns, env, envState]);
+
+  /* Every run on one agent version: nothing to choose between. */
+  const agentKinds = new Set(
+    listed.map((r) => `${r.agentVersion}|${r.agentKey || ""}`),
+  );
+  const singleAgent = listed.length > 0 && agentKinds.size <= 1;
+  const currentAgent = currentAgentVersion(envState);
+  const currentNotRun =
+    !!currentAgent?.label &&
+    listed.length > 0 &&
+    !listed.some(
+      (r) => r.kind !== "trial" && r.agentVersion === currentAgent.label,
+    );
+
   const toggle = (id) =>
     setSelected((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
@@ -511,11 +561,31 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           and Choose winner sit on the runs bar, beside the run count. */}
       {/* Pass rate by run, in its own card above the runs. */}
       <Box sx={{ mb: 2, flexShrink: 0 }}>
+        {currentNotRun && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{ mb: 1 }}
+          >
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              {`${currentAgent.label} hasn't run yet`}
+            </Typography>
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => navigate(runPlanHref(env.id))}
+            >
+              Run simulation
+            </Button>
+          </Stack>
+        )}
         <RunsOverview
           runs={listed}
           versionOf={versionOf}
           evals={evals}
           barPct={Math.round((envState.reportBar?.pass1 ?? 0.8) * 100)}
+          setupDiffs={setupDiffs}
           onOpenRun={(r) =>
             navigate(paths.dashboard.simulate.simulationRun(env.id, r.id))
           }
@@ -665,16 +735,30 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               {/* The label does not change once a winner exists. Picking one is the
                   same act every time — open the weights, decide, apply — and
                   "Change winner" implied a different, smaller thing. */}
-              <Button
-                variant="outlined"
-                color="inherit"
-                size="small"
-                onClick={() => setPickingWinner(true)}
-                startIcon={<Iconify icon="solar:cup-star-bold" width={16} />}
-                sx={{ borderColor: "divider" }}
+              <Tooltip
+                arrow
+                title={
+                  singleAgent
+                    ? `All runs use agent ${listed[0].agentVersion} — nothing to choose`
+                    : ""
+                }
               >
-                Choose winner
-              </Button>
+                <Box component="span" sx={{ display: "inline-flex" }}>
+                  <Button
+                    variant="outlined"
+                    color="inherit"
+                    size="small"
+                    disabled={singleAgent}
+                    onClick={() => setPickingWinner(true)}
+                    startIcon={
+                      <Iconify icon="solar:cup-star-bold" width={16} />
+                    }
+                    sx={{ borderColor: "divider" }}
+                  >
+                    Choose winner
+                  </Button>
+                </Box>
+              </Tooltip>
             </Stack>
           )}
           {selected.length === 0 && baseline ? (
@@ -1182,13 +1266,21 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         quiet
                         deltaWidth={grid.deltaWidth}
                         text={`${(r.avgDurationMs / 1000).toFixed(1)}s`}
-                        delta={deltaAgainst(metrics.duration, r, against)}
+                        delta={calm(
+                          deltaAgainst(metrics.duration, r, against),
+                          r,
+                          against,
+                        )}
                       />
                       <MetricCell
                         quiet
                         deltaWidth={grid.deltaWidth}
                         text={compactTokens(r.tokens)}
-                        delta={deltaAgainst(metrics.tokens, r, against)}
+                        delta={calm(
+                          deltaAgainst(metrics.tokens, r, against),
+                          r,
+                          against,
+                        )}
                       />
                       <MetricCell
                         quiet
@@ -1196,7 +1288,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         text={costText(creditsByRun[r.id])}
                         delta={
                           creditsComparable(r, against)
-                            ? deltaAgainst(creditsMetric, r, against)
+                            ? calm(
+                                deltaAgainst(creditsMetric, r, against),
+                                r,
+                                against,
+                              )
                             : null
                         }
                       />
@@ -1209,8 +1305,8 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           divider={ei === 0}
                           last={ei === evals.length - 1}
                           deltaWidth={grid.deltaWidth}
-                          delta={deltaAgainst(
-                            metrics[`eval:${e.id}`],
+                          delta={calm(
+                            deltaAgainst(metrics[`eval:${e.id}`], r, against),
                             r,
                             against,
                           )}
@@ -1378,7 +1474,24 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           >
                             {r.kind === "trial"
                               ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}`
-                              : `Run ${r.ordinal}`}{" "}
+                              : `Run ${r.ordinal}`}
+                            {/* Right after the name, so a narrow column never
+                                cuts it off. */}
+                            {setupDiffs[r.id] && (
+                              <Tooltip
+                                arrow
+                                title={`Setup differs from ${setupDiffs[r.id].from}: ${setupDiffs[r.id].labels.join(", ")}`}
+                              >
+                                <Box
+                                  component="span"
+                                  sx={{ color: "status.warning.fg" }}
+                                >
+                                  {setupDiffs[r.id].faults
+                                    ? " · tool faults"
+                                    : " · different setup"}
+                                </Box>
+                              </Tooltip>
+                            )}{" "}
                             · {identityOf(r).label}
                           </Typography>
                           <RunDetail
@@ -1555,13 +1668,21 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       quiet
                       deltaWidth={grid.deltaWidth}
                       text={`${(r.avgDurationMs / 1000).toFixed(1)}s`}
-                      delta={deltaAgainst(metrics.duration, r, against)}
+                      delta={calm(
+                        deltaAgainst(metrics.duration, r, against),
+                        r,
+                        against,
+                      )}
                     />
                     <MetricCell
                       quiet
                       deltaWidth={grid.deltaWidth}
                       text={compactTokens(r.tokens)}
-                      delta={deltaAgainst(metrics.tokens, r, against)}
+                      delta={calm(
+                        deltaAgainst(metrics.tokens, r, against),
+                        r,
+                        against,
+                      )}
                     />
                     <MetricCell
                       quiet
@@ -1569,7 +1690,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       text={costText(creditsByRun[r.id])}
                       delta={
                         creditsComparable(r, against)
-                          ? deltaAgainst(creditsMetric, r, against)
+                          ? calm(
+                              deltaAgainst(creditsMetric, r, against),
+                              r,
+                              against,
+                            )
                           : null
                       }
                     />
@@ -1579,7 +1704,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       quiet={!r.saidNotDone}
                       deltaWidth={grid.deltaWidth}
                       text={`${r.saidNotDone}`}
-                      delta={deltaAgainst(metrics.saidNotDone, r, against)}
+                      delta={calm(
+                        countDelta(r.saidNotDone, against?.saidNotDone),
+                        r,
+                        against,
+                      )}
                     />
                     {/* The environment's own number, beside the graders it is
                         computed from so the two can be read against each other
@@ -1590,7 +1719,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       text={
                         r.meanReturn == null ? "—" : r.meanReturn.toFixed(2)
                       }
-                      delta={deltaAgainst(metrics.meanReturn, r, against)}
+                      delta={calm(
+                        deltaAgainst(metrics.meanReturn, r, against),
+                        r,
+                        against,
+                      )}
                     />
 
                     {evals.map((e, ei) => (
@@ -1600,8 +1733,8 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         divider={ei === 0}
                         last={ei === evals.length - 1}
                         deltaWidth={grid.deltaWidth}
-                        delta={deltaAgainst(
-                          metrics[`eval:${e.id}`],
+                        delta={calm(
+                          deltaAgainst(metrics[`eval:${e.id}`], r, against),
                           r,
                           against,
                         )}
@@ -1843,7 +1976,7 @@ RunsSummary.propTypes = {
    already say that. Same soft chip and colours as the legacy runs table
    (BaseStatusCellRenderer + shared statusStyles), so status reads the same
    everywhere in the product. */
-const STATUS_COL = 128;
+const STATUS_COL = 140;
 
 const QUEUED_ID = "demo-queued";
 
@@ -2010,8 +2143,7 @@ function StatusCell({ status, improvements, onOpenImprovements }) {
               "&:hover": { bgcolor: "action.hover", color: "text.primary" },
             }}
           >
-            <Iconify icon="solar:graph-up-linear" width={14} />
-            {n}
+            {`${n} ${n === 1 ? "epoch" : "epochs"}`}
           </ButtonBase>
         </Tooltip>
       )}
@@ -2206,7 +2338,11 @@ function callPassCell(r, against, deltaWidth, againstLabel) {
           ? null
           : pts === 0
             ? { flat: true }
-            : { text: `${Math.abs(pts)} pts`, up: pts > 0, better: pts > 0 }
+            : calm(
+                { text: `${Math.abs(pts)} pts`, up: pts > 0, better: pts > 0 },
+                r,
+                against,
+              )
       }
       against={againstLabel}
     />
@@ -2223,14 +2359,18 @@ function addedCells(r, against) {
       quiet
       deltaWidth={56}
       text={st ? `${st.flaky}` : "—"}
-      delta={st && was ? countDelta(st.flaky, was.flaky) : null}
+      delta={
+        st && was ? calm(countDelta(st.flaky, was.flaky), r, against) : null
+      }
     />,
     <MetricCell
       key="failing"
       quiet={!st?.failed}
       deltaWidth={56}
       text={st ? `${st.failed}` : "—"}
-      delta={st && was ? countDelta(st.failed, was.failed) : null}
+      delta={
+        st && was ? calm(countDelta(st.failed, was.failed), r, against) : null
+      }
     />,
     <MetricCell
       key="calls"

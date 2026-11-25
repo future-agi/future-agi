@@ -27,6 +27,8 @@ export default function RunsOverview({
   onOpenRun,
   headline = null,
   versionOf = undefined,
+  /* { [runId]: { from, labels } } — runs whose setup differs from the run before. */
+  setupDiffs = null,
   /* What a point is called — an improvement's page charts its trials. */
   unit = "run",
 }) {
@@ -212,6 +214,7 @@ export default function RunsOverview({
           runs={finished}
           referenceVersion={referenceVersion}
           focusEval={focus}
+          setupDiffs={setupDiffs}
           onOpenRun={onOpenRun}
         />
       </Box>
@@ -231,6 +234,7 @@ RunsOverview.propTypes = {
   headline: PropTypes.object,
   /* (run) → its environment version; deltas only within one version. */
   versionOf: PropTypes.func,
+  setupDiffs: PropTypes.object,
 };
 
 /* ── the trend ──────────────────────────────────────────────────────────── */
@@ -246,6 +250,7 @@ function TrendChart({
   runs,
   referenceVersion,
   focusEval,
+  setupDiffs,
   onOpenRun,
   unit = "run",
 }) {
@@ -271,9 +276,10 @@ function TrendChart({
           failing: st.failed,
           passed: st.scenarioPassed,
           of: st.measured,
+          diff: setupDiffs?.[r.id] || null,
         };
       }),
-    [runs],
+    [runs, setupDiffs],
   );
 
   const caption = (
@@ -379,6 +385,11 @@ function TrendChart({
   });
   const step = Math.ceil(n / Math.max(1, Math.floor(iw / 40)));
   const hp = hover != null ? points[hover] : null;
+  const segments = [];
+  points.forEach((p, i) => {
+    if (!segments.length || p.diff) segments.push([i]);
+    else segments[segments.length - 1].push(i);
+  });
   const line = (vals) =>
     vals
       .map((v, i) => (v == null ? null : `${x(i)},${y(v)}`))
@@ -491,13 +502,17 @@ function TrendChart({
             strokeDasharray="4 3"
           />
         )}
-        <polyline
-          points={line(points.map((p) => p.rate))}
-          fill="none"
-          stroke={alpha(ink, 0.9)}
-          strokeWidth={1.5}
-          strokeLinejoin="round"
-        />
+        {/* A point on a different setup is not joined to the one before it. */}
+        {segments.map((seg) => (
+          <polyline
+            key={`s${seg[0]}`}
+            points={seg.map((i) => `${x(i)},${y(points[i].rate)}`).join(" ")}
+            fill="none"
+            stroke={alpha(ink, 0.9)}
+            strokeWidth={1.5}
+            strokeLinejoin="round"
+          />
+        ))}
         {points.map((p, i) => {
           const last = i === n - 1;
           return (
@@ -506,7 +521,7 @@ function TrendChart({
                 cx={x(i)}
                 cy={y(p.rate)}
                 r={last ? 5 : hover === i ? 4.5 : 3.5}
-                fill={last ? ink : paper}
+                fill={last && !p.diff ? ink : paper}
                 stroke={ink}
                 strokeWidth={1.5}
               />
@@ -581,6 +596,7 @@ function TrendChart({
             {focusEval && hp.run.scores?.[focusEval.id] != null
               ? ` · ${focusEval.name} ${hp.run.scores[focusEval.id]}%`
               : ""}
+            {hp.diff ? " · Different setup — not comparable" : ""}
           </Typography>
         </Box>
       )}
@@ -592,6 +608,7 @@ TrendChart.propTypes = {
   runs: PropTypes.array,
   referenceVersion: PropTypes.string,
   focusEval: PropTypes.object,
+  setupDiffs: PropTypes.object,
   onOpenRun: PropTypes.func,
 };
 
