@@ -27,6 +27,7 @@ from enum import Enum
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import unquote
 
 if TYPE_CHECKING:
     from sentry_sdk.types import Event, Hint
@@ -211,12 +212,15 @@ _SENSITIVE_NAMES = (*SENSITIVE_KEY_SUBSTRINGS, *_CREDENTIAL_ALIASES)
 _SENSITIVE_TEXT = (*_SENSITIVE_NAMES, "credential", "<saml:", "<samlp:")
 # A Bearer scheme value carries no sensitive name of its own ("Bearer abc123",
 # a `"bearer": "x"` key, a header tuple's repr, a URL- or form-encoded
-# `Bearer%20x` / `Bearer+x`). Capture the separator and the run after it.
+# `Bearer%20x` / `Bearer+x`). The lookahead captures the separator and the run
+# after it without consuming them, so a label such as "bearer: Bearer x" does
+# not swallow the real scheme: each occurrence is inspected on its own.
 _BEARER_SCHEME = re.compile(
-    r"(?<![a-z0-9])bearer[\"'`\u2018\u2019\u201c\u201d]?([\s:=,;(|/+%]+)(\S*)"
+    r"(?<![a-z0-9])bearer(?=[\"'`\u2018\u2019\u201c\u201d]?([\s:=,;(|/+%]+)(\S*))"
 )
 _BEARER_PLAIN_SEPARATOR = re.compile(r"[\s:,]+")
 _BEARER_TRAILING = ".,;:!?)]\"'`\u2018\u2019\u201c\u201d"
+_MAX_DECODE_ROUNDS = 3
 
 
 def _has_bearer_value(probe: str) -> bool:
@@ -248,7 +252,19 @@ def _scrub_text(value: Any) -> str:
     probe = _USAGE_COUNT.sub("", value).lower()
     if any(s in probe for s in _SENSITIVE_TEXT) or _has_bearer_value(probe):
         return _REDACTED
-    return value
+    # A percent-escape next to the scheme hides it from the check above
+    # ("%20Bearer%20x", "B%65arer%20x", "%2520Bearer%2520x"). Inspect a decoded
+    # copy for a few rounds; text that keeps decoding past them is redacted.
+    # Kept text is always the original spelling, never the decoded copy.
+    decoded = probe
+    for _ in range(_MAX_DECODE_ROUNDS):
+        if "%" not in decoded or (step := unquote(decoded).lower()) == decoded:
+            return value
+        decoded = step
+        if _has_bearer_value(decoded):
+            return _REDACTED
+    # Still escaped after the bounded rounds, so it was never fully inspected.
+    return value if "%" not in decoded or unquote(decoded) == decoded else _REDACTED
 
 
 def _scrub(value: Any) -> Any:

@@ -89,21 +89,75 @@ def test_ordinary_event_and_next_event(at_ingestion):
         (f"callback rejected Bearer%20{MARKER}", False),
         (f"callback rejected Bearer+{MARKER}", False),
         (f"Authorization: Bearer {MARKER}", False),
+        # A percent-escape next to the scheme, or a label in front of it.
+        (f"callback rejected x%20Bearer%20{MARKER}", False),
+        (f"callback rejected %2520Bearer%2520{MARKER}", False),
+        (f"callback rejected B%65arer%20{MARKER}", False),
+        (f"flag bearer: Bearer {MARKER}", False),
+        (f"retry as bearer, bearer {MARKER}", False),
         # Ordinary uses of the word are kept.
         ("standard-bearer of the release stopped", True),
         ("the bearer bonds job failed", True),
         ("flag bearer: the team lead", True),
         ("Bearer scheme rejected", True),
+        ("standard%20bearer of the release", True),
+        ("flag bearer: bearer of the news", True),
+        ("100% of jobs finished", True),
+        ("route /jobs%2Fdaily finished", True),
     ],
 )
 def test_bounded_message_policy(message, kept):
     with sentry_capture(include_local_variables=False) as transport:
         sentry_sdk.capture_event({"message": message})
         sentry_sdk.capture_message("next diagnostic")
+        packets = [envelope.serialize() for envelope in transport.envelopes]
+        assert all(MARKER.encode() not in packet for packet in packets)
         first, second = transport.events
         assert first["message"] == (message if kept else sentry._REDACTED)
         assert second["message"] == "next diagnostic"
-        assert MARKER not in json.dumps(transport.events)
+        if kept:
+            assert json.dumps(message).encode() in packets[0]
+
+
+def test_encoded_or_labelled_bearer_values_are_not_sent():
+    # Each value reaches the wire through a different path: a message, an
+    # exception value and a log template.
+    with sentry_capture(
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        include_local_variables=False,
+    ) as transport:
+        logger = logging.getLogger(LOGGER)
+        sentry_sdk.capture_event({"message": f"callback B%65arer%20{MARKER}"})
+        sentry_sdk.capture_event(
+            {
+                "exception": {
+                    "values": [
+                        {"type": "LookupError", "value": f"bearer: Bearer {MARKER}"}
+                    ]
+                }
+            }
+        )
+        logger.error(f"callback %%20Bearer%%20{MARKER}: %s", "GET")
+        logger.error(f"flag bearer: Bearer {MARKER} at %s", "GET")
+        # Ordinary text, including escapes and the word itself, is unchanged.
+        logger.error("standard%%20bearer of the release: %s", "GET")
+        sentry_sdk.capture_message("flag bearer: bearer of the news")
+
+        packets = [envelope.serialize() for envelope in transport.envelopes]
+        assert len(packets) == 6
+        assert all(MARKER.encode() not in packet for packet in packets)
+        message, error, encoded, labelled, ordinary, news = transport.events
+        assert message["message"] == sentry._REDACTED
+        assert error["exception"]["values"][-1]["value"] == sentry._REDACTED
+        for event in (encoded, labelled):
+            assert event["logentry"] == {"message": sentry._REDACTED}
+        assert ordinary["logentry"] == {
+            "message": "standard%%20bearer of the release: %s",
+            "params": ["GET"],
+        }
+        assert b"standard%%20bearer of the release: %s" in packets[4]
+        assert news["message"] == "flag bearer: bearer of the news"
+        assert b"flag bearer: bearer of the news" in packets[5]
 
 
 def test_small_limits_discard_uninspectable_payloads(monkeypatch):

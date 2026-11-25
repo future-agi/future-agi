@@ -390,6 +390,13 @@ def test_sensitive_key_detection():
         "upstream rejected Bearer|abc",
         "upstream rejected Bearer/abc",
         "upstream rejected Bearer%r",
+        # A percent-escape next to the scheme, or a label in front of it.
+        "callback rejected x%20Bearer%20qa-opaque-value",
+        "callback rejected %2520Bearer%2520qa-opaque-value",
+        "callback rejected B%65arer%20qa-opaque-value",
+        "callback rejected x%25252520Bearer%25252520qa-opaque-value",
+        "flag bearer: Bearer qa-opaque-value",
+        "retry as bearer, bearer qa-opaque-value",
     ],
 )
 def test_scrub_text_redacts_a_bearer_value(text):
@@ -411,6 +418,10 @@ def test_scrub_text_redacts_a_bearer_value(text):
         # Source excerpts that only name the scheme's prefix literal.
         '        if not auth_header.startswith("Bearer "):',
         "    expected 'Bearer ' prefix",
+        "standard%20bearer of the release",
+        "flag bearer: bearer of the news",
+        "100% of jobs finished",
+        "route /jobs%2Fdaily finished",
     ],
 )
 def test_scrub_text_keeps_ordinary_uses_of_bearer(text):
