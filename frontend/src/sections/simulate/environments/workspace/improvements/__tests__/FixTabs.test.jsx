@@ -150,7 +150,9 @@ describe("Scenarios tab", () => {
     });
     try {
       wrap(<FixScenariosTab fix={byId("fix-ready-archive")} />);
-      const refund = within(await screen.findByTestId("scenario-refund-window"));
+      const refund = within(
+        await screen.findByTestId("scenario-refund-window"),
+      );
       expect(refund.getByText("Not measured")).toBeInTheDocument();
       expect(refund.getByText("3 trials not measured")).toBeInTheDocument();
       expect(

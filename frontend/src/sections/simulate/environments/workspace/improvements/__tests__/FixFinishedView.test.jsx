@@ -101,8 +101,7 @@ const wrap = (ui) => (
   </QueryClientProvider>
 );
 const renderUi = (ui) => render(wrap(ui));
-const renderPage = (fixId) =>
-  renderUi(<FixRunPage fixId={fixId} />);
+const renderPage = (fixId) => renderUi(<FixRunPage fixId={fixId} />);
 
 const shipPosts = () =>
   axios.post.mock.calls.filter(([url]) =>
@@ -736,14 +735,21 @@ describe("FixFinishedView", () => {
     ).toHaveLength(1);
     // From a run, What to try next has the one way on.
     expect(
-      screen.getAllByRole("button", { name: /^Run (Epoch again|a new epoch)$/ }),
+      screen.getAllByRole("button", {
+        name: /^Run (Epoch again|a new epoch)$/,
+      }),
     ).toHaveLength(1);
   });
 
   it.each([
     ["a failed epoch's Retry", "fix-failed", {}, /^Retry Epoch/],
     ["a stopped epoch's rerun", "fix-stopped", {}, "Run Epoch again"],
-    ["a no-safe epoch's new epoch", "fix-no-improvement", {}, "Run a new epoch"],
+    [
+      "a no-safe epoch's new epoch",
+      "fix-no-improvement",
+      {},
+      "Run a new epoch",
+    ],
   ])("locks %s for a viewer, with why", async (_, id, extra, name) => {
     vi.mocked(useSimulationAccess).mockReturnValue({
       canEdit: false,

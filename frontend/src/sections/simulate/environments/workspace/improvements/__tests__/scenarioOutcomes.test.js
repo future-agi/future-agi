@@ -83,9 +83,9 @@ describe("scenarioOutcomes", () => {
     ).toBe("noise");
     // A drop the verdict named nowhere (a must-pass check that never ran)
     // reads as what it was, not as Broke.
-    expect(outcome({ must_pass_regressions: [], must_pass_within_noise: [] })).toBe(
-      "dropped",
-    );
+    expect(
+      outcome({ must_pass_regressions: [], must_pass_within_noise: [] }),
+    ).toBe("dropped");
     expect(outcome(null)).toBe("dropped");
     // A scenario named for one check is matched by its key, never a prefix of it.
     expect(

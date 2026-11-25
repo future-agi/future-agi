@@ -9,10 +9,6 @@ export default function WorkspaceImprovementDetail() {
   const { fixId } = useParams();
   if (!env) return null;
   return (
-    <FixRunPage
-      key={fixId}
-      fixId={fixId}
-      runTestId={env.platform?.runTestId}
-    />
+    <FixRunPage key={fixId} fixId={fixId} runTestId={env.platform?.runTestId} />
   );
 }

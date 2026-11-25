@@ -151,7 +151,12 @@ describe("FixRunPage", () => {
   it("heads a running fix with its name, state and stage", async () => {
     renderPage("fix-search");
     expect(await screen.findByText("Epoch 13")).toBeInTheDocument();
-    expect(screen.getByText("Running")).toBeInTheDocument();
+    // The header's status, beside its stage; the candidates table says Running too.
+    expect(
+      within(screen.getByTestId("epoch-stage").parentElement).getByText(
+        "Running",
+      ),
+    ).toBeInTheDocument();
     // The stage in the design's words, never the engine's own stage name.
     expect(screen.getByTestId("epoch-stage")).toHaveTextContent("Proposing");
     expect(screen.queryByText("Searching")).toBeNull();
@@ -193,13 +198,14 @@ describe("FixRunPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("goes back to the Epochs tab", async () => {
+  it("goes back to the Epochs tab of the epoch's own environment", async () => {
+    // The fake API reads the fixture's environment, env-fixture.
     renderPage("fix-search");
     expect(
       await screen.findByRole("link", { name: "Back to epochs" }),
     ).toHaveAttribute(
       "href",
-      "/dashboard/simulate/environments/env-1?tab=improvements",
+      "/dashboard/simulate/environments/env-fixture?tab=improvements",
     );
   });
 

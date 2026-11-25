@@ -1051,7 +1051,9 @@ describe("candidateGroups", () => {
       // The lock fails on what the change names too, so the heading claims no call.
       "Didn't keep to the approved models",
     ]);
-    expect(noSafeHeadline({ ...fix, candidates: fix.candidates.slice(2) })).toBe(
+    expect(
+      noSafeHeadline({ ...fix, candidates: fix.candidates.slice(2) }),
+    ).toBe(
       "No safe improvement: the only candidate didn't keep to the approved models.",
     );
   });

@@ -89,7 +89,9 @@ describe("the running view's candidates", () => {
     await user.click(screen.getByTestId("candidate-group-target"));
     const rejected = within(screen.getByTestId("candidate-1"));
     expect(
-      rejected.getByText("Escalate refused late cancellations to the front desk."),
+      rejected.getByText(
+        "Escalate refused late cancellations to the front desk.",
+      ),
     ).toBeInTheDocument();
     expect(rejected.getByText("0%")).toBeInTheDocument();
   });

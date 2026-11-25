@@ -231,7 +231,9 @@ describe("fix-run list", () => {
       }),
       { wrapper: Wrapper },
     );
-    await waitFor(() => expect(result.current.ready.fixes.length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(result.current.ready.fixes.length).toBeGreaterThan(0),
+    );
     const readyIds = () => result.current.ready.fixes.map((f) => f.id);
     expect(readyIds()).not.toContain("fix-search");
 
