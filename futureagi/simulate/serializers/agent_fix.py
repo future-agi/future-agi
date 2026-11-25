@@ -103,14 +103,21 @@ class AgentFixListQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
     state = serializers.CharField(
-        required=False, help_text="Comma-separated fix states to list."
+        required=False,
+        help_text="Comma-separated fix states to list, any of: "
+        f"{', '.join(AgentFixRun.State.values)}.",
     )
 
     def validate_state(self, value):
-        states = [one.strip() for one in value.split(",") if one.strip()]
-        unknown = sorted(set(states) - set(AgentFixRun.State.values))
+        states = [one.strip() for one in value.split(",")]
+        valid = AgentFixRun.State.values
+        # An empty item (",," or a trailing comma) names no state; it is refused,
+        # never read as "every state".
+        unknown = sorted({one or "(empty)" for one in states} - set(valid))
         if unknown:
-            raise serializers.ValidationError(f"Unknown state: {', '.join(unknown)}")
+            raise serializers.ValidationError(
+                f"Unknown state: {', '.join(unknown)}. Use any of: {', '.join(valid)}."
+            )
         return states
 
 
@@ -385,10 +392,9 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     for its page) in the context, so its issues are read once."""
 
     environment_id = serializers.UUIDField()
-    # The run's test execution, as for launch.
-    source_run_id = serializers.UUIDField(
-        source="source_run.test_execution_id", allow_null=True
-    )
+    # The run's test execution, as for launch; null once the run is deleted
+    # (selectors.agent_fix.fix_runs_for_read).
+    source_run_id = serializers.UUIDField(source="source_execution_id", allow_null=True)
     base_agent_version_id = serializers.UUIDField()
     request = AgentFixRequestSerializer()
     report = AgentFixReportSerializer(allow_null=True)

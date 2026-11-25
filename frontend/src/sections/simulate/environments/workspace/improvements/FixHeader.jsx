@@ -120,7 +120,9 @@ function originHref(fix, kind, envId, runTestId) {
 // The design's epoch header (ImprovementRunsView): the environment, then the epoch,
 // and below it the versions and where it came from, in words. Everything comes from
 // the epoch's own read, so a reload or a shared link keeps it.
-export default function FixHeader({ fix, envId, runTestId, actions }) {
+export default function FixHeader({ fix, runTestId, actions }) {
+  // The epoch's own environment, so the crumbs and the name it shows agree.
+  const envId = fix.environment_id;
   const location = useLocation();
   const { issue } = fix;
   const issueHref = issue
@@ -244,7 +246,6 @@ export default function FixHeader({ fix, envId, runTestId, actions }) {
 
 FixHeader.propTypes = {
   fix: PropTypes.object.isRequired,
-  envId: PropTypes.string.isRequired,
   // The environment's run list id: a run's page needs it.
   runTestId: PropTypes.string,
   actions: PropTypes.node,

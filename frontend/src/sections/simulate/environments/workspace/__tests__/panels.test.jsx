@@ -490,6 +490,22 @@ describe("Improvements tab", () => {
     expect(screen.getByText("improvements-body")).toBeInTheDocument();
   });
 
+  it("keeps the tab when the list failed, so its panel says why", () => {
+    fixRuns.value = { ...NO_FIXES, error: { statusCode: 500 } };
+    renderPanels({ tab: "improvements", backed: true });
+    expect(screen.getByRole("tab", { name: /Epochs/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("improvements-body")).toBeInTheDocument();
+  });
+
+  it("shows no tab for a template environment, which has no epochs to read", () => {
+    fixRuns.value = { ...NO_FIXES, error: { statusCode: 400 } };
+    renderPanels({ tab: "improvements" });
+    expect(screen.queryByRole("tab", { name: /Epochs/ })).toBeNull();
+  });
+
   it("keeps the tab for ?tab=improvements while the list loads", () => {
     fixRuns.value = { ...NO_FIXES, isLoading: true };
     renderPanels({ tab: "improvements" });

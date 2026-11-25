@@ -145,6 +145,24 @@ describe("ImprovementsPanel", () => {
     expect(screen.queryByText(/has the status/)).toBeNull();
   });
 
+  it("stays on a page whose read failed, and says why, with its pager", async () => {
+    const user = userEvent.setup();
+    allFixes = stoppedFixes(30);
+    const { rerender } = render(<ImprovementsPanel env={env} />);
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("26–30 of 30")).toBeInTheDocument();
+
+    failing = { statusCode: 500 };
+    rerender(<ImprovementsPanel env={env} />);
+    expect(
+      screen.getByText(
+        "Could not load the epochs. Reload the page to try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("26–30 of 30")).toBeInTheDocument();
+    expect(screen.queryByText("1–25 of 30")).toBeNull();
+  });
+
   it("reads queued, running and stopping as one Running", async () => {
     const user = userEvent.setup();
     render(<ImprovementsPanel env={env} />);

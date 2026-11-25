@@ -18,6 +18,7 @@ from django.db.models import (
     Exists,
     ExpressionWrapper,
     F,
+    IntegerField,
     Max,
     OuterRef,
     Prefetch,
@@ -987,11 +988,24 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         .annotate(total=Count("id"))
         .values("total")
     )
+    # A deleted run keeps its row, but its page no longer opens: the fix names no run.
+    source_live = Q(
+        source_run__deleted=False, source_run__test_execution__deleted=False
+    )
     return (
         with_spend(runs)
         .annotate(
             number=Subquery(number),
-            source_run_number=run_number("source_run__"),
+            source_execution_id=Case(
+                When(source_live, then=F("source_run__test_execution_id")),
+                default=None,
+                output_field=UUIDField(),
+            ),
+            source_run_number=Case(
+                When(source_live, then=run_number("source_run__")),
+                default=None,
+                output_field=IntegerField(),
+            ),
             retry_taken=Exists(
                 retries_taking_the_retry(
                     Coalesce(

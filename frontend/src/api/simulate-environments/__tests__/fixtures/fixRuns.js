@@ -166,8 +166,9 @@ const finishedCandidates = (id) => [
   candidate(id, 3, "winner", {
     verdict: {
       ...candidate(id, 3, "winner").verdict,
-      must_pass_regressions: ["on-time-cancel"],
-      must_pass_within_noise: ["refund-window"],
+      // As the engine names them: "<scenario key>: <check>".
+      must_pass_regressions: ["on-time-cancel: escalated"],
+      must_pass_within_noise: ["refund-window: policy_cited"],
     },
     wording: {
       ...candidate(id, 3, "winner").wording,

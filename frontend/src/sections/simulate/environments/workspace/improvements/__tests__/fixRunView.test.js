@@ -15,6 +15,8 @@ import {
   heldToRows,
   identityLine,
   isShipped,
+  listResult,
+  noSafeHeadline,
   checkIcon,
   checkLabel,
   describeChecks,
@@ -126,6 +128,16 @@ describe("headline", () => {
       changes: "The server's change line.",
       notes: winner.summary,
     });
+  });
+
+  // The list's read has no server wording; the page's headline is the server's.
+  it("counts broken must-pass scenarios in the list, not the checks the verdict names", () => {
+    const fix = structuredClone(byId("fix-ready-archive"));
+    winnerOf(fix).verdict.must_pass_regressions = [
+      "on-time-cancel: escalated",
+      "on-time-cancel: polite",
+    ];
+    expect(listResult(fix).note).toBe("broke 1 must-pass");
   });
 
   it("says why every other ending ended and what to do next, never the engine's summary", () => {
@@ -653,6 +665,17 @@ describe("step rows", () => {
     });
     // The issue job's summary carries no diagnosis: it reads as the search.
     expect(stageOf({ ...fix, summary: true })).toBe("search");
+    // An engine that skipped its diagnosis names its next stage: no diagnosis
+    // and no candidate yet still reads as the search, never Diagnosing.
+    const skipped = { ...fix, stage: "Propose · attempt 1" };
+    expect(stageOf(skipped)).toBe("search");
+    expect(stageLabel(skipped)).toBe("Proposing");
+    expect(stepRows(skipped).map((r) => r.state)).toEqual([
+      "done",
+      "done",
+      "now",
+      "todo",
+    ]);
   });
 
   it("lists every cause the diagnosis found", () => {
@@ -928,6 +951,20 @@ describe("ceilingCards", () => {
       },
     ]);
   });
+
+  it("reads a part that has not been decided as not checked, never within the limit", () => {
+    const pending = withCeilings([
+      { name: "reply latency", status: "pending", detail: "" },
+    ]);
+    expect(ceilingCards(pending)).toEqual([
+      {
+        id: "latency",
+        label: "Reply time",
+        value: "Not checked yet",
+        note: "the check has not run on this candidate",
+      },
+    ]);
+  });
 });
 
 describe("candidateGroups", () => {
@@ -989,8 +1026,14 @@ describe("candidateGroups", () => {
     expect(candidateGroups(fix).map((g) => g.label)).toEqual([
       "Didn't hold over repeat runs",
       "Went over the reply-time or cost limit",
-      "Called a model outside the approved list",
+      // The lock fails on what the change names too, so the heading claims no call.
+      "Didn't keep to the approved models",
     ]);
+    expect(
+      noSafeHeadline({ ...fix, candidates: fix.candidates.slice(2) }),
+    ).toBe(
+      "No safe improvement: the only candidate didn't keep to the approved models.",
+    );
   });
 
   it("orders the furthest check first, opens held back with no winner, and keeps every candidate", () => {
@@ -1009,7 +1052,10 @@ describe("candidateGroups", () => {
           ...cand(
             2,
             "rejected",
-            rejectedAt("must-pass", { must_pass_regressions: ["a", "b"] }),
+            // Two scenarios, one of them named for two of its checks.
+            rejectedAt("must-pass", {
+              must_pass_regressions: ["a: polite", "a: refunded", "b: polite"],
+            }),
           ),
           wording: { must_pass: "2 must-pass scenarios broke." },
         },
