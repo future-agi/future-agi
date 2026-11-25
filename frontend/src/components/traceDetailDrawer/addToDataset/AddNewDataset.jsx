@@ -13,6 +13,8 @@ import PropTypes from "prop-types";
 import { enqueueSnackbar } from "notistack";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { RESPONSE_CODES } from "src/utils/constants";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { LoadingButton } from "@mui/lab";
 import { useNavigate, useParams } from "react-router";
 import { LLM_TABS } from "../../../sections/projects/LLMTracing/common";
@@ -110,6 +112,14 @@ const AddNewDataset = ({
       mutationFn: (payload) =>
         axios.post(endpoints.project.addNewDataset, payload),
 
+      onError: (error) => {
+        // The global mutation handler leaves 429s to the websocket alert.
+        // Show the refusal to the submitting user even without a connection.
+        if (error?.statusCode !== RESPONSE_CODES.LIMIT_REACHED) return;
+        enqueueSnackbar(getSafeActionErrorMessage(error, "Unable to create dataset."), {
+          variant: "error",
+        });
+      },
       onSuccess: (res) => {
         const result = res?.data?.result;
         const datasetId = result?.dataset_id ?? result?.datasetId;
