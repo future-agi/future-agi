@@ -23,12 +23,14 @@ from tfc.utils.base_model import BaseModel
 
 
 class SimulateEvalResult(BaseModel):
-    """One call, one question: a replaced verdict of the run's own."""
+    """One call, one question: a replaced verdict of the run's own, or an ask's answer."""
 
     class Origin(models.TextChoices):
         # The only origin for now. It is a column already so rows are labelled
         # when other origins arrive, and nothing is backfilled then.
         REPLACED_OWN_SCORE = "replaced_own_score", "The run's own score, replaced"
+        # An answer to an ask: one call, one question, one ask.
+        ASK = "ask", "An ask's answer"
 
     class State(models.TextChoices):
         ANSWERED = "answered", "Answered"
@@ -83,6 +85,30 @@ class SimulateEvalResult(BaseModel):
         blank=True,
         related_name="+",
     )
+    # On an ask's answer (origin ``ask``); empty on a replaced verdict by rule.
+    # Added after the replaced verdicts, all nullable, so none of those rows
+    # changes.
+    ask = models.ForeignKey(
+        "simulate.SimulateAsk",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="results",
+    )
+    # A hash of what decided the answer: the template and its version, the
+    # model, the criteria as sent, the labels, the kinds read, the reader's
+    # version. The readable parts are on the ask.
+    question_version = models.CharField(max_length=64, null=True, blank=True)
+    confidence = models.FloatField(null=True, blank=True)
+    # Per kind read: where it came from, a digest of the exact content sent,
+    # and any cut or mark.
+    evidence = models.JSONField(null=True, blank=True)
+    # The evaluator's own log row, which carries the template version and the
+    # charge.
+    evaluator_log_id = models.UUIDField(null=True, blank=True)
+    # When a grading task took the row; a second delivery finds it taken.
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_eval_result"
@@ -95,12 +121,19 @@ class SimulateEvalResult(BaseModel):
                     origin="replaced_own_score",
                     replaced_at__isnull=False,
                     replacement_id__isnull=False,
-                ),
-                name="eval_result_replaced_names_its_request",
+                    ask__isnull=True,
+                )
+                | models.Q(origin="ask", ask__isnull=False),
+                name="eval_result_origin_names_its_source",
             ),
             models.UniqueConstraint(
                 fields=["replacement_id", "call_execution", "question_key"],
                 condition=models.Q(origin="replaced_own_score"),
                 name="uniq_eval_result_replacement_call_question",
+            ),
+            models.UniqueConstraint(
+                fields=["ask", "call_execution", "question_key"],
+                condition=models.Q(origin="ask"),
+                name="uniq_eval_result_ask_call_question",
             ),
         ]

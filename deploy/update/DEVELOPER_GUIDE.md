@@ -86,6 +86,8 @@ The [EvalTask reference fixture](../../scripts/update_rehearsal_eval_task_refere
 
 **Feature update (2026-11-25):** `simulate/0117_eval_result` creates a new, empty table for kept evaluation verdicts. It writes no rows to any existing table. Qualification scopes a `CreateModel` to the table it creates, not to the tables its foreign keys point at, so 0117 selects no registered table and needs no reference data. Its foreign key to the registered `simulate_call_execution` table still briefly takes a SHARE ROW EXCLUSIVE lock on that table while the key is added; on a busy call table that lock waits behind long transactions and writes queue behind it, so run it with a short `lock_timeout` and retry, or off-peak. That lock is in the migration's header; the scope check does not show it.
 
+**Feature update (2026-11-25):** `simulate/0118_eval_result_ask` creates a new, empty `simulate_ask` table and adds nullable columns, with no default, to 0117's `simulate_eval_result`, so no existing row is rewritten. It replaces that table's origin check, which validates its existing rows (every one is still accepted) under an ACCESS EXCLUSIVE lock on it. Neither table is registered, so qualification selects none and needs no reference data. Its new foreign keys briefly lock their parent tables (the organisation, workspace and user tables): run it with a short `lock_timeout` and retry, or off-peak, as the migration's header says.
+
 ## 3. What changes require extra work?
 
 | Your change                                                         | What to do                                                                  | What the checker can establish                                            |

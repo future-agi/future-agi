@@ -12,6 +12,7 @@ from .agent_setup import (
     AgentVersionSetup,
 )
 from .agent_version import AgentVersion
+from .ask import SimulateAsk
 from .call_log_entry import CallLogEntry
 from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
@@ -69,6 +70,7 @@ from .test_execution import (
 from .trial_item_result import TrialItemResult
 
 __all__ = [
+    "SimulateAsk",
     "SimulateEvalResult",
     "AgentFixCandidate",
     "AgentFixIssueJob",
