@@ -4,7 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "src/utils/test-utils";
 import DesignReviewStage from "../DesignReviewStage";
-import { REVIEW_COPY, REVIEW_STATUS } from "../designReview.constants";
+import {
+  MAX_RULE_LENGTH,
+  REVIEW_COPY,
+  REVIEW_STATUS,
+  RULE_COUNTER_FROM,
+} from "../designReview.constants";
 
 vi.mock("react-router-dom", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -219,5 +224,42 @@ describe("DesignReviewStage edits", () => {
 
     finish();
     await screen.findByText("Greet the caller. Always.");
+  });
+
+  it("keeps a long rule whole, counts near the limit and refuses one over it", async () => {
+    const user = userEvent.setup();
+    renderStage();
+    await screen.findByText("Greet the caller.");
+    await user.click(screen.getByRole("button", { name: REVIEW_COPY.edit }));
+    const field = screen.getByRole("textbox", { name: REVIEW_COPY.ruleLabel });
+    const saveButton = screen.getByRole("button", { name: REVIEW_COPY.save });
+
+    await user.clear(field);
+    await user.paste("x".repeat(RULE_COUNTER_FROM));
+    expect(
+      screen.getByText(REVIEW_COPY.ruleLength(RULE_COUNTER_FROM)),
+    ).toBeInTheDocument();
+    expect(saveButton).toBeEnabled();
+
+    await user.paste("x".repeat(MAX_RULE_LENGTH - RULE_COUNTER_FROM + 1));
+    expect(field).toHaveValue("x".repeat(MAX_RULE_LENGTH + 1));
+    expect(screen.getByText(REVIEW_COPY.ruleTooLong)).toBeInTheDocument();
+    expect(saveButton).toBeDisabled();
+    await user.type(field, "{enter}");
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it("says the rule needs text when it is cleared", async () => {
+    const user = userEvent.setup();
+    renderStage();
+    await screen.findByText("Greet the caller.");
+    await user.click(screen.getByRole("button", { name: REVIEW_COPY.edit }));
+    await user.clear(
+      screen.getByRole("textbox", { name: REVIEW_COPY.ruleLabel }),
+    );
+    expect(screen.getByText(REVIEW_COPY.ruleEmpty)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: REVIEW_COPY.save }),
+    ).toBeDisabled();
   });
 });

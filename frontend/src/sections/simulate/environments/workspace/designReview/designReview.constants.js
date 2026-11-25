@@ -6,6 +6,9 @@ export const REVIEW_STATUS = {
 
 export const PARK_AFTER_MS = 15 * 60 * 1000;
 
+export const MAX_RULE_LENGTH = 2000;
+export const RULE_COUNTER_FROM = 1800;
+
 export const SOURCE_LABEL = {
   agent_reading: "From the agent's reading",
   agent_code: "From the agent's code",
@@ -117,6 +120,9 @@ export const REVIEW_COPY = {
   save: "Save",
   cancel: "Cancel",
   ruleLabel: "Rule",
+  ruleEmpty: "The rule needs some text",
+  ruleTooLong: `A rule can be at most ${MAX_RULE_LENGTH} characters`,
+  ruleLength: (count) => `${count} of ${MAX_RULE_LENGTH} characters`,
   theRule: "The rule",
   theUseCase: "The use case",
   keepOneUseCase: "A design needs at least one use case",
