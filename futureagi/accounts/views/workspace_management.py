@@ -1716,22 +1716,16 @@ class SwitchWorkspaceAPIView(APIView):
                         "You don't have access to this workspace"
                     )
 
-            # Update user's config with current workspace
-            if not user.config:
-                user.config = {}
-
-            user.config["currentWorkspaceId"] = str(new_workspace_id)
-            user.config["defaultWorkspaceId"] = str(
-                new_workspace_id
-            )  # Also update default for backward compatibility
-
-            # Update orgWorkspaceMap so org switch remembers this workspace
-            org_id = str(organization.id)
-            org_workspace_map = user.config.get("orgWorkspaceMap", {})
-            org_workspace_map[org_id] = str(new_workspace_id)
-            user.config["orgWorkspaceMap"] = org_workspace_map
-
-            user.save(update_fields=["config"])
+            # Update user's config with current workspace (default too, for
+            # backward compatibility), and orgWorkspaceMap so an org switch
+            # remembers this workspace.
+            org_workspace_map = dict((user.config or {}).get("orgWorkspaceMap", {}))
+            org_workspace_map[str(organization.id)] = str(new_workspace_id)
+            user.update_config(
+                currentWorkspaceId=str(new_workspace_id),
+                defaultWorkspaceId=str(new_workspace_id),
+                orgWorkspaceMap=org_workspace_map,
+            )
 
             return self._gm.success_response(
                 {

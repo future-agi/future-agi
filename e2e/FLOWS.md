@@ -170,13 +170,17 @@
 3. open the on-call address's unsubscribe link in another tab and see the monitor named
 4. press Unsubscribe and see Unsubscribed with no Resubscribe button
 5. rename the monitor in the editor opened before the unsubscribe and save it
-6. delete the monitor and open the link again
+6. the owner, the last recipient, unsubscribes from the same monitor
+7. reopen the editor and save a rename of the monitor left with no recipients
+8. delete the monitor and open the link again
 
 **Backend state verified:**
 
 - opening the link alone leaves both addresses on the monitor in PG tracer_useralertmonitor.notification_emails
 - Unsubscribe removes only the on-call address from the monitor in PG
 - the editor's save renames the monitor in PG and keeps the on-call address removed
+- the last recipient's Unsubscribe leaves the monitor with no recipients in PG
+- the editor saves a rename of the monitor with no recipients, and the list stays empty in PG
 - after the monitor is deleted the link says Monitor deleted and the deleted row's recipients are unchanged
 
 ## annotations

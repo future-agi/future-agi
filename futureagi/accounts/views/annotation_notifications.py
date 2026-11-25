@@ -120,7 +120,10 @@ def _unsub_template(
         f"</head><body><main class='card'><h1>{title}</h1><p>{message}</p>"
         f"{form}</main></body></html>"
     )
-    return HttpResponse(html, content_type="text/html", status=status_code)
+    response = HttpResponse(html, content_type="text/html", status=status_code)
+    # The page's URL holds the signed token: don't hand it to the next request.
+    response["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 def _action_form(action_url: str, action: str, label: str) -> str:

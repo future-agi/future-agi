@@ -121,6 +121,17 @@ export const notificationPayload = (notification, loaded, isUpdate) => {
   return payload;
 };
 
+// The last recipient of an email alert can unsubscribe from the emailed link,
+// which leaves the stored alert with no addresses. Editing that alert must
+// still save a rename or a threshold change; a new alert (or a duplicate)
+// still needs a destination.
+export const allowStoredNoEmails = (values, isUpdate) => {
+  const notification = values?.notification;
+  if (!isUpdate || notification?.method !== "email") return values;
+  if (notification?.emails?.length) return values;
+  return { ...values, notification: { ...notification, keepNoEmails: true } };
+};
+
 export const getAlertFilterValue = (data) => {
   const filters = [];
   const normalizedFilters = normalizeAlertFilters(data?.filters);

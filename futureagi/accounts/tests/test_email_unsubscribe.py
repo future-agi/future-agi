@@ -714,3 +714,91 @@ def test_recipient_reload_failure_stays_inside_the_alert_email(monitor):
         _send_alert_email(monitor, "Errors above threshold", "critical")
 
     assert mail.outbox == []
+
+
+@pytest.mark.django_db
+class TestMergeGateReview:
+    """Merge-gate review at 051307efe5."""
+
+    @override_settings(
+        FI_API_PUBLIC_URL="/api", FRONTEND_BASE_URL="https://app.acme.test"
+    )
+    def test_single_origin_install_emails_an_absolute_link(self, user):
+        # The documented route-split install publishes the API as VITE_HOST_API=/api.
+        (message,) = _send([user.email], eu.INTEGRATION_ERRORS)
+        link = message.extra_headers["List-Unsubscribe"].strip("<>")
+
+        assert link.startswith(f"https://app.acme.test/api{URL}?token=")
+        assert (
+            message.extra_headers["List-Unsubscribe-Post"]
+            == "List-Unsubscribe=One-Click"
+        )
+        assert link in message.alternatives[0][0]
+
+    @override_settings(FI_API_PUBLIC_URL="/api", FRONTEND_BASE_URL="")
+    def test_relative_api_url_without_a_public_origin_falls_back_to_base_url(
+        self, user
+    ):
+        with override_settings(BASE_URL="http://localhost:8000"):
+            assert eu.public_api_url() == "http://localhost:8000/api"
+
+    def test_browser_post_keeps_the_token_out_of_trace_headers(self, rf):
+        from tfc.telemetry.middleware import OTelContextMiddleware
+
+        page = f"https://app.acme.test{URL}?token=signed-tok-123"
+        request = rf.post(
+            f"{URL}?token=signed-tok-123", {"action": "unsubscribe"}, HTTP_REFERER=page
+        )
+        span = mock.Mock()
+        OTelContextMiddleware(lambda r: None)._capture_request(span, request)
+        recorded = {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
+
+        assert "signed-tok-123" not in recorded["http.request.headers"]
+        assert f"https://app.acme.test{URL}" in recorded["http.request.headers"]
+
+    def test_emailed_link_pages_send_no_referrer(self, api_client, user):
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
+
+        page = api_client.get(URL, {"token": token})
+        done = api_client.post(f"{URL}?token={token}", ONE_CLICK, format="multipart")
+        invalid = api_client.get(URL, {"token": "garbage"})
+
+        for response in (page, done, invalid):
+            assert response["Referrer-Policy"] == "no-referrer"
+
+    @pytest.mark.parametrize(
+        "path, body, written",
+        [
+            (
+                "/accounts/organizations/switch/",
+                lambda u, w: {"organization_id": str(u.organization_id)},
+                lambda u, w: ("currentOrganizationId", str(u.organization_id)),
+            ),
+            (
+                "/accounts/organizations/",
+                lambda u, w: {"organization_id": str(u.organization_id)},
+                lambda u, w: ("currentOrganizationId", str(u.organization_id)),
+            ),
+            (
+                "/accounts/workspace/switch/",
+                lambda u, w: {"new_workspace_id": str(w.id)},
+                lambda u, w: ("currentWorkspaceId", str(w.id)),
+            ),
+        ],
+        ids=["org-switch", "org-select", "workspace-switch"],
+    )
+    def test_switch_that_read_the_user_before_an_unsubscribe_keeps_it(
+        self, auth_client, user, workspace, path, body, written
+    ):
+        # auth_client holds the user object as the request loaded it, before
+        # the unsubscribe below commits: an in-flight switch.
+        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
+        assert eu.USER_CONFIG_KEY not in (user.config or {})
+
+        response = auth_client.post(path, body(user, workspace), format="json")
+
+        assert response.status_code == 200, response.content
+        stored = type(user).objects.get(pk=user.pk).config
+        assert stored[eu.USER_CONFIG_KEY] == [eu.INTEGRATION_ERRORS]
+        key, value = written(user, workspace)
+        assert stored[key] == value  # the switch's own change still lands

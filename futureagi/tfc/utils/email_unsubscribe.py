@@ -19,7 +19,7 @@ Opt-outs live in storage that already exists, so no schema change:
 import os
 from datetime import timedelta
 from typing import NamedTuple
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import structlog
 from django.conf import settings
@@ -107,8 +107,17 @@ def public_api_url() -> str:
     callers (BASE_URL, else the UI's VITE_HOST_API; see
     ``settings.FI_API_PUBLIC_URL``). The same on the API and on the workers
     that send mail, and on a self-hosted install it never names Future AGI
-    Cloud."""
-    return (os.environ.get("BACKEND_URL") or settings.FI_API_PUBLIC_URL).rstrip("/")
+    Cloud.
+
+    A single-origin install publishes the API as a path (VITE_HOST_API=/api),
+    which a mail reader can't open, so a root-relative address is resolved
+    against the UI's public origin (``settings.FRONTEND_BASE_URL``), else
+    ``settings.BASE_URL``."""
+    url = (os.environ.get("BACKEND_URL") or settings.FI_API_PUBLIC_URL).rstrip("/")
+    if url.startswith("/"):
+        parts = urlsplit(settings.FRONTEND_BASE_URL or settings.BASE_URL)
+        url = f"{parts.scheme}://{parts.netloc}{url}"
+    return url
 
 
 def page_url(token: str) -> str:

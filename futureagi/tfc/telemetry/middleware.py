@@ -426,6 +426,10 @@ class OTelContextMiddleware:
             meta_key = f"HTTP_{header.upper().replace('-', '_')}"
             if meta_key in request.META:
                 headers[header] = request.META[meta_key]
+        if "referer" in headers:
+            # The page a browser came from: its query can hold a signed link
+            # token (an unsubscribe page posting its own form), as http.url can.
+            headers["referer"] = headers["referer"].split("?", 1)[0].split("#", 1)[0]
 
         # Direct META keys
         if "CONTENT_TYPE" in request.META:

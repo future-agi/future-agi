@@ -21,6 +21,7 @@ import {
   evalUsesChoiceThreshold,
   isSpanAttrFilterValid,
   notificationPayload,
+  allowStoredNoEmails,
 } from "../common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import AlertFilterBar from "./AlertFilterBar";
@@ -72,16 +73,19 @@ export default function AlertSettingsForm({
 
   const buildFormValues = useCallback(
     () =>
-      getDefaultAlertConfigValues({
-        ...(openSheetView && alertRuleDetails),
-        name: openSheetView
-          ? duplicateAlertName || alertRuleDetails?.name || ""
-          : "",
-        ...(alertType &&
-          !openSheetView && {
-            metricType: alertType,
-          }),
-      }),
+      allowStoredNoEmails(
+        getDefaultAlertConfigValues({
+          ...(openSheetView && alertRuleDetails),
+          name: openSheetView
+            ? duplicateAlertName || alertRuleDetails?.name || ""
+            : "",
+          ...(alertType &&
+            !openSheetView && {
+              metricType: alertType,
+            }),
+        }),
+        Boolean(openSheetView && !duplicateAlertName),
+      ),
     [openSheetView, alertRuleDetails, duplicateAlertName, alertType],
   );
 
