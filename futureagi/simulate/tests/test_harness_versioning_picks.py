@@ -182,7 +182,9 @@ def _released(user, workspace, key, storage, *, locked=True):
     """Every scenario of NAMES in the default suite and scorable, and a release on the
     default pair: the first scenario in train, the others in test."""
     environment = _environment(user, workspace, key, storage)
-    record_authoring(environment, _authoring(names=NAMES), origin="manual", user=user)
+    # A rebuild, not a user edit: the base environment already retired a key
+    # NAMES reuses, which only a user origin refuses.
+    record_authoring(environment, _authoring(names=NAMES), origin="authoring")
     environment.refresh_from_db()
     members = list(
         HarnessSuiteMember.no_workspace_objects.filter(
@@ -1136,7 +1138,13 @@ class TestWarnings:
         settings.HARNESS_VERSIONING_ENABLED = False
 
         assert preview_run(environment) == {
-            "versions": {"agent": None, "environment": None, "suite": None},
+            "versions": {
+                "agent": None,
+                "environment": None,
+                "suite": None,
+                "split": None,
+                "release": None,
+            },
             "warnings": [],
             "bundle_cached": None,
             "blocked_tools": [],
@@ -1170,6 +1178,8 @@ class TestRunPlan:
                     "label": "v1",
                 },
                 "suite": {"id": str(environment.suite_version_id), "label": "v2"},
+                "split": None,
+                "release": None,
             },
             "warnings": [
                 {
@@ -1237,7 +1247,13 @@ class TestRunPlan:
 
         assert response.status_code == 200, response.content
         assert response.json() == {
-            "versions": {"agent": None, "environment": None, "suite": None},
+            "versions": {
+                "agent": None,
+                "environment": None,
+                "suite": None,
+                "split": None,
+                "release": None,
+            },
             "warnings": [],
             "bundle_cached": None,
             "blocked_tools": [],

@@ -1039,6 +1039,8 @@ class TestRunListSummary:
             "suite_version",
             "pinned_agent_version",
             "agent_differs",
+            "split",
+            "release",
         }
         assert oldest["status"] == "Completed"
         assert oldest["suite_version"]["id"] == str(first.suite_version_id)
