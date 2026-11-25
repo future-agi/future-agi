@@ -1147,6 +1147,34 @@ def test_a_real_change_shares_its_empty_ref_with_an_unresolved_source_and_still_
     assert view["source_changed"] == [""]
 
 
+def test_a_dropped_rule_shares_its_empty_ref_with_an_unresolved_source_and_still_reads_source_changed(
+    user, workspace, storage
+):
+    """Two rules cited with ref "": one names words no version holds, the other quotes a rule this version dropped
+    with nothing recorded in its place. The dropped rule is a real change, so the ref reads Source changed."""
+    environment = _environment(user, workspace, storage, "lc-shared-ref-dropped")
+    _suite(environment, _ten())
+    parent = _with_rules_and_files(
+        environment.environment_version, ["Refund within 10 days."], {}
+    )
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, ["Refund within 7 days."], {})
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "", "quote": "words no rule held"},
+                {"kind": "rule", "ref": "", "quote": "Refund within 10 days"},
+            ]
+        },
+    )
+    _proofs(environment, {}, version=child)
+
+    view = _views(environment, version=child)[REFUND_KEYS[0]]
+
+    assert view["source_changed"] == [""]
+
+
 def test_counts_call_only_a_run_proof_proved():
     from simulate.services.harness_scenario_lifecycle import lifecycle_counts
 

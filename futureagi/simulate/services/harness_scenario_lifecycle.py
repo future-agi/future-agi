@@ -751,26 +751,28 @@ def scenario_lifecycle(
             for one in replaced
             if _reworded_here(one["quote"], environment_version, parent_documents)
         ]
-        # A ref whose every rule source neither version resolves already reads source_unresolved; Compare has
-        # nothing to show for it. A ref shared with a source that does resolve (two rules cited with ref "") stays.
-        unresolved = {
-            one["ref"]
-            for one in view["sources"]
-            if one["kind"] == "rule"
-            and not one["resolved"]
-            and parent_documents is not None
-            and rule_pair(
-                one["quote"],
-                rules_of(parent_documents),
-                current_rules,
-                environment_version.documents or {},
-                parent_documents,
-            )
-            == (None, None)
-        } - {
-            one["ref"]
-            for one in view["sources"]
-            if one["kind"] == "rule" and one["resolved"]
+        # A ref whose every rule source names a rule in neither version (`rule_pair`) already reads source_unresolved;
+        # Compare has nothing to show. A ref shared with a source that names a rule (two cited with ref "") stays.
+        pairs = (
+            [
+                (
+                    one["ref"],
+                    rule_pair(
+                        one["quote"],
+                        rules_of(parent_documents),
+                        current_rules,
+                        environment_version.documents or {},
+                        parent_documents,
+                    ),
+                )
+                for one in view["sources"]
+                if one["kind"] == "rule"
+            ]
+            if parent_documents is not None
+            else []
+        )
+        unresolved = {ref for ref, pair in pairs if pair == (None, None)} - {
+            ref for ref, pair in pairs if pair != (None, None)
         }
         view["source_changed"] = list(
             dict.fromkeys(
