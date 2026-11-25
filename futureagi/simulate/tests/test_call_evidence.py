@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 from django.utils import timezone
 
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import DatasetSourceChoices, StatusType
 from model_hub.models.develop_dataset import Dataset
 from simulate.models import AgentDefinition, Scenarios
@@ -271,6 +272,54 @@ def test_a_call_from_another_workspace_or_organisation_is_refused(voice_call):
             organization_id=uuid.uuid4(),
             workspace_id=run_test.workspace_id,
         )
+
+
+def _workspace(organization, user):
+    return Workspace.objects.create(
+        name=f"ws-{uuid.uuid4().hex[:6]}", organization=organization, created_by=user
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("runs_in", "asked_from", "allowed"),
+    [
+        ("none", "default", True),
+        ("none", "other", False),
+        ("other", "default", False),
+        ("default", "other", False),
+    ],
+)
+def test_the_workspace_rule_is_the_run_pages(
+    voice_call, organization, workspace, user, runs_in, asked_from, allowed
+):
+    """From the organisation's default workspace (one per organisation) the run
+    page also shows runs kept with no workspace."""
+    spaces = {
+        "none": None,
+        "default": workspace,
+        "other": _workspace(organization, user),
+    }
+    # Saved with no workspace, as older runs were; a save would fill one in.
+    RunTest.objects.filter(id=voice_call.test_execution.run_test_id).update(
+        workspace=spaces[runs_in]
+    )
+    call = CallExecution.objects.get(id=voice_call.id)
+    assert call.test_execution.run_test.workspace_id == getattr(
+        spaces[runs_in], "id", None
+    )
+
+    read = lambda: read_call_evidence(  # noqa: E731
+        call,
+        [Kind.SCENARIO],
+        organization_id=organization.id,
+        workspace_id=spaces[asked_from].id,
+    )
+    if allowed:
+        assert read()[Kind.SCENARIO].state == State.PRESENT
+    else:
+        with pytest.raises(reader.CallNotInWorkspace):
+            read()
 
 
 # --- transcript ----------------------------------------------------------------
@@ -1218,11 +1267,16 @@ class _Stored:
 
 @pytest.mark.django_db
 def test_an_artifact_is_read_only_from_the_calls_job_and_tenant(
-    organization, workspace, execution, scenario
+    organization, workspace, user, execution, scenario
 ):
     own = _job(organization, workspace)
     other = _job(organization, workspace)
-    for job, key in ((own, "own/key"), (other, "other/key")):
+    elsewhere = _job(organization, _workspace(organization, user))
+    for job, key in (
+        (own, "own/key"),
+        (other, "other/key"),
+        (elsewhere, "elsewhere/key"),
+    ):
         HostedHarnessArtifact.no_workspace_objects.create(
             job=job,
             sha256=TRACE,
@@ -1234,23 +1288,23 @@ def test_an_artifact_is_read_only_from_the_calls_job_and_tenant(
     storage = SimpleNamespace(get_object=lambda bucket, key: _Stored(key.encode()))
     call = _call(execution, scenario)
 
-    def stored(job, organization_id, workspace_id, kind="world_state"):
+    def stored(job, kind="world_state"):
         read = reader._Read(
             call=call,
             trial=replace(HOSTED, job_id=job.id),
             run_kind=RunKind.HOSTED_VOICE,
-            organization_id=organization_id,
-            workspace_id=workspace_id,
+            organization_id=organization.id,
+            workspace_id=workspace.id,
             max_chars=None,
         )
         return reader.stored_artifact(read, f"sha256:{TRACE}", kind)
 
     with patch("tfc.utils.storage_client.get_storage_client", return_value=storage):
-        assert stored(own, organization.id, workspace.id) == b"own/key"
-        assert stored(other, organization.id, workspace.id) == b"other/key"
-        assert stored(own, organization.id, uuid.uuid4()) is None
-        assert stored(own, uuid.uuid4(), workspace.id) is None
-        assert stored(own, organization.id, workspace.id, kind="log") is None
+        assert stored(own) == b"own/key"
+        assert stored(other) == b"other/key"
+        # A job kept in another workspace than the call's run is not read.
+        assert stored(elsewhere) is None
+        assert stored(own, kind="log") is None
 
 
 # --- what each artifact level allows is the ingestion's own table ---------------

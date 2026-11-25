@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from accounts.models.workspace import Workspace
 from simulate.models.agent_setup import AgentVersionSetup
 from simulate.models.chat_message import ChatMessageModel
 from simulate.models.hosted_harness import (
@@ -189,11 +190,7 @@ def read_call_evidence(
     max_chars: int | None = None,
 ) -> dict[Kind, Evidence]:
     """Each asked kind of evidence for one call. Refuses a call from elsewhere."""
-    run_test = call.test_execution.run_test
-    if not (
-        _same_id(run_test.organization_id, organization_id)
-        and _same_id(run_test.workspace_id, workspace_id)
-    ):
+    if not in_workspace(call.test_execution.run_test, organization_id, workspace_id):
         raise CallNotInWorkspace(str(call.id))
     trial = hosted_trial(call)
     read = _Read(
@@ -205,6 +202,21 @@ def read_call_evidence(
         max_chars=max_chars,
     )
     return {Kind(kind): _READERS[Kind(kind)](read) for kind in kinds}
+
+
+def in_workspace(run_test: Any, organization_id: Any, workspace_id: Any) -> bool:
+    """Whether a run is one the run page shows in that organisation and workspace:
+    its own workspace, or, from the organisation's default workspace, a run kept
+    with no workspace (``simulate/views/scoping.py``)."""
+    if not _same_id(run_test.organization_id, organization_id):
+        return False
+    if _same_id(run_test.workspace_id, workspace_id):
+        return True
+    if run_test.workspace_id is not None or workspace_id is None:
+        return False
+    return Workspace.objects.filter(
+        id=workspace_id, organization_id=organization_id, is_default=True
+    ).exists()
 
 
 def run_kind_of(call: CallExecution) -> RunKind:
@@ -296,15 +308,17 @@ def stored_artifact(read: _Read, digest: str, artifact_kind: str) -> bytes | Non
 
     if read.trial is None:
         return None
+    # The call passed the tenant check; its job is kept where its run is.
+    run_test = read.call.test_execution.run_test
     rows = HostedHarnessArtifact.no_workspace_objects.filter(
         job_id=read.trial.job_id,
         sha256=digest.removeprefix("sha256:"),
         kind=artifact_kind,
-        job__organization_id=read.organization_id,
+        job__organization_id=run_test.organization_id,
     )
     rows = (
-        rows.filter(job__workspace_id=read.workspace_id)
-        if read.workspace_id is not None
+        rows.filter(job__workspace_id=run_test.workspace_id)
+        if run_test.workspace_id is not None
         else rows.filter(job__workspace_id__isnull=True)
     )
     key = rows.values_list("object_key", flat=True).first()
