@@ -3130,6 +3130,28 @@ def test_finalizer_completes_a_run_still_open(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("finalizer", ["native", "rerun"])
+def test_finalizer_leaves_a_summary_a_person_is_waiting_for_running(
+    run_test, dispatch, monkeypatch, finalizer
+):
+    from simulate.models.test_execution import EvalExplanationSummaryStatus
+
+    run = _run(
+        run_test,
+        "evaluating",
+        execution_metadata=dict(_RERUN_MARKER),
+        eval_explanation_summary_status=EvalExplanationSummaryStatus.RUNNING,
+    )
+    _call(run, metadata=dict(CLOSED))
+
+    _finalize(finalizer, run, monkeypatch, completed_calls=1, failed_calls=0)
+
+    run.refresh_from_db()
+    assert run.status == TestExecution.ExecutionStatus.COMPLETED
+    assert run.eval_explanation_summary_status == EvalExplanationSummaryStatus.RUNNING
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("finalizer", ["native", "rerun"])
 @pytest.mark.parametrize(
     "ended_status", ["completed", "failed", "cancelled", "cancelling"]
 )
@@ -3463,7 +3485,7 @@ def test_late_verdict_on_a_completed_run_marks_the_summary_out_of_date(
                     check(call, eval_config_ids=[config_id])
             else:
                 check(call, eval_config_ids=[config_id])
-        assert callbacks == []
+        assert len(callbacks) == 1, "the mark waits for the verdict's commit"
     dispatch.summary.assert_not_called()
     done.refresh_from_db()
     assert (done.status, done.completed_at) == (Status.COMPLETED, earlier)
@@ -3496,15 +3518,109 @@ def test_late_verdict_leaves_a_summary_that_is_not_finished_alone(
     )
     call = _call(done, metadata=dict(CLOSED), eval_outputs=verdict)
 
-    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+    with django_capture_on_commit_callbacks(execute=True):
         TestExecutor(initialize_voice_service=False)._check_and_update_eval_completion(
             call, eval_config_ids=[config_id]
         )
 
-    assert callbacks == []
     dispatch.summary.assert_not_called()
     done.refresh_from_db()
     assert done.eval_explanation_summary_status == summary_status
+
+
+@pytest.mark.django_db
+def test_the_out_of_date_mark_waits_for_the_verdicts_commit(
+    run_test, eval_template, django_capture_on_commit_callbacks, dispatch
+):
+    """The mark is made once the verdict is committed, so a summary job that
+    looks at the grading after it sees the verdict too."""
+    from simulate.models.test_execution import EvalExplanationSummaryStatus
+    from simulate.services.test_executor import TestExecutor
+
+    Summary = EvalExplanationSummaryStatus
+    done = _run(
+        run_test,
+        TestExecution.ExecutionStatus.COMPLETED,
+        eval_explanation_summary_status=Summary.COMPLETED,
+    )
+
+    with django_capture_on_commit_callbacks(execute=False) as callbacks:
+        TestExecutor(initialize_voice_service=False)._mark_summary_out_of_date(done.id)
+        done.refresh_from_db()
+        assert done.eval_explanation_summary_status == Summary.COMPLETED
+
+    assert len(callbacks) == 1
+    callbacks[0]()
+    done.refresh_from_db()
+    assert done.eval_explanation_summary_status == Summary.PENDING
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "run_status", ["running", "evaluating", "failed", "cancelling", "cancelled"]
+)
+def test_a_late_verdict_on_a_run_that_is_not_completed_leaves_its_summary_alone(
+    run_test, eval_template, django_capture_on_commit_callbacks, dispatch, run_status
+):
+    """Only a completed run's summary goes out of date on a late verdict: a
+    run still scoring is settled later, and a failed or stopped one keeps its
+    summary as it is. The run's status and ``completed_at`` are not touched."""
+    from simulate.models.test_execution import EvalExplanationSummaryStatus
+    from simulate.services.test_executor import TestExecutor
+
+    Summary = EvalExplanationSummaryStatus
+    config_id = str(_config(run_test, eval_template).id)
+    verdict = {config_id: {"status": "Completed", "output": "Passed"}}
+    earlier = timezone.now() - timedelta(hours=1)
+    other = _run(
+        run_test,
+        run_status,
+        completed_at=earlier,
+        eval_explanation_summary={"build": 0},
+        eval_explanation_summary_status=Summary.COMPLETED,
+    )
+    late = _call(other, metadata=dict(CLOSED), eval_outputs=verdict)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        TestExecutor(initialize_voice_service=False)._check_and_update_eval_completion(
+            late, eval_config_ids=[config_id]
+        )
+
+    other.refresh_from_db()
+    assert (other.status, other.completed_at) == (run_status, earlier)
+    assert other.eval_explanation_summary_status == Summary.COMPLETED
+    dispatch.summary.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_settle_leaves_a_summary_a_person_is_waiting_for_running(
+    run_test, eval_template, django_capture_on_commit_callbacks, dispatch
+):
+    """A summary already running when the run settles keeps running, so the
+    pane keeps polling; the job itself sees whether grading changed."""
+    from simulate.models.test_execution import EvalExplanationSummaryStatus
+    from simulate.services.test_executor import TestExecutor
+
+    Summary = EvalExplanationSummaryStatus
+    config_id = str(_config(run_test, eval_template).id)
+    first = _run(
+        run_test,
+        TestExecution.ExecutionStatus.EVALUATING,
+        eval_explanation_summary_status=Summary.RUNNING,
+    )
+    in_time = _call(
+        first,
+        metadata={"eval_started": True, "eval_completed": False},
+        eval_outputs={config_id: {"status": "Completed", "output": "Passed"}},
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        TestExecutor(initialize_voice_service=False)._check_and_update_eval_completion(
+            in_time, eval_config_ids=[config_id]
+        )
+
+    first.refresh_from_db()
+    assert first.status == TestExecution.ExecutionStatus.COMPLETED
+    assert first.eval_explanation_summary_status == Summary.RUNNING
 
 
 @pytest.mark.django_db

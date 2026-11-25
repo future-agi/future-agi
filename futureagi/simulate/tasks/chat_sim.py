@@ -408,7 +408,6 @@ def monitor_test_execution_for_chat(test_execution_id: str):
                 EvalExplanationSummaryStatus.PENDING
             )
             test_execution.save(update_fields=["eval_explanation_summary_status"])
-            # The summary is made only when a person asks for it.
 
             return
 

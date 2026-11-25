@@ -311,7 +311,6 @@ class TestExecutor:
                     test_execution.save(
                         update_fields=["eval_explanation_summary_status"]
                     )
-                    # The summary is made only when a person asks for it.
 
                     test_execution.picked_up_by_executor = False
                     test_execution.save()
@@ -521,7 +520,6 @@ class TestExecutor:
                             EvalExplanationSummaryStatus.PENDING
                         )
                         test_execution.save()
-                        # The summary is made only when a person asks for it.
 
                     logger.info(
                         f"Test execution {test_execution.id} completed - all evaluations finished"
@@ -4173,6 +4171,7 @@ class TestExecutor:
         from simulate.services.scoring_status import (
             CALL_SCORING_OPEN_Q,
             SETTLE_FROM_STATUSES,
+            summary_status_once_graded,
         )
 
         try:
@@ -4230,7 +4229,7 @@ class TestExecutor:
                     total_calls=total_call_count,
                     completed_calls=completed_call_count,
                     failed_calls=failed_call_count,
-                    eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
+                    eval_explanation_summary_status=summary_status_once_graded(),
                 )
                 if updated:
                     logger.info(
@@ -4238,8 +4237,7 @@ class TestExecutor:
                     )
 
                     # After commit, so the live update reads the completed
-                    # run. The summary is marked pending above and is made
-                    # only when a person asks for it.
+                    # run.
                     def _after_completion():
                         self._after_run_completed(test_execution_id)
 
@@ -4261,20 +4259,26 @@ class TestExecutor:
         The summary was made without this verdict. It is kept, and nothing is
         queued: pending tells the page, and the SDK, that nobody has asked
         for a summary since the run's verdicts last changed. A summary that
-        is running, failed, or was never made keeps its state.
+        failed or was never made keeps its state. One that is running sees
+        the verdict itself, so it keeps running and the page keeps polling.
+
+        The mark is made once the verdict is committed: a summary job that
+        looks at the grading after the mark then sees the verdict too.
         """
-        TestExecution.objects.filter(
-            id=test_execution_id,
-            status=TestExecution.ExecutionStatus.COMPLETED,
-            eval_explanation_summary_status=EvalExplanationSummaryStatus.COMPLETED,
-        ).update(eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING)
+
+        def _mark():
+            TestExecution.objects.filter(
+                id=test_execution_id,
+                status=TestExecution.ExecutionStatus.COMPLETED,
+                eval_explanation_summary_status=EvalExplanationSummaryStatus.COMPLETED,
+            ).update(
+                eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING
+            )
+
+        transaction.on_commit(_mark, robust=True)
 
     def _after_run_completed(self, test_execution_id):
-        """Live update for a run the settle just completed.
-
-        No summary is queued: it is analysis made by model calls, and it
-        starts only when a person asks for it.
-        """
+        """Live update for a run the settle just completed."""
         try:
             from simulate.utils.websocket_notifications import (
                 notify_simulation_update,

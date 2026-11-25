@@ -30,8 +30,8 @@
     },
     {
       "path": "futureagi/tracer/services/clickhouse/client.py",
-      "before_sha256": "5ab6c1c9055271764551c8c6ff5b5f014b582dfd1c0521d3b25e29cfe36aa8cd",
-      "after_sha256": "bb9ca329c5e3562b8995ac97c157249d5b22707811b75a5e424fb864294f9793",
+      "before_sha256": "bb9ca329c5e3562b8995ac97c157249d5b22707811b75a5e424fb864294f9793",
+      "after_sha256": "23074785f6f2ef0e97d5a014625335cb6d6359af7d10e336de59db8c12732880",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -43,8 +43,8 @@
           "clickhouse:tracer_eval_logger",
           "clickhouse:tracer_trace"
         ],
-        "mitigation": "The unchanged CREATE DATABASE IF NOT EXISTS is database-level and repeatable; it creates an empty namespace and does not change any table. The named table reads are metadata and CDC lag checks. This PR changes native streamed reads, not the DDL. Roll back the client code if needed; do not drop a retained database to reverse a code rollout.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "mitigation": "The unchanged CREATE DATABASE IF NOT EXISTS is database-level and repeatable; it creates an empty namespace and changes no table. This PR changes read admission only: the optional retained-window metadata read gets a bounded budget and is skipped rather than starving the page read, native driver logs for these reads are quieted, and the send guard restores pooled policy after ping/reconnect. The named table reads remain metadata and CDC lag checks. Roll back the client code if needed; no stored state changes.",
+        "review": "https://github.com/future-agi/future-agi/pull/4231#discussion_r4688933888",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
@@ -572,34 +572,19 @@
     },
     {
       "path": "futureagi/tracer/services/derived_metrics/retention.py",
-      "before_sha256": "e6b451a042432abd83168b86d0fc9e3676493d393ca3fd0b4840e20b4d059363",
-      "after_sha256": "75aa69f17cc5d419d25a87970360ada0aa2b2e7ca75add1eb4163d772069b820",
+      "before_sha256": "75aa69f17cc5d419d25a87970360ada0aa2b2e7ca75add1eb4163d772069b820",
+      "after_sha256": "e84c785657c9d967ed4af454e82c9f0b77417ff186a296967206cdf48387e868",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
-          "clickhouse_change",
-          "clickhouse_mutation",
-          "clickhouse_rewrite"
+          "clickhouse_change"
         ],
         "tables": [
           "clickhouse:metric_field_values",
-          "clickhouse:metric_field_values_checkpoint",
-          "clickhouse:metric_bucket_totals",
-          "clickhouse:metric_bucket_totals_checkpoint",
-          "clickhouse:metric_unit_state",
-          "clickhouse:metric_source_dependencies",
-          "clickhouse:metric_bucket_retired_parts",
-          "clickhouse:list_current_root_facts",
-          "clickhouse:list_current_members",
-          "clickhouse:list_current_user_activity",
-          "clickhouse:spans",
-          "clickhouse:end_user_id_remap",
-          "clickhouse:trace_session_id_remap",
-          "clickhouse:tracer_eval_logger",
-          "clickhouse:tracer_eval_logger_v2"
+          "clickhouse:metric_field_values_checkpoint"
         ],
-        "mitigation": "Publish the safe retained head and retire or revoke affected visibility before physical expiry; durable scope and shard receipts govern synchronous ALTER DELETE on all ten live stores. Claimed erasure work deletes, requires every earlier metric submission for that scope on this shard to report drained (otherwise it fails for retry instead of completing), then re-deletes and verifies count() = 0; expiry and unpublished-replan cleanup also verify the scrub. collect_garbage's early unclaimed attempt purge stays best-effort. For organization, project, metric and version erasure, the project lease is invalidated before native deletes; a metric/version erasure with no remaining definition also aborts open attempts. A subject-erasure retry after a published checkpoint repeats only the physical phase. Predicates are repeatable, but project/org erase can rewrite many shared parts. No inverse for privacy purge; do not re-expose data by reversing to a revoked head or blindly restoring a pre-erasure backup.",
-        "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
+        "mitigation": "Read-only change to the span-owner cleanup probe: its span input selects one winner per logical key across the allowlisted committed field-value branches and the frozen draft capture instead of collapsing twice. Tenant, project and generation/attempt fences, the owner relation, the dependency probe and standalone expiry are unchanged; no DDL, insert, delete or setting change, and the 512 MiB per-query cap is unchanged. Million-field native CI measured the probe at 309 MB versus 534 MB before. Rollback is a code revert; no stored state changes.",
+        "review": "https://github.com/future-agi/future-agi/pull/4374#discussion_r4688903614",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
@@ -705,6 +690,80 @@
         ],
         "mitigation": "Store only ambiguous sampler span-ID/quarter keys in a fresh session Memory table; bounds are 50,000 rows and 64 MiB across populations. A recoverable page-budget retry can replay and compare the exact frozen rows from a query-local external table; unrelated session loss aborts. DROP TEMPORARY IF EXISTS or disconnect clears state, so no persistent rollback is needed.",
         "review": "https://github.com/future-agi/future-agi/pull/4303#discussion_r4657582442",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "deploy/standalone/bin/bootstrap.py",
+      "before_sha256": "fbf8c6a36f72adba275ad3c7f11a9bda2095ee424730dc3567a8b4badedd76b3",
+      "after_sha256": "473950a5fe018504ccdac4b96fb9623c783b64e3dec1f37628aadc3aeee43246",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:eval_per_config",
+          "clickhouse:eval_per_config_mv",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:derived_metric_inputs",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits",
+          "clickhouse:derived_metrics",
+          "clickhouse:metric_field_values",
+          "clickhouse:metric_field_values_checkpoint",
+          "clickhouse:metric_bucket_totals",
+          "clickhouse:metric_bucket_totals_checkpoint",
+          "clickhouse:metric_unit_state",
+          "clickhouse:metric_source_dependencies",
+          "clickhouse:metric_bucket_retired_parts",
+          "clickhouse:list_current_root_facts",
+          "clickhouse:list_current_members",
+          "clickhouse:list_current_user_activity",
+          "clickhouse:derived_metric_snapshot_units",
+          "clickhouse:derived_metric_snapshot_buckets",
+          "clickhouse:schema_versions"
+        ],
+        "mitigation": "Adds only the Metrics schema step; existing statements are unchanged. While METRICS_ENABLED is on it runs the packaged receipt-based runner on files 009, 011 and 028-038 (CREATE/ADD COLUMN IF NOT EXISTS and view replacement; 011's materialized view is protected by its receipt). No backfill, mutation or TTL change, never --force, skipped on hosted production. A failure or drift is logged at ERROR and startup continues with only Metrics unavailable. Rollback: older code ignores the new tables; no data is dropped.",
+        "review": "https://github.com/future-agi/future-agi/pull/4309#discussion_r4657946974",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tfc/management/commands/bootstrap_install.py",
+      "before_sha256": "1f6504e06ce50f8f2e9feab146b2d6252fc73977489e906ced4a4a2b28ecc080",
+      "after_sha256": "46ca8571505b08339bc91588b5001bcfc48ff7539ca50232eb3d97fb1c307652",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:eval_per_config",
+          "clickhouse:eval_per_config_mv",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:derived_metric_inputs",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits",
+          "clickhouse:derived_metrics",
+          "clickhouse:metric_field_values",
+          "clickhouse:metric_field_values_checkpoint",
+          "clickhouse:metric_bucket_totals",
+          "clickhouse:metric_bucket_totals_checkpoint",
+          "clickhouse:metric_unit_state",
+          "clickhouse:metric_source_dependencies",
+          "clickhouse:metric_bucket_retired_parts",
+          "clickhouse:list_current_root_facts",
+          "clickhouse:list_current_members",
+          "clickhouse:list_current_user_activity",
+          "clickhouse:derived_metric_snapshot_units",
+          "clickhouse:derived_metric_snapshot_buckets",
+          "clickhouse:schema_versions"
+        ],
+        "mitigation": "Adds only the Metrics schema step; existing statements are unchanged. While METRICS_ENABLED is on it runs the packaged receipt-based runner on files 009, 011 and 028-038 (CREATE/ADD COLUMN IF NOT EXISTS and view replacement; 011's materialized view is protected by its receipt). No backfill, mutation or TTL change, never --force, skipped on hosted production. A failure or drift is logged at ERROR and startup continues with only Metrics unavailable. Rollback: older code ignores the new tables; no data is dropped.",
+        "review": "https://github.com/future-agi/future-agi/pull/4309#discussion_r4657946974",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
