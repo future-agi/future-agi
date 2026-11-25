@@ -369,6 +369,11 @@ const CEILING_CARDS = [
   { id: "latency", part: "reply latency", label: "Reply time" },
 ];
 
+const CEILING_VALUE = {
+  passed: "Within the limit",
+  failed: "Over the limit",
+};
+
 const signedPct = (n) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)}%`;
 
 // The winner's cost and reply time against the current version's, from the
@@ -394,13 +399,16 @@ export function ceilingCards(fix) {
       ];
     }
     if (numbers?.candidate == null || !numbers?.baseline) {
+      // Only a part that passed is within the limit; one not decided yet says so.
+      const value = CEILING_VALUE[part.status];
       return [
         {
           id,
           label,
-          value:
-            part.status === "failed" ? "Over the limit" : "Within the limit",
-          note: "against the current version",
+          value: value || "Not checked yet",
+          note: value
+            ? "against the current version"
+            : "the check has not run on this candidate",
         },
       ];
     }

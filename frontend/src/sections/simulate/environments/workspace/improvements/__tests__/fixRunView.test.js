@@ -948,6 +948,20 @@ describe("ceilingCards", () => {
       },
     ]);
   });
+
+  it("reads a part that has not been decided as not checked, never within the limit", () => {
+    const pending = withCeilings([
+      { name: "reply latency", status: "pending", detail: "" },
+    ]);
+    expect(ceilingCards(pending)).toEqual([
+      {
+        id: "latency",
+        label: "Reply time",
+        value: "Not checked yet",
+        note: "the check has not run on this candidate",
+      },
+    ]);
+  });
 });
 
 describe("candidateGroups", () => {
