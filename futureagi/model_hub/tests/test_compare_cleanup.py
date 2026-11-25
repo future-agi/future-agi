@@ -154,6 +154,39 @@ def test_missing_root_is_quiet(monkeypatch, tmp_path, isolated_storage, configur
     assert not Path(storage.get_compare_local_root()).exists()
 
 
+@pytest.mark.parametrize("missing_during", ["check", "listing"])
+def test_missing_bucket_does_not_keep_expired_marker(
+    monkeypatch, isolated_storage, missing_during
+):
+    from tfc.utils.storage_client import PrivateBucketMissing
+
+    expired = make_compare(FIRST_ID)
+    expire_folders(monkeypatch, expired)
+    if missing_during == "check":
+        monkeypatch.setattr(
+            compare_storage,
+            "_client_and_bucket",
+            Mock(side_effect=PrivateBucketMissing(PRIVATE_BUCKET)),
+        )
+    else:
+        from minio.error import S3Error
+
+        isolated_storage.list_objects.side_effect = S3Error(
+            response=None,
+            code="NoSuchBucket",
+            message="Missing",
+            resource=None,
+            request_id=None,
+            host_id=None,
+            bucket_name=PRIVATE_BUCKET,
+        )
+    compare_storage.sweep_local_compare_root()
+    assert not expired.exists()
+    compare_storage.logger.warning.assert_called_once_with(
+        "compare_cleanup_bucket_missing", compare_id=FIRST_ID, bucket=PRIVATE_BUCKET
+    )
+
+
 def test_root_permission_error_is_logged(monkeypatch):
     monkeypatch.setattr(
         compare_storage.os, "listdir", Mock(side_effect=PermissionError("denied"))

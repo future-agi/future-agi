@@ -24,9 +24,11 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from django.conf import settings
+from minio.error import S3Error
 
 from tfc.utils.storage import get_compare_local_dir, get_compare_local_root
 from tfc.utils.storage_client import (
+    PrivateBucketMissing,
     PrivateBucketRefused,
     ensure_private_bucket,
     get_storage_client,
@@ -215,7 +217,18 @@ def remove_compare(compare_id) -> None:
     stays when the remote removal fails, so the local sweep retries it. A local
     folder that is already gone is not an error; one that cannot be removed
     raises, so the caller retries it."""
-    delete_compare_objects(compare_id)
+    try:
+        delete_compare_objects(compare_id)
+    except (PrivateBucketMissing, S3Error) as exc:
+        # If the bucket itself is gone there are no remote pages to retry.
+        # Keep the marker on all other errors, especially permission failures.
+        if isinstance(exc, S3Error) and exc.code != "NoSuchBucket":
+            raise
+        logger.warning(
+            "compare_cleanup_bucket_missing",
+            compare_id=str(compare_id),
+            bucket=exc.bucket_name,
+        )
     remove_local_compare_dir(compare_id)
 
 
