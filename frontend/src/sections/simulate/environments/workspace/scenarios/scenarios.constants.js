@@ -151,6 +151,7 @@ export const LIFECYCLE_COPY = {
     missing: "Not in this version.",
     loading: "Reading both versions…",
     failed: "Couldn't read the change. Try again.",
+    validate: (n) => `Validate ${n} ${n === 1 ? "scenario" : "scenarios"}`,
     citedBy: (keys) =>
       `Cited by ${keys.length === 1 ? "1 scenario" : `${keys.length} scenarios`}: ${keys.join(", ")}`,
   },

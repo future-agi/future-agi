@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { screen, within } from "src/utils/test-utils";
+import { screen, waitFor, within } from "src/utils/test-utils";
 
 const getSourceChanges = vi.fn(async () => ({
   from_version: 1,
@@ -9,15 +9,27 @@ const getSourceChanges = vi.fn(async () => ({
   changes: [
     {
       kind: "rule",
-      ref: "",
+      // The server names a rule change by its words; a scenario's own source numbers its sources.
+      ref: "rule-5f1c",
       before: "Refunds are allowed within 30 days of delivery.",
       after: "Refunds are allowed within 14 days of delivery.",
       cited_by: ["refund-inside-window", "refund-refused-outside-window"],
     },
   ],
 }));
+const validateScenarios = vi.fn(async () => ({
+  state: "validating",
+  job_id: "val-1",
+}));
 vi.mock("src/api/simulate-environments/scenarios", async () => ({
   ...(await vi.importActual("src/api/simulate-environments/scenarios")),
+  validateScenarios: (...args) => validateScenarios(...args),
+  getRunningScenarioValidation: async () => ({
+    job_id: null,
+    scenario_keys: null,
+    to_prove: 0,
+  }),
+  getScenarioValidation: async () => ({ state: "validating" }),
   getSourceChanges: (...args) => getSourceChanges(...args),
 }));
 
@@ -36,8 +48,10 @@ const lifecycle = {
   state: "draft",
   reason_text: "Not validated on these versions yet.",
   negative_controls: [],
-  sources: [{ kind: "rule", ref: "", quote: "within 14 days", resolved: true }],
-  source_changed: ["rule"],
+  sources: [
+    { kind: "rule", ref: "rule:1", quote: "within 14 days", resolved: true },
+  ],
+  source_changed: ["rule:1"],
   source_changed_version: 2,
   source_changed_version_id: "ev-2",
 };
@@ -83,6 +97,81 @@ describe("Source changed", () => {
     // The dialog says it, so the app-wide error toast stays quiet.
     const [read] = client.getQueryCache().getAll();
     expect(read.options.meta).toEqual({ errorHandled: true });
+  });
+
+  it("marks a file's quote only in that file", async () => {
+    getSourceChanges.mockResolvedValueOnce({
+      from_version: 1,
+      to_version: 2,
+      changes: ["file:a.md", "file:b.md"].map((ref) => ({
+        kind: "file",
+        ref,
+        before: "within 30 days",
+        after: "within 14 days",
+        cited_by: ["refund-inside-window"],
+      })),
+    });
+    renderWithClient(
+      <LifecycleSection
+        envId="env-1"
+        lifecycle={{
+          ...lifecycle,
+          sources: [
+            { kind: "file", ref: "file:b.md", quote: "within 14 days" },
+          ],
+        }}
+        Row={Row}
+      />,
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Compare" }));
+    expect(await screen.findAllByTestId("compare-cited")).toHaveLength(1);
+  });
+
+  it("offers to validate every scenario the changes affect, once each", async () => {
+    getSourceChanges.mockResolvedValueOnce({
+      from_version: 1,
+      to_version: 2,
+      changes: [["a", "b"], ["b"]].map((cited_by, at) => ({
+        kind: "rule",
+        ref: `rule-${at}`,
+        before: "x",
+        after: "y",
+        cited_by,
+      })),
+    });
+    renderWithClient(
+      <LifecycleSection envId="env-1" lifecycle={lifecycle} Row={Row} />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Compare" }));
+    const button = await screen.findByRole("button", {
+      name: "Validate 2 scenarios",
+    });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    await waitFor(() =>
+      expect(validateScenarios).toHaveBeenCalledWith("env-1", {
+        keys: ["a", "b"],
+      }),
+    );
+  });
+
+  it("offers no Validate to someone who can't", async () => {
+    renderWithClient(
+      <LifecycleSection
+        envId="env-1"
+        lifecycle={lifecycle}
+        Row={Row}
+        locked
+      />,
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Compare" }));
+    expect(await screen.findByText(/Cited by 2 scenarios/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Validate/ })).toBeNull();
   });
 
   it("offers no Compare when nothing it cites changed", () => {

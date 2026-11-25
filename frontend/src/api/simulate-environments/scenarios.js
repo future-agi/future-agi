@@ -119,6 +119,8 @@ const sourceChangesPath = (envId, versionId) =>
 
 // The archive note the server keeps is at most 255 characters.
 export const ARCHIVE_REASON_MAX = 255;
+// The server validates at most this many named scenarios at once.
+export const VALIDATE_KEYS_MAX = 50;
 
 // Prove the default pair's scenarios: those with no current proof, only `keys`, or all with `reprove_all`.
 // 200 answers `ready` (nothing to prove) or `unavailable`; 202 a running job to poll.

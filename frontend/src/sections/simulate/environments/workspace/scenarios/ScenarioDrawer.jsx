@@ -103,6 +103,7 @@ export default function ScenarioDrawer({
               envId={envId}
               row={row}
               testConditions={testConditions}
+              locked={locked}
             />
           </Box>
         </Stack>
@@ -123,7 +124,7 @@ ScenarioDrawer.propTypes = {
   onLifecycleChange: PropTypes.func,
 };
 
-function ScenarioSheet({ envId, row, testConditions = false }) {
+function ScenarioSheet({ envId, row, testConditions = false, locked = false }) {
   const persona = row.persona?.name ? row.persona : null;
   const goals = normaliseSubTasks(row.subTasks);
   const problem = row.doorProblem;
@@ -285,6 +286,7 @@ function ScenarioSheet({ envId, row, testConditions = false }) {
         lifecycle={row.lifecycle}
         Row={Row}
         sectionSx={SECTION_HEAD}
+        locked={locked}
       />
       {rows.length > 0 && (
         <Box>
@@ -312,6 +314,7 @@ ScenarioSheet.propTypes = {
   envId: PropTypes.string,
   row: SCENARIO_SHAPE,
   testConditions: PropTypes.bool,
+  locked: PropTypes.bool,
 };
 
 function Row({ label, children }) {

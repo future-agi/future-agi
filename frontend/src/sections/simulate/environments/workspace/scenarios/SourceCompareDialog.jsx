@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import {
   Box,
+  DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
@@ -9,6 +10,8 @@ import {
 
 import { ClosableDialog } from "src/components/custom-dialog";
 import { useSourceChanges } from "src/api/simulate-environments/scenariosHooks";
+import { VALIDATE_KEYS_MAX } from "src/api/simulate-environments/scenarios";
+import ValidateScenariosButton from "./ValidateScenariosButton";
 import { LIFECYCLE_COPY } from "./scenarios.constants";
 
 const COPY = LIFECYCLE_COPY.sourceChanged;
@@ -69,14 +72,26 @@ export default function SourceCompareDialog({
   envId,
   versionId,
   sources = [],
+  locked = false,
 }) {
   const { data, isLoading, isError } = useSourceChanges(envId, versionId, {
     enabled: open,
   });
-  const quotesFor = (ref) =>
+  // A rule change is named by its words and a scenario's own source by its number, so a rule's quote is looked for in
+  // the text itself; a file keeps its path on both sides.
+  const quotesFor = ({ kind, ref }) =>
     sources
-      .filter((one) => one.ref === ref && one.quote)
+      .filter(
+        (one) =>
+          one.quote &&
+          one.kind === kind &&
+          (kind === "rule" || one.ref === ref),
+      )
       .map((one) => one.quote);
+  const changes = data?.changes ?? [];
+  const affected = [...new Set(changes.flatMap((one) => one.cited_by))];
+  const canValidate =
+    !locked && affected.length > 0 && affected.length <= VALIDATE_KEYS_MAX;
   return (
     <ClosableDialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
@@ -90,7 +105,7 @@ export default function SourceCompareDialog({
           <Typography sx={{ typography: "s1" }}>{COPY.failed}</Typography>
         )}
         <Stack spacing={3}>
-          {(data?.changes ?? []).map((change) => (
+          {changes.map((change) => (
             <Stack key={`${change.kind}-${change.ref}`} spacing={1}>
               <Typography sx={{ typography: "m3" }}>
                 {change.kind === "rule"
@@ -121,7 +136,7 @@ export default function SourceCompareDialog({
                     >
                       {label}
                     </Typography>
-                    <Cited text={text} quotes={quotesFor(change.ref)} />
+                    <Cited text={text} quotes={quotesFor(change)} />
                   </Box>
                 ))}
               </Stack>
@@ -132,6 +147,15 @@ export default function SourceCompareDialog({
           ))}
         </Stack>
       </DialogContent>
+      {canValidate && (
+        <DialogActions>
+          <ValidateScenariosButton
+            envId={envId}
+            keys={affected}
+            label={COPY.validate(affected.length)}
+          />
+        </DialogActions>
+      )}
     </ClosableDialog>
   );
 }
@@ -142,4 +166,6 @@ SourceCompareDialog.propTypes = {
   envId: PropTypes.string,
   versionId: PropTypes.string,
   sources: PropTypes.arrayOf(PropTypes.object),
+  // Someone who can't edit reads the change without a next step.
+  locked: PropTypes.bool,
 };

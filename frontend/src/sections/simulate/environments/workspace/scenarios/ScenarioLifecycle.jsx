@@ -38,7 +38,7 @@ import SourceCompareDialog from "./SourceCompareDialog";
 import { NotMeasuredChip } from "./ScenarioTableCells";
 
 // A rule or file the scenario cites changed: say where, and open the before and after.
-function SourceChangedLine({ envId, lifecycle }) {
+function SourceChangedLine({ envId, lifecycle, locked }) {
   const [open, setOpen] = useState(false);
   return (
     <Stack direction="row" alignItems="center" spacing={1}>
@@ -62,6 +62,7 @@ function SourceChangedLine({ envId, lifecycle }) {
         envId={envId}
         versionId={lifecycle.source_changed_version_id}
         sources={lifecycle.sources ?? []}
+        locked={locked}
       />
     </Stack>
   );
@@ -69,6 +70,7 @@ function SourceChangedLine({ envId, lifecycle }) {
 SourceChangedLine.propTypes = {
   envId: PropTypes.string,
   lifecycle: PropTypes.object,
+  locked: PropTypes.bool,
 };
 
 const RESULT_ROLES = {
@@ -119,7 +121,13 @@ LifecycleHeaderLine.propTypes = {
 };
 
 // The Status sheet: why the scenario is in its state, whether it is proved, and each wrong-way example.
-export function LifecycleSection({ envId, lifecycle, Row, sectionSx }) {
+export function LifecycleSection({
+  envId,
+  lifecycle,
+  Row,
+  sectionSx,
+  locked = false,
+}) {
   if (!lifecycle) return null;
   const examples = wrongWayRows(lifecycle);
   const proof = lifecycle.proof;
@@ -173,7 +181,11 @@ export function LifecycleSection({ envId, lifecycle, Row, sectionSx }) {
         )}
         {lifecycle.source_changed?.length > 0 && (
           <Row label={LIFECYCLE_COPY.sourceChanged.label}>
-            <SourceChangedLine envId={envId} lifecycle={lifecycle} />
+            <SourceChangedLine
+              envId={envId}
+              lifecycle={lifecycle}
+              locked={locked}
+            />
           </Row>
         )}
         {proof && (
@@ -241,4 +253,5 @@ LifecycleSection.propTypes = {
   lifecycle: PropTypes.object,
   Row: PropTypes.elementType.isRequired,
   sectionSx: PropTypes.object,
+  locked: PropTypes.bool,
 };
