@@ -2,6 +2,9 @@
 
 Latency objectives are measurements, not per-statement abort thresholds. SQL
 pagination, memory safety, spilling and concurrency remain independent controls.
+The one exception is explicit: a caller that owns a real deadline for a single
+statement may ask for it as that statement's ``max_execution_time``
+(``application_read_context(execution_cap_ms=...)``); nothing else changes.
 The context marker prevents a pooled native client from leaking this policy into
 catalog maintenance or a subsequent bounded diagnostic read.
 """
@@ -10,6 +13,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 _application_read = ContextVar("application_analytics_read", default=False)
+# A statement whose caller explicitly asked for a server execution cap
+# (``AnalyticsQueryService.execute_ch_query(server_execution_cap_ms=...)``).
+_application_read_execution_cap_ms = ContextVar(
+    "application_read_execution_cap_ms", default=None
+)
 
 # Explicit zeros also override inherited user-profile defaults. A locked server
 # profile cannot be overridden and must be reported separately at qualification.
@@ -68,6 +76,11 @@ def application_read_settings(settings: dict | None = None) -> dict:
         default_threads if threads <= 0 else min(threads, max_threads)
     )
     result.update(dict.fromkeys(UNLIMITED_STATEMENT_SETTINGS, 0))
+    cap_ms = _application_read_execution_cap_ms.get()
+    if cap_ms is not None:
+        # The one opt-in exception to the no-abort policy, scoped to a single
+        # statement by ``application_read_context``.
+        result["max_execution_time"] = cap_ms / 1000.0
     result.update(
         readonly=2,
         read_overflow_mode="throw",
@@ -98,12 +111,25 @@ def supports_bounded_speculative_reads(executor) -> bool:
 
 
 @contextmanager
-def application_read_context(enabled: bool = True):
-    """Scope application mode, including a bounded diagnostic opt-out."""
+def application_read_context(
+    enabled: bool = True, *, execution_cap_ms: int | None = None
+):
+    """Scope application mode, including a bounded diagnostic opt-out.
+
+    ``execution_cap_ms`` lets the statements in this scope carry that server
+    ``max_execution_time`` instead of none; every other abort cap stays off.
+    It applies only in application mode and is cleared by any inner scope.
+    """
     if not isinstance(enabled, bool):
         raise TypeError("Application read mode must be bool")
+    if execution_cap_ms is not None and (
+        type(execution_cap_ms) is not int or execution_cap_ms <= 0 or not enabled
+    ):
+        raise ValueError("Application read execution cap must be a positive int")
     token = _application_read.set(enabled)
+    cap_token = _application_read_execution_cap_ms.set(execution_cap_ms)
     try:
         yield
     finally:
+        _application_read_execution_cap_ms.reset(cap_token)
         _application_read.reset(token)

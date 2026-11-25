@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -43,8 +44,18 @@ func New(name string, cfg map[string]interface{}) *ExpressionGuardrail {
 	return g
 }
 
-func (g *ExpressionGuardrail) Name() string           { return g.name }
+func (g *ExpressionGuardrail) Name() string            { return g.name }
 func (g *ExpressionGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// RealtimeReady rejects the legacy invalid-expression sentinel before a speech
+// provider is dialed. HTTP callers retain their existing Check behavior.
+func (g *ExpressionGuardrail) RealtimeReady() error {
+	if g.parsed == nil {
+		return fmt.Errorf("expression is missing or invalid")
+	}
+	_, err := parseMode(g.expr, true)
+	return err
+}
 
 func (g *ExpressionGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if g.parsed == nil || input == nil {
@@ -228,7 +239,7 @@ type token struct {
 	val  string
 }
 
-func tokenize(input string) []token {
+func tokenizeMode(input string, strict bool) ([]token, error) {
 	var tokens []token
 	i := 0
 	for i < len(input) {
@@ -246,10 +257,13 @@ func tokenize(input string) []token {
 			i++
 			start := i
 			for i < len(input) && input[i] != quote {
-				if input[i] == '\\' {
+				if input[i] == '\\' && i+1 < len(input) {
 					i++
 				}
 				i++
+			}
+			if strict && i == len(input) {
+				return nil, fmt.Errorf("unterminated expression string")
 			}
 			tokens = append(tokens, token{tokString, input[start:i]})
 			if i < len(input) {
@@ -355,11 +369,14 @@ func tokenize(input string) []token {
 			continue
 		}
 
-		// Unknown char — skip.
+		// Keep the legacy HTTP parser permissive; realtime cannot discard input.
+		if strict {
+			return nil, fmt.Errorf("invalid expression character")
+		}
 		i++
 	}
 	tokens = append(tokens, token{tokEOF, ""})
-	return tokens
+	return tokens, nil
 }
 
 func isIdentStart(ch byte) bool {
@@ -375,12 +392,29 @@ func isIdentPart(ch byte) bool {
 type parser struct {
 	tokens []token
 	pos    int
+	strict bool
+	err    error
 }
 
 func parse(expr string) (node, error) {
-	tokens := tokenize(expr)
-	p := &parser{tokens: tokens}
+	return parseMode(expr, false)
+}
+
+func parseMode(expr string, strict bool) (node, error) {
+	tokens, err := tokenizeMode(expr, strict)
+	if err != nil {
+		return nil, err
+	}
+	p := &parser{tokens: tokens, strict: strict}
 	n := p.parseOr()
+	if p.err != nil {
+		return nil, p.err
+	}
+	if strict {
+		if err := validateRealtimeNode(n); err != nil {
+			return nil, err
+		}
+	}
 	if p.current().kind != tokEOF {
 		return nil, fmt.Errorf("unexpected token: %s", p.current().val)
 	}
@@ -468,6 +502,8 @@ func (p *parser) parsePrimary() node {
 		n := p.parseOr()
 		if p.current().kind == tokRParen {
 			p.advance()
+		} else if p.strict {
+			p.err = fmt.Errorf("missing closing parenthesis")
 		}
 		return n
 	}
@@ -486,6 +522,12 @@ func (p *parser) parsePrimary() node {
 	// Number literal.
 	if cur.kind == tokNumber {
 		p.advance()
+		if p.strict {
+			value, err := strconv.ParseFloat(cur.val, 64)
+			if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+				p.err = fmt.Errorf("invalid expression number")
+			}
+		}
 		if strings.Contains(cur.val, ".") {
 			f, _ := strconv.ParseFloat(cur.val, 64)
 			return &literalNode{value: f}
@@ -508,6 +550,8 @@ func (p *parser) parsePrimary() node {
 		arg := p.parseOr()
 		if p.current().kind == tokRParen {
 			p.advance()
+		} else if p.strict {
+			p.err = fmt.Errorf("missing closing parenthesis")
 		}
 		return &callNode{fn: fn, arg: arg}
 	}
@@ -517,7 +561,10 @@ func (p *parser) parsePrimary() node {
 		return p.parseFieldPath()
 	}
 
-	// Fallback.
+	// Fallback is retained for legacy HTTP only.
+	if p.strict {
+		p.err = fmt.Errorf("missing expression operand")
+	}
 	p.advance()
 	return &literalNode{value: nil}
 }
@@ -532,16 +579,27 @@ func (p *parser) parseFieldPath() node {
 			if p.current().kind == tokIdent {
 				path.WriteByte('.')
 				path.WriteString(p.advance().val)
+			} else if p.strict {
+				p.err = fmt.Errorf("missing field name")
 			}
 		} else if p.current().kind == tokLBrack {
 			p.advance()
 			if p.current().kind == tokNumber {
+				if p.strict {
+					if _, err := strconv.ParseUint(p.current().val, 10, 32); err != nil {
+						p.err = fmt.Errorf("invalid field index")
+					}
+				}
 				path.WriteByte('[')
 				path.WriteString(p.advance().val)
 				path.WriteByte(']')
+			} else if p.strict {
+				p.err = fmt.Errorf("missing field index")
 			}
 			if p.current().kind == tokRBrack {
 				p.advance()
+			} else if p.strict {
+				p.err = fmt.Errorf("missing closing bracket")
 			}
 		} else {
 			break
@@ -558,10 +616,14 @@ func (p *parser) parseList() node {
 		items = append(items, p.parseOr())
 		if p.current().kind == tokComma {
 			p.advance()
+		} else if p.strict && p.current().kind != tokRBrack {
+			p.err = fmt.Errorf("missing list separator")
 		}
 	}
 	if p.current().kind == tokRBrack {
 		p.advance()
+	} else if p.strict {
+		p.err = fmt.Errorf("missing closing bracket")
 	}
 	return &listNode{items: items}
 }
@@ -571,6 +633,59 @@ func (p *parser) peek() token {
 		return token{tokEOF, ""}
 	}
 	return p.tokens[p.pos+1]
+}
+
+// validateRealtimeNode rejects operations whose legacy evaluator silently falls
+// back to nil/false instead of reporting an unavailable check.
+func validateRealtimeNode(n node) error {
+	switch v := n.(type) {
+	case *literalNode:
+		if v.value == nil {
+			return fmt.Errorf("invalid expression literal")
+		}
+	case *fieldNode:
+		if v.path != "request" && v.path != "response" && v.path != "metadata" && !strings.HasPrefix(v.path, "request.") && !strings.HasPrefix(v.path, "response.") && !strings.HasPrefix(v.path, "metadata.") {
+			return fmt.Errorf("unsupported expression root")
+		}
+	case *unaryNode:
+		return validateRealtimeNode(v.operand)
+	case *listNode:
+		for _, item := range v.items {
+			if err := validateRealtimeNode(item); err != nil {
+				return err
+			}
+		}
+	case *callNode:
+		switch v.fn {
+		case "len", "lower", "upper", "has":
+		default:
+			return fmt.Errorf("unsupported expression function")
+		}
+		return validateRealtimeNode(v.arg)
+	case *binaryNode:
+		if err := validateRealtimeNode(v.left); err != nil {
+			return err
+		}
+		if err := validateRealtimeNode(v.right); err != nil {
+			return err
+		}
+		if v.op == "matches" {
+			literal, ok := v.right.(*literalNode)
+			if !ok {
+				return fmt.Errorf("realtime matches requires a constant pattern")
+			}
+			pattern, ok := literal.value.(string)
+			if !ok {
+				return fmt.Errorf("realtime matches requires a string pattern")
+			}
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("invalid expression pattern")
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported expression node")
+	}
+	return nil
 }
 
 // --- Evaluator ---

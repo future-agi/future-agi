@@ -17,12 +17,12 @@ const VersionStyle = ({ text, index }) => {
       fontWeight={"fontWeightMedium"}
       sx={{
         backgroundColor: "action.hover",
-        borderRadius: "2px",
+        borderRadius: "4px",
         color: "text.primary",
         paddingX: (theme) => theme.spacing(0.75),
         paddingTop: (theme) => theme.spacing(0.5),
         paddingBottom: (theme) => theme.spacing(0.375),
-        textTransform: "uppercase",
+        textTransform: "none",
       }}
     >
       {tagForeground && (

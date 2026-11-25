@@ -562,7 +562,9 @@ def test_graph_compilers_retain_every_leaf_and_bind(surface, case, days):
         )
         # Independent witnesses are intersected at user grain. Requiring the
         # old whole-list row conjunction here would reintroduce same-span AND.
-        assert all(_normalized(predicate) in _normalized(sql) for predicate in row_predicates)
+        assert all(
+            _normalized(predicate) in _normalized(sql) for predicate in row_predicates
+        )
         assert _normalized("HAVING " + membership) in _normalized(sql)
         assert params["snapshot_start_date"] == start
         assert params["snapshot_end_date"] == END
@@ -716,9 +718,9 @@ def test_session_list_graph_null_parity_for_one_trace_with_present_and_missing_c
         anchor_by_session_start=True,
     )
     assert re.search(r"countIf\(latest_attr_exists_0[^\n]*\) = 0", list_sql)
-    assert re.search(
-        r"countIf\(latest_attr_exists_0[^\n]*\) = 0", graph_sql
-    ), "Graph accepts some missing child; list requires no child with key"
+    assert re.search(r"countIf\(latest_attr_exists_0[^\n]*\) = 0", graph_sql), (
+        "Graph accepts some missing child; list requires no child with key"
+    )
 
 
 @pytest.mark.parametrize("days", DAYS)

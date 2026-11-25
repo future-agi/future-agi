@@ -32,6 +32,10 @@ class FieldConfig:
     settings: dict | None = None
     choices_map: dict | None = None
     eval_template_id: str | None = None
+    # Eval rows can target a span or a trace.  The Observe count tile uses this
+    # as presentation metadata only; unknown/session targets intentionally
+    # remain null so the UI does not invent a glyph.
+    target_type: str | None = None
     annotators: dict | None = None
     # When set, this column renders a sub-field (e.g. "reason") of a parent
     # eval column identified by parent_eval_id. Lets the frontend pull the
@@ -251,6 +255,86 @@ def ensure_project_session_property_identities(config: list[dict]) -> list[dict]
     )
 
 
+def update_column_config_based_on_metric_fields(
+    column_config: list[dict], metric_fields: list[dict], *, context: str
+) -> list[dict]:
+    """Merge scoped B08 catalog descriptors without reading any metric values.
+
+    Callers supply the complete descriptors for this authorized list/context
+    from the property catalog, not one partial catalog page. Cell hydration is
+    a separate, deferred page request. Saved visibility/order survive active-version
+    edits; stale metric metadata does not.
+    Existing non-metric columns and the caller's objects are left unchanged.
+    """
+    levels = {
+        "sessions": {"conversation"},
+        "spans": {"span"},
+        "traces": set(),  # M12 remains closed.
+        "users": {"user"},
+    }
+    if context not in levels:
+        raise ValueError("Unknown metric column list context.")
+    from tracer.services.derived_metrics.predicates import decode_metric_field_id
+
+    descriptors = {}
+    for item in metric_fields:
+        if (
+            item.get("property_kind") != "metric_field"
+            or item.get("source") != context
+            or item.get("level") not in levels[context]
+        ):
+            continue
+        identity = item["property_id"]
+        decode_metric_field_id(identity)
+        if context == "users" and item.get("projection") not in {
+            "per_user",
+            "user_metric",
+        }:
+            continue
+        value_type = item["type"]
+        if item.get("projection") == "per_user" and value_type != "number":
+            raise ValueError("Users projections must be numeric.")
+        present = asdict(
+            FieldConfig(
+                id=identity,
+                name=item["display_name"],
+                is_visible=False,
+                group_by="Metrics",
+                output_type=value_type,
+            )
+        )
+        present.update(
+            property_id=identity,
+            property_kind="metric_field",
+            property_source=context,
+            value_type=value_type,
+            value_labels=dict(item.get("value_labels", {}))
+            if value_type == "boolean"
+            else {},
+            unit=item["unit"],
+            format=item["value_format"],
+            projection=item["projection"],
+            level=item["level"],
+            source_level=item["source_level"],
+            version=item["version"],
+            version_id=item["version_id"],
+            filterable=item["filterable"],
+            hydration="deferred",
+        )
+        descriptors[identity] = present
+    merged = []
+    for saved in column_config or ():
+        identity = saved.get("property_id") or saved.get("id", "")
+        if identity.startswith("metric_field:"):
+            current = descriptors.pop(identity, None)
+            if current is not None:
+                current["is_visible"] = saved.get("is_visible", False)
+                merged.append(current)
+        else:
+            merged.append(dict(saved))
+    return [*merged, *descriptors.values()]
+
+
 def get_default_eval_task_config(is_project_name_visible=True):
     config = [
         FieldConfig(id="name", name="Task Name", is_visible=True, group_by=None),
@@ -334,6 +418,9 @@ def update_column_config_based_on_eval_config(
     skip_choices: bool | None = False,
     is_simulator: bool = False,
     property_source: str | None = None,
+    target_types: dict[str, str | None] | None = None,
+    observed_choice_labels: dict[str, list[str]] | None = None,
+    count_mode: bool = False,
 ):
     if not column_config:
         column_config = []
@@ -341,15 +428,40 @@ def update_column_config_based_on_eval_config(
     resolved_property_source = property_source or (
         "simulation" if is_simulator else "traces"
     )
+    target_types = target_types or {}
+    observed_choice_labels = observed_choice_labels or {}
 
     for item in custom_eval_configs:
         eval_template_config = item.eval_template.config or {}
         output_type = eval_template_config.get("output", "score")
         choices = item.eval_template.choices if item.eval_template.choices else None
-        choices_map = item.eval_template.config.get("choices_map", {})
+        choices_map = dict(item.eval_template.config.get("choices_map", {}) or {})
+        config_id = str(item.id)
+        target_type = target_types.get(config_id)
+        if target_type not in {"span", "trace"}:
+            target_type = None
+        # Count-mode tiles have one column per config rather than one per
+        # choice. Preserve declared labels, and give observed undeclared labels
+        # a neutral tone so an old result never disappears or inherits a
+        # misleading semantic color.
+        if skip_choices:
+            for label in observed_choice_labels.get(config_id, []):
+                if label not in (None, ""):
+                    choices_map.setdefault(str(label), "neutral")
+            if choices and output_type == EvalOutputType.CHOICES.value:
+                choices = list(
+                    dict.fromkeys(
+                        [*choices, *observed_choice_labels.get(config_id, [])]
+                    )
+                )
 
-        # For simulator projects, don't add "Avg." prefix
-        name_prefix = "" if is_simulator else "Avg. "
+        # For simulator projects, don't add "Avg." prefix. Observe count tiles
+        # show Pass/Fail and choice evals as counts, not averages.
+        is_count_column = count_mode and output_type in (
+            EvalOutputType.PASS_FAIL.value,
+            EvalOutputType.CHOICES.value,
+        )
+        name_prefix = "" if is_simulator or is_count_column else "Avg. "
 
         eval_template_id = str(item.eval_template.id)
 
@@ -366,6 +478,7 @@ def update_column_config_based_on_eval_config(
                     ),
                     choices_map=choices_map,
                     eval_template_id=eval_template_id,
+                    target_type=target_type,
                 )
                 present_config = asdict(present_config)
                 present_config.update(
@@ -390,6 +503,7 @@ def update_column_config_based_on_eval_config(
                 choices_map=choices_map,
                 choices=choices,
                 eval_template_id=eval_template_id,
+                target_type=target_type,
             )
             present_config = asdict(present_config)
             present_config.update(

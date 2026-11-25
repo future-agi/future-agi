@@ -8,6 +8,7 @@ Pure data-access layer: no HTTP, no business logic. Service layer composes.
 import json
 import re
 import statistics
+import uuid
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
@@ -15,6 +16,7 @@ import numpy as np
 import structlog
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import (
     Avg,
     Case,
@@ -31,8 +33,6 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
-from scipy.stats import ks_2samp
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 
 from tracer.models.observation_span import EvalLogger, EvalTargetType
 from tracer.models.trace_error_analysis import (
@@ -43,6 +43,7 @@ from tracer.models.trace_error_analysis import (
     TraceErrorDetail,
     TraceErrorGroup,
 )
+from tracer.models.trace_grouping import TraceGroupingIssueState
 from tracer.models.trace_investigation import (
     TraceInvestigationAttributionEvidence,
     TraceInvestigationFinding,
@@ -164,7 +165,9 @@ def _base_qs(project_ids: list[str]) -> QuerySet:
     # Exclude legacy pre-revamp rows (old agent-compass) that predate
     # feed fields — they have no issue_group and render as fallback K-IDs.
     return (
-        TraceErrorGroup.objects.filter(project_id__in=project_ids, deleted=False)
+        TraceErrorGroup.objects.filter(
+            project_id__in=project_ids, deleted=False, target_type="error_feed"
+        )
         .exclude(issue_group__isnull=True)
         .exclude(issue_state__dirty=True)
         .exclude(issue_state__retired=True)
@@ -216,6 +219,7 @@ def _is_omega_group(cluster_id: str, project_id: str) -> bool:
         cluster_id=cluster_id,
         project_id=project_id,
         deleted=False,
+        target_type="error_feed",
         issue_state__dirty=False,
         issue_state__retired=False,
     ).exists()
@@ -649,8 +653,8 @@ def get_cluster_detail(
     cluster_id is hashed from project+content).
     """
     qs = (
-        TraceErrorGroup.objects.filter(deleted=False)
-        .select_related("project", "assignee")
+        TraceErrorGroup.objects.filter(deleted=False, target_type="error_feed")
+        .select_related("project", "assignee", "issue_state")
         .exclude(issue_state__dirty=True)
         .exclude(issue_state__retired=True)
     )
@@ -659,6 +663,11 @@ def get_cluster_detail(
     cluster = qs.filter(cluster_id=cluster_id).first()
     if not cluster:
         return None
+    # Only grouping writes issue state; eval and older scan issues have none.
+    try:
+        stored = cluster.issue_state.mechanism
+    except TraceGroupingIssueState.DoesNotExist:
+        stored = {}
 
     cluster_pk = str(cluster.pk)
     trends_map = _fetch_trends_batch([cluster_pk])
@@ -677,7 +686,9 @@ def get_cluster_detail(
 
     success_trace: TracePreview | None = None
     if cluster.success_trace_id:
-        success_trace = _ch_trace_preview(str(cluster.success_trace_id))
+        success_trace = _ch_trace_preview(
+            str(cluster.success_trace_id), str(cluster.project_id)
+        )
     elif cluster.source == ClusterSource.EVAL and cluster.eval_config_id:
         # Eval clusters never get the scanner's KNN success match. A genuine
         # PASSING result for the same eval is the honest "working" reference
@@ -707,7 +718,9 @@ def get_cluster_detail(
                     [str(passing_session)], str(cluster.project_id)
                 ).get(str(passing_session))
                 if rep_tid:
-                    success_trace = _ch_trace_preview(str(rep_tid))
+                    success_trace = _ch_trace_preview(
+                        str(rep_tid), str(cluster.project_id)
+                    )
         else:
             member_ids = _trace_ids_for_cluster(
                 cluster.cluster_id, str(cluster.project_id)
@@ -725,13 +738,17 @@ def get_cluster_detail(
                 .first()
             )
             if passing_trace_id:
-                success_trace = _ch_trace_preview(str(passing_trace_id))
+                success_trace = _ch_trace_preview(
+                    str(passing_trace_id), str(cluster.project_id)
+                )
 
     representative_trace: TracePreview | None = None
     if row.trace_id:
         # Session clusters' latest_trace_id is an effective trace (the session's
         # rep) with no junction row — hydrate it from the CH root span.
-        representative_trace = _ch_trace_preview(str(row.trace_id))
+        representative_trace = _ch_trace_preview(
+            str(row.trace_id), str(cluster.project_id)
+        )
 
     rca = RcaSummary(
         synthesis=cluster.rca_synthesis,
@@ -746,6 +763,8 @@ def get_cluster_detail(
     return FeedDetailCore(
         row=row,
         description=cluster.combined_description,
+        fix_hypothesis=stored.get("fix_hypothesis"),
+        falsifier=stored.get("falsifier"),
         success_trace=success_trace,
         representative_trace=representative_trace,
         rca=rca,
@@ -758,27 +777,39 @@ def update_cluster(
     payload: FeedUpdatePayload,
 ) -> FeedDetailCore | None:
     """Update status/severity/assignee on a cluster, return fresh detail."""
-    qs = TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
+    qs = TraceErrorGroup.objects.filter(
+        cluster_id=cluster_id, deleted=False, target_type="error_feed"
+    )
     if project_ids is not None:
         qs = qs.filter(project_id__in=project_ids)
     cluster = qs.first()
     if not cluster:
         return None
 
-    if is_grouping_issue(cluster.pk):
-        try:
-            edit_grouping_issue(
-                cluster.pk,
-                lambda current: _set_cluster_update_fields(
-                    current, payload, changed_only=True
-                ),
-            )
-        except GroupingHumanEditUnavailable:
-            return None
-    else:
-        update_fields = _set_cluster_update_fields(cluster, payload)
-        if update_fields:
-            cluster.save(update_fields=[*update_fields, "updated_at"])
+    from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+
+    with transaction.atomic():
+        alert_before = issue_snapshot(cluster)
+        if is_grouping_issue(cluster.pk):
+            try:
+                edit_grouping_issue(
+                    cluster.pk,
+                    lambda current: _set_cluster_update_fields(
+                        current, payload, changed_only=True
+                    ),
+                )
+            except GroupingHumanEditUnavailable:
+                return None
+            cluster.refresh_from_db()
+        else:
+            update_fields = _set_cluster_update_fields(cluster, payload)
+            if update_fields:
+                cluster.save(update_fields=[*update_fields, "updated_at"])
+        record_issue_event(
+            cluster=cluster,
+            before=alert_before,
+            source_key=f"feed-patch:{uuid.uuid4()}",
+        )
 
     return get_cluster_detail(cluster_id, project_ids)
 
@@ -869,16 +900,19 @@ def _trace_output_str(trace) -> str | None:
     return _safe_str(trace.output)
 
 
-def _ch_trace_preview(trace_id: str) -> TracePreview | None:
+def _ch_trace_preview(trace_id: str, project_id: str) -> TracePreview | None:
     """``TracePreview`` for a trace hydrated from its CH root span — the sole
     source post-cutover (no PG ``Trace`` row). Input/output prefer the typed
     ``input.value``/``output.value`` attrs, falling back to the span's raw
     input/output payload, matching the pass-reel precedence so the same trace
     renders identically across surfaces. ``None`` if the trace has no CH root.
+
+    ``project_id`` is the cluster's project: a trace id can exist in several
+    projects and organizations, and the preview must show this project's copy.
     """
     if not trace_id:
         return None
-    root = _get_root_span(str(trace_id))
+    root = _get_root_span(str(trace_id), project_id)
     if root is None:
         return None
     attrs = root.attrs_string or {}
@@ -1145,6 +1179,8 @@ def _tfidf_distinctive_terms(
     up to ``top_k`` ``(term, score)`` pairs sorted by descending score.
     Empty list on degenerate inputs (corpus <2 docs, empty vocab, etc).
     """
+    from sklearn.feature_extraction.text import TfidfVectorizer  # lazy
+
     if not target_doc or len(corpus) < 2:
         return []
     try:
@@ -1312,6 +1348,8 @@ def _log_odds_distinctive(
         delta = log((y_f+a)/(n_f+a0-y_f-a)) - log((y_b+a)/(n_b+a0-y_b-a))
         z     = delta / sqrt(1/(y_f+a) + 1/(y_b+a))
     """
+    from sklearn.feature_extraction.text import CountVectorizer  # lazy
+
     if not fail_docs or not base_docs:
         return []
     try:
@@ -1553,6 +1591,8 @@ def _insight_distribution_shift(
 
     ``project_id`` (single tenant — both corpora belong to the cluster's
     project) pins the totals reads so they prune by primary-key prefix."""
+    from scipy.stats import ks_2samp  # lazy
+
     if not baseline_ids:
         return None
     fail_tot = _get_trace_totals_batch(trace_ids, project_id)
@@ -1773,14 +1813,15 @@ def _fetch_pattern_summary(
     return PatternSummary(insights=insights, key_moments=key_moments)
 
 
-def _get_root_span(trace_id: str) -> CHSpan | None:
+def _get_root_span(trace_id: str, project_id: str | None = None) -> CHSpan | None:
     """Root span = no parent (NULL or empty string).
 
     Single-trace convenience — delegates to roots_by_trace_ids which
     queries only root spans (parent_span_id = '') instead of listing
     every span. Returns the latest root per the batch helper's ordering.
+    ``project_id`` pins the read to one project's copy of the trace.
     """
-    roots = _get_root_spans_batch([str(trace_id)])
+    roots = _get_root_spans_batch([str(trace_id)], project_id)
     return roots.get(str(trace_id))
 
 
@@ -1834,6 +1875,31 @@ def _get_trace_totals_batch(
         )
 
 
+_SPAN_EVAL_SCORE_Q = Q(target_type=EvalTargetType.SPAN)
+# Shown for a metric with nothing to measure, so an empty window is not read as 0.
+_NO_DATA = "—"
+
+
+def _cluster_eval_score_q(cluster: TraceErrorGroup | None) -> Q:
+    """Which EvalLogger rows score a cluster's member traces.
+
+    Scanner and Omega issues average span-level evals. An eval issue is scored
+    by its own eval at its own unit; a span-only read gives a trace-target eval
+    issue no score at all. Session issues keep the span read and fall back to
+    ``_avg_session_eval_score``.
+    """
+    if (
+        cluster is None
+        or cluster.source != ClusterSource.EVAL
+        or cluster.eval_target_type not in (EvalTargetType.TRACE, EvalTargetType.SPAN)
+    ):
+        return _SPAN_EVAL_SCORE_Q
+    score_q = Q(target_type=cluster.eval_target_type)
+    if cluster.eval_config_id:
+        score_q &= Q(custom_eval_config_id=cluster.eval_config_id)
+    return score_q
+
+
 def _get_trace_score(trace_id: str) -> float | None:
     """Average EvalLogger score across span-level evals on the trace.
 
@@ -1849,12 +1915,14 @@ def _get_trace_score(trace_id: str) -> float | None:
     )["avg"]
 
 
-def _get_trace_scores_batch(trace_ids: list[str]) -> dict:
-    """Return {trace_id_str: avg eval score} — span-level evals; bool counted as 0/1."""
+def _get_trace_scores_batch(
+    trace_ids: list[str], score_q: Q = _SPAN_EVAL_SCORE_Q
+) -> dict:
+    """Return {trace_id_str: avg eval score}; bool counted as 0/1."""
     if not trace_ids:
         return {}
     rows = (
-        EvalLogger.objects.filter(trace_id__in=trace_ids, target_type="span")
+        EvalLogger.objects.filter(score_q, trace_id__in=trace_ids)
         .values("trace_id")
         .annotate(avg=Avg(EVAL_SCORE_EXPR))
         .filter(avg__isnull=False)
@@ -1894,27 +1962,48 @@ def _cluster_findings_by_trace(
     )
     findings = list(
         TraceInvestigationFinding.objects.filter(
-            id__in=finding_ids, report__project_id=project_id,
-            report__trace_id__in=trace_ids, report__is_current=True,
-            report__deleted=False, deleted=False,
-        ).select_related("report").prefetch_related("attributions").order_by("ordinal")
+            id__in=finding_ids,
+            report__project_id=project_id,
+            report__trace_id__in=trace_ids,
+            report__is_current=True,
+            report__deleted=False,
+            deleted=False,
+        )
+        .select_related("report")
+        .prefetch_related("attributions")
+        .order_by("ordinal")
     )
     allowed_ids = {finding.id for finding in findings}
     citations: dict = {finding_id: {} for finding_id in allowed_ids}
-    for link in TraceInvestigationFindingEvidence.objects.filter(
-        finding_id__in=allowed_ids, deleted=False, evidence__deleted=False,
-        evidence__report_id=F("finding__report_id"),
-    ).select_related("evidence").order_by("evidence__ordinal"):
+    for link in (
+        TraceInvestigationFindingEvidence.objects.filter(
+            finding_id__in=allowed_ids,
+            deleted=False,
+            evidence__deleted=False,
+            evidence__report_id=F("finding__report_id"),
+        )
+        .select_related("evidence")
+        .order_by("evidence__ordinal")
+    ):
         citations[link.finding_id].setdefault(None, []).append(link.evidence)
-    for link in TraceInvestigationAttributionEvidence.objects.filter(
-        attribution__finding_id__in=allowed_ids, deleted=False,
-        evidence__deleted=False,
-        evidence__report_id=F("attribution__finding__report_id"),
-    ).select_related("evidence", "attribution").order_by("evidence__ordinal"):
-        citations[link.attribution.finding_id].setdefault(link.attribution.role, []).append(link.evidence)
+    for link in (
+        TraceInvestigationAttributionEvidence.objects.filter(
+            attribution__finding_id__in=allowed_ids,
+            deleted=False,
+            evidence__deleted=False,
+            evidence__report_id=F("attribution__finding__report_id"),
+        )
+        .select_related("evidence", "attribution")
+        .order_by("evidence__ordinal")
+    ):
+        citations[link.attribution.finding_id].setdefault(
+            link.attribution.role, []
+        ).append(link.evidence)
     result: dict[str, list] = {}
     for finding in findings:
-        result.setdefault(str(finding.report.trace_id), []).append((finding, citations[finding.id]))
+        result.setdefault(str(finding.report.trace_id), []).append(
+            (finding, citations[finding.id])
+        )
     return result
 
 
@@ -1933,11 +2022,22 @@ def _finding_span_context(findings_by_trace: dict, project_id: str) -> dict:
         with get_reader() as reader:
             rows = []
             for offset in range(0, len(span_ids), 128):
-                rows.extend(reader.list_by_ids(
-                    span_ids[offset:offset + 128], project_id=project_id,
-                    include_heavy=False,
-                    columns=["id", "trace_id", "name", "operation_name", "attrs_string", "input", "output"],
-                ))
+                rows.extend(
+                    reader.list_by_ids(
+                        span_ids[offset : offset + 128],
+                        project_id=project_id,
+                        include_heavy=False,
+                        columns=[
+                            "id",
+                            "trace_id",
+                            "name",
+                            "operation_name",
+                            "attrs_string",
+                            "input",
+                            "output",
+                        ],
+                    )
+                )
     except Exception:
         logger.warning("omega_reel_span_context_unavailable", exc_info=True)
         return {}
@@ -2045,23 +2145,38 @@ def _omega_findings_to_reel(
     for finding, citations in findings:
         direct = citations.get(None, [])
         first = next((e for e in direct if e.excerpt), None)
-        steps.append({
-            "label": "FINDING", "text": _highlight_text(finding.statement, highlight_terms, "error"),
-            "span": None, "status": "neutral", "isFailure": False,
-            "raw": first.excerpt if first else None,
-            "evidence_id": first.evidence_id if first else None, "role": None, "meta": None,
-        })
+        steps.append(
+            {
+                "label": "FINDING",
+                "text": _highlight_text(finding.statement, highlight_terms, "error"),
+                "span": None,
+                "status": "neutral",
+                "isFailure": False,
+                "raw": first.excerpt if first else None,
+                "evidence_id": first.evidence_id if first else None,
+                "role": None,
+                "meta": None,
+            }
+        )
         roles = {a.role: a for a in finding.attributions.all() if not a.deleted}
         for role in ("origin", "decisive", "symptom"):
             attribution = roles.get(role)
-            if not attribution or attribution.status != "supported" or not attribution.span_id:
+            if (
+                not attribution
+                or attribution.status != "supported"
+                or not attribution.span_id
+            ):
                 continue
             receipt = next(
-                (e for e in citations.get(role, []) if e.span_id == attribution.span_id and e.excerpt),
+                (
+                    e
+                    for e in citations.get(role, [])
+                    if e.span_id == attribution.span_id and e.excerpt
+                ),
                 None,
             )
             context = (span_context or {}).get((trace_id, attribution.span_id)) or {}
-            operation = (context.get("name") or context.get("operation_name"))
+            operation = context.get("name") or context.get("operation_name")
             if not operation and receipt:
                 operation = _receipt_operation(receipt.excerpt)
             attrs = context.get("attrs_string") or {}
@@ -2071,19 +2186,29 @@ def _omega_findings_to_reel(
                 input_value = context["input"]
             if output_value is None and context.get("output") not in (None, "", "null"):
                 output_value = context["output"]
-            steps.append({
-                "label": role.upper(),
-                "text": getattr(attribution, "explanation", "") or operation or "Attributed span",
-                "span": attribution.span_id, "status": "neutral", "isFailure": False,
-                "raw": receipt.excerpt if receipt else None,
-                "evidence_id": receipt.evidence_id if receipt else None,
-                "role": role,
-                "operation": operation,
-                "input_preview": input_value[:240] if input_value is not None else None,
-                "output_preview": output_value[:240] if output_value is not None else None,
-                "io_source": "recorded_span" if context else None,
-                "meta": None,
-            })
+            steps.append(
+                {
+                    "label": role.upper(),
+                    "text": getattr(attribution, "explanation", "")
+                    or operation
+                    or "Attributed span",
+                    "span": attribution.span_id,
+                    "status": "neutral",
+                    "isFailure": False,
+                    "raw": receipt.excerpt if receipt else None,
+                    "evidence_id": receipt.evidence_id if receipt else None,
+                    "role": role,
+                    "operation": operation,
+                    "input_preview": input_value[:240]
+                    if input_value is not None
+                    else None,
+                    "output_preview": output_value[:240]
+                    if output_value is not None
+                    else None,
+                    "io_source": "recorded_span" if context else None,
+                    "meta": None,
+                }
+            )
     return steps[:8]
 
 
@@ -2431,7 +2556,7 @@ def _fetch_success_trace_pass_reel(
     steps: list[dict] = []
 
     # 1. User input/output from the CH root span — the sole source post-cutover.
-    root = _get_root_span(success_id)
+    root = _get_root_span(success_id, str(cluster.project_id))
     input_text = None
     output_text = None
     if root:
@@ -2469,6 +2594,7 @@ def _fetch_representative_traces(
     *,
     pass_reel: list[dict] | None = None,
     highlight_terms: list[str] | None = None,
+    score_q: Q = _SPAN_EVAL_SCORE_Q,
 ) -> list[RepresentativeTrace]:
     """
     Failing traces in the cluster (Overview tab's "Traces affected" list).
@@ -2554,7 +2680,7 @@ def _fetch_representative_traces(
     trace_ids = [str(t.id) for t in deduped]
     roots = _get_root_spans_batch(trace_ids, project_id)
     totals = _get_trace_totals_batch(trace_ids, project_id)
-    scores = _get_trace_scores_batch(trace_ids)
+    scores = _get_trace_scores_batch(trace_ids, score_q)
     reports = _get_investigation_reports_batch(trace_ids, project_id)
     findings_by_trace = (
         _cluster_findings_by_trace(cluster_id, project_id, trace_ids)
@@ -2563,7 +2689,8 @@ def _fetch_representative_traces(
     )
     span_context = (
         _finding_span_context(findings_by_trace, project_id)
-        if findings_by_trace is not None else {}
+        if findings_by_trace is not None
+        else {}
     )
     judges = _trace_judges_batch(trace_ids)
     session_judges = _session_judges_batch(list(session_by_trace.values()))
@@ -2597,7 +2724,8 @@ def _fetch_representative_traces(
                 else None
             ),
             span_context={
-                span_id: row for (tid, span_id), row in span_context.items()
+                span_id: row
+                for (tid, span_id), row in span_context.items()
                 if tid == str(trace.id)
             },
             judge=_judge_for(str(trace.id)),
@@ -2611,7 +2739,9 @@ def _cluster_qs_for_access(
     cluster_id: str, project_ids: list[str] | None = None
 ) -> QuerySet:
     qs = (
-        TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
+        TraceErrorGroup.objects.filter(
+            cluster_id=cluster_id, deleted=False, target_type="error_feed"
+        )
         .exclude(issue_state__dirty=True)
         .exclude(issue_state__retired=True)
     )
@@ -2658,6 +2788,7 @@ def get_overview(
             limit=rep_limit,
             pass_reel=pass_reel,
             highlight_terms=highlight_terms,
+            score_q=_cluster_eval_score_q(cluster),
         ),
         representative_total=member_total or 0,
     )
@@ -2681,8 +2812,14 @@ def _percentile(values: list[int], pct: float) -> int:
     return int(values[lo] + (values[hi] - values[lo]) * (k - lo))
 
 
-def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregates:
-    """Compute per-cluster aggregates for the Traces tab stat bar."""
+def _fetch_traces_aggregates(
+    cluster_id: str, project_id: str, *, score_q: Q = _SPAN_EVAL_SCORE_Q
+) -> TracesAggregates:
+    """Compute per-cluster aggregates for the Traces tab stat bar.
+
+    ``avg_score`` and ``avg_turns`` are ``None`` when nothing was measured, so
+    the UI can show "no data" instead of a fake zero.
+    """
     member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id, project_id)
     trace_ids = list(member_trace_ids)
     if member_session_ids:
@@ -2705,15 +2842,11 @@ def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregat
     failing = sum(1 for v in has_issues_map.values() if v is True)
     passing = sum(1 for v in has_issues_map.values() if v is False)
 
-    # PR3: span-only via _avg_eval_score — keeps the avg comparable to
-    # pre-row_type semantics. Trace-level evals (PR4) surface elsewhere.
-    # Helper uses EVAL_SCORE_EXPR for bool-aware avg (sim/voice clusters).
     # Session clusters have no span evals on their member traces — their
     # score lives on the session-target rows instead.
-    avg_score = _avg_eval_score(trace_ids)
+    avg_score = _avg_eval_score(trace_ids, score_q)
     if avg_score is None and member_session_ids:
         avg_score = _avg_session_eval_score(member_session_ids)
-    avg_score = avg_score or 0.0
 
     # Latency percentiles: sum(latency_ms) per trace via CH batch helper.
     totals_by_trace = _get_trace_totals_batch(trace_ids, project_id)
@@ -2733,16 +2866,16 @@ def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregat
             turn_count__isnull=False,
         ).values_list("turn_count", flat=True)
     )
-    avg_turns = statistics.fmean(turn_counts) if turn_counts else 0.0
+    avg_turns = round(statistics.fmean(turn_counts), 2) if turn_counts else None
 
     return TracesAggregates(
         total_traces=total_traces,
         failing_traces=failing,
         passing_traces=passing,
-        avg_score=round(avg_score, 4),
+        avg_score=round(avg_score, 4) if avg_score is not None else None,
         p50_latency=p50,
         p95_latency=p95,
-        avg_turns=round(avg_turns, 2),
+        avg_turns=avg_turns,
     )
 
 
@@ -2751,7 +2884,12 @@ _COST_PER_TOKEN = 0.0000037
 
 
 def _fetch_trace_rows(
-    cluster_id: str, project_id: str, limit: int, offset: int
+    cluster_id: str,
+    project_id: str,
+    limit: int,
+    offset: int,
+    *,
+    score_q: Q = _SPAN_EVAL_SCORE_Q,
 ) -> tuple[list[TracesListRow], int]:
     """Paginated list of traces in the cluster for the AG Grid."""
     base = (
@@ -2819,7 +2957,7 @@ def _fetch_trace_rows(
 
     # Pre-batch CH/PG lookups: one round-trip each.
     totals_by_trace = _get_trace_totals_batch(page_trace_ids, project_id)
-    scores_by_trace = _get_trace_scores_batch(page_trace_ids)
+    scores_by_trace = _get_trace_scores_batch(page_trace_ids, score_q)
     roots_by_trace = _get_root_spans_batch(page_trace_ids, project_id)
     reports_by_trace = _get_investigation_reports_batch(page_trace_ids, project_id)
 
@@ -2877,8 +3015,11 @@ def get_traces_tab(
         return None
 
     project_id = str(cluster.project_id)
-    aggregates = _fetch_traces_aggregates(cluster_id, project_id)
-    rows, total = _fetch_trace_rows(cluster_id, project_id, limit=limit, offset=offset)
+    score_q = _cluster_eval_score_q(cluster)
+    aggregates = _fetch_traces_aggregates(cluster_id, project_id, score_q=score_q)
+    rows, total = _fetch_trace_rows(
+        cluster_id, project_id, limit=limit, offset=offset, score_q=score_q
+    )
     return TracesTabResponse(aggregates=aggregates, traces=rows, total=total)
 
 
@@ -2925,18 +3066,19 @@ def _users_affected_in_window(
     return len(all_users)
 
 
-def _avg_eval_score(trace_ids: list[str]) -> float | None:
-    """Average eval score over span-level evals on a list of traces.
+def _avg_eval_score(
+    trace_ids: list[str], score_q: Q = _SPAN_EVAL_SCORE_Q
+) -> float | None:
+    """Average eval score over a list of traces; ``None`` when nothing scored.
 
-    PR3: span-only filter. Trace-level evals (PR4) surface elsewhere.
     Uses EVAL_SCORE_EXPR so bool-only eval clusters (sim/voice) don't
     silently return 0 when output_bool is the only populated column.
     """
     if not trace_ids:
         return None
-    return EvalLogger.objects.filter(
-        trace_id__in=trace_ids, target_type="span"
-    ).aggregate(avg=Avg(EVAL_SCORE_EXPR))["avg"]
+    return EvalLogger.objects.filter(score_q, trace_id__in=trace_ids).aggregate(
+        avg=Avg(EVAL_SCORE_EXPR)
+    )["avg"]
 
 
 def _project_scope_total(
@@ -3020,13 +3162,16 @@ def _fetch_trend_metrics(
     cur_err_rate = (100.0 * cur_numerator / cur_total) if cur_total else 0.0
     prev_err_rate = (100.0 * prev_numerator / prev_total) if prev_total else 0.0
 
-    # Session clusters score on session-target eval rows, not span evals.
-    cur_score = (
-        _avg_eval_score(cur_traces) or _avg_session_eval_score(cur_sessions) or 0.0
-    )
-    prev_score = (
-        _avg_eval_score(prev_traces) or _avg_session_eval_score(prev_sessions) or 0.0
-    )
+    # Session clusters score on session-target eval rows, not span evals. A real
+    # 0.0 average is a score, so fall back only on None.
+    score_q = _cluster_eval_score_q(cluster)
+
+    def _window_score(traces: list[str], sessions: list[str]) -> float | None:
+        score = _avg_eval_score(traces, score_q)
+        return _avg_session_eval_score(sessions) if score is None else score
+
+    cur_score = _window_score(cur_traces, cur_sessions)
+    prev_score = _window_score(prev_traces, prev_sessions)
 
     cur_users = _users_affected_in_window(cur_traces, project_id)
     prev_users = _users_affected_in_window(prev_traces, project_id)
@@ -3040,8 +3185,12 @@ def _fetch_trend_metrics(
         ),
         TrendMetric(
             label="Avg eval score",
-            value=f"{cur_score:.2f}",
-            delta=round(cur_score - prev_score, 2),
+            value=f"{cur_score:.2f}" if cur_score is not None else _NO_DATA,
+            delta=(
+                round(cur_score - prev_score, 2)
+                if cur_score is not None and prev_score is not None
+                else 0.0
+            ),
         ),
         TrendMetric(
             label="Affected users",
@@ -3166,30 +3315,36 @@ def _fetch_events_over_time_with_passing(
 
 
 def _fetch_score_trends(
-    cluster_id: str, days: int, max_labels: int = 4, project_id: str | None = None
+    cluster: TraceErrorGroup,
+    days: int,
+    max_labels: int = 4,
+    project_id: str | None = None,
 ) -> list[ScoreTrend]:
     """Per-CustomEvalConfig.name score sparkline over the last ``days``.
 
-    Splits the window in half: first half = prev, second half = current.
-    Daily sparkline is average ``output_float`` per day over the full window.
+    Reads the members and eval rows the score cards read: members that fall in
+    the window, scored by ``_cluster_eval_score_q``. Splits the window in half:
+    first half = prev, second half = current. Daily sparkline is average
+    ``output_float`` per day over the full window.
     """
-    member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id, project_id)
-    if not member_trace_ids and not member_session_ids:
-        return []
-
     now = timezone.now()
     since = now - timedelta(days=days)
     midpoint = now - timedelta(days=days / 2)
+    member_trace_ids, member_session_ids = _member_ids_in_window(
+        cluster.cluster_id, since, project_id=project_id
+    )
+    if not member_trace_ids and not member_session_ids:
+        return []
 
-    # Session members' eval rows anchor to trace_session, not trace.
-    member_q = Q(trace_id__in=member_trace_ids)
+    # Trace and span members score by the issue's own eval; session members'
+    # eval rows anchor to trace_session, not trace.
+    member_q = Q(trace_id__in=member_trace_ids) & _cluster_eval_score_q(cluster)
     if member_session_ids:
         member_q |= Q(trace_session_id__in=member_session_ids)
 
     rows = list(
         EvalLogger.objects.filter(
             member_q,
-            created_at__gte=since,
             custom_eval_config__isnull=False,
         )
         .annotate(day=TruncDate("created_at"), score=EVAL_SCORE_EXPR)
@@ -3287,7 +3442,7 @@ def get_trends_tab(
         events_over_time=_fetch_events_over_time_with_passing(
             cluster_id, project_id, days
         ),
-        score_trends=_fetch_score_trends(cluster_id, days, project_id=project_id),
+        score_trends=_fetch_score_trends(cluster, days, project_id=project_id),
         activity_heatmap=_fetch_activity_heatmap(
             cluster_id, days=max(days, 30), project_id=project_id
         ),
@@ -3328,7 +3483,9 @@ def _fetch_sidebar_ai_metadata(
     model_version: str | None = None
     if focus_trace_id:
         with get_reader() as reader:
-            llm_span = reader.first_span_by_type(focus_trace_id, "llm")
+            llm_span = reader.first_span_by_type(
+                focus_trace_id, "llm", project_id=str(cluster.project_id)
+            )
         if llm_span:
             model = llm_span.model or None
             # CHSpan typed-Map string attrs live in attrs_string.
@@ -3342,12 +3499,13 @@ def _fetch_sidebar_ai_metadata(
     # When a trace is explicitly selected, report THAT trace's score.
     # Otherwise show the cluster-wide average (current no-selection default).
     # Session clusters score on session-target eval rows, not span evals.
+    score_q = _cluster_eval_score_q(cluster)
     if selected_trace_id:
-        eval_score = _avg_eval_score([selected_trace_id])
+        eval_score = _avg_eval_score([selected_trace_id], score_q)
         if eval_score is None and selected_session_id:
             eval_score = _avg_session_eval_score([selected_session_id])
     else:
-        eval_score = _avg_eval_score(trace_ids)
+        eval_score = _avg_eval_score(trace_ids, score_q)
         if eval_score is None and session_ids:
             eval_score = _avg_session_eval_score(session_ids)
     if eval_score is not None:
@@ -3500,7 +3658,9 @@ def _fetch_co_occurring_issues(
 
     # Hydrate with cluster metadata
     cluster_rows = TraceErrorGroup.objects.filter(
-        cluster_id__in=[cid for cid, _, _ in top], deleted=False
+        cluster_id__in=[cid for cid, _, _ in top],
+        deleted=False,
+        target_type="error_feed",
     ).only("cluster_id", "title", "issue_category", "priority")
     cluster_map = {c.cluster_id: c for c in cluster_rows}
 

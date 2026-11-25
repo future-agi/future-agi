@@ -20,6 +20,7 @@ import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useRefreshScenarioGrid } from "./useRefreshScenarioGrid";
 import { addColumnSchema, columnGenerationOptions } from "./common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const AddColumnScenario = ({ open, onClose, datasetId, scenarioId }) => {
   const refreshGrid = useRefreshScenarioGrid(scenarioId);
@@ -134,19 +135,21 @@ const AddColumnScenario = ({ open, onClose, datasetId, scenarioId }) => {
 
   const formLoading = isAddingManCols || isAddingCols;
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       disableEscapeKeyDown={formLoading}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
-          width: "676px",
+          width: "640px",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -162,7 +165,7 @@ const AddColumnScenario = ({ open, onClose, datasetId, scenarioId }) => {
             onClick={handleClose}
             sx={{ position: "absolute", top: "10px", right: "12px" }}
           >
-            <Iconify icon="mingcute:close-line" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
 
           <Box sx={{ display: "flex", flexDirection: "column" }}>
@@ -251,7 +254,6 @@ const AddColumnScenario = ({ open, onClose, datasetId, scenarioId }) => {
                 color: "primary.main",
                 borderColor: "primary.main",
                 border: "1px solid",
-                borderRadius: 0.5,
                 "&:hover": {
                   borderColor: "primary.main",
                 },

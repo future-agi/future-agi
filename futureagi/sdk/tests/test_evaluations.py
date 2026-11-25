@@ -5,7 +5,9 @@ Tests for SDK evaluation endpoints that allow running evaluations via API.
 Note: These endpoints use APIKeyAuthentication which accepts both JWT and API key auth.
 """
 
-from unittest.mock import patch
+import builtins
+import json
+from unittest.mock import Mock, patch
 
 import pytest
 from rest_framework import status
@@ -63,6 +65,14 @@ def eval_template(user, db):
             "organization": None,  # System template
         },
     )
+    # This fixture is a global system template. The request-context signal
+    # fills nullable organization/workspace fields on create, so reset them to
+    # keep the row global, as the structure endpoint expects.
+    EvalTemplate.all_objects.filter(pk=template.pk).update(
+        organization=None,
+        workspace=None,
+    )
+    template.refresh_from_db()
     return template
 
 
@@ -96,6 +106,155 @@ def function_param_eval_template(user, db):
         },
     )
     return template
+
+
+@pytest.fixture
+def standalone_billing_unavailable(monkeypatch):
+    """Exercise the real helper's optional-import fallback, not a fresh OSS boot.
+
+    Root conftest supplies usage stubs in OSS runs, so reject the SDK helper's
+    usage imports even when already loaded. Other application imports stay real;
+    only the optional billing callable is set to its missing value.
+    """
+    from sdk.utils import evaluations
+
+    original_import = builtins.__import__
+    unavailable_imports = []
+
+    def without_usage(name, globals=None, locals=None, fromlist=(), level=0):
+        if (globals or {}).get("__name__") == evaluations.__name__ and (
+            name == "ee.usage" or name.startswith("ee.usage.")
+        ):
+            unavailable_imports.append(name)
+            raise ImportError("Optional usage package unavailable")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(evaluations, "log_and_deduct_cost_for_api_request", None)
+    monkeypatch.setattr(builtins, "__import__", without_usage)
+    return unavailable_imports
+
+
+@pytest.fixture
+def standalone_eval_result():
+    from evaluations.engine import EvalResult
+
+    return EvalResult(
+        value=1.0,
+        data={"input": "test input", "output": "test output"},
+        reason="Evaluation completed",
+        failure=None,
+        runtime=0.1,
+        model_used=None,
+        metrics=[],
+        metadata={"test": "success"},
+        output_type="score",
+    )
+
+
+@pytest.mark.integration
+class TestStandaloneEvalCostLogging:
+    def test_engine_error_without_billing_preserves_original_exception(
+        self, user, workspace, eval_template, standalone_billing_unavailable
+    ):
+        from sdk.utils import evaluations
+
+        inputs = {"input": "test input", "output": "test output"}
+        engine_error = RuntimeError("Evaluation engine failed")
+        # Keep the real cost helper: absent billing legitimately returns None.
+        log_row = evaluations._log_and_deduct_cost_for_standalone_eval(
+            user, eval_template, False, inputs, workspace=workspace
+        )
+        assert log_row is None
+
+        with patch("evaluations.engine.run_eval", side_effect=engine_error) as run:
+            with pytest.raises(evaluations.StandaloneEvaluationError) as raised:
+                evaluations._run_eval(eval_template, inputs, None, user, workspace)
+
+        run.assert_called_once()
+        assert str(raised.value) == str(engine_error)
+        assert raised.value.args == (engine_error,)
+        assert raised.value.__context__ is engine_error
+        assert "ee.usage.services.metering" in standalone_billing_unavailable
+
+    def test_engine_error_with_billing_updates_existing_log(
+        self,
+        user,
+        workspace,
+        eval_template,
+        standalone_billing_unavailable,
+        monkeypatch,
+    ):
+        from sdk.utils import evaluations
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        inputs = {"input": "test input", "output": "test output"}
+        existing_config = {
+            "input": inputs,
+            "mappings": inputs,
+            "source": "standalone_v2",
+            "reference_id": str(user.id),
+        }
+        log_row = Mock(
+            status=APICallStatusChoices.PROCESSING.value,
+            config=json.dumps(existing_config),
+        )
+        bill = Mock(return_value=log_row)
+        monkeypatch.setattr(evaluations, "log_and_deduct_cost_for_api_request", bill)
+        engine_error = RuntimeError("Evaluation engine failed")
+
+        with patch("evaluations.engine.run_eval", side_effect=engine_error) as run:
+            with pytest.raises(evaluations.StandaloneEvaluationError) as raised:
+                evaluations._run_eval(eval_template, inputs, None, user, workspace)
+
+        bill.assert_called_once()
+        assert bill.call_args.kwargs["source_id"] == eval_template.id
+        assert bill.call_args.kwargs["config"]["mappings"] == inputs
+        run.assert_called_once()
+        assert log_row.status == APICallStatusChoices.ERROR.value
+        assert json.loads(log_row.config) == {
+            **existing_config,
+            "output": {"output": None, "reason": str(engine_error)},
+        }
+        log_row.save.assert_called_once_with()
+        assert str(raised.value) == str(engine_error)
+        assert raised.value.args == (engine_error,)
+        assert raised.value.__context__ is engine_error
+
+    def test_success_without_billing_keeps_result_and_skips_log_updates(
+        self,
+        user,
+        workspace,
+        eval_template,
+        standalone_billing_unavailable,
+        standalone_eval_result,
+    ):
+        from sdk.utils import evaluations
+
+        inputs = {"input": "test input", "output": "test output"}
+        with (
+            patch(
+                "evaluations.engine.run_eval", return_value=standalone_eval_result
+            ) as run,
+            patch.object(evaluations, "json") as log_json,
+        ):
+            result = evaluations._run_eval(eval_template, inputs, None, user, workspace)
+
+        run.assert_called_once()
+        assert result == {
+            "data": inputs,
+            "failure": None,
+            "reason": "Evaluation completed",
+            "runtime": 0.1,
+            "model": None,
+            "metrics": [],
+            "metadata": {"test": "success"},
+            "output": "score",
+            "value": 1.0,
+        }
+        log_json.loads.assert_not_called()
+        log_json.dumps.assert_not_called()
+        assert "ee.usage.services.metering" in standalone_billing_unavailable
+        assert "ee.usage.services.config" in standalone_billing_unavailable
 
 
 @pytest.mark.integration
@@ -378,6 +537,40 @@ class TestStandaloneEvalV2API:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "k must be an integer" in str(response.json())
+
+    def test_new_eval_engine_error_without_billing_returns_original_error(
+        self, sdk_client, eval_template, standalone_billing_unavailable
+    ):
+        from model_hub.models.evaluation import Evaluation
+
+        engine_error = RuntimeError("Evaluation engine failed")
+        with (
+            patch("evaluations.engine.run_eval", side_effect=engine_error) as run,
+            patch("sdk.views.evaluations.track_mixpanel_event"),
+        ):
+            response = sdk_client.post(
+                "/sdk/api/v1/new-eval/",
+                {
+                    "eval_name": eval_template.name,
+                    "inputs": {"input": "test input", "output": "test output"},
+                    "is_async": False,
+                },
+                format="json",
+            )
+
+        run.assert_called_once()
+        assert response.status_code == status.HTTP_400_BAD_REQUEST, response.data
+        assert response.json() == {
+            "status": False,
+            "type": "validation_error",
+            "code": "invalid",
+            "detail": str(engine_error),
+            "message": str(engine_error),
+            "error": str(engine_error),
+            "result": str(engine_error),
+        }
+        assert "ee.usage.services.metering" in standalone_billing_unavailable
+        assert not Evaluation.objects.filter(eval_template=eval_template).exists()
 
     def test_new_eval_post_async_persists_function_params(
         self, auth_client, function_param_eval_template

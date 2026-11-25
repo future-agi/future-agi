@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
 import React, {
@@ -10,6 +11,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import useFitHeight from "src/hooks/use-fit-height";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { readQuery, endpoints } from "src/utils/axios";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
@@ -71,6 +73,8 @@ import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
 import useCursorGridPagination from "./useCursorGridPagination";
+import { getTraceGridRowId } from "./traceGridRowId";
+import { supportsUsageSort, USAGE_SORT_COLUMNS } from "./usageSort";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
 import {
   dispatchObservePageChanged,
@@ -111,6 +115,8 @@ const TraceGrid = React.forwardRef(
       enabled = true,
       showErrors = false,
       compareType,
+      // Only the visible grid of a primary/compare pair renders the drawer.
+      hideDetailDrawer = false,
     },
     gridRef,
   ) => {
@@ -121,17 +127,18 @@ const TraceGrid = React.forwardRef(
         headerColumnBorder: false,
         wrapperBorder: { width: 0 },
         wrapperBorderRadius: 0,
-        rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+        rowBorder: { width: 1, color: theme.palette.border.subtle },
         headerFontSize: "13px",
         headerFontWeight: 500,
         headerBackgroundColor: "transparent",
         headerTextColor: theme.palette.text.primary,
-        rowHoverColor: "rgba(120,87,252,0.04)",
+        rowHoverColor: theme.palette.action.hover,
       }),
       [theme.palette.text.primary],
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const [dateInterval] = useUrlState("dateInterval", "day");
+    const [, setEvalFocus, removeEvalFocus] = useUrlState("evalFocus", false);
     const { openReplaySessionDrawer, currentStep, validatedSteps } =
       useReplaySessionsStoreShallow((state) => ({
         openReplaySessionDrawer: state.openReplaySessionDrawer,
@@ -142,27 +149,53 @@ const TraceGrid = React.forwardRef(
     const {
       traceDetailDrawerOpen,
       setTraceDetailDrawerOpen,
-      setVisibleTraceIds,
+      setVisibleTraces,
     } = useLLMTracingStoreShallow((state) => ({
       traceDetailDrawerOpen: state.traceDetailDrawerOpen,
       setTraceDetailDrawerOpen: state.setTraceDetailDrawerOpen,
-      setVisibleTraceIds: state.setVisibleTraceIds,
+      setVisibleTraces: state.setVisibleTraces,
     }));
     const activeTraceId = traceDetailDrawerOpen?.traceId || null;
+    const activeTraceProjectId = traceDetailDrawerOpen?.projectId || null;
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
+    const [usageSort, setUsageSort] = useState([]);
+    const canUsageSort = supportsUsageSort(
+      projectId,
+      toBackendFilters([
+        ...filters,
+        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+        ...(extraFilters || EMPTY_EXTRA_FILTERS),
+        ...(metricFilters || []),
+      ]),
+    );
+    const usageSortKey = JSON.stringify(canUsageSort ? usageSort : []);
+    useEffect(() => {
+      if (!canUsageSort && usageSort.length) {
+        setUsageSort([]);
+        withLiveGridApi(gridRef?.current?.api, (api) =>
+          api.applyColumnState({ defaultState: { sort: null } }),
+        );
+      }
+    }, [canUsageSort, usageSort, gridRef]);
     const [readMessage, setReadMessage] = useState(null);
     const readMessageRef = useRef(null);
     const [continuationNotice, setContinuationNotice] = useState(null);
     const [gridLoading, setGridLoading] = useState(enabled);
     const firstPageRequestRef = useRef(0);
+    const loadingRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
     const gridElementRef = useRef(null);
+    /* Fill to the bottom of the window from wherever the grid starts. */
+    const fitHeight = useFitHeight(gridElementRef);
     const {
       beginPageLoad,
+      endUnknown,
+      frontierPage,
+      hasMore,
       page,
-      pageCount,
       pageSize,
+      provenNext,
       changePageSize,
       finishPageLoad,
       goToPage,
@@ -184,6 +217,14 @@ const TraceGrid = React.forwardRef(
 
     const inFlightPageLoads = useRef(new Map());
     const cursorPagination = useRef(createListCursorPagination());
+    // Gate the boundary on whether its cursor is still remembered — reset(),
+    // an LRU eviction, or a filter/date/page-size change can all make a page
+    // that was genuinely visited unreachable again. `frontierPage` is
+    // 1-indexed (matches the UI); `canReachPage` takes the same 0-indexed
+    // convention as `requestParams`.
+    const furthestPage = cursorPagination.current.canReachPage(frontierPage - 1)
+      ? frontierPage
+      : 0;
     const { showMetricsIds, reset: resetMetricIds } =
       useShallowToggleAnnotationsStore((state) => ({
         showMetricsIds: state.showMetricsIds,
@@ -193,6 +234,7 @@ const TraceGrid = React.forwardRef(
       (purge = true) => {
         inFlightPageLoads.current.clear();
         cursorPagination.current.reset();
+        if (usageSortKey !== "[]") cursorPagination.current.disableCursor();
         resetPagination();
         preserveRowsDuringNextRefreshRef.current = !purge;
         if (purge) setGridLoading(enabled);
@@ -200,7 +242,7 @@ const TraceGrid = React.forwardRef(
           api.refreshServerSide({ purge }),
         );
       },
-      [enabled, gridRef, resetPagination],
+      [enabled, gridRef, resetPagination, usageSortKey],
     );
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
@@ -220,6 +262,7 @@ const TraceGrid = React.forwardRef(
           enabled,
           showErrors,
           compareType,
+          usageSortKey,
         }),
       [
         filters,
@@ -231,11 +274,13 @@ const TraceGrid = React.forwardRef(
         enabled,
         showErrors,
         compareType,
+        usageSortKey,
       ],
     );
     const filterRequestKey = useMemo(
       () =>
         JSON.stringify({
+          responseVersion: "capture-coverage-v1",
           selectionQueryKey,
           requestedAttributeKeys: requestedAttributeKeysKey,
           pageSize,
@@ -350,6 +395,7 @@ const TraceGrid = React.forwardRef(
       () => {
         inFlightPageLoads.current.clear();
         cursorPagination.current.reset();
+        if (usageSortKey !== "[]") cursorPagination.current.disableCursor();
         return {
           getRows: async (params) => {
             if (!enabled) {
@@ -359,7 +405,15 @@ const TraceGrid = React.forwardRef(
               withLiveGridApi(params.api, () => params.fail?.());
               return;
             }
+            let requestCompleted = false;
+            const finishRequest = (result) => {
+              if (requestCompleted) return;
+              requestCompleted = true;
+              if (result) params.success(result);
+              else params.fail();
+            };
             let pageNumber = 0;
+            let loadingRequestId = null;
             let firstPageRequestId = null;
             let pageLoadRequestId = null;
             let pageLoadSucceeded = false;
@@ -367,6 +421,8 @@ const TraceGrid = React.forwardRef(
             let requestGeneration = null;
             let continuationPending = false;
             try {
+              if (!isGridApiLive(params.api)) return;
+              loadingRequestId = ++loadingRequestRef.current;
               setLoading(true);
               const { request } = params;
               requestGeneration = cursorPagination.current.generation();
@@ -393,6 +449,9 @@ const TraceGrid = React.forwardRef(
                   // detail page).
                   ...(projectId ? { project_id: projectId } : {}),
                   page_size: requestPageSize,
+                  ...(usageSortKey !== "[]"
+                    ? { sort_params: usageSortKey }
+                    : {}),
                   // JSON preserves attribute paths containing commas. The API
                   // rejects oversized requests; neither side truncates.
                   ...(requestedAttributeKeysKey === "[]"
@@ -434,7 +493,7 @@ const TraceGrid = React.forwardRef(
               if (!cursorPagination.current.isCurrent(requestGeneration)) {
                 // A newer filter/range owns the grid now. Do not let this stale
                 // response replace its loading state with an empty overlay.
-                params.fail();
+                finishRequest();
                 return;
               }
 
@@ -446,11 +505,11 @@ const TraceGrid = React.forwardRef(
                 resumePendingListPage({
                   page: exactPage,
                   resume: () => {
+                    finishRequest();
                     if (
                       cursorPagination.current.isCurrent(requestGeneration) &&
                       isGridApiLive(params.api)
                     ) {
-                      params.fail();
                       if (params.api?.retryServerSideLoads) {
                         params.api.retryServerSideLoads();
                       } else {
@@ -534,9 +593,10 @@ const TraceGrid = React.forwardRef(
                 request,
                 rows,
                 isLastPage,
+                metadata,
               });
 
-              params.success({
+              finishRequest({
                 rowData: rows,
                 rowCount: discoveredRowCount,
               });
@@ -544,26 +604,37 @@ const TraceGrid = React.forwardRef(
               pageLoadRowCount = rows.length;
               setContinuationNotice(null);
 
-              // Collect all loaded trace IDs for prev/next navigation
+              // Collect all loaded trace rows for prev/next navigation
               setTimeout(() => {
                 if (!isGridApiLive(params.api)) return;
-                const ids = [];
+                const traces = [];
                 params.api.forEachNode((node) => {
-                  if (node.data?.trace_id) ids.push(node.data.trace_id);
+                  if (node.data?.trace_id) {
+                    traces.push({
+                      traceId: node.data.trace_id,
+                      projectId: node.data.project_id || null,
+                    });
+                  }
                 });
-                if (ids.length > 0) setVisibleTraceIds(ids);
+                if (traces.length > 0) setVisibleTraces(traces);
               }, 0);
             } catch (error) {
               if (isExpectedRequestCancellation(error)) {
                 return;
               }
               if (!isGridApiLive(params.api)) return;
+              if (
+                requestGeneration !== null &&
+                !cursorPagination.current.isCurrent(requestGeneration)
+              ) {
+                return;
+              }
               if (isListCursorContinuationLimitError(error)) {
                 // Keep the signed checkpoint and any existing rows. This is a
                 // bounded exact read awaiting an explicit retry, not an empty
                 // result or a user-visible query failure.
                 setContinuationNotice(true);
-                params.fail();
+                finishRequest();
                 return;
               }
               if (
@@ -574,14 +645,29 @@ const TraceGrid = React.forwardRef(
               ) {
                 inFlightPageLoads.current.clear();
                 cursorPagination.current.disableCursor();
-                params.fail();
+                finishRequest();
                 params.api?.refreshServerSide?.({ purge: true });
                 return;
               }
               readMessageRef.current = QUERY_FAILED_RETRY_MESSAGE;
               setReadMessage(QUERY_FAILED_RETRY_MESSAGE);
-              failServerSideGridRead(params);
+              failServerSideGridRead({ ...params, fail: finishRequest });
             } finally {
+              // Completion releases AG Grid's slot even for an obsolete cache.
+              // A scheduled continuation owns its callback until resume runs.
+              if (!continuationPending) {
+                finishRequest();
+                if (
+                  !pageLoadSucceeded &&
+                  requestGeneration !== null &&
+                  !cursorPagination.current.isCurrent(requestGeneration)
+                ) {
+                  // A same-cache refresh (purge: false) cannot re-mark a block
+                  // that is still loading, so this obsolete read's fail() just
+                  // left it failed. Queue it again for the current generation.
+                  retryServerSideCursorLoad(params.api);
+                }
+              }
               finishPageLoad(pageLoadRequestId, {
                 succeeded: pageLoadSucceeded,
                 rowCount: pageLoadRowCount,
@@ -600,7 +686,13 @@ const TraceGrid = React.forwardRef(
                 // in-flight page.
                 setGridLoading(false);
               }
-              if (!continuationPending) setLoading(false);
+              if (
+                !continuationPending &&
+                loadingRequestId !== null &&
+                loadingRequestId === loadingRequestRef.current
+              ) {
+                setLoading(false);
+              }
             }
           },
         };
@@ -626,10 +718,14 @@ const TraceGrid = React.forwardRef(
     );
 
     const { columnDefs } = useMemo(() => {
+      const withUsageSort = (definition) => ({
+        ...definition,
+        sortable: canUsageSort && USAGE_SORT_COLUMNS.includes(definition.field),
+      });
       // If columns are empty → return initial/default columnDefs
       if (!columns || columns.length === 0) {
         return {
-          columnDefs: TRACE_DEFAULT_COLUMNS,
+          columnDefs: TRACE_DEFAULT_COLUMNS.map(withUsageSort),
           bottomRow: [],
         };
       }
@@ -668,14 +764,14 @@ const TraceGrid = React.forwardRef(
         }
       }
       return {
-        columnDefs: columnDefsResult,
+        columnDefs: columnDefsResult.map(withUsageSort),
         bottomRow: [
           {
             ...bottomRowObj,
           },
         ],
       };
-    }, [columns, showMetricsIds]);
+    }, [columns, showMetricsIds, canUsageSort]);
 
     useEffect(() => {
       return () => resetMetricIds();
@@ -733,6 +829,10 @@ const TraceGrid = React.forwardRef(
           //disguard clicks on empty rows
           return;
         }
+        // A regular grid click must not inherit the one-shot eval focus from
+        // a previous eval-cell click. Use removeValue rather than serializing
+        // a null query value so shared URLs stay clean.
+        removeEvalFocus();
         if (event?.column?.colId === "status") return;
         if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId()))
           return;
@@ -772,11 +872,23 @@ const TraceGrid = React.forwardRef(
         if (!traceId) {
           return;
         }
-        setTraceDetailDrawerOpen({ traceId: traceId, filters: filters });
+        // Pin detail to the row's project: without a route project (the
+        // cross-project user page) an unpinned read serves the newest copy
+        // of this trace id in any project.
+        const rowProjectId = event.data.project_id;
+        const sourceColumn = event.column?.getColDef?.()?.context?.sourceColumn;
+        if (sourceColumn?.groupBy === "Evaluation Metrics") {
+          setEvalFocus(true);
+        }
+        setTraceDetailDrawerOpen({
+          traceId: traceId,
+          ...(rowProjectId ? { projectId: rowProjectId } : {}),
+          filters: filters,
+        });
 
         // trackEvent(Events.observeTraceidClicked);
       },
-      [filters, setTraceDetailDrawerOpen],
+      [filters, removeEvalFocus, setEvalFocus, setTraceDetailDrawerOpen],
     );
 
     const shouldDisable = useMemo(() => {
@@ -792,7 +904,7 @@ const TraceGrid = React.forwardRef(
       <Box
         ref={gridElementRef}
         sx={{
-          height: "calc(100vh - 270px)",
+          height: fitHeight ? `${fitHeight}px` : "calc(100vh - 270px)",
           display: "flex",
           flexDirection: "column",
         }}
@@ -824,7 +936,7 @@ const TraceGrid = React.forwardRef(
           className={`clean-data-table ${continuationNotice ? "ag-grid-cursor-paused" : ""} ${shouldDisable ? "ag-grid-disabled" : ""}`}
           theme={agTheme}
           animateRows={false}
-          headerHeight={40}
+          headerHeight={32}
           ref={gridRef}
           rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
           columnDefs={columnDefs}
@@ -853,18 +965,25 @@ const TraceGrid = React.forwardRef(
             isGridReadPending || continuationNotice
               ? null
               : NoRowsOverlay(
-                  <Typography
-                    sx={{
-                      fontSize: 14,
-                      fontWeight: 400,
-                      color: "text.secondary",
-                    }}
-                  >
-                    {readMessageRef.current ||
-                      (showErrors ? "No error found" : "No traces found")}
-                  </Typography>,
+                  readMessageRef.current ||
+                    (showErrors ? "No error found" : "No traces found"),
                 )
           }
+          onSortChanged={({ api }) => {
+            const next = api
+              .getColumnState()
+              .filter((column) => column.sort)
+              .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+              .map((column) => ({
+                column_id: column.colId,
+                direction: column.sort,
+              }));
+            setUsageSort((previous) =>
+              JSON.stringify(previous) === JSON.stringify(next)
+                ? previous
+                : next,
+            );
+          }}
           onCellClicked={handleCellClick}
           onSelectionChanged={onSelectionChanged}
           onColumnMoved={onColumnMoved}
@@ -884,15 +1003,19 @@ const TraceGrid = React.forwardRef(
           }}
           statusBar={statusBar}
           blockLoadDebounceMillis={300}
-          getRowId={(d) => {
-            return d?.data?.trace_id;
-          }}
+          // Without a route project (the user page) rows span projects and
+          // one trace id can be listed once per project.
+          getRowId={(d) =>
+            getTraceGridRowId(d?.data, { crossProject: !projectId })
+          }
           getRowStyle={(params) => {
             if (
               params.data?.trace_id &&
-              params.data.trace_id === activeTraceId
+              params.data.trace_id === activeTraceId &&
+              (!activeTraceProjectId ||
+                params.data.project_id === activeTraceProjectId)
             ) {
-              return { backgroundColor: "rgba(120, 87, 252, 0.08)" };
+              return { backgroundColor: theme.palette.action.selected };
             }
             return null;
           }}
@@ -906,12 +1029,17 @@ const TraceGrid = React.forwardRef(
           }
           loading={isPageLoading}
           page={page}
-          pageCount={pageCount}
           pageSize={pageSize}
+          endUnknown={endUnknown}
+          furthestPage={furthestPage}
+          hasMore={hasMore}
+          provenNext={provenNext}
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
-        <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
+        {!hideDetailDrawer && (
+          <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
+        )}
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}
           filterData={openQuickFilter}
@@ -933,6 +1061,7 @@ TraceGrid.propTypes = {
   setFilterOpen: PropTypes.func,
   setLoading: PropTypes.func,
   compareType: PropTypes.string,
+  hideDetailDrawer: PropTypes.bool,
   projectId: PropTypes.string,
   cellHeight: PropTypes.string,
   hasEvalFilter: PropTypes.bool,

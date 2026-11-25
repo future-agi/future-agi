@@ -3,6 +3,13 @@ import json
 from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorObjectSerializer,
+    ApiErrorResponseSerializer,
+)
+from tfc.utils.serializer_fields import JsonValueField
+from tfc.utils.ssrf_guard import SsrfBlocked
+from tfc.utils.webhook_delivery import validate_webhook_url
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -14,12 +21,85 @@ from tracer.models.monitor import (
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.serializers.filters import (
+    OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
     StrictInputSerializer,
     filter_list_field,
     filter_list_query_param_field,
 )
+from tracer.utils.monitor import uses_choice_threshold
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
+
+
+class UserAlertMonitorCreateResponseSerializer(serializers.Serializer):
+    """The existing HTTP 200 GeneralMethods string-result envelope, not a model."""
+
+    status = serializers.ChoiceField(choices=[True])
+    result = serializers.CharField()
+
+
+class UserAlertMonitorEntitlementResponseSerializer(ApiErrorResponseSerializer):
+    """FeatureUnavailable as emitted by custom_exception_handler before creation."""
+
+    error = ApiErrorObjectSerializer()  # type: ignore[assignment]  # nested object replaces the base string field
+    upgrade_required = serializers.BooleanField()
+    upgrade_cta = JsonValueField(required=False)
+
+
+class UserAlertMonitorListQuerySerializer(serializers.Serializer):
+    page_number = serializers.IntegerField(
+        min_value=0, default=0, help_text="Zero-based page number."
+    )
+    page_size = serializers.IntegerField(min_value=1, max_value=100, default=30)
+    search_text = serializers.CharField(required=False, allow_blank=True)
+    project_id = serializers.ListField(child=serializers.UUIDField(), required=False)
+    status = serializers.ListField(
+        child=serializers.ChoiceField(choices=["triggered", "healthy"]), required=False
+    )
+    metric_type = serializers.ListField(child=serializers.CharField(), required=False)
+    sort_by = serializers.CharField(required=False)
+    sort_direction = serializers.ChoiceField(choices=["asc", "desc"], required=False)
+
+
+class UserAlertMonitorListColumnSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+
+
+class UserAlertMonitorTrendSerializer(serializers.Serializer):
+    timestamp = serializers.DateTimeField()
+    count = serializers.IntegerField(min_value=0)
+
+
+class UserAlertMonitorListItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    metric_type = serializers.CharField()
+    filters = serializers.JSONField(allow_null=True)
+    status = serializers.ChoiceField(choices=["triggered", "healthy"])
+    no_of_alerts = serializers.IntegerField(min_value=0)
+    last_triggered = serializers.DateTimeField(allow_null=True)
+    is_mute = serializers.BooleanField()
+    trends = UserAlertMonitorTrendSerializer(many=True)
+
+
+class UserAlertMonitorListMetadataSerializer(serializers.Serializer):
+    total_rows = serializers.IntegerField(min_value=0)
+    total_pages = serializers.IntegerField(min_value=0)
+
+
+class UserAlertMonitorListResultSerializer(serializers.Serializer):
+    column_config = UserAlertMonitorListColumnSerializer(many=True)
+    table = UserAlertMonitorListItemSerializer(many=True)
+    metadata = UserAlertMonitorListMetadataSerializer()
+
+
+class UserAlertMonitorListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = UserAlertMonitorListResultSerializer()
 
 
 class UserAlertMonitorSerializer(serializers.ModelSerializer):
@@ -28,11 +108,21 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     )
     name = serializers.CharField(required=True)
     metric_name = serializers.SerializerMethodField()
+    # Switching from email to webhook explicitly clears the email channel.
+    notification_emails = serializers.ListField(
+        child=serializers.EmailField(), required=False, allow_empty=True
+    )
 
     class Meta:
         model = UserAlertMonitor
         fields = "__all__"
-        read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
+        read_only_fields = (
+            "last_checked_at",
+            "last_derived_run_id",
+            "logs",
+            "deleted",
+            "deleted_at",
+        )
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
@@ -47,12 +137,22 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     .first()
                 )
                 if eval_config:
-                    metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    metric_name = eval_config.name or eval_config.eval_template.name
+                    if obj.threshold_metric_value and uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
                 return "Invalid Eval"
         return obj.get_metric_type_display()
+
+    def validate_webhook_url(self, value):
+        if value:
+            try:
+                validate_webhook_url(value)
+            except SsrfBlocked as error:
+                raise serializers.ValidationError(str(error)) from None
+        return value
 
     def validate_notification_emails(self, value):
         if value and len(value) > 5:
@@ -77,11 +177,59 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     f"An alert with the name '{name}' already exists in this project."
                 )
 
-    def _validate_metric_type(self, data):
+    def _validate_metric_type(self, data, choice_from_row=False):
+        """Returns True when a stored choice on a scoring eval should be
+        dropped rather than rejected (see `validate`)."""
         metric_type = data.get("metric_type")
         metric = data.get("metric")
         project = data.get("project")
         threshold_metric_value = data.get("threshold_metric_value")
+        if data.get("alert_when", "point") == "confident" and (
+            metric_type != MonitorMetricTypeChoices.DERIVED_METRIC.value
+            or data.get("threshold_type") != "static"
+            or data.get("threshold_operator") not in ("greater_than", "less_than")
+        ):
+            raise serializers.ValidationError(
+                {
+                    "alert_when": "Confidence gating requires a derived metric with a static above/below threshold."
+                }
+            )
+
+        if metric_type == MonitorMetricTypeChoices.DERIVED_METRIC.value:
+            from uuid import UUID
+
+            from tracer.models.derived_metric import DerivedMetric
+
+            try:
+                metric_id = UUID(str(metric))
+            except (ValueError, TypeError) as exc:
+                raise serializers.ValidationError(
+                    {"metric": "Select a derived metric."}
+                ) from exc
+            workspace = data.get("workspace") or getattr(
+                self.instance, "workspace", None
+            )
+            if not DerivedMetric.objects.filter(
+                pk=metric_id,
+                project=project,
+                workspace=workspace,
+                organization=data.get("organization"),
+                deleted=False,
+            ).exists():
+                raise serializers.ValidationError(
+                    {
+                        "metric": "Derived metric is not available in this project/workspace."
+                    }
+                )
+            if (
+                data.get("threshold_type") != "static"
+                or data.get("filters")
+                or threshold_metric_value
+            ):
+                raise serializers.ValidationError(
+                    "Derived metrics use static thresholds and the filters frozen into their runs."
+                )
+            return False
 
         if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if not metric:
@@ -89,7 +237,7 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     {"metric": "Metric is required for evaluation metrics."}
                 )
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
+                custom_eval_config = CustomEvalConfig.objects.using("default").get(
                     id=metric, project=project
                 )
             except CustomEvalConfig.DoesNotExist:
@@ -97,11 +245,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     {"metric": f"Invalid metric format for '{metric}'."}
                 )
 
+            eval_template = custom_eval_config.eval_template
             choices = (
-                custom_eval_config.eval_template.choices
-                if custom_eval_config.eval_template
-                and custom_eval_config.eval_template.choices
-                else None
+                eval_template.choices if uses_choice_threshold(eval_template) else None
             )
             if choices:
                 if threshold_metric_value is None:
@@ -117,6 +263,8 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                         }
                     )
             elif threshold_metric_value is not None:
+                if choice_from_row:
+                    return True
                 raise serializers.ValidationError(
                     {
                         "threshold_metric_value": "This field must be empty for evals without predefined choices."
@@ -127,6 +275,7 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Metric and threshold_metric_value are not allowed for metric type {metric_type}"
                 )
+        return False
 
     def _validate_threshold_type(self, data):
         threshold_type = data.get("threshold_type")
@@ -220,7 +369,16 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
 
         self._validate_project_organization(project, organization)
         self._validate_unique_name(project, name)
-        self._validate_metric_type(full_data)
+        # A scoring-eval alert saved before scoring evals stopped taking a
+        # choice can still carry one. The client no longer sends it, so on an
+        # update it only reaches validation from the row: drop it instead of
+        # failing every unrelated edit. A choice the request sends is still
+        # validated.
+        choice_from_row = (
+            self.instance is not None and "threshold_metric_value" not in data
+        )
+        if self._validate_metric_type(full_data, choice_from_row=choice_from_row):
+            validated_data["threshold_metric_value"] = None
         self._validate_threshold_type(full_data)
         if "filters" in validated_data and filters:
             validated_data["filters"] = self.validate_filters(filters)
@@ -478,8 +636,10 @@ class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
                     .first()
                 )
                 if eval_config:
-                    metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    metric_name = eval_config.name or eval_config.eval_template.name
+                    if obj.threshold_metric_value and uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
                 return "Invalid Eval"
@@ -567,6 +727,10 @@ _FETCH_GRAPH_METADATA_PROPERTIES = {
     "query_elapsed_ms": {"type": "number"},
     "query_rows_returned": {"type": "integer"},
 }
+_FETCH_GRAPH_METRIC_STATISTIC_SCHEMA = {
+    "type": "string",
+    "enum": list(OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES),
+}
 _FETCH_GRAPH_SERIES_SCHEMA = {
     "type": "object",
     "required": ["data", "query_complete", "query_status", "query_sampled"],
@@ -574,6 +738,8 @@ _FETCH_GRAPH_SERIES_SCHEMA = {
         "metric_name": {"type": "string"},
         "id": {"type": "string"},
         "name": {"type": "string"},
+        # System-metric series only; latency is always "mean".
+        "metric_statistic": _FETCH_GRAPH_METRIC_STATISTIC_SCHEMA,
         "data": {"type": "array", "items": _FETCH_GRAPH_POINT_SCHEMA},
         **_FETCH_GRAPH_METADATA_PROPERTIES,
     },
@@ -593,6 +759,10 @@ _FETCH_ALL_SYSTEM_METRICS_SCHEMA = {
         **{
             metric: {"type": "array", "items": _FETCH_GRAPH_POINT_SCHEMA}
             for metric in ("latency", "tokens", "cost", "traffic")
+        },
+        "system_metric_statistics": {
+            "type": "object",
+            "additionalProperties": _FETCH_GRAPH_METRIC_STATISTIC_SCHEMA,
         },
         **_FETCH_GRAPH_METADATA_PROPERTIES,
     },

@@ -6,6 +6,7 @@ import structlog
 from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
+from django.utils.functional import SimpleLazyObject
 
 from accounts.authentication import generate_encrypted_message
 from accounts.models.auth_token import AuthToken, AuthTokenType
@@ -18,17 +19,25 @@ from tfc.constants.roles import OrganizationRoles
 
 logger = structlog.get_logger(__name__)
 try:
-    from ee.usage.models.usage import OrganizationSubscription, SubscriptionTier, SubscriptionTierChoices
+    from ee.usage.models.usage import (
+        OrganizationSubscription,
+        SubscriptionTier,
+        SubscriptionTierChoices,
+    )
 except ImportError:
     OrganizationSubscription = None
     SubscriptionTier = None
     SubscriptionTierChoices = None
 try:
-    from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+    from ee.usage.utils.usage_entries import (
+        create_organization_subscription_if_not_exists,
+    )
 except ImportError:
     create_organization_subscription_if_not_exists = None
 
-aws_marketplace_service = AWSMarketplaceService()
+# Lazy: building boto3 clients at import costs ~8 MB RSS in every process
+# and only AWS Marketplace deployments use them.
+aws_marketplace_service = SimpleLazyObject(AWSMarketplaceService)
 
 
 def get_aws_customer_defaults(
@@ -171,6 +180,18 @@ def _create_user_account(email, full_name, aws_customer):
         organization_role=OrganizationRoles.OWNER,
     )
 
+    from accounts.models.organization_membership import OrganizationMembership
+    from tfc.constants.levels import Level
+
+    OrganizationMembership.objects.get_or_create(
+        user=user,
+        organization=aws_customer.organization,
+        defaults={
+            "role": OrganizationRoles.OWNER,
+            "level": Level.OWNER,
+            "is_active": True,
+        },
+    )
     return user, generated_password
 
 

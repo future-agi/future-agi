@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from types import SimpleNamespace
+from uuid import uuid4, uuid5
 
 import pytest
 from rest_framework.test import APIClient
@@ -15,7 +17,17 @@ from simulate.services.hosted_harness import (
     record_cleanup,
     register_attempt,
 )
+from simulate.services.hosted_harness_gateway import _read_harness_spend
+from simulate.services.hosted_sandbox import SandboxFileNotFoundError
 from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
+from tfc.ee_loader import has_ee
+
+# Credit amounts come from billing.yaml, which ships only with the private
+# cloud overlay (ee/cloud); without it BillingConfig falls open to empty
+# defaults and prices differently.
+requires_cloud_billing = pytest.mark.skipif(
+    not has_ee("ee.cloud"), reason="requires ee/cloud billing.yaml (OSS lane)"
+)
 
 
 @pytest.fixture
@@ -27,10 +39,17 @@ def hosted_attempt(organization):
 @pytest.fixture
 def metered_attempt(hosted_attempt, monkeypatch):
     from ee.usage.services import emitter
+    from simulate.tasks.hosted_harness_usage import seal_hosted_harness_usage
 
     events = []
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
     monkeypatch.setattr(emitter, "emit", events.append)
+    # Cleanup enqueues the seal after commit; run it inline so these tests see its events.
+    monkeypatch.setattr(
+        seal_hosted_harness_usage,
+        "apply_async",
+        lambda args, **_: seal_hosted_harness_usage._original_func(*args),
+    )
     return hosted_attempt, events
 
 
@@ -90,7 +109,7 @@ def _report(records):
     }
 
 
-def _receipt(attempt, *, failure_domain="simulator"):
+def _receipt(attempt, *, failure_domain="simulator", started=True):
     registration = attempt.job.scenario_registrations.get()
     return HostedHarnessReceipt.objects.create(
         job=attempt.job,
@@ -100,7 +119,7 @@ def _receipt(attempt, *, failure_domain="simulator"):
         status="errored",
         digest="sha256:" + "0" * 64,
         body={
-            "call": {"duration_ms": 15000},
+            "call": {"duration_ms": 15000} if started else None,
             "failure": {"domain": failure_domain, "code": "run_failed"},
         },
     )
@@ -126,6 +145,7 @@ def _provision(attempt):
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
+@requires_cloud_billing
 def test_authoring_tokens_become_deterministic_ai_credit_events(
     metered_attempt, django_capture_on_commit_callbacks
 ):
@@ -159,6 +179,46 @@ def test_authoring_tokens_become_deterministic_ai_credit_events(
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
+def test_saved_simulation_run_does_not_rebill_authoring(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    job = capability.attempt.job
+    job.payload["metadata"] = {
+        "simulation_only": True,
+        "harness_spend": {
+            "attempts": {
+                "1": {
+                    "stages": [
+                        {
+                            "stage": "build-environment",
+                            "models": ["gemini-3.7-flash"],
+                            "tokens_in": 1_000_000,
+                            "tokens_out": 100_000,
+                        }
+                    ]
+                }
+            }
+        },
+    }
+    job.save(update_fields=["payload"])
+    capability.attempt.cleanup_verified_at = datetime.now(UTC)
+    capability.attempt.sandbox_runtime = {"seconds": 10}
+    capability.attempt.save(update_fields=["cleanup_verified_at", "sandbox_runtime"])
+
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.replay_harness_usage(capability.attempt)
+
+    capability.attempt.refresh_from_db()
+    job.refresh_from_db()
+    assert capability.attempt.authoring_usage_report is None
+    assert events == []
+    assert harness_usage.harness_consumption(job)["ai_credits"] == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
 def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
     metered_attempt, django_capture_on_commit_callbacks
 ):
@@ -245,7 +305,53 @@ def test_unpriceable_live_authoring_is_unavailable_not_zero(metered_attempt):
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
-def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
+@requires_cloud_billing
+def test_a_build_run_as_a_chat_turn_bills_the_chats_ledger_at_cleanup(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    ledger = {
+        "schema": "futureagi.harness-spend.v1",
+        "total_usd": 0.42,
+        "unpriced_turns": 0,
+        "stages": [
+            {
+                "stage": "builder",
+                "usd": 0.42,
+                "turns": 3,
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 800_000,
+            }
+        ],
+    }
+    files = {"/work/builder-cost.json": json.dumps(ledger).encode()}
+
+    def download_file(path, timeout=None):
+        if path not in files:
+            raise SandboxFileNotFoundError(path)
+        return files[path]
+
+    # A build runs as a chat turn: its sandbox holds the chat's ledger and no cost.json.
+    _read_harness_spend(
+        attempt, SimpleNamespace(fs=SimpleNamespace(download_file=download_file))
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(attempt.id, provider_ref="", verified_absent=True)
+
+    assert [(event.event_type, event.properties["model"]) for event in events] == [
+        ("harness_authoring", "gemini-3.7-flash")
+    ]
+    assert events[0].amount == pytest.approx(70.2)
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_cleanup_finalizes_when_live_authoring_is_unpriced(
+    metered_attempt, django_capture_on_commit_callbacks
+):
     capability, events = metered_attempt
     job = capability.attempt.job
     job.payload["metadata"] = {
@@ -255,7 +361,7 @@ def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
                     "stages": [
                         {
                             "stage": "understand-agent",
-                            "models": ["gemini-3.8-flash-unlisted"],
+                            "models": ["not-a-priced-model"],
                             "tokens_in": 1000,
                             "tokens_out": 100,
                         }
@@ -266,17 +372,41 @@ def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
     }
     job.save(update_fields=["payload"])
 
-    record_cleanup(
-        capability.attempt.id,
-        provider_ref="",
-        verified_absent=True,
-    )
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(
+            capability.attempt.id,
+            provider_ref="",
+            verified_absent=True,
+        )
 
     capability.attempt.refresh_from_db()
     job.refresh_from_db()
     assert capability.attempt.cleanup_verified_at is not None
     assert job.state == job.State.FAILED
     assert events == []
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_cleanup_seals_measured_calls_through_the_backend_job(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    record = _record("voice_call", amount=2)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(attempt, _report([record]))
+    _receipt(attempt)
+    assert events == []
+
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(attempt.id, provider_ref="", verified_absent=True)
+
+    assert [(event.event_type, float(event.amount)) for event in events] == [
+        ("voice_call", 2.0)
+    ]
+    assert events[0].event_id == str(uuid5(attempt.id, record["id"]))
 
 
 @pytest.mark.django_db
@@ -416,6 +546,36 @@ def test_simulator_failure_remains_billable_as_measured_usage(
     assert {(event.event_type, float(event.amount)) for event in events} == {
         ("voice_call", 0.25)
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_a_call_that_never_started_is_not_billed_whatever_the_domain(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(
+            attempt,
+            _report(
+                [
+                    _record(
+                        "voice_call",
+                        amount=0.25,
+                        outcome="failed",
+                        failure_domain="simulator",
+                    )
+                ]
+            ),
+        )
+    # The simulator's setup broke before the call started: billable domain, no call.
+    _receipt(attempt, failure_domain="simulator", started=False)
+
+    harness_usage.replay_harness_usage(attempt)
+
+    assert events == []
 
 
 @pytest.mark.django_db
@@ -566,3 +726,273 @@ def test_successful_admission_clears_persisted_budget_refusal(
     assert harness_usage.check_harness_usage(capability.attempt, "text_call")["allowed"]
     capability.attempt.job.refresh_from_db()
     assert "usage_limit" not in capability.attempt.job.payload["metadata"]
+
+
+@pytest.fixture
+def required_actions(monkeypatch):
+    actions = []
+    monkeypatch.setattr(
+        harness_usage,
+        "_require_harness_action",
+        lambda organization_id, action: actions.append(action),
+    )
+    return actions
+
+
+@pytest.mark.parametrize(
+    ("agent", "metadata", "expected"),
+    [
+        ({"connector": "phone"}, {}, ["harness_authoring", "voice_call"]),
+        ({"connector": "livekit"}, {}, ["harness_authoring", "voice_call"]),
+        ({"connector": "retell_chat"}, {}, ["harness_authoring", "text_call"]),
+        (
+            {"connector": "auto"},
+            {"modality": "voice"},
+            ["harness_authoring", "voice_call"],
+        ),
+        ({"connector": "auto"}, {}, ["harness_authoring"]),
+        ({}, {}, ["harness_authoring"]),
+    ],
+)
+def test_run_usage_checks_the_rail_the_connector_names(
+    required_actions, agent, metadata, expected
+):
+    harness_usage.require_harness_run_usage(
+        "org-1", {"agent": agent, "metadata": metadata}
+    )
+
+    assert required_actions == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "detected", "expected"),
+    [
+        ({"agent": {"connector": "auto"}}, ["livekit"], ["voice_call"]),
+        ({"agent": {"connector": "auto"}}, ["phone", "openai"], ["voice_call"]),
+        ({"agent": {"connector": "auto"}}, ["openai"], []),
+        ({"agent": {"connector": "auto"}}, [], []),
+        (
+            {"agent": {"connector": "auto"}, "metadata": {"modality": "text"}},
+            ["livekit"],
+            [],
+        ),
+        ({"agent": {"connector": "livekit"}}, ["livekit"], []),
+        ({}, ["livekit"], []),
+    ],
+)
+def test_source_scan_checks_voice_minutes_only_for_an_undecided_source(
+    required_actions, payload, detected, expected
+):
+    harness_usage.require_harness_source_call_usage("org-1", payload, detected)
+
+    assert required_actions == expected
+
+
+@pytest.mark.django_db
+def test_selected_run_checks_the_rail_of_the_authored_modality(
+    hosted_attempt, required_actions
+):
+    job = hosted_attempt.attempt.job
+
+    harness_usage.require_harness_call_usage(job)
+    assert required_actions == ["text_call"]
+
+    job.stage_outputs = [{"kind": "contract", "data": {"modality": "voice"}}]
+    job.save(update_fields=["stage_outputs", "updated_at"])
+    required_actions.clear()
+
+    harness_usage.require_harness_call_usage(job)
+    assert required_actions == ["voice_call"]
+
+
+@pytest.mark.django_db
+def test_selected_run_reads_the_modality_past_malformed_contract_outputs(
+    hosted_attempt, required_actions
+):
+    job = hosted_attempt.attempt.job
+    job.stage_outputs = [
+        None,
+        "contract",
+        {"kind": "contract"},
+        {"kind": "contract", "data": "voice"},
+        {"kind": "contract", "data": {"modality": "VOICE"}},
+    ]
+    job.save(update_fields=["stage_outputs", "updated_at"])
+
+    harness_usage.require_harness_call_usage(job)
+
+    assert required_actions == ["voice_call"]
+
+
+@pytest.mark.django_db
+def test_oss_call_and_source_usage_checks_never_refuse(hosted_attempt, monkeypatch):
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: True)
+    job = hosted_attempt.attempt.job
+    organization_id = str(job.organization_id)
+    job.stage_outputs = [{"kind": "contract", "data": {"modality": "voice"}}]
+    job.save(update_fields=["stage_outputs", "updated_at"])
+
+    harness_usage.require_harness_call_usage(job)
+    harness_usage.require_harness_source_call_usage(
+        organization_id, {"agent": {"connector": "auto"}}, ["livekit"]
+    )
+    harness_usage.require_harness_run_usage(
+        organization_id, {"agent": {"connector": "phone"}}
+    )
+
+    assert harness_usage.check_harness_action(organization_id, "voice_call") == {
+        "allowed": True
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+@pytest.mark.parametrize("complete", [True, False, None])
+def test_a_reading_bill_says_whether_it_holds_every_turn(
+    monkeypatch, settings, complete
+):
+    from ee.usage.services import emitter
+
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    spend = {
+        "stages": [
+            {
+                "stage": "understanding-agent",
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 0,
+            }
+        ]
+    }
+    if complete is not None:
+        spend["complete"] = complete
+
+    harness_usage.record_agent_reading_usage(
+        organization_id=uuid4(),
+        workspace_id=None,
+        subject_id=uuid4(),
+        run_id=uuid4(),
+        purpose="agent",
+        spend=spend,
+    )
+
+    assert len(events) == 1
+    assert events[0].properties["source"] == "agent_reading"
+    assert events[0].properties["complete"] is complete
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_every_attempt_at_one_reading_is_one_charge(monkeypatch, settings):
+    from ee.usage.services import emitter
+
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    spend = {
+        "stages": [
+            {
+                "stage": "understanding-agent",
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 0,
+            }
+        ]
+    }
+    subject_id, first_run, retried_run = uuid4(), uuid4(), uuid4()
+
+    for run_id in (first_run, first_run, retried_run):
+        harness_usage.record_agent_reading_usage(
+            organization_id=uuid4(),
+            workspace_id=None,
+            subject_id=subject_id,
+            run_id=str(run_id),
+            purpose="agent",
+            spend=spend,
+        )
+
+    # The run id is new on each attempt; the charge's key is not. The ledger keeps
+    # one charge per key, so the replay and the retry add nothing.
+    key = str(uuid5(subject_id, "reading:agent:understanding-agent"))
+    assert [event.event_id for event in events] == [key, key, key]
+    assert {event.properties["source_id"] for event in events} == {str(subject_id)}
+    assert [event.properties["reading_run_id"] for event in events] == [
+        str(first_run),
+        str(first_run),
+        str(retried_run),
+    ]
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_scan_and_an_agent_reading_of_one_subject_are_two_charges(
+    monkeypatch, settings
+):
+    from ee.usage.services import emitter
+
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    stage = {
+        "stage": "understanding-agent",
+        "models": ["gemini-3.7-flash"],
+        "tokens_in": 1_000,
+        "tokens_out": 100,
+        "tokens_cached": 0,
+    }
+    subject_id = uuid4()
+
+    for purpose in ("agent", "scan"):
+        harness_usage.record_agent_reading_usage(
+            organization_id=uuid4(),
+            workspace_id=None,
+            subject_id=subject_id,
+            run_id=str(uuid4()),
+            purpose=purpose,
+            spend={"stages": [dict(stage)]},
+        )
+
+    assert len({event.event_id for event in events}) == 2
+    assert [event.properties["reading_purpose"] for event in events] == [
+        "agent",
+        "scan",
+    ]
+
+
+def test_a_reading_that_reports_a_stage_twice_is_refused(monkeypatch, settings):
+    from ee.usage.services import emitter
+
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    stage = {
+        "stage": "understanding-agent",
+        "models": ["gemini-3.7-flash"],
+        "tokens_in": 1_000,
+        "tokens_out": 100,
+        "tokens_cached": 0,
+    }
+
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_usage.record_agent_reading_usage(
+            organization_id=uuid4(),
+            workspace_id=None,
+            subject_id=uuid4(),
+            run_id=str(uuid4()),
+            purpose="agent",
+            spend={"stages": [stage, dict(stage)]},
+        )
+
+    assert refused.value.code == "reading_usage_invalid"
+    assert events == []

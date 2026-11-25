@@ -1,16 +1,9 @@
-"""Deterministic codecs for unified property definitions.
-
-The functions in this module are pure and deliberately independent of Django,
-PostgreSQL, ClickHouse, and Kafka.  They form the byte contract shared by
-definition producers, qualification, and the eventual catalog reader.
-"""
+"""Pure identity, search, and JSON codecs for current property definitions."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
-import struct
 import unicodedata
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
@@ -19,9 +12,13 @@ from uuid import UUID
 
 MAX_DEFINITION_JSON_BYTES = 32 * 1024
 MAX_IDENTITY_COMPONENT_BYTES = 4 * 1024
+MAX_FOLDED_ATTRIBUTE_KEY_BYTES = 3 * MAX_IDENTITY_COMPONENT_BYTES
+CUSTOM_ATTRIBUTE_PREFIX = "custom_attribute:"
+MAX_CUSTOM_PROPERTY_ID_BYTES = MAX_IDENTITY_COMPONENT_BYTES + len(
+    CUSTOM_ATTRIBUTE_PREFIX
+)
 MAX_SEARCH_COMPONENT_BYTES = 8 * 1024
 MAX_CANONICAL_NUMBER_LENGTH = 4 * 1024
-ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 
 _PROPERTY_ID_KINDS = frozenset(
     {
@@ -31,12 +28,12 @@ _PROPERTY_ID_KINDS = frozenset(
         "eval_config",
         "annotation",
         "dataset_column",
+        "metric_field",
     }
 )
 _UUID_PROPERTY_ID_KINDS = frozenset(
-    {"eval_template", "eval_config", "annotation", "dataset_column"}
+    {"eval_template", "eval_config", "annotation", "dataset_column", "metric_field"}
 )
-_HEX_DIGITS = frozenset("0123456789abcdef")
 
 
 class CatalogCodecError(ValueError):
@@ -76,6 +73,7 @@ def validate_text(
     field: str,
     max_bytes: int,
     allow_empty: bool = False,
+    allow_controls: bool = False,
 ) -> str:
     """Validate one identity/search field without rewriting it."""
 
@@ -91,7 +89,7 @@ def validate_text(
         raise CatalogCodecError(f"{field} must not be empty")
     if len(encoded) > max_bytes:
         raise CatalogCodecError(f"{field} exceeds {max_bytes} UTF-8 bytes")
-    if any(unicodedata.category(char) == "Cc" for char in value):
+    if not allow_controls and any(unicodedata.category(char) == "Cc" for char in value):
         raise CatalogCodecError(f"{field} contains a control character")
     return value
 
@@ -113,6 +111,7 @@ def stable_property_id(
         raw_key,
         field="source_key",
         max_bytes=MAX_IDENTITY_COMPONENT_BYTES,
+        allow_controls=kind == "custom_attribute",
     )
 
     if kind == "system_attribute":
@@ -177,50 +176,6 @@ def canonical_json(
     return payload
 
 
-def canonical_json_sha256(payload: str) -> str:
-    """Hash an already-canonical UTF-8 JSON payload."""
-
-    try:
-        encoded = payload.encode("utf-8")
-    except UnicodeEncodeError as exc:
-        raise CatalogCodecError("canonical JSON contains an invalid surrogate") from exc
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def framed_sha256(domain: str, *components: str | int | bool | None) -> str:
-    """Hash unambiguous length-prefixed fields under an explicit domain."""
-
-    validate_text(
-        domain,
-        field="digest domain",
-        max_bytes=MAX_IDENTITY_COMPONENT_BYTES,
-    )
-    digest = hashlib.sha256()
-    domain_bytes = domain.encode("utf-8")
-    digest.update(struct.pack(">I", len(domain_bytes)))
-    digest.update(domain_bytes)
-    for component in components:
-        if component is None:
-            encoded = b"<null>"
-        elif isinstance(component, bool):
-            encoded = b"true" if component else b"false"
-        else:
-            encoded = str(component).encode("utf-8")
-        digest.update(struct.pack(">Q", len(encoded)))
-        digest.update(encoded)
-    return digest.hexdigest()
-
-
-def require_sha256(value: str, *, field: str) -> str:
-    """Validate the lowercase transport representation of a SHA-256 digest."""
-
-    if not isinstance(value, str):
-        raise TypeError(f"{field} must be a string")
-    if len(value) != 64 or any(char not in _HEX_DIGITS for char in value):
-        raise CatalogCodecError(f"{field} must be 64 lowercase hex characters")
-    return value
-
-
 def combine_search_text(*components: str, source_tokens: Sequence[str] = ()) -> str:
     """Casefold and de-duplicate bounded search components in source order."""
 
@@ -240,7 +195,7 @@ def combine_search_text(*components: str, source_tokens: Sequence[str] = ()) -> 
 
 
 def _validate_json_value(value: Any, *, path: str, seen: set[int]) -> None:
-    if value is None or isinstance(value, (str, bool, int)):
+    if value is None or isinstance(value, str | bool | int):
         if isinstance(value, str):
             try:
                 value.encode("utf-8")
@@ -264,7 +219,7 @@ def _validate_json_value(value: Any, *, path: str, seen: set[int]) -> None:
             _validate_json_value(member, path=f"{path}.{key}", seen=seen)
         seen.remove(identity)
         return
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         identity = id(value)
         if identity in seen:
             raise CatalogCodecError(f"{path} contains a cycle")
@@ -299,7 +254,7 @@ def _encode_json_value(value: Any) -> str:
             )
             + "}"
         )
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return "[" + ",".join(_encode_json_value(member) for member in value) + "]"
     raise CatalogCodecError(f"unsupported canonical JSON value {type(value).__name__}")
 

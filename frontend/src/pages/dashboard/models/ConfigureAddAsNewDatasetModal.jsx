@@ -99,7 +99,7 @@ const ConfigureAddAsNewDatasetModal = ({ open, onClose }) => {
               Add as new dataset
             </Typography>
             <IconButton onClick={handleClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText text="Save this derived dataset as a new dataset" />
@@ -142,9 +142,6 @@ const ConfigureAddAsNewDatasetModal = ({ open, onClose }) => {
             variant="contained"
             autoFocus
             color="primary"
-            sx={{
-              borderRadius: "10px",
-            }}
             loading={loading} // Pass the loading state to the button
           >
             <Typography variant="s2" fontWeight={"fontWeightSemiBold"}>

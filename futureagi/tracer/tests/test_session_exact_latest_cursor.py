@@ -27,7 +27,7 @@ from tracer.services.clickhouse.v2.query_builders.session_list import (
 
 PROJECT = str(UUID(int=1))
 SESSION = str(UUID(int=100))
-METHODS = ("page", "cursor", "count", "match", "metrics", "content", "attributes")
+METHODS = ("page", "cursor", "count", "match", "hydration")
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -59,13 +59,8 @@ def _filters(start, end):
 def _query(builder, method):
     if method == "match":
         return builder.build_filter_match_query([SESSION])
-    if method in {"metrics", "content", "attributes"}:
-        name = {
-            "metrics": "build_page_metrics_query",
-            "content": "build_content_query",
-            "attributes": "build_span_attributes_query",
-        }[method]
-        return getattr(builder, name)([SESSION])
+    if method == "hydration":
+        return builder.build_page_hydration_query([SESSION])
     return getattr(
         builder,
         {
@@ -141,20 +136,30 @@ def test_session_replay_uses_schema_key_and_post_collapse_microsecond_window(
     )
     sql, params = _query(builder, method)
     compact = " ".join(sql.split())
-    key = "project_id, trace_id, id, start_time"
+    # A candidate statement's root scan carries its own window bindings so a
+    # bounded slice can raise its floor without moving the request window every
+    # other scan in the same statement reads.  Unsliced - which is every
+    # statement here - they are the request window, asserted below.  The
+    # page-scoped hydration statements are never sliced and bind it directly.
+    low, high = (
+        ("candidate_root_scan_start_us", "candidate_root_scan_end_us")
+        if method in {"page", "cursor", "count", "match"}
+        else ("start_date_us", "end_date_us")
+    )
+    key = "project_id, toDate(created_at), trace_id, id"
     if cls is SessionListQueryBuilderV2:
         key = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
-        assert "toStartOfHour(fromUnixTimestamp64Micro(%(start_date_us)s" in sql
-        assert "%(end_date_us)s - 1" in sql
+        assert f"toStartOfHour(fromUnixTimestamp64Micro(%({low})s" in sql
+        assert f"%({high})s - 1" in sql
         assert "toStartOfHour(start_time) AS start_hour" in sql
     else:
         assert "toStartOfHour" not in sql
     assert f"GROUP BY {key}" in compact
     assert "AS latest_start_time" in sql
-    assert (
-        "latest_start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')" in sql
-    )
-    assert "latest_start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')" in sql
+    assert f"latest_start_time >= fromUnixTimestamp64Micro(%({low})s, 'UTC')" in sql
+    assert f"latest_start_time < fromUnixTimestamp64Micro(%({high})s, 'UTC')" in sql
+    assert params[low] == params["start_date_us"]
+    assert params[high] == params["end_date_us"]
     assert params["start_date_us"] % 1_000_000 == 123456
     assert "spans_per_session" not in sql
     assert not re.search(r"FROM\s+spans(?:\s+AS\s+\w+)?\s+FINAL\b", sql)
@@ -208,7 +213,7 @@ def _values_where(sql):
     return re.sub(r"'(?:\\.|[^'\\])*'|\b(?:SELECT|PREWHERE|WHERE)\b|[()]", token, sql)
 
 
-def _inline_execute(chdb, sql, params, rows, remaps):
+def _inline_execute(chdb, sql, params, rows, remaps, *, as_driver=False):
     context = SimpleNamespace(server_info=SimpleNamespace(get_timezone=lambda: "UTC"))
     rendered = sql % escape_params(params, context)
     # Inline remaps are already latest state and VALUES has no FINAL operator.
@@ -226,17 +231,44 @@ def _inline_execute(chdb, sql, params, rows, remaps):
     literals = escape_params(
         {"rows": tuple(rows), "remaps": tuple(remaps), "columns": columns}, context
     )
+    # Ordinary, unnamed spans retain the existing literal total/cost oracles;
+    # the native member projection also reads these schema-default components.
     spans = f"""SELECT *, start_time + INTERVAL 1 SECOND AS end_time, toInt64(1) AS total_tokens,
+        '' AS name, toInt32(0) AS prompt_tokens, toInt32(0) AS completion_tokens,
+        lengthUTF8(input) AS input_length,
         map('state', input) AS attrs_string, map('amount', cost) AS attrs_number,
         map('ok', true) AS attrs_bool, '{{}}' AS attributes_extra
         FROM values({literals["columns"]}, {literals["rows"][1:-1]})"""
     maps = (
         f"SELECT * FROM values('old_id UUID, new_id UUID', {literals['remaps'][1:-1]})"
     )
-    assert rendered.lstrip().startswith("WITH")
-    rendered = f"WITH spans AS ({spans}), trace_session_id_remap AS ({maps}), {rendered.lstrip()[4:]}"
-    result = str(chdb.query(_values_where(rendered), "JSONEachRow"))
-    return [json.loads(line) for line in result.splitlines() if line]
+    # Canonical-ID lookup is a plain SELECT; page reads have their own WITH. Keep
+    # EXPLAIN outside the statement when the selector estimates a slice first.
+    body = rendered.lstrip()
+    explain = "EXPLAIN ESTIMATE " if body.startswith("EXPLAIN ESTIMATE") else ""
+    if explain:
+        body = body[len("EXPLAIN ESTIMATE") :].lstrip()
+    assert body.startswith(("WITH", "SELECT")), body
+    tail = ", " + body[4:] if body.startswith("WITH") else " " + body
+    rendered = (
+        f"{explain}WITH spans AS ({spans}), trace_session_id_remap AS ({maps}){tail}"
+    )
+    rendered = _values_where(rendered)
+    if not as_driver:
+        result = str(chdb.query(rendered, "JSONEachRow"))
+        return [json.loads(line) for line in result.splitlines() if line]
+    envelope = json.loads(str(chdb.query(rendered, "JSON")))
+    data = envelope["data"]
+    # The public selector consumes native datetime objects (including cursor
+    # boundaries); only the direct SQL assertions above that boundary read JSON.
+    for field in envelope["meta"]:
+        if re.match(r"(?:Nullable\()?DateTime", field["type"]):
+            for row in data:
+                if row[field["name"]] is not None:
+                    row[field["name"]] = datetime.fromisoformat(row[field["name"]])
+    return SimpleNamespace(
+        data=data, columns=[field["name"] for field in envelope["meta"]]
+    )
 
 
 def _adversarial_rows(start, end):
@@ -352,32 +384,25 @@ def test_inline_exact_session_pages_and_hydration_over_adversarial_versions(days
         ids
     )
     expected_costs = {100: 5, 101: 7, 102: 9, 107: 1, 109: 10, 110: 1, 200: 9}
-    for method in (
-        "build_page_metrics_query",
-        "build_content_query",
-        "build_span_attributes_query",
-    ):
-        sql, params = getattr(builder, method)(
-            [str(UUID(int=n)) for n in expected_costs]
-        )
-        result = _inline_execute(chdb, sql, params, rows, remaps)
-        assert {r["session_id"] for r in result} == {
-            str(UUID(int=n)) for n in expected_costs
-        }
-        if method == "build_page_metrics_query":
-            assert {
-                int(UUID(r["session_id"])): r["total_cost"] for r in result
-            } == expected_costs
-            moved = next(r for r in result if int(UUID(r["session_id"])) == 101)
-            assert datetime.fromisoformat(moved["session_start"]) == start + timedelta(
-                minutes=6
-            )
-        if method == "build_content_query":
-            moved = next(r for r in result if int(UUID(r["session_id"])) == 101)
-            assert moved["first_message"] == moved["last_message"] == "v2-moved"
-        if method == "build_span_attributes_query":
-            moved = [r for r in result if int(UUID(r["session_id"])) == 101]
-            assert len(moved) == 1 and moved[0]["attrs_number"]["amount"] == 7
+    # One hydration statement now carries the metrics, the messages and the
+    # attribute payloads that three separate statements used to re-read.
+    sql, params = builder.build_page_hydration_query(
+        [str(UUID(int=n)) for n in expected_costs]
+    )
+    result = _inline_execute(chdb, sql, params, rows, remaps)
+    assert {r["session_id"] for r in result} == {
+        str(UUID(int=n)) for n in expected_costs
+    }
+    assert {int(UUID(r["session_id"])): r["total_cost"] for r in result} == (
+        expected_costs
+    )
+    moved = next(r for r in result if int(UUID(r["session_id"])) == 101)
+    assert datetime.fromisoformat(moved["session_start"]) == start + timedelta(
+        minutes=6
+    )
+    assert moved["first_message"] == moved["last_message"] == "v2-moved"
+    attributes = type(builder).expand_page_attribute_rows([moved])
+    assert len(attributes) == 1 and attributes[0]["attrs_number"]["amount"] == 7
     # An excluded latest timestamp must not expose its older allowed version.
     excluded = {
         "column_id": "start_time",
@@ -442,6 +467,12 @@ def test_public_default_session_dispatch_uses_real_exact_builder_and_signed_cano
     def execute(sql, params, **kwargs):
         calls.append((sql, params))
         assert "spans_per_session" not in sql and "_seed_order" not in sql
+        if sql.lstrip().startswith("EXPLAIN ESTIMATE"):
+            # The candidate slice width probe reads the primary index only, so
+            # it carries no physical replacement key and no data read at all.
+            # Answering with no ``columns`` is the reducer's "unknown" case,
+            # which keeps this page on the unnarrowed statement asserted below.
+            return SimpleNamespace(data=[])
         assert (
             "GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
             in sql
@@ -462,7 +493,7 @@ def test_public_default_session_dispatch_uses_real_exact_builder_and_signed_cano
                     for sid, when in records
                 ]
             )
-        if "sum(cost) AS total_cost" in sql:
+        if "AS root_total_cost" in sql:
             return SimpleNamespace(
                 data=[
                     {

@@ -64,13 +64,9 @@ def test_skip_when_runtime_inputs_missing():
 def test_skip_when_every_mapped_value_is_empty():
     mapping = {"question": "q_col", "context": "ctx_col"}
     assert (
-        has_usable_inputs_for_gt(mapping, {"question": "", "context": "   "})
-        is False
+        has_usable_inputs_for_gt(mapping, {"question": "", "context": "   "}) is False
     )
-    assert (
-        has_usable_inputs_for_gt(mapping, {"question": None, "context": []})
-        is False
-    )
+    assert has_usable_inputs_for_gt(mapping, {"question": None, "context": []}) is False
 
 
 def test_proceed_when_any_mapped_value_is_present():
@@ -100,12 +96,7 @@ def test_list_mapping_opens_gate_on_any_present_column():
         )
         is True
     )
-    assert (
-        has_usable_inputs_for_gt(
-            mapping, {"text_col": "", "image_col": ""}
-        )
-        is False
-    )
+    assert has_usable_inputs_for_gt(mapping, {"text_col": "", "image_col": ""}) is False
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -123,9 +114,7 @@ def test_label_cols_canonical_keys():
 
 
 def test_label_cols_legacy_keys_accepted():
-    assert get_label_columns(
-        {"expected_output": "v", "reasoning": "r"}
-    ) == ("v", "r")
+    assert get_label_columns({"expected_output": "v", "reasoning": "r"}) == ("v", "r")
     assert get_label_columns({"expected_output": "v", "reason": "r"}) == (
         "v",
         "r",
@@ -133,9 +122,7 @@ def test_label_cols_legacy_keys_accepted():
 
 
 def test_label_cols_canonical_wins_over_legacy():
-    assert get_label_columns(
-        {"output": "new", "expected_output": "old"}
-    ) == ("new", "")
+    assert get_label_columns({"output": "new", "expected_output": "old"}) == ("new", "")
 
 
 def test_label_cols_explanation_is_optional():
@@ -179,9 +166,7 @@ def test_detect_input_column_types_stamps_modalities(monkeypatch):
 
 
 def test_build_ground_truth_blocks_empty():
-    assert build_ground_truth_blocks(
-        [], variable_mapping=None, role_mapping=None
-    ) == []
+    assert build_ground_truth_blocks([], variable_mapping=None, role_mapping=None) == []
 
 
 def test_build_ground_truth_blocks_text_only_uses_labelled_framing():
@@ -244,7 +229,9 @@ def test_build_ground_truth_blocks_image_column_emits_image_url_block(monkeypatc
     assert image_blocks[0]["image_url"]["url"] == "https://example.com/a.png"
 
 
-def test_build_ground_truth_blocks_uses_supplied_column_types_skipping_sniff(monkeypatch):
+def test_build_ground_truth_blocks_uses_supplied_column_types_skipping_sniff(
+    monkeypatch,
+):
     sniffed: list = []
 
     def boom_detect(*_args, **_kwargs):
@@ -280,7 +267,9 @@ def test_build_ground_truth_blocks_uses_supplied_column_types_skipping_sniff(mon
     assert image_blocks[0]["image_url"]["url"] == "https://example.com/a.png"
 
 
-def test_build_ground_truth_blocks_falls_back_to_sniff_when_column_types_missing(monkeypatch):
+def test_build_ground_truth_blocks_falls_back_to_sniff_when_column_types_missing(
+    monkeypatch,
+):
     sniffed: list = []
 
     def fake_detect(inputs, required_keys):
@@ -311,7 +300,9 @@ def test_build_ground_truth_blocks_falls_back_to_sniff_when_column_types_missing
     assert any(b.get("type") == "image_url" for b in blocks)
 
 
-def test_build_ground_truth_blocks_falls_back_to_sniff_when_column_types_empty(monkeypatch):
+def test_build_ground_truth_blocks_falls_back_to_sniff_when_column_types_empty(
+    monkeypatch,
+):
     sniffed: list = []
 
     def fake_detect(inputs, required_keys):

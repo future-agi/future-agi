@@ -11,9 +11,7 @@ from collections.abc import Callable
 from concurrent.futures import (
     ThreadPoolExecutor,
 )
-from concurrent.futures import (
-    TimeoutError as FutureTimeoutError,
-)
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -23,9 +21,11 @@ from django.core.cache import cache, caches
 from django.core.cache.backends.locmem import LocMemCache
 from django.db import DatabaseError, connection, transaction
 
+from tracer.constants.dashboard import TEXT_ANNOTATION_AGGREGATIONS
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
+from tracer.services.clickhouse.attribute_reads import ATTRIBUTE_READ_MAX_PROJECTS
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 from tracer.services.postgres_read_policy import application_postgres_reads
@@ -288,6 +288,8 @@ def _annotation_label_metric_entry(annotation_label: dict) -> dict:
         "sources": ["datasets", "traces"],
         "output_type": label_type,
     }
+    if (label_type or "").lower() == "text":
+        metric_entry["allowed_aggregations"] = list(TEXT_ANNOTATION_AGGREGATIONS)
     if label_type == "categorical":
         legacy_choices = []
         choice_options = []
@@ -505,9 +507,9 @@ def resolve_property_catalog_project_scope(
     carried into its visibility predicate must first be proven to belong to
     the already-authorized workspace. Unlike the legacy catalog builder,
     malformed and mixed valid/foreign scopes are rejected instead
-    of silently narrowed. This rollout is qualified for Observe projects;
-    workspace reads materialize that complete eligible PG set so the
-    activation can prove full coverage.
+    of silently narrowed. Workspace reads use the complete live Observe
+    project set; deleted or newly inaccessible scopes cannot be replayed
+    through a previously signed cursor.
     """
 
     raw_project_ids = list(project_ids)
@@ -1026,7 +1028,18 @@ def build_metrics_catalog(
 
     attribute_executor = None
     attribute_future = None
-    if want_custom_attributes and project_ids:
+    attribute_project_count = len(set(project_ids)) if want_custom_attributes else 0
+    if attribute_project_count > ATTRIBUTE_READ_MAX_PROJECTS:
+        # Span-attribute discovery has a hard project-scope cap. Above it, skip
+        # only the custom-attribute family and keep every finite family, rather
+        # than failing the whole catalog with a 503. Callers that need span
+        # attributes for a large workspace pass an explicit project scope.
+        logger.warning(
+            "metrics_catalog_custom_attributes_skipped_over_project_cap",
+            project_count=attribute_project_count,
+            project_cap=ATTRIBUTE_READ_MAX_PROJECTS,
+        )
+    elif want_custom_attributes and project_ids:
         try:
             attribute_executor = ThreadPoolExecutor(
                 max_workers=settings.DASHBOARD_METRICS_ATTRIBUTE_WORKERS

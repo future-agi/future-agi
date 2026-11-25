@@ -78,7 +78,13 @@ const DeleteAgentDefinitionDialog = ({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      fullWidth
+    >
       <Box sx={{ padding: 2 }}>
         <DialogTitle sx={{ padding: 0, margin: 0 }}>
           <Box
@@ -88,17 +94,13 @@ const DeleteAgentDefinitionDialog = ({
               justifyContent: "space-between",
             }}
           >
-            <Typography
-              fontWeight="fontWeightBold"
-              color="text.primary"
-              typography="m3"
-            >
+            <Typography fontWeight={600} color="text.primary" typography="m3">
               Delete Agent definition
               {agents?.length > 1 && "s"}
             </Typography>
 
-            <IconButton onClick={onClose} sx={{ padding: 1 }}>
-              <Iconify icon="mdi:close" color="text.primary" />
+            <IconButton onClick={onClose}>
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
 
@@ -132,9 +134,9 @@ const DeleteAgentDefinitionDialog = ({
               size="small"
               onClick={handleDelete}
               sx={{
-                backgroundColor: "red.500",
+                backgroundColor: "status.danger.solid",
                 color: "common.white",
-                "&:hover": { backgroundColor: "red.600" },
+                "&:hover": { backgroundColor: "status.danger.solid" },
               }}
             >
               <Typography typography="s2" fontWeight="fontWeightSemiBold">

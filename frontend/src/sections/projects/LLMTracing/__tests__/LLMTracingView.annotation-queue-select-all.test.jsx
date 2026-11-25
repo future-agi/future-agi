@@ -69,6 +69,7 @@ const harness = vi.hoisted(() => {
       totalRowCountIsLowerBound: false,
     }),
     validatedFilters: {},
+    addDatasetProps: null,
     spanExcludedPhysicalId: JSON.stringify([
       "project-1",
       "trace-2",
@@ -378,7 +379,10 @@ vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
   default: () => null,
 }));
 vi.mock("src/components/traceDetailDrawer/addToDataset/add-dataset", () => ({
-  default: () => null,
+  default: (props) => {
+    harness.addDatasetProps = props;
+    return null;
+  },
 }));
 vi.mock("src/components/traceDetailDrawer/AnnotateDrawer", () => ({
   default: () => null,
@@ -435,7 +439,7 @@ async function applyMixedFiltersAndOpenQueue(user) {
   await user.click(await screen.findByText("Manager Queue"));
 }
 
-async function renderView() {
+async function renderView(viewProps = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -444,7 +448,7 @@ async function renderView() {
     rendered = render(
       <QueryClientProvider client={queryClient}>
         <React.Suspense fallback={<div>Loading tracing view</div>}>
-          <LLMTracingView />
+          <LLMTracingView {...viewProps} />
         </React.Suspense>
       </QueryClientProvider>,
     );
@@ -556,6 +560,79 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
             remove_simulation_calls: false,
           },
         },
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+  });
+
+  // The user page (mode="user", no route project) lists one row per
+  // (project, trace), so its trace grid's row ids carry the project. The
+  // queue and dataset APIs take bare trace ids.
+  const crossProjectRowId = (projectId, traceId) =>
+    JSON.stringify([projectId, traceId]);
+
+  it("hands the queue and dataset bare trace ids for rows from several projects", async () => {
+    harness.traceStore.set({
+      selectAll: false,
+      toggledNodes: [
+        crossProjectRowId("project-b", "trace-1"),
+        crossProjectRowId("project-a", "trace-1"),
+        crossProjectRowId("project-a", "trace-2"),
+      ],
+    });
+    const user = userEvent.setup();
+    await renderView({ mode: "user", userIdForUserMode: "user-1" });
+
+    await waitFor(() =>
+      expect(harness.addDatasetProps?.selectedTraces).toEqual([
+        "trace-1",
+        "trace-2",
+      ]),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /add selected rows/i }),
+    );
+    await user.click(await screen.findByText("Manager Queue"));
+
+    await waitFor(() => {
+      expect(harness.addItems).toHaveBeenCalledWith(
+        {
+          queueId: "manager-queue",
+          items: [
+            { source_type: "trace", source_id: "trace-1" },
+            { source_type: "trace", source_id: "trace-2" },
+          ],
+        },
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+  });
+
+  it("submits bare trace ids as select-all exclusions for rows from several projects", async () => {
+    const user = userEvent.setup();
+    await renderView({ mode: "user", userIdForUserMode: "user-1" });
+    act(() =>
+      harness.traceStore.set({
+        selectAll: true,
+        toggledNodes: [crossProjectRowId("project-b", "trace-excluded")],
+      }),
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /add selected rows/i }),
+    );
+    await user.click(await screen.findByText("Manager Queue"));
+
+    await waitFor(() => {
+      expect(harness.addItems).toHaveBeenCalledWith(
+        expect.objectContaining({
+          queueId: "manager-queue",
+          selection: expect.objectContaining({
+            mode: "filter",
+            source_type: "trace",
+            exclude_ids: ["trace-excluded"],
+          }),
+        }),
         expect.objectContaining({ onSuccess: expect.any(Function) }),
       );
     });

@@ -2,12 +2,34 @@
 
 from rest_framework import serializers
 
+from agentcc.models.request_log import AgentccRequestLog
+
+# `AgentccRequestLog.api_key_id` holds the gateway's own key id — the value the
+# proxy stamps on each log and the one log ingestion matches against
+# `AgentccAPIKey.gateway_key_id`. Both are CharFields of opaque gateway ids
+# (`gw-key-7f3a`), never the DB's UUID primary key, so a filter on this column
+# is a string filter. Typing it as a UUID rejected every real key id while
+# accepting none, and bounding it by the column's own width keeps a reference
+# the column could not possibly hold an error rather than a silent empty result.
+API_KEY_ID_MAX_LENGTH = AgentccRequestLog._meta.get_field("api_key_id").max_length
+
+
+def _api_key_id_field():
+    # Blank means "no key filter" to both consumers, exactly as for the
+    # user_id/session_id filters alongside it.
+    return serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=API_KEY_ID_MAX_LENGTH,
+        help_text="Gateway key id (not the API key's UUID primary key).",
+    )
+
 
 class GatewayOverviewQuerySerializer(serializers.Serializer):
     start = serializers.DateTimeField(required=False)
     end = serializers.DateTimeField(required=False)
     granularity = serializers.CharField(required=False)
-    api_key_id = serializers.UUIDField(required=False)
+    api_key_id = _api_key_id_field()
 
 
 class GatewayRequestLogQuerySerializer(serializers.Serializer):
@@ -17,7 +39,7 @@ class GatewayRequestLogQuerySerializer(serializers.Serializer):
     limit = serializers.IntegerField(required=False, min_value=1)
     user_id = serializers.CharField(required=False, allow_blank=True)
     session_id = serializers.CharField(required=False, allow_blank=True)
-    api_key_id = serializers.UUIDField(required=False)
+    api_key_id = _api_key_id_field()
     request_id = serializers.CharField(required=False, allow_blank=True)
     model = serializers.CharField(
         required=False, help_text="Comma-separated model names."

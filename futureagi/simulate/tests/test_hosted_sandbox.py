@@ -1,22 +1,28 @@
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 from types import SimpleNamespace
 
 import pytest
+import structlog
+import structlog.testing
 
 from simulate.services.hosted_sandbox import (
     DaytonaSandboxRuntimeProvider,
     E2BSandboxRuntimeProvider,
     SandboxCommandRequest,
+    SandboxCommandStep,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
+    SandboxNotFoundError,
     SandboxProviderConfigurationError,
     SandboxProviderError,
     sandbox_provider_name,
     sandbox_runtime_reference,
 )
-from simulate.services.hosted_sandbox.e2b import E2BProcess
+from simulate.services.hosted_sandbox.e2b import E2BFilesystem, E2BProcess
 
 
 def _spec(**overrides) -> SandboxLaunchSpec:
@@ -108,6 +114,10 @@ def test_daytona_adapter_maps_provider_neutral_launch_spec(settings, monkeypatch
     assert not hasattr(params, "network_allow_list")
     assert provider.runtime_digest == "sha256:digest"
 
+    provider.create(_spec(runtime_name="alk-hosted-certified-large"), timeout=300)
+    params, _ = _DaytonaClient.created
+    assert params.snapshot == "alk-hosted-certified-large"
+
 
 def test_daytona_adapter_ignores_cidrs_for_restricted_empty_policy(
     settings, monkeypatch
@@ -192,14 +202,15 @@ class _E2BCommands:
 
     def run(self, command, **kwargs):
         self.calls.append((command, kwargs))
+        # An isolated session starts with `install -d` too, so a background command is answered first.
+        if kwargs.get("background"):
+            return SimpleNamespace(pid=73)
         if command.startswith("install -d "):
             return SimpleNamespace(
                 stdout="",
                 stderr="",
                 exit_code=type(self).bootstrap_exit_code,
             )
-        if kwargs.get("background"):
-            return SimpleNamespace(pid=73)
         marker = re.search(r"(__FUTUREAGI_EXIT_[0-9a-f]+__)", command).group(1)
         return SimpleNamespace(stdout=f"output\n{marker}7\n", stderr="problem")
 
@@ -215,6 +226,10 @@ class _E2BSandbox:
         self.files = _E2BFiles()
         self.commands = _E2BCommands()
         self.killed = False
+        self.renewed_timeout = None
+
+    def set_timeout(self, timeout):
+        self.renewed_timeout = timeout
 
     def kill(self):
         self.killed = True
@@ -262,6 +277,7 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
     settings.ALK_E2B_TEMPLATE_MEMORY_MB = 8192
     settings.ALK_E2B_TEMPLATE_DISK_GB = 10
     settings.ALK_E2B_MAX_TTL_SECONDS = 86400
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example.com"
 
     provider = E2BSandboxRuntimeProvider()
     sandbox = provider.create(_spec(), timeout=300)
@@ -285,12 +301,20 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
         "rm -f /usr/local/bin/python && "
         "printf '#!/bin/sh\\nexec /opt/alk-venv/bin/python \"$@\"\\n' "
         "> /usr/local/bin/python && chmod 0755 /usr/local/bin/python && "
-        "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip"
+        "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip && "
+        "if [ -x /opt/alk-venv/bin/uv ]; then "
+        "ln -sfn /opt/alk-venv/bin/uv /usr/local/bin/uv; fi && "
+        "if [ -x /opt/alk-venv/bin/uvx ]; then "
+        "ln -sfn /opt/alk-venv/bin/uvx /usr/local/bin/uvx; fi && "
+        "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx"
     )
     assert bootstrap_options["user"] == "root"
     preview = provider.create_preview_url(sandbox, 8080, expires_in_seconds=600)
     assert preview.url == "https://8080-e2b-sandbox.e2b.app"
     assert preview.headers == {"E2B-Traffic-Access-Token": "traffic-token"}
+
+    provider.renew_ttl(sandbox, 7200)
+    assert _E2BSandboxClass.sandbox.renewed_timeout == 7200
 
     assert provider.delete(sandbox, timeout=1, wait=True) is True
     assert sandbox._sandbox.killed is True
@@ -344,6 +368,156 @@ def test_e2b_process_preserves_exit_code_and_reconnectable_command(monkeypatch):
     assert submitted_options["envs"] == {"PROVIDER_TOKEN": secret}
 
 
+class _E2BIsolationCommands(_E2BCommands):
+    """An image that has, or lacks, the per-user isolation marker."""
+
+    def __init__(self, marker: bool):
+        super().__init__()
+        self.marker = marker
+
+    def run(self, command, **kwargs):
+        if "test -f /opt/alk/process-isolation" in command:
+            self.calls.append((command, kwargs))
+            found = re.search(r"(__FUTUREAGI_EXIT_[0-9a-f]+__)", command).group(1)
+            return SimpleNamespace(
+                stdout=f"{found}{0 if self.marker else 1}\n", stderr=""
+            )
+        return super().run(command, **kwargs)
+
+
+# A build's session: the two harness entrypoints around a step that is not one.
+_STEPS = (
+    SandboxCommandStep(
+        "python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json",
+        harness=True,
+    ),
+    SandboxCommandStep("python -m fi.alk.harness.cli scenarios extend --count 4"),
+    SandboxCommandStep(
+        "python -m fi.alk.harness.hosted_entrypoint /work/job.json", harness=True
+    ),
+)
+_COMMAND = " && ".join(step.command for step in _STEPS)
+
+
+def _session(process, *, isolate):
+    process.execute_session_command(
+        "alk-harness",
+        SandboxCommandRequest(
+            command=_COMMAND,
+            env={"PATH": "/usr/bin"},
+            run_async=True,
+            steps=_STEPS if isolate else (),
+        ),
+    )
+    return process._sandbox.commands.calls[-1]
+
+
+def _drops(command):
+    """Each step's drop to the sandbox user: its setpriv flags and env, and the step it runs."""
+    tokens = shlex.split(command)
+    drops = []
+    for index, token in enumerate(tokens):
+        if token == "setpriv":
+            end = tokens.index("-c", index)
+            drops.append((tokens[index:end], tokens[end + 1]))
+    return drops
+
+
+def test_e2b_isolation_grants_only_the_harness_steps(monkeypatch):
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    raw.commands = _E2BIsolationCommands(marker=True)
+
+    command, options = _session(E2BProcess(raw, "svc-control"), isolate=True)
+
+    assert options["user"] == "root"  # only to wrap each step
+    assert options["envs"] == {"PATH": "/usr/bin"}
+    drops = _drops(command)
+    assert [step for _, step in drops] == [
+        f"umask 077; {step.command}" for step in _STEPS
+    ]
+    caps = "+chown,+dac_override,+fowner,+kill,+setgid,+setuid"
+    for (flags, _), step in zip(drops, _STEPS, strict=True):
+        assert flags[1:4] == [
+            "--reuid=svc-control",
+            "--regid=svc-control",
+            "--init-groups",
+        ]
+        assert "HOME=/home/svc-control" in flags and "sh" == flags[-1]
+        if step.harness:
+            assert f"--inh-caps={caps}" in flags and f"--ambient-caps={caps}" in flags
+            assert "ALK_PROCESS_ISOLATION=required" in flags
+        else:
+            # Extend and everything else between the entrypoints holds no capability.
+            assert "--inh-caps=-all" in flags and "--ambient-caps=-all" in flags
+            assert not [flag for flag in flags if caps in flag]
+            assert "ALK_PROCESS_ISOLATION=required" not in flags
+
+
+def test_e2b_isolation_locks_work_down_as_root_and_always_writes_the_exit_code(
+    monkeypatch,
+):
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    raw.commands = _E2BIsolationCommands(marker=True)
+
+    command, _options = _session(E2BProcess(raw, "svc-control"), isolate=True)
+
+    # The commands directory and the log stay the sandbox user's, so its later sessions can write
+    # theirs and the poller can read them.
+    assert command.startswith(
+        "install -d -m 0700 -o svc-control -g svc-control /run/futureagi/provider-commands && "
+        "install -m 0600 -o svc-control -g svc-control /dev/null /run/futureagi/provider-commands/"
+    )
+    # /work is closed before the first step, by root: a relaunch can find files a declared user owns.
+    assert "( chmod -R go-rwx /work && chmod 0711 /work && setpriv " in command
+    # The exit code is written by the root shell after the steps, so a drop that fails to start
+    # still ends with its code instead of reading as a command that disappeared.
+    steps_end = command.rindex(") >> /run/futureagi/provider-commands/")
+    written = command.index(
+        "printf '%s' \"$_futureagi_code\" > /run/futureagi/provider-commands/"
+    )
+    assert steps_end < written
+    assert (
+        "chown svc-control:svc-control /run/futureagi/provider-commands/"
+        in command[written:]
+    )
+
+
+def test_e2b_without_the_image_marker_runs_exactly_today_s_command(monkeypatch):
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    raw.commands = _E2BIsolationCommands(marker=False)
+    process = E2BProcess(raw, "svc-control")
+
+    with structlog.testing.capture_logs() as logged:
+        asked, asked_options = _session(process, isolate=True)
+    plain, plain_options = _session(process, isolate=False)
+
+    pattern = re.compile(r"provider-commands/[0-9a-f]+\.")
+    assert pattern.sub("X.", asked) == pattern.sub("X.", plain)
+    assert asked_options["user"] == plain_options["user"] == "svc-control"
+    assert "ALK_PROCESS_ISOLATION" not in asked and "setpriv" not in asked
+    # Isolation is expected once the image carries it: an image without it says so.
+    assert [one["event"] for one in logged] == ["hosted_isolation_marker_missing"]
+
+
+def test_a_request_s_steps_must_be_its_command():
+    with pytest.raises(ValueError):
+        SandboxCommandRequest(command="python -m one", steps=_STEPS)
+
+
+def test_e2b_a_request_without_isolation_never_checks_the_image(monkeypatch):
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    raw.commands = _E2BIsolationCommands(marker=True)
+
+    command, options = _session(E2BProcess(raw, "svc-control"), isolate=False)
+
+    assert options["user"] == "svc-control" and "setpriv" not in command
+    assert not any("process-isolation" in sent for sent, _ in raw.commands.calls)
+
+
 def test_e2b_process_fails_when_command_disappears_without_exit_marker(monkeypatch):
     monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
     process = E2BProcess(_E2BSandbox(), "svc-control")
@@ -352,6 +526,21 @@ def test_e2b_process_fails_when_command_disappears_without_exit_marker(monkeypat
         SandboxProviderError, match="disappeared without an exit marker"
     ):
         process.get_session_command("alk-harness", "99:missing")
+
+
+def test_e2b_reports_a_missing_file_apart_from_a_missing_sandbox(monkeypatch):
+    """A caller treats a missing sandbox as gone; a missing file in a live one is not that."""
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    files = E2BFilesystem(raw, "svc-control")
+
+    with pytest.raises(SandboxFileNotFoundError) as missing:
+        files.download_file("/work/builder-cost.json")
+    assert not isinstance(missing.value, SandboxNotFoundError)
+    assert isinstance(missing.value, SandboxProviderError)
+
+    raw.files.values["/work/builder-cost.json"] = b"{}"
+    assert files.download_file("/work/builder-cost.json") == b"{}"
 
 
 def test_e2b_template_capacity_fails_closed(settings):

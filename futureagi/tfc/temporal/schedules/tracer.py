@@ -9,6 +9,13 @@ from tfc.temporal.schedules.config import ScheduleConfig
 # Tracer schedules (migrated from Celery Beat)
 TRACER_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
+        schedule_id="cleanup-derived-metric-snapshots",
+        activity_name="tracer.cleanup_derived_metric_snapshots",
+        interval_seconds=900,
+        queue="tasks_l",
+        description="Resume durable metric erasure and queued snapshot captures",
+    ),
+    ScheduleConfig(
         schedule_id="process-inline-evals",
         activity_name="process_in_line_evals",
         interval_seconds=10,
@@ -26,12 +33,49 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
     #     queue="default",
     #     description="Process evaluation tasks",
     # ),
+    # Recovery, not processing: the per-task workflow is still the only thing
+    # that drains a task, and nothing restarted one that stopped. This reclaims
+    # entries stuck ``running`` (the workflow-start reaper cannot reach a task
+    # whose workflow is alive) and restarts the workflow of a task nothing is
+    # draining. A task draining normally costs one describe and is left alone.
+    ScheduleConfig(
+        schedule_id="sweep-stranded-eval-tasks",
+        activity_name="sweep_stranded_eval_tasks",
+        interval_seconds=300,
+        queue="tasks_s",
+        description="Recover eval tasks whose drain stopped",
+    ),
+    # A Recalculate runs in the user's request; this finishes one whose
+    # request died mid-eval, which would otherwise leave the result retired:
+    # an eval-task result with its replacement running for ever, or a result
+    # with no task (inline Observe eval, experiment span) with none at all.
+    ScheduleConfig(
+        schedule_id="sweep-stale-recalculations",
+        activity_name="sweep_stale_recalculations",
+        interval_seconds=600,
+        queue="tasks_s",
+        description="Finish Recalculates whose request died mid-eval",
+    ),
+    ScheduleConfig(
+        schedule_id="sweep-lost-insight-runs",
+        activity_name="sweep_lost_insight_runs",
+        interval_seconds=60,
+        queue="tasks_xl",
+        description="Settle Insights reports whose workflow stopped",
+    ),
     ScheduleConfig(
         schedule_id="check-alerts",
         activity_name="check_alerts",
         interval_seconds=60,
         queue="tasks_l",
         description="Check and process alert monitors",
+    ),
+    ScheduleConfig(
+        schedule_id="drain-feed-alerts",
+        activity_name="drain_feed_alerts",
+        interval_seconds=30,
+        queue="tasks_s",
+        description="Dispatch committed Error Feed alerts to Slack",
     ),
     ScheduleConfig(
         schedule_id="run-evals-on-spans",
@@ -55,3 +99,15 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         description="Fetch logs from observability providers (VAPI, Retell, etc.)",
     ),
 ]
+
+# Enrolled projects still need policy expiry and physical debt cleanup when the
+# rollout is disabled. Admission restricts those reservations to privacy work.
+TRACER_SCHEDULES.append(
+    ScheduleConfig(
+        schedule_id="dispatch-derived-metrics",
+        activity_name="tracer.dispatch_derived_metrics",
+        interval_seconds=60,
+        queue="tasks_s",
+        description="Dispatch metric refresh or mandatory source-policy cleanup",
+    )
+)

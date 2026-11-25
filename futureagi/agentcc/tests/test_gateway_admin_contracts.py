@@ -59,9 +59,11 @@ def test_vertex_provider_paste_builds_trusted_endpoint_and_contract():
     )
     assert prepared["api_format"] == "gemini"
     assert "api_key" not in prepared
-    assert GatewayOrgConfig.model_validate(
-        {"providers": {"vertex": prepared}}
-    ).providers["vertex"].service_account_json
+    assert (
+        GatewayOrgConfig.model_validate({"providers": {"vertex": prepared}})
+        .providers["vertex"]
+        .service_account_json
+    )
 
     with pytest.raises(ValueError, match="service-account"):
         _prepare_vertex_provider_config(
@@ -69,7 +71,8 @@ def test_vertex_provider_paste_builds_trusted_endpoint_and_contract():
                 "gcp_project": "demo-project",
                 "gcp_location": "us-central1",
                 "service_account_json": raw.replace(
-                    "https://oauth2.googleapis.com/token", "https://attacker.example/token"
+                    "https://oauth2.googleapis.com/token",
+                    "https://attacker.example/token",
                 ),
             }
         )
@@ -120,6 +123,19 @@ def test_gateway_org_config_accepts_camel_case_input_and_dumps_snake_case():
     assert dumped["routing"]["retry"]["on_status_codes"] == [429]
     assert dumped["cache"]["default_ttl"] == 60
     assert dumped["cache"]["max_entries"] == 25
+
+
+def test_gateway_provider_contract_preserves_empty_api_path_prefix():
+    contract = GatewayOrgConfig.model_validate(
+        {"providers": {"perplexity": {"api_path_prefix": ""}}}
+    )
+
+    assert (
+        contract.model_dump(by_alias=True, exclude_none=True)["providers"][
+            "perplexity"
+        ]["api_path_prefix"]
+        == ""
+    )
 
 
 def test_gateway_org_config_accepts_duplicate_saved_aliases():
@@ -224,7 +240,11 @@ def test_assemble_providers_maps_legacy_aws_credentials_to_gateway_contract(
         SimpleNamespace(
             provider_name="bedrock",
             encrypted_credentials=b"encrypted",
-            extra_config={"weight": 2, "ignored": "not-supported"},
+            extra_config={
+                "weight": 2,
+                "api_path_prefix": "",
+                "ignored": "not-supported",
+            },
             base_url="https://bedrock-runtime.us-east-1.amazonaws.com",
             api_format="bedrock",
             models_list=["anthropic.claude-3-5-sonnet-20241022-v2:0"],
@@ -241,6 +261,7 @@ def test_assemble_providers_maps_legacy_aws_credentials_to_gateway_contract(
     assert providers["bedrock"]["aws_secret_access_key"] == "sk"
     assert providers["bedrock"]["aws_region"] == "us-east-1"
     assert providers["bedrock"]["weight"] == 2
+    assert providers["bedrock"]["api_path_prefix"] == ""
     assert "access_key" not in providers["bedrock"]
     assert "ignored" not in providers["bedrock"]
 

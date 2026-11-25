@@ -90,6 +90,15 @@ def _parameter_schema(parameter: dict[str, Any]) -> dict[str, Any]:
             )
             if key in parameter
         }
+    if (
+        parameter.get("in") == "query"
+        and schema.get("type") == "array"
+        and isinstance(schema.get("items"), dict)
+    ):
+        default = schema.pop("default", None)
+        schema = {"anyOf": [copy.deepcopy(schema["items"]), schema, {"type": "null"}]}
+        if default is not None:
+            schema["default"] = default
     if parameter.get("description") and "description" not in schema:
         schema["description"] = parameter["description"]
     return schema
@@ -127,6 +136,37 @@ def _json_schema(schema: dict[str, Any]) -> dict[str, Any]:
         # null to `type` would still leave their other constraints rejecting it.
         result = {"anyOf": [result, {"type": "null"}]}
     return result
+
+
+def _response_policy(
+    entry: dict[str, Any], operation: dict[str, Any], contract: dict[str, Any]
+) -> dict[str, Any]:
+    """Shape the MCP result without changing the REST response.
+
+    ``omit`` drops fields an agent does not need and that would push the result
+    past the MCP size limit. Each dotted path must exist in the contract's 200
+    schema, so renaming the field fails generation instead of letting it back in.
+    """
+    response = {"unwrap": "result", **(entry.get("response") or {})}
+    omit = response.get("omit", [])
+    if set(response) - {"unwrap", "omit"} or not isinstance(omit, list):
+        raise ToolGenerationError(f"Invalid response policy for {entry['name']}")
+    root = operation.get("responses", {}).get("200", {}).get("schema", {})
+    for dotted in omit:
+        if not isinstance(dotted, str) or not dotted:
+            raise ToolGenerationError(f"Invalid response policy for {entry['name']}")
+        schema = root
+        unwrap = [response["unwrap"]] if response["unwrap"] else []
+        for key in unwrap + dotted.split("."):
+            properties = _dereference_root_schema(schema, contract).get(
+                "properties", {}
+            )
+            if key not in properties:
+                raise ToolGenerationError(
+                    f"Response field to omit not found for {entry['name']}: {dotted}"
+                )
+            schema = properties[key]
+    return response
 
 
 def _resolve_parameter(
@@ -362,28 +402,42 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
                 f"Path parameter mismatch for {name}: expected "
                 f"{sorted(path_fields)}, mapped {sorted(mapped_path_fields)}"
             )
-        generated_tools.append(
-            {
-                "name": name,
-                "description": description,
-                "group": entry["group"],
-                "inputSchema": input_schema,
-                "annotations": annotations,
-                "request": {
-                    "method": method.upper(),
-                    "path": path,
-                    "parameters": request_mapping,
-                },
-                "response": entry.get("response") or {"unwrap": "result"},
-                "source": {"operationId": operation.get("operationId")},
-            }
-        )
+        tool = {
+            "name": name,
+            "description": description,
+            "group": entry["group"],
+            "inputSchema": input_schema,
+            "annotations": annotations,
+            "request": {
+                "method": method.upper(),
+                "path": path,
+                "parameters": request_mapping,
+            },
+            "response": _response_policy(entry, operation, contract),
+            "source": {"operationId": operation.get("operationId")},
+        }
+        # The EE feature the tool's REST view checks; listing hides the tool
+        # from an organization without it.
+        if "entitlement" in entry:
+            if not isinstance(entry["entitlement"], str) or not entry["entitlement"]:
+                raise ToolGenerationError(f"Invalid entitlement for {name}")
+            tool["entitlement"] = entry["entitlement"]
+        generated_tools.append(tool)
 
-    contract_bytes = contract_path.read_bytes()
+    # A fingerprint of the tool NAMES, not of the whole contract. The manifest
+    # used to carry a hash of all of swagger.json, so any two pull requests
+    # that touched the API conflicted on that one line. This line changes only
+    # when the set of tools changes. Two pull requests that both add or remove
+    # a tool still conflict here, on purpose: each also set the catalog's
+    # expected_tool_count to the same number, and that edit would otherwise
+    # merge cleanly to a wrong count. `scripts/generate-mcp-tools.py --check`
+    # regenerates the manifest and compares it, which is what keeps the
+    # committed file in step with the contract.
+    tool_names = "\n".join(sorted(tool["name"] for tool in generated_tools))
     return {
         "schema_version": 1,
         "source_contract": str(contract_path.name),
-        "source_contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
+        "tool_names_sha256": hashlib.sha256(tool_names.encode()).hexdigest(),
         "tool_count": len(generated_tools),
         "tools": generated_tools,
     }

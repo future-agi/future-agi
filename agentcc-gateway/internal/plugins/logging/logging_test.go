@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -793,6 +795,86 @@ func TestEmitter_Dropped(t *testing.T) {
 	<-e.ch
 }
 
+// Shutdown does not wait for every request, so a record can be emitted while
+// Close runs, or after: it is dropped and counted, not sent on the closed channel.
+func TestEmitter_EmitDuringAndAfterClose(t *testing.T) {
+	e := NewTraceEmitter(config.RequestLoggingConfig{Enabled: true, BufferSize: 8, Workers: 1})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				e.Emit(TraceRecord{RequestID: "r"})
+			}
+		}()
+	}
+	e.Close()
+	wg.Wait()
+	before := e.Dropped()
+	e.Emit(TraceRecord{RequestID: "late"})
+
+	if got := e.Dropped() - before; got != 1 {
+		t.Errorf("Emit after Close dropped %d records, want 1", got)
+	}
+}
+
+// Records dropped after Close, which has already logged the drops so far, are
+// logged once, not silently counted, and not once per record.
+func TestEmitter_WarnsOnceOfRecordsDroppedAfterClose(t *testing.T) {
+	logs, restore := installCapturingLogger()
+	defer restore()
+	e := NewTraceEmitter(config.RequestLoggingConfig{Enabled: true, BufferSize: 8, Workers: 1})
+	e.Close()
+	before := logs.count()
+
+	for i := 0; i < 3; i++ {
+		e.Emit(TraceRecord{RequestID: "late"})
+	}
+
+	if got := e.Dropped(); got != 3 {
+		t.Errorf("dropped %d records emitted after Close, want 3", got)
+	}
+	var warnings int
+	logs.mu.Lock()
+	for _, rec := range logs.records[before:] {
+		if rec.Level == slog.LevelWarn {
+			warnings++
+		}
+	}
+	logs.mu.Unlock()
+	if warnings != 1 {
+		t.Errorf("logged %d warnings for 3 records dropped after Close, want 1", warnings)
+	}
+}
+
+// Emit warns of a dropped record after it lets go of the emitter, so a slow
+// log write does not hold up Close.
+func TestEmitter_CloseDoesNotWaitOnADropWarning(t *testing.T) {
+	warning := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	prev := slog.Default()
+	slog.SetDefault(slog.New(blockingLogHandler{msg: "request.trace.dropped", started: warning, release: release}))
+	defer slog.SetDefault(prev)
+	// No workers read the channel, so the record is dropped.
+	e := &TraceEmitter{ch: make(chan TraceRecord)}
+	go e.Emit(TraceRecord{RequestID: "r1"})
+	<-warning
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		e.Close()
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close waited for the log write of a dropped record")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Integration
 // ---------------------------------------------------------------------------
@@ -812,6 +894,21 @@ func TestPlugin_Close(t *testing.T) {
 
 	if p.emitter.Dropped() != 0 {
 		t.Errorf("Dropped() = %d, want 0", p.emitter.Dropped())
+	}
+}
+
+// A request that finishes after the plugin is closed is not logged, and does
+// not crash the gateway.
+func TestProcessResponse_AfterClose(t *testing.T) {
+	p := New(enabledCfg(), nil)
+	p.Close()
+
+	rc := newRC()
+	rc.Response = &models.ChatCompletionResponse{}
+	p.ProcessResponse(context.Background(), rc)
+
+	if got := p.emitter.Dropped(); got != 1 {
+		t.Errorf("Dropped() = %d, want 1", got)
 	}
 }
 
@@ -850,4 +947,215 @@ func TestProcessResponse_SkipsInternalKey(t *testing.T) {
 			t.Error("should not emit request.trace for internal key")
 		}
 	}
+}
+
+// decisionRC is a finished System One call whose state and instructions are
+// marked so a test can tell whether they reached the log.
+func decisionRC(t *testing.T) *models.RequestContext {
+	t.Helper()
+	rc := newRC()
+	rc.EndpointType = "decision"
+	rc.Model = "typesafe/jev-latest"
+	rc.ResolvedModel = "jev-1.13.0"
+	rc.Provider = "typesafe"
+	req, apiErr := models.ParseDecisionRequest([]byte(`{"model":"typesafe/jev-latest","state":{"ticket":"private-state"},"questions":{"resolved":{"type":"noul","instructions":"private-instructions"}}}`))
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	req.SetUpstreamModel("jev-latest")
+	rc.DecisionRequest = req
+	resp, _ := models.ParseDecisionResponse([]byte(`{"model":"jev-1.13.0","answers":{"resolved":{"type":"noul","noul":0.8}},"usage":{"input_tokens":21,"output_tokens":0}}`))
+	rc.DecisionResponse = resp
+	rc.Response = &models.ChatCompletionResponse{Model: "jev-1.13.0", Usage: &models.Usage{PromptTokens: 21, TotalTokens: 21}}
+	rc.Metadata["endpoint_type"] = "decision"
+	rc.Metadata["decision_format"] = "systemone"
+	rc.Metadata["decision_question_count"] = "1"
+	return rc
+}
+
+func hasContent(rec TraceRecord) bool {
+	all := string(rec.RequestBodyJSON) + string(rec.ResponseBodyJSON) + rec.ErrorMessage
+	return strings.Contains(all, "private-state") || strings.Contains(all, "private-instructions")
+}
+
+// Without include_bodies a decision still logs its summary: question IDs and
+// types, the state's size, the answers and usage.
+func TestBuildRecord_DecisionSummaryByDefault(t *testing.T) {
+	rec := buildRecord(decisionRC(t), enabledCfg())
+	if rec.StatusCode != 200 || rec.PromptTokens != 21 || rec.Provider != "typesafe" {
+		t.Fatalf("status = %d tokens = %d provider = %q", rec.StatusCode, rec.PromptTokens, rec.Provider)
+	}
+	if rec.Metadata["endpoint_type"] != "decision" || rec.Metadata["decision_format"] != "systemone" || rec.Metadata["decision_question_count"] != "1" {
+		t.Errorf("metadata = %v", rec.Metadata)
+	}
+	if hasContent(rec) {
+		t.Fatalf("summary carries content: %s %s", rec.RequestBodyJSON, rec.ResponseBodyJSON)
+	}
+	if !strings.Contains(string(rec.RequestBodyJSON), `"question_ids":["resolved"]`) || !strings.Contains(string(rec.ResponseBodyJSON), `"noul":0.8`) {
+		t.Errorf("summary = %s %s", rec.RequestBodyJSON, rec.ResponseBodyJSON)
+	}
+}
+
+// Full bodies need include_bodies, and any privacy setting keeps them out.
+func TestBuildRecord_DecisionFullBodies(t *testing.T) {
+	cfg := enabledCfg()
+	cfg.IncludeBodies = true
+	rec := buildRecord(decisionRC(t), cfg)
+	if !strings.Contains(string(rec.RequestBodyJSON), "private-state") || !strings.Contains(string(rec.ResponseBodyJSON), `"answers"`) {
+		t.Fatalf("include_bodies did not log the bodies: %s", rec.RequestBodyJSON)
+	}
+	for _, meta := range []map[string]string{
+		{"org_privacy_enabled": "true"},
+		{"org_privacy_mode": "full"},
+		{"privacy_mode": "patterns"},
+	} {
+		rc := decisionRC(t)
+		for k, v := range meta {
+			rc.Metadata[k] = v
+		}
+		if rec := buildRecord(rc, cfg); hasContent(rec) {
+			t.Errorf("privacy %v still logged content", meta)
+		}
+	}
+}
+
+// A vendor's error text never reaches the log; the code and status do.
+func TestBuildRecord_DecisionErrorTextNotLogged(t *testing.T) {
+	rc := decisionRC(t)
+	rc.Response, rc.DecisionResponse = nil, nil
+	rc.Errors = []error{&models.APIError{Status: 422, Code: "upstream_rejected", Message: "vendor says private-state is bad"}}
+	rec := buildRecord(rc, enabledCfg())
+	if rec.StatusCode != 422 || rec.ErrorCode != "upstream_rejected" || strings.Contains(rec.ErrorMessage, "private") {
+		t.Fatalf("status = %d code = %q message = %q", rec.StatusCode, rec.ErrorCode, rec.ErrorMessage)
+	}
+}
+
+// A wrapped decision error is still recorded as its status, not the vendor's text.
+func TestBuildRecord_WrappedDecisionErrorTextNotLogged(t *testing.T) {
+	rc := decisionRC(t)
+	rc.Response, rc.DecisionResponse = nil, nil
+	apiErr := &models.APIError{Status: 422, Code: "upstream_rejected", Message: "vendor says private-state is bad"}
+	rc.Errors = []error{fmt.Errorf("decision call: %w", apiErr)}
+	rec := buildRecord(rc, enabledCfg())
+	if rec.StatusCode != 422 || rec.ErrorCode != "upstream_rejected" || strings.Contains(rec.ErrorMessage, "private") {
+		t.Fatalf("status = %d code = %q message = %q", rec.StatusCode, rec.ErrorCode, rec.ErrorMessage)
+	}
+}
+
+func TestBuildRecord_ProviderKeyHeaderMasked(t *testing.T) {
+	cfg := enabledCfg()
+	cfg.IncludeBodies = true
+	rc := decisionRC(t)
+	rc.RequestHeaders = http.Header{"X-Agentcc-Provider-Key": {"caller-own-key"}}
+	rec := buildRecord(rc, cfg)
+	raw, _ := json.Marshal(rec)
+	if strings.Contains(string(raw), "caller-own-key") {
+		t.Fatal("the provider key header reached the log record")
+	}
+}
+
+// Where a redactor would apply, a decision logs its summary: the redactor
+// walks chat messages and cannot clean a decision's state.
+func TestPlugin_DecisionUnderRedactionLogsSummary(t *testing.T) {
+	cfg := enabledCfg()
+	cfg.IncludeBodies = true
+	p := New(cfg, nil)
+	defer p.Close()
+	f := NewLogFlusher("http://127.0.0.1:1/never", "", time.Hour, 10)
+	p.SetFlusher(f)
+	p.SetRedactor(privacy.New(privacy.ModeFull, nil))
+
+	p.ProcessResponse(context.Background(), decisionRC(t))
+	records := f.take()
+	if len(records) != 1 {
+		t.Fatalf("records = %d", len(records))
+	}
+	if hasContent(records[0]) {
+		t.Fatalf("redaction on, yet content logged: %s", records[0].RequestBodyJSON)
+	}
+	if !strings.Contains(string(records[0].RequestBodyJSON), "question_ids") {
+		t.Errorf("summary missing: %s", records[0].RequestBodyJSON)
+	}
+}
+
+// An internal caller's decision is not logged: it is billed by the backend.
+func TestPlugin_InternalDecisionNotLogged(t *testing.T) {
+	p := New(enabledCfg(), nil)
+	defer p.Close()
+	f := NewLogFlusher("http://127.0.0.1:1/never", "", time.Hour, 10)
+	p.SetFlusher(f)
+	rc := decisionRC(t)
+	rc.Metadata["key_type"] = "internal"
+	p.ProcessResponse(context.Background(), rc)
+	if records := f.take(); len(records) != 0 {
+		t.Fatalf("internal decision logged %d records", len(records))
+	}
+}
+
+// Every header the gateway accepts a credential in must be starred before the
+// record is stored. x-goog-api-key was missing while the GenAI route reads a
+// caller's Google key from exactly that header, so those keys were kept in
+// plain text on the request log row.
+func TestSanitizeHeaders_StarsEveryCredentialHeader(t *testing.T) {
+	const secret = "SENTINEL-DO-NOT-LEAK"
+
+	credentialHeaders := []string{
+		"Authorization",
+		"Proxy-Authorization",
+		"X-Api-Key",
+		"Api-Key",
+		"X-Goog-Api-Key",
+		"X-Goog-Iam-Authorization-Token",
+		"X-Amz-Security-Token",
+		"X-Auth-Token",
+		"Cookie",
+		"Set-Cookie",
+		"X-Webhook-Secret",
+	}
+
+	in := map[string][]string{"Content-Type": {"application/json"}}
+	for _, name := range credentialHeaders {
+		in[name] = []string{secret}
+	}
+
+	out := sanitizeHeaders(in)
+
+	for _, name := range credentialHeaders {
+		got := out[name]
+		if len(got) != 1 || got[0] == secret {
+			t.Errorf("%s = %v, want it starred", name, got)
+		}
+	}
+	// A header that carries no credential stays readable, or the log stops
+	// being useful.
+	if got := out["Content-Type"]; len(got) != 1 || got[0] != "application/json" {
+		t.Errorf("Content-Type = %v, want it left alone", got)
+	}
+}
+
+// A vector-store write or a run on the assistant's own model has no model and
+// no chat request, but it is an endpoint's call and must be logged; only a
+// request that names no endpoint is skipped.
+func TestProcessResponse_LogsEndpointCallWithoutModel(t *testing.T) {
+	handler, cleanup := installCapturingLogger()
+	defer cleanup()
+
+	cfg := enabledCfg()
+	cfg.BufferSize = 10
+	cfg.Workers = 1
+	p := New(cfg, nil)
+
+	rc := newRC()
+	rc.Model = ""
+	rc.Request = nil
+	rc.EndpointType = "vector_stores"
+	p.ProcessResponse(context.Background(), rc)
+	p.Close()
+
+	for i := 0; i < handler.count(); i++ {
+		if handler.get(i).Message == "request.trace" {
+			return
+		}
+	}
+	t.Fatal("a vector-store call was not logged")
 }

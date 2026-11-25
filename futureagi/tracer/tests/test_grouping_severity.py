@@ -43,6 +43,11 @@ def assessment(observe_project, monkeypatch):
         severity_claim = severity.claim_severity(worker_id="test-severity", limit=1)[
             "claims"
         ][0]
+        assert severity_claim["organization_name"] == (
+            observe_project.organization.display_name
+            or observe_project.organization.name
+        )
+        assert severity_claim["project_name"] == observe_project.name
         yield issue, attempt, severity_claim
 
 

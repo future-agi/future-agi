@@ -1,0 +1,2215 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import PropTypes from "prop-types";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  enrichTurns,
+  computeCallMetrics,
+} from "src/components/VoiceDetailDrawerV2/transcriptUtils";
+
+// Mock only the axios default instance; keep the real `endpoints` so the URL
+// assertions below are genuine, not a tautology against our own mock.
+vi.mock("src/utils/axios", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, default: { get: vi.fn() } };
+});
+
+const axiosMod = await import("src/utils/axios");
+const axios = axiosMod.default;
+const { endpoints } = axiosMod;
+const { mapExecutions } = await import("../runs");
+const {
+  buildRunIdentity,
+  buildRunStats,
+  useRunDetail,
+  mapCallDetail,
+  callTranscript,
+  useCallDetail,
+  useCallExecutionV3Detail,
+  useCallTraces,
+  withScoringStatus,
+  useRunCalls,
+} = await import("../runDetail");
+const { runSummaryKey } = await import("../runCalls");
+const { RUN_COLORS } = await import(
+  "src/sections/simulate/environments/workspace/runs/runs.constants"
+);
+
+// One completed, one failed row, in the server's newest-first order, with
+// `count` = the run-test total — so `ex-new` is ordinal 2 and `ex-old` is 1.
+const executionsPayload = () => ({
+  results: [
+    {
+      id: "ex-new",
+      status: "Completed",
+      start_time: "2026-01-14T09:12:00.000Z",
+      agent_version: "v2",
+      total_chats: 12,
+      success_rate: 100,
+      outcome_status: "passed",
+      pass_rate: 74,
+      trial_pass_rate: 74,
+    },
+    {
+      id: "ex-old",
+      status: "Failed",
+      start_time: "2026-01-12T11:05:00.000Z",
+      agent_version: "v1",
+      total_chats: 10,
+      success_rate: 60,
+      outcome_status: "failed",
+      pass_rate: 55,
+      trial_pass_rate: 55,
+    },
+  ],
+  count: 2,
+});
+
+// A voice kpis payload — real run-level counts, a duration in seconds, one
+// system metric (avg_score) and one eval metric (0–100 scale).
+const kpisPayload = () => ({
+  agent_type: "VOICE",
+  total_calls: 12,
+  failed_calls: 3,
+  total_duration: 600,
+  avg_score: 82,
+  avg_csat_score: 4.2,
+  avg_turn_count: 7,
+  calls_connected_percentage: 90,
+  task_completion: 75,
+});
+
+describe("buildRunIdentity", () => {
+  it("stamps ordinal-keyed letter + colour from the mapped row", () => {
+    const rows = mapExecutions(executionsPayload());
+    const newest = rows.find((r) => r.executionId === "ex-new");
+
+    const identity = buildRunIdentity(newest, "Refund Copilot");
+    expect(identity.executionId).toBe("ex-new");
+    expect(identity.ordinal).toBe(2);
+    expect(identity.letter).toBe("2");
+    expect(identity.color).toBe(RUN_COLORS[1]);
+    expect(identity.name).toBe("Refund Copilot");
+    expect(identity.agentVersion).toBe("v2");
+    expect(identity.status).toBe("passed");
+    // The row carries no end time — finishedAt is a documented gap.
+    expect(identity.finishedAt).toBeNull();
+  });
+
+  it("returns null for a missing row", () => {
+    expect(buildRunIdentity(null)).toBeNull();
+  });
+});
+
+describe("buildRunStats", () => {
+  it("derives counts from kpis and reads the pass rate from the run's row", () => {
+    const rows = mapExecutions(executionsPayload());
+    const row = rows.find((r) => r.executionId === "ex-new");
+
+    const stats = buildRunStats(kpisPayload(), row);
+    expect(stats.total).toBe(12);
+    expect(stats.failed).toBe(3);
+    expect(stats.passed).toBe(9);
+    // The server's rate, not the derived 75%.
+    expect(stats.passRate).toBe(74);
+    expect(stats.durationS).toBe(600);
+    expect(stats.avgDurationMs).toBe(50000);
+    expect(stats.avgScore).toBe(82);
+    expect(stats.csat).toBe(4.2);
+    expect(stats.avgTurnCount).toBe(7);
+    expect(stats.connectedPct).toBe(90);
+    // The eval metric surfaces as a per-eval column score (0–100).
+    expect(stats.scores.task_completion).toBe(75);
+    // Documented gaps.
+    expect(stats.tokens).toBeNull();
+    expect(stats.cost).toBeNull();
+    expect(stats.failedCritical).toBe(0);
+  });
+
+  it("shows hosted verdicts without replacing them with transport KPIs", () => {
+    const row = mapExecutions({
+      results: [
+        {
+          id: "ex-hosted",
+          status: "Running",
+          total_calls: 6,
+          outcome_passed: 2,
+          outcome_failed: 1,
+          outcome_skipped: 0,
+          outcome_status: "running",
+          pass_rate: 67,
+          trial_pass_rate: 67,
+          scored: 3,
+        },
+      ],
+    })[0];
+    const stats = buildRunStats({ total_calls: 6, failed_calls: 0 }, row);
+
+    expect(stats).toMatchObject({
+      total: 6,
+      passed: 2,
+      failed: 1,
+      measured: 3,
+      unmeasured: 3,
+      passRate: 67,
+    });
+  });
+
+  it("falls back to the executions row counts and still reads the server's pass rate, never passed over total", () => {
+    const rows = mapExecutions(executionsPayload());
+    const row = rows.find((r) => r.executionId === "ex-old");
+
+    const stats = buildRunStats(null, row);
+    // Row: total 10, success_rate 60 → passed 6, failed 4.
+    expect(stats.total).toBe(10);
+    expect(stats.passed).toBe(6);
+    expect(stats.failed).toBe(4);
+    expect(stats.passRate).toBe(55);
+    expect(buildRunStats(null, null).passRate).toBeNull();
+    expect(stats.durationS).toBeNull();
+    expect(stats.avgDurationMs).toBeNull();
+  });
+
+  // `completed` (status = completed) is a different number from `total`
+  // (every status). It must never fall back to `total` — a caller that needs
+  // "the run's completed calls" and gets the wrong number is worse than one
+  // told the number isn't known yet. The KPI body carries `completed_calls`
+  // for both modalities, not the chat-only `connected_calls` borrow.
+  it("reads `completed` from kpis.completed_calls on a chat run", () => {
+    const stats = buildRunStats(
+      {
+        agent_type: "text",
+        completed_calls: 12,
+        connected_calls: 12,
+        total_calls: 16,
+      },
+      null,
+    );
+    expect(stats.completed).toBe(12);
+    expect(stats.total).toBe(16);
+  });
+
+  // Voice's `connected_calls` is `connected_voice_calls`
+  // (`duration_seconds > 0`), a different filter and a different number —
+  // reading it would be wrong. The fixture makes the two differ on purpose,
+  // so borrowing it again fails this case.
+  it("reads `completed` from kpis.completed_calls on a voice run too, never from connected_calls", () => {
+    const stats = buildRunStats(
+      {
+        agent_type: "voice",
+        completed_calls: 12,
+        connected_calls: 9,
+        total_calls: 16,
+      },
+      null,
+    );
+    expect(stats.completed).toBe(12);
+    expect(stats.total).toBe(16);
+  });
+
+  it("leaves `completed` null (never 0, never `total`) while kpis hasn't loaded yet", () => {
+    const rows = mapExecutions(executionsPayload());
+    const row = rows.find((r) => r.executionId === "ex-old");
+    const stats = buildRunStats(null, row);
+    expect(stats.completed).toBeNull();
+    expect(stats.completed).not.toBe(stats.total);
+  });
+
+  // A KPI body that has loaded may still have no `completed_calls` (an older
+  // backend). That must read as "not known yet", not a zero and not `total`.
+  it("leaves `completed` null when a loaded kpis payload carries no completed_calls", () => {
+    const stats = buildRunStats(
+      { agent_type: "voice", connected_calls: 9, total_calls: 16 },
+      null,
+    );
+    expect(stats.completed).toBeNull();
+    expect(stats.completed).not.toBe(stats.total);
+  });
+
+  // `completed_calls` is a call count, not a verdict — `DETAILS_KEYS`
+  // (common.js) must file it as a run detail, never an eval metric, or every
+  // run grows a fake "Completed calls" eval.
+  it("never files completed_calls as an eval score (it is a call count, not a verdict)", () => {
+    const stats = buildRunStats(
+      {
+        agent_type: "text",
+        completed_calls: 12,
+        total_calls: 16,
+        task_success: 49,
+      },
+      null,
+    );
+    expect(stats.completed).toBe(12);
+    expect(stats.scores).toEqual({ task_success: 49 });
+    expect(stats.scores).not.toHaveProperty("completed_calls");
+  });
+
+  it("never files completed_calls as an eval score on a voice run either", () => {
+    const stats = buildRunStats(
+      {
+        agent_type: "voice",
+        completed_calls: 12,
+        total_calls: 16,
+        task_success: 49,
+      },
+      null,
+    );
+    expect(stats.completed).toBe(12);
+    expect(stats.scores).toEqual({ task_success: 49 });
+    expect(stats.scores).not.toHaveProperty("completed_calls");
+  });
+});
+
+// A real-shaped voice call-detail payload: a two-turn transcript, conversation
+// metrics, a recording, and three evals (pass / fail-score / pending).
+const callDetailPayload = () => ({
+  id: "call-1",
+  simulation_call_type: "voice",
+  call_type: "Inbound",
+  phone_number: "+15551234567",
+  provider: "vapi",
+  duration: 42.5,
+  transcript: [
+    {
+      speaker_role: "assistant",
+      content: "Hi, how can I help you today?",
+      start_time_seconds: 0,
+    },
+    {
+      speaker_role: "user",
+      content: "I want a refund please",
+      start_time_seconds: 3.2,
+    },
+  ],
+  turn_count: 4,
+  avg_agent_latency: 320,
+  agent_talk_percentage: 60,
+  total_tokens: null,
+  cost_cents: 150,
+  call_summary: "Customer asked for a refund.",
+  recordings: { combined: "https://cdn.example.com/rec.mp3" },
+  eval_metrics: {
+    "eval-1": {
+      id: "eval-1",
+      name: "Refund correctness",
+      value: "Passed",
+      type: "Pass/Fail",
+      reason: "policy match",
+      status: "completed",
+    },
+    "eval-2": {
+      id: "eval-2",
+      name: "Tone",
+      value: 0.4,
+      type: "score",
+      reason: "curt",
+      status: "completed",
+    },
+    "eval-3": {},
+  },
+});
+
+describe("mapCallDetail", () => {
+  it.each([
+    ["a plain string (voice, older chat)", "hello there", "hello there"],
+    ["null", null, ""],
+    ["undefined", undefined, ""],
+    ["a number", 42, "42"],
+    ["an OpenAI-style part list", [{ role: "user", content: "hi" }], "hi"],
+    ["a list of strings", ["a", "b"], "a\nb"],
+    ["a {text} part", { text: "from text" }, "from text"],
+    ["a single {content} object", { content: "from content" }, "from content"],
+    ["a nested list", [[{ content: "deep" }], "flat"], "deep\nflat"],
+    ["an empty list", [], ""],
+  ])(
+    "turns %s into transcript text without crashing",
+    (_label, content, text) => {
+      const d = mapCallDetail({
+        id: "c",
+        simulation_call_type: "text",
+        transcript: [{ role: "user", content }],
+      });
+      expect(d.turns[0].text).toBe(text);
+      expect(typeof d.stats.words).toBe("number");
+    },
+  );
+
+  it("reads a hosted chat's message content lists as text (real Retell chat shape)", () => {
+    // Each transcript row is one chat message whose content is a list of
+    // OpenAI-style {role, content} items, not a string.
+    const d = mapCallDetail({
+      id: "chat-1",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "user",
+          content: [{ role: "user", content: "Hi there, pricing please" }],
+        },
+        {
+          role: "assistant",
+          content: [{ role: "assistant", content: "Sure — two plans." }],
+        },
+        { role: "user", content: ["plain", { text: "text part" }] },
+      ],
+    });
+
+    expect(d.turns.map((t) => t.text)).toEqual([
+      "Hi there, pricing please",
+      "Sure — two plans.",
+      "plain\ntext part",
+    ]);
+    expect(d.stats.words).toBe(11);
+  });
+
+  it("reads a chat row whose message is the scenario's own task as the task, not the customer", () => {
+    const d = mapCallDetail({
+      id: "chat-task",
+      simulation_call_type: "text",
+      persona: null,
+      transcript: [
+        {
+          role: "user",
+          speaker_role: "task",
+          content: [
+            { role: "task", content: "Nightly reconciliation: post deal 9." },
+          ],
+        },
+        {
+          role: "assistant",
+          speaker_role: "assistant",
+          content: [{ role: "assistant", content: "Posted." }],
+        },
+        {
+          role: "user",
+          speaker_role: "user",
+          content: [{ role: "user", content: "Thanks" }],
+        },
+      ],
+    });
+    expect(d.turns.map((t) => t.role)).toEqual(["task", "agent", "customer"]);
+    expect(d.persona).toBeNull();
+  });
+
+  it("maps a real voice call-detail payload to the CallDetail view-model", () => {
+    const d = mapCallDetail(callDetailPayload());
+    expect(d.id).toBe("call-1");
+    expect(d.type).toBe("voice");
+    expect(d.direction).toBe("Inbound");
+    expect(d.phone).toBe("+15551234567");
+    expect(d.provider).toBe("vapi");
+    expect(d.durationS).toBe(42.5);
+
+    // Transcript: roles normalised (assistant→agent, user→customer), timestamps kept.
+    expect(d.turns).toHaveLength(2);
+    expect(d.turns[0]).toMatchObject({
+      role: "agent",
+      text: "Hi, how can I help you today?",
+      at: 0,
+    });
+    expect(d.turns[1]).toMatchObject({ role: "customer", at: 3.2 });
+
+    // Stats from the real conversation metrics; words derived from the transcript.
+    expect(d.stats.turnCount).toBe(4);
+    expect(d.stats.latencyMs).toBe(320);
+    expect(d.stats.aiPct).toBe(60);
+    expect(d.stats.userPct).toBe(40);
+    expect(d.stats.words).toBe(12);
+    // No backend field for either — documented gaps.
+    expect(d.stats.silenceS).toBeNull();
+    expect(d.stats.ttfwMs).toBeNull();
+
+    expect(d.tokens).toBeNull();
+    expect(d.cost).toBe(1.5);
+    expect(d.summary).toBe("Customer asked for a refund.");
+    expect(d.recordings.combined).toBe("https://cdn.example.com/rec.mp3");
+
+    // Evals: pass/fail verdict + thresholded score; the pending `{}` is dropped.
+    expect(d.evalResults).toHaveLength(2);
+    const e1 = d.evalResults.find((e) => e.id === "eval-1");
+    const e2 = d.evalResults.find((e) => e.id === "eval-2");
+    expect(e1).toMatchObject({
+      score: 1,
+      passed: true,
+      reason: "policy match",
+    });
+    expect(e2).toMatchObject({ score: 0.4, passed: false });
+  });
+
+  it("routes a text sim to the chat type and reads chat-message roles + tool calls", () => {
+    const d = mapCallDetail({
+      id: "chat-1",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "assistant",
+          speaker_role: "assistant",
+          content: "Refund issued.",
+          tool_calls: [{ function: { name: "issue_refund" } }],
+        },
+        { role: "user", speaker_role: "user", content: "thanks" },
+      ],
+      recordings: {},
+      eval_metrics: {},
+    });
+    expect(d.type).toBe("chat");
+    expect(d.turns[0]).toMatchObject({ role: "agent", text: "Refund issued." });
+    expect(d.turns[0].toolCalls).toHaveLength(1);
+    expect(d.recordings).toEqual({});
+  });
+
+  it("adds top-level v3 function calls to the transcript", () => {
+    const d = mapCallDetail({
+      id: "chat-with-tool",
+      simulation_call_type: "text",
+      transcript: [{ role: "assistant", content: "Let me check." }],
+      function_calls: [
+        {
+          name: "lookup_order",
+          arguments: { order_id: "AB-1" },
+          result: { status: "shipped" },
+          duration_ms: 309,
+        },
+      ],
+      eval_metrics: {},
+    });
+
+    expect(d.turns).toHaveLength(2);
+    expect(d.turns[1]).toMatchObject({
+      role: "tool",
+      text: expect.stringContaining("Function call · lookup_order · 309ms"),
+    });
+    expect(d.turns[1].text).toContain('→ args: {"order_id":"AB-1"}');
+    expect(d.turns[1].text).toContain('← result: {"status":"shipped"}');
+  });
+
+  it("shows the tool-call count the API gives, and keeps hand-offs in the transcript", () => {
+    const d = mapCallDetail({
+      id: "flow-call",
+      simulation_call_type: "text",
+      transcript: [{ role: "assistant", content: "Here is the post." }],
+      function_calls: [
+        {
+          name: "Shakespearean Bard",
+          delegated_to: "Shakespearean Bard",
+          result: "a draft",
+        },
+        {
+          name: "Character Counter Tool",
+          arguments: { text: "a draft" },
+          result: "208",
+        },
+        {
+          name: "X Post Verifier",
+          delegated_to: "X Post Verifier",
+          result: "valid",
+        },
+      ],
+      tool_call_count: 1,
+      eval_metrics: {},
+    });
+
+    expect(d.stats.toolCalls).toBe(1);
+    expect(d.turns.filter((turn) => turn.role === "tool")).toHaveLength(3);
+  });
+
+  it("says actors are on only when the server says so", () => {
+    expect(
+      mapCallDetail({ id: "c1", actors_enabled: true }).actorsEnabled,
+    ).toBe(true);
+    expect(
+      mapCallDetail({ id: "c1", actors_enabled: false }).actorsEnabled,
+    ).toBe(false);
+  });
+
+  it("returns null for a missing payload", () => {
+    expect(mapCallDetail(null)).toBeNull();
+  });
+
+  it("keeps a removed eval's verdict and carries its marker", () => {
+    const d = mapCallDetail({
+      id: "call-2",
+      simulation_call_type: "text",
+      transcript: [],
+      recordings: {},
+      eval_metrics: {
+        "cfg-live": {
+          name: "Tone",
+          value: "Passed",
+          type: "Pass/Fail",
+          reason: "fine",
+        },
+        "cfg-gone": {
+          name: "no_misselling",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "oversold",
+          removed: true,
+        },
+      },
+    });
+
+    expect(d.evalResults).toHaveLength(2);
+    expect(d.evalResults.find((e) => e.id === "cfg-gone")).toMatchObject({
+      name: "no_misselling",
+      passed: false,
+      removed: true,
+    });
+    // A live eval's verdict carries no marker.
+    expect(d.evalResults.find((e) => e.id === "cfg-live").removed).toBe(false);
+  });
+
+  it("drops a removed eval's stored row when it carries no value, but keeps one that does", () => {
+    // "removed" marks a VERDICT — a pending, skipped or errored row is a
+    // stored row, not a verdict, and is never rendered, live or removed.
+    // `norm.kind === "empty"` already enforces this; this test pins it.
+    const d = mapCallDetail({
+      id: "call-3",
+      simulation_call_type: "text",
+      transcript: [],
+      recordings: {},
+      eval_metrics: {
+        // Removed AND pending — serialises as `{}` plus the marker. Not a
+        // verdict, so it must not appear at all.
+        "cfg-gone-empty": { removed: true },
+        // Removed AND holds a value — a real verdict: still shown, still
+        // marked.
+        "cfg-gone-valued": {
+          name: "no_misselling",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "oversold",
+          removed: true,
+        },
+      },
+    });
+
+    expect(d.evalResults).toHaveLength(1);
+    expect(
+      d.evalResults.find((e) => e.id === "cfg-gone-empty"),
+    ).toBeUndefined();
+    expect(d.evalResults.find((e) => e.id === "cfg-gone-valued")).toMatchObject(
+      {
+        name: "no_misselling",
+        passed: false,
+        removed: true,
+      },
+    );
+  });
+
+  it("shows an actor's turn as theirs, with the role and channel the turn carries", () => {
+    const d = mapCallDetail({
+      id: "call-actor-chat",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "user",
+          speaker_role: "user",
+          content: "Please apply 25% to deal 8.",
+        },
+        {
+          role: "user",
+          speaker_role: "actor",
+          speaker_name: "Alex Vance",
+          actor_id: "alex_vance",
+          actor_role: "Sales Manager",
+          channel: "chat_message",
+          content: "I approved it in the CRM.",
+        },
+      ],
+      recordings: {},
+    });
+    expect(
+      d.turns.map((t) => [
+        t.role,
+        t.speakerName,
+        t.actorId,
+        t.actorRole,
+        t.channel,
+        t.text,
+      ]),
+    ).toEqual([
+      ["customer", "", "", "", "", "Please apply 25% to deal 8."],
+      [
+        "actor",
+        "Alex Vance",
+        "alex_vance",
+        "Sales Manager",
+        "chat_message",
+        "I approved it in the CRM.",
+      ],
+    ]);
+  });
+});
+
+describe("callTranscript", () => {
+  it.each([null, undefined])(
+    "preserves unknown speech ends (%s) without corrupting voice metrics",
+    (missingEnd) => {
+      const rows = callTranscript({
+        transcript: [
+          {
+            speaker_role: "assistant",
+            start_time_seconds: 0,
+            end_time_seconds: 3,
+            start_time_ms: 0,
+            end_time_ms: 3000,
+          },
+          {
+            speaker_role: "user",
+            start_time_seconds: 6,
+            end_time_seconds: missingEnd,
+            start_time_ms: 6000,
+            end_time_ms: 0,
+          },
+          {
+            speaker_role: "assistant",
+            start_time_seconds: 8,
+            end_time_seconds: 25,
+            start_time_ms: 8000,
+            end_time_ms: 25000,
+          },
+        ],
+      });
+      expect(rows[1].end_time_seconds).toBeNull();
+      const turns = enrichTurns(rows);
+      expect(turns[1].duration).toBeNull();
+      expect(computeCallMetrics(turns)).toMatchObject({
+        userTalkPct: 0,
+        assistantTalkPct: 100,
+        silenceTotal: 3,
+        silenceCount: 1,
+      });
+    },
+  );
+
+  it("interleaves timed tools and leaves missing harness timestamps at the end", () => {
+    const raw = {
+      transcript: [
+        { id: "reply", content: "Found it.", start_time_seconds: 8 },
+        { id: "question", content: "Check my order.", start_time_seconds: 0 },
+      ],
+      function_calls: [
+        { id: "missing", name: "unknown_time", at: 0 },
+        { id: "lookup", name: "lookup_order", started_at_seconds: 4 },
+        { id: "also-missing", name: "other_tool" },
+      ],
+    };
+    expect(callTranscript(raw).map((row) => row.id)).toEqual([
+      "question",
+      "lookup",
+      "reply",
+      "missing",
+      "also-missing",
+    ]);
+    expect(callTranscript(raw)[3].start_time_seconds).toBeNull();
+    expect(raw.transcript[0].id).toBe("reply");
+    expect(mapCallDetail(raw).turns.map((turn) => turn.at)).toEqual([
+      0,
+      4,
+      8,
+      null,
+      null,
+    ]);
+  });
+
+  it("keeps explicit zero offsets and equal timestamps in stable order", () => {
+    expect(
+      callTranscript({
+        transcript: [{ id: "greeting", start_time_seconds: 0 }],
+        function_calls: [
+          { id: "first", start_time_seconds: "0" },
+          { id: "second", start_time_ms: 0 },
+          { id: "third", start_time_ms: 1500 },
+        ],
+      }).map((row) => [row.id, row.start_time_seconds]),
+    ).toEqual([
+      ["greeting", 0],
+      ["first", 0],
+      ["second", 0],
+      ["third", 1.5],
+    ]);
+  });
+
+  it("does not invent times for invalid offsets or absolute timestamps without an anchor", () => {
+    expect(
+      callTranscript({
+        function_calls: [
+          { start_time_seconds: "" },
+          { start_time_seconds: "invalid" },
+          { at: 1790000000 },
+        ],
+      }).every((row) => row.start_time_seconds === null),
+    ).toBe(true);
+    expect(callTranscript({ function_calls: null })).toEqual([]);
+  });
+
+  it("shows a world actor's action as theirs, not as the agent's tool call", () => {
+    const detail = mapCallDetail({
+      function_calls: [
+        {
+          id: "agent",
+          name: "update_deal",
+          actor_id: "agent",
+          kind: "agent_call",
+          start_time_ms: 1000,
+        },
+        {
+          id: "manager",
+          name: "approve",
+          actor_id: "manager",
+          actor_name: "Pat Lee",
+          kind: "world_actor_action",
+          outcome: "refused",
+          start_time_ms: 2000,
+        },
+      ],
+    });
+    expect(detail.turns.map((turn) => [turn.role, turn.speakerName])).toEqual([
+      ["tool", ""],
+      ["world_actor", "Pat Lee"],
+    ]);
+    expect(detail.turns[1].text).toMatch(/^Refused · approve/);
+    expect(detail.turns[1].toolCalls).toBeNull();
+  });
+
+  it("heads a world actor's action by how the world took it, with its error", () => {
+    const { turns } = mapCallDetail({
+      function_calls: [
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "faulted",
+          error: "crm returned 503",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "refused",
+          error: "not permitted",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "committed",
+          actor_role: "store manager",
+          result: {},
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "duplicate",
+        },
+      ],
+    });
+    expect(turns.map((turn) => turn.text.split("\n")[0])).toEqual([
+      "Failed · approve",
+      "Refused · approve",
+      "Committed · approve",
+      "Duplicate · approve",
+    ]);
+    expect(turns.map((turn) => turn.actorRole)).toEqual([
+      "",
+      "",
+      "store manager",
+      "",
+    ]);
+    expect(turns[0].text).toContain("× error: crm returned 503");
+    expect(turns[1].text).toContain("× error: not permitted");
+  });
+});
+
+const makeWrapper = () => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const Wrapper = ({ children }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  Wrapper.propTypes = { children: PropTypes.node };
+  return Wrapper;
+};
+
+describe("useCallDetail", () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+    axios.get.mockResolvedValue({ data: callDetailPayload() });
+  });
+
+  it("reads the real call-executions detail endpoint and maps it", async () => {
+    const { result } = renderHook(() => useCallDetail("call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.callDetail.id).toBe("call-1");
+    expect(result.current.callDetail.type).toBe("voice");
+    expect(axios.get).toHaveBeenCalledWith(
+      endpoints.runResultsV3.callDetail("call-1"),
+    );
+  });
+
+  it("stays idle with no id", () => {
+    const { result } = renderHook(() => useCallDetail(null), {
+      wrapper: makeWrapper(),
+    });
+    expect(result.current.callDetail).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it("polls while error localization is active and stops after it completes", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockResolvedValue({
+      data: {
+        ...callDetailPayload(),
+        eval_metrics: {
+          "eval-1": { error_localizer_status: "running" },
+        },
+      },
+    });
+
+    const { unmount } = renderHook(
+      () => useCallExecutionV3Detail("call-localizing"),
+      { wrapper: Wrapper },
+    );
+    const queryKey = ["simulation-call-detail-v3", "call-localizing"];
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData(queryKey)?.eval_metrics?.["eval-1"],
+      ).toMatchObject({ error_localizer_status: "running" }),
+    );
+    const query = queryClient.getQueryCache().find({ queryKey });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(queryKey, {
+      ...callDetailPayload(),
+      eval_metrics: {
+        "eval-1": { error_localizer_status: "completed" },
+      },
+    });
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
+  });
+
+  it("polls while an eval is still being scored and stops once none is", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const withEval = (status) => ({
+      ...callDetailPayload(),
+      evaluations: [{ id: "cfg-1", name: "Tone", value: null, status }],
+    });
+    axios.get.mockResolvedValue({ data: withEval("pending") });
+
+    const { unmount } = renderHook(
+      () => useCallExecutionV3Detail("call-scoring"),
+      { wrapper: Wrapper },
+    );
+    const queryKey = ["simulation-call-detail-v3", "call-scoring"];
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKey)?.evaluations).toHaveLength(1),
+    );
+    const query = queryClient.getQueryCache().find({ queryKey });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(queryKey, withEval("timed_out"));
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
+  });
+});
+
+describe("useRunDetail", () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+    axios.get.mockResolvedValue({
+      data: {
+        execution: {
+          id: "ex-new",
+          ordinal: 2,
+          agent_version: "v2",
+          agent_type: "VOICE",
+          status: "completed",
+          started_at: "2026-01-14T09:12:00.000Z",
+          completed_at: "2026-01-14T09:22:00.000Z",
+          selected_scenario_keys: ["scenario-a", "scenario-b"],
+          trials: 3,
+          pinned_agent_version: { id: "a4", label: "v4" },
+          environment_version: { id: "e2", label: "v2" },
+          suite_version: { id: "s3", label: "v3" },
+          agent_differs: true,
+          resume: {
+            resumable: true,
+            finished: 18,
+            unfinished: 12,
+            history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+          },
+          summary: {
+            total: 12,
+            measured: 12,
+            pass_rate: 74,
+            outcomes: { passed: 9, failed: 3, error: 0, inconclusive: 0 },
+            duration: { average: 50 },
+            tokens: { total_value: 2000 },
+            cost_cents: { total_value: 120 },
+          },
+        },
+      },
+    });
+  });
+
+  it("resolves the matching row and merges the real kpis + performance summary", async () => {
+    const { result } = renderHook(
+      () => useRunDetail("rt1", "ex-new", { envName: "Refund Copilot" }),
+      { wrapper: makeWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.identity.status).toBe("passed");
+    expect(result.current.identity.ordinal).toBe(2);
+    expect(result.current.identity.name).toBe("Refund Copilot");
+    expect(result.current.identity.scenarioIds).toEqual([
+      "scenario-a",
+      "scenario-b",
+    ]);
+    expect(result.current.identity.trials).toBe(3);
+    expect(result.current.identity.pinnedAgentVersion).toEqual({
+      id: "a4",
+      label: "v4",
+    });
+    expect(result.current.identity.environmentVersion).toEqual({
+      id: "e2",
+      label: "v2",
+    });
+    expect(result.current.identity.suiteVersion).toEqual({
+      id: "s3",
+      label: "v3",
+    });
+    expect(result.current.identity.agentDiffers).toBe(true);
+    expect(result.current.identity.resume).toEqual({
+      resumable: true,
+      finished: 18,
+      unfinished: 12,
+      history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+    });
+    expect(result.current.stats.total).toBe(12);
+    expect(result.current.stats.passRate).toBe(74);
+    expect(axios.get).toHaveBeenCalledWith(
+      endpoints.runResultsV3.calls("ex-new"),
+      { params: { page: 1, page_size: 1 } },
+    );
+  });
+
+  it.each([
+    ["Pending", "queued"],
+    ["Running", "running"],
+    ["Evaluating", "grading"],
+    ["Completed", "finished"],
+    ["Failed", "failed"],
+    ["Cancelling", "cancelling"],
+    ["Cancelled", "cancelled"],
+  ])("matches the runs list lifecycle for %s", async (status, expected) => {
+    axios.get.mockResolvedValueOnce({
+      data: { execution: { id: "ex-state", status: status.toLowerCase() } },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-state"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const [listRow] = mapExecutions({
+      results: [{ id: "ex-state", status }],
+      count: 1,
+    });
+    expect(listRow.runState).toBe(expected);
+    expect(result.current.identity.runState).toBe(listRow.runState);
+  });
+
+  it("keeps terminal Run failure when some calls already passed", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: {
+        execution: {
+          id: "ex-failed",
+          status: "failed",
+          summary: {
+            total: 12,
+            outcomes: { passed: 8, failed: 2, error: 2, inconclusive: 0 },
+          },
+        },
+      },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-failed"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.identity.status).toBe("failed");
+    expect(result.current.stats.passed).toBe(8);
+    expect(result.current.stats.failed).toBe(4);
+  });
+
+  it("names the fix a check run belongs to, and none for a user's run", async () => {
+    const identityOf = async (execution) => {
+      axios.get.mockResolvedValueOnce({
+        data: { execution: { status: "completed", summary: {}, ...execution } },
+      });
+      const { result } = renderHook(() => useRunDetail("rt1", execution.id), {
+        wrapper: makeWrapper(),
+      });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      return result.current.identity;
+    };
+
+    expect(
+      (
+        await identityOf({
+          id: "ex-check",
+          fix_run: { id: "fix-1", label: "baseline" },
+        })
+      ).fixRun,
+    ).toEqual({ id: "fix-1", label: "baseline" });
+    expect((await identityOf({ id: "ex-user" })).fixRun).toBeNull();
+  });
+
+  it("marks a running Run stoppable and a cancelling or grading one not", async () => {
+    const identityFor = async (status) => {
+      axios.get.mockResolvedValueOnce({
+        data: {
+          execution: {
+            id: `ex-${status}`,
+            status,
+            summary: { total: 4, outcomes: {} },
+          },
+        },
+      });
+      const { result } = renderHook(() => useRunDetail("rt1", `ex-${status}`), {
+        wrapper: makeWrapper(),
+      });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      return result.current.identity;
+    };
+
+    expect((await identityFor("running")).stoppable).toBe(true);
+    expect((await identityFor("pending")).stoppable).toBe(true);
+    expect((await identityFor("cancelling")).stoppable).toBe(false);
+    expect((await identityFor("completed")).stoppable).toBe(false);
+    expect((await identityFor("evaluating")).stoppable).toBe(false);
+  });
+
+  it("exposes the execution's own status so the page knows when it can grade again", async () => {
+    for (const status of ["completed", "evaluating"]) {
+      axios.get.mockResolvedValueOnce({
+        data: {
+          execution: {
+            id: `ex-raw-${status}`,
+            status,
+            summary: { total: 4, outcomes: {} },
+          },
+        },
+      });
+      const { result } = renderHook(
+        () => useRunDetail("rt1", `ex-raw-${status}`),
+        { wrapper: makeWrapper() },
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.identity.executionStatus).toBe(status);
+    }
+  });
+
+  it("reports a cancelling Run as cancelling, not running", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: {
+        execution: {
+          id: "ex-c",
+          status: "cancelling",
+          summary: { total: 4, outcomes: {} },
+        },
+      },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-c"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.identity.status).toBe("cancelling");
+  });
+
+  it("polls the Run summary while active and stops when it completes", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockResolvedValue({
+      data: {
+        execution: {
+          id: "ex-new",
+          status: "evaluating",
+          summary: { total: 0, outcomes: {} },
+        },
+      },
+    });
+
+    const { result, unmount } = renderHook(
+      () => useRunDetail("rt1", "ex-new"),
+      {
+        wrapper: Wrapper,
+      },
+    );
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData([
+          "simulation-run-results-v3",
+          "ex-new",
+          "summary",
+        ])?.execution?.status,
+      ).toBe("evaluating"),
+    );
+    expect(result.current.identity.status).toBe("running");
+    const query = queryClient.getQueryCache().find({
+      queryKey: ["simulation-run-results-v3", "ex-new", "summary"],
+    });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(query.queryKey, {
+      execution: {
+        id: "ex-new",
+        status: "completed",
+        summary: { total: 0, outcomes: {} },
+      },
+    });
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
+  });
+});
+
+describe("call detail evals carry their scoring status", () => {
+  const detail = (eval_metrics, evaluations) =>
+    mapCallDetail({
+      id: "call-s",
+      simulation_call_type: "text",
+      transcript: [],
+      recordings: {},
+      eval_metrics,
+      evaluations,
+    });
+
+  it("lists a timed-out eval the stored metrics hold as an empty row", () => {
+    const d = detail({ "cfg-a": {} }, [
+      {
+        id: "cfg-a",
+        name: "Resolution",
+        type: "",
+        value: null,
+        score: null,
+        passed: null,
+        reason: "Scoring timed out: no progress for 10 minutes.",
+        status: "timed_out",
+      },
+    ]);
+    expect(d.evalResults).toHaveLength(1);
+    expect(d.evalResults[0]).toMatchObject({
+      id: "cfg-a",
+      name: "Resolution",
+      score: null,
+      passed: null,
+      status: "timed_out",
+      reason: "Scoring timed out: no progress for 10 minutes.",
+    });
+  });
+
+  it("lists a pending eval that has no stored row yet", () => {
+    const d = detail({}, [
+      {
+        id: "cfg-b",
+        name: "Tone",
+        type: "",
+        value: null,
+        reason: "",
+        status: "pending",
+      },
+    ]);
+    expect(d.evalResults).toEqual([
+      expect.objectContaining({ id: "cfg-b", name: "Tone", status: "pending" }),
+    ]);
+  });
+
+  it("marks a failed eval as an error, with its reason", () => {
+    const d = detail({ "cfg-c": {} }, [
+      {
+        id: "cfg-c",
+        name: "Policy",
+        value: null,
+        reason: "Model quota hit",
+        status: "failed",
+      },
+    ]);
+    expect(d.evalResults[0]).toMatchObject({
+      status: "failed",
+      error: true,
+      reason: "Model quota hit",
+    });
+  });
+
+  it("leaves a scored eval's stored verdict as it is", () => {
+    const stored = {
+      name: "Policy",
+      value: "Passed",
+      type: "Pass/Fail",
+      reason: "ok",
+    };
+    const d = detail({ "cfg-d": stored }, [
+      {
+        id: "cfg-d",
+        name: "Policy",
+        value: "Passed",
+        reason: "ok",
+        status: "succeeded",
+      },
+    ]);
+    expect(d.evalResults[0]).toMatchObject({ passed: true, reason: "ok" });
+  });
+
+  it("keeps a removed, never-scored eval out when the evaluations list doesn't name it", () => {
+    const d = detail({ "cfg-gone": { removed: true } }, []);
+    expect(d.evalResults).toHaveLength(0);
+  });
+
+  it("drops an old verdict once its re-grade timed out", () => {
+    const d = detail(
+      {
+        "cfg-r": {
+          name: "Policy",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "oversold",
+          error: false,
+          status: "completed",
+        },
+      },
+      [
+        {
+          id: "cfg-r",
+          name: "Policy",
+          value: null,
+          reason: "Scoring timed out: no progress for 10 minutes.",
+          status: "timed_out",
+        },
+      ],
+    );
+    expect(d.evalResults[0]).toMatchObject({
+      status: "timed_out",
+      score: null,
+      passed: null,
+      error: false,
+      reason: "Scoring timed out: no progress for 10 minutes.",
+    });
+  });
+
+  it("clears an old error flag and reason while the eval is re-grading", () => {
+    const d = detail(
+      {
+        "cfg-q": {
+          name: "Tone",
+          value: null,
+          reason: "Model quota hit",
+          error: true,
+          status: "failed",
+        },
+      },
+      [
+        {
+          id: "cfg-q",
+          name: "Tone",
+          value: null,
+          reason: "",
+          status: "pending",
+        },
+      ],
+    );
+    expect(d.evalResults[0]).toMatchObject({
+      status: "pending",
+      error: false,
+      reason: "",
+    });
+  });
+
+  it("returns the stored metrics untouched when there is no evaluations list", () => {
+    const metrics = { "cfg-e": { name: "x", value: 1 } };
+    expect(withScoringStatus(metrics, undefined)).toBe(metrics);
+  });
+});
+
+describe("useRunDetail fed by the calls table", () => {
+  const wholeRun = (status = "completed", passed = 9) => ({
+    id: "ex-new",
+    ordinal: 2,
+    agent_version: "v2",
+    agent_type: "VOICE",
+    status,
+    started_at: "2026-01-14T09:12:00.000Z",
+    selected_scenario_keys: ["scenario-a"],
+    trials: 2,
+    summary: {
+      total: 12,
+      measured: 12,
+      pass_rate: Math.round((passed / 12) * 100),
+      outcomes: { passed, failed: 12 - passed, error: 0, inconclusive: 0 },
+      duration: { average: 50 },
+      tokens: { total_value: 2000 },
+      cost_cents: { total_value: 120 },
+    },
+  });
+  // A table page: its top-level `summary` follows the filters, `execution`
+  // is always the whole run.
+  const tablePage = (execution, filteredTotal = 12) => ({
+    execution,
+    summary: { total: filteredTotal, outcomes: { passed: filteredTotal } },
+    results: [],
+    groups: [],
+    count: filteredTotal,
+    total_pages: 1,
+  });
+  const listQuery = (filters = {}) => ({
+    page: 1,
+    limit: 100,
+    search: "",
+    filters,
+    groupBy: "goal",
+  });
+  const isCallsRequest = ([url]) =>
+    url === endpoints.runResultsV3.calls("ex-new");
+  const callsRequests = () => axios.get.mock.calls.filter(isCallsRequest);
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Requests held open until the test answers them, by `page_size`.
+  const heldRequests = () => {
+    const pending = {};
+    axios.get.mockImplementation(
+      (url, { params }) =>
+        new Promise((resolve) => {
+          pending[params.page_size] = (execution, extra = {}) =>
+            resolve({ data: { ...tablePage(execution), ...extra } });
+        }),
+    );
+    return pending;
+  };
+
+  const setup = (
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    }),
+  ) => {
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    return { queryClient, wrapper: Wrapper };
+  };
+
+  const fallbackHeader = async (execution) => {
+    axios.get.mockResolvedValueOnce({ data: { execution } });
+    const { result, unmount } = renderHook(
+      () => useRunDetail("rt1", "ex-new", { envName: "Env" }),
+      { wrapper: setup().wrapper },
+    );
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+    const { identity, stats } = result.current;
+    unmount();
+    return { identity, stats };
+  };
+
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it("sends one request with the table mounted and shows the same header", async () => {
+    const expected = await fallbackHeader(wholeRun());
+    axios.get.mockReset();
+    axios.get.mockResolvedValue({ data: tablePage(wholeRun()) });
+
+    const { result } = renderHook(
+      () => ({
+        header: useRunDetail("rt1", "ex-new", {
+          envName: "Env",
+          callsShown: true,
+        }),
+        table: useRunCalls("ex-new", listQuery()),
+      }),
+      { wrapper: setup().wrapper },
+    );
+
+    await waitFor(() => expect(result.current.header.identity).not.toBeNull());
+    expect(result.current.header.identity).toEqual(expected.identity);
+    expect(result.current.header.stats).toEqual(expected.stats);
+    expect(callsRequests()).toHaveLength(1);
+    expect(callsRequests()[0][1].params.page_size).toBe(100);
+  });
+
+  it("fetches on its own when the table isn't mounted", async () => {
+    axios.get.mockResolvedValue({ data: { execution: wholeRun() } });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-new"), {
+      wrapper: setup().wrapper,
+    });
+
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+    expect(callsRequests()).toEqual([
+      [
+        endpoints.runResultsV3.calls("ex-new"),
+        { params: { page: 1, page_size: 1 } },
+      ],
+    ]);
+  });
+
+  it("waits for the table instead of fetching while it is about to mount", () => {
+    renderHook(() => useRunDetail("rt1", "ex-new", { callsShown: true }), {
+      wrapper: setup().wrapper,
+    });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it("keeps whole-run values whatever the table filters", async () => {
+    axios.get.mockImplementation((url, { params }) =>
+      Promise.resolve({
+        data: tablePage(wholeRun(), params.filters === "{}" ? 12 : 3),
+      }),
+    );
+    const { result, rerender } = renderHook(
+      ({ filters }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: true }),
+        table: useRunCalls("ex-new", listQuery(filters)),
+      }),
+      { wrapper: setup().wrapper, initialProps: { filters: {} } },
+    );
+    await waitFor(() => expect(result.current.header.identity).not.toBeNull());
+    const before = result.current.header;
+
+    rerender({ filters: { status: ["failed"] } });
+    await waitFor(() => expect(result.current.table.summary?.total).toBe(3));
+    expect(result.current.header.identity).toEqual(before.identity);
+    expect(result.current.header.stats).toEqual(before.stats);
+    expect(result.current.header.stats.total).toBe(12);
+    // Both requests are the table's own.
+    expect(callsRequests().every(([, c]) => c.params.page_size === 100)).toBe(
+      true,
+    );
+  });
+
+  it("updates from the table's polls while the run is active", async () => {
+    axios.get
+      .mockResolvedValueOnce({ data: tablePage(wholeRun("running", 4)) })
+      .mockResolvedValue({ data: tablePage(wholeRun("completed", 9)) });
+    const { result } = renderHook(
+      () => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: true }),
+        table: useRunCalls("ex-new", listQuery()),
+      }),
+      { wrapper: setup().wrapper },
+    );
+    await waitFor(() =>
+      expect(result.current.header.identity?.status).toBe("running"),
+    );
+    expect(result.current.header.stats.passed).toBe(4);
+
+    await waitFor(
+      () => expect(result.current.header.identity.status).toBe("passed"),
+      { timeout: 5000 },
+    );
+    expect(result.current.header.stats.passed).toBe(9);
+    expect(callsRequests().every(([, c]) => c.params.page_size === 100)).toBe(
+      true,
+    );
+  }, 10000);
+
+  it("doesn't let an older table page overwrite a fresher header", async () => {
+    const { queryClient, wrapper } = setup();
+    const tableKey = [
+      "simulation-run-results-v3",
+      "ex-new",
+      1,
+      100,
+      "",
+      {},
+      "goal",
+    ];
+    queryClient.setQueryData(
+      tableKey,
+      {
+        ...tablePage(wholeRun("running", 4)),
+        requestedAt: Date.now() - 10_000,
+      },
+      { updatedAt: Date.now() - 10_000 },
+    );
+    queryClient.setQueryData(
+      runSummaryKey("ex-new"),
+      { execution: wholeRun("completed", 9), requestedAt: Date.now() },
+      { updatedAt: Date.now() },
+    );
+    axios.get.mockImplementation(() => new Promise(() => {}));
+
+    const { result } = renderHook(
+      () => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: true }),
+        table: useRunCalls("ex-new", listQuery()),
+      }),
+      { wrapper },
+    );
+    expect(result.current.table.summary.total).toBe(12);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(
+      queryClient.getQueryData(runSummaryKey("ex-new")).execution.status,
+    ).toBe("completed");
+    expect(result.current.header.identity.status).toBe("passed");
+    expect(result.current.header.stats.passed).toBe(9);
+  });
+
+  it("drops a header response that lands after a newer table write", async () => {
+    let resolveHeader;
+    axios.get.mockImplementation((url, { params }) =>
+      params.page_size === 1
+        ? new Promise((resolve) => {
+            resolveHeader = resolve;
+          })
+        : Promise.resolve({ data: tablePage(wholeRun("completed", 9)) }),
+    );
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        table: useRunCalls("ex-new", { ...listQuery(), enabled: shown }),
+      }),
+      { wrapper: setup().wrapper, initialProps: { shown: false } },
+    );
+    await waitFor(() => expect(resolveHeader).toBeDefined());
+    await act(() => tick(5));
+
+    rerender({ shown: true });
+    await waitFor(() =>
+      expect(result.current.header.identity?.status).toBe("passed"),
+    );
+    await act(async () => {
+      resolveHeader({ data: { execution: wholeRun("running", 4) } });
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+    expect(result.current.header.identity.status).toBe("passed");
+    expect(result.current.header.identity.stoppable).toBe(false);
+    expect(result.current.header.stats.passed).toBe(9);
+  });
+
+  it("keeps a newer header poll over an older request that resolves later", async () => {
+    const { queryClient, wrapper } = setup();
+    const held = heldRequests();
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        // The debug drawer's cited-calls read.
+        drawer: useRunCalls("ex-new", {
+          limit: 500,
+          filters: { call_execution_id: ["c1"] },
+        }),
+      }),
+      { wrapper, initialProps: { shown: true } },
+    );
+    await waitFor(() => expect(held[500]).toBeDefined());
+    await act(() => tick(5));
+    rerender({ shown: false });
+    await waitFor(() => expect(held[1]).toBeDefined());
+
+    // Re-grading started between the two requests.
+    await act(async () => held[1](wholeRun("evaluating", 9)));
+    await waitFor(() =>
+      expect(result.current.header.identity?.executionStatus).toBe(
+        "evaluating",
+      ),
+    );
+    await act(async () => held[500](wholeRun("completed", 9)));
+    await act(() => tick(20));
+
+    expect(result.current.header.identity.status).toBe("running");
+    const query = queryClient
+      .getQueryCache()
+      .find({ queryKey: runSummaryKey("ex-new") });
+    expect(query.options.refetchInterval(query)).toBe(3000);
+  });
+
+  it("orders a header response landing before the table's write", async () => {
+    const held = heldRequests();
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        table: useRunCalls("ex-new", { ...listQuery(), enabled: shown }),
+      }),
+      { wrapper: setup().wrapper, initialProps: { shown: false } },
+    );
+    await waitFor(() => expect(held[1]).toBeDefined());
+    await act(() => tick(5));
+    rerender({ shown: true });
+    await waitFor(() => expect(held[100]).toBeDefined());
+
+    // Both land before the table's write runs.
+    await act(async () => {
+      held[100](wholeRun("completed", 9));
+      held[1](wholeRun("running", 4));
+    });
+    await act(() => tick(20));
+
+    await waitFor(
+      () => expect(result.current.header.identity.status).toBe("passed"),
+      { timeout: 3000 },
+    );
+    expect(result.current.header.identity.status).toBe("passed");
+    expect(result.current.header.stats.passed).toBe(9);
+  });
+
+  it("keeps the header without a new request when the table unmounts", async () => {
+    axios.get.mockResolvedValue({ data: tablePage(wholeRun()) });
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        table: useRunCalls("ex-new", { ...listQuery(), enabled: shown }),
+      }),
+      { wrapper: setup().wrapper, initialProps: { shown: true } },
+    );
+    await waitFor(() => expect(result.current.header.identity).not.toBeNull());
+    const before = result.current.header;
+
+    rerender({ shown: false });
+    expect(result.current.header.identity).toEqual(before.identity);
+    expect(result.current.header.stats).toEqual(before.stats);
+    expect(callsRequests()).toHaveLength(1);
+  });
+});
+
+describe("useCallTraces", () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it("reads one call's traces of the run and maps the rows", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        project_id: "hidden-project",
+        traces: [
+          {
+            trace_id: "trace-1",
+            name: "book_ride",
+            start_time: "2026-10-14T11:08:13Z",
+            status: "OK",
+            latency_ms: 1830,
+            call_execution_id: "call-1",
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() =>
+      expect(result.current.projectId).toBe("hidden-project"),
+    );
+    expect(axios.get).toHaveBeenCalledWith(
+      endpoints.runResultsV3.traces("exec-1"),
+      { params: { call_execution_id: "call-1" } },
+    );
+    expect(result.current.traces).toEqual([
+      {
+        traceId: "trace-1",
+        name: "book_ride",
+        startTime: "2026-10-14T11:08:13Z",
+        status: "OK",
+        latencyMs: 1830,
+      },
+    ]);
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("answers no project and no rows when the run has nothing to read", async () => {
+    axios.get.mockResolvedValue({ data: { project_id: null, traces: [] } });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    expect(result.current.projectId).toBeNull();
+    expect(result.current.traces).toEqual([]);
+  });
+
+  it("reads again for the next call of the run rather than showing the last call's traces", async () => {
+    axios.get.mockImplementation((_url, { params }) =>
+      Promise.resolve({
+        data: {
+          project_id: "hidden-project",
+          traces: [
+            {
+              trace_id: `trace-of-${params.call_execution_id}`,
+              name: "turn",
+            },
+          ],
+        },
+      }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ callId }) => useCallTraces("exec-1", callId),
+      { wrapper: makeWrapper(), initialProps: { callId: "call-a" } },
+    );
+    await waitFor(() =>
+      expect(result.current.traces.map((t) => t.traceId)).toEqual([
+        "trace-of-call-a",
+      ]),
+    );
+
+    rerender({ callId: "call-b" });
+
+    await waitFor(() =>
+      expect(result.current.traces.map((t) => t.traceId)).toEqual([
+        "trace-of-call-b",
+      ]),
+    );
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    expect(axios.get).toHaveBeenLastCalledWith(
+      endpoints.runResultsV3.traces("exec-1"),
+      { params: { call_execution_id: "call-b" } },
+    );
+  });
+
+  it("stays idle without a run or a call", () => {
+    renderHook(() => useCallTraces(null, "call-1"), { wrapper: makeWrapper() });
+    renderHook(() => useCallTraces("exec-1", null), { wrapper: makeWrapper() });
+
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("actor turns in a call", () => {
+  it("names who spoke on a voice turn, with the role and channel the turn carries", () => {
+    const voice = mapCallDetail({
+      id: "v",
+      transcript: [
+        {
+          speaker_role: "actor",
+          speaker_name: "Rowan",
+          actor_id: "friend",
+          actor_role: "roommate",
+          channel: "audio_mix",
+          content: "Two",
+        },
+        { speaker_role: "user", content: "One" },
+      ],
+    });
+    expect(
+      voice.turns.map((t) => [t.role, t.speakerName, t.actorRole, t.channel]),
+    ).toEqual([
+      ["actor", "Rowan", "roommate", "audio_mix"],
+      ["customer", "", "", ""],
+    ]);
+  });
+});
+
+describe("useCallWorkers", () => {
+  it("reads a pending record again even when its next read is already past, never turning the poll off", async () => {
+    const { readAgainDelay, READ_AGAIN_MIN_MS } = await import("../runDetail");
+    const now = Date.parse("2026-11-17T10:00:00Z");
+    // Past (a late answer, a client clock ahead of the server's): the shortest positive wait, never 0.
+    expect(readAgainDelay("2026-11-17T09:59:30Z", now)).toBe(READ_AGAIN_MIN_MS);
+    expect(readAgainDelay("2026-11-17T10:00:35Z", now)).toBe(35000);
+    expect(readAgainDelay(null, now)).toBe(false);
+    // An unreadable time still reads again, never NaN (which would leave the poll in an unknown state).
+    expect(readAgainDelay("not a date", now)).toBe(READ_AGAIN_MIN_MS);
+  });
+
+  it.each([
+    ["already past", () => new Date(Date.now() - 30_000).toISOString()],
+    ["unreadable", () => "not a date"],
+  ])(
+    "reads a pending record again shortly when its next read is %s",
+    async (_label, nextReadAt) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const { useCallWorkers, READ_AGAIN_MIN_MS } = await import(
+          "../runDetail"
+        );
+        axios.get.mockReset();
+        axios.get.mockResolvedValue({
+          status: 202,
+          data: {
+            pending: true,
+            next_read_at: nextReadAt(),
+            participants_declared: true,
+          },
+        });
+        const client = new QueryClient();
+        const Wrapper = ({ children }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        );
+        Wrapper.propTypes = { children: PropTypes.node };
+        const { result } = renderHook(() => useCallWorkers("call-late"), {
+          wrapper: Wrapper,
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(axios.get).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(READ_AGAIN_MIN_MS + 100);
+        await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("keeps the record shown while a status change re-reads the same call, but never another call's", async () => {
+    const { useCallWorkers } = await import("../runDetail");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const record = { workers: [], events: [], pending: false };
+    axios.get.mockReset();
+    axios.get.mockResolvedValueOnce({ status: 200, data: record });
+    let release;
+    axios.get.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ status: 200, data: record });
+        }),
+    );
+    const { result, rerender } = renderHook(
+      ({ id, status }) => useCallWorkers(id, status),
+      { wrapper: Wrapper, initialProps: { id: "call-1", status: "ongoing" } },
+    );
+    await waitFor(() => expect(result.current.data).toEqual(record));
+    rerender({ id: "call-1", status: "completed" });
+    // Re-reading: the same call's record stays, so the open tab never blanks.
+    expect(result.current.data).toEqual(record);
+    rerender({ id: "call-2", status: "completed" });
+    expect(result.current.data).toBeUndefined();
+    release?.();
+  });
+
+  it.each([
+    ["passed", "queued"],
+    ["failed", "in_progress"],
+    ["cancelled", "queued"],
+  ])(
+    "never shows the previous attempt's record when the same call is rerun (%s to %s)",
+    async (ended, rerun) => {
+      const { useCallWorkers } = await import("../runDetail");
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const Wrapper = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      Wrapper.propTypes = { children: PropTypes.node };
+      const record = {
+        workers: [{ id: "refund" }],
+        events: [],
+        pending: false,
+      };
+      axios.get.mockReset();
+      axios.get.mockResolvedValueOnce({ status: 200, data: record });
+      let release;
+      axios.get.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve({ status: 204, data: "" });
+          }),
+      );
+      const { result, rerender } = renderHook(
+        ({ status }) => useCallWorkers("call-1", status),
+        { wrapper: Wrapper, initialProps: { status: ended } },
+      );
+      await waitFor(() => expect(result.current.data).toEqual(record));
+      // An in-place rerun keeps the call id and has no attempt id: the new attempt's read is pending.
+      rerender({ status: rerun });
+      expect(result.current.data).toBeUndefined();
+      release?.();
+      await waitFor(() => expect(result.current.data).toBeNull());
+    },
+  );
+
+  it("reads an empty answer (204) as no worker record, not a failure", async () => {
+    const { useCallWorkers } = await import("../runDetail");
+    axios.get.mockResolvedValueOnce({ status: 204, data: "" });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const { result } = renderHook(() => useCallWorkers("call-1"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toBe(null);
+  });
+
+  it("shows Participants once a call has a record or while a multi-agent call's is collected, and not when it has none", async () => {
+    const { useHasWorkers } = await import("../runDetail");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const has = async (id, response) => {
+      axios.get.mockReset();
+      axios.get.mockResolvedValue(response);
+      const { result } = renderHook(() => useHasWorkers(id), {
+        wrapper: Wrapper,
+      });
+      await waitFor(() => expect(result.current).not.toBeUndefined());
+      return result.current;
+    };
+    expect(
+      await has("with-record", {
+        status: 200,
+        data: { workers: [], events: [], pending: false },
+      }),
+    ).toBe(true);
+    expect(
+      await has("still-coming", {
+        status: 202,
+        data: {
+          pending: true,
+          next_read_at: "2026-11-17T10:00:35+00:00",
+          participants_declared: true,
+        },
+      }),
+    ).toBe(true);
+    // A single-agent call is read after it ends too: no tab appears for the wait and vanishes after it.
+    expect(
+      await has("single-agent", {
+        status: 202,
+        data: {
+          pending: true,
+          next_read_at: "2026-11-17T10:00:35+00:00",
+          participants_declared: false,
+        },
+      }),
+    ).toBe(false);
+    expect(await has("none", { status: 204, data: "" })).toBe(false);
+  });
+
+  it("doesn't know whether a call has workers while unread, and shows the tab when the read fails", async () => {
+    const { useHasWorkers } = await import("../runDetail");
+    const client = new QueryClient();
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockReset();
+    axios.get.mockRejectedValue(new Error("forbidden"));
+    const { result } = renderHook(() => useHasWorkers("call-unread"), {
+      wrapper: Wrapper,
+    });
+    expect(result.current).toBeUndefined();
+    await waitFor(() => expect(axios.get).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        client.getQueryState([
+          "simulation-call-workers-v3",
+          "call-unread",
+          null,
+          null,
+        ]),
+      ).toMatchObject({ status: "error" }),
+    );
+    // The panel says it couldn't load; a hidden tab would read as a call with no other agents.
+    await waitFor(() => expect(result.current).toBe(true));
+  });
+
+  it("reads a call's record again once the call ends while open", async () => {
+    const { useHasWorkers } = await import("../runDetail");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockReset();
+    axios.get
+      .mockResolvedValueOnce({ status: 204, data: "" })
+      .mockResolvedValue({
+        status: 200,
+        data: { workers: [], events: [], pending: false },
+      });
+    const { result, rerender } = renderHook(
+      ({ status }) => useHasWorkers("call-ending", status),
+      { wrapper: Wrapper, initialProps: { status: "ongoing" } },
+    );
+    await waitFor(() => expect(result.current).toBe(false));
+    rerender({ status: "completed" });
+    await waitFor(() => expect(result.current).toBe(true));
+  });
+
+  it("stops checking for a record once a check fails, and leaves the failure to the panel", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { useCallWorkers } = await import("../runDetail");
+      const soon = new Date(Date.now() + 35_000).toISOString();
+      axios.get.mockReset();
+      axios.get
+        .mockResolvedValueOnce({
+          status: 202,
+          data: { pending: true, next_read_at: soon },
+        })
+        .mockRejectedValue(new Error("forbidden"));
+      const client = new QueryClient();
+      const Wrapper = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      Wrapper.propTypes = { children: PropTypes.node };
+      const { result } = renderHook(() => useCallWorkers("call-failing"), {
+        wrapper: Wrapper,
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      await vi.advanceTimersByTimeAsync(35_000);
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      expect(
+        client.getQueryCache().find({
+          queryKey: ["simulation-call-workers-v3", "call-failing", null, null],
+        }).meta.errorHandled,
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads again once at the time the API says, and stops once nothing is due", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { useCallWorkers, COLLECTING_WORKERS } = await import(
+        "../runDetail"
+      );
+      const record = { workers: [], events: [], pending: false };
+      const at = (seconds) =>
+        new Date(Date.now() + seconds * 1000).toISOString();
+      axios.get.mockReset();
+      axios.get
+        .mockResolvedValueOnce({
+          status: 202,
+          data: {
+            pending: true,
+            next_read_at: at(35),
+            participants_declared: true,
+          },
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          data: { ...record, pending: true, next_read_at: at(635) },
+        })
+        .mockResolvedValue({ status: 200, data: record });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const Wrapper = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      Wrapper.propTypes = { children: PropTypes.node };
+      const { result } = renderHook(() => useCallWorkers("call-2"), {
+        wrapper: Wrapper,
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toBe(COLLECTING_WORKERS);
+      // Nothing is read before the time the API gave.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(axios.get).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await waitFor(() => expect(result.current.data.workers).toEqual([]));
+      await vi.advanceTimersByTimeAsync(600_000);
+      await waitFor(() => expect(result.current.data).toEqual(record));
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(axios.get).toHaveBeenCalledTimes(3);
+      expect(axios.get).toHaveBeenCalledWith(
+        "/simulate/v3/call-executions/call-2/workers/",
+        undefined,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("useTrialRoutes", () => {
+  const wrapper = () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    return Wrapper;
+  };
+
+  it("reads one scenario's trials lined up, with tool calls only when asked", async () => {
+    const { useTrialRoutes } = await import("../runDetail");
+    const routes = { trials: [], columns: [], split: null, same_route: true };
+    axios.get.mockReset().mockResolvedValue({ status: 200, data: routes });
+    const { result } = renderHook(
+      () => useTrialRoutes("ex1", "refund-inside-window", true),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.data).toEqual(routes));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/v3/test-executions/ex1/trial-routes/?scenario_key=refund-inside-window&tool_calls=true",
+      undefined,
+    );
+  });
+
+  it("keeps the last lining-up on screen while tool-call columns load", async () => {
+    const { useTrialRoutes } = await import("../runDetail");
+    const first = { trials: [], columns: [], split: null, same_route: true };
+    let release;
+    axios.get
+      .mockReset()
+      .mockResolvedValueOnce({ status: 200, data: first })
+      .mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    const { result, rerender } = renderHook(
+      ({ tools }) => useTrialRoutes("ex1", "s", tools),
+      { wrapper: wrapper(), initialProps: { tools: false } },
+    );
+    await waitFor(() => expect(result.current.data).toEqual(first));
+    rerender({ tools: true });
+    expect(result.current.data).toEqual(first);
+    release({ status: 200, data: { ...first, tool_calls: true } });
+    await waitFor(() => expect(result.current.data.tool_calls).toBe(true));
+  });
+
+  it("reads nothing without a run or a scenario", async () => {
+    const { useTrialRoutes } = await import("../runDetail");
+    axios.get.mockReset();
+    renderHook(() => useTrialRoutes("ex1", null, false), {
+      wrapper: wrapper(),
+    });
+    renderHook(() => useTrialRoutes(null, "s", false), { wrapper: wrapper() });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+});

@@ -2,31 +2,39 @@ from __future__ import annotations
 
 import shlex
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
+import structlog
 from django.conf import settings
 
 from .base import (
     SandboxCommand,
     SandboxCommandLogs,
     SandboxCommandRequest,
+    SandboxCommandStep,
     SandboxExecResult,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
     SandboxNotFoundError,
     SandboxPreview,
     SandboxProviderConfigurationError,
     SandboxProviderError,
+    SandboxProviderUnavailableError,
     SandboxRuntimeProvider,
 )
 
+logger = structlog.get_logger(__name__)
+
 
 def _translate_error(exc: Exception) -> SandboxProviderError | None:
-    from e2b import SandboxException, SandboxNotFoundException
+    from e2b import FileNotFoundException, SandboxException, SandboxNotFoundException
 
     status_code = getattr(exc, "status_code", None)
     if isinstance(exc, SandboxNotFoundException):
         return SandboxNotFoundError(str(exc), status_code=status_code)
+    if isinstance(exc, FileNotFoundException):
+        return SandboxFileNotFoundError(str(exc), status_code=status_code)
     if isinstance(exc, SandboxException):
         return SandboxProviderError(str(exc), status_code=status_code)
     return None
@@ -51,18 +59,38 @@ class E2BFilesystem:
         _call(self._sandbox.files.write, path, data, user=self._os_user)
 
     def download_file(self, path: str, timeout: int | None = None) -> bytes:
-        body = _call(
+        try:
+            body = self._sandbox.files.read(
+                path, format="bytes", request_timeout=timeout, user=self._os_user
+            )
+        except Exception as exc:
+            if _is_file_not_found(exc):
+                raise SandboxFileNotFoundError(str(exc)) from exc
+            translated = _translate_error(exc)
+            if translated is None:
+                raise
+            raise translated from exc
+        return bytes(body)
+
+    def download_file_stream(
+        self, path: str, timeout: int | None = None
+    ) -> Iterator[bytes]:
+        with _call(
             self._sandbox.files.read,
             path,
-            format="bytes",
+            format="stream",
             request_timeout=timeout,
             user=self._os_user,
-        )
-        return bytes(body)
+        ) as reader:
+            yield from reader
 
 
 class E2BProcess:
     _COMMAND_DIR = "/run/futureagi/provider-commands"
+    # An ALK image whose harness can run each customer process as its own OS user has this.
+    _ISOLATION_MARKER = "/opt/alk/process-isolation"
+    # What that harness holds: start a declared user, then stop and remove what it owns.
+    _ISOLATION_CAPABILITIES = "+chown,+dac_override,+fowner,+kill,+setgid,+setuid"
 
     def __init__(self, sandbox: Any, os_user: str) -> None:
         self._sandbox = sandbox
@@ -123,22 +151,72 @@ class E2BProcess:
         command_token = uuid.uuid4().hex
         log_path = f"{self._COMMAND_DIR}/{command_token}.log"
         exit_path = f"{self._COMMAND_DIR}/{command_token}.exit"
-        wrapped = (
-            f"mkdir -p {shlex.quote(self._COMMAND_DIR)}; set +e; "
-            f"( {request.command} ) > {shlex.quote(log_path)} 2>&1; "
-            "_futureagi_code=$?; "
-            f"printf '%s' \"$_futureagi_code\" > {shlex.quote(exit_path)}; "
-            'exit "$_futureagi_code"'
-        )
+        isolate = False
+        if request.steps:
+            isolate = self.exec(f"test -f {self._ISOLATION_MARKER}").exit_code == 0
+            if not isolate:
+                # An image the platform expects to isolate: one without the marker is a pin moved back.
+                logger.warning(
+                    "hosted_isolation_marker_missing",
+                    sandbox_id=getattr(self._sandbox, "sandbox_id", None),
+                )
+        if isolate:
+            wrapped = self._isolated_command(request.steps, log_path, exit_path)
+            user = "root"
+        else:
+            wrapped = (
+                f"mkdir -p {shlex.quote(self._COMMAND_DIR)}; set +e; "
+                f"( {request.command} ) > {shlex.quote(log_path)} 2>&1; "
+                "_futureagi_code=$?; "
+                f"printf '%s' \"$_futureagi_code\" > {shlex.quote(exit_path)}; "
+                'exit "$_futureagi_code"'
+            )
+            user = self._os_user
         handle = _call(
             self._sandbox.commands.run,
             wrapped,
             background=True,
             timeout=0,
             envs=request.env,
-            user=self._os_user,
+            user=user,
         )
         return SandboxCommand(cmd_id=f"{handle.pid}:{command_token}", status="running")
+
+    def _isolated_command(
+        self, steps: Sequence[SandboxCommandStep], log_path: str, exit_path: str
+    ) -> str:
+        """The root shell of an isolated session. It only wraps each step: every step runs as the
+        sandbox user, and only a harness step holds the capabilities and asks for isolation. Root
+        locks /work down first, since it can hold files a declared user owns, and writes the exit
+        file, so a step that could not even start still ends with its code."""
+        name = self._os_user
+        user = shlex.quote(name)
+        caps = self._ISOLATION_CAPABILITIES
+
+        def drop(step: SandboxCommandStep) -> str:
+            grant = (
+                f"--inh-caps={caps} --ambient-caps={caps} "
+                if step.harness
+                else "--inh-caps=-all --ambient-caps=-all "
+            )
+            required = " ALK_PROCESS_ISOLATION=required" if step.harness else ""
+            return (
+                f"setpriv --reuid={user} --regid={user} --init-groups {grant}-- "
+                f"env HOME=/home/{name} USER={name} LOGNAME={name}{required} "
+                f"sh -c {shlex.quote(f'umask 077; {step.command}')}"
+            )
+
+        chain = " && ".join(drop(step) for step in steps)
+        log, exit_file = shlex.quote(log_path), shlex.quote(exit_path)
+        return (
+            f"install -d -m 0700 -o {user} -g {user} {shlex.quote(self._COMMAND_DIR)} && "
+            f"install -m 0600 -o {user} -g {user} /dev/null {log}; set +e; "
+            f"( chmod -R go-rwx /work && chmod 0711 /work && {chain} ) >> {log} 2>&1; "
+            "_futureagi_code=$?; "
+            f"printf '%s' \"$_futureagi_code\" > {exit_file}; "
+            f"chown {user}:{user} {exit_file}; "
+            'exit "$_futureagi_code"'
+        )
 
     @staticmethod
     def _command_parts(command_id: str) -> tuple[int, str]:
@@ -232,7 +310,19 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     supports_adjustments = True
     supports_public_ingress = True
 
+    def renew_ttl(self, sandbox: E2BSandbox, ttl_seconds: int) -> None:
+        self.validate_requested_resources(*self.configured_resources(), ttl_seconds)
+        _call(sandbox._sandbox.set_timeout, ttl_seconds)
+
     def __init__(self) -> None:
+        # Every method below imports `e2b` lazily; check it once here so a
+        # backend image without the optional `sandbox` extra fails with a
+        # typed, non-retryable error instead of a ModuleNotFoundError mid-job.
+        try:
+            import e2b  # noqa: F401
+        except ImportError as exc:
+            raise SandboxProviderUnavailableError("E2B", "e2b") from exc
+
         self.api_key = str(getattr(settings, "E2B_API_KEY", "") or "")
         self.runtime_name = str(
             getattr(settings, "ALK_E2B_TEMPLATE_REFERENCE", "") or ""
@@ -314,7 +404,7 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
                 network["allow_out"] = allow_out
         sandbox = _call(
             Sandbox.create,
-            template=self.template_reference,
+            template=spec.runtime_name or self.template_reference,
             timeout=spec.ttl_seconds,
             secure=True,
             allow_internet_access=True,
@@ -331,7 +421,12 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
                 "rm -f /usr/local/bin/python && "
                 "printf '#!/bin/sh\\nexec /opt/alk-venv/bin/python \"$@\"\\n' "
                 "> /usr/local/bin/python && chmod 0755 /usr/local/bin/python && "
-                "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip",
+                "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip && "
+                "if [ -x /opt/alk-venv/bin/uv ]; then "
+                "ln -sfn /opt/alk-venv/bin/uv /usr/local/bin/uv; fi && "
+                "if [ -x /opt/alk-venv/bin/uvx ]; then "
+                "ln -sfn /opt/alk-venv/bin/uvx /usr/local/bin/uvx; fi && "
+                "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx",
                 timeout=min(timeout, 60),
                 user="root",
             )

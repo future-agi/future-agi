@@ -69,11 +69,42 @@ class TestProjectListAPI:
         assert data["projects"][0].get("trace_type") == "experiment"
 
     def test_list_projects_with_trace_count(self, auth_client, project, trace):
-        """List includes trace count for each project."""
-        response = auth_client.get("/tracer/project/")
+        """Without a ClickHouse read, trace_count falls back to the PostgreSQL count."""
+        with patch(
+            "tracer.views.project.V2AnalyticsQueryService",
+            side_effect=RuntimeError("clickhouse unavailable"),
+        ):
+            response = auth_client.get("/tracer/project/")
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         assert data["projects"][0].get("trace_count") == 1
+
+    def test_list_projects_trace_count_reads_clickhouse_rollup(
+        self, auth_client, project, observe_project
+    ):
+        """Collector traces live only in ClickHouse: the count reads the rollup the
+        Observe trace list uses (last 30 days), not PostgreSQL."""
+        with patch("tracer.views.project.V2AnalyticsQueryService") as service_class:
+            service = service_class.return_value
+            service.supports_per_query_read_settings = True
+            service.execute_ch_query.return_value = SimpleNamespace(
+                data=[{"project_id_text": str(observe_project.id), "trace_count": 2}]
+            )
+            response = auth_client.get("/tracer/project/")
+        assert response.status_code == status.HTTP_200_OK
+        counts = {
+            row["name"]: row["trace_count"] for row in get_result(response)["projects"]
+        }
+        assert counts[observe_project.name] == 2
+        assert counts[project.name] == 0
+        service.execute_ch_query.assert_called_once()
+        query = " ".join(service.execute_ch_query.call_args.args[0].split())
+        assert "FROM trace_count_rollup" in query
+        assert "uniqExactMerge(uniq_traces_state)" in query
+        assert "PREWHERE project_id IN %(pids)s" in query
+        assert sorted(service.execute_ch_query.call_args.args[1]["pids"]) == sorted(
+            [str(project.id), str(observe_project.id)]
+        )
 
     def test_list_projects_filter_by_name(self, auth_client, project, observe_project):
         """Filter projects by name."""
@@ -1065,6 +1096,30 @@ class TestProjectSDKCodeAPI:
         assert "a" * 32 not in payload_text
         assert "b" * 32 not in payload_text
 
+    def test_self_hosted_keys_point_at_the_install_api_and_collector(
+        self, auth_client, settings
+    ):
+        """The SDKs default to Future AGI Cloud: FI_BASE_URL names this
+        install's API and FI_TRACES_URL its collector."""
+        settings.CLOUD_DEPLOYMENT = ""
+        settings.FI_API_PUBLIC_URL = "http://localhost:8000"
+        settings.FI_COLLECTOR_PUBLIC_URL = "http://localhost:4318"
+
+        response = auth_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "observe"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        keys = get_result(response)["keys"]
+        assert 'os.environ["FI_BASE_URL"] = "http://localhost:8000"' in keys["Python"]
+        assert 'os.environ["FI_TRACES_URL"] = "http://localhost:4318"' in keys["Python"]
+        assert (
+            'process.env.FI_BASE_URL = "http://localhost:8000";' in keys["TypeScript"]
+        )
+        assert (
+            'process.env.FI_TRACES_URL = "http://localhost:4318";' in keys["TypeScript"]
+        )
+
     def test_get_sdk_code_observe(self, auth_client):
         """Get SDK code for observe project type."""
         response = auth_client.get(
@@ -1131,7 +1186,17 @@ class TestProjectGraphDataAPI:
             )
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
-        assert data == {"system_metrics": exact_metrics, "evaluations": {}}
+        assert data == {
+            "system_metrics": exact_metrics,
+            # Declared per-series statistic: latency is always the mean.
+            "system_metric_statistics": {
+                "latency": "mean",
+                "tokens": "sum",
+                "cost": "mean",
+                "traffic": "count",
+            },
+            "evaluations": {},
+        }
 
     @pytest.mark.parametrize(
         ("failure", "expected_status", "expected_code"),

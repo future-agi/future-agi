@@ -315,8 +315,14 @@ class TestHistoricalWorkflow:
         )
         await _make_running_stale(str(eval_task.id))
 
+        # The starter describes before every start and, finding the crashed
+        # execution closed, says so; without that evidence the first reap
+        # applies the blind floor, which an hour-old claim has not passed.
         result = await _run_historical(
-            workflow_environment, str(eval_task.id), batch_size=5
+            workflow_environment,
+            str(eval_task.id),
+            batch_size=5,
+            workflow_confirmed_stopped=True,
         )
 
         assert result.status == "completed"
@@ -366,9 +372,13 @@ class TestHistoricalWorkflow:
     ):
         """When both run_entry and fail_eval_entry exhaust their retries, the
         entry is left stranded RUNNING and the task can't finalize. The workflow
-        must fail loudly rather than report COMPLETED over undrained work (the
-        drain loop breaks on an empty *pending* claim, so a naive finalize would
-        no-op and the run would otherwise still return completed)."""
+        waits for the claim to become reclaimable and reaps again; when no wait
+        ever reclaims it (here it stays under the blind floor), it must fail
+        loudly rather than report COMPLETED over undrained work (the drain loop
+        ends on an empty *pending* claim, so a naive finalize would no-op and
+        the run would otherwise still return completed)."""
+        from datetime import timedelta
+
         from temporalio.client import WorkflowFailureError
         from temporalio.common import RetryPolicy
 
@@ -392,6 +402,9 @@ class TestHistoricalWorkflow:
         one_shot = RetryPolicy(maximum_attempts=1)
         monkeypatch.setattr(wf, "RUN_ENTRY_RETRY_POLICY", one_shot)
         monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", one_shot)
+        # Each finalize wait is one second here, so the bounded waits run out
+        # in seconds rather than two hours.
+        monkeypatch.setattr(wf, "_FINALIZE_WAIT", timedelta(seconds=1))
 
         with pytest.raises(WorkflowFailureError):
             await _run_historical(
@@ -417,6 +430,9 @@ class TestHistoricalWorkflow:
         _patch_failing_reconcile(monkeypatch)
         # One-shot so the reconcile activity exhausts its retries fast.
         monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", RetryPolicy(maximum_attempts=1))
+        monkeypatch.setattr(
+            wf, "RECONCILE_RETRY_POLICY", RetryPolicy(maximum_attempts=1)
+        )
 
         with pytest.raises(WorkflowFailureError):
             await _run_historical(
@@ -583,6 +599,9 @@ class TestContinuousWorkflow:
             _deterministic_rejection,
         )
         monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", RetryPolicy(maximum_attempts=1))
+        monkeypatch.setattr(
+            wf, "RECONCILE_RETRY_POLICY", RetryPolicy(maximum_attempts=1)
+        )
         await sync_to_async(EvalTask.objects.filter(id=eval_task.id).update)(
             run_type=RunType.CONTINUOUS
         )
@@ -661,6 +680,9 @@ class TestContinuousWorkflow:
         # Exercise the workflow's post-exhaustion path without waiting for all
         # five production backoff attempts in this orchestration test.
         monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", RetryPolicy(maximum_attempts=1))
+        monkeypatch.setattr(
+            wf, "RECONCILE_RETRY_POLICY", RetryPolicy(maximum_attempts=1)
+        )
 
         original_cursor = eval_task.created_at
         await sync_to_async(make_pending_entries)(eval_task, 1)

@@ -18,8 +18,8 @@ import { useMutation } from "@tanstack/react-query";
 import { useSnackbar } from "src/components/snackbar";
 import { Box, Divider } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import logger from "src/utils/logger";
 import RightSectionAuth from "./RightSectionAuth";
+import { getSsoRedirectUrl } from "./sso-redirect";
 
 // ----------------------------------------------------------------------
 
@@ -39,16 +39,22 @@ export default function SSOLogin() {
 
   const { mutate: initiateSSO, isPending: isLoading } = useMutation({
     mutationFn: async (data) => {
-      const response = await axios.get(endpoints.auth.ssoLogin(data.email));
+      const response = await axios.get(endpoints.auth.ssoLogin(data.email), {
+        withCredentials: true,
+      });
       return response.data;
     },
     onSuccess: (data) => {
+      const redirectUrl = getSsoRedirectUrl(data);
+      if (redirectUrl) {
+        window.location.assign(redirectUrl);
+        return;
+      }
       if (data.new_org) {
-        logger.debug("SSO Response:", data);
         navigate(paths.auth.jwt.setup_org);
       } else {
-        enqueueSnackbar(data.message || "SSO login initiated successfully", {
-          variant: "success",
+        enqueueSnackbar(data.message || "SSO login initiation failed", {
+          variant: "error",
         });
       }
       trackEvent(Events.ssoLoginClicked, {
@@ -66,7 +72,7 @@ export default function SSOLogin() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -77,7 +83,7 @@ export default function SSOLogin() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           lineHeight: "36px",
           color: "text.secondary",
           maxWidth: "480px",
@@ -101,11 +107,11 @@ export default function SSOLogin() {
       />
 
       <LoadingButton
+        size="large"
         fullWidth
         type="submit"
         variant="contained"
         loading={isLoading}
-        sx={{ borderRadius: 0.5 }}
         color="primary"
       >
         Sign in
@@ -161,7 +167,7 @@ export default function SSOLogin() {
           },
         }}
       >
-        <Iconify icon="eva:arrow-ios-back-fill" />
+        <Iconify icon="solar:alt-arrow-left-linear" />
       </IconButton> */}
 
       {/* Left Side - Form */}

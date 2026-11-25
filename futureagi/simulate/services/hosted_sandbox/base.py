@@ -17,6 +17,16 @@ class SandboxLaunchSpec:
     allowed_domains: tuple[str, ...] = ()
     allowed_cidrs: tuple[str, ...] = ()
     unrestricted_egress: bool = False
+    runtime_name: str | None = None
+
+
+@dataclass(frozen=True)
+class SandboxCommandStep:
+    """One step of a session command. A harness step is an agent-learning-kit entrypoint that
+    runs each customer process as its own OS user; only a harness step may hold the means."""
+
+    command: str
+    harness: bool = False
 
 
 @dataclass(frozen=True)
@@ -25,6 +35,15 @@ class SandboxCommandRequest:
     env: dict[str, str] | None = None
     run_async: bool = False
     suppress_input_echo: bool = False
+    # The command's steps, when its customer processes should run as their own OS users where the
+    # provider and its image can; a provider that cannot runs ``command``, the steps joined by &&.
+    steps: tuple[SandboxCommandStep, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.steps and self.command != " && ".join(
+            step.command for step in self.steps
+        ):
+            raise ValueError("a command with steps must be its steps joined by &&")
 
 
 @dataclass(frozen=True)
@@ -66,6 +85,10 @@ class SandboxNotFoundError(SandboxProviderError):
     pass
 
 
+class SandboxFileNotFoundError(SandboxProviderError):
+    """A file the sandbox does not hold. Not a SandboxNotFoundError: the sandbox is still there."""
+
+
 class SandboxConflictError(SandboxProviderError):
     pass
 
@@ -73,6 +96,25 @@ class SandboxConflictError(SandboxProviderError):
 class SandboxProviderConfigurationError(SandboxProviderError):
     def __init__(self, message: str) -> None:
         super().__init__(message, status_code=422)
+
+
+class SandboxProviderUnavailableError(SandboxProviderConfigurationError):
+    """The selected provider's SDK is not installed in this backend image.
+
+    The SDKs are the optional ``sandbox`` extra (pyproject.toml), which the
+    default image does not ship. Unlike a configuration error this cannot be
+    fixed by retrying or by setting environment variables: the image has to be
+    rebuilt with ``--build-arg EXTRAS=sandbox``.
+    """
+
+    def __init__(self, provider: str, module: str) -> None:
+        super().__init__(
+            f"the {provider} SDK (`{module}`) is not installed in this backend "
+            "image; rebuild it with --build-arg EXTRAS=sandbox (futureagi/"
+            "Dockerfile.oss) or install the `sandbox` extra"
+        )
+        self.provider = provider
+        self.module = module
 
 
 class SandboxRuntimeProvider(ABC):
@@ -83,6 +125,16 @@ class SandboxRuntimeProvider(ABC):
     create_timeout_seconds = 300
     supports_adjustments = False
     supports_public_ingress = False
+
+    def renew_ttl(self, sandbox: Any, ttl_seconds: int) -> None:
+        """Re-arm the sandbox lease after provisioning, when supported.
+
+        Providers without a mutable lease must provision enough lifetime for the
+        whole job in ``create``. The guest capability is activated only after this
+        hook succeeds.
+        """
+
+        return None
 
     @abstractmethod
     def create(self, spec: SandboxLaunchSpec, *, timeout: int) -> Any:

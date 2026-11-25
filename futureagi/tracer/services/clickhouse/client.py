@@ -4,14 +4,14 @@ ClickHouse Client for Analytics Backend
 Provides connection management and query execution for ClickHouse.
 """
 
+import logging
 import queue
 import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from typing import Any
 
-import structlog
 from django.conf import settings
 
 from tracer.services.clickhouse.application_read_policy import (
@@ -21,12 +21,14 @@ from tracer.services.clickhouse.application_read_policy import (
 from tracer.services.clickhouse.application_read_transport import (
     application_native_read_transport,
 )
+from tracer.services.clickhouse.native_read_stream import (
+    _ManagedNativeReadStream,
+    logger,
+)
 from tracer.services.clickhouse.server_readonly import (
     ensure_read_statement,
     without_query_settings,
 )
-
-logger = structlog.get_logger(__name__)
 
 _TOO_MANY_SIMULTANEOUS_QUERIES_CODE = 202
 _READ_ADMISSION_RETRY_DELAYS_SECONDS = tuple(
@@ -62,6 +64,84 @@ except ImportError:
     CLICKHOUSE_AVAILABLE = False
 
 
+_quiet_retained_read = ContextVar("quiet_retained_read", default=False)
+
+
+def _allow_native_log(_record: logging.LogRecord) -> bool:
+    return not _quiet_retained_read.get()
+
+
+@contextmanager
+def _quiet_retained_driver():
+    from tfc.telemetry.instrumentation import suppress_clickhouse_query_span
+
+    # The driver logs substituted SQL, server messages and result-column names.
+    # Filter at the emitters: ancestor logger filters don't see propagated records.
+    for name in (
+        "clickhouse_driver.connection",
+        "clickhouse_driver.client",
+        "clickhouse_driver.log",
+        "clickhouse_driver.streams.native",
+    ):
+        logging.getLogger(name).addFilter(_allow_native_log)  # idempotent
+    token = _quiet_retained_read.set(True)
+    try:
+        with suppress_clickhouse_query_span():
+            yield
+    finally:
+        _quiet_retained_read.reset(token)
+
+
+@contextmanager
+def _guard_retained_dispatch(client, deadline):
+    """Guard the query packet on this lease, not the entry to Client.execute.
+
+    In clickhouse-driver 0.2.10, execute prepares the connection settings,
+    calls force_connect (which may ping and reconnect), then substitutes the
+    parameters before calling Connection.send_query. Keep that entire driver
+    and instrumentation path; only interpose at its single-connection send.
+    """
+    connection = client.connection
+    if getattr(client, "connections", ()):
+        # A rotating client could select a different, unguarded connection.
+        raise TimeoutError("Optional metadata requires a single connection")
+    send_query = connection.send_query
+    had_instance_method = "send_query" in vars(connection)
+    sync_timeout = connection.sync_request_timeout
+
+    def send_before_deadline(*args, **kwargs):
+        # Use the selector's minimum useful statement budget. Never serialize
+        # a near-zero server setting (zero would mean unlimited).
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms < 25 or not connection.connected or connection.socket is None:
+            raise TimeoutError("ClickHouse read deadline exhausted")
+        remaining = remaining_ms / 1000
+        # send_query serializes context.settings, not execute's input dict.
+        connection.context.settings = {
+            **connection.context.settings,
+            "max_execution_time": remaining,
+        }
+        if connection.send_receive_timeout is not None:
+            remaining = min(connection.send_receive_timeout, remaining)
+            connection.send_receive_timeout = remaining
+        connection.socket.settimeout(remaining)
+        return send_query(*args, **kwargs)
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("ClickHouse read deadline exhausted")
+    connection.send_query = send_before_deadline
+    try:
+        connection.sync_request_timeout = min(sync_timeout, remaining)
+        yield
+    finally:
+        connection.sync_request_timeout = sync_timeout
+        if had_instance_method:
+            connection.send_query = send_query
+        else:
+            del connection.send_query
+
+
 def _bounded_read_timeout_ms(
     timeout_ms: int | None,
     *,
@@ -81,201 +161,6 @@ def _bounded_read_timeout_ms(
             ceiling_ms,
         ),
     )
-
-
-class _ManagedNativeReadStream:
-    """Own one admitted native read connection for an iterator's lifetime."""
-
-    def __init__(
-        self,
-        owner: "ClickHouseClient",
-        query: str,
-        params: dict[str, Any],
-        *,
-        timeout_ms: int | None,
-        block_size: int,
-        query_settings: dict[str, Any] | None = None,
-    ):
-        self._owner = owner
-        self._query = query
-        self._params = params
-        self._timeout_ms = timeout_ms
-        self._block_size = block_size
-        self._query_settings = query_settings
-        self._deadline = 0.0
-        self._admission_acquired = False
-        self._client = None
-        self._driver_connection = None
-        self._original_connect_timeout = None
-        self._original_send_receive_timeout = None
-        self._socket = None
-        self._original_socket_timeout = None
-        self._original_socket_timeout_known = False
-        self._exhausted = False
-
-    def _remaining_seconds(self) -> float | None:
-        if self._timeout_ms is None:
-            return None
-        remaining = self._deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("ClickHouse read deadline exhausted")
-        return remaining
-
-    @staticmethod
-    def _narrow_timeout(original: Any, remaining: float) -> float:
-        try:
-            value = float(original)
-        except (TypeError, ValueError):
-            return remaining
-        return min(value, remaining) if value > 0 else remaining
-
-    def _capture_transport(self) -> None:
-        connection = getattr(self._client, "connection", None)
-        if getattr(connection, "connected", None) not in {True, False}:
-            return
-        self._driver_connection = connection
-        self._original_connect_timeout = getattr(connection, "connect_timeout", None)
-        self._original_send_receive_timeout = getattr(
-            connection, "send_receive_timeout", None
-        )
-        socket = getattr(connection, "socket", None)
-        if socket is not None:
-            self._socket = socket
-            self._original_socket_timeout = socket.gettimeout()
-            self._original_socket_timeout_known = True
-        else:
-            # A lazy connection creates its socket during the first next().
-            self._original_socket_timeout = self._original_send_receive_timeout
-            self._original_socket_timeout_known = True
-
-    def _clamp_transport(self) -> None:
-        remaining = self._remaining_seconds()
-        connection = self._driver_connection
-        if connection is None:
-            return
-        if remaining is not None and self._original_connect_timeout is not None:
-            connection.connect_timeout = self._narrow_timeout(
-                self._original_connect_timeout, remaining
-            )
-        if remaining is None:
-            connection.send_receive_timeout = None
-        else:
-            connection.send_receive_timeout = self._narrow_timeout(
-                self._original_send_receive_timeout, remaining
-            )
-        socket = getattr(connection, "socket", None)
-        if socket is not None:
-            self._socket = socket
-            if not self._original_socket_timeout_known:
-                self._original_socket_timeout = socket.gettimeout()
-                self._original_socket_timeout_known = True
-            socket.settimeout(
-                None
-                if remaining is None
-                else self._narrow_timeout(self._original_socket_timeout, remaining)
-            )
-
-    def _restore_transport(self) -> bool:
-        connection = self._driver_connection
-        if connection is None:
-            return True
-        restored = True
-        if self._socket is not None and self._original_socket_timeout_known:
-            try:
-                self._socket.settimeout(self._original_socket_timeout)
-            except Exception:
-                restored = False
-        if self._original_connect_timeout is not None:
-            try:
-                connection.connect_timeout = self._original_connect_timeout
-            except Exception:
-                restored = False
-        try:
-            connection.send_receive_timeout = self._original_send_receive_timeout
-        except Exception:
-            restored = False
-        return restored
-
-    def _retire_client(self) -> None:
-        if self._client is None:
-            return
-        try:
-            self._client.disconnect()
-        except Exception as exc:
-            logger.warning(
-                "server_readonly_native_disconnect_failed",
-                error_type=type(exc).__name__,
-                exc_info=True,
-            )
-        finally:
-            self._client = None
-
-    def _cleanup(self, *, reusable: bool) -> None:
-        try:
-            transport_restored = self._restore_transport()
-            reusable = reusable and transport_restored
-            if self._client is not None:
-                if reusable:
-                    client = self._client
-                    self._client = None
-                    self._owner._return_client(client)
-                else:
-                    self._retire_client()
-        finally:
-            if self._admission_acquired:
-                self._admission_acquired = False
-                self._owner._read_admission.release()
-
-    def __enter__(self) -> Iterator[list[tuple]]:
-        if self._timeout_ms is not None:
-            self._deadline = time.monotonic() + (self._timeout_ms / 1000.0)
-        try:
-            self._admission_acquired = self._owner._read_admission.acquire(
-                timeout=(
-                    self._owner.read_timeout_ceiling_ms / 1000.0
-                    if self._timeout_ms is None
-                    else self._remaining_seconds()
-                )
-            )
-            if not self._admission_acquired:
-                raise TimeoutError("ClickHouse read admission deadline exhausted")
-            self._remaining_seconds()
-            self._client = self._owner._get_client()
-            self._remaining_seconds()
-            self._capture_transport()
-            self._clamp_transport()
-            kwargs = (
-                {"settings": self._query_settings}
-                if self._query_settings is not None
-                else {}
-            )
-            rows = iter(self._client.execute_iter(self._query, self._params, **kwargs))
-        except BaseException:
-            self._cleanup(reusable=False)
-            raise
-
-        def blocks() -> Iterator[list[tuple]]:
-            block: list[tuple] = []
-            while True:
-                self._clamp_transport()
-                try:
-                    row = next(rows)
-                except StopIteration:
-                    self._remaining_seconds()
-                    self._exhausted = True
-                    break
-                self._clamp_transport()
-                block.append(row)
-                if len(block) >= self._block_size:
-                    yield block
-                    block = []
-            if block:
-                yield block
-
-        return blocks()
-
-    def __exit__(self, exc_type, *_exc) -> None:
-        self._cleanup(reusable=exc_type is None and self._exhausted)
 
 
 class ClickHouseClient:
@@ -371,6 +256,9 @@ class ClickHouseClient:
         self._pool_lock = threading.Lock()
         self._pool_initialized = False
         self._read_admission = threading.BoundedSemaphore(self._pool_size)
+        # One extra native read may be in flight for the optional retained
+        # window. Its caller can time out before the driver returns.
+        self._retained_lookup_admission = threading.BoundedSemaphore(1)
 
     @property
     def is_available(self) -> bool:
@@ -408,20 +296,24 @@ class ClickHouseClient:
             else {"use_numpy": False, "max_block_size": 100000}
         )
 
-        return CHDriver(
-            host=self.host,
-            port=self.port,
-            user=self.user,
-            password=self.password,
-            database=self.database,
-            connect_timeout=self.connect_timeout,
-            send_receive_timeout=(
-                max(self.send_timeout, self.receive_timeout)
-                if send_receive_timeout_seconds is None
-                else send_receive_timeout_seconds
-            ),
-            settings=driver_settings,
-            compression="lz4",
+        from tfc.telemetry.instrumentation import instrument_clickhouse_client
+
+        return instrument_clickhouse_client(
+            CHDriver(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database=self.database,
+                connect_timeout=self.connect_timeout,
+                send_receive_timeout=(
+                    max(self.send_timeout, self.receive_timeout)
+                    if send_receive_timeout_seconds is None
+                    else send_receive_timeout_seconds
+                ),
+                settings=driver_settings,
+                compression="lz4",
+            )
         )
 
     def _get_client(self) -> CHDriver:
@@ -557,16 +449,24 @@ class ClickHouseClient:
         params: dict[str, Any] | None = None,
         timeout_ms: int | None = None,
         settings: dict[str, Any] | None = None,
+        *,
+        retained_until: float | None = None,
     ) -> tuple[list[tuple], list[tuple], float, int | None, int | None]:
-        """Execute a guarded read and include native rows/bytes progress."""
+        """Execute a guarded read and include native rows/bytes progress.
 
-        result = self._execute_read(
-            query,
-            params,
-            timeout_ms=timeout_ms,
-            settings=settings,
-            include_progress=True,
-        )
+        retained_until is the optional lookup waiter's absolute monotonic expiry.
+        Other reads keep their original admission, transport and telemetry.
+        """
+
+        with _quiet_retained_driver() if retained_until is not None else nullcontext():
+            result = self._execute_read(
+                query,
+                params,
+                timeout_ms=timeout_ms,
+                settings=settings,
+                include_progress=True,
+                retained_until=retained_until,
+            )
         assert len(result) == 5
         return result
 
@@ -578,6 +478,7 @@ class ClickHouseClient:
         settings: dict[str, Any] | None = None,
         *,
         include_progress: bool,
+        retained_until: float | None = None,
     ) -> (
         tuple[list[tuple], list[tuple], float]
         | tuple[list[tuple], list[tuple], float, int | None, int | None]
@@ -599,7 +500,8 @@ class ClickHouseClient:
             Tuple of (rows, column_types, query_time_ms), optionally followed
             by native read_rows and read_bytes progress.
         """
-        application_read = is_application_read()
+        retained_lookup = retained_until is not None
+        application_read = is_application_read() and not retained_lookup
         timeout_ms = (
             None
             if application_read
@@ -672,22 +574,28 @@ class ClickHouseClient:
         admission_acquired = False
         client = None
 
+        admission = (
+            self._retained_lookup_admission if retained_lookup else self._read_admission
+        )
         try:
-            admission_acquired = self._read_admission.acquire(
-                # Queue admission stays bounded independently of statement
-                # execution. Do not exhaust all HTTP workers waiting for a slot.
-                timeout=max(
-                    (timeout_ms or self.read_timeout_ceiling_ms) / 1000.0, 0.001
+            if retained_lookup:
+                admission_acquired = admission.acquire(blocking=False)
+            else:
+                # Queue admission stays bounded independently of statement execution.
+                admission_acquired = admission.acquire(
+                    timeout=max(
+                        (timeout_ms or self.read_timeout_ceiling_ms) / 1000.0, 0.001
+                    )
                 )
-            )
             if not admission_acquired:
                 raise TimeoutError("ClickHouse read admission deadline exhausted")
             client = self._get_client()
-            logger.debug(
-                "Executing ClickHouse read query",
-                query=query[:200],
-                timeout_ms=timeout_ms,
-            )
+            if not retained_lookup:
+                logger.debug(
+                    "Executing ClickHouse read query",
+                    query=query[:200],
+                    timeout_ms=timeout_ms,
+                )
             retry_attempt = 0
             while True:
                 try:
@@ -698,9 +606,16 @@ class ClickHouseClient:
                         query_settings=query_settings,
                         started_at=t_start,
                         timeout_ms=timeout_ms,
+                        **(
+                            {"retained_until": retained_until}
+                            if retained_lookup
+                            else {}
+                        ),
                     )
                     break
                 except CHError as exc:
+                    if retained_lookup:
+                        raise
                     if getattr(
                         exc, "code", None
                     ) != _TOO_MANY_SIMULTANEOUS_QUERIES_CODE or retry_attempt >= len(
@@ -753,15 +668,16 @@ class ClickHouseClient:
             read_rows = progress_metric("rows")
             read_bytes = progress_metric("bytes")
 
-            logger.info(
-                "ClickHouse read query completed",
-                query=query[:200],
-                query_time_ms=round(query_time_ms, 2),
-                rows_returned=rows_returned,
-                read_rows=read_rows,
-                read_bytes=read_bytes,
-                backend="clickhouse",
-            )
+            if not retained_lookup:
+                logger.info(
+                    "ClickHouse read query completed",
+                    query=query[:200],
+                    query_time_ms=round(query_time_ms, 2),
+                    rows_returned=rows_returned,
+                    read_rows=read_rows,
+                    read_bytes=read_bytes,
+                    backend="clickhouse",
+                )
 
             rounded_query_time_ms = round(query_time_ms, 2)
             if include_progress:
@@ -776,19 +692,20 @@ class ClickHouseClient:
 
         except CHError as e:
             query_time_ms = (time.monotonic() - t_start) * 1000
-            logger.error(
-                "ClickHouse read query failed",
-                error=str(e),
-                query=query[:200],
-                query_time_ms=round(query_time_ms, 2),
-                backend="clickhouse",
-            )
+            if not retained_lookup:
+                logger.error(
+                    "ClickHouse read query failed",
+                    error=str(e),
+                    query=query[:200],
+                    query_time_ms=round(query_time_ms, 2),
+                    backend="clickhouse",
+                )
             raise
         finally:
             if client is not None:
                 self._return_client(client)
             if admission_acquired:
-                self._read_admission.release()
+                admission.release()
 
     @staticmethod
     def _execute_native_read_with_remaining_timeout(
@@ -799,6 +716,7 @@ class ClickHouseClient:
         query_settings: dict[str, Any] | None,
         started_at: float,
         timeout_ms: int | None,
+        retained_until: float | None = None,
     ):
         """Keep connect + socket wait inside the read's remaining wall.
 
@@ -817,6 +735,13 @@ class ClickHouseClient:
 
         connection = getattr(client, "connection", None)
         connected = getattr(connection, "connected", None)
+        if retained_until is not None and (
+            timeout_ms is None
+            or query_settings is None
+            or connected not in {True, False}
+        ):
+            # No optional dispatch without both server and transport guardrails.
+            raise TimeoutError("Optional metadata requires bounded native dispatch")
         if timeout_ms is None:
             with application_native_read_transport(client):
                 return client.execute(
@@ -834,15 +759,21 @@ class ClickHouseClient:
             )
 
         deadline = started_at + (timeout_ms / 1000.0)
+        if retained_until is not None:
+            # Admission and executor setup must not renew the waiter's deadline.
+            deadline = min(deadline, retained_until)
         original_connect_timeout = getattr(connection, "connect_timeout", None)
         original_send_receive_timeout = getattr(
             connection, "send_receive_timeout", None
         )
-        socket = None
-        original_socket_timeout = None
-        original_socket_timeout_known = False
+        # connect()/reconnect creates a socket using the *clamped* policy.
+        # Only a socket that existed before the clamp has a timeout to save.
+        original_socket = getattr(connection, "socket", None)
+        original_socket_timeout = (
+            original_socket.gettimeout() if original_socket is not None else None
+        )
         try:
-            if connected is False:
+            if connected is False or retained_until is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError("ClickHouse read deadline exhausted")
@@ -854,7 +785,8 @@ class ClickHouseClient:
                     connection.send_receive_timeout = min(
                         float(original_send_receive_timeout), remaining
                     )
-                connection.connect()
+                if connected is False:
+                    connection.connect()
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -865,26 +797,36 @@ class ClickHouseClient:
                 )
             socket = getattr(connection, "socket", None)
             if socket is not None:
-                original_socket_timeout = socket.gettimeout()
-                original_socket_timeout_known = True
                 socket.settimeout(remaining)
 
-            return client.execute(
-                query,
-                params,
-                with_column_types=True,
-                settings=query_settings,
-            )
+            with (
+                _guard_retained_dispatch(client, deadline)
+                if retained_until is not None
+                else nullcontext()
+            ):
+                return client.execute(
+                    query,
+                    params,
+                    with_column_types=True,
+                    settings=query_settings,
+                )
         finally:
-            if socket is not None and original_socket_timeout_known:
-                try:
-                    socket.settimeout(original_socket_timeout)
-                except Exception:
-                    pass
             if original_connect_timeout is not None:
                 connection.connect_timeout = original_connect_timeout
             if original_send_receive_timeout is not None:
                 connection.send_receive_timeout = original_send_receive_timeout
+            current_socket = getattr(connection, "socket", None)
+            if current_socket is not None:
+                try:
+                    current_socket.settimeout(
+                        original_socket_timeout
+                        if current_socket is original_socket
+                        else original_send_receive_timeout
+                    )
+                except Exception:
+                    # The pool may reuse the client, but not this transport.
+                    client.disconnect()
+                    raise
 
     def execute_read_block_stream(
         self,

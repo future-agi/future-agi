@@ -1,0 +1,160 @@
+# e2e-relative file<TAB>expression<TAB>exact multiplicity<TAB>dispatch/exception category
+# Collector-only helpers and public test doubles do not create another backend context.
+flows/agents/call-log-eval-columns.spec.ts	factory req=request	1	collector
+flows/alerts/view-trace-scoping.spec.ts	factory req=request	1	collector
+flows/annotations/catalog-score-lifecycle.spec.ts	binding page,request,actor,probe	1	backendRequestContext
+flows/annotations/session-score-lifecycle.spec.ts	binding browser,request,scopeActors:scopes,scopeProbe:probe	1	backendRequestContext
+flows/auth/first-run-existing-account.spec.ts	factory req=pwRequest	1	ApiClient
+flows/auth/google-signin.spec.ts	factory context=browser	1	browser; not an API context
+flows/auth/google-signin.spec.ts	factory req=pwRequest	1	ApiClient
+flows/auth/login.spec.ts	factory req=pwRequest	1	ApiClient
+flows/auth/logout-clears-previous-account.spec.ts	factory req=pwRequest	1	ApiClient
+flows/auth/saml-tenant-isolation.spec.ts	binding browser,request	1	backendRequestContext
+flows/auth/saml-tenant-isolation.spec.ts	binding page,request	5	backendRequestContext
+flows/auth/saml-tenant-isolation.spec.ts	factory x=browser	1	browser; not an API context
+flows/auth/saml-tenant-isolation.spec.ts	factory y=browser	1	browser; not an API context
+flows/auth/saml-tenant-isolation.spec.ts	send request.post `${E2E.apiUrl}/saml2_auth/idp-uploads/`	1	reviewed first-hop expression
+flows/auth/signup-demo-traces.spec.ts	binding page,request	1	raw; ApiClient
+flows/dashboards/array-membership-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/array-membership-widget.spec.ts	factory reader=request	1	ScopeActors.headers
+flows/dashboards/array-membership-widget.spec.ts	send reader.get `${E2E.apiUrl}${path}`	1	reviewed first-hop expression
+flows/dashboards/boolean-attribute-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/catalog-source-parity.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/conversation-attribute-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/derived-metric.spec.ts	factory req=request	1	collector
+flows/dashboards/numeric-attribute-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/preset-burst-requests.spec.ts	binding requestId,request,timestamp	1	CDP Network.requestWillBeSent event data; not an API context
+flows/dashboards/preset-burst-requests.spec.ts	factory context=browser	1	browser; not an API context
+flows/dashboards/preset-burst-requests.spec.ts	factory ingest=request	1	collector
+flows/dashboards/trace-backed-session-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/trace-backed-user-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/trace-metric-local-filter.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/trace-numeric-annotation-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/trace-star-annotation-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/trace-text-annotation-widget.spec.ts	factory ingestion=request	1	collector
+flows/dashboards/widget-y-axis.spec.ts	factory req=request	4	collector
+flows/dashboards/widget-y-axis.spec.ts	send req.post `${cfg.collectorUrl}/v1/traces`	1	reviewed first-hop expression
+flows/datasets/pdf-document-preview.spec.ts	attached context.request	1	managed storage
+flows/error-feed/slack-alert.spec.ts	factory req=request	1	collector + Slack mock :28081
+flows/error-feed/slack-alert.spec.ts	send req.get `${E2E.slackMockUrl}/messages`	1	reviewed first-hop expression
+flows/error-feed/slack-integration-management.spec.ts	factory req=request	1	Slack first hop; backend callback is a redirect
+flows/error-feed/slack-integration-management.spec.ts	send req.get install.result.authorization_url	1	reviewed first-hop expression
+flows/error-feed/trigger-matrix.spec.ts	factory req=request	1	Slack first hop; backend callback is a redirect + collector
+flows/error-feed/trigger-matrix.spec.ts	send req.get `${E2E.slackMockUrl}/messages`	1	reviewed first-hop expression
+flows/error-feed/trigger-matrix.spec.ts	send req.get install.result.authorization_url	1	reviewed first-hop expression
+flows/evals/catalog-result-types.spec.ts	factory req=request	1	collector
+flows/evals/choice-catalog.spec.ts	factory req=request	1	collector
+flows/evals/cohort-sampling.spec.ts	factory req=request	1	collector
+flows/evals/eval-log-source-navigation.spec.ts	factory req=request	1	collector
+flows/evals/eval-task.spec.ts	factory req=request	1	collector
+flows/evals/link-destinations.spec.ts	factory req=request	1	link canaries :28082/:28083
+flows/evals/link-destinations.spec.ts	send req.get `${url}/requests`	2	reviewed first-hop expression
+flows/evals/recalculate-task-result.spec.ts	factory req=request	1	collector
+flows/evals/task-filter-submit.spec.ts	factory req=request	1	collector
+flows/evals/task-usage-trace-drawer.spec.ts	factory req=request	1	collector
+flows/gateway/key-guardrail-policy.spec.ts	factory accounts=request	1	ApiClient
+flows/gateway/key-guardrail-policy.spec.ts	factory context=browser	1	browser; not an API context
+flows/gateway/key-guardrail-policy.spec.ts	factory gateway=request	1	gateway → mock-LLM
+flows/gateway/key-guardrail-policy.spec.ts	send gateway.get '/-/orgs/configs'	4	reviewed first-hop expression
+flows/gateway/key-guardrail-policy.spec.ts	send gateway.post '/v1/chat/completions'	2	reviewed first-hop expression
+flows/gateway/key-guardrail-policy.spec.ts	send gateway.post '/v1/responses'	1	reviewed first-hop expression
+flows/gateway/org-fail-open.spec.ts	factory accounts=request	1	ApiClient
+flows/gateway/org-fail-open.spec.ts	factory context=browser	1	browser; not an API context
+flows/gateway/org-fail-open.spec.ts	factory gateway=request	1	gateway → mock-LLM
+flows/gateway/org-fail-open.spec.ts	send gateway.get '/-/orgs/configs'	1	reviewed first-hop expression
+flows/gateway/org-fail-open.spec.ts	send gateway.post '/v1/chat/completions'	1	reviewed first-hop expression
+flows/gateway/provider-path-prefix.spec.ts	factory gatewayRequest=request	1	gateway → mock-LLM
+flows/gateway/provider-path-prefix.spec.ts	send gatewayRequest.get '/-/orgs/configs'	1	reviewed first-hop expression
+flows/gateway/unpriced-request-cost.spec.ts	factory accounts=request	1	ApiClient
+flows/gateway/unpriced-request-cost.spec.ts	factory context=browser	1	browser; not an API context
+flows/gateway/unpriced-request-cost.spec.ts	factory gateway=request	1	gateway → mock-LLM
+flows/gateway/unpriced-request-cost.spec.ts	send gateway.get '/-/orgs/configs'	1	reviewed first-hop expression
+flows/gateway/unpriced-request-cost.spec.ts	send gateway.post '/v1/chat/completions'	1	reviewed first-hop expression
+flows/knowledge-base/download-boundaries.spec.ts	binding scopeActors:scopes,scopeProbe,request	1	backendRequestContext
+flows/knowledge-base/download-boundaries.spec.ts	send request.get path	6	reviewed first-hop expression
+flows/knowledge-base/file-download.spec.ts	binding scopeActors,browser,request	1	backendRequestContext
+flows/knowledge-base/file-download.spec.ts	send request.get `${E2E.apiUrl}${path}`	3	reviewed first-hop expression
+flows/observe/ask-jev-composer.spec.ts	factory req=request	1	collector
+flows/observe/ask-jev-run.spec.ts	factory req=request	1	collector
+flows/observe/catalog-history-live-parity.spec.ts	binding actor,page,request,probe,lifecycle:h5	1	backendRequestContext
+flows/observe/catalog-history-live-parity.spec.ts	send request.get endpoints.collectorUrl + '/v1/traces'	1	reviewed first-hop expression
+flows/observe/catalog-history-live-parity.spec.ts	send request.get endpoints.healthUrl	1	reviewed first-hop expression
+flows/observe/catalog-permission-boundaries.spec.ts	factory context=browser	1	browser; not an API context
+flows/observe/catalog-permission-boundaries.spec.ts	factory req=request	1	collector + backend via ScopeActors.headers
+flows/observe/catalog-permission-boundaries.spec.ts	send req.post `${E2E.apiUrl}${UPLOAD}`	1	reviewed first-hop expression
+flows/observe/catalog-session-custom-filter.spec.ts	binding page,request,actor,probe	1	backendRequestContext
+flows/observe/catalog-session-parity.spec.ts	binding page,request,actor,probe	1	backendRequestContext
+flows/observe/catalog-trace-filter-parity.spec.ts	factory req=request	1	collector
+flows/observe/catalog-user-parity.spec.ts	factory context=browser	1	browser; not an API context
+flows/observe/catalog-user-parity.spec.ts	factory requestContext=request	1	collector
+flows/observe/copilot-agent-usage-timing.spec.ts	binding page,request,actor,probe	1	backendRequestContext
+flows/observe/eval-count-tiles.spec.ts	factory req=request	1	collector
+flows/observe/graph-metric-scoping.spec.ts	factory req=request	1	collector
+flows/observe/insights-new-report.spec.ts	factory req=request	1	collector
+flows/observe/list-pagination.spec.ts	factory req=request	9	collector
+flows/observe/native-accounting-and-source-details.spec.ts	binding page,request,actor,probe	1	backendRequestContext
+flows/observe/native-session-accounting-navigation.spec.ts	binding page,request,actor,probe	1	backendRequestContext
+flows/observe/native-trace-desktop-detail.spec.ts	binding page,request,actor,probe	1	backendRequestContext
+flows/observe/observed-catalog.spec.ts	factory req=request	1	collector
+flows/observe/openrouter-usage.spec.ts	factory req=request	1	collector
+flows/observe/saved-view-duplicate-name.spec.ts	factory req=request	1	collector
+flows/observe/saved-view-preset-dates.spec.ts	factory req=request	7	collector
+flows/observe/span-filter-parity.spec.ts	factory req=request	1	collector
+flows/observe/sql-workbench.spec.ts	factory req=request	1	collector
+flows/observe/trace-ingestion.spec.ts	factory req=request	1	collector
+flows/observe/user-code-literal.spec.ts	factory req=request	1	collector
+flows/sdk-ingestion/eval-structure-scope.spec.ts	binding browser,request,scopeActors:scopes,scopeProbe:probe	1	backendRequestContext
+flows/sdk-ingestion/eval-structure-scope.spec.ts	send request.get `${E2E.apiUrl}${SDK_EVAL}${encodeURIComponent(evalId	1	reviewed first-hop expression
+flows/sdk-ingestion/eval-structure-scope.spec.ts	send request.get `${E2E.apiUrl}${SDK_EVAL}${own.eval_id}/`	1	reviewed first-hop expression
+flows/settings/api-key-expiry.spec.ts	binding page,actor,probe,request	1	backendRequestContext
+flows/settings/api-key-expiry.spec.ts	send request.get `${E2E.apiUrl}${HEALTH}`	3	reviewed first-hop expression
+flows/settings/api-key-expiry.spec.ts	send request.post `${E2E.collectorUrl}/v1/traces`	3	reviewed first-hop expression
+flows/settings/host-update-status.spec.ts	binding page,actor,request	1	backendRequestContext
+flows/settings/host-update-status.spec.ts	send request.fetch `${E2E.apiUrl}${STATUS_PATH}`	1	reviewed first-hop expression
+flows/settings/host-update-status.spec.ts	send request.get `${E2E.apiUrl}${STATUS_PATH}`	4	reviewed first-hop expression
+flows/simulate/evidence-import-from-observe.spec.ts	attached page.request	1	collector
+flows/simulate/evidence-import-tenant-scope.spec.ts	binding browser,request,scopeActors,scopeProbe	1	backendRequestContext
+harness/alert-webhook-boundaries.spec.ts	binding scopeActors:actors,scopeProbe:probe,request	1	backendRequestContext
+harness/alert-webhook-boundaries.spec.ts	send request.patch `${E2E.apiUrl}${target}`	1	reviewed first-hop expression
+harness/catalog-backfill.spec.ts	binding actor,probe,request,lifecycle:h5	1	backendRequestContext
+harness/catalog-backfill.spec.ts	send request.get health	1	reviewed first-hop expression
+harness/catalog-backfill.spec.ts	send request.get url + '/v1/traces'	1	reviewed first-hop expression
+harness/decision-mock.spec.ts	binding request	1	raw; gateway
+harness/decision-mock.spec.ts	send request.post url	2	reviewed first-hop expression
+harness/kb-upload.spec.ts	binding actor,request	1	backendRequestContext
+harness/legacy-eval-fixture.spec.ts	binding scopeActors:scopes,scopeProbe:probe,request	1	backendRequestContext
+harness/legacy-eval-fixture.spec.ts	send request.post `${E2E.apiUrl}${FIXTURE}`	1	reviewed first-hop expression
+harness/link-executor.spec.ts	factory req=request	1	link canaries :28082/:28083 + collector
+harness/link-executor.spec.ts	send req.get `${url}/requests`	2	reviewed first-hop expression
+harness/link-isolation.spec.ts	binding request	1	raw; app
+harness/link-isolation.spec.ts	send request.get '/e2e-monaco/bootstrap.js'	1	reviewed first-hop expression
+harness/link-isolation.spec.ts	send request.get '/e2e-monaco/vs/loader.js'	1	reviewed first-hop expression
+harness/mock-daytona.spec.ts	binding actor,request	1	backendRequestContext
+harness/mock-daytona.spec.ts	send request.get `${E2E.daytonaMockUrl}/calls`	1	reviewed first-hop expression
+harness/mock-llm.spec.ts	factory req=request	1	gateway → mock-LLM
+harness/mock-llm.spec.ts	send req.post `${E2E.gatewayUrl}/v1/chat/completions`	1	reviewed first-hop expression
+harness/native-cdc.spec.ts	binding request,actor,probe	2	backendRequestContext
+harness/native-cdc.spec.ts	send request.put `${E2E.apiUrl}/simulate/agent-definitions/${agentId}/edit/`	1	reviewed first-hop expression
+harness/otlp-native-storage.spec.ts	binding request,actor,probe	2	backendRequestContext
+harness/otlp-shapes.spec.ts	binding request	1	backendRequestContext
+harness/otlp-shapes.spec.ts	binding request,actor,probe	2	backendRequestContext
+harness/otlp-tree.spec.ts	binding request,actor,probe	1	backendRequestContext
+harness/otlp.spec.ts	factory req=request	1	collector
+harness/provisioning.spec.ts	factory req=request	1	ApiClient
+lib/backend-request.ts	attached route.fetch(	1	firstHopOptions
+lib/backend-request.ts	binding request,baseURL	1	backendRequestContext
+lib/backend-request.ts	factory -=request	1	backendRequestContext
+lib/fixtures.ts	factory req=pwRequest	1	ApiClient
+lib/fresh-actor.ts	factory req=request	1	ApiClient
+lib/google-fixture.ts	factory api=request	1	Google mock HTTPS :28443
+lib/google-fixture.ts	send api.get '/events'	1	reviewed first-hop expression
+lib/google-fixture.ts	send api.post '/scenario'	1	reviewed first-hop expression
+lib/key-administrator.ts	factory req=request	1	ApiClient
+lib/licensed-customer.ts	factory req=pwRequest	1	ApiClient
+lib/mock-model-fixtures.ts	factory req=request	1	ApiClient
+lib/otlp-delivery.ts	send req.post url	1	reviewed first-hop expression
+lib/scope-actors.ts	factory context=browser	1	browser; not an API context
+lib/scope-actors.ts	factory req=pwRequest	1	ApiClient + ScopeActors.headers
+lib/scope-actors.ts	send req.fetch `${E2E.apiUrl}${path}`	1	reviewed first-hop expression
+scripts/api-client.test.mjs	factory context=request	1	isolated self-test listener
+scripts/api-client.test.mjs	factory raw=request	1	isolated self-test listener

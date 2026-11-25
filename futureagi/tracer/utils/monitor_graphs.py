@@ -209,6 +209,8 @@ def get_static_metric_graph_data(
             ),
             settings=MONITOR_CH_SETTINGS,
         )
+        if hasattr(builder, "validate_result"):
+            builder.validate_result()
         graph_data = _format_ch_time_series(result.data)
         deadline.remaining_ms(floor_ms=1)
         return graph_data
@@ -461,9 +463,7 @@ def _evaluator_percentage_band(
     result = analytics.execute_ch_query(
         query,
         params,
-        timeout_ms=deadline.remaining_ms(
-            MONITOR_GRAPH_CH_TIMEOUT_CAP_MS, floor_ms=1
-        ),
+        timeout_ms=deadline.remaining_ms(MONITOR_GRAPH_CH_TIMEOUT_CAP_MS, floor_ms=1),
         settings=MONITOR_CH_SETTINGS,
     )
     deadline.remaining_ms(floor_ms=1)

@@ -32,6 +32,32 @@ describe("getSafeActionErrorMessage", () => {
     ).toBe(fallback);
   });
 
+  it.each([
+    "Model 'gpt-3.5-turbo' is not available in the current model catalog. It may be deprecated or retired. Please select a supported model from the latest available models list.",
+    "Model 'gpt-3.5-turbo' is no longer available. Please select a supported model.",
+    "Select a supported decision model and connection.",
+    "select at least one call",
+  ])("shows a 400 that says select in prose: %s", (message) => {
+    expect(
+      getSafeActionErrorMessage(
+        { statusCode: 400, code: "invalid", result: message },
+        fallback,
+      ),
+    ).toBe(message);
+  });
+
+  it.each([
+    "Query failed: SELECT trace_id FROM spans WHERE project_id = 'p1'",
+    "Query failed: select * from spans where project_id = 'p1'",
+  ])("hides query text even on a 400 response: %s", (message) => {
+    expect(
+      getSafeActionErrorMessage(
+        { response: { status: 400, data: { detail: message } } },
+        fallback,
+      ),
+    ).toBe(fallback);
+  });
+
   it("does not trust an internal-looking message even on a 400 response", () => {
     expect(
       getSafeActionErrorMessage(
@@ -44,5 +70,131 @@ describe("getSafeActionErrorMessage", () => {
         fallback,
       ),
     ).toBe(fallback);
+  });
+});
+
+describe("getSafeActionErrorMessage for typed user-facing refusals", () => {
+  const fallback = "Something went wrong";
+  const retry =
+    "Could not verify your plan's dataset limit. Please try again in a moment.";
+
+  it("shows the dataset limit check retry message despite its 503", () => {
+    expect(
+      getSafeActionErrorMessage(
+        {
+          response: {
+            status: 503,
+            data: { code: "dataset_limit_check_failed", message: retry },
+          },
+        },
+        fallback,
+      ),
+    ).toBe(retry);
+  });
+
+  it("reads the code from the interceptor-flattened error too", () => {
+    expect(
+      getSafeActionErrorMessage(
+        { statusCode: 503, code: "dataset_limit_check_failed", result: retry },
+        fallback,
+      ),
+    ).toBe(retry);
+  });
+
+  it("shows why a Viewer's simulation write was refused", () => {
+    const reason =
+      "Viewers can't start a paid run. Ask a workspace admin for the Member role.";
+    expect(
+      getSafeActionErrorMessage(
+        { statusCode: 403, code: "viewer_read_only", result: reason },
+        fallback,
+      ),
+    ).toBe(reason);
+  });
+
+  it("still hides an ordinary 403", () => {
+    expect(
+      getSafeActionErrorMessage(
+        {
+          statusCode: 403,
+          code: "permission_denied",
+          result: "Write access denied to this workspace",
+        },
+        fallback,
+      ),
+    ).toBe(fallback);
+  });
+
+  it("still hides a 503 without a user-facing code", () => {
+    expect(
+      getSafeActionErrorMessage(
+        {
+          statusCode: 503,
+          code: "service_unavailable",
+          result: "upstream harness error: connection refused",
+        },
+        fallback,
+      ),
+    ).toBe(fallback);
+  });
+
+  it("still hides internal details behind a user-facing code", () => {
+    expect(
+      getSafeActionErrorMessage(
+        {
+          statusCode: 503,
+          code: "dataset_limit_check_failed",
+          result: "Code: 159. DB::Exception: Timeout exceeded",
+        },
+        fallback,
+      ),
+    ).toBe(fallback);
+  });
+});
+
+describe("getSafeActionErrorMessage for rate-limit refusals", () => {
+  const fallback = "Failed to run evaluation. Please retry.";
+  const limit =
+    "Evaluation rate limit reached. Wait for the usage window to reset before retrying.";
+
+  it("shows the server's 429 message from the interceptor-flattened error", () => {
+    expect(
+      getSafeActionErrorMessage(
+        {
+          status: false,
+          type: "rate_limit",
+          code: "rate_limited",
+          message: limit,
+          result: limit,
+          statusCode: 429,
+        },
+        fallback,
+      ),
+    ).toBe(limit);
+  });
+
+  it("shows the server's 429 message from a raw Axios error", () => {
+    expect(
+      getSafeActionErrorMessage(
+        { response: { status: 429, data: { detail: limit } } },
+        fallback,
+      ),
+    ).toBe(limit);
+  });
+
+  it.each([
+    ["no message", { statusCode: 429 }],
+    ["a structured result", { statusCode: 429, result: { code: "x" } }],
+    [
+      "an internal-looking message",
+      { statusCode: 429, result: "Code: 159. DB::Exception: Timeout exceeded" },
+    ],
+    ["a multiline message", { statusCode: 429, result: "Slow down\nTrace" }],
+  ])("never invites an immediate retry for a 429 with %s", (_, error) => {
+    const message = getSafeActionErrorMessage(error, fallback);
+    expect(message).toBe(
+      "Rate limit reached. Please try again in a few minutes.",
+    );
+    expect(message).not.toContain("DB::");
   });
 });

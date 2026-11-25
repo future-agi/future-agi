@@ -88,6 +88,7 @@ from model_hub.models.develop_dataset import (
     Row,
 )
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.openai_tools import openai_tool_envelope
 from model_hub.models.prompt_base_template import PromptBaseTemplate
 from model_hub.models.prompt_folders import PromptFolder
 from model_hub.models.run_prompt import (
@@ -149,6 +150,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
+    MediaToolUnavailable,
     convert_image_from_url_to_base64,
     detect_audio_format,
     download_document_from_url,
@@ -268,6 +270,15 @@ def handle_media(item: dict, model_name: str):
                 "input_audio": {"data": encoded_string, "format": audio_type},
             }
 
+        except MediaToolUnavailable as exc:
+            if model_mode == "stt":
+                # Speech-to-text reads the audio_url item itself and sends the
+                # audio unconverted when ffmpeg is missing (RunPrompt STT).
+                logger.warning("stt_audio_not_converted", reason=str(exc))
+                return item
+            # Names the missing ffmpeg and the image to use; a None item would
+            # fail later with an unrelated error.
+            raise
         except (KeyError, ValueError) as e:
             logger.error(f"Data processing error: {e}")
         except Exception as e:
@@ -1954,7 +1965,13 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     for tool in tools:
                         tool_config = tool.get("config")
                         if tool_config:
-                            tools_to_send.append(tool_config)
+                            tools_to_send.append(
+                                openai_tool_envelope(
+                                    tool.get("name"),
+                                    tool.get("description"),
+                                    tool_config,
+                                )
+                            )
 
                     run_prompt = RunPrompt(
                         model=config.get("configuration", {}).get("model"),
@@ -2025,11 +2042,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                                 except ImportError:
                                     emit = None
 
-                                if (
-                                    emit is not None
-                                    and UsageEvent is not None
-                                    and BillingEventType is not None
-                                ):
+                                if emit is not None and UsageEvent is not None:
                                     emit(
                                         UsageEvent(
                                             org_id=str(organization.id),
@@ -2279,9 +2292,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 prompt_eval.mapping = new_config.get("mapping", {})
                 prompt_eval.config = normalized_config
                 prompt_eval.kb = kb
-                prompt_eval.error_localizer = new_config.get(
-                    "error_localizer", False
-                )
+                prompt_eval.error_localizer = new_config.get("error_localizer", False)
                 prompt_eval.save(
                     update_fields=[
                         "name",

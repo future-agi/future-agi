@@ -22,11 +22,9 @@
  * opaque keys (enum values, UUIDs) that should never be shown to the user.
  */
 import {
-  Autocomplete,
   Box,
   Button,
   Chip,
-  CircularProgress,
   IconButton,
   InputAdornment,
   MenuItem,
@@ -38,13 +36,10 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import React, {
-  forwardRef,
   useCallback,
   useEffect,
-  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -52,6 +47,7 @@ import React, {
 import Iconify from "src/components/iconify";
 import { buildPropertyRegistryId } from "src/hooks/useDashboards";
 import { useAIFilter } from "src/hooks/use-ai-filter";
+import QueryInput from "./QueryInput";
 
 // ---------------------------------------------------------------------------
 // Operators
@@ -239,7 +235,7 @@ function EnumValuePicker({
         }}
       >
         {value.length === 0 ? (
-          <Typography sx={{ fontSize: 13, color: "text.disabled", flex: 1 }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled", flex: 1 }}>
             Select values...
           </Typography>
         ) : (
@@ -513,6 +509,9 @@ function FilterRow({
   takenSingleFields,
 }) {
   const fieldDef = fieldMap[filter.field] || filterFields[0];
+  // No field to bind to (empty catalogue) — render nothing rather than reading
+  // `.type` off undefined. The Basic tab shows an empty-state in this case.
+  if (!fieldDef) return null;
   const operators = getOperators(fieldDef);
 
   return (
@@ -528,7 +527,8 @@ function FilterRow({
             value: newField?.type === "enum" ? [] : "",
           });
         }}
-        sx={{ minWidth: 100, fontSize: 13, height: 30 }}
+        sx={{ minWidth: 100, fontSize: 12, height: 30 }}
+        MenuProps={{ PaperProps: { sx: { maxHeight: 280 } } }}
       >
         {filterFields.map((f) => (
           <MenuItem
@@ -537,7 +537,6 @@ function FilterRow({
             disabled={
               f.value !== filter.field && takenSingleFields?.has(f.value)
             }
-            sx={{ fontSize: 13 }}
           >
             {f.label}
           </MenuItem>
@@ -550,10 +549,10 @@ function FilterRow({
         onChange={(e) =>
           onChange(index, { ...filter, operator: e.target.value })
         }
-        sx={{ minWidth: 110, fontSize: 13, height: 30 }}
+        sx={{ minWidth: 110, fontSize: 12, height: 30 }}
       >
         {operators.map((op) => (
-          <MenuItem key={op.value} value={op.value} sx={{ fontSize: 13 }}>
+          <MenuItem key={op.value} value={op.value}>
             {op.label}
           </MenuItem>
         ))}
@@ -583,7 +582,7 @@ function FilterRow({
           }
           sx={{
             minWidth: 100,
-            "& .MuiInputBase-root": { fontSize: 13, height: 30 },
+            "& .MuiInputBase-root": { fontSize: 12, height: 30 },
           }}
         />
       )}
@@ -602,1072 +601,6 @@ FilterRow.propTypes = {
   fieldMap: PropTypes.object.isRequired,
   onChange: PropTypes.func.isRequired,
   onRemove: PropTypes.func.isRequired,
-};
-
-// ---------------------------------------------------------------------------
-// QueryInput — inline token builder (field → operator → value)
-// ---------------------------------------------------------------------------
-/**
- * @param {Array} filterFields — field definitions
- * @param {Object} fieldMap — { fieldValue: fieldDef }
- * @param {Function} onApply — called with array of tokens
- * @param {Array} initialTokens
- * @param {Array} [valueOptions] — dynamic value options for the current field (from parent)
- * @param {string} [activeField] — notifies parent which field is selected (for value fetching)
- * @param {Function} [onFieldChange] — called when field changes (so parent can fetch values)
- */
-// Field-type families used to pick the right HTML input type when a range op
-// (between / not_between) is active. Matches TraceFilterPanel's NUMERIC_TYPES /
-// DATE_TYPES sets — duplicated here so QueryInput stays self-contained.
-const RANGE_NUMERIC_TYPES = new Set([
-  "number",
-  "float",
-  "integer",
-  "int",
-  "decimal",
-  "double",
-  "numeric",
-  "long",
-]);
-const RANGE_DATE_TYPES = new Set(["date", "datetime", "timestamp"]);
-// Numeric ranges stay type="text": type="number" swallows invalid keystrokes
-// with no feedback (same rationale as the Basic-tab inputs, TH-5195).
-const rangeInputTypeFor = (fieldType) => {
-  if (RANGE_DATE_TYPES.has(fieldType)) return "date";
-  return "text";
-};
-
-const isValidRangeNumericInput = (v) =>
-  v === "" || /^-?\d*\.?\d*$/.test(String(v).trim());
-
-// Complete (fully-typed) number. Unlike the partial check above, this rejects
-// mid-type states ("-", ".", "1.5.6"); used to gate commit/flush so a partial
-// value never becomes an applied token (TH-5195). Empty passes — an empty
-// bound is handled by the non-empty checks, not this.
-const isCompleteNumericInput = (v) => {
-  const str = String(v ?? "").trim();
-  if (str === "") return true;
-  if (!/^-?(\d+\.?\d*|\.\d+)$/.test(str)) return false;
-  return Number.isFinite(parseFloat(str));
-};
-
-const QUERY_PAGINATION_THRESHOLD_PX = 40;
-
-const QueryInput = forwardRef(function QueryInput(
-  {
-    filterFields,
-    fieldMap,
-    onApply,
-    initialTokens = [],
-    valueOptions = [],
-    valueLoading = false,
-    valueLoadingMore = false,
-    valueLoadError = false,
-    fieldLoading = false,
-    fieldLoadingMore = false,
-    fieldLoadError = false,
-    onFieldChange,
-    onFieldSearchChange,
-    onLoadMoreFields,
-    onValueSearchChange,
-    onLoadMoreValues,
-    hasMoreFields = false,
-    hasMoreValues = false,
-    getOperators: getOperatorsProp,
-  },
-  ref,
-) {
-  const [tokens, setTokens] = useState(initialTokens);
-  const [partialField, setPartialField] = useState(null);
-  const [partialOp, setPartialOp] = useState(null);
-  const [partialValueTypes, setPartialValueTypes] = useState([]);
-  const [partialOriginalValue, setPartialOriginalValue] = useState(undefined);
-  const [inputValue, setInputValue] = useState("");
-  const [rangeFrom, setRangeFrom] = useState("");
-  const [rangeTo, setRangeTo] = useState("");
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const inputRef = useRef(null);
-  const bottomEdgeLatchedRef = useRef(false);
-  const paginationRequestRef = useRef(null);
-  const initialTokensKey = useMemo(
-    () => JSON.stringify(initialTokens || []),
-    [initialTokens],
-  );
-
-  useEffect(() => {
-    let parsedTokens = [];
-    try {
-      const parsed = JSON.parse(initialTokensKey);
-      parsedTokens = Array.isArray(parsed) ? parsed : [];
-    } catch (_e) {
-      parsedTokens = [];
-    }
-    setTokens(parsedTokens);
-    setPartialField(null);
-    setPartialOp(null);
-    setPartialValueTypes([]);
-    setPartialOriginalValue(undefined);
-    setInputValue("");
-    setRangeFrom("");
-    setRangeTo("");
-  }, [initialTokensKey]);
-
-  const phase = !partialField ? "field" : !partialOp ? "operator" : "value";
-
-  useEffect(() => {
-    // A field/operator/search transition is a new list and may start a new
-    // explicit scroll gesture. Page arrivals alone do not touch this latch:
-    // browsers often emit more momentum/resize events while still pinned to
-    // the bottom, and those events must not drain the remaining cursor chain.
-    bottomEdgeLatchedRef.current = false;
-  }, [phase, partialField, inputValue]);
-
-  useEffect(() => {
-    if (!dropdownOpen) bottomEdgeLatchedRef.current = false;
-  }, [dropdownOpen]);
-
-  // Resolve the picked operator's definition (so we can read `range: true`).
-  const currentOpDef = useMemo(() => {
-    if (!partialField || !partialOp) return null;
-    const fd = fieldMap[partialField];
-    const ops = getOperatorsProp
-      ? getOperatorsProp(fd?.type || "string", partialField)
-      : getOperators(fd || "string");
-    return ops.find((o) => o.value === partialOp);
-  }, [partialField, partialOp, fieldMap, getOperatorsProp]);
-
-  const isRangePhase = phase === "value" && Boolean(currentOpDef?.range);
-  const rangeInputType = isRangePhase
-    ? rangeInputTypeFor(fieldMap[partialField]?.type)
-    : "text";
-  const isNumericRange =
-    isRangePhase && RANGE_NUMERIC_TYPES.has(fieldMap[partialField]?.type);
-  const isNumericScalar =
-    phase === "value" &&
-    !isRangePhase &&
-    RANGE_NUMERIC_TYPES.has(fieldMap[partialField]?.type);
-  const rangeFromInvalid =
-    isNumericRange && !isValidRangeNumericInput(rangeFrom);
-  const rangeToInvalid = isNumericRange && !isValidRangeNumericInput(rangeTo);
-  const hasStaticValueChoices = Boolean(
-    phase === "value" && fieldMap[partialField]?.choices?.length,
-  );
-  const allowsFreeTextValue = Boolean(
-    phase === "value" &&
-      (!hasStaticValueChoices ||
-        fieldMap[partialField]?.allowCustomValue === true),
-  );
-
-  const options = useMemo(() => {
-    if (phase === "field")
-      return filterFields.map((f) => ({
-        id: f.value,
-        label: f.label,
-        type: "field",
-      }));
-    if (phase === "operator") {
-      const fd = fieldMap[partialField];
-      const ops = getOperatorsProp
-        ? getOperatorsProp(fd?.type || "string", partialField)
-        : getOperators(fd || "string");
-      return ops.map((o) => ({
-        id: o.value,
-        label: o.label,
-        type: "operator",
-      }));
-    }
-    if (phase === "value") {
-      const fd = fieldMap[partialField];
-      // Static choices: gate on choices presence so categorical / thumbs /
-      // annotator fields (which carry their real type tag) also pick up.
-      // Dynamic values from parent (fetched from CH)
-      if (valueOptions.length > 0) {
-        return valueOptions.map((o) => {
-          const val = typeof o === "string" ? o : o.value ?? o.label;
-          const label = typeof o === "string" ? o : o.label ?? o.value;
-          return {
-            id: val,
-            label: String(label ?? ""),
-            type: "value",
-            storageType: typeof o === "object" ? o.type : undefined,
-          };
-        });
-      }
-      if (fd?.choices?.length) {
-        return fd.choices.map((choice) => {
-          const value =
-            typeof choice === "object" ? choice.value ?? choice.label : choice;
-          const label =
-            typeof choice === "object" ? choice.label ?? choice.value : choice;
-          return { id: value, label: String(label ?? ""), type: "value" };
-        });
-      }
-    }
-    return [];
-  }, [
-    phase,
-    partialField,
-    filterFields,
-    fieldMap,
-    valueOptions,
-    getOperatorsProp,
-  ]);
-
-  const filtered = useMemo(
-    () =>
-      inputValue
-        ? options.filter((option) => {
-            const query = inputValue.toLowerCase();
-            const candidates =
-              phase === "value" ? [option.id, option.label] : [option.label];
-            return candidates.some((candidate) =>
-              String(candidate ?? "")
-                .toLowerCase()
-                .includes(query),
-            );
-          })
-        : options,
-    [inputValue, options, phase],
-  );
-
-  const exactInputOption = useMemo(() => {
-    const candidate = inputValue.trim().toLowerCase();
-    if (!candidate) return null;
-    return (
-      options.find((option) =>
-        [option.id, option.label].some(
-          (value) =>
-            String(value ?? "")
-              .trim()
-              .toLowerCase() === candidate,
-        ),
-      ) ?? null
-    );
-  }, [inputValue, options]);
-
-  const partialOriginalDisplayValue = useMemo(
-    () =>
-      Array.isArray(partialOriginalValue)
-        ? partialOriginalValue.join(", ")
-        : partialOriginalValue === null || partialOriginalValue === undefined
-          ? ""
-          : String(partialOriginalValue),
-    [partialOriginalValue],
-  );
-  const originalInputUnchanged =
-    partialOriginalValue !== undefined &&
-    partialOriginalDisplayValue === inputValue.trim();
-
-  const commitFilter = useCallback(
-    (field, op, value, valueTypes) => {
-      const token = { field, operator: op, value };
-      if (Array.isArray(valueTypes) && valueTypes.some(Boolean)) {
-        token.valueTypes = valueTypes;
-      }
-      const updated = [...tokens, token];
-      setTokens(updated);
-      setPartialField(null);
-      setPartialOp(null);
-      setPartialValueTypes([]);
-      setPartialOriginalValue(undefined);
-      setInputValue("");
-      setRangeFrom("");
-      setRangeTo("");
-      onValueSearchChange?.("", field);
-      setTimeout(() => {
-        inputRef.current?.focus();
-        setDropdownOpen(true);
-      }, 0);
-      onApply(updated);
-    },
-    [tokens, onApply, onValueSearchChange],
-  );
-
-  const commitRange = useCallback(() => {
-    if (rangeFrom === "" || rangeTo === "") return;
-    if (rangeFromInvalid || rangeToInvalid) return;
-    commitFilter(partialField, partialOp, [rangeFrom, rangeTo]);
-  }, [
-    rangeFrom,
-    rangeTo,
-    rangeFromInvalid,
-    rangeToInvalid,
-    partialField,
-    partialOp,
-    commitFilter,
-  ]);
-
-  // Imperative API used by the parent (TraceFilterPanel etc.) when Apply
-  // is clicked while a complete partial token is still pending. Without
-  // this the user types `field op value` + Apply and the filter silently
-  // drops because the token was never committed.
-  useImperativeHandle(
-    ref,
-    () => ({
-      // Returns the newly-committed tokens when a complete partial was
-      // flushed, otherwise null. Caller uses the return value to rebuild
-      // rows directly; no inner onApply needed since the parent panel
-      // closes right after Apply.
-      flushPartial: () => {
-        if (!partialField || !partialOp) return null;
-        if (isRangePhase) {
-          if (rangeFrom === "" || rangeTo === "") return null;
-          if (rangeFromInvalid || rangeToInvalid) return null;
-          // partial-regex above still allows "-"/"." — require complete numbers
-          if (
-            isNumericRange &&
-            (!isCompleteNumericInput(rangeFrom) ||
-              !isCompleteNumericInput(rangeTo))
-          )
-            return null;
-          const updated = [
-            ...tokens,
-            {
-              field: partialField,
-              operator: partialOp,
-              value: [rangeFrom, rangeTo],
-            },
-          ];
-          setTokens(updated);
-          setPartialField(null);
-          setPartialOp(null);
-          setPartialValueTypes([]);
-          setPartialOriginalValue(undefined);
-          setInputValue("");
-          setRangeFrom("");
-          setRangeTo("");
-          return updated;
-        }
-        const v = inputValue.trim();
-        if (!v) return null;
-        if (!allowsFreeTextValue && !exactInputOption) return null;
-        // Don't commit a partial/invalid numeric on close (TH-5195).
-        if (isNumericScalar && !isCompleteNumericInput(v)) return null;
-        const selectedValue = exactInputOption
-          ? exactInputOption.id
-          : originalInputUnchanged
-            ? partialOriginalValue
-            : v;
-        const selectedValueTypes = exactInputOption?.storageType
-          ? [exactInputOption.storageType]
-          : originalInputUnchanged
-            ? partialValueTypes
-            : undefined;
-        const token = {
-          field: partialField,
-          operator: partialOp,
-          value: selectedValue,
-        };
-        if (
-          Array.isArray(selectedValueTypes) &&
-          selectedValueTypes.some(Boolean)
-        ) {
-          token.valueTypes = selectedValueTypes;
-        }
-        const updated = [...tokens, token];
-        setTokens(updated);
-        setPartialField(null);
-        setPartialOp(null);
-        setPartialValueTypes([]);
-        setPartialOriginalValue(undefined);
-        setInputValue("");
-        return updated;
-      },
-    }),
-    [
-      tokens,
-      partialField,
-      partialOp,
-      isRangePhase,
-      rangeFrom,
-      rangeTo,
-      rangeFromInvalid,
-      rangeToInvalid,
-      isNumericRange,
-      isNumericScalar,
-      inputValue,
-      hasStaticValueChoices,
-      allowsFreeTextValue,
-      exactInputOption,
-      partialValueTypes,
-      partialOriginalValue,
-      originalInputUnchanged,
-    ],
-  );
-
-  const reopenDropdown = useCallback(() => {
-    setTimeout(() => setDropdownOpen(true), 0);
-  }, []);
-
-  const opDefFor = useCallback(
-    (field, op) => {
-      const fd = fieldMap[field];
-      const ops = getOperatorsProp
-        ? getOperatorsProp(fd?.type || "string", field)
-        : getOperators(fd || "string");
-      return ops.find((o) => o.value === op);
-    },
-    [fieldMap, getOperatorsProp],
-  );
-
-  const handleSelect = useCallback(
-    (_, option) => {
-      if (!option) return;
-      if (typeof option === "string") {
-        const explicitValue = option.trim();
-        if (
-          phase !== "value" ||
-          !allowsFreeTextValue ||
-          !explicitValue ||
-          (isNumericScalar && !isCompleteNumericInput(explicitValue))
-        ) {
-          return;
-        }
-        commitFilter(partialField, partialOp, explicitValue);
-        return;
-      }
-      if (phase === "field") {
-        setPartialField(option.id);
-        setPartialValueTypes([]);
-        setPartialOriginalValue(undefined);
-        setInputValue("");
-        onFieldChange?.(option.id);
-        reopenDropdown();
-      } else if (phase === "operator") {
-        if (opDefFor(partialField, option.id)?.noValue) {
-          commitFilter(partialField, option.id, "");
-          return;
-        }
-        setPartialOp(option.id);
-        setPartialValueTypes([]);
-        setPartialOriginalValue(undefined);
-        setInputValue("");
-        setRangeFrom("");
-        setRangeTo("");
-        reopenDropdown();
-      } else if (phase === "value") {
-        commitFilter(
-          partialField,
-          partialOp,
-          option.id,
-          option.storageType ? [option.storageType] : undefined,
-        );
-      }
-    },
-    [
-      phase,
-      partialField,
-      partialOp,
-      commitFilter,
-      reopenDropdown,
-      onFieldChange,
-      opDefFor,
-      hasStaticValueChoices,
-      allowsFreeTextValue,
-      isNumericScalar,
-    ],
-  );
-
-  const editToken = useCallback(
-    (index) => {
-      const token = tokens[index];
-      const updated = tokens.filter((_, i) => i !== index);
-      setTokens(updated);
-      setPartialField(token.field);
-      setPartialOriginalValue(token.value);
-      const tokenValueTypes = Array.isArray(token.valueTypes)
-        ? token.valueTypes
-        : [];
-      setPartialValueTypes(tokenValueTypes);
-      onFieldChange?.(token.field);
-      if (opDefFor(token.field, token.operator)?.noValue) {
-        // No-value op: re-pick operator, no value phase.
-        setPartialOp(null);
-        setRangeFrom("");
-        setRangeTo("");
-        setInputValue("");
-      } else {
-        setPartialOp(token.operator);
-        // Key off the operator, not the array shape — in/not_in and
-        // multi-select values are also 2-element arrays.
-        if (
-          opDefFor(token.field, token.operator)?.range &&
-          Array.isArray(token.value) &&
-          token.value.length === 2
-        ) {
-          setRangeFrom(token.value[0] ?? "");
-          setRangeTo(token.value[1] ?? "");
-          setInputValue("");
-        } else {
-          setRangeFrom("");
-          setRangeTo("");
-          setInputValue(
-            Array.isArray(token.value)
-              ? token.value.join(", ")
-              : token.value === null || token.value === undefined
-                ? ""
-                : String(token.value),
-          );
-          onValueSearchChange?.(
-            Array.isArray(token.value)
-              ? token.value.join(", ")
-              : token.value === null || token.value === undefined
-                ? ""
-                : String(token.value),
-            token.field,
-          );
-        }
-      }
-      setTimeout(() => setDropdownOpen(true), 0);
-      // Keep the parent filter set stable while this token is being edited.
-      // Publishing the temporary removal makes controlled parents rebuild
-      // initialTokens, which clears this partial editor before it can commit.
-      // The completed edit is published by commitFilter/flushPartial instead.
-    },
-    [tokens, onFieldChange, onValueSearchChange, opDefFor],
-  );
-
-  const handleKeyDown = useCallback(
-    (e) => {
-      if (
-        phase === "value" &&
-        !isRangePhase &&
-        e.key === "Enter" &&
-        inputValue.trim() &&
-        allowsFreeTextValue &&
-        (!isNumericScalar || isCompleteNumericInput(inputValue.trim()))
-      ) {
-        // MUI otherwise commits the first highlighted fuzzy suggestion after
-        // this input-level handler returns. Resolve an exact option ourselves
-        // so its typed id (including false / 0) wins regardless of ordering;
-        // otherwise preserve the user's explicit free-form text.
-        e.defaultMuiPrevented = true;
-        e.preventDefault();
-        commitFilter(
-          partialField,
-          partialOp,
-          exactInputOption?.id ??
-            (originalInputUnchanged ? partialOriginalValue : inputValue.trim()),
-          exactInputOption?.storageType
-            ? [exactInputOption.storageType]
-            : originalInputUnchanged
-              ? partialValueTypes
-              : undefined,
-        );
-        return;
-      }
-      if ((e.key === "Backspace" || e.key === "Delete") && !inputValue) {
-        e.preventDefault();
-        if (partialOp) {
-          setPartialOp(null);
-          setPartialValueTypes([]);
-          setPartialOriginalValue(undefined);
-          setRangeFrom("");
-          setRangeTo("");
-          setDropdownOpen(true);
-        } else if (partialField) {
-          setPartialField(null);
-          setPartialValueTypes([]);
-          setPartialOriginalValue(undefined);
-          setDropdownOpen(true);
-        } else if (tokens.length > 0) {
-          editToken(tokens.length - 1);
-        }
-      }
-    },
-    [
-      phase,
-      isRangePhase,
-      isNumericScalar,
-      inputValue,
-      partialField,
-      partialOp,
-      tokens,
-      commitFilter,
-      editToken,
-      hasStaticValueChoices,
-      allowsFreeTextValue,
-      exactInputOption,
-      partialValueTypes,
-      partialOriginalValue,
-      originalInputUnchanged,
-    ],
-  );
-
-  const handleDeleteToken = useCallback(
-    (index) => {
-      const updated = tokens.filter((_, i) => i !== index);
-      setTokens(updated);
-      setDropdownOpen(true);
-      onApply(updated.length > 0 ? updated : []);
-    },
-    [tokens, onApply],
-  );
-
-  const requestNextPage = useCallback(
-    (requestedPhase, { retry = false } = {}) => {
-      if (paginationRequestRef.current) return false;
-      const isFieldRequest = requestedPhase === "field";
-      const hasMore = isFieldRequest ? hasMoreFields : hasMoreValues;
-      const loading = isFieldRequest ? fieldLoadingMore : valueLoadingMore;
-      const failed = isFieldRequest ? fieldLoadError : valueLoadError;
-      const requestAction = isFieldRequest
-        ? onLoadMoreFields
-        : onLoadMoreValues;
-      if (
-        !hasMore ||
-        loading ||
-        (!retry && failed) ||
-        typeof requestAction !== "function"
-      ) {
-        return false;
-      }
-
-      let requestResult;
-      try {
-        requestResult = requestAction();
-      } catch (_error) {
-        return false;
-      }
-      const request = Promise.resolve(requestResult);
-      paginationRequestRef.current = request;
-      const clearRequest = () => {
-        if (paginationRequestRef.current === request) {
-          paginationRequestRef.current = null;
-        }
-      };
-      request.then(clearRequest, clearRequest);
-      return true;
-    },
-    [
-      fieldLoadError,
-      fieldLoadingMore,
-      hasMoreFields,
-      hasMoreValues,
-      onLoadMoreFields,
-      onLoadMoreValues,
-      valueLoadError,
-      valueLoadingMore,
-    ],
-  );
-
-  const handleOptionsScroll = useCallback(
-    (event) => {
-      const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
-      if (
-        scrollHeight - scrollTop - clientHeight >
-        QUERY_PAGINATION_THRESHOLD_PX
-      ) {
-        bottomEdgeLatchedRef.current = false;
-        return;
-      }
-      if (bottomEdgeLatchedRef.current) return;
-      if (requestNextPage(phase)) {
-        bottomEdgeLatchedRef.current = true;
-      }
-    },
-    [phase, requestNextPage],
-  );
-
-  const handlePaginationRetry = useCallback(
-    (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (requestNextPage(phase, { retry: true })) {
-        bottomEdgeLatchedRef.current = true;
-      }
-    },
-    [phase, requestNextPage],
-  );
-
-  const inlinePrefix = useMemo(() => {
-    const parts = [];
-    if (partialField)
-      parts.push({
-        text: fieldMap[partialField]?.label || partialField,
-        color: "primary.main",
-      });
-    if (partialOp) {
-      parts.push({
-        text: currentOpDef?.label || partialOp,
-        color: "warning.main",
-      });
-    }
-    return parts;
-  }, [partialField, partialOp, fieldMap, currentOpDef]);
-
-  const placeholder = isRangePhase
-    ? ""
-    : phase === "field"
-      ? fieldLoading && filterFields.length === 0
-        ? "loading fields..."
-        : tokens.length
-          ? "add filter..."
-          : "type to filter — e.g. field → operator → value"
-      : phase === "operator"
-        ? "pick operator..."
-        : valueLoading
-          ? "loading values..."
-          : allowsFreeTextValue
-            ? "type or pick value..."
-            : "pick value...";
-  const paginationRetryAvailable =
-    phase === "field"
-      ? fieldLoadError &&
-        hasMoreFields &&
-        typeof onLoadMoreFields === "function"
-      : phase === "value"
-        ? valueLoadError &&
-          hasMoreValues &&
-          typeof onLoadMoreValues === "function"
-        : false;
-
-  // Shared chip/prefix render — used by both the Autocomplete renderInput
-  // startAdornment and the range-phase Box below.
-  const tokenChips = tokens.map((token, idx) => (
-    <Chip
-      key={idx}
-      label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
-      size="small"
-      onClick={() => editToken(idx)}
-      onDelete={() => handleDeleteToken(idx)}
-      deleteIcon={<Iconify icon="mdi:close" width={10} />}
-      sx={{
-        height: 22,
-        fontSize: 11,
-        mr: 0.25,
-        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-        color: "primary.main",
-        border: "1px solid",
-        borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
-        cursor: "pointer",
-        "&:hover": {
-          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.16),
-          borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-        },
-        "& .MuiChip-deleteIcon": {
-          color: "primary.main",
-          "&:hover": { color: "primary.dark" },
-        },
-      }}
-    />
-  ));
-
-  const prefixChips = inlinePrefix.map((p, i) => (
-    <Box
-      key={i}
-      component="span"
-      sx={{
-        fontSize: 13,
-        fontWeight: 600,
-        color: p.color,
-        mr: 0.5,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {p.text}
-    </Box>
-  ));
-
-  if (isRangePhase) {
-    const rangeFieldSx = {
-      flex: 1,
-      minWidth: 100,
-      "& .MuiOutlinedInput-root": { height: 28, fontSize: 12 },
-      "& .MuiInputBase-input": { p: "4px 8px" },
-    };
-    const onRangeKeyDown = (e) => {
-      if (e.key === "Enter" && rangeFrom !== "" && rangeTo !== "") {
-        e.preventDefault();
-        commitRange();
-      }
-      if (
-        (e.key === "Backspace" || e.key === "Delete") &&
-        e.target.value === ""
-      ) {
-        e.preventDefault();
-        setPartialOp(null);
-        setRangeFrom("");
-        setRangeTo("");
-      }
-    };
-
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: 0.5,
-          width: "100%",
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 1,
-          px: 1.5,
-          py: 0.5,
-          minHeight: 40,
-          "&:focus-within": { borderColor: "primary.main" },
-        }}
-      >
-        {tokenChips}
-        {prefixChips}
-        <TextField
-          size="small"
-          type={rangeInputType}
-          value={rangeFrom}
-          error={rangeFromInvalid}
-          onChange={(e) => setRangeFrom(e.target.value.trim())}
-          placeholder="from"
-          autoFocus
-          onKeyDown={onRangeKeyDown}
-          sx={rangeFieldSx}
-          inputProps={isNumericRange ? { inputMode: "decimal" } : undefined}
-        />
-        <Box
-          component="span"
-          sx={{ fontSize: 12, color: "text.secondary", px: 0.25 }}
-        >
-          and
-        </Box>
-        <TextField
-          size="small"
-          type={rangeInputType}
-          value={rangeTo}
-          error={rangeToInvalid}
-          onChange={(e) => setRangeTo(e.target.value.trim())}
-          placeholder="to"
-          onKeyDown={onRangeKeyDown}
-          sx={rangeFieldSx}
-          inputProps={isNumericRange ? { inputMode: "decimal" } : undefined}
-        />
-        <IconButton
-          size="small"
-          onClick={commitRange}
-          disabled={
-            rangeFrom === "" ||
-            rangeTo === "" ||
-            rangeFromInvalid ||
-            rangeToInvalid
-          }
-          sx={{ p: 0.5 }}
-        >
-          <Iconify icon="mdi:check" width={16} />
-        </IconButton>
-      </Box>
-    );
-  }
-
-  return (
-    <Autocomplete
-      size="small"
-      freeSolo={phase === "value" && !isRangePhase && allowsFreeTextValue}
-      options={filtered}
-      filterOptions={(availableOptions) => availableOptions}
-      getOptionLabel={(o) => (typeof o === "string" ? o : o.label)}
-      inputValue={inputValue}
-      onInputChange={(_, v, reason) => {
-        if (reason !== "reset") {
-          if (v !== inputValue) {
-            setPartialValueTypes([]);
-            setPartialOriginalValue(undefined);
-          }
-          setInputValue(v);
-          if (phase === "field") onFieldSearchChange?.(v);
-          else if (phase === "value") onValueSearchChange?.(v, partialField);
-        }
-      }}
-      onChange={handleSelect}
-      open={
-        !isRangePhase &&
-        dropdownOpen &&
-        focused &&
-        (phase === "field" || filtered.length > 0)
-      }
-      onOpen={() => setDropdownOpen(true)}
-      onClose={() => setDropdownOpen(false)}
-      loading={phase === "field" ? fieldLoading : valueLoading}
-      autoHighlight
-      clearOnBlur={false}
-      disableClearable
-      value={null}
-      ListboxProps={{
-        "data-query-field-options-list": phase === "field" ? "" : undefined,
-        "data-query-value-options-list": phase === "value" ? "" : undefined,
-        onScroll: handleOptionsScroll,
-      }}
-      slotProps={{
-        popper: { sx: { zIndex: 1500 } },
-        paper: {
-          sx: {
-            fontSize: 13,
-            mt: 0.5,
-            borderRadius: "6px",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-          },
-        },
-      }}
-      renderOption={(props, option) => {
-        const { key, ...rest } = props;
-        const isField = option.type === "field";
-        const isOperator = option.type === "operator";
-        const isValue = option.type === "value";
-        const fieldDef = isField ? fieldMap[option.id] : null;
-        return (
-          <Box
-            component="li"
-            key={key}
-            {...rest}
-            sx={{
-              ...rest.sx,
-              fontSize: 13,
-              py: 0.5,
-              px: 1.5,
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-            }}
-          >
-            {isField && (
-              <Iconify
-                icon={
-                  fieldDef?.type === "enum"
-                    ? "mdi:format-list-bulleted"
-                    : "mdi:text-short"
-                }
-                width={14}
-                sx={{ color: "text.disabled", flexShrink: 0 }}
-              />
-            )}
-            {isOperator && (
-              <Iconify
-                icon="mdi:code-tags"
-                width={14}
-                sx={{ color: "warning.main", flexShrink: 0 }}
-              />
-            )}
-            {isValue && (
-              <Iconify
-                icon="mdi:checkbox-blank-outline"
-                width={14}
-                sx={{ color: "text.disabled", flexShrink: 0 }}
-              />
-            )}
-            <Box
-              sx={{
-                flex: 1,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {option.label}
-            </Box>
-            {isField && (
-              <Chip
-                label={fieldDef?.category || fieldDef?.type || "text"}
-                size="small"
-                variant="outlined"
-                sx={{
-                  height: 16,
-                  fontSize: 9,
-                  flexShrink: 0,
-                  textTransform: "capitalize",
-                }}
-              />
-            )}
-          </Box>
-        );
-      }}
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          inputRef={inputRef}
-          placeholder={placeholder}
-          helperText={
-            phase === "field" && fieldLoadError
-              ? "More fields could not be loaded. Retained matches remain available."
-              : phase === "value" && valueLoadError
-                ? "More values could not be loaded. Loaded matches remain available."
-                : undefined
-          }
-          FormHelperTextProps={
-            (phase === "field" && fieldLoadError) ||
-            (phase === "value" && valueLoadError)
-              ? { role: "status" }
-              : undefined
-          }
-          onFocus={() => {
-            setFocused(true);
-            setDropdownOpen(true);
-          }}
-          onBlur={() => setFocused(false)}
-          onKeyDown={handleKeyDown}
-          InputProps={{
-            ...params.InputProps,
-            startAdornment: (
-              <>
-                {tokenChips}
-                {prefixChips}
-              </>
-            ),
-            endAdornment: paginationRetryAvailable ? (
-              <>
-                <IconButton
-                  size="small"
-                  aria-label={`Retry loading ${phase === "field" ? "fields" : "values"}`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={handlePaginationRetry}
-                  disabled={
-                    paginationRequestRef.current !== null ||
-                    (phase === "field" ? fieldLoadingMore : valueLoadingMore)
-                  }
-                  sx={{ mr: 0.5 }}
-                >
-                  <Iconify icon="mdi:refresh" width={16} />
-                </IconButton>
-                {params.InputProps.endAdornment}
-              </>
-            ) : (phase === "field" && (fieldLoading || fieldLoadingMore)) ||
-              (phase === "value" && (valueLoading || valueLoadingMore)) ? (
-              <CircularProgress size={14} sx={{ mr: 1 }} />
-            ) : (
-              params.InputProps.endAdornment
-            ),
-            sx: {
-              ...params.InputProps.sx,
-              fontSize: 13,
-              fontFamily: "monospace",
-              flexWrap: "wrap",
-              gap: 0.25,
-            },
-          }}
-        />
-      )}
-    />
-  );
-});
-
-QueryInput.propTypes = {
-  filterFields: PropTypes.array.isRequired,
-  fieldMap: PropTypes.object.isRequired,
-  onApply: PropTypes.func.isRequired,
-  initialTokens: PropTypes.array,
-  valueOptions: PropTypes.array,
-  valueLoading: PropTypes.bool,
-  valueLoadingMore: PropTypes.bool,
-  valueLoadError: PropTypes.bool,
-  fieldLoading: PropTypes.bool,
-  fieldLoadingMore: PropTypes.bool,
-  fieldLoadError: PropTypes.bool,
-  onFieldChange: PropTypes.func,
-  onFieldSearchChange: PropTypes.func,
-  onLoadMoreFields: PropTypes.func,
-  onValueSearchChange: PropTypes.func,
-  onLoadMoreValues: PropTypes.func,
-  hasMoreFields: PropTypes.bool,
-  hasMoreValues: PropTypes.bool,
-  getOperators: PropTypes.func,
 };
 
 // Collapse rows into the `{field: [values]}` shape callers receive. Rows with
@@ -1723,6 +656,10 @@ const FilterPanel = ({
   // Render the filter rows alone — no tabs, no AI box, no caption. The Query
   // tab and AI parsing are power-user surfaces that not every list needs.
   basicOnly = false,
+  // Hide just the AI filter box (keep Basic + Query) where the grounded AI
+  // backend isn't wired for this source — e.g. scenarios, until model-hub's
+  // ai-filter accepts a `scenarios` source.
+  showAiFilter = true,
   // "bottom-start" grows the popover rightwards from the trigger; use
   // "bottom-end" when the trigger sits near the right edge of the viewport.
   placement = "bottom-start",
@@ -1958,8 +895,9 @@ const FilterPanel = ({
       }}
     >
       <Stack spacing={1}>
-        {/* AI filter input */}
-        {!basicOnly && (
+        {/* AI filter input — hidden where the grounded AI backend isn't wired
+            for this source (pass showAiFilter={false}); Basic/Query stay. */}
+        {!basicOnly && showAiFilter && (
           <TextField
             size="small"
             placeholder={aiLoading ? "Parsing with AI..." : aiPlaceholder}
@@ -2002,12 +940,12 @@ const FilterPanel = ({
                     </IconButton>
                   </InputAdornment>
                 ) : null,
-              sx: { fontSize: 13, height: 32 },
+              sx: { fontSize: 12, height: 32 },
             }}
             fullWidth
           />
         )}
-        {!basicOnly && aiError && (
+        {!basicOnly && showAiFilter && aiError && (
           <Typography
             variant="caption"
             sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
@@ -2022,6 +960,7 @@ const FilterPanel = ({
             value={activeTab}
             onChange={(_, v) => setActiveTab(v)}
             sx={{
+              boxShadow: "none",
               minHeight: 28,
               borderBottom: "1px solid",
               borderColor: "divider",
@@ -2030,7 +969,6 @@ const FilterPanel = ({
                 py: 0.5,
                 px: 1,
                 textTransform: "none",
-                fontSize: 13,
                 fontWeight: 500,
                 minWidth: 0,
               },
@@ -2057,20 +995,28 @@ const FilterPanel = ({
                 Basic Filter
               </Typography>
             )}
-            <Stack spacing={0.75}>
-              {rows.map((row, i) => (
-                <FilterRow
-                  key={i}
-                  filter={row}
-                  index={i}
-                  filterFields={filterFields}
-                  fieldMap={fieldMap}
-                  onChange={handleUpdateRow}
-                  onRemove={handleRemoveRow}
-                  takenSingleFields={takenSingleFields}
-                />
-              ))}
-            </Stack>
+            {filterFields.length === 0 ? (
+              <Typography
+                sx={{ color: "text.secondary", fontSize: 12, px: 0.5, py: 0.5 }}
+              >
+                No filters available for this view.
+              </Typography>
+            ) : (
+              <Stack spacing={0.75}>
+                {rows.map((row, i) => (
+                  <FilterRow
+                    key={i}
+                    filter={row}
+                    index={i}
+                    filterFields={filterFields}
+                    fieldMap={fieldMap}
+                    onChange={handleUpdateRow}
+                    onRemove={handleRemoveRow}
+                    takenSingleFields={takenSingleFields}
+                  />
+                ))}
+              </Stack>
+            )}
             <Stack
               direction="row"
               justifyContent="space-between"
@@ -2154,6 +1100,7 @@ FilterPanel.propTypes = {
   currentFilters: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
   onApply: PropTypes.func.isRequired,
   aiPlaceholder: PropTypes.string,
+  showAiFilter: PropTypes.bool,
   width: PropTypes.number,
   projectId: PropTypes.string,
   source: PropTypes.string,

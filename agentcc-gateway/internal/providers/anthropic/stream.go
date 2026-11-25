@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
@@ -94,7 +95,10 @@ func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk,
 	case "ping":
 		return nil, false, nil
 	case "error":
-		return nil, false, nil
+		// The upstream failed mid-stream. Returned as an APIError so the read
+		// loop ends the stream with it; skipped, the stream would read as a
+		// finished one.
+		return nil, false, parseAnthropicError(http.StatusBadGateway, []byte(data))
 	}
 
 	return nil, false, nil
@@ -164,7 +168,7 @@ func (s *streamState) handleContentBlockStart(event streamEvent) (*models.Stream
 								Index: idx,
 								ID:    block.ID,
 								Type:  "function",
-								Function: &models.FunctionCall{
+								Function: &models.FunctionCallDelta{
 									Name:      block.Name,
 									Arguments: "",
 								},
@@ -238,7 +242,7 @@ func (s *streamState) handleContentBlockDelta(event streamEvent) (*models.Stream
 						ToolCalls: []models.ToolCallDelta{
 							{
 								Index: tcIdx,
-								Function: &models.FunctionCall{
+								Function: &models.FunctionCallDelta{
 									Arguments: ijd.PartialJSON,
 								},
 							},
@@ -280,6 +284,11 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 
 	// Include usage if available.
 	if event.Usage != nil {
+		// Compatible providers can defer the input count until message_delta.
+		// Native streams report it in message_start and omit it here.
+		if event.Usage.InputTokens > 0 {
+			s.inputTokens = event.Usage.InputTokens
+		}
 		chunk.Usage = &models.Usage{
 			PromptTokens:     s.inputTokens,
 			CompletionTokens: event.Usage.OutputTokens,

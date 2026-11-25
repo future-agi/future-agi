@@ -15,8 +15,6 @@ func (t *Tracker) SeedSpend(level, key string, totalSpend float64, modelSpend ma
 	}
 
 	lb.counter.mu.Lock()
-	defer lb.counter.mu.Unlock()
-
 	now := time.Now().UTC()
 	start := PeriodStart(lb.period, now)
 
@@ -27,9 +25,23 @@ func (t *Tracker) SeedSpend(level, key string, totalSpend float64, modelSpend ma
 		lb.counter.modelSpend = make(map[string]float64)
 	}
 
+	// The local counter is the fallback view used while the shared ledger is
+	// unreadable, so it is seeded exactly as it is without a ledger.
 	lb.counter.totalSpend = totalSpend
 	for m, s := range modelSpend {
 		lb.counter.modelSpend[m] = s
+	}
+	lb.counter.mu.Unlock()
+
+	if backend, ok := t.durable.(interface {
+		SeedSpendFloor(string, string, string, string, float64, map[string]float64) bool
+	}); ok {
+		if level == "org" {
+			key = ""
+		}
+		// Logs include video costs already in the shared ledger. Seed a floor, not
+		// a second additive balance, and never erase a live reservation/receipt.
+		backend.SeedSpendFloor("", "global_"+level, key, lb.period, totalSpend, modelSpend)
 	}
 
 	slog.Info("budget seeded", "level", level, "key", key, "spend", totalSpend)

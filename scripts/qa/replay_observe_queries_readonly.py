@@ -354,19 +354,214 @@ def diagnostic_read_settings(
     return limits
 
 
-_USERS_ORIGIN_SHA = "20d339691652b7d0120ae3b6b8d1dfaf2a859c778688f19cce0e74e66e944f1f"
+# SQL pins: the canonical digest of the statement the deployed builders emit
+# for each REVIEWED first-page origin SHAPE. The Users read path emits more
+# than one shape, so this is a set of reviewed statements, never a blanket
+# exemption for Users queries: the run stays bound to the one shape it actually
+# selected.
+#
+# Recompute offline against the checked-in builders -- no connection, no
+# production access. From ``futureagi/`` with ``PYTHONPATH=.`` and every
+# DB/CH/Redis port pointed at a dead port, after ``django.setup()`` only::
+#
+#     b = UserListQueryBuilderV2(organization_id=str(UUID(int=11)),
+#                                project_ids=[str(UUID(int=12))],
+#                                filters=FILTERS, search="", empty_scope=False)
+#     sql, _ = b.build_dimension_candidate_query(
+#         limit=26, window_start=datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc),
+#         window_end=datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc))
+#     _users_origin_digest(sql)
+#
+# Organization, projects, window, ``limit``, the attribute key, the attribute
+# VALUES and -- since the digest is canonical -- HOW MANY values the filter
+# selected are all outside the digest. What remains is the statement's shape:
+# which witness qualified, and whether the legacy ASCII bloom hint was emitted
+# alongside the UTF-8 one. Measured on this tree, 51 filter cases spanning
+# ``equals`` and ``in`` at 1, 2, 3, 5, 10, 11, 12 and 40 values, typed and
+# untyped, ASCII and non-ASCII, values containing the letter ``k``, selected
+# lists whose lowercased values collide, and two-filter conjunctions, produce
+# exactly these SEVEN statements and no others.
+#
+# The user_id label witness, the search shape and the numeric witness are still
+# unpinned and still fail closed with USERS_REMAP_ORIGIN_NOT_QUALIFIED.
+_USERS_ORIGIN_SHAPES = {
+    # A ``created_at`` between filter only, or any attribute filter that
+    # qualifies no exact-text witness at all: a non-ASCII value, a typed
+    # ``equals``, ``contains``, or an ``attribute_value_types`` list whose
+    # length does not match the value count (all measured). Post immutable-hour
+    # replay this statement carries no ``candidate_span_identities`` CTE.
+    "no_text_witness": "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",
+    # ONE exact-text ``equals`` attribute filter (``col_type`` SPAN_ATTRIBUTE,
+    # ``filter_type`` text or string, a single non-empty ASCII value). That
+    # qualifies a scalar text witness, so ``scalar_witness_identities`` is
+    # present and the manager's own first batch is 65 rows.
+    "equals_legacy_hint": "f1fea350ee7c1f5813b5c9a63866a80432b46b06b950a884b489595a887547e4",
+    # The same ``equals`` page where the legacy ASCII bloom companion declines:
+    # its Kelvin-sign enumeration would exceed 256 variants, which happens from
+    # nine letters ``k`` in the value upward.
+    "equals_hint_declined": "90d4ed2ec983b4de3160c9fa92b7ff02b942f5cdba84dc4ba0c1a4e2296cf79c",
+    # ONE SPAN_ATTRIBUTE ``in`` filter over N non-empty ASCII values, no
+    # ``attribute_value_types``: the multi-value text picker.
+    "in_untyped_legacy_hint": "776cc4f1ab7d981c3b4f9553669cafe63e76caed85e2423561524c841e9882a9",
+    # The same picker page with the legacy companion declined.
+    "in_untyped_hint_declined": "c9dfee566b95b9c1875e3285ea0597cbbc609247d97cb9d72e86f1f8ae3f83b6",
+    # The typed picker: the same filter plus ``attribute_value_types``
+    # ["string"] * N, which spells its own parameter suffix.
+    "in_typed_legacy_hint": "0f7984257853b57038ef42489f954a0d7210eeea54a39872108272acb6720ec3",
+    # The typed picker with the legacy companion declined.
+    "in_typed_hint_declined": "6a5702be21bc17859a8492349c3f5f106dfe13803e6df6636588fd4a58423069",
+}
+_USERS_ORIGIN_SHAS = frozenset(_USERS_ORIGIN_SHAPES.values())
 _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af46676"
+# Source pins: sha256 of the *file bytes* backing each imported module, i.e.
+# ``sha256(Path(import_module(name).__file__).read_bytes())``. Re-pin with
+# ``shasum -a 256 futureagi/<module path>.py``; the offline unit test
+# ``UsersSourcePinTests`` fails the moment these drift from the tree again.
 _USERS_SOURCE_PINS = {
-    "tracer.services.users_list_manager": "b5da3657a94ab71710a8db384990e018269929e80c2f651cf8a25b02df3eb831",
-    "tracer.services.clickhouse.query_builders.user_list": "97c47542622bb599cb003d2e7c5dfcc6bcba0989aaef41e8c3461ed6d6435ba8",
+    "tracer.services.users_list_manager": "0416542bd6d9fda86d3970543fa55b28071024a0dc7ec2a10d5a5f1a01ea6c6b",
+    "tracer.services.users_matching_walk": "d0ab77c4eafbc509c0dcb49cf5644bc4681eb16081f1815f846f9b9c3cf6fde1",
+    "tracer.services.clickhouse.query_builders.user_list": "2daef30d91a1bf4cc43e1162a6e98019211b5bbe01de2a24e2486096d7b2bb99",
     "tracer.services.clickhouse.v2.query_builders.user_list": "d5024fe5a46b7cbdf2621d04dfd02027c17816f7250f84120c920a0dd3c9908e",
     "tracer.services.clickhouse.v2.id_remap_sql": "56903f382c0f8dc40099e5ebfda45a8ab853c0b8f7ec16b5712f9c11092fe24a",
 }
+_CH_USER_ENV = "OBSERVE_CH_USER"
+
+
+# Origin statements are digested in a CANONICAL form, not as raw text: every
+# bracketed run of value-list placeholders collapses to a single token, and
+# nothing else changes. The Users read path spells ONE placeholder per selected
+# value in two companion bloom index hints built in
+# ``tracer/services/clickhouse/query_builders/latest_filter_predicates.py`` --
+# ``hasAny(arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str)),
+# [%(latest_filter_index_0_0)s, ...])`` and, for all-ASCII values, the legacy
+# ``lower()`` companion ``[%(latest_filter_legacy_index_0_0)s, ...]``, whose
+# placeholder count is 2 ** (number of letters ``k`` in the values),
+# deduplicated. The raw statement text therefore fans out on BOTH the value
+# count AND the value text: ``equals "kid"``, ``equals "token"``, ``equals
+# "ok"`` and any selected-value list whose lowercased values collide are each a
+# different statement at the SAME cardinality, including cardinality 1.
+# Collapsing the ARITY of those two placeholder families -- and only theirs --
+# makes the digest depend on the statement's SHAPE: which witness qualified and
+# whether the legacy hint was emitted. Every other byte still enters the
+# digest: whitespace, keywords, columns, structure, the placeholder NAMES, and
+# the attribute-KEY list ``[%(latest_filter_key_0)s]`` whose trailing index is a
+# FILTER index rather than a value index. A builder change still fails closed.
+#
+# A bracketed, ``", "``-separated run of ``%(name)s`` placeholders, which is
+# exactly how the builder spells both hint lists.
+_ORIGIN_PLACEHOLDER_LIST_RE = re.compile(
+    r"\[%\([A-Za-z0-9_]+\)s(?:, %\([A-Za-z0-9_]+\)s)*\]"
+)
+_ORIGIN_PLACEHOLDER_NAME_RE = re.compile(r"%\(([A-Za-z0-9_]+)\)s")
+# The two parameter families the builder derives from a filter's value list:
+# ``latest_filter_index_<filter suffix>_<value index>`` and its legacy
+# companion. The value index is a canonical decimal, so ``_00`` is not ``_0``
+# and a renamed placeholder matches nothing and is left alone.
+_ORIGIN_VALUE_PARAM_RE = re.compile(
+    r"^(?P<stem>latest_filter_(?:legacy_)?index_[A-Za-z0-9_]*[A-Za-z0-9])"
+    r"_(?P<value_index>0|[1-9][0-9]*)$"
+)
+
+
+def _collapse_origin_value_list(match):
+    """Collapse one placeholder run iff it is a whole filter value list.
+
+    Every member must belong to the same value-list family and stem, and the
+    value indexes must be exactly ``0 .. n-1`` in order -- which is how the
+    builder emits them. Anything else is returned untouched, so an unexpected
+    list keeps its exact text and still fails the pin.
+    """
+
+    names = _ORIGIN_PLACEHOLDER_NAME_RE.findall(match.group(0))
+    parsed = [_ORIGIN_VALUE_PARAM_RE.match(name) for name in names]
+    if any(item is None for item in parsed):
+        return match.group(0)
+    stems = {item.group("stem") for item in parsed}
+    indexes = [int(item.group("value_index")) for item in parsed]
+    if len(stems) != 1 or indexes != list(range(len(indexes))):
+        return match.group(0)
+    return "[%(" + stems.pop() + "_*)s]"
+
+
+def _canonical_origin_sql(sql):
+    """Return the statement with value-list ARITY collapsed, nothing else."""
+
+    return _ORIGIN_PLACEHOLDER_LIST_RE.sub(_collapse_origin_value_list, sql)
+
+
+def _users_origin_digest(sql):
+    """Digest the canonical form of an origin statement.
+
+    ``.strip().rstrip(";")`` is exactly the normalization ``validate_select``
+    applies before the statement runs, so one digest covers both check sites:
+    the qualification check that selects the shape and the execute-time check
+    that re-verifies the statement actually handed to the driver.
+    """
+
+    return hashlib.sha256(
+        _canonical_origin_sql(sql.strip().rstrip(";")).encode()
+    ).hexdigest()
 
 
 def _users_sources_current():
     return all(hashlib.sha256(Path(import_module(name).__file__).read_bytes()).hexdigest() == digest
                for name, digest in _USERS_SOURCE_PINS.items())
+
+
+def _users_origin_sha(sql):
+    """Return the pinned digest of this origin statement, or fail closed.
+
+    The selected shape travels on the remap context so the statement that is
+    actually executed is re-checked against the SAME pin, not merely against
+    set membership a second time.
+    """
+    digest = _users_origin_digest(sql)
+    if digest not in _USERS_ORIGIN_SHAS:
+        raise replay.ReplayError("USERS_REMAP_ORIGIN_NOT_QUALIFIED")
+    return digest
+
+
+def _users_origin_limit(manager):
+    """Mirror the manager's own first-batch size instead of assuming 25 + 1.
+
+    ``UsersListManager.list_cursor_payload`` resets ``_attribute_witness_disabled``
+    before its first read, so page 1 always asks for the *enabled* witness batch:
+    65 rows when exact-text attribute filters qualify, 26 otherwise. The previous
+    hard-coded 26 rejected a server-answered 65-row origin client-side, which made
+    the certificate structurally unable to cover the attribute-filtered path.
+    """
+    from tracer.services.users_list_manager import (
+        USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE,
+        USER_LIST_CANDIDATE_BATCH_SIZE,
+    )
+
+    batch = (USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE
+             if manager.attribute_exact_text_filters else USER_LIST_CANDIDATE_BATCH_SIZE)
+    if type(batch) is not int or batch <= 0:
+        raise replay.ReplayError("USERS_REMAP_ORIGIN_LIMIT_INVALID")
+    return batch + 1
+
+
+def observe_ch_user(args):
+    """Resolve the ClickHouse user; ``--user-assert`` bars the silent fallback."""
+    if getattr(args, "user_assert", False):
+        user = os.environ.get(_CH_USER_ENV)
+        if not user:
+            raise replay.ReplayError("CH_USER_NOT_CONFIGURED")
+        return user
+    # Flag off resolves EXACTLY as it did before this flag existed: only an
+    # *unset* variable falls back to ``default``. A variable set to the empty
+    # string keeps resolving to the empty string, so a misconfigured identity
+    # fails at connect instead of silently running as the ``default`` account.
+    return os.environ.get(_CH_USER_ENV, "default")
+
+
+def assert_ch_identity(args, actual):
+    """Fail fast when the server says we are somebody else than OBSERVE_CH_USER."""
+    if not getattr(args, "user_assert", False):
+        return
+    if type(actual) is not str or actual != observe_ch_user(args):
+        raise replay.ReplayError("CH_USER_IDENTITY_MISMATCH")
 
 
 def _user_uuid(value):
@@ -387,6 +582,8 @@ class _UsersRemapContext:
     authorized_projects: tuple[str, ...]
     origin_bindings: str
     binding: str
+    origin_limit: int
+    origin_sql_sha256: str
 
 
 @dataclass(frozen=True)
@@ -422,12 +619,33 @@ class ReadOnlyExecutor:
             args.host,
             port=args.port,
             database=args.database,
-            user=os.environ.get("OBSERVE_CH_USER", "default"),
+            user=observe_ch_user(args),
             password=os.environ.get("OBSERVE_CH_PASSWORD", ""),
             connect_timeout=3,
             send_receive_timeout=args.safety_seconds + 3,
             compression="lz4",
         )
+        # The executor opens its OWN connection; the preflight assertion on the
+        # metadata client does not cover it.
+        self._assert_server_side_identity()
+
+    def _assert_server_side_identity(self):
+        """Prove THIS connection's account with the server, not with our own arg.
+
+        Comparing ``self.client.connection.user`` would be tautological: the
+        driver stores verbatim whatever we passed to ``Client(...)``. Only a
+        ``currentUser()`` the server answers proves which account this
+        connection runs as. Costs one metadata statement per executor, under
+        server-enforced readonly, before any table read.
+        """
+        if not getattr(self.args, "user_assert", False):
+            return
+        rows = self.client.execute(
+            "SELECT currentUser()",
+            query_id=f"{self.prefix}-identity",
+            settings={"readonly": 2, "max_execution_time": 3},
+        )
+        assert_ch_identity(self.args, rows[0][0] if rows and rows[0] else None)
 
     def remaining_read_ms(self):
         return max(0, int((self.deadline - time.monotonic()) * 1000))
@@ -456,16 +674,18 @@ class ReadOnlyExecutor:
         builder = UserListQueryBuilderV2(organization_id=manager.organization_id,
                                        project_ids=list(projects), filters=manager.filters,
                                        search=manager.search, empty_scope=manager.empty_scope)
+        origin_limit = _users_origin_limit(manager)
         sql, bindings = builder.build_dimension_candidate_query(
-            limit=26, window_start=replay.utc(case["window"]["start"]),
+            limit=origin_limit, window_start=replay.utc(case["window"]["start"]),
             window_end=replay.utc(case["window"]["end"]),
         )
-        if hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest() != _USERS_ORIGIN_SHA:
-            raise replay.ReplayError("USERS_REMAP_ORIGIN_NOT_QUALIFIED")
+        origin_sha = _users_origin_sha(sql)
         self._users_context = _UsersRemapContext(
             tuple(_user_uuid(p) for p in projects), tuple(map(str, self.projects)),
             replay.digest(safe_json(bindings)),
             replay.digest({"case": case, "scope": scope, "plan_id": plan_id, "projects": projects}),
+            origin_limit,
+            origin_sha,
         )
         self._users_origin_expected = True
 
@@ -483,7 +703,8 @@ class ReadOnlyExecutor:
 
     def _users_result(self, result, *, origin, certificate, query_id):
         if origin:
-            if (result.row_count != len(result.data) or result.row_count > 26
+            if (result.row_count != len(result.data)
+                    or result.row_count > self._users_context.origin_limit
                     or len(result.columns) != len(set(result.columns))):
                 raise replay.ReplayError("USERS_REMAP_ORIGIN_RESULT_INVALID")
             try:
@@ -507,7 +728,15 @@ class ReadOnlyExecutor:
                     raise replay.ReplayError("USERS_REMAP_RESULT_INVALID")
                 seen.add(alias)
 
-    def execute_ch_query(self, query, params=None, timeout_ms=None, settings=None):
+    def execute_ch_query(
+        self,
+        query,
+        params=None,
+        timeout_ms=None,
+        settings=None,
+        *,
+        server_execution_cap_ms=None,
+    ):
         from clickhouse_driver.errors import Error
         from tracer.services.clickhouse.query_service import QueryResult
         from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
@@ -528,8 +757,13 @@ class ReadOnlyExecutor:
                 raise
             self._validate_users_remap(query, params, pending)
             sql, certified = query, pending
-        if origin and (hashlib.sha256(sql.encode()).hexdigest() != _USERS_ORIGIN_SHA
-                       or replay.digest(safe_json(params)) != self._users_context.origin_bindings):
+        # Same canonical digest as the shape the qualification check selected.
+        # The raw ``sql_sha256`` recorded below stays the exact executed text,
+        # so the ledger still carries the byte-for-byte statement that ran.
+        if origin and (
+            _users_origin_digest(sql) != self._users_context.origin_sql_sha256
+            or replay.digest(safe_json(params)) != self._users_context.origin_bindings
+        ):
             raise replay.ReplayError("USERS_REMAP_ORIGIN_BINDINGS_CHANGED")
         remaining = self.remaining_read_ms()
         if remaining <= 0:
@@ -542,7 +776,17 @@ class ReadOnlyExecutor:
 
             # Candidate qualification still exercises application policy first,
             # followed by separate, explicit run-only diagnostic safeguards.
-            candidate_settings = application_read_settings(settings)
+            if server_execution_cap_ms is None:
+                candidate_settings = application_read_settings(settings)
+            else:
+                from tracer.services.clickhouse.application_read_policy import (
+                    application_read_context,
+                )
+
+                with application_read_context(
+                    execution_cap_ms=server_execution_cap_ms
+                ):
+                    candidate_settings = application_read_settings(settings)
         limits = diagnostic_read_settings(
             candidate_settings if self.mode == "candidate" else settings,
             remaining_ms=remaining,
@@ -550,6 +794,14 @@ class ReadOnlyExecutor:
             preserve_caller_caps=self.mode == "reference_diagnostic",
             timeout_ms=timeout_ms,
         )
+        # A statement the product asks the server to stop keeps that cap here
+        # too, so the rig measures the deadline production enforces.
+        product_capped = (
+            server_execution_cap_ms is not None
+            and server_execution_cap_ms / 1000 < limits["max_execution_time"]
+        )
+        if product_capped:
+            limits["max_execution_time"] = server_execution_cap_ms / 1000
         query_id = f"{self.prefix}-{len(self.calls) + 1}"
         record = {
             "query_id": query_id,
@@ -563,7 +815,7 @@ class ReadOnlyExecutor:
             record["scope_certificate"] = {
                 "kind": "finite_users_remap_certificate.v1",
                 "origin_query_id": certified.origin_query_id,
-                "origin_sql_sha256": _USERS_ORIGIN_SHA,
+                "origin_sql_sha256": certified.context.origin_sql_sha256,
                 "source_sha256": replay.digest(_USERS_SOURCE_PINS),
                 "scope_binding_sha256": certified.context.binding,
                 "candidate_count": len(certified.ids), "candidate_ids_sha256": replay.digest(certified.ids),
@@ -599,6 +851,14 @@ class ReadOnlyExecutor:
                 exception_class=type(exc).__name__,
                 elapsed_ms=round((time.monotonic() - start) * 1000, 2),
             )
+            if product_capped:
+                from clickhouse_driver.errors import ErrorCodes
+
+                if exc.code != ErrorCodes.TIMEOUT_EXCEEDED:
+                    raise
+                raise ReadDeadlineExceeded(
+                    "ClickHouse statement exceeded its execution cap"
+                ) from exc
             raise
         finally:
             timing_origin = getattr(self, "timing_origin", None)
@@ -1357,6 +1617,10 @@ def main():
         "--verify-finite-users-remap", action="store_true", default=False,
         help="Opt-in source-bound finite Users remap authorization; unsupported origins fail closed, not independent result qualification",
     )
+    parser.add_argument(
+        "--user-assert", action="store_true", default=False,
+        help="Require OBSERVE_CH_USER to be set and to equal the server's currentUser(); the preflight and every executor connection each spend one metadata statement proving it, and abort before any table read, so a driver cannot silently run as 'default'",
+    )
     parser.add_argument("--threads", type=int, choices=(1, 2, 4, 8), default=2)
     args = parser.parse_args()
     if args.verify_trace_full_rows and not args.verify_trace_ids:
@@ -1365,6 +1629,8 @@ def main():
         raise replay.ReplayError("INVALID_DIAGNOSTIC_SAFETY_BUDGET")
     if not 0 < args.run_seconds <= 3600 or not 1 <= args.max_consecutive_failures <= 10:
         raise replay.ReplayError("INVALID_RUN_SAFETY_BUDGET")
+    # Resolve the asserted identity before the ledger lock or any connection.
+    observe_ch_user(args)
     plan = replay.read_json(args.plan)
     if plan["plan_id"] != replay.digest(
         {k: v for k, v in plan.items() if k != "plan_id"}
@@ -1417,6 +1683,9 @@ def main():
     }
     if args.verify_finite_users_remap:
         run_profile["verify_finite_users_remap"] = True
+    if args.user_assert:
+        # Keyed, never valued: the ledger must not carry the account name.
+        run_profile["user_assert"] = True
     lock = Path(args.ledger + ".lock")
     lock_fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(lock_fd)
@@ -1428,18 +1697,22 @@ def main():
             args.host,
             port=args.port,
             database=args.database,
-            user=os.environ.get("OBSERVE_CH_USER", "default"),
+            user=observe_ch_user(args),
             password=os.environ.get("OBSERVE_CH_PASSWORD", ""),
             connect_timeout=3,
             send_receive_timeout=5,
             settings={"readonly": 2, "max_execution_time": 3},
         )
         try:
-            server = check.execute("SELECT hostName(), version(), currentDatabase()")
+            server = check.execute(
+                "SELECT hostName(), version(), currentDatabase(), currentUser()"
+            )
         finally:
             check.disconnect()
         if server[0][0] != args.expected_server or server[0][2] != args.database:
             raise replay.ReplayError("DATABASE_TARGET_MISMATCH")
+        # Server-side identity, not the client's own claim. Before any read.
+        assert_ch_identity(args, server[0][3])
         run_profile["server_version"] = server[0][1]
         initialize_candidate()
         run_profile["candidate_runtime"] = candidate_runtime_profile()
