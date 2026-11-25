@@ -326,7 +326,7 @@ def test_a_start_stamps_the_first_run_with_a_generation(
     auth_client, observe_project, yes_no, fake_view, started, monkeypatch
 ):
     # A restart or recovery rotates the stamp, which fences this run's late
-    # writes: the first run must carry one too (TH-7963).
+    # writes: the first run must carry one too.
     sent = []
     monkeypatch.setattr(
         "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",

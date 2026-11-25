@@ -409,7 +409,7 @@ def test_create_stamps_the_first_run_so_a_replacement_fences_it(
     custom_eval_config,
     starter,
 ):
-    """TH-7963: without a create stamp the first run is unfenced for life, so
+    """Without a create stamp the first run is unfenced for life, so
     its late failure marks the run that recovery or Resume started Failed."""
     from tfc.temporal.eval_tasks.activities import _set_task_status_sync
     from tfc.temporal.eval_tasks.client import _select
