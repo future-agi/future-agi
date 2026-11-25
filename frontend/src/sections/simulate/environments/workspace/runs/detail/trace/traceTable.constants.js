@@ -293,6 +293,7 @@ export const CHECK_LINE_COPY = {
   noneApply: (total) =>
     total === 1 ? "does not apply" : `none of ${total} apply`,
   notEvaluated: "not evaluated",
+  notScored: (n) => `${n} couldn't score`,
   waitingAll: (total) => `${total} waiting`,
   showMore: (n) => `+ ${n} more`,
   showLess: "Show less",

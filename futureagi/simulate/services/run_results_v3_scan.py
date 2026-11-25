@@ -465,6 +465,7 @@ def _outcome(
     errored: Truth,
     passed: Truth,
     failed_required: Truth = False,
+    errored_required: Truth = False,
     *,
     by_required: bool = False,
 ) -> str:
@@ -484,7 +485,7 @@ def _outcome(
         return "inconclusive"
     if by_required:
         return _outcome_by_required(
-            harness_status, failed, errored, passed, failed_required
+            harness_status, failed, errored, passed, failed_required, errored_required
         )
     if harness_status in _HARNESS_FAILED or failed is True:
         return "failed"
@@ -503,6 +504,7 @@ def _outcome_by_required(
     errored: Truth,
     passed: Truth,
     failed_required: Truth,
+    errored_required: Truth,
 ) -> str:
     if harness_status in _HARNESS_FAILED:
         return "failed"
@@ -517,7 +519,7 @@ def _outcome_by_required(
     if harness_status in _HARNESS_INCONCLUSIVE:
         return "inconclusive"
     if harness_status in _HARNESS_PASSED:
-        return "passed"
+        return "inconclusive" if errored_required is True else "passed"
     if failed is True:
         return "failed"
     if errored is True:
@@ -617,8 +619,9 @@ class _Judge:
 
     def judge_entries(
         self, entries: dict[str, str]
-    ) -> tuple[dict[str, float | None], Truth, Truth, Truth, Truth]:
-        """Judge an object of entries: (scores, failed, errored, passed, failed_required)."""
+    ) -> tuple[dict[str, float | None], Truth, Truth, Truth, Truth, Truth]:
+        """Judge an object of entries: (scores, failed, errored, passed, failed_required,
+        errored_required)."""
         judged = {
             eval_id: self._verdict(eval_id, entries.get(eval_id))
             for eval_id in self.verdicts
@@ -657,11 +660,19 @@ class _Judge:
                 ),
                 False,
             ),
+            _or(
+                *(
+                    errored
+                    for eval_id, (_, errored) in judged.items()
+                    if eval_id in self.required
+                ),
+                False,
+            ),
         )
 
     def judge_value(
         self, evals: Any
-    ) -> tuple[dict[str, float | None], Truth, Truth, Truth, Truth]:
+    ) -> tuple[dict[str, float | None], Truth, Truth, Truth, Truth, Truth]:
         """Judge eval outputs that are not an object, or SQL NULL as ``MISSING``."""
         judged = {eval_id: verdict(evals) for eval_id, verdict in self.verdicts.items()}
         scores = {
@@ -680,6 +691,14 @@ class _Judge:
                 *(
                     verdict[2]
                     for eval_id, verdict in judged.items()
+                    if eval_id in self.required
+                ),
+                False,
+            ),
+            _or(
+                *(
+                    _errored(evals, eval_id)
+                    for eval_id in self.verdicts
                     if eval_id in self.required
                 ),
                 False,
@@ -885,7 +904,7 @@ def scan_call_values(
                 scenario_goal,
                 scenario_name,
             ) in calls:
-                scores, failed, errored, passed, failed_required = (
+                scores, failed, errored, passed, failed_required, errored_required = (
                     judge.judge_entries(_entries(eval_text, keys))
                     if eval_text is not None and eval_text.startswith(_ENTRIES_START)
                     else judge.judge_value(
@@ -924,6 +943,7 @@ def scan_call_values(
                         errored,
                         passed,
                         failed_required,
+                        errored_required,
                         by_required=by_required,
                     ),
                     "scores": scores,

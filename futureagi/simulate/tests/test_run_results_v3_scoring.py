@@ -147,6 +147,34 @@ def test_reversed_pass_fail_uses_stored_final_verdict(
 
 
 @pytest.mark.parametrize(
+    ("required_rule", "required", "expected"),
+    [
+        (False, True, "inconclusive"),
+        (True, False, "passed"),
+        (True, True, "inconclusive"),
+    ],
+)
+def test_an_errored_required_eval_leaves_a_passed_call_inconclusive(
+    settings, required_rule, required, expected
+):
+    settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = required_rule
+    call = SimpleNamespace(
+        call_metadata={"harness_outcome_status": "passed"},
+        status=CallExecution.CallStatus.COMPLETED,
+        eval_outputs={
+            "eval-1": {
+                "status": "failed",
+                "output_type": "Pass/Fail",
+                "output": None,
+            }
+        },
+    )
+    config = _config("pass_fail", required=required)
+
+    assert call_outcome(call, {"eval-1": config}) == expected
+
+
+@pytest.mark.parametrize(
     ("raw_score", "expected"),
     [(0.9, "failed"), (0.1, "passed")],
 )
