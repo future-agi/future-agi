@@ -11,6 +11,7 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+import structlog
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -49,6 +50,8 @@ from simulate.utils.transcript_parse import (
 )
 from tracer.models.project import Project
 from tracer.selectors.observe_evidence import SourceEvidence, SourceKind
+
+logger = structlog.get_logger(__name__)
 
 # The environment's record of recent adds, keyed by request key, beside Save's own.
 EVIDENCE_ADDS = "evidence_adds"
@@ -410,7 +413,12 @@ def _held(
                 try:
                     with transaction.atomic():
                         current = current_evidence(owner, originals)
-                except Exception:  # noqa: BLE001 - historical Observe reads are best effort
+                except Exception as exc:  # noqa: BLE001 - historical Observe reads are best effort
+                    logger.warning(
+                        "evidence_observe_read_failed",
+                        import_id=str(owner.id),
+                        error_type=type(exc).__name__,
+                    )
                     stale.update(original.id for original in originals)
                     continue
             for original in originals:
@@ -563,7 +571,12 @@ def _promotion_candidates(duplicates):
             try:
                 with transaction.atomic():
                     current = current_evidence(owner, cases)
-            except Exception:  # noqa: BLE001 - historical Observe reads are best effort
+            except Exception as exc:  # noqa: BLE001 - historical Observe reads are best effort
+                logger.warning(
+                    "evidence_observe_read_failed",
+                    import_id=str(owner.id),
+                    error_type=type(exc).__name__,
+                )
                 continue
         for case in cases:
             source = current.get(case.source_id)
