@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
@@ -23,7 +24,7 @@ from simulate.services.evidence_import import (
     discard_evidence_import,
 )
 from tracer.models.project import Project
-from tracer.selectors.observe_evidence import Turn
+from tracer.selectors.observe_evidence import Label, Turn
 
 from .test_evidence_datasets import CHAT, EXPECTED, _column, _mapping, _row
 from .test_evidence_datasets import _create as _create_rows
@@ -116,6 +117,17 @@ class TestObserve:
         assert [one["id"] for one in _list(client, environment)] == [first["id"]]
         [original] = _review(client, environment, first, found)["cases"]
         assert (original["status"], original["also_from"]) == ("pending", 1)
+
+    def test_changed_label_allows_reimport(self, client, environment, project):
+        label = Label("Quality", "text", "good", "", "session")
+        source = _evidence(labels=(label,))
+        _sessions(client, environment, project, {SESSION: source}, [SESSION])
+
+        changed = replace(source, labels=(replace(label, value="poor"),))
+        again = _sessions(client, environment, project, {SESSION: changed}, [SESSION])
+
+        [case] = again["cases"]
+        assert (case["status"], case["duplicate_of"]) == ("pending", None)
 
     def test_two_sessions_holding_the_same_conversation_are_one_case(
         self, client, environment, project

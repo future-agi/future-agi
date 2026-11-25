@@ -400,10 +400,10 @@ def _held(
             current = current_evidence(originals[0].evidence_import, originals)
             for original in originals:
                 source = current.get(original.source_id)
-                if source is None or not (
-                    content_digest(source) == original.content_digest
-                    if original.content_digest
-                    else original.digest and evidence_digest(source) == original.digest
+                if (
+                    source is None
+                    or not original.digest
+                    or evidence_digest(source) != original.digest
                 ):
                     stale.add(original.id)
     for case in found:
