@@ -677,6 +677,14 @@ describe("jobRefetchInterval", () => {
     expect(jobRefetchInterval(idle, 1000 + SAVE_GRACE_MS)).toBe(false);
   });
 
+  it("polls slowly while the design waits for approval", () => {
+    const parked = { status: { stage: "awaiting_approval" } };
+    expect(jobRefetchInterval(parked, 0)).toBe(30000);
+    expect(jobRefetchInterval({ status: { stage: "authoring" } }, 0)).toBe(
+      2000,
+    );
+  });
+
   it("does not poll a finished environment whose chat was never busy here", () => {
     const quiet = completed({ conversation_id: "c-quiet", state: "idle" });
     expect(jobRefetchInterval(quiet, 0)).toBe(false);

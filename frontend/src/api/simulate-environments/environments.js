@@ -24,8 +24,10 @@ import {
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import { harnessEnvToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import {
+  AWAITING_APPROVAL_STAGE,
   LIVE_ENV_STATUSES,
   NOT_PROVIDED,
+  PARKED_REFETCH_MS,
 } from "src/sections/simulate/environments/myEnvironments.constants";
 import {
   EMPTY_ENV_FILTERS,
@@ -65,6 +67,15 @@ const toPage = (data) => ({
 
 const LIST_REFETCH_MS = 3000;
 
+export const listRefetchInterval = (data) => {
+  const live = (data?.results ?? []).filter((row) =>
+    LIVE_ENV_STATUSES.has(row?.status),
+  );
+  if (live.some((row) => row?.stage !== AWAITING_APPROVAL_STAGE))
+    return LIST_REFETCH_MS;
+  return live.length ? PARKED_REFETCH_MS : false;
+};
+
 // Server-paginated: `page` is the table's 0-indexed page, the endpoint is
 // 1-indexed. keepPreviousData holds the current page on screen while the next
 // one loads, so paging doesn't flash an empty table.
@@ -85,12 +96,7 @@ export function useMyEnvironments({
     // to its final state without a reload. `select` never touches the cache, so
     // `query.state.data` is the raw payload with the backend's `status`; an
     // unknown status stops the poll rather than polling forever.
-    refetchInterval: (query) =>
-      (query.state.data?.results ?? []).some((row) =>
-        LIVE_ENV_STATUSES.has(row?.status),
-      )
-        ? LIST_REFETCH_MS
-        : false,
+    refetchInterval: (query) => listRefetchInterval(query.state.data),
   });
 }
 

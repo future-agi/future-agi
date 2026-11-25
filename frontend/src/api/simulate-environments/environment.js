@@ -13,6 +13,7 @@ import { useEnvironmentsStore } from "src/sections/simulate/environments/store/u
 import {
   AWAITING_APPROVAL_STAGE,
   ENV_STATUS,
+  PARKED_REFETCH_MS,
 } from "src/sections/simulate/environments/myEnvironments.constants";
 import {
   VOICE_CONNECTORS,
@@ -56,6 +57,7 @@ export const jobRefetchInterval = (data, now = Date.now()) => {
   }
   const busyAt = conversationId ? lastBusyAt.get(conversationId) : undefined;
   if (busyAt !== undefined && now - busyAt < SAVE_GRACE_MS) return REFETCH_MS;
+  if (data?.status?.stage === AWAITING_APPROVAL_STAGE) return PARKED_REFETCH_MS;
   return terminalStages.has(data?.status?.stage) ? false : REFETCH_MS;
 };
 

@@ -16,6 +16,8 @@ export const ENV_STATUS = {
 // The unfinished values of the list endpoint's own status (building | running |
 // completed | failed, from harness_environment.status_for). A cancel in flight
 // stays building/running until it lands as failed, so these two cover it.
+export const PARKED_REFETCH_MS = 30000;
+
 export const LIVE_ENV_STATUSES = new Set([
   ENV_STATUS.BUILDING,
   ENV_STATUS.RUNNING,

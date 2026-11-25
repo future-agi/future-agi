@@ -498,6 +498,17 @@ class TestReviewApi:
         )
         assert _get(client, workspace, URL.format(waiting.id)).status_code == 404
 
+    def test_the_job_read_carries_the_designs_status_and_not_the_design(self, waiting):
+        from simulate.services.harness_provider import serialize_job
+
+        review = serialize_job(waiting)["job"]["metadata"]["design_review"]
+
+        assert review == {
+            "status": AWAITING_APPROVAL,
+            "created_at": stored_review(waiting)["created_at"],
+            "approved_at": None,
+        }
+
     def test_the_builder_chat_refuses_a_message_while_the_design_waits(self, waiting):
         with pytest.raises(HostedHarnessError) as refused:
             enqueue_message(

@@ -353,8 +353,17 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         ) from exc
 
 
+_DESIGN_REVIEW_READ_KEYS = ("status", "created_at", "approved_at")
+
+
 def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     metadata = job.payload.get("metadata", {})
+    if isinstance(metadata, dict) and isinstance(metadata.get("design_review"), dict):
+        review = metadata["design_review"]
+        metadata = {
+            **metadata,
+            "design_review": {key: review.get(key) for key in _DESIGN_REVIEW_READ_KEYS},
+        }
     if not isinstance(metadata, dict) or "observability_refusal" not in metadata:
         return metadata
     if not job.run_test_id:
