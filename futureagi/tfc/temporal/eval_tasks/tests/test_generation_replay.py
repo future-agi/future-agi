@@ -34,6 +34,7 @@ import dataclasses
 import hashlib
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -196,15 +197,43 @@ def test_a_closed_sampling_history_sleeps_on_a_timer_before_its_reconcile(fixtur
     assert events[-1]["eventType"] == "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED"
 
 
-@pytest.mark.parametrize("fixture", sorted(TIMER))
-async def test_a_closed_sampling_history_replays_on_dev_and_on_this_branch(
+@pytest.mark.parametrize("fixture", ALL)
+async def test_recorded_history_replays_on_the_pinned_dev(
     fixture, tmp_path, monkeypatch
 ):
-    """Dev's timer histories replay here (upgrade), and this branch's replay
-    on dev (rollback to dev), with or without a generation."""
-    text = (FIXTURES / fixture).read_text()
-    await _replay(fixture, text, _dev_workflows(tmp_path, monkeypatch))
-    await _replay(fixture, text, wf)
+    """Every history replays on dev: v1.59's (an upgrade from the release
+    through dev), this branch's (a rollback to dev) and dev's own timer
+    histories, with or without a generation. ``test_recorded_history_replays_
+    on_current_code`` replays the same set here."""
+    dev = _dev_workflows(tmp_path, monkeypatch)
+    await _replay(fixture, (FIXTURES / fixture).read_text(), dev)
+
+
+# What the SDK reports when v1.59 replays a first-closed timer history, in
+# full: any other nondeterminism (another TMPRL1100 included) is a new break.
+FIRST_CLOSED_REFUSAL = (
+    "[TMPRL1100] Nondeterminism error: Non-deprecated patch marker encountered "
+    "for change historical-first-closed-reconcile-delay-v1, but there is no "
+    "corresponding change command!"
+)
+
+
+def _is_first_closed_refusal(exc: BaseException) -> bool:
+    """Whether ``exc`` is exactly v1.59's refusal of the first-closed marker:
+    a ``NondeterminismError`` whose core failure message is, in full,
+    ``FIRST_CLOSED_REFUSAL``."""
+    found = re.search(r'Failure \{ message: "((?:[^"\\]|\\.)*)"', str(exc))
+    return (
+        type(exc) is NondeterminismError
+        and found is not None
+        and found.group(1) == FIRST_CLOSED_REFUSAL
+    )
+
+
+async def _assert_v1_59_refuses(name: str, text: str, release) -> None:
+    with pytest.raises(NondeterminismError) as refused:
+        await _replay(name, text, release)
+    assert _is_first_closed_refusal(refused.value), str(refused.value)
 
 
 @pytest.mark.parametrize("fixture", sorted(TIMER))
@@ -214,8 +243,45 @@ async def test_v1_59_cannot_take_over_a_closed_sampling_history(
     """The limit is dev's, not the generation's: v1.59 refuses dev's own
     timer histories exactly as it refuses this branch's."""
     release = _release_workflows(tmp_path, monkeypatch)
-    with pytest.raises(NondeterminismError):
-        await _replay(fixture, (FIXTURES / fixture).read_text(), release)
+    await _assert_v1_59_refuses(fixture, (FIXTURES / fixture).read_text(), release)
+
+
+def _core_failure(message: str) -> str:
+    return (
+        "Workflow activation completion failed: Failure { failure: Some(Failure "
+        f'{{ message: "{message}", source: "", stack_trace: "", '
+        "encoded_attributes: None, cause: None, failure_info: None }), "
+        "force_cause: NonDeterministicError }"
+    )
+
+
+@pytest.mark.parametrize(
+    "exc,expected",
+    [
+        (NondeterminismError(_core_failure(FIRST_CLOSED_REFUSAL)), True),
+        (
+            NondeterminismError(
+                _core_failure(
+                    "[TMPRL1100] Nondeterminism error: Timer machine does not "
+                    "handle this event: HistoryEvent(id: 20, ActivityTaskScheduled)"
+                )
+            ),
+            False,
+        ),
+        (NondeterminismError(_core_failure(f"{FIRST_CLOSED_REFUSAL} Also: x")), False),
+        (NondeterminismError(FIRST_CLOSED_REFUSAL), False),
+        (RuntimeError(_core_failure(FIRST_CLOSED_REFUSAL)), False),
+    ],
+    ids=["exact", "other-tmprl1100", "longer-message", "no-core-failure", "type"],
+)
+def test_only_the_exact_first_closed_refusal_is_accepted(exc, expected):
+    assert _is_first_closed_refusal(exc) is expected
+
+
+def test_every_timer_history_is_checked_in():
+    """The v1.59 columns (replays, refusals) split the checked-in set."""
+    assert TIMER <= set(ALL)
+    assert len(TIMER) == 4
 
 
 def test_no_history_or_workflow_code_uses_the_withdrawn_fence_patch():
@@ -349,8 +415,7 @@ async def test_every_new_history_replays_on_the_v1_59_release(
         events = json.loads(text)["events"]
         assert WITHDRAWN_FENCE_PATCH not in b"".join(_markers(events)), name
         if name in TIMER:
-            with pytest.raises(NondeterminismError):
-                await _replay(name, text, release)
+            await _assert_v1_59_refuses(name, text, release)
         else:
             await _replay(name, text, release)
         await _replay(name, text, dev)
