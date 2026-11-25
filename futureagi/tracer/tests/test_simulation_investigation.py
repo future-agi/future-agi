@@ -943,6 +943,12 @@ def test_simulation_evidence_http_page_matches_documented_contract(
 
     validator = Draft4Validator(native(documented))
     validator.validate(body)
+    for persona in (None, {"traits": ["patient", None, {"active": True}]}):
+        body["calls"][0]["persona"] = persona
+        validator.validate(body)
+    for persona in (False, []):
+        body["calls"][0]["persona"] = persona
+        assert not validator.is_valid(body)
     del body["calls"][0]["persona"]
     assert not validator.is_valid(body)
 

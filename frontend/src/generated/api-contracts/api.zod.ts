@@ -91276,7 +91276,10 @@ export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse =
         ]),
         situation: zod.union([zod.string().min(1), zod.null()]),
         persona: zod.union([
-          jsonValueSchema.describe("Any valid JSON value."),
+          zod.record(
+            zod.string(),
+            jsonValueSchema.describe("Any valid JSON value."),
+          ),
           zod.null(),
         ]),
         evaluations: zod.array(

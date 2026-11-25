@@ -127384,9 +127384,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         persona: {
           title: "Persona",
           type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
           "x-nullable": true,
-          "x-json-value": true,
-          description: "Any valid JSON value.",
         },
         evaluations: {
           type: "array",

@@ -189223,9 +189223,13 @@
                 "persona": {
                     "title": "Persona",
                     "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    },
+                    "x-nullable": true
                 },
                 "evaluations": {
                     "type": "array",

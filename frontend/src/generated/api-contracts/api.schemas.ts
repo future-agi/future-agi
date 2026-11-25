@@ -37903,19 +37903,15 @@ export interface SimulationEvidenceEvaluationApi {
   reason: string | null;
 }
 
-export type SimulationEvidenceToolApiArguments = {
-  [key: string]: unknown;
-} | null;
+export type SimulationEvidenceToolApiArguments = JsonValueApi;
 
-export type SimulationEvidenceToolApiResult = { [key: string]: unknown } | null;
+export type SimulationEvidenceToolApiResult = JsonValueApi;
 
-export type SimulationEvidenceToolApiOk = { [key: string]: unknown } | null;
+export type SimulationEvidenceToolApiOk = JsonValueApi;
 
-export type SimulationEvidenceToolApiError = { [key: string]: unknown } | null;
+export type SimulationEvidenceToolApiError = JsonValueApi;
 
-export type SimulationEvidenceToolApiRefused = {
-  [key: string]: unknown;
-} | null;
+export type SimulationEvidenceToolApiRefused = JsonValueApi;
 
 export interface SimulationEvidenceToolApi {
   /** @minLength 1 */
@@ -37930,7 +37926,7 @@ export interface SimulationEvidenceToolApi {
 }
 
 export type SimulationEvidenceCallApiPersona = {
-  [key: string]: unknown;
+  [key: string]: JsonValueApi;
 } | null;
 
 export interface SimulationEvidenceCallApi {

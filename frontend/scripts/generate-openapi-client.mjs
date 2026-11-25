@@ -1251,9 +1251,24 @@ export type ${jsonAlias} = JsonValueApi;`,
     // logged, and the times it computes are null when the provider gave none.
     schemas = assertReplaceRegex(
       schemas,
-      /(export type (?:Conversation(?:CallAgent|Call|Analysis|Latency|Turn)|SimulationEvidenceTool)Api\w+ = )\{ \[key: string\]: unknown \};/g,
+      /(export type Conversation(?:CallAgent|Call|Analysis|Latency|Turn)Api\w+ = )\{ \[key: string\]: unknown \};/g,
       "$1JsonValueApi;",
       "conversation record JSON values → recursive JSON value",
+    );
+    for (const field of ["Arguments", "Result", "Ok", "Error", "Refused"]) {
+      const alias = `SimulationEvidenceToolApi${field}`;
+      schemas = assertReplace(
+        schemas,
+        `export type ${alias} = { [key: string]: unknown } | null;`,
+        `export type ${alias} = JsonValueApi;`,
+        `${alias} → recursive JSON value`,
+      );
+    }
+    schemas = assertReplace(
+      schemas,
+      "export type SimulationEvidenceCallApiPersona = {[key: string]: { [key: string]: unknown }} | null;",
+      "export type SimulationEvidenceCallApiPersona = { [key: string]: JsonValueApi } | null;",
+      "simulation persona → nullable JSON record",
     );
     for (const recordType of [
       "ConversationVariablesApiConfigured",

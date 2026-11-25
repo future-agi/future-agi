@@ -380,7 +380,7 @@ class SimulationEvidenceCallSerializer(serializers.Serializer):
     goals = SimulationEvidenceGoalsSerializer(allow_null=True)
     situation = serializers.CharField(allow_null=True)
     # An authored persona object, or null when the scenario has none.
-    persona = JsonValueField(allow_null=True)
+    persona = serializers.DictField(child=JsonValueField(allow_null=True), allow_null=True)
     evaluations = SimulationEvidenceEvaluationSerializer(many=True)
     agent_prompt = serializers.CharField(allow_null=True)
     tool_calls = SimulationEvidenceToolSerializer(many=True, required=False)
