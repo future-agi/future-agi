@@ -584,9 +584,12 @@ def _follow_on(
         spent = len(engine.calls) - narrowed
         # A first page with two or more eligible witnesses costs them before
         # its first slice (``_choose_witness``), on top of its count.
+        # The page's trace-name root resolution, if any, comes first and is
+        # charged to the count like any statement.
+        kinds = [kind for kind in engine.kinds if kind != "roots"]
         choice_estimates = next(
-            (n for n, kind in enumerate(engine.kinds) if kind != "estimate"),
-            len(engine.kinds),
+            (n for n, kind in enumerate(kinds) if kind != "estimate"),
+            len(kinds),
         )
         assert choice_estimates == 0 or cursor is None, (hop, choice_estimates)
         assert choice_estimates <= walk.USER_LIST_WALK_WITNESS_CANDIDATES, (
@@ -3201,7 +3204,8 @@ def test_a_user_less_scope_is_always_an_empty_complete_page(seed):
     read, engine = _page(
         World(), page_size=25, filters=_windowed(family, days), engine=engine
     )
-    kinds = [kind_of(call) for call in engine.calls]
+    # The page's trace-name root resolution, if any, precedes the walk.
+    kinds = [kind_of(call) for call in engine.calls if kind_of(call) != "roots"]
     assert read.payload["table"] == [] and read.has_more is False, kinds
     assert read.payload["query_status"] == "complete"
     first = next((n for n, kind in enumerate(kinds) if kind != "estimate"), 0)

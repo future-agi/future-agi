@@ -102,6 +102,7 @@ flows/observe/saved-view-preset-dates.spec.ts	factory req=request	7	collector
 flows/observe/span-filter-parity.spec.ts	factory req=request	1	collector
 flows/observe/sql-workbench.spec.ts	factory req=request	1	collector
 flows/observe/trace-ingestion.spec.ts	factory req=request	1	collector
+flows/observe/trace-name-search.spec.ts	factory req=request	1	collector
 flows/observe/user-code-literal.spec.ts	factory req=request	1	collector
 flows/sdk-ingestion/eval-structure-scope.spec.ts	binding browser,request,scopeActors:scopes,scopeProbe:probe	1	backendRequestContext
 flows/sdk-ingestion/eval-structure-scope.spec.ts	send request.get `${E2E.apiUrl}${SDK_EVAL}${encodeURIComponent(evalId	1	reviewed first-hop expression

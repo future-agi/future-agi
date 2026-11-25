@@ -16,8 +16,10 @@ span IDs, grouped by ``(observation_span_id, label_id)``.
 The three result sets are merged in Python to produce the final response.
 """
 
+import json
 import math
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -42,6 +44,10 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     partition_span_filter_plans,
     supports_span_filters,
     targets_span_filter_domain,
+)
+from tracer.services.clickhouse.trace_name_sql import (
+    TraceNameRootSets,
+    bind_trace_name_root_sets,
 )
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
@@ -1439,6 +1445,65 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             candidate_full_state=candidate_full_state,
         )
 
+    # The request's trace-name roots, resolved once for every classifier
+    # batch (``prepare_trace_name_root_sets``), and the window they cover.
+    _trace_name_root_sets: TraceNameRootSets | None = None
+    _trace_name_root_sets_window: str | None = None
+
+    def prepare_trace_name_root_sets(
+        self, execute: Callable[[str, dict[str, Any]], Any]
+    ) -> None:
+        """Resolve each trace_name leaf's matching roots once per request.
+
+        A bounded walk classifies its candidates in many batches. Each batch
+        statement used to look up the window's matching roots again under
+        FINAL; with the set resolved here, every request-window batch binds
+        it instead (``_build_filter_match_query``). Idempotent: the walk calls
+        it before its first batch. ``execute(sql, params)`` runs the lookup
+        with the walk's own executor, budget and settings. Raises
+        ``TraceNameFilterTooBroad`` above the root-set cap.
+        """
+
+        # The resolver imports this package; resolve it at call time.
+        from tracer.services.clickhouse.trace_name_roots import (
+            has_trace_name_leaf,
+            resolve_trace_name_root_sets,
+        )
+
+        if self._trace_name_root_sets is not None:
+            return
+        if not has_trace_name_leaf(self.filters):
+            self._trace_name_root_sets = {}
+            return
+        window = self.parse_time_range(self.filters)
+        self._trace_name_root_sets = resolve_trace_name_root_sets(
+            self.filters,
+            start=window[0],
+            end=window[1],
+            execute=execute,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        self._trace_name_root_sets_window = self._trace_name_root_window_fingerprint()
+
+    def _trace_name_root_window_fingerprint(self) -> str:
+        """The request's time filters, which decide the window a set covers.
+
+        Not the parsed window itself: without a time filter it defaults to
+        ``now``, which moves between batches of one request while the set
+        stays the one resolved for that request.
+        """
+
+        return json.dumps(
+            [
+                item
+                for item in self.filters
+                if BaseQueryBuilder.is_datetime_filter(item)
+            ],
+            sort_keys=True,
+            default=str,
+        )
+
     def build_filter_match_query_from_seed_rows(
         self,
         candidate_rows: list[dict[str, Any]],
@@ -1496,6 +1561,22 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             BaseQueryBuilder.is_datetime_filter(item) for item in self.filters
         )
         scope_to_request_window = not candidate_full_state or has_explicit_time_filter
+        # A trace_name residual looks up the live roots of this batch's own
+        # candidate traces (resolved_annotation_candidates). Full-state
+        # classification does not limit candidates to the request window, so
+        # neither does their root lookup.
+        trace_name_root_window = (
+            ("start_date", "end_date") if scope_to_request_window else None
+        )
+        # The request resolved its roots once over this same window
+        # (``prepare_trace_name_root_sets``): bind them instead of looking them
+        # up again in every batch.
+        bind_root_sets = bool(
+            trace_name_root_window is not None
+            and self._trace_name_root_sets
+            and self._trace_name_root_sets_window
+            == self._trace_name_root_window_fingerprint()
+        )
         plans, residual_filters = partition_span_filter_plans(self.filters)
         params: dict[str, Any] = {
             **self.params,
@@ -1626,6 +1707,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                         span_date_scope=scope_to_request_window,
                         candidate_ids_param="candidate_span_ids",
                         resolved_candidate_spans_table="resolved_annotation_candidates",
+                        trace_name_root_window=trace_name_root_window,
                         candidate_entities_param=(
                             "candidate_span_entities" if branch_entities else None
                         ),
@@ -1635,6 +1717,29 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     branch_predicate, branch_filter_params = branch_builder.translate(
                         residual_filters
                     )
+                    if bind_root_sets:
+                        # This branch is one project's: bind only its roots, so
+                        # the batch carries the request's set once, not once
+                        # per candidate project.
+                        branch_predicate, branch_root_params = (
+                            bind_trace_name_root_sets(
+                                branch_predicate,
+                                {
+                                    key: tuple(
+                                        group
+                                        for group in roots
+                                        if group[0] == str(candidate_project_id)
+                                    )
+                                    for key, roots in (
+                                        self._trace_name_root_sets or {}
+                                    ).items()
+                                },
+                            )
+                        )
+                        branch_filter_params = {
+                            **branch_filter_params,
+                            **branch_root_params,
+                        }
                     branch_predicate = branch_predicate or "1 = 1"
                     branch_sources = {
                         **params,
@@ -1689,6 +1794,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     span_date_scope=scope_to_request_window,
                     candidate_ids_param="candidate_span_ids",
                     resolved_candidate_spans_table="resolved_annotation_candidates",
+                    trace_name_root_window=trace_name_root_window,
                     candidate_entities_param=candidate_entities_param,
                     strict_trace_project_correlation=has_eval_residual,
                     trace_project_eval_config_ids=(
@@ -1802,6 +1908,11 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         {self._filter_match_limit_sql(output_limit, candidate_identities, result_limit)}
         {self._FILTER_READ_SETTINGS}
         """
+        if bind_root_sets:
+            query, root_params = bind_trace_name_root_sets(
+                query, self._trace_name_root_sets
+            )
+            params.update(root_params)
         return query, params
 
     def build_filter_navigation_target_query(

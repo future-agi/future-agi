@@ -3121,6 +3121,27 @@
 - the status line says 3 traces answered and the counts read 2 Yes · 1 No
 - the traces table shows exactly the three seeded traces, each with the same answer as the rows API
 
+### OBS-E2E-066 — collector trace is found by its root Trace Name
+
+**Goal:** A developer finds a new collector trace by its root name and sees that name on its spans
+
+**Spec:** `flows/observe/trace-name-search.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. send two distinct collector traces
+2. open the new Observe project
+3. filter the trace list by a substring of the first root name
+4. open the spans view and filter by the root Trace Name; see root and child
+
+**Backend state verified:**
+
+- both collector traces have two spans in CH FINAL, with root and child stored trace_name values
+- the UI trace-name filter reaches the trace-list endpoint and returns only the matching trace
+- the UI spans Trace Name filter reaches the span-list endpoint and returns both spans of only the matching trace
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle

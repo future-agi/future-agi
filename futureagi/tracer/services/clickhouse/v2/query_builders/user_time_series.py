@@ -20,6 +20,7 @@ from tracer.services.clickhouse.query_builders.time_series import (
 from tracer.services.clickhouse.query_builders.user_time_series import (
     UserTimeSeriesQueryBuilder,
 )
+from tracer.services.clickhouse.trace_name_sql import scope_trace_name_roots
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     resolved_id_expr,
@@ -829,6 +830,11 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
+        # A trace_name leaf looks up the live roots of this user's own traces.
+        query = scope_trace_name_roots(
+            query,
+            "trace_id IN (SELECT trace_id FROM candidate_user_trace_ids)",
+        )
         return query, self.params
 
 

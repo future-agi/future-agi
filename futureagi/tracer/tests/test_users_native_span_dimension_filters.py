@@ -30,6 +30,7 @@ from tracer.services.clickhouse.query_builders.user_list import (
     UnsupportedBoundedUserListQuery,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_SQL
 from tracer.services.clickhouse.v2.query_builders.user_list import (
     UserListQueryBuilderV2,
 )
@@ -40,6 +41,25 @@ pytestmark = pytest.mark.unit
 UID = "00000000-0000-4000-8000-000000000001"
 PROJECT = "00000000-0000-4000-8000-000000000002"
 ORG = "00000000-0000-4000-8000-000000000003"
+OTHER_PROJECT = "00000000-0000-4000-8000-000000000004"
+START = datetime(2026, 9, 1)
+END = datetime(2026, 9, 2)
+
+
+def date_filter():
+    return {
+        "column_id": "created_at",
+        "filter_config": {
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": [START.isoformat(), END.isoformat()],
+        },
+    }
+
+
+def list_root_scope(sql):
+    """The one intentional difference from a single-project graph's SQL."""
+    return sql.replace("project_id = %(project_id)s", "project_id IN %(project_ids)s")
 
 
 def leaf(column_id, operation, value=None, *, col_type="SYSTEM_METRIC"):
@@ -129,30 +149,62 @@ OPERATIONS = [
 ]
 
 
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {"project_id": PROJECT},
+        {"project_ids": [PROJECT]},
+        {"project_ids": [PROJECT, OTHER_PROJECT]},
+        {"project_ids": [], "empty_scope": True},
+    ],
+    ids=["project", "project-set", "organization", "empty-scope"],
+)
 @pytest.mark.parametrize("column_id", sorted(USER_NATIVE_SPAN_DIMENSIONS))
 @pytest.mark.parametrize(("operation", "value"), OPERATIONS)
 def test_native_leaf_is_the_users_graphs_own_membership_sql(
-    column_id, operation, value
+    column_id, operation, value, scope
 ):
-    # The graph compiles this leaf with its default namespace; the list sends
-    # the identical SQL under the leaf's own namespace, nothing else changed.
+    # Keep the complete graph comparison: only Trace Name's root lookup needs
+    # the list's window and (for an org list) its authorized project set.
     item = leaf(column_id, operation, value)
     graph_flags, graph_condition, graph_params = _user_membership_having(
         [item], project_id=PROJECT
     )
     builder = UserListQueryBuilderV2(
-        organization_id=ORG, project_ids=[PROJECT], filters=[item]
+        organization_id=ORG, filters=[item, date_filter()], **scope
     )
     flags, condition, params, _witness = builder.native_span_dimension_membership(
         item, index=3
     )
 
     def renamed(text):
-        return text.replace("user_member", "native_leaf_3")
+        text = text.replace("user_member", "native_leaf_3")
+        if column_id == "trace_name" and scope.get("project_ids"):
+            text = list_root_scope(text)
+        return text
 
+    expected_params = {renamed(name): v for name, v in graph_params.items()}
+    if column_id == "trace_name":
+        expected_params.update(start_date=START, end_date=END)
+        assert (
+            "(project_id, trace_id) IN (SELECT project_id, trace_id FROM spans FINAL"
+            in flags[0]
+        )
+        assert TRACE_NAME_SQL in flags[0]
+        assert "AND (parent_span_id IS NULL OR parent_span_id = '')" in flags[0]
+        assert "AND start_time >= %(start_date)s - INTERVAL 1 DAY" in flags[0]
+        assert "AND start_time < %(end_date)s" in flags[0]
+        expected_scope = (
+            "project_id IN %(project_ids)s"
+            if scope.get("project_ids")
+            else "project_id = %(project_id)s"
+        )
+        assert f"PREWHERE {expected_scope}" in flags[0]
+    else:
+        assert "start_date" not in params and "end_date" not in params
     assert flags == tuple(renamed(flag) for flag in graph_flags)
     assert condition == renamed(graph_condition)
-    assert params == {renamed(name): v for name, v in graph_params.items()}
+    assert params == expected_params
 
 
 @pytest.mark.parametrize("column_id", sorted(USER_NATIVE_SPAN_DIMENSIONS))
@@ -160,10 +212,12 @@ def test_native_leaf_is_the_users_graphs_own_membership_sql(
 def test_every_operator_is_one_any_span_condition(column_id, operation, value):
     # SYSTEM_METRIC leaves: a user matches when ANY latest live span satisfies
     # the span compiler's predicate - negations included ("some span differs").
-    column = USER_NATIVE_SPAN_DIMENSIONS[column_id]
-    builder = UserListQueryBuilderV2(
-        organization_id=ORG, project_ids=[PROJECT], filters=[]
+    column = (
+        TRACE_NAME_SQL
+        if column_id == "trace_name"
+        else USER_NATIVE_SPAN_DIMENSIONS[column_id]
     )
+    builder = _builder()
     flags, condition, _params, _witness = builder.native_span_dimension_membership(
         leaf(column_id, operation, value), index=0
     )
@@ -266,10 +320,7 @@ def test_the_page_read_caches_only_the_page_and_replaces_absence():
         assert manager._row_matches_filters(row) is False
 
 
-WINDOW = {
-    "window_start": datetime(2026, 9, 1),
-    "window_end": datetime(2026, 9, 8),
-}
+WINDOW = {"window_start": START, "window_end": END}
 
 
 @pytest.mark.parametrize("column_id", sorted(USER_NATIVE_SPAN_DIMENSIONS))
@@ -284,9 +335,7 @@ def test_native_leaf_never_narrows_acquisition_on_the_attribute_maps(
     # attribute (nobody), so the seeded page is acquired without one. The
     # walk discovers on the leaf's own span flag instead.
     item = leaf(column_id, operation, value)
-    builder = UserListQueryBuilderV2(
-        organization_id=ORG, project_ids=[PROJECT], filters=[item]
-    )
+    builder = _builder(item)
     assert first_witness(builder, "raw") is None
     manager = manager_for(item)
     assert manager.matching_activity_walk_applies(builder) is True
@@ -424,7 +473,9 @@ _NEGATIONS = {"not_equals", "not_in", "not_contains"}
 
 def _builder(*filters):
     return UserListQueryBuilderV2(
-        organization_id=ORG, project_ids=[PROJECT], filters=list(filters)
+        organization_id=ORG,
+        project_ids=[PROJECT],
+        filters=[*filters, date_filter()],
     )
 
 
@@ -456,6 +507,9 @@ def test_a_native_witness_is_the_leafs_existence_flag(
     flags, condition, params, _terms = compile_user_membership_leaf(
         item, project_id=PROJECT, namespace="native_leaf_1"
     )
+    if column_id == "trace_name":
+        flags = tuple(list_root_scope(flag) for flag in flags)
+        params = {**params, "start_date": START, "end_date": END}
     if col_type is None and operation == "is_null":
         assert condition == "countIf(native_leaf_1_match_0) = 0"
         present = flags[0].removesuffix(" AS native_leaf_1_match_0")
@@ -623,3 +677,44 @@ def test_the_native_read_caches_the_order_key_and_reads_the_epoch_as_none():
     }
     # An attribute key of the same name never shares this cache.
     assert manager._matching_activity_by_user == {}
+
+
+@pytest.mark.parametrize(
+    "column_id", sorted(set(USER_NATIVE_SPAN_DIMENSIONS) - {"trace_name"})
+)
+def test_unrelated_native_membership_does_not_derive_a_root_window(column_id):
+    builder = _builder()
+    with patch.object(
+        builder, "parse_time_range", side_effect=AssertionError("window")
+    ):
+        item = leaf(column_id, "equals", "OK")
+        flags, condition, params, _ = builder.native_span_dimension_membership(
+            item, index=0
+        )
+    graph_flags, graph_condition, graph_params, _ = compile_user_membership_leaf(
+        item, project_id=PROJECT, namespace="native_leaf_0"
+    )
+    assert (flags, condition, params) == (graph_flags, graph_condition, graph_params)
+
+
+@pytest.mark.parametrize("predicate", [None, ""])
+def test_trace_graph_refuses_a_missing_native_column_predicate(predicate):
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        UnsupportedFilterShapeError,
+        compile_exact_graph_row_predicates,
+    )
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        ClickHouseFilterBuilderV2,
+    )
+
+    with (
+        patch.object(
+            ClickHouseFilterBuilderV2, "_build_column_condition", return_value=predicate
+        ),
+        pytest.raises(UnsupportedFilterShapeError, match="did not produce a predicate"),
+    ):
+        compile_exact_graph_row_predicates(
+            [leaf("trace_name", "equals", "OK")],
+            project_id=PROJECT,
+            observe_type="trace",
+        )

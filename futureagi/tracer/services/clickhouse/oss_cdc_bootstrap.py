@@ -116,7 +116,7 @@ _NATIVE_FILES = {
 # data only: deliberately not an ALTER interpreter or a native apply path.
 _SPAN_COLUMNS = {
     "attributes_extra": "String DEFAULT '{}'",
-    "trace_name": "String MATERIALIZED ifNull(dictGetOrDefault('trace_dict', 'name', toUUID(trace_id), ''), '')",
+    "trace_name": "String MATERIALIZED if(empty(parent_span_id), name, '')",
     "_peerdb_is_deleted": "UInt8 ALIAS is_deleted",
     "llm_request_model": "LowCardinality(String) MATERIALIZED attrs_string['gen_ai.request.model']",
     "llm_response_model": "LowCardinality(String) MATERIALIZED attrs_string['gen_ai.response.model']",
@@ -421,15 +421,21 @@ def _check_table(
                 if actual[key] == (_tokens(data_type), kind, _tokens(expression)):
                     continue  # exact server spelling, not arbitrary expression equivalence
             if native and name == "spans" and key == "trace_name":
-                # Only this complete native expression has a qualified equivalent.
-                # database comes from the explicit target/currentDatabase check,
-                # never an environment fallback or a stripped foreign qualifier.
-                data_type, kind, expression = expected[key]
+                # Old installs may still use 015's dictionary expression, with
+                # or without the server's current-database qualification.
+                # Neither is a reason to mutate an existing table in bootstrap.
+                legacy = _tokens(
+                    "ifNull(dictGetOrDefault('trace_dict', 'name', toUUID(trace_id), ''), '')"
+                )
+                data_type, kind, _expression = expected[key]
                 qualified = tuple(
                     f"'{database}.trace_dict'" if token == "'trace_dict'" else token
-                    for token in expression
+                    for token in legacy
                 )
-                if actual[key] == (data_type, kind, qualified):
+                if actual[key] in (
+                    (data_type, kind, legacy),
+                    (data_type, kind, qualified),
+                ):
                     continue
             raise BootstrapError(f"{name}.{key}: incompatible type/default expression")
     engine, engine_full, partition, sorting, primary, create_query = row

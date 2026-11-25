@@ -72,6 +72,17 @@ from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_size_error,
     is_read_budget_error,
 )
+from tracer.services.clickhouse.trace_name_roots import (
+    TraceNameRootSets,
+    bind_trace_name_root_sets,
+    has_trace_name_leaf,
+    resolve_trace_name_root_sets,
+    tagged_trace_name_root_lookups,
+)
+from tracer.services.clickhouse.trace_name_sql import (
+    TRACE_NAME_ROOT_SET_MAX_ROOTS,
+    scope_trace_name_roots,
+)
 from tracer.services.clickhouse.v2.id_remap_sql import (
     resolved_id_expr,
 )
@@ -1866,6 +1877,22 @@ def _read_exact_filtered_span_graph(
         # One exhaustive compiler witness before latest replay; no daily empty
         # scan loop. Resource failures return to the finite adaptive lane below.
         partition_width = scan_width
+    if has_trace_name_leaf(getattr(builder, "filters", None)):
+        # Resolve the trace_name leaf's matching roots once for the request;
+        # every partition binds them instead of looking them up again.
+        query_count += 1
+        builder.trace_name_root_sets = _resolve_graph_trace_name_roots(
+            analytics=analytics,
+            filters=builder.filters,
+            project_id=str(builder.project_id),
+            start_date=start_date,
+            end_date=end_date,
+            timeout_ms=_remaining_exact_graph_timeout_ms(
+                started,
+                EXACT_GRAPH_SPAN_PARTITION_QUERY_TIMEOUT_MS,
+            ),
+            settings=EXACT_GRAPH_SPAN_PARTITION_READ_SETTINGS,
+        )
     while partition_start < partition_limit:
         partition_end = min(partition_start + partition_width, partition_limit)
         query, params = builder.build_exact_span_partition(
@@ -2552,6 +2579,43 @@ def _matching_trace_ids(
     }
 
 
+def _resolve_graph_trace_name_roots(
+    *,
+    analytics: Any,
+    filters: list[dict[str, Any]],
+    project_id: str,
+    start_date: datetime,
+    end_date: datetime,
+    timeout_ms: int,
+    settings: dict[str, Any],
+) -> TraceNameRootSets:
+    """A graph request's trace-name roots, in one statement per leaf.
+
+    Runs under the graph's own read settings and remaining wall, with a
+    result ceiling of one row above the root-set cap. Raises
+    ``TraceNameFilterTooBroad`` above the cap.
+    """
+
+    def execute(query: str, params: dict[str, Any]) -> Any:
+        return analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=timeout_ms,
+            settings={
+                **settings,
+                "max_result_rows": TRACE_NAME_ROOT_SET_MAX_ROOTS + 1,
+            },
+        ).data
+
+    return resolve_trace_name_root_sets(
+        filters,
+        start=start_date,
+        end=end_date,
+        execute=execute,
+        project_id=project_id,
+    )
+
+
 def _matching_span_ids(
     *,
     analytics: Any,
@@ -2563,11 +2627,25 @@ def _matching_span_ids(
     predicate_params: dict[str, Any],
     timeout_ms: int,
     settings: dict[str, Any],
+    trace_name_root_sets: TraceNameRootSets | None = None,
 ) -> set[str]:
     if not span_ids:
         return set()
+    # A trace_name leaf binds the roots the graph resolved once for the
+    # request (``trace_name_root_sets``). Otherwise it looks up live roots:
+    # only those of this batch's candidates' traces, as every other
+    # finite-candidate statement does.
+    predicate, root_params = bind_trace_name_root_sets(
+        predicate or "1", trace_name_root_sets
+    )
+    predicate_params = {**predicate_params, **root_params}
+    predicate = scope_trace_name_roots(
+        predicate,
+        "trace_id IN (SELECT trace_id FROM spans "
+        "WHERE project_id = %(project_id)s AND id IN %(candidate_span_ids)s)",
+    )
     source = latest_span_membership_source_sql(
-        predicate=predicate or "1",
+        predicate=predicate,
         identity_scope="AND id IN %(candidate_span_ids)s",
     )
     result = analytics.execute_ch_query(
@@ -2734,6 +2812,14 @@ def read_exact_annotation_graph(
     bucket_values: dict[datetime, list[float]] = defaultdict(list)
     query_count = 0
     rows_returned = 0
+    # A span graph's trace_name leaf: its matching roots are resolved once,
+    # before the first span batch, and every batch binds them.
+    span_root_sets: TraceNameRootSets | None = None
+    resolve_span_roots = (
+        aggregation_context == "trace"
+        and observe_type == "span"
+        and bool(tagged_trace_name_root_lookups(span_predicate or ""))
+    )
 
     # PostgreSQL is authoritative for Score. Hold one repeatable-read snapshot
     # while CH checks only those finite annotated identities. Any membership
@@ -2765,7 +2851,7 @@ def read_exact_annotation_graph(
             pending: list[dict[str, Any]] = []
 
             def reduce_batch(batch: list[dict[str, Any]]) -> None:
-                nonlocal query_count, rows_returned
+                nonlocal query_count, rows_returned, span_root_sets
                 if not batch:
                     return
                 trace_ids = tuple(
@@ -2809,6 +2895,17 @@ def read_exact_annotation_graph(
                     if use_span_scope or observe_type == "span"
                     else trace_params
                 )
+                if span_ids and resolve_span_roots and span_root_sets is None:
+                    span_root_sets = _resolve_graph_trace_name_roots(
+                        analytics=analytics,
+                        filters=filters,
+                        project_id=str(project_id),
+                        start_date=start_date,
+                        end_date=end_date,
+                        timeout_ms=remaining_statement_timeout_ms(),
+                        settings=settings,
+                    )
+                    query_count += 1
                 matched_spans = (
                     _matching_span_ids(
                         analytics=analytics,
@@ -2820,6 +2917,7 @@ def read_exact_annotation_graph(
                         predicate_params=span_membership_params,
                         timeout_ms=remaining_statement_timeout_ms(),
                         settings=settings,
+                        trace_name_root_sets=span_root_sets,
                     )
                     if span_ids
                     else set()
@@ -4205,6 +4303,10 @@ def _user_aggregate_source_sql(
         **filter_params,
         **membership_params,
         "project_id": project_id,
+        # A trace-name membership flag resolves an in-window child from its
+        # possibly earlier root. Both limits are bound by this read budget.
+        "start_date": start_date,
+        "end_date": end_date,
         "snapshot_start_date": start_date,
         "snapshot_end_date": end_date,
     }

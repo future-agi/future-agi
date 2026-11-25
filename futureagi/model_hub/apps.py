@@ -22,6 +22,8 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
         "createsuperuser",
         "reset_password",
         "generate_swagger",
+        # Reads system.dictionaries / spans counts with readonly=1; writes nothing.
+        "ch25_dictionary_health",
         "provision_sql_reader",
         "provision_sql_service",
         "grpcrunaioserver",

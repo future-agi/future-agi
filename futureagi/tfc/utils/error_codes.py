@@ -104,6 +104,10 @@ err_dict = {
     "FILTER_VALUE_INVENTORY_TOO_BROAD": [
         "Too many values to browse exactly. Enter a more specific search."
     ],
+    "TRACE_NAME_FILTER_TOO_BROAD": [
+        "This Trace Name filter matches more than 2,048 traces in the selected "
+        "time range. Narrow the time range or the trace name and retry."
+    ],
     "DATASET_LIMIT_CHECK_FAILED": [
         "Could not verify your plan's dataset limit. Please try again in a moment."
     ],

@@ -50,6 +50,7 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
     usage_coverage_sql,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_SQL
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -734,7 +735,7 @@ class _TraceRootReplayV2:
             fields += self._root_replay_content_fields()
         else:
             fields += [
-                ("trace_name", "trace_name"),
+                (TRACE_NAME_SQL, "trace_name"),
                 ("name", "span_name"),
                 ("status", "status"),
                 ("end_time", "end_time"),

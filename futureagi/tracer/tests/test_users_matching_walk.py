@@ -154,6 +154,8 @@ class World:
 
 
 def kind_of(query: str) -> str:
+    if query.lstrip().startswith("SELECT DISTINCT project_id, trace_id FROM ("):
+        return "roots"
     if "native_span_flags" in query:
         return "native"
     if "AS raw_end_user_id" in query:
@@ -233,6 +235,13 @@ class Engine:
         self.caps.append(server_execution_cap_ms)
         params = params or {}
         kind = kind_of(query)
+        if kind == "roots":
+            # The page's trace-name roots, resolved once: this world decides
+            # native leaves by the value they bind, so any root set will do.
+            return SimpleNamespace(
+                data=[{"project_id": PROJECT, "trace_id": "trace-checkout"}],
+                query_time_ms=1.0,
+            )
         if kind == "slice":
             return self._slice(params)
         if kind == "instant":

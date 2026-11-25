@@ -19,6 +19,7 @@ from tracer.selectors.filter_seed_width import (
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import is_read_budget_error
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_ROOT_SET_MAX_ROOTS
 
 _INITIAL_SLICE = timedelta(minutes=5)
 _MAX_SLICE = timedelta(days=2)
@@ -1610,6 +1611,11 @@ def read_bounded_filter_page(
         else 0
     )
     seed_density_probe_attempts = 0
+    # The request's trace-name root resolution (one statement per distinct
+    # leaf) replaces a root lookup every classifier used to repeat, so it is
+    # paid outside the acquisition budget: it must never take the slot the
+    # first classifier is owed.
+    trace_name_root_attempts = 0
     # One probe per distinct candidate slice per request. The schedule only
     # ever proposes a given boundary/width pair once, so this is a guard
     # against a retry paying twice, not an optimization of the common path.
@@ -2064,7 +2070,7 @@ def read_bounded_filter_page(
         acquisition statement it exists to size.
         """
 
-        return len(attempts) - seed_density_probe_attempts
+        return len(attempts) - seed_density_probe_attempts - trace_name_root_attempts
 
     def execute(
         *,
@@ -2078,7 +2084,7 @@ def read_bounded_filter_page(
         max_bytes_to_read_cap: int | None = None,
         use_reserved_query_budget: bool = False,
     ) -> QueryResult:
-        nonlocal seed_density_probe_attempts
+        nonlocal seed_density_probe_attempts, trace_name_root_attempts
         # A resumable cursor must leave enough wall time to roll back an
         # in-flight seed batch and publish its last fully classified checkpoint,
         # even when that checkpoint contains zero matches and needs no row
@@ -2116,7 +2122,7 @@ def read_bounded_filter_page(
             and pending_identity_candidates
             and not continuation_progressed
             and not use_reserved_query_budget
-            and kind not in {"classify", "prefilter"}
+            and kind not in {"classify", "prefilter", "trace_name_roots"}
         )
         if classifier_reserve_is_active:
             active_deadline -= _BOUNDED_CONTINUATION_MIN_QUERY_HEADROOM_MS / 1000
@@ -2141,6 +2147,8 @@ def read_bounded_filter_page(
             if seed_density_probe_attempts >= seed_density_probe_allowance:
                 raise _BudgetExceeded("query_budget_exceeded")
             seed_density_probe_attempts += 1
+        elif kind == "trace_name_roots":
+            trace_name_root_attempts += 1
         else:
             active_query_limit = (
                 max_query_count
@@ -2161,7 +2169,7 @@ def read_bounded_filter_page(
                 **(read_settings or {}),
                 "max_result_rows": result_limit,
             }
-            if kind in {"classify", "prefilter"}:
+            if kind in {"classify", "prefilter", "trace_name_roots"}:
                 for (
                     setting_name,
                     setting_cap,
@@ -2840,6 +2848,24 @@ def read_bounded_filter_page(
                     None,
                 )
             )
+            prepare_trace_name_roots = getattr(
+                builder, "prepare_trace_name_root_sets", None
+            )
+            if identity_batch and callable(prepare_trace_name_roots):
+                # Once per request, before the first batch: every batch binds
+                # the resolved set instead of looking its roots up again.
+                prepare_trace_name_roots(
+                    lambda root_query, root_params: (
+                        execute(
+                            kind="trace_name_roots",
+                            query=root_query,
+                            params=root_params,
+                            active_start=active_start,
+                            active_end=active_end,
+                            result_limit=TRACE_NAME_ROOT_SET_MAX_ROOTS + 1,
+                        ).data
+                    )
+                )
             if not identity_batch:
                 match_result = None
             elif callable(seeded_match_builder):

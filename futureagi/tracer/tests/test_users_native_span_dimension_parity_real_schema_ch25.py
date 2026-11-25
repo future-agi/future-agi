@@ -454,3 +454,84 @@ def test_the_native_statement_returns_each_users_newest_witnessed_span(
     assert newest == {
         label: start + timedelta(hours=hours) for label, hours in expected.items()
     }
+
+
+def test_collector_order_child_inherits_root_trace_name_in_users(ch_client):
+    """A Users member can have only the child, inserted before traces exists."""
+    project, trace, user = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    root, child = uuid.uuid4().hex, uuid.uuid4().hex
+    start = WINDOW_START.replace(tzinfo=UTC)
+    columns = (
+        "project_id, observation_type, service_name, start_time, "
+        "trace_id, id, parent_span_id, name, end_user_id"
+    )
+    ch_client.execute(
+        f"INSERT INTO spans ({columns}) VALUES",
+        [
+            (
+                project,
+                "span",
+                "svc",
+                start + timedelta(hours=1),
+                str(trace),
+                root,
+                "",
+                "Collector Root",
+                None,
+            ),
+            (
+                project,
+                "span",
+                "svc",
+                start + timedelta(hours=2),
+                str(trace),
+                child,
+                root,
+                "Child Task",
+                user,
+            ),
+        ],
+    )
+    ch_client.execute(
+        "INSERT INTO traces (id, project_id, name, created_at) VALUES",
+        [(trace, project, "Unrelated trace row name", start)],
+    )
+    ch_client.execute(
+        "INSERT INTO end_users (project_id, end_user_id, organization_id, "
+        "user_id, user_id_type, first_seen) VALUES",
+        [(project, user, uuid.UUID(ORGANIZATION), "collector-child", "string", start)],
+    )
+    try:
+        assert ch_client.execute(
+            "SELECT trace_name FROM spans WHERE project_id = %(project)s AND id = %(id)s",
+            {"project": project, "id": child},
+        ) == [("",)]
+        item = _leaf("trace_name", "equals", "Collector Root")
+        builder = UserListQueryBuilderV2(
+            organization_id=ORGANIZATION,
+            project_ids=[str(project)],
+            filters=[_date_filter(), item],
+        )
+        sql, params = builder.build_native_span_dimension_query(
+            [str(user)], [(1, item)]
+        )
+        assert [(str(row[0]), row[1]) for row in ch_client.execute(sql, params)] == [
+            (str(user), 1)
+        ]
+        sql, params, _needs_eval = exact_graph_reads._user_id_membership_sql(
+            project_id=str(project),
+            filters=[_date_filter(), item],
+            start_date=WINDOW_START,
+            end_date=WINDOW_END,
+            all_snapshot_users=True,
+        )
+        assert {str(row[0]) for row in ch_client.execute(sql, params)} == {str(user)}
+    finally:
+        # The project is unique to this test. Queue cleanup rather than
+        # waiting for unrelated spans mutations across the shared CH fixture.
+        for table in ("spans", "traces", "end_users"):
+            ch_client.execute(
+                f"ALTER TABLE {table} DELETE WHERE project_id = %(project)s "
+                "SETTINGS mutations_sync = 0",
+                {"project": project},
+            )

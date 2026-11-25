@@ -26,6 +26,7 @@ and whole-window totals that sit on spans the witness never sees.
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -59,6 +60,25 @@ def _trace(sid: str) -> str:
     return str(uuid.uuid5(uuid.UUID(PROJECT), f"trace-{sid}"))
 
 
+# The trace name of each seeded trace (g2's trace is never named).
+TRACE_NAMES = {
+    "a1": "checkout",
+    "a2": "browse",
+    "b1": "Checkout",
+    "c1": "checkout",
+    "c2": "checkout",
+    "d1": "checkout",
+    "d2": "browse",
+    "e1": "checkout",
+    "e2": "browse",
+    "f1": "browse",
+    "g1": "checkout",
+    "h1": "checkout",
+    "k1": "checkout",
+    "k2": "checkout",
+}
+
+
 def _at(hours: float) -> datetime:
     return WINDOW_START + timedelta(hours=hours)
 
@@ -89,6 +109,7 @@ def survivor_of_e(ch_client):
         version=1,
         deleted=0,
         cost=1.0,
+        name=None,
     ):
         start = _at(hours)
         row = {
@@ -98,7 +119,9 @@ def survivor_of_e(ch_client):
             "start_time": start,
             "trace_id": _trace(sid),
             "id": sid,
-            "name": sid,
+            # Every span here is its trace's root, and a root names its trace
+            # (039): the same name the traces row gives the old dictionary.
+            "name": TRACE_NAMES.get(sid, "") if name is None else name,
             "end_user_id": uuid.UUID(user),
             "end_time": start + timedelta(seconds=1),
             "latency_ms": 10,
@@ -124,24 +147,7 @@ def survivor_of_e(ch_client):
     ch_client.execute("SYSTEM STOP MERGES spans")
     try:
         # g2's trace is never written: its spans store trace_name ''.
-        traces(
-            {
-                "a1": "checkout",
-                "a2": "browse",
-                "b1": "Checkout",
-                "c1": "checkout",
-                "c2": "checkout",
-                "d1": "checkout",
-                "d2": "browse",
-                "e1": "checkout",
-                "e2": "browse",
-                "f1": "browse",
-                "g1": "checkout",
-                "h1": "checkout",
-                "k1": "checkout",
-                "k2": "checkout",
-            }
-        )
+        traces(TRACE_NAMES)
         span(u["A"], "a1", hours=60, model="gpt-4o", status="ERROR", tag="gold")
         # A's whole-window cost sits on a span no native witness sees.
         span(u["A"], "a2", hours=10, model="claude", cost=5.0)
@@ -173,7 +179,7 @@ def survivor_of_e(ch_client):
             {"id": uuid.UUID(_trace("c1"))},
         )
         traces({"c1": "browse"})
-        span(u["C"], "c1", hours=70, model="claude", version=2)
+        span(u["C"], "c1", hours=70, model="claude", version=2, name="browse")
         stored = dict(
             ch_client.execute(
                 "SELECT concat(id, '/', toString(_version)), trace_name FROM spans "
@@ -484,3 +490,60 @@ def test_a_family_less_is_null_walks_on_its_absence_flag(ch_client, survivor_of_
     assert slices and all("NOT ifNull(" in s for s in slices)
     natives = [s for s in statements if "native_span_flags" in s]
     assert natives and all("_absent) AS native_leaf_1_newest" in s for s in natives)
+
+
+ROOT_LOOKUP = "FROM spans FINAL PREWHERE"
+ROOT_RESOLUTION = "SELECT DISTINCT project_id, trace_id FROM ("
+
+
+def _walk_pages(ch_client, items, *, resolve_once):
+    """Every page of a walk, each page's statements kept apart (one request each)."""
+
+    pages = []
+    cursor = None
+    with (
+        (
+            nullcontext()
+            if resolve_once
+            else patch.object(
+                walk, "_resolve_walk_trace_name_roots", lambda state: None
+            )
+        ),
+        patch.object(walk, "USER_LIST_WALK_SLICE_USER_LIMIT", 2),
+        patch.object(walk, "USER_LIST_WALK_MAX_STATEMENTS", 64),
+        patch.object(walk, "USER_LIST_PAGE_WALL_MS", 120_000),
+        patch.object(walk, "USER_LIST_WALK_FINISH_WALL_MS", 240_000),
+    ):
+        while True:
+            read, executor, _manager = _walk_page(
+                ch_client, items, page_size=2, cursor=cursor
+            )
+            assert read.payload["query_status"] == "complete"
+            pages.append((read.payload["table"], executor.statements))
+            if not read.has_more:
+                return pages
+            cursor = _cursor(read)
+            assert len(pages) < 40
+
+
+def test_a_trace_name_walk_resolves_its_roots_once_per_page(ch_client, survivor_of_e):
+    item = _native("trace_name", "equals", "checkout")
+    pages = _walk_pages(ch_client, [item], resolve_once=True)
+
+    def names(walked):
+        return [row["user_id"] for table, _statements in walked for row in table]
+
+    assert names(pages) == _ordered(survivor_of_e, GPT_MEMBERS)
+    assert len(pages) >= 2
+    for _table, statements in pages:
+        # One resolution per request, before its slices; no other statement
+        # (slice, instant, probe, estimate, certification) reads roots.
+        assert sum(s.lstrip().startswith(ROOT_RESOLUTION) for s in statements) == 1
+        assert sum(ROOT_LOOKUP in s for s in statements) == 1
+        assert len(statements) > 2
+    # Before: every statement with the leaf looked its roots up again, and
+    # the pages were the same.
+    old_pages = _walk_pages(ch_client, [item], resolve_once=False)
+    assert names(old_pages) == names(pages)
+    for _table, statements in old_pages:
+        assert sum(ROOT_LOOKUP in s for s in statements) > 1

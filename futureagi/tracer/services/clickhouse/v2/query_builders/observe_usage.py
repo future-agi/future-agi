@@ -12,6 +12,7 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
     usage_aggregate_sql,
     usage_coverage_sql,
 )
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_SQL
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
 )
@@ -131,7 +132,10 @@ class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
             "provider",
             "trace_session_id",
         ]
-        root_fields = ", ".join(f"live.{field}" for field in fields)
+        root_fields = ", ".join(
+            f"({TRACE_NAME_SQL})" if field == "trace_name" else f"live.{field}"
+            for field in fields
+        )
         # SELECT * omits MATERIALIZED columns such as deployed trace_name.
         source_columns = ", ".join(
             dict.fromkeys(
