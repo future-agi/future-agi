@@ -738,24 +738,50 @@ def scenario_lifecycle(
         view["sources"] = [SourceView(**one) for one in resolved.get(key) or []]
         # A rule source resolved only through the rule that replaced it still quotes the old words: Source changed
         # until the case cites the new rule, whatever proved it since.
-        reworded = [
-            one["ref"]
+        # Resolved only through the rule that replaced it: the case still quotes the old words.
+        replaced = [
+            one
             for one in view["sources"]
             if one["kind"] == "rule"
             and one["resolved"]
             and matched_rule(one["quote"], current_rules) is None
-            and _reworded_here(one["quote"], environment_version, parent_documents)
         ]
+        reworded = [
+            one["ref"]
+            for one in replaced
+            if _reworded_here(one["quote"], environment_version, parent_documents)
+        ]
+        # A rule source neither version resolves already reads source_unresolved; Compare has nothing to show for it.
+        unresolved = {
+            one["ref"]
+            for one in view["sources"]
+            if one["kind"] == "rule"
+            and not one["resolved"]
+            and parent_documents is not None
+            and rule_pair(
+                one["quote"],
+                rules_of(parent_documents),
+                current_rules,
+                environment_version.documents or {},
+                parent_documents,
+            )
+            == (None, None)
+        }
         view["source_changed"] = list(
             dict.fromkeys(
-                ([] if _checked_here(proofs, key) else changed.get(key, [])) + reworded
+                (
+                    []
+                    if _checked_here(proofs, key)
+                    else [ref for ref in changed.get(key, []) if ref not in unresolved]
+                )
+                + reworded
             )
         )
         if view["source_changed"]:
             view["source_changed_version"] = environment_version.version_number
             view["source_changed_version_id"] = str(environment_version.id)
         bad = next((one for one in view["sources"] if not one.get("resolved")), None)
-        if bad is None and reworded and view.get("reason") == "source_unresolved":
+        if bad is None and replaced and view.get("reason") == "source_unresolved":
             # Held only for a rule the contract records as reworded: never checked against the new rule yet.
             _demote(view, "not_validated", reason_text("not_validated"))
         # The proof can already read source_unresolved; its text still names the source.
