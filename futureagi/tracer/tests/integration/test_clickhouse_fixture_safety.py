@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+
 from conftest import UnsafeClickHouseTestTarget, _ch_test_native_port
 from tracer.tests.integration import conftest as integration_conftest
 

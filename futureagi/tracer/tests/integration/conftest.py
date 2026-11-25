@@ -7,9 +7,10 @@ collected from ``futureagi/tracer/tests/integration/`` resolve these fixtures.
 import uuid
 
 import pytest
-from conftest import _open_ch_test_native_client
 from django.conf import settings
 from django.test import override_settings
+
+from conftest import _open_ch_test_native_client
 
 _CH_TABLES_TO_TRUNCATE = [
     "spans",
