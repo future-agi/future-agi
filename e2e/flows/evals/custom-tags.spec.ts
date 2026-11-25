@@ -7,10 +7,10 @@ const CREATE = '/model-hub/eval-templates/create-v2/';
 const UI_READY = 60_000;
 interface Detail { result: { id: string; tags: string[] } }
 
-test('EVAL-E2E-011: custom evaluation tags survive draft reopening and repeated version saves', {
+test('EVAL-E2E-021: custom evaluation tags survive draft reopening and repeated version saves', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'EVAL-E2E-011', area: 'evals',
+    id: 'EVAL-E2E-021', area: 'evals',
     userGoal: 'Keep preset and custom evaluation labels when reopening a draft and repeatedly saving a version',
     steps: ['seed a draft with preset and custom tags through the API',
       'reopen the draft, add a trimmed custom tag, reject its duplicate and leave another pending',
