@@ -304,6 +304,7 @@ describe("ScenarioEditor test conditions", () => {
       ).length,
     ).toBeGreaterThan(0);
     expect(screen.queryByText(/Proved/)).toBeNull();
+    expect(screen.queryByText(/proved, not described/)).toBeNull();
   });
 
   it("disables tools that run inside the agent", () => {
