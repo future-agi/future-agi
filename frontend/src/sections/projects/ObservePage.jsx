@@ -373,14 +373,11 @@ const ObservePage = React.memo(() => {
     );
   }
 
-  // A deleted project, or one in another organisation or workspace, has no
-  // data for any tab to load, so show that instead of a tab's retry panel.
-  // Only when nothing has loaded: the current API also answers a transient
-  // failure with 400 "Project Not Found", and a failed background refetch must
-  // not replace a working page.
-  const projectUnavailableKind = projectDetail
-    ? null
-    : getResourceUnavailableKind(projectDetailError);
+  // The legacy 400 can also mean a transient failure. Keep cached content in
+  // that case, but honor a definitive refusal even after a successful load.
+  const projectUnavailableKind = getResourceUnavailableKind(projectDetailError, {
+    acceptLegacy400: !projectDetail,
+  });
   if (projectUnavailableKind) {
     return (
       <Box sx={containerStyles}>

@@ -22,7 +22,7 @@ const messagesOf = (error) =>
  * @returns {"not_found" | "forbidden" | null} null for every other failure,
  * which callers keep handling with their usual retry or error state.
  */
-export function getResourceUnavailableKind(error) {
+export function getResourceUnavailableKind(error, { acceptLegacy400 = true } = {}) {
   if (!error || typeof error !== "object") return null;
 
   const status = Number(error.statusCode ?? error.response?.status);
@@ -32,7 +32,7 @@ export function getResourceUnavailableKind(error) {
   if (status === 403 && error.code !== "2fa_required") {
     return RESOURCE_FORBIDDEN;
   }
-  if (status === 400) {
+  if (acceptLegacy400 && status === 400) {
     if (error.code === "not_found") return RESOURCE_NOT_FOUND;
     if (messagesOf(error).some((message) => NOT_FOUND_MESSAGES.has(message))) {
       return RESOURCE_NOT_FOUND;

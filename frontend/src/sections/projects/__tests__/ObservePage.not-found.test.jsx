@@ -123,7 +123,26 @@ describe("ObservePage not-found gate", () => {
     expect(screen.queryByText("traces tab")).not.toBeInTheDocument();
   });
 
-  it("keeps a loaded project's page when a later refetch fails", () => {
+  it.each([
+    [404, "Project Not Found", "not_found"],
+    [403, "Permission denied", "permission_denied"],
+  ])("replaces cached project content after a %i refusal", (status, message, code) => {
+    mockUseGetProjectDetails.mockReturnValue({
+      data: { id: "proj-1", source: "traces" },
+      error: refusal(status, message, code),
+    });
+
+    renderObservePage();
+
+    expect(screen.getByRole("link", { name: /back to observe/i })).toHaveAttribute(
+      "href", "/dashboard/observe",
+    );
+    expect(screen.queryByText("observe header")).not.toBeInTheDocument();
+    expect(screen.queryByText("observe tab bar")).not.toBeInTheDocument();
+    expect(screen.queryByText("traces tab")).not.toBeInTheDocument();
+  });
+
+  it("keeps a loaded project's page after an ambiguous 400", () => {
     mockUseGetProjectDetails.mockReturnValue({
       data: { id: "proj-1", source: "traces" },
       error: refusal(400, "Project Not Found", "invalid"),
