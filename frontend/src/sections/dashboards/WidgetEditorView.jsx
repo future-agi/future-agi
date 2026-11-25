@@ -5204,7 +5204,7 @@ export default function WidgetEditorView() {
                             {barData.rows.map((row, i) => {
                               const val = row.numericValue;
                               const color = getSeriesColor(
-                                row.name || row.label,
+                                chartSeries[i]?.name,
                                 seriesColorMap,
                                 palette,
                               );

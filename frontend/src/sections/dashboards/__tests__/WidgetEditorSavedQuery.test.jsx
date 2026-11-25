@@ -700,8 +700,8 @@ describe("restoreWidgetQueryItem typed saved contract", () => {
   );
 });
 
-it("uses the same breakdown hue for the editor plot and legend", async () => {
-  await captureReopen(SAVED_NUMERIC, "line");
+async function renderBreakdownPreview(chartType) {
+  await captureReopen(SAVED_NUMERIC, chartType);
   const response = {
     data: {
       result: {
@@ -725,6 +725,10 @@ it("uses the same breakdown hue for the editor plot and legend", async () => {
     },
   };
   act(() => h.query.mutate.mock.calls[0][1].onSuccess(response));
+}
+
+it("uses the same breakdown hue for the editor plot and legend", async () => {
+  await renderBreakdownPreview("line");
   const colors = JSON.parse(
     (await screen.findByTestId("preview-chart")).dataset.colors,
   );
@@ -733,4 +737,22 @@ it("uses the same breakdown hue for the editor plot and legend", async () => {
   expect(
     JSON.parse(screen.getByTestId("preview-legend").dataset.colors),
   ).toEqual(colors);
+});
+
+it("paints each horizontal preview bar with its legend dot color", async () => {
+  await renderBreakdownPreview("bar");
+  const fillColors = SAVED_NUMERIC.metrics.map((metric) => {
+    const name = `${metric.name} / A (${metric.aggregation})`;
+    const label = screen.getByTitle(name);
+    const fill = label.nextElementSibling.firstElementChild.firstElementChild;
+    const dot = screen
+      .getAllByText(name)
+      .find((node) =>
+        node.matches(".MuiTypography-caption"),
+      ).previousElementSibling;
+    const color = getComputedStyle(fill).backgroundColor;
+    expect(color).toBe(getComputedStyle(dot).backgroundColor);
+    return color;
+  });
+  expect(new Set(fillColors).size).toBe(2);
 });
