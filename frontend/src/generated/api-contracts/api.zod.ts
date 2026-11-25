@@ -38609,7 +38609,9 @@ export const SimulateApiAgentFixRunsListQueryParams = zod.object({
     .string()
     .min(1)
     .optional()
-    .describe("Comma-separated fix states to list."),
+    .describe(
+      "Comma-separated fix states to list, any of: queued, running, stopping, ready, no_improvement, not_reproduced, out_of_budget, stopped, failed, too_few_cases.",
+    ),
 });
 
 export const simulateApiAgentFixRunsListResponseResultsItemStageMax = 32;

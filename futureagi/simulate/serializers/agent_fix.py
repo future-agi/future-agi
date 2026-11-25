@@ -110,8 +110,7 @@ class AgentFixListQuerySerializer(serializers.Serializer):
         unknown = sorted({one or "(empty)" for one in states} - set(valid))
         if unknown:
             raise serializers.ValidationError(
-                f"Unknown state: {', '.join(unknown)}."
-                f" Use any of: {', '.join(valid)}."
+                f"Unknown state: {', '.join(unknown)}. Use any of: {', '.join(valid)}."
             )
         return states
 
@@ -353,9 +352,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     environment_id = serializers.UUIDField()
     # The run's test execution, as for launch; null once the run is deleted
     # (selectors.agent_fix.fix_runs_for_read).
-    source_run_id = serializers.UUIDField(
-        source="source_execution_id", allow_null=True
-    )
+    source_run_id = serializers.UUIDField(source="source_execution_id", allow_null=True)
     base_agent_version_id = serializers.UUIDField()
     request = AgentFixRequestSerializer()
     report = AgentFixReportSerializer(allow_null=True)
