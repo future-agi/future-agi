@@ -741,7 +741,7 @@ class BackendWorkflowTest(unittest.TestCase):
             line for line in key_text.splitlines() if line.startswith("runtime=")
         )
         self.assertNotIn("ImageVersion", runtime)
-        for recipe_input in ('$ids', '$config', '"$(uname -m)"', '"$tools"'):
+        for recipe_input in ("$ids", "$config", '"$(uname -m)"', '"$tools"'):
             self.assertIn(recipe_input, runtime)
 
         # Exercise key.sh's exact recipe output against a stable, synthetic
