@@ -672,6 +672,52 @@ def test_a_grading_delivered_twice_charges_once_and_leaves_one_row(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("change", ["instructions", "new_version", "deleted"])
+def test_a_question_edited_in_the_library_after_launch_is_not_graded(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+    change,
+):
+    """The template is in the org's library and can change while the ask runs; a
+    row is graded only on the question as it was launched, and costs nothing."""
+    from ee.usage.models.usage import APICallLog
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    ask = _launch(selection, organization, workspace, user)
+    template = EvalTemplate.objects.get(id=ask.questions[0]["eval_template_id"])
+    if change == "instructions":
+        template.config = {**template.config, "rule_prompt": "Something else?"}
+        template.save(update_fields=["config"])
+    elif change == "new_version":
+        EvalTemplateVersion.objects.create_version(
+            eval_template=template,
+            prompt_messages=[],
+            config_snapshot=template.config,
+            criteria=template.criteria,
+            model=template.model,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+    else:
+        EvalTemplate.objects.filter(id=template.id).update(deleted=True)
+
+    _grade_all(ask)
+
+    rows = _rows(ask)
+    assert {(r.state, r.cause) for r in rows} == {
+        (STATE.GRADING_ERROR, "question_changed")
+    }
+    assert decision_model.requests == []
+    assert not APICallLog.objects.filter(organization=organization).exists()
+
+
+@pytest.mark.django_db
 def test_the_claim_itself_refuses_a_row_another_delivery_took(
     organization, workspace, user, selection, gate_passes, queued
 ):

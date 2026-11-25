@@ -755,7 +755,19 @@ def _grade(row) -> dict[str, Any]:
     values = {key: _as_text(read[kind].content) for key, kind in inputs}
     from model_hub.models.evals_metric import EvalTemplate
 
-    template = EvalTemplate.no_workspace_objects.get(id=question["eval_template_id"])
+    template = EvalTemplate.no_workspace_objects.filter(
+        id=question["eval_template_id"], deleted=False
+    ).first()
+    if template is None or not _as_launched(template, question):
+        # The template is in the org's library, so it can be edited or deleted
+        # while the ask runs. The question is graded only as it was launched.
+        return {
+            "state": RESULT.GRADING_ERROR,
+            "cause": "question_changed",
+            "reason": "This question's evaluator was changed or deleted after the "
+            "ask started, so it wasn't graded.",
+            "evidence": evidence,
+        }
     if _too_large(question["model"], template, values):
         return {"state": RESULT.UNMEASURED, "cause": "too_large", "evidence": evidence}
     organization = row.ask.organization
@@ -806,6 +818,22 @@ def _grade(row) -> dict[str, Any]:
         "evaluator_log_id": result.get("log_id"),
         "evidence": evidence,
     }
+
+
+def _as_launched(template, question: Mapping[str, Any]) -> bool:
+    """Whether the template still asks what the launch saved: its instructions,
+    model, answer labels and current version."""
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    config = template.config or {}
+    current = EvalTemplateVersion.objects.get_default(template)
+    return (
+        config.get("rule_prompt") == question["criteria"]
+        and template.model == question["model"]
+        and list(template.choices or []) == list(question["labels"])
+        and current is not None
+        and current.version_number == question["template_version"]
+    )
 
 
 def _as_text(content: Any) -> str:
