@@ -255,7 +255,9 @@ def stored_agent_answer(agent_version: AgentVersion) -> StoredAgentAnswer | None
     return StoredAgentAnswer(
         agent={
             **_rebuilt_agent(setup, with_raw_setup=False),
-            "extension": _shown_extension(setup.raw_setup),
+            "extension": _shown_extension(
+                setup.raw_setup, from_code=setup.agent_kind == "source"
+            ),
         },
         sdk_version=setup.sdk_version,
         stored_at=setup.created_at,
@@ -264,14 +266,18 @@ def stored_agent_answer(agent_version: AgentVersion) -> StoredAgentAnswer | None
     )
 
 
-def _shown_extension(raw_setup: Any) -> dict[str, Any]:
+def _shown_extension(raw_setup: Any, *, from_code: bool) -> dict[str, Any]:
+    """The parts of the extension the page shows. Only an agent read from its
+    code has a setting its model is read from, so no other kind shows one."""
     raw = raw_setup if isinstance(raw_setup, dict) else {}
     return {
         **{
             name: raw[name] if isinstance(raw.get(name), dict) else None
             for name in ("framework", "source")
         },
-        "model_source": _shown_model_source(raw.get("model_source")),
+        "model_source": (
+            _shown_model_source(raw.get("model_source")) if from_code else None
+        ),
     }
 
 

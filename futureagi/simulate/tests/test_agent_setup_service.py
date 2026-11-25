@@ -456,6 +456,34 @@ def test_an_imported_agent_shows_its_model_as_before(hosted_version, provider_li
 
 
 @pytest.mark.django_db
+def test_an_imported_agent_never_shows_a_model_source_it_was_stored_with(
+    hosted_version, provider_list
+):
+    """Only an agent read from its code has a setting it reads its model from;
+    the API gives none for any other kind, whatever the document holds."""
+    from simulate.serializers.response.agent_setup import StoredAgentResponseSerializer
+
+    store_agent(
+        agent_version_id=hosted_version.id,
+        agent=hosted_agent(
+            extension={
+                "model_source": {
+                    "setting": "ANTHROPIC_MODEL",
+                    "path": "agent.py",
+                    "line": 19,
+                }
+            }
+        ),
+        sdk_version="0.2.3",
+    )
+
+    shown = StoredAgentResponseSerializer(stored_agent_answer(hosted_version)).data
+
+    assert shown["agent"]["extension"]["model_source"] is None
+    assert "ANTHROPIC_MODEL" not in str(shown)
+
+
+@pytest.mark.django_db
 def test_an_older_guest_without_instrumentation_is_stored_as_none(version):
     agent = source_agent()
     agent.pop("instrumentation")

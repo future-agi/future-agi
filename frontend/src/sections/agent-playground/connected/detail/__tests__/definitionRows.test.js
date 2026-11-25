@@ -320,8 +320,7 @@ describe("storedAgentRows", () => {
     const rows = byLabel(storedAgentRows(details));
     expect(rows.Kind.value).toBe("Source");
     expect(rows.Type.value).toBe("Voice");
-    expect(rows.Model).toBeUndefined();
-    expect(rows["Model named in the code"].value).toBe(
+    expect(rows.Model.value).toBe(
       "gpt-4.1 · temperature 0.3 · max 1024 tokens",
     );
     expect(rows.Voice.value).toBe("sonic-en · cartesia · en · speed 1");
@@ -412,20 +411,33 @@ describe("storedAgentRows", () => {
     max_tokens: null,
   });
 
-  it("says which setting sets the model, with the code's default", () => {
+  it("says which setting sets the model, where the code reads it, and the code's default", () => {
     const rows = fromSetting(
       "ANTHROPIC_MODEL",
       named("vertex_ai/gemini-3.7-flash"),
     );
     expect(rows.Model.value).toBe(
-      "Set by ANTHROPIC_MODEL (default vertex_ai/gemini-3.7-flash)",
+      "Set by ANTHROPIC_MODEL in agent.py:19 (default vertex_ai/gemini-3.7-flash)",
     );
     expect(rows["Model named in the code"]).toBeUndefined();
   });
 
-  it("names the setting alone when the code gives no default", () => {
+  it("names the setting and where it is read when the code gives no default", () => {
     const rows = fromSetting("OPENAI_MODEL", null);
-    expect(rows.Model.value).toBe("Set by OPENAI_MODEL");
+    expect(rows.Model.value).toBe("Set by OPENAI_MODEL in agent.py:19");
+  });
+
+  it("leaves out where the setting is read when the reading has no path, and the line when it has none", () => {
+    const at = (path, line) =>
+      modelRows({
+        model: named("gpt-4o"),
+        extension: { model_source: { setting: "OPENAI_MODEL", path, line } },
+      }).Model.value;
+    expect(at(null, null)).toBe("Set by OPENAI_MODEL (default gpt-4o)");
+    expect(at(null, 4)).toBe("Set by OPENAI_MODEL (default gpt-4o)");
+    expect(at("config.yaml", null)).toBe(
+      "Set by OPENAI_MODEL in config.yaml (default gpt-4o)",
+    );
   });
 
   it("never shows the default as the model in use when a setting is known", () => {
@@ -434,20 +446,24 @@ describe("storedAgentRows", () => {
       temperature: 0.2,
     });
     expect(rows.Model.value).toBe(
-      "Set by ANTHROPIC_MODEL (default claude-x) · temperature 0.2",
+      "Set by ANTHROPIC_MODEL in agent.py:19 (default claude-x) · temperature 0.2",
     );
     expect(Object.values(rows).map((r) => r.value)).not.toContain("claude-x");
   });
 
-  it("labels a name the code writes out as named in the code", () => {
+  // A reading with no setting may still hold a setting's default: readings
+  // stored before settings were recorded, and readings whose setting the kit
+  // could not confirm. So the row says only "Model", as it always has.
+  it("labels a model with no setting as Model, as before", () => {
     const rows = fromSetting(null, named("gpt-4.1"));
-    expect(rows["Model named in the code"].value).toBe("gpt-4.1");
-    expect(rows.Model).toBeUndefined();
+    expect(rows.Model.value).toBe("gpt-4.1");
+    expect(rows["Model named in the code"]).toBeUndefined();
   });
 
   it("reads an older stored reading, with no model_source, the same way", () => {
     const rows = modelRows({ model: named("gpt-4.1"), extension: undefined });
-    expect(rows["Model named in the code"].value).toBe("gpt-4.1");
+    expect(rows.Model.value).toBe("gpt-4.1");
+    expect(rows["Model named in the code"]).toBeUndefined();
   });
 
   it("has no model row when the code names neither a model nor a setting", () => {

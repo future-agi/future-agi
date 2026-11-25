@@ -174,9 +174,11 @@ export const hostedConfigurationRows = (facts) =>
 /**
  * The Model row. When the code reads its model from a setting, the customer
  * sets that setting, so the name in the code is only its default: the row
- * says where the model is set and never shows the default as the model in
- * use. An agent read from its code without a setting shows the name the code
- * names; an imported agent's row shows its model as the provider gives it.
+ * says which setting sets the model and where the code reads it, and never
+ * shows the default as the model in use. Any other row shows the model as the
+ * reading stored it, under "Model" as before: a reading with no setting may be
+ * one stored before settings were recorded, so it can't be said to name the
+ * model in use.
  */
 const modelRow = ({ kind, model, extension }) => {
   const tuning = model
@@ -185,21 +187,22 @@ const modelRow = ({ kind, model, extension }) => {
         model.max_tokens != null ? `max ${model.max_tokens} tokens` : null,
       ]
     : [];
-  const fromCode = kind === "source";
-  const setting = fromCode ? extension?.model_source?.setting : null;
-  if (setting) {
+  const source = kind === "source" ? extension?.model_source : null;
+  if (source?.setting) {
+    const where = source.path
+      ? ` in ${source.path}${source.line != null ? `:${source.line}` : ""}`
+      : "";
+    const setBy = `Set by ${source.setting}${where}`;
     return {
       label: "Model",
       value: join([
-        model?.name
-          ? `Set by ${setting} (default ${model.name})`
-          : `Set by ${setting}`,
+        model?.name ? `${setBy} (default ${model.name})` : setBy,
         ...tuning,
       ]),
     };
   }
   return {
-    label: fromCode ? "Model named in the code" : "Model",
+    label: "Model",
     value: model ? join([model.name, ...tuning]) : null,
   };
 };

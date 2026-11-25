@@ -56,6 +56,28 @@ def test_prompt_and_model_changes_alone_are_clean():
     assert result["tools_added"] == []
 
 
+def _read_from(document, setting, default="gpt-4o"):
+    document = copy.deepcopy(document)
+    document["model"] = {"provider": "openai", "name": default}
+    document["extension"] = {
+        **(document.get("extension") or {}),
+        "model_source": {"setting": setting, "path": "agent.py", "line": 2},
+    }
+    return document
+
+
+def test_a_model_read_from_another_setting_is_a_model_change():
+    before = _read_from(source_agent(), "OPENAI_MODEL")
+
+    moved = compare_documents(before, _read_from(source_agent(), "LLM_MODEL"))
+    same = compare_documents(before, _read_from(source_agent(), "OPENAI_MODEL"))
+    gained = compare_documents(source_agent(), before)
+
+    assert moved["model_changed"] is True
+    assert same["model_changed"] is False
+    assert gained["model_changed"] is True
+
+
 def test_a_new_tool_or_outside_service_is_new_tool():
     before = source_agent()
 
