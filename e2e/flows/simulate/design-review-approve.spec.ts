@@ -10,7 +10,7 @@ const ENVIRONMENTS = '/simulate/api/harness-environments';
 // Button and line copy from frontend/.../designReview/designReview.constants.js (REVIEW_COPY).
 const APPROVE = 'Approve and build';
 const removeNamed = (name: string) => `Remove ${name}`;
-const removedFromPlan = (name: string) => `${name} removed from the plan.`;
+const removedFromPlan = (name: string) => `${name} was removed from the plan.`;
 // Table from futureagi/simulate/models/hosted_harness.py (HostedHarnessJob.Meta.db_table).
 const JOBS_TABLE = 'simulate_hosted_harness_job';
 
