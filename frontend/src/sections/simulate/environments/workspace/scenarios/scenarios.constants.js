@@ -62,6 +62,7 @@ export const SCENARIOS_COPY = {
   emptyBody:
     "Scenarios are normally derived from your agent when the environment is built.",
   critical: "Critical: a failure here is a release blocker",
+  briefTip: "What the caller is told to do",
 };
 
 // A row the unsaved changes add or change; an added one can't be picked for a

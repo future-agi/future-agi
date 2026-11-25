@@ -49,9 +49,9 @@ const LOCK_TOOLTIP = "Fork this environment to edit.";
 // Body cells pinned to an edge need an opaque base (rows scroll under them)
 // and the row's hover tint layered on top. The actions column on the right is
 // set off by a hairline; the checkbox column sits flat beside the row.
-const pinnedBodyCellSx = (side) => ({
+const pinnedBodyCellSx = (side, offset = 0) => ({
   position: "sticky",
-  [side]: 0,
+  [side]: offset,
   zIndex: 1,
   bgcolor: "background.paper",
   ...(side === "right" && {
@@ -78,11 +78,12 @@ const WIDTHS_KEY = "simulate:scenario-table:column-widths";
 const DEFAULT_WIDTHS = {
   Scenario: 280,
   Persona: 200,
-  Situation: 320,
-  "Sub-goals": 260,
-  "Ideal outcome": 320,
   Tags: 200,
+  "Sub-goals": 260,
+  Brief: 320,
+  "Passes when": 320,
 };
+const HEADER_TIPS = { Brief: SCENARIOS_COPY.briefTip };
 const FIXED_WIDTHS = { select: 48, "#": 44, "": 96 };
 const FILLER = "filler";
 const edgeLine = (color) => ({
@@ -256,15 +257,23 @@ export default function ScenarioTable({
     "#",
     "Scenario",
     "Persona",
-    "Situation",
-    "Sub-goals",
-    "Ideal outcome",
     "Tags",
+    "Sub-goals",
+    "Brief",
+    "Passes when",
     FILLER,
     "",
   ];
   const widthOf = (h) => widths[h] ?? FIXED_WIDTHS[h] ?? 0;
   const tableWidth = columns.reduce((sum, h) => sum + widthOf(h), 0);
+  const numberLeft = locked ? 0 : FIXED_WIDTHS.select;
+  const pinnedLeft = {
+    "#": numberLeft,
+    Scenario: numberLeft + FIXED_WIDTHS["#"],
+  };
+  const scenarioEdgeSx = {
+    boxShadow: (t) => `1px 0 0 ${t.palette.divider}`,
+  };
 
   return (
     // No own scroll wrapper: the parent (PagedScenarioViews) owns the scroll
@@ -294,6 +303,8 @@ export default function ScenarioTable({
             const isActions = i === columns.length - 1;
             const isSelect = h === "select";
             const resize = resizeHandlers[h];
+            const tip = HEADER_TIPS[h];
+            const pinLeft = pinnedLeft[h];
             return (
               <TableCell
                 key={h || i}
@@ -317,6 +328,7 @@ export default function ScenarioTable({
                   ...(h !== FILLER && { width: widthOf(h) }),
                   ...(!isActions &&
                     h !== FILLER && { borderRight: "1px solid" }),
+                  ...(pinLeft !== undefined && { left: pinLeft, zIndex: 4 }),
                   ...(isSelect && {
                     "&.MuiTableCell-paddingCheckbox": {
                       width: FIXED_WIDTHS.select,
@@ -346,9 +358,13 @@ export default function ScenarioTable({
                   />
                 ) : resize ? (
                   <>
-                    <Box sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {h}
-                    </Box>
+                    <Tooltip arrow title={tip || ""}>
+                      <Box
+                        sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+                      >
+                        {h}
+                      </Box>
+                    </Tooltip>
                     <DraggableColResizer
                       onResize={resize.onResize}
                       getCurrentWidth={resize.getCurrentWidth}
@@ -450,8 +466,8 @@ export default function ScenarioTable({
               const subTasks = row.subTasks || [];
               const personaLine = personaSubline(p);
               const callActorLine = `With ${(row.callActors || []).map((one) => one.name).join(", ")}`;
-              const situationText = row.situation || row.task || "";
-              const idealOutcomeText = row.outcome || row.expected || "";
+              const briefText = row.situation || row.task || "";
+              const passesWhenText = row.outcome || row.expected || "";
 
               return (
                 <TableRow
@@ -506,6 +522,7 @@ export default function ScenarioTable({
                   )}
                   <TableCell
                     sx={{
+                      ...pinnedBodyCellSx("left", pinnedLeft["#"]),
                       typography: "s1",
                       color: "text.subtitle",
                       fontVariantNumeric: "tabular-nums",
@@ -515,7 +532,14 @@ export default function ScenarioTable({
                     {idx}
                   </TableCell>
 
-                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                  <TableCell
+                    sx={{
+                      ...pinnedBodyCellSx("left", pinnedLeft.Scenario),
+                      ...scenarioEdgeSx,
+                      overflow: "hidden",
+                      verticalAlign: "top",
+                    }}
+                  >
                     <Stack direction="row" alignItems="center" spacing={0.75}>
                       <TruncTooltip title={row.name || row.title}>
                         <Typography
@@ -577,18 +601,6 @@ export default function ScenarioTable({
                     )}
                   </TableCell>
 
-                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
-                    <ClampCell text={situationText} lines={limits.lines} />
-                  </TableCell>
-
-                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
-                    <SubTasksCell subTasks={subTasks} limit={limits.subTasks} />
-                  </TableCell>
-
-                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
-                    <ClampCell text={idealOutcomeText} lines={limits.lines} />
-                  </TableCell>
-
                   <TableCell
                     onClick={stopRowClick}
                     sx={{ overflow: "hidden", verticalAlign: "top" }}
@@ -602,6 +614,18 @@ export default function ScenarioTable({
                         lockTooltip={lockTooltip}
                       />
                     )}
+                  </TableCell>
+
+                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                    <SubTasksCell subTasks={subTasks} limit={limits.subTasks} />
+                  </TableCell>
+
+                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                    <ClampCell text={briefText} lines={limits.lines} />
+                  </TableCell>
+
+                  <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                    <ClampCell text={passesWhenText} lines={limits.lines} />
                   </TableCell>
 
                   <TableCell />

@@ -62,6 +62,39 @@ describe("ScenarioTable — pinned checkbox column", () => {
   });
 });
 
+describe("ScenarioTable columns", () => {
+  it("reads select, #, Scenario, Persona, Tags, Sub-goals, Brief, Passes when", () => {
+    renderTable();
+    const labels = screen
+      .getAllByRole("columnheader")
+      .map((cell) => cell.textContent.trim())
+      .filter(Boolean);
+    expect(labels).toEqual([
+      "#",
+      "Scenario",
+      "Persona",
+      "Tags",
+      "Sub-goals",
+      "Brief",
+      "Passes when",
+    ]);
+    expect(screen.queryByText("Situation")).toBeNull();
+    expect(screen.queryByText("Ideal outcome")).toBeNull();
+  });
+
+  it("keeps the Scenario column pinned beside the number while the table scrolls sideways", () => {
+    renderTable();
+    const header = screen.getByRole("columnheader", { name: "Scenario" });
+    expect(getComputedStyle(header).position).toBe("sticky");
+    expect(getComputedStyle(header).left).toBe("92px");
+    const cell = screen
+      .getByText(rows[0].name || rows[0].title)
+      .closest("td");
+    expect(getComputedStyle(cell).position).toBe("sticky");
+    expect(getComputedStyle(cell).left).toBe("92px");
+  });
+});
+
 describe("ScenarioTable — hide group", () => {
   it("calls onHideGroup with the section id when the group's eye is clicked", () => {
     const onHideGroup = vi.fn();
