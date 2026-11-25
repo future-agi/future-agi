@@ -69,8 +69,19 @@ class HealthCheckClient(ClickHouseClient):
 
     @staticmethod
     def _execute_native_read_with_remaining_timeout(
-        client, query, params, *, query_settings, started_at, timeout_ms
+        client,
+        query,
+        params,
+        *,
+        query_settings,
+        started_at,
+        timeout_ms,
+        retained_until=None,
     ):
+        # A retained lookup's expiry belongs to the optional picker reads; a
+        # health read keeps its own budget and never makes one.
+        if retained_until is not None:
+            raise ValueError("ClickHouse health reads do not take a retained lookup")
         # Unlike application reads, a diagnostic must always have a wall budget.
         if timeout_ms is None:
             raise ValueError("ClickHouse health reads require a timeout")
