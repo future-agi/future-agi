@@ -243,6 +243,47 @@ def test_egress_refusals_a_start_s_baseline_and_both_notice_shapes_are_typed():
     ).errors
 
 
+# What the kit's sealed record sends for a browser world: the agent's tool call, a page the agent tried to open, the
+# requests pages made, and a host only the proxy saw (its count stands, with no kind).
+BROWSER_BLOCKED = [
+    {"host": "api.other.test", "method": "POST", "tool": "fetch", "count": 1},
+    {"host": "www.example.com", "via": "browser", "what": "navigation", "count": 2},
+    {"host": "cdn.other.test", "via": "browser", "what": "page_request", "count": 6},
+    {"host": "fonts.other.test", "method": "CONNECT", "via": "browser", "count": 3},
+]
+
+
+def _agent(blocked):
+    return {
+        "who": "agent",
+        "name": "the agent",
+        "attempted": 0,
+        "committed": 0,
+        "refused": 0,
+        "faulted": 0,
+        "duplicate": 0,
+        "committed_actions": [],
+        "blocked": blocked,
+    }
+
+
+def test_a_browser_s_refusals_are_served_apart_from_the_agent_s_calls():
+    shown = _shown({"state_changes": [_agent(BROWSER_BLOCKED)]})
+    served = TrialStateSerializer(shown).data
+
+    assert served["state_changes"][0]["blocked"] == BROWSER_BLOCKED
+    assert TrialStateSerializer(data=shown).is_valid(), TrialStateSerializer(
+        data=shown
+    ).errors
+
+
+def test_an_older_trial_s_refusals_are_served_as_before():
+    older = [{"host": "refunds.example.com", "method": "CONNECT", "count": 2}]
+    served = TrialStateSerializer(_shown({"state_changes": [_agent(older)]})).data
+
+    assert served["state_changes"][0]["blocked"] == older
+
+
 def test_every_decision_is_named_by_its_id_when_nameless():
     named, nameless = _decisions(
         {"actor": "lead", "name": "Sam Lee", "play": "mocked"},
