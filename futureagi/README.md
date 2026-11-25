@@ -2,10 +2,25 @@
 
 ## Setup
 
+Run the commands below from the `futureagi/` directory of the repository.
+
 ### Initial Setup
 ```bash
 git submodule update --init --recursive
 ```
+
+### Quick Start
+
+With `uv` and Python 3.11 installed, run these commands from `futureagi/`:
+
+```bash
+uv sync --frozen --extra dev
+. .venv/bin/activate
+pre-commit validate-config .pre-commit-config.yaml
+```
+
+The `dev` extra supplies `pre-commit`; `requirements.txt` alone does not.
+Validation checks the configuration without installing a Git hook.
 
 ### Type Checking with MyPy
 
@@ -31,33 +46,28 @@ baselined errors, run `make mypy-baseline-sync` and commit the smaller
 baseline. CI's environment is the reference (no `ee/cloud` checkout); its run
 uploads mypy's output as the `mypy-output` artifact, which
 `python3 -I ../scripts/mypy_baseline.py sync --input <file>` turns into a
-baseline. See `scripts/mypy_baseline.py`.
+baseline. See the [baseline helper](../scripts/mypy_baseline.py) and the
+[type-checking conventions](../CONTRIBUTING.md#code-style).
 
 ### Pre-commit Hooks
 
-**This project uses pre-commit hooks to ensure code quality.** They run automatically before each commit.
-
-#### What do they check?
-
-- ✅ Code formatting and import sorting (Ruff)
-- ✅ Linting (Ruff)
-- ✅ Security (Bandit, detect-secrets)
-- ✅ Django checks (migrations, system checks)
-- ✅ File validation (YAML, JSON)
-
 #### First-time setup
 
-```bash
-# Install hooks (one-time)
-make pre-commit-install
+Choose one hook setup per clone. To check for a custom hook directory, run
+`git config --get core.hooksPath` from `futureagi/`. No output and exit status 1
+means it is unset.
 
-# Run on all files (first time)
-make pre-commit-all
-```
+- **Repository hooks (Husky):** `yarn install` at the repository root configures
+  Git to use Husky. Keep that hook path; do not run `make pre-commit-install`
+  in this clone. See the [repository hook reference](../TESTING.md#git-hooks).
+- **Standalone Python hook:** In a clone with no `core.hooksPath` set, complete
+  the [Quick Start](#quick-start), then run `make pre-commit-install` from
+  `futureagi/`. This installs the backend checks in Git's default hook directory.
 
 #### Daily usage
 
-Pre-commit runs automatically on `git commit`. You can also run manually:
+With the Quick Start environment active, you can run the backend checks manually
+in either setup:
 
 ```bash
 make pre-commit         # Run on staged files
@@ -69,15 +79,17 @@ make mypy               # Check types (baseline-driven)
 
 #### Having issues?
 
-- See [Pre-commit Setup Guide](docs/PRE_COMMIT_SETUP.md)
-- See [Quick Reference](docs/PRE_COMMIT_QUICK_REFERENCE.md)
-- Run `./scripts/verify-team-setup.sh` to diagnose issues
+- Check which [hook setup](#first-time-setup) this clone uses.
+- `pre-commit validate-config .pre-commit-config.yaml` checks the backend hook
+  configuration. The [setup checker](bin/verify-team-setup.sh) also looks for
+  `.git/hooks` in the current directory, so its hook-installation check is not
+  reliable from this subdirectory.
 
 ### Common Commands
 
 ```bash
 # Code Quality
-make pre-commit-install   # Install pre-commit hooks
+make pre-commit-install  # Standalone Python hook only (no custom Git hook path)
 make pre-commit-all       # Run all pre-commit checks
 make format              # Auto-format code
 make lint                # Run linters
@@ -85,8 +97,8 @@ make check-all           # Run all quality checks
 
 # Testing
 make test                # Run all tests
-make test-coverage       # Tests with coverage
-make test-backend-only   # Backend tests only
+make test-unit           # Tests marked unit
+make test-integration    # Tests marked integration
 
 # Django
 DEBUG=true python manage.py runserver  # Start dev server (DEBUG defaults to off; set it explicitly to serve app static files and debug pages)
@@ -101,67 +113,23 @@ Before submitting a PR:
 1. Ensure pre-commit hooks are installed
 2. Run `make pre-commit-all` to check your changes
 3. Run `make test` to ensure tests pass
-4. Follow the [PR template](.github/PULL_REQUEST_TEMPLATE.md)
+4. Follow the [PR template](../.github/PULL_REQUEST_TEMPLATE.md)
 
-See [Contributing Guide](CONTRIBUTING.md) for more details.
+See [Contributing Guide](../CONTRIBUTING.md) for more details.
 
 ### Documentation
 
-- 📚 [Pre-commit Setup Guide](docs/PRE_COMMIT_SETUP.md)
-- 📋 [Onboarding Checklist](docs/ONBOARDING_CHECKLIST.md)
-- 🔍 [Quick Reference](docs/PRE_COMMIT_QUICK_REFERENCE.md)
-- 📖 [Testing Guide](TESTING.md)
+- 📚 [Backend Quick Start](#quick-start)
+- 🔧 [Git hooks setup](#first-time-setup)
+- 🔍 [Git hooks reference](../TESTING.md#git-hooks)
+- 📖 [Testing guide](../TESTING.md)
 
 ---
-
-## Alternative Minimal Version
-
-If you want a shorter version:
-
----
-
-## Development Setup
-
-### Quick Start
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Install pre-commit hooks (MANDATORY)
-make pre-commit-install
-
-# Verify setup
-./scripts/verify-team-setup.sh
-
-# Start developing!
-```
-
-### Pre-commit Hooks
-
-This project uses pre-commit hooks to ensure code quality. They run automatically on commit.
-
-**Setup (one-time):** `make pre-commit-install`
-
-**Documentation:** [Pre-commit Guide](docs/PRE_COMMIT_SETUP.md)
-
----
-
 
 # Pre-commit Quick Reference
 
-Quick reference for pre-commit hooks usage.
-
-## One-Time Setup
-
-```bash
-# Recommended: Use the setup script
-make pre-commit-install
-
-# Or manually
-pip install pre-commit
-pre-commit install
-```
+For setup, follow the [Quick Start](#quick-start) and choose the
+[hook setup](#first-time-setup) for your clone.
 
 ## Daily Usage
 
@@ -181,21 +149,19 @@ make pre-commit-all
 
 | Command | Description |
 |---------|-------------|
-| `make pre-commit-install` | Install pre-commit hooks (one-time) |
+| `make pre-commit-install` | Install the standalone Python hook only (no custom Git hook path) |
 | `make pre-commit` | Run on staged files |
 | `make pre-commit-all` | Run on all files |
 | `make format` | Auto-fix and format code (`ruff check --fix`, `ruff format`) |
 | `make lint` | Run linters (`ruff check`, `ruff format --check`) |
-| `make check-secrets` | Check for secrets |
+| `make mypy` | Compare type errors with the baseline |
 | `make check-all` | Run all quality checks |
-| `make fix` | Auto-fix common issues |
+| `make test` | Run the backend tests |
 
 ## Quick Fixes
 
 ### "Command not found: pre-commit"
-```bash
-pip install pre-commit
-```
+Follow the [Quick Start](#quick-start) to install and activate the developer environment.
 
 ### "Hooks failed"
 1. Read the error message
@@ -228,27 +194,18 @@ SKIP=ruff-check,ruff-format git commit -m "Message"
 
 ## Installed Hooks
 
-### Auto-fixing Hooks
-✅ **ruff-check** - Linter and import sorter, with auto-fix
-✅ **ruff-format** - Python formatter
-✅ **django-upgrade** - Upgrade Django code
-✅ **djlint** - Django template formatter
-
-### Checking Hooks
-🔍 **bandit** - Security scan
-🔍 **detect-secrets** - Secret detection
-🔍 **django-check** - Django system checks
-🔍 **check-yaml/json** - File validation
+For the standalone Python hook, see the [backend hook configuration](.pre-commit-config.yaml)
+for the enabled Ruff and file checks. Husky runs the [repository hooks](../TESTING.md#git-hooks) instead.
 
 ## Troubleshooting
 
 ```bash
-# Clear cache and reinstall
+# Standalone Python hook only (no custom Git hook path): clear cache and reinstall
 pre-commit clean
 pre-commit install --install-hooks
 
-# Update hooks to latest versions
-make pre-commit-update
+# Check the current pinned hook configuration
+pre-commit validate-config .pre-commit-config.yaml
 
 # Run with verbose output
 pre-commit run --all-files --verbose
@@ -256,6 +213,6 @@ pre-commit run --all-files --verbose
 
 ## Help
 
-- 📚 [Full Setup Guide](PRE_COMMIT_SETUP.md)
+- 📚 [Git hooks setup](#first-time-setup)
 - 🔧 [Configuration](.pre-commit-config.yaml)
 - 💬 Ask in team Slack channel
