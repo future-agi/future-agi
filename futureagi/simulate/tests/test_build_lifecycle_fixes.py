@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.utils import timezone
 
+from simulate.constants.hosted_harness import USER_CANCELED
 from simulate.models import HostedHarnessJob
 from simulate.services.agent_contracts import contract_bytes
 from simulate.services.harness_build_retry import retry_failed_build, retryable
@@ -51,6 +52,7 @@ from simulate.tests.test_harness_design_review_reading import (  # noqa: F401
     client,
     review_on,
 )
+from simulate.tests.test_harness_provider import _v1_payload
 from simulate.tests.test_hosted_harness_gateway import _Daytona, _Stopped
 
 GATEWAY = "simulate.services.hosted_harness_gateway"
@@ -514,3 +516,103 @@ class TestSeededProviderKey:
         )
 
         material.assert_called_once()
+
+
+def _canceled(user, workspace, *, reason=USER_CANCELED, review=None):
+    job, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(scenario_count=3),
+        idempotency_key=uuid.uuid4().hex,
+        workspace=workspace,
+        state=HostedHarnessJob.State.CANCELED,
+    )
+    now = timezone.now()
+    job.current_stage = HostedHarnessJob.State.CANCELED
+    job.cancel_requested_at = now
+    job.cancel_reason = reason
+    job.terminal_at = now
+    if review is not None:
+        job.payload["metadata"][REVIEW_KEY] = {"status": review}
+    job.save()
+    return job
+
+
+@pytest.mark.django_db
+class TestRetryACanceledBuild:
+    @pytest.mark.parametrize("review", [None, APPROVED])
+    def test_a_build_the_user_stopped_starts_again_from_its_design(
+        self, user, workspace, review
+    ):
+        job = _canceled(user, workspace, review=review)
+        assert retryable(job)
+
+        with patch(AUTHORING), patch(START) as start:
+            retried, point = retry_failed_build(job, user=user, base_url=BASE_URL)
+
+        assert point == "start"
+        start.assert_called_once()
+        job.refresh_from_db()
+        assert (job.state, job.current_stage) == (
+            HostedHarnessJob.State.QUEUED,
+            "queued",
+        )
+        assert (job.cancel_requested_at, job.cancel_reason, job.terminal_at) == (
+            None,
+            None,
+            None,
+        )
+        assert retried.state == HostedHarnessJob.State.QUEUED
+
+    def test_a_retry_that_cannot_start_leaves_the_build_stopped_by_the_user(
+        self, user, workspace
+    ):
+        job = _canceled(user, workspace, review=APPROVED)
+        stopped_at = job.terminal_at
+
+        with (
+            patch(AUTHORING),
+            patch(START, side_effect=RuntimeError("temporal down")),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            retry_failed_build(job, user=user, base_url=BASE_URL)
+
+        assert refused.value.code == "scheduler_unavailable"
+        job.refresh_from_db()
+        assert (job.state, job.current_stage, job.cancel_reason) == (
+            HostedHarnessJob.State.CANCELED,
+            HostedHarnessJob.State.CANCELED,
+            USER_CANCELED,
+        )
+        assert job.terminal_at == stopped_at
+        assert job.cancel_requested_at is not None
+        assert retryable(job)
+
+    @pytest.mark.parametrize(
+        ("reason", "review"),
+        [
+            ("design_discarded", "discarded"),
+            ("environment_deleted", APPROVED),
+            ("ttl_exceeded", APPROVED),
+            (USER_CANCELED, "discarded"),
+        ],
+    )
+    def test_a_build_stopped_any_other_way_is_not_tried_again(
+        self, user, workspace, reason, review
+    ):
+        job = _canceled(user, workspace, reason=reason, review=review)
+        assert not retryable(job)
+
+        with (
+            patch(AUTHORING),
+            patch(START) as start,
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            retry_failed_build(job, user=user, base_url=BASE_URL)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "build_retry_not_failed",
+            409,
+        )
+        start.assert_not_called()
+        job.refresh_from_db()
+        assert job.state == HostedHarnessJob.State.CANCELED

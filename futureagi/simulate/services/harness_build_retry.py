@@ -8,8 +8,10 @@ import structlog
 from django.db import transaction
 from django.utils import timezone
 
+from simulate.constants.hosted_harness import USER_CANCELED
 from simulate.models import HostedHarnessJob
 from simulate.services.harness_design_review import (
+    APPROVED,
     READING_FAILED,
     fail_design_reading,
     fail_stale_reading,
@@ -28,11 +30,23 @@ ResumePoint = Literal["start", "checks"]
 
 def retryable(job: HostedHarnessJob) -> bool:
     """A failed environment build, not one of its runs, unless reading its agent
-    failed in a way trying again won't fix."""
+    failed in a way trying again won't fix; or a build the user stopped after its
+    design was approved, or that had no design to approve."""
+    return job.environment_id is None and _stopped(job) and not _read_for_good(job)
+
+
+def _stopped(job: HostedHarnessJob) -> bool:
+    if job.state == HostedHarnessJob.State.FAILED:
+        return True
+    return job.state == HostedHarnessJob.State.CANCELED and _stopped_by_user(job)
+
+
+def _stopped_by_user(job: HostedHarnessJob) -> bool:
+    review = stored_review(job)
     return (
-        job.environment_id is None
-        and job.state == HostedHarnessJob.State.FAILED
-        and not _read_for_good(job)
+        job.cancel_reason == USER_CANCELED
+        and not job.deleted
+        and (review is None or review.get("status") == APPROVED)
     )
 
 
@@ -94,7 +108,7 @@ def retry_failed_build(
 ) -> tuple[HostedHarnessJob, ResumePoint]:
     """Queue a failed build again and start its workflow. A build whose agent could
     not be read reads it again, and waits for its design to be approved. Refused
-    with 409 for a run, a build that did not fail, or a reading that failed for good,
+    with 409 for a run, a build that is not stopped, or a reading that failed for good,
     and with 503 when the workflow could not start, in which case the build is
     failed again with the failure it had."""
     from simulate.services.harness_usage import require_harness_authoring
@@ -112,12 +126,18 @@ def retry_failed_build(
                 "Only an environment's build can be tried again; start a new run instead",
                 status_code=409,
             )
-        if locked.state != HostedHarnessJob.State.FAILED:
+        if not _stopped(locked):
             raise HostedHarnessError(
                 "build_retry_not_failed",
                 f"Only a stopped build can be tried again; this one is {locked.state}",
                 status_code=409,
             )
+        previous = {
+            "state": locked.state,
+            "current_stage": locked.current_stage,
+            "cancel_requested_at": locked.cancel_requested_at,
+            "cancel_reason": locked.cancel_reason,
+        }
         previous_failure, previous_end = locked.failure, locked.terminal_at
         if _read_for_good(locked):
             raise HostedHarnessError(
@@ -135,12 +155,16 @@ def retry_failed_build(
             locked.current_stage = "queued"
             locked.failure = None
             locked.terminal_at = None
+            locked.cancel_requested_at = None
+            locked.cancel_reason = None
             locked.save(
                 update_fields=[
                     "state",
                     "current_stage",
                     "failure",
                     "terminal_at",
+                    "cancel_requested_at",
+                    "cancel_reason",
                     "updated_at",
                 ]
             )
@@ -161,14 +185,13 @@ def retry_failed_build(
                 id=locked.id
             )
             if reverted.state == HostedHarnessJob.State.QUEUED:
-                reverted.state = HostedHarnessJob.State.FAILED
-                reverted.current_stage = "failed"
+                for field, value in previous.items():
+                    setattr(reverted, field, value)
                 reverted.failure = previous_failure
                 reverted.terminal_at = previous_end or timezone.now()
                 reverted.save(
                     update_fields=[
-                        "state",
-                        "current_stage",
+                        *previous,
                         "failure",
                         "terminal_at",
                         "updated_at",
