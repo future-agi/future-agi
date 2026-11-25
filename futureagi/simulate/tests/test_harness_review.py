@@ -1,3 +1,4 @@
+import copy
 import json
 
 import jsonpatch
@@ -111,8 +112,6 @@ def test_a_dict_moved_and_edited_in_a_list_gives_a_patch_that_builds_the_draft(
     ],
 )
 def test_a_patch_is_checked_on_copies_and_leaves_the_draft_as_it_was(was, now):
-    import copy
-
     before = {**TOOLS[1], "examples": was}
     after = {**TOOLS[1], "examples": now}
     draft = _tree({"tools": [TOOLS[0], after]})
@@ -120,7 +119,8 @@ def test_a_patch_is_checked_on_copies_and_leaves_the_draft_as_it_was(was, now):
 
     [change] = compute_changes(_tree({"tools": [TOOLS[0], before]}), draft)
 
-    assert jsonpatch.apply_patch(copy.deepcopy(before), change["patch"]) == seen
+    # The draft's own value is as it was before the review read it.
+    assert after == seen
     assert jsonpatch.apply_patch(copy.deepcopy(before), change["patch"]) == seen
 
 
