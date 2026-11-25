@@ -1,13 +1,13 @@
 import { request } from '@playwright/test';
 import type { APIRequestContext, Locator, Page, Request, Response } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { fetchRoute } from '../../lib/backend-request';
 import { sendTrace } from '../../lib/otlp';
 import { POLL, StateProbe } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { PAGER_VIEWPORT, UI_READY, openObserveList, pagerButton, readPager, selectPageSize, waitForCurrentPage } from '../../lib/pager';
 import type { TestActor } from '../../lib/provisioning';
-
 test.use({ viewport: PAGER_VIEWPORT }); // why this size: lib/pager.ts
 
 // The trace list request the Observe trace table issues, pinned off the running
@@ -612,7 +612,7 @@ test('OBS-E2E-030: has_more without a strictly greater total promises no page nu
         await route.continue(); return;
       }
       rewritten = true;
-      const response = await route.fetch();
+      const response = await fetchRoute(route);
       const body = await response.json();
       const seen = SIZE * 2; // page 1 (10 rows) + this page (10 rows)
       body.result.metadata.has_more = true;
