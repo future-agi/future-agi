@@ -33,10 +33,11 @@ def controller_args(job):
     )
 
 
-def _invalid():
+def _invalid(reason=""):
     return HostedHarnessError(
         "source_snapshot_changed",
-        "This build does not match its accepted source review.",
+        "This build does not match its accepted source review."
+        + (f" ({reason})" if reason else ""),
         status_code=409,
     )
 
@@ -57,7 +58,7 @@ def expected_pin(job):
         or str(row.id) != pin.get("review_id")
         or str(job.id) != pin.get("owner_id")
     ):
-        raise _invalid()
+        raise _invalid("accepted snapshot changed before scenario validation")
     expected = {
         "id": row.receipt["snapshot_id"],
         "digest": row.snapshot_digest,
@@ -153,18 +154,53 @@ def _trusted_scenarios(job, manifest, pin):
     except HostedHarnessError as exc:
         if exc.retryable:
             raise
-        raise _invalid() from None
+        raise _invalid(f"scenario generation failed with {exc.code}") from None
     if (
         (result.get("snapshot_id"), result.get("snapshot_digest"))
         != (pin["id"], pin["digest"])
         or result.get("simulation_schema_digest") != pin["schema_digest"]
         or result.get("bundle_digest") != manifest.get("digest")
     ):
-        raise _invalid()
+        raise _invalid("scenario generation returned different source or bundle digests")
     expected = result.get("scenarios")
     if not isinstance(expected, list) or len(expected) != job.scenario_count:
-        raise _invalid()
+        raise _invalid("scenario generation returned the wrong scenario count")
     return expected
+
+
+def _semantic_source_digest(case, document, setup, ready):
+    values = {
+        **document,
+        "setup_code": setup.decode(),
+        "ready_code": ready.decode(),
+    }
+    if "This scenario runs on the base world unchanged." in values["setup_code"]:
+        values["setup_code"] = ""
+    if "Nothing beyond the base world is presumed." in values["ready_code"]:
+        values["ready_code"] = ""
+    semantic_fields = (
+        "instruction",
+        "tests",
+        "setup_code",
+        "ready_code",
+        "solution",
+        "alternatives",
+        "sub_goals",
+        "variables",
+    )
+    body = {
+        "case": case,
+        "scenario": {field: values.get(field) for field in semantic_fields},
+    }
+    return "sha256:" + hashlib.sha256(
+        json.dumps(
+            body,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
 
 
 def check_archive(job, body):
@@ -174,13 +210,13 @@ def check_archive(job, body):
     files = archives.read_archive(body)
     try:
         if any(json.loads(files[path]) != pin for path in (root, bundled + root)):
-            raise _invalid()
+            raise _invalid("archive source pin changed")
         manifest = json.loads(files[bundled + "manifest.json"])
         if (
             manifest["schema_version"] != "futureagi.environment-bundle.v2"
             or manifest["metadata"]["reviewed_source"] != pin
         ):
-            raise _invalid()
+            raise _invalid("bundle source pin changed")
         entries = manifest["files"]
         published = {
             path.removeprefix(bundled): content
@@ -190,51 +226,85 @@ def check_archive(job, body):
         if {entry["path"] for entry in entries} != set(published) or len(
             entries
         ) != len(published):
-            raise _invalid()
+            raise _invalid("bundle manifest file set changed")
         for entry in entries:
             content = published[entry["path"]]
             if (len(content), hashlib.sha256(content).hexdigest()) != (
                 entry["size"],
                 entry["sha256"],
             ):
-                raise _invalid()
-        expected = _trusted_scenarios(job, manifest, pin)
+                raise _invalid(f"bundle file changed: {entry['path']}")
         scenarios = json.loads(files["scenarios.json"])
         if not isinstance(scenarios, list) or len(scenarios) != job.scenario_count:
-            raise _invalid()
+            raise _invalid("archive scenario count changed")
+        expected = _trusted_scenarios(job, manifest, pin)
         proofs = json.loads(files["proofs.json"])
-        expected_by_key = {item["native"]["scenario_key"]: item for item in expected}
-        if len(expected_by_key) != len(expected):
-            raise _invalid()
+        expected_by_case = {item["source_case"]["id"]: item for item in expected}
+        if len(expected_by_case) != len(expected):
+            raise _invalid("trusted scenarios contain duplicate source cases")
+        # Older authors assigned a fresh ID to every slot, even when a row
+        # repeated. Keep accepting those IDs while requiring all distinct cases.
+        case_identity = {
+            key: json.dumps(
+                {k: v for k, v in item["source_case"].items() if k not in {"id", "proof_digest"}},
+                sort_keys=True,
+            )
+            for key, item in expected_by_case.items()
+        }
         seen = set()
+        seen_cases = set()
         for scenario in scenarios:
             key = scenario["scenario_key"]
             folder = scenario["folder"]
-            trusted = expected_by_key.get(key)
             if (
-                trusted is None
-                or folder != "scenarios/" + key
+                folder != "scenarios/" + scenario["name"]
                 or "/" in key
-                or scenario != {**trusted["native"], "folder": folder}
+                or "/" in scenario["name"]
             ):
-                raise _invalid()
+                raise _invalid(f"scenario index changed: {key}")
             path = folder + "/scenario.json"
-            document = json.loads(files[path])
+            archived_document = json.loads(files[path])
             bundled_document = json.loads(published[path])
-            case = document["fixture"]["reviewed_source"]
+            index = {
+                **archived_document,
+                "steps": len(archived_document.get("solution") or []),
+                "folder": folder,
+            }
+            setup = files[folder + "/setup.py"]
+            ready = files[folder + "/ready.py"]
+            if key in seen:
+                raise _invalid(f"scenario reuses an identity or source case: {key}")
+            if scenario != index or bundled_document != archived_document:
+                raise _invalid(f"scenario index or bundle copy changed: {key}")
             if (
-                key in seen
-                or document != trusted["native"]
-                or bundled_document != trusted["native"]
-                or case != trusted["source_case"]
-                or scenario["fixture"]["reviewed_source"] != trusted["source_case"]
-                or proofs[key]["reviewed_source_digest"]
-                != trusted["source_case"]["proof_digest"]
+                published[folder + "/setup.py"] != setup
+                or published[folder + "/ready.py"] != ready
             ):
-                raise _invalid()
+                raise _invalid(f"scenario script bundle copy changed: {key}")
             seen.add(key)
-        if seen != set(expected_by_key) or set(proofs) != set(expected_by_key):
-            raise _invalid()
+            fixture = archived_document["fixture"]
+            if "reviewed_source" not in fixture:
+                if proofs[key].get("reviewed_source_digest"):
+                    raise _invalid(f"ordinary scenario carries a source proof: {key}")
+                continue
+            case = fixture["reviewed_source"]
+            trusted = expected_by_case.get(case["id"])
+            if trusted is None or case["id"] in seen_cases:
+                raise _invalid(f"scenario uses an unknown or repeated source case: {key}")
+            if (
+                case != trusted["source_case"]
+                or scenario["fixture"]["reviewed_source"] != case
+            ):
+                raise _invalid(f"scenario approved source case changed: {key}")
+            if (
+                proofs[key]["reviewed_source_digest"]
+                != _semantic_source_digest(case, archived_document, setup, ready)
+            ):
+                raise _invalid(f"scenario source proof changed: {key}")
+            seen_cases.add(case["id"])
+        covered = {case_identity[key] for key in seen_cases}
+        if covered != set(case_identity.values()) or set(proofs) != seen:
+            raise _invalid("scenario, source case, or proof key set changed")
     except (KeyError, TypeError, ValueError, UnicodeError):
         raise _invalid() from None
     return pin
@@ -255,6 +325,8 @@ def complete(attempt, body):
     try:
         check_archive(job, body)
     except HostedHarnessError as exc:
+        if exc.retryable:
+            raise
         job.failure = {"code": exc.code, "message": exc.message}
         job.state = HostedHarnessJob.State.FAILED
     else:

@@ -404,7 +404,7 @@ def capture_documents(
             suffix = PurePath(name).suffix.lower()
             if suffix in {".docx", ".rtf", ".md"}:
                 raw = (
-                    extract_document_text(raw, name).encode()
+                    extract_document_text(raw, name, preserve_lines=True).encode()
                     if suffix != ".md"
                     else raw
                 )
@@ -911,7 +911,7 @@ def _accept_captured(request, owner, staged, review, existing_projection):
                 "draft": staged["draft_payload"],
                 "review": _checked_review(request, staged, review),
                 "reviewer_id": str(request.user.id),
-                "existing_environments": existing_projection,
+                "prior_source_projection": existing_projection,
             }
         )
     )

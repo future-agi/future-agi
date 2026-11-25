@@ -346,52 +346,17 @@ class TestCancelKbIngestionWorkflow:
 class TestCreateFilesAndUploadWithThreadPool:
     """Tests for create_files_and_upload with ThreadPoolExecutor."""
 
-    @patch(
-        "model_hub.views.develop_dataset.CreateKnowledgeBaseView._upload_file_to_s3_background"
-    )
-    def test_uses_thread_pool_executor(self, mock_upload):
-        """Test that ThreadPoolExecutor is used instead of daemon threads."""
-        from model_hub.views.develop_dataset import CreateKnowledgeBaseView
-
-        view = CreateKnowledgeBaseView()
-
-        mock_file = MagicMock()
-        mock_file.name = "test.pdf"
-        mock_file.size = 1024
-        mock_file.read.return_value = b"test content"
-
-        # Get the executor
-        executor = view._get_upload_executor()
-
-        # Verify it's a ThreadPoolExecutor
-        from concurrent.futures import ThreadPoolExecutor
-
-        assert isinstance(executor, ThreadPoolExecutor)
-
-    @patch(
-        "model_hub.views.develop_dataset.CreateKnowledgeBaseView._upload_file_to_s3_background"
-    )
-    def test_executor_is_singleton(self, mock_upload):
-        """Test that executor is reused (singleton pattern)."""
-        from model_hub.views.develop_dataset import CreateKnowledgeBaseView
-
-        view = CreateKnowledgeBaseView()
-
-        executor1 = view._get_upload_executor()
-        executor2 = view._get_upload_executor()
-
-        assert executor1 is executor2
-
-    @patch(
-        "model_hub.views.develop_dataset.CreateKnowledgeBaseView._get_upload_executor"
-    )
-    def test_submits_to_executor(self, mock_get_executor):
+    @patch("concurrent.futures.ThreadPoolExecutor")
+    def test_submits_to_request_owned_executor(self, pool_type):
         """Test that uploads are submitted to the executor."""
         from model_hub.views.develop_dataset import CreateKnowledgeBaseView
 
         view = CreateKnowledgeBaseView()
         mock_executor = MagicMock()
-        mock_get_executor.return_value = mock_executor
+        pool_type.return_value.__enter__.return_value = mock_executor
+        mock_executor.submit.return_value.result.return_value = (
+            "http://storage.test/test.pdf"
+        )
 
         mock_file = MagicMock()
         mock_file.name = "test.pdf"
@@ -403,16 +368,37 @@ class TestCreateFilesAndUploadWithThreadPool:
         # Should have submitted to executor
         mock_executor.submit.assert_called_once()
 
-    @patch(
-        "model_hub.views.develop_dataset.CreateKnowledgeBaseView._get_upload_executor"
-    )
-    def test_multiple_files_submitted_to_executor(self, mock_get_executor):
+    @patch("concurrent.futures.ThreadPoolExecutor")
+    def test_waits_for_uploads_before_returning(self, pool_type):
+        """Ingestion must not be scheduled before the object exists in storage."""
+        from model_hub.views.develop_dataset import CreateKnowledgeBaseView
+
+        view = CreateKnowledgeBaseView()
+        executor = MagicMock()
+        pool_type.return_value.__enter__.return_value = executor
+        future = MagicMock()
+        future.result.return_value = "http://storage.test/test.txt"
+        executor.submit.return_value = future
+        mock_file = MagicMock(name="uploaded-file")
+        mock_file.name = "test.txt"
+        mock_file.size = 12
+        mock_file.read.return_value = b"test content"
+
+        view.create_files_and_upload([mock_file], "test-user", "kb-123")
+
+        future.result.assert_called_once_with()
+
+    @patch("concurrent.futures.ThreadPoolExecutor")
+    def test_multiple_files_submitted_to_executor(self, pool_type):
         """Test that multiple files are submitted to executor."""
         from model_hub.views.develop_dataset import CreateKnowledgeBaseView
 
         view = CreateKnowledgeBaseView()
         mock_executor = MagicMock()
-        mock_get_executor.return_value = mock_executor
+        pool_type.return_value.__enter__.return_value = mock_executor
+        mock_executor.submit.return_value.result.return_value = (
+            "http://storage.test/test.pdf"
+        )
 
         files = []
         for i in range(5):
@@ -435,6 +421,7 @@ class TestCreateFilesAndUploadWithThreadPool:
         from model_hub.views.develop_dataset import CreateKnowledgeBaseView
 
         view = CreateKnowledgeBaseView()
+        mock_upload.return_value = "http://storage.test/document.docx"
 
         mock_file = MagicMock()
         mock_file.name = "document.docx"

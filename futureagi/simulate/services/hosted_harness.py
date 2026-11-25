@@ -3193,7 +3193,7 @@ def record_cleanup(
             and not metadata.get("adaptation")
             and not metadata.get("design")
             and (
-                not job.run_test_id
+                (not job.run_test_id and not _scenario_only_source_build(job))
                 or not metadata.get("authoring_object_key")
                 or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
                 != job.scenario_count

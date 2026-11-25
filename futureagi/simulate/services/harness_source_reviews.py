@@ -149,16 +149,24 @@ def _environment_schema(
 ) -> tuple[dict | None, list[str]]:
     version = drafts.fresh_draft(owner, "environment") or owner.environment_version
     schema = ((version.documents or {}).get("contract") or {}).get("data_schema") or {}
-    columns = (
-        [
-            (str(table), str(name), str(sql_type))
-            for table, fields in schema.items()
-            if isinstance(fields, dict)
-            for name, sql_type in fields.items()
-        ]
-        if isinstance(schema, dict)
-        else []
-    )
+    columns = []
+    if isinstance(schema, dict):
+        for table, table_schema in schema.items():
+            if not isinstance(table_schema, dict):
+                continue
+            fields = table_schema.get("properties", table_schema)
+            if not isinstance(fields, dict):
+                continue
+            columns.extend(
+                (
+                    str(table),
+                    str(name),
+                    str(field.get("type", "string"))
+                    if isinstance(field, dict)
+                    else str(field),
+                )
+                for name, field in fields.items()
+            )
     if not columns:
         columns = _sql_columns(version.archive_object_key)
     tables = sorted({table for table, _name, _kind in columns})

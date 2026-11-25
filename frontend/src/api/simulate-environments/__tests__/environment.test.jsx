@@ -335,6 +335,27 @@ describe("harnessJobToEnvironment — only the real world, no fixture fill", () 
 });
 
 describe("harnessJobToEnvironment", () => {
+  it("does not expose environment versioning on a design job", () => {
+    const design = {
+      ...COMPLETED_JOB,
+      job: {
+        ...COMPLETED_JOB.job,
+        metadata: {
+          ...COMPLETED_JOB.job.metadata,
+          design: { name: "Designed environment" },
+        },
+      },
+      versioning: { enabled: true, nudges_enabled: true },
+    };
+
+    expect(harnessJobToEnvironment(design).env.supportsEvidenceImports).toBe(false);
+    expect(harnessJobToEnvironment(COMPLETED_JOB).env.supportsEvidenceImports).toBe(true);
+    expect(harnessJobToEnvironment(design).env.versioning).toEqual({
+      enabled: false,
+      nudges_enabled: true,
+    });
+  });
+
   it("reads platform from the top-level detail response", () => {
     const { env } = harnessJobToEnvironment(COMPLETED_JOB);
     expect(env.platform.runTestId).toBe("rt1");

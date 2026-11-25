@@ -2,7 +2,7 @@ export const buildSourceReview = (draft, decisions = {}) => {
   const sources = draft?.sources || [];
   const proposals = draft?.proposals || {};
   const {
-    testedAgent = false,
+    testedAgent = true,
     acceptedMappingIndexes = [],
     acceptedRuleIds = [],
     acceptedRelationshipIndexes = [],

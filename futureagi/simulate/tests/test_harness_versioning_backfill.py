@@ -74,6 +74,11 @@ class _RealisticStorage(_Storage):
             raise S3Error(None, "NoSuchKey", "missing", object_name, "request", "host")
         return object_name
 
+    def get_bucket_policy(self, bucket):
+        raise S3Error(
+            None, "NoSuchBucketPolicy", "missing", bucket, "request", "host"
+        )
+
 
 @pytest.fixture
 def storage(monkeypatch):

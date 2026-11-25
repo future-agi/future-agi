@@ -221,6 +221,7 @@ export function harnessJobToEnvironment(item) {
 
   const env = {
     id: job.job_id,
+    supportsEvidenceImports: !(job.metadata?.design || job.metadata?.adaptation),
     name: environmentName(job),
     agentType: agentTypeFor(item?.credentials?.detected_connectors),
     status: jobStatusFor(status),
@@ -239,7 +240,9 @@ export function harnessJobToEnvironment(item) {
     stageOutputs: item?.stage_outputs,
     parallelism: item?.parallelism || null,
     // Whether this environment shows its version history ({enabled, nudges_enabled}).
-    versioning: item?.versioning || null,
+    versioning: job.metadata?.design
+      ? { ...item?.versioning, enabled: false }
+      : item?.versioning || null,
     tools: world.tools,
     rules: world.rules,
     seed: world.seed,

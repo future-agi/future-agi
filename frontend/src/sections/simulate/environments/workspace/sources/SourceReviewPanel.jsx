@@ -65,7 +65,7 @@ function SourceReviewEditor({
   );
   const [ruleIds, setRuleIds] = useState([]);
   const [joinIndexes, setJoinIndexes] = useState([]);
-  const [testedAgent, setTestedAgent] = useState(false);
+  const [testedAgent, setTestedAgent] = useState(true);
   const [personalDataModes, setPersonalDataModes] = useState(() =>
     Object.fromEntries(
       mappings

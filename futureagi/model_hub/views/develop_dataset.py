@@ -15818,57 +15818,64 @@ class CreateKnowledgeBaseView(APIView):
             "files_with_issues": files_with_issues,
         }
 
-    # Bounded thread pool for S3 uploads - prevents resource exhaustion
-    _upload_executor = None
-
-    @classmethod
-    def _get_upload_executor(cls):
-        """Get or create the bounded ThreadPoolExecutor for S3 uploads."""
-        if cls._upload_executor is None:
-            from concurrent.futures import ThreadPoolExecutor
-
-            cls._upload_executor = ThreadPoolExecutor(
-                max_workers=10, thread_name_prefix="kb-s3-upload"
-            )
-        return cls._upload_executor
-
     def create_files_and_upload(self, files, user, kb_id, org_id=None):
+        from concurrent.futures import ThreadPoolExecutor
+
+        files = list(files)
         created_files = []
         file_metadata = {}
-        executor = self._get_upload_executor()
+        uploads = []
 
-        for file_obj in files:
-            file_name = file_obj.name
-            file_size = file_obj.size
-            extension = file_name.split(".")[-1].lower() if "." in file_name else ""
+        # A request-owned pool cannot be inherited in a broken state when an
+        # application server forks or respawns a worker.
+        with ThreadPoolExecutor(
+            max_workers=min(10, max(1, len(files))),
+            thread_name_prefix="kb-s3-upload",
+        ) as executor:
+            for file_obj in files:
+                file_name = file_obj.name
+                file_size = file_obj.size
+                extension = (
+                    file_name.split(".")[-1].lower() if "." in file_name else ""
+                )
 
-            # Create Files record
-            file_instance = Files.objects.create(
-                name=file_name,
-                status=StatusType.PROCESSING.value,
-                metadata=json.dumps({"size": file_size}),
-                updated_by=user,
-            )
+                file_instance = Files.objects.create(
+                    name=file_name,
+                    status=StatusType.PROCESSING.value,
+                    metadata=json.dumps({"size": file_size}),
+                    updated_by=user,
+                )
 
-            # Read file bytes for S3 upload
-            file_obj.seek(0)
-            file_bytes = file_obj.read()
+                file_obj.seek(0)
+                uploads.append(
+                    executor.submit(
+                        self._upload_file_to_s3_background,
+                        file_obj.read(),
+                        file_name,
+                        str(kb_id),
+                        str(file_instance.id),
+                        org_id,
+                    )
+                )
 
-            # Submit to bounded thread pool (max 10 concurrent uploads)
-            executor.submit(
-                self._upload_file_to_s3_background,
-                file_bytes,
-                file_name,
-                str(kb_id),
-                str(file_instance.id),
-                org_id,
-            )
+                file_metadata[str(file_instance.id)] = {
+                    "name": file_name,
+                    "extension": extension,
+                }
+                created_files.append(str(file_instance.id))
 
-            file_metadata[str(file_instance.id)] = {
-                "name": file_name,
-                "extension": extension,
-            }
-            created_files.append(str(file_instance.id))
+            # Ingestion is scheduled as soon as this method returns. Every
+            # object must exist in storage before that hand-off.
+            for file_id, upload in zip(created_files, uploads, strict=True):
+                try:
+                    uploaded_url = upload.result()
+                except Exception as exc:
+                    Files.objects.filter(id=file_id).update(
+                        status=StatusType.FAILED.value,
+                        metadata=json.dumps({"error": str(exc)}),
+                    )
+                    raise
+                Files.objects.filter(id=file_id).update(uploaded_url=uploaded_url)
 
         return {
             "files": created_files,
@@ -15878,34 +15885,17 @@ class CreateKnowledgeBaseView(APIView):
     def _upload_file_to_s3_background(
         self, file_bytes, file_name, kb_id, file_id, org_id=None
     ):
-        from django.db import close_old_connections, connection
-
         from tfc.utils.storage import upload_file_to_s3
 
-        try:
-            close_old_connections()
-            connection.ensure_connection()
-
-            upload_file_to_s3(
-                file_bytes=file_bytes,
-                file_name=file_name,
-                kb_id=kb_id,
-                file_id=file_id,
-                org_id=org_id,
-            )
-            logger.info(f"Background S3 upload completed for file {file_id}")
-
-        except Exception as e:
-            logger.error(f"Background S3 upload failed for file {file_id}: {e}")
-            try:
-                Files.objects.filter(id=file_id).update(
-                    status=StatusType.FAILED.value,
-                    metadata=json.dumps({"error": str(e)}),
-                )
-            except Exception as db_error:
-                logger.error(f"Failed to update file status: {db_error}")
-        finally:
-            close_old_connections()
+        uploaded_url = upload_file_to_s3(
+            file_bytes=file_bytes,
+            file_name=file_name,
+            kb_id=kb_id,
+            file_id=file_id,
+            org_id=org_id,
+        )
+        logger.info(f"Background S3 upload completed for file {file_id}")
+        return uploaded_url
 
     # Check if file is valid
     def is_file_readable(self, file_obj):

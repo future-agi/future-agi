@@ -128,6 +128,13 @@ describe("Prebuild source review", () => {
       2,
       `${path}accept/`,
       expect.objectContaining({
+        decisions: expect.objectContaining({
+          record_reviews: [
+            expect.objectContaining({
+              audience: { tested_agent: true, participant_ids: [] },
+            }),
+          ],
+        }),
         expected_revision: 3,
         expected_schema_digest: "sha256:new-schema",
         expected_draft_digest: "sha256:repaired",

@@ -14,8 +14,12 @@ class DocumentTextError(ValueError):
     pass
 
 
-def normalize_document_text(text: str) -> str:
-    normalized = " ".join(text.replace("\x00", "").split()).strip()
+def normalize_document_text(text: str, *, preserve_lines: bool = False) -> str:
+    text = text.replace("\x00", "")
+    if preserve_lines:
+        normalized = "\n".join(" ".join(line.split()) for line in text.splitlines()).strip()
+    else:
+        normalized = " ".join(text.split())
     if not normalized:
         raise DocumentTextError("Document contains no extractable text.")
     if len(normalized) > MAX_DOCUMENT_TEXT_CHARS:
@@ -23,13 +27,14 @@ def normalize_document_text(text: str) -> str:
     return normalized
 
 
-def extract_pdf_reader_text(reader) -> str:
+def extract_pdf_reader_text(reader, *, preserve_lines: bool = False) -> str:
     return normalize_document_text(
-        "\n\n".join((page.extract_text() or "").strip() for page in reader.pages)
+        "\n\n".join((page.extract_text() or "").strip() for page in reader.pages),
+        preserve_lines=preserve_lines,
     )
 
 
-def extract_document_text(content: bytes, filename: str) -> str:
+def extract_document_text(content: bytes, filename: str, *, preserve_lines: bool = False) -> str:
     """Extract normalized text without filesystem or indexing side effects."""
     if not isinstance(content, bytes) or len(content) > MAX_DOCUMENT_BYTES:
         raise DocumentTextError("Document exceeds the 25 MiB import limit.")
@@ -40,7 +45,7 @@ def extract_document_text(content: bytes, filename: str) -> str:
         if suffix == ".pdf":
             from pypdf import PdfReader
 
-            return extract_pdf_reader_text(PdfReader(io.BytesIO(content)))
+            return extract_pdf_reader_text(PdfReader(io.BytesIO(content)), preserve_lines=preserve_lines)
         elif suffix == ".docx":
             import docx
 
@@ -56,4 +61,4 @@ def extract_document_text(content: bytes, filename: str) -> str:
         raise
     except Exception as exc:
         raise DocumentTextError("Document text could not be extracted.") from exc
-    return normalize_document_text(text)
+    return normalize_document_text(text, preserve_lines=preserve_lines)

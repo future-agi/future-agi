@@ -65,6 +65,36 @@ def test_environment_with_multiple_tables_requires_a_destination(monkeypatch):
     ]
 
 
+def test_environment_schema_reads_generated_json_schema(monkeypatch):
+    monkeypatch.setattr(reviews.drafts, "fresh_draft", lambda *_: None)
+    owner = SimpleNamespace(
+        environment_version=SimpleNamespace(
+            documents={
+                "contract": {
+                    "data_schema": {
+                        "analyses": {
+                            "type": "object",
+                            "properties": {
+                                "email": {"type": "string"},
+                                "relevance": {"type": "integer"},
+                            },
+                            "description": "Qualified leads",
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    schema, tables = reviews._environment_schema(owner, None)
+
+    assert tables == ["analyses"]
+    assert schema["fields"] == [
+        {"name": "email", "data_type": "string", "required": False},
+        {"name": "relevance", "data_type": "integer", "required": False},
+    ]
+
+
 @pytest.fixture
 def mock_processor(monkeypatch):
     calls = []

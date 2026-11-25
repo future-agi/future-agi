@@ -41,8 +41,9 @@ def staging_expiry_scheduled(monkeypatch):
     return schedule
 
 
+@pytest.mark.parametrize("certified", [True, False])
 def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
-    user, workspace, request, monkeypatch, auth_client
+    user, workspace, request, monkeypatch, auth_client, certified
 ):
     storage = request.getfixturevalue("_storage_fixture")
     environment = _environment(user, workspace, "source-import")
@@ -66,22 +67,22 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
             {"compiler": {"bundle_digest": digest}, "source": {"digest": agent_source}}
         )
 
-    record_authoring(
-        environment,
-        _authoring(
-            **{
-                assembly.SEALED_MANIFEST: json.dumps(
-                    {
-                        "digest": old_seal,
-                        "provenance": {"source_digest": agent_source},
-                        "metadata": {"reviewed_source": previous_pin},
-                    }
-                ),
-                assembly.CERTIFICATE: certifies(old_seal),
-                pin_path: harness_sources._canonical(previous_pin).decode(),
-                bundled_pin_path: harness_sources._canonical(previous_pin).decode(),
+    sealed = {
+        assembly.SEALED_MANIFEST: json.dumps(
+            {
+                "digest": old_seal,
+                "provenance": {"source_digest": agent_source},
+                "metadata": {"reviewed_source": previous_pin},
             }
         ),
+        pin_path: harness_sources._canonical(previous_pin).decode(),
+        bundled_pin_path: harness_sources._canonical(previous_pin).decode(),
+    }
+    if certified:
+        sealed[assembly.CERTIFICATE] = certifies(old_seal)
+    record_authoring(
+        environment,
+        _authoring(sealed=False, **sealed),
         origin="authoring",
     )
     environment.refresh_from_db()
@@ -147,9 +148,10 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
                         },
                     }
                 ).encode(),
-                assembly.CERTIFICATE: certifies(new_seal).encode(),
                 bundled_pin_path: harness_sources._canonical(pin),
             }
+            if certified:
+                sealed[assembly.CERTIFICATE] = certifies(new_seal).encode()
             for case in trusted_scenarios:
                 folder = f"scenarios/{case['native']['scenario_key']}"
                 for name in ("scenario.json", "setup.py", "ready.py"):
@@ -347,7 +349,7 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
     assert bundle["environment_hash"] == source_draft.hash
     assert bundle["suite_hash"] == suite_draft.hash
     sealed = archives.read_archive(archives.get_archive(bundle["key"]))
-    assert assembly.certifies_bundle(sealed)
+    assert assembly.certifies_bundle(sealed) is certified
     assert assembly.manifest_facts(sealed) == (new_seal, agent_source)
     accepted_pin = {
         "id": "snapshot-kb",

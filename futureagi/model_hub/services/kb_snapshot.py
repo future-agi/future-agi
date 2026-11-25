@@ -140,7 +140,7 @@ def capture_knowledge_base_selection(
                 filename = f"source-{index}.pdf"
                 media_type = "application/pdf"
             else:
-                parsed = extract_document_text(original, file.name).encode("utf-8")
+                parsed = extract_document_text(original, file.name, preserve_lines=True).encode("utf-8")
                 filename = f"source-{index}.txt"
                 media_type = "text/plain"
         except DocumentTextError as exc:

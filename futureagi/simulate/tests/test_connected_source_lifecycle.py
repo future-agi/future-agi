@@ -174,21 +174,34 @@ def test_each_connector_parks_and_recovers_approved_inputs(
     }
     case["proof_digest"] = reviews.schema_digest(case)
     scenario = {
-        "scenario_key": "refund",
-        "name": "refund",
+        "scenario_key": "reviewed-refund",
+        "name": "policy-refund",
+        "use_case": "Test the approved returns policy",
         "fixture": {"reviewed_source": case},
     }
     scenario_bytes = json.dumps(scenario).encode()
+    setup_bytes = b'def setup(world):\n    world["route_code"] = "ORCHID-72"\n'
+    ready_bytes = b'def ready(world):\n    return world["route_code"] == "ORCHID-72"\n'
     files = {
         "reviewed-source.json": raw,
         "environment-bundle/reviewed-source.json": raw,
         "scenarios.json": json.dumps(
-            [{**scenario, "folder": "scenarios/refund"}]
+            [{**scenario, "steps": 0, "folder": "scenarios/policy-refund"}]
         ).encode(),
-        "scenarios/refund/scenario.json": scenario_bytes,
-        "environment-bundle/scenarios/refund/scenario.json": scenario_bytes,
+        "scenarios/policy-refund/scenario.json": scenario_bytes,
+        "scenarios/policy-refund/setup.py": setup_bytes,
+        "scenarios/policy-refund/ready.py": ready_bytes,
+        "environment-bundle/scenarios/policy-refund/scenario.json": scenario_bytes,
+        "environment-bundle/scenarios/policy-refund/setup.py": setup_bytes,
+        "environment-bundle/scenarios/policy-refund/ready.py": ready_bytes,
         "proofs.json": json.dumps(
-            {"refund": {"reviewed_source_digest": case["proof_digest"]}}
+            {
+                "reviewed-refund": {
+                    "reviewed_source_digest": builds._semantic_source_digest(
+                        case, scenario, setup_bytes, ready_bytes
+                    )
+                }
+            }
         ).encode(),
     }
     manifest = {
@@ -202,14 +215,30 @@ def test_each_connector_parks_and_recovers_approved_inputs(
                 "sha256": hashlib.sha256(raw).hexdigest(),
             },
             {
-                "path": "scenarios/refund/scenario.json",
+                "path": "scenarios/policy-refund/scenario.json",
                 "size": len(scenario_bytes),
                 "sha256": hashlib.sha256(scenario_bytes).hexdigest(),
+            },
+            {
+                "path": "scenarios/policy-refund/setup.py",
+                "size": len(setup_bytes),
+                "sha256": hashlib.sha256(setup_bytes).hexdigest(),
+            },
+            {
+                "path": "scenarios/policy-refund/ready.py",
+                "size": len(ready_bytes),
+                "sha256": hashlib.sha256(ready_bytes).hexdigest(),
             },
         ],
     }
     files["environment-bundle/manifest.json"] = json.dumps(manifest).encode()
     trusted_requests = []
+    trusted_native = {
+        **scenario,
+        "scenario_key": "generated-refund",
+        "name": "generated-refund",
+        "use_case": "Test the behavior of the connected agent",
+    }
 
     def trusted_scenarios(payload):
         trusted_requests.append(payload)
@@ -221,7 +250,7 @@ def test_each_connector_parks_and_recovers_approved_inputs(
                 "simulation_schema_digest": pin["schema_digest"],
                 "bundle_digest": manifest["digest"],
                 "scenarios": [
-                    {"native": scenario, "source_case": case, "scenario": {}}
+                    {"native": trusted_native, "source_case": case, "scenario": {}}
                 ],
             },
         }
@@ -230,12 +259,22 @@ def test_each_connector_parks_and_recovers_approved_inputs(
     assert builds.check_archive(job, _archive(files)) == pin
     assert trusted_requests[-1]["operation"] == "generate_scenarios"
     assert trusted_requests[-1]["bundle_manifest"] == manifest
+    task = (
+        job.payload["metadata"].get("agent_name")
+        or job.name
+        or "the connected agent"
+    )
+    assert trusted_requests[-1]["environment_requirements"] == {
+        "task": f"Test the behavior of {task}"
+    }
     for path in (
         "reviewed-source.json",
         "environment-bundle/reviewed-source.json",
         "environment-bundle/manifest.json",
         "proofs.json",
-        "scenarios/refund/scenario.json",
+        "scenarios/policy-refund/scenario.json",
+        "scenarios/policy-refund/setup.py",
+        "scenarios/policy-refund/ready.py",
     ):
         with pytest.raises(HostedHarnessError):
             builds.check_archive(job, _archive({**files, path: b"{}"}))
@@ -306,3 +345,39 @@ def test_each_connector_parks_and_recovers_approved_inputs(
             assert completed.state == HostedHarnessJob.State.COMPLETED
             assert completed.scenario_registrations.count() == 1
             assert completed.payload["metadata"]["authoring_object_key"]
+
+
+def test_archive_mixes_ordinary_and_grounded_scenarios_without_losing_coverage(monkeypatch):
+    from types import SimpleNamespace
+
+    pin = {"id": "s1", "digest": "snapshot", "schema_digest": "schema"}
+    monkeypatch.setattr(builds, "expected_pin", lambda _job: pin)
+    case = {"id": "rule-a", "category": "success", "policy_reference": "Give code RA-25"}
+    expected = [{"source_case": case}, {"source_case": {**case, "id": "old-second-slot"}}]
+    monkeypatch.setattr(builds, "_trusted_scenarios", lambda *_: expected)
+    job = SimpleNamespace(scenario_count=2)
+    files = {"reviewed-source.json": json.dumps(pin).encode()}
+    index, proofs = [], {}
+    for key, fixture in [("refund", {"reviewed_source": case}), ("greeting", {})]:
+        folder = f"scenarios/{key}"
+        document = {"name": key, "scenario_key": key, "fixture": fixture}
+        index.append({**document, "steps": 0, "folder": folder})
+        files[folder + "/scenario.json"] = json.dumps(document).encode()
+        files[folder + "/setup.py"] = files[folder + "/ready.py"] = b""
+        proofs[key] = (
+            {"reviewed_source_digest": builds._semantic_source_digest(case, document, b"", b"")}
+            if fixture else {}
+        )
+    manifest = {
+        "schema_version": "futureagi.environment-bundle.v2", "metadata": {"reviewed_source": pin},
+        "files": [{"path": k, "size": len(v), "sha256": hashlib.sha256(v).hexdigest()}
+                  for k, v in files.items()],
+    }
+    files.update({"environment-bundle/" + k: v for k, v in files.copy().items()})
+    files["environment-bundle/manifest.json"] = json.dumps(manifest).encode()
+    files["scenarios.json"] = json.dumps(index).encode()
+    files["proofs.json"] = json.dumps(proofs).encode()
+    assert builds.check_archive(job, _archive(files)) == pin
+    expected[1]["source_case"] = {**case, "id": "rule-b", "policy_reference": "Escalate damage"}
+    with pytest.raises(HostedHarnessError, match="source case"):
+        builds.check_archive(job, _archive(files))

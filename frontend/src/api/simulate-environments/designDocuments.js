@@ -11,7 +11,7 @@ const upload = async (file, options) => {
   try {
     return await uploadHarnessDesignDocument(file, options);
   } catch (error) {
-    const code = error?.response?.data?.code || error?.code;
+    const code = error?.response?.data?.code || error?.code || error?.error;
     const normalized = {
       document_too_large: "too_large",
       document_unsupported: "unsupported",

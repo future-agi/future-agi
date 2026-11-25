@@ -149,6 +149,7 @@ def _generate(generation, owner):
                 "snapshot": snapshot,
                 "environment_requirements": {"task": f"Test the behavior of {task}"},
                 "requested_count": generation.requested_count,
+                "distinct_source_cases": True,
             }
         )
     )
@@ -167,12 +168,13 @@ def _generate(generation, owner):
 
 
 def _seal(
-    owner, environment, suite, *, snapshot, result, schema_digest, generated_keys
+    owner, environment, suite, *, snapshot, result, schema_digest, generated_keys, requested_count
 ):
     base = drafts._default_authoring(owner)
     if base is None:
         raise _unsealed()
     previous_digest, agent_source = assembly.manifest_facts(base.sealed)
+    base_has_certificate = assembly.CERTIFICATE in base.sealed
     if not schema_digest or previous_digest is None:
         raise _unsealed()
     tree = archives.compose(environment, suite, base.sealed)
@@ -190,6 +192,7 @@ def _seal(
                 "operation": "reseal_scenarios",
                 "mode": "existing_environment",
                 "generated_scenario_keys": generated_keys,
+                "distinct_case_budget": requested_count,
                 "schema_digest": schema_digest,
                 "snapshot": snapshot,
                 "authoring_archive_base64": base64.b64encode(
@@ -220,7 +223,7 @@ def _seal(
         or digest == previous_digest
         or digest != response.get("bundle_digest")
         or resealed_agent_source != agent_source
-        or not assembly.certifies_bundle(split.sealed)
+        or (base_has_certificate and not assembly.certifies_bundle(split.sealed))
         or response.get("reviewed_source") != pin
         or metadata.get("reviewed_source") != pin
         or split.sealed.get("environment-bundle/reviewed-source.json")
@@ -286,7 +289,7 @@ def _prepare(generation, owner, result, approved_ids, snapshot):
         generated.append(
             {"scenario_key": key, "name": native["name"], "citations": citations}
         )
-    if len(generated) != generation.requested_count:
+    if not 1 <= len(generated) <= generation.requested_count:
         raise HostedHarnessError(
             "source_generation_incomplete",
             "The processor did not return every requested grounded scenario.",
@@ -301,6 +304,7 @@ def _prepare(generation, owner, result, approved_ids, snapshot):
         result=result,
         schema_digest=generation.review.basis["schema_digest"],
         generated_keys=[one["scenario_key"] for one in generated],
+        requested_count=generation.requested_count,
     )
     return archive, digest, generated
 

@@ -128,6 +128,7 @@ export default function ScenariosStep({
   // An evidence import opened from Observe, or a transcript added here, lands
   // as `?import=`.
   const [searchParams, setSearchParams] = useSearchParams();
+  const evidenceEnvId = env?.supportsEvidenceImports === false || env?.designBuild ? null : env?.id;
   const importId = searchParams.get(IMPORT_PARAM);
   const closeImport = () => {
     const next = new URLSearchParams(searchParams);
@@ -584,9 +585,9 @@ export default function ScenariosStep({
                         search={debouncedQuery}
                         filters={filters}
                       />
-                      {!rowsLocked && !editHint && env?.id && (
+                      {!rowsLocked && !editHint && evidenceEnvId && (
                         <ImportEvidenceButton
-                          envId={env.id}
+                          envId={evidenceEnvId}
                           onImported={openImport}
                         />
                       )}
@@ -650,8 +651,8 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
-              {!rowsLocked && !editHint && env?.id ? (
-                <DraftImports envId={env.id} onResume={openImport} />
+              {!rowsLocked && !editHint && evidenceEnvId ? (
+                <DraftImports envId={evidenceEnvId} onResume={openImport} />
               ) : null}
               <PagedScenarioViews
                 pageData={pageData}
@@ -689,9 +690,9 @@ export default function ScenariosStep({
         </ClickAwayListener>
       )}
 
-      {importId && env?.id ? (
+      {importId && evidenceEnvId ? (
         <EvidenceReviewDrawer
-          envId={env.id}
+          envId={evidenceEnvId}
           importId={importId}
           open
           onClose={closeImport}

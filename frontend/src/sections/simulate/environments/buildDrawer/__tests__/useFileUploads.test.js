@@ -14,7 +14,7 @@ describe("useFileUploads", () => {
     uploadHarnessDesignDocument
       .mockResolvedValueOnce({ id: "a84ffd6f-d21d-4121-944c-fa82dcc9b8d1" })
       .mockRejectedValueOnce(new Error("The upload was interrupted"))
-      .mockRejectedValueOnce({ code: "document_unsupported" })
+      .mockRejectedValueOnce({ error: "document_unsupported" })
       .mockResolvedValueOnce({ id: "76469425-7b3d-40f9-8146-dd2f318345f0" });
     const { result } = renderHook(() => useFileUploads());
     act(() =>
