@@ -32,6 +32,7 @@ type Registry struct {
 	providers      map[string]Provider
 	modelMap       map[string]string   // model name → provider ID
 	modelProviders map[string][]string // model name → all provider IDs that serve it
+	skipped        map[string]bool     // immutable after startup; unknown provider formats
 	router         *routing.Router     // nil if no routing configured
 }
 
@@ -40,12 +41,18 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 	r := &Registry{
 		providers:      make(map[string]Provider),
 		modelMap:       make(map[string]string),
+		skipped:        make(map[string]bool),
 		modelProviders: make(map[string][]string),
 	}
 
 	for name, pcfg := range cfg.Providers {
 		// Apply provider presets (auto-fill base_url, api_format from type).
 		applyProviderPreset(&pcfg)
+		if !slices.Contains(providerFormats, pcfg.APIFormat) {
+			r.skipped[name] = true
+			slog.Warn("skipping provider with unsupported api_format", "provider", name, "api_format", pcfg.APIFormat)
+			continue
+		}
 
 		// Apply optimized defaults for local/self-hosted providers.
 		applyLocalDefaults(&pcfg)
@@ -81,7 +88,9 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 
 	// Apply explicit model map from config (overrides provider-level).
 	for model, providerID := range cfg.ModelMap {
-		r.modelMap[model] = providerID
+		if !r.skipped[providerID] {
+			r.modelMap[model] = providerID
+		}
 	}
 
 	// Create router if routing config is present or if models have multiple providers.
@@ -90,7 +99,7 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 		for id := range r.providers {
 			providerIDs[id] = true
 		}
-		router, err := routing.NewRouter(cfg.Routing, providerIDs, r.modelProviders)
+		router, err := routing.NewRouter(r.activeTargets(cfg.Routing), providerIDs, r.modelProviders)
 		if err != nil {
 			return nil, fmt.Errorf("creating router: %w", err)
 		}
@@ -115,6 +124,26 @@ func (r *Registry) hasMultiProviderModels() bool {
 	}
 	return false
 }
+
+// activeTargets drops only targets of deliberately skipped providers. A target
+// naming an unconfigured provider is still a configuration error.
+func (r *Registry) activeTargets(cfg config.RoutingConfig) config.RoutingConfig {
+	if len(r.skipped) == 0 {
+		return cfg
+	}
+	targets := make(map[string][]config.RoutingTargetConfig, len(cfg.Targets))
+	for model, entries := range cfg.Targets {
+		for _, target := range entries {
+			if !r.skipped[target.Provider] {
+				targets[model] = append(targets[model], target)
+			}
+		}
+	}
+	cfg.Targets = targets
+	return cfg
+}
+
+var providerFormats = []string{"openai", "anthropic", "gemini", "google", "bedrock", "cohere", "azure", APIFormatSystemOne, apiFormatTypeSafe, "deepgram", "cartesia"}
 
 func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 	switch cfg.APIFormat {
@@ -144,7 +173,7 @@ func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 	case "deepgram", "cartesia":
 		return speech.New(name, cfg)
 	default:
-		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure, systemone, deepgram, cartesia)", cfg.APIFormat)
+		return nil, fmt.Errorf("unsupported api_format %q (supported: %s)", cfg.APIFormat, strings.Join(providerFormats, ", "))
 	}
 }
 
@@ -265,7 +294,7 @@ func (r *Registry) ResolveForScope(model string, excluded map[string]bool, indep
 	}
 
 	// If only one provider is configured, use it as default.
-	if len(r.providers) == 1 {
+	if len(r.providers) == 1 && len(r.skipped) == 0 {
 		for id, p := range r.providers {
 			if !excluded[id] {
 				return &ResolveResult{Provider: p}, nil
@@ -493,7 +522,7 @@ func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig, health ...*rout
 	var newRouter *routing.Router
 	if routingCfg.DefaultStrategy != "" || len(routingCfg.Targets) > 0 {
 		var err error
-		newRouter, err = routing.NewRouter(routingCfg, providerIDs, modelProviders, sharedHealth)
+		newRouter, err = routing.NewRouter(r.activeTargets(routingCfg), providerIDs, modelProviders, sharedHealth)
 		if err != nil {
 			return err
 		}
