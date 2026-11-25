@@ -1171,14 +1171,16 @@ def _questions_asked_this_turn(
         .first()
         or 0
     )
-    return set(
-        conversation.events.filter(
+    return {
+        message_id
+        for message_id in conversation.events.filter(
             kind__in=_QUESTION_EVENTS,
             sequence__gt=turn_began,
             sequence__lt=before_sequence,
             message_id__isnull=False,
         ).values_list("message_id", flat=True)
-    )
+        if message_id is not None
+    }
 
 
 def _close_taken_answers(conversation: HostedHarnessConversation) -> None:

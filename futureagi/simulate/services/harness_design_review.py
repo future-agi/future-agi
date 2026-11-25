@@ -276,7 +276,7 @@ def _current_agent(
         return runtime
     if version.id == runtime.agent_version_id:
         return runtime
-    current = _side_row(version.id)
+    current: HarnessAgentVersionRuntime | None = _side_row(version.id)
     if current is None:
         return runtime
     _move_build_to(job, current)
