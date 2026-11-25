@@ -284,13 +284,15 @@ export const REQUIRED_EVAL_COPY = {
 export const CHECK_LINE_COPY = {
   from: "From",
   heading: { subGoals: "Sub-goals", evals: "Required evals" },
-  failedOf: (failed, total) => `${failed} of ${total} failed`,
-  passedOf: (kind, passed, total) =>
-    kind === "subGoals"
-      ? `${passed} of ${total} met`
-      : `${passed} of ${total} passed`,
-  allPassed: (kind, total) =>
-    kind === "subGoals" ? `all ${total} met` : `all ${total} passed`,
+  failedOf: (failed, total, someApply) =>
+    `${failed} of ${total}${someApply ? " that apply" : ""} failed`,
+  passedOf: (kind, passed, total, someApply) =>
+    `${passed} of ${total}${someApply ? " that apply" : ""} ${kind === "subGoals" ? "met" : "passed"}`,
+  allPassed: (kind, total, someApply) =>
+    `all ${total}${someApply ? " that apply" : ""} ${kind === "subGoals" ? "met" : "passed"}`,
+  noneApply: (total) =>
+    total === 1 ? "does not apply" : `none of ${total} apply`,
+  notEvaluated: "not evaluated",
   waitingAll: (total) => `${total} waiting`,
   showMore: (n) => `+ ${n} more`,
   showLess: "Show less",

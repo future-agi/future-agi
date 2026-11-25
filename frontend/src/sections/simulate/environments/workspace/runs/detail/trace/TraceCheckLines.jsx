@@ -82,14 +82,21 @@ function evalItem(result) {
 const byState = (one, other) =>
   ORDER.indexOf(one.state) - ORDER.indexOf(other.state);
 
-function countLine(kind, items) {
-  const count = (state) => items.filter((one) => one.state === state).length;
+function countLine(kind, items, notEvaluated) {
+  const applicable = items.filter((one) => one.state !== "not_applicable");
+  const someApply = applicable.length < items.length;
+  const count = (state) =>
+    applicable.filter((one) => one.state === state).length;
   const failed = count("failed");
   const passed = count("passed");
-  if (failed) return C.failedOf(failed, items.length);
-  if (count("waiting") === items.length) return C.waitingAll(items.length);
-  if (passed === items.length) return C.allPassed(kind, items.length);
-  return C.passedOf(kind, passed, items.length);
+  if (notEvaluated && !failed && !passed) return C.notEvaluated;
+  if (!applicable.length) return C.noneApply(items.length);
+  if (failed) return C.failedOf(failed, applicable.length, someApply);
+  if (count("waiting") === applicable.length)
+    return C.waitingAll(applicable.length);
+  if (passed === applicable.length)
+    return C.allPassed(kind, applicable.length, someApply);
+  return C.passedOf(kind, passed, applicable.length, someApply);
 }
 
 function Row({ item }) {
@@ -140,7 +147,7 @@ Row.propTypes = {
   }).isRequired,
 };
 
-function Group({ kind, items }) {
+function Group({ kind, items, notEvaluated }) {
   const [open, setOpen] = useState(false);
   if (!items.length) return null;
   const sorted = [...items].sort(byState);
@@ -153,7 +160,7 @@ function Group({ kind, items }) {
         <Box component="span" sx={{ fontWeight: 600, color: "text.secondary" }}>
           {C.heading[kind]}
         </Box>
-        {` · ${countLine(kind, sorted)}`}
+        {` · ${countLine(kind, sorted, notEvaluated)}`}
       </Typography>
       {shown.map((item) => (
         <Row key={item.key} item={item} />
@@ -183,12 +190,17 @@ function Group({ kind, items }) {
 Group.propTypes = {
   kind: PropTypes.oneOf(["subGoals", "evals"]).isRequired,
   items: PropTypes.array.isRequired,
+  notEvaluated: PropTypes.bool,
 };
 
 const hasFailure = (group) =>
   group.items.some((item) => item.state === "failed");
 
-export default function TraceCheckLines({ subGoals = [], requiredEvals = [] }) {
+export default function TraceCheckLines({
+  subGoals = [],
+  requiredEvals = [],
+  notEvaluated = false,
+}) {
   if (!subGoals.length && !requiredEvals.length) return null;
   const groups = [
     { kind: "subGoals", items: subGoals.map(subGoalItem) },
@@ -197,7 +209,12 @@ export default function TraceCheckLines({ subGoals = [], requiredEvals = [] }) {
   return (
     <Stack spacing={1} sx={{ mt: 1 }} data-testid="trace-check-lines">
       {groups.map((group) => (
-        <Group key={group.kind} kind={group.kind} items={group.items} />
+        <Group
+          key={group.kind}
+          kind={group.kind}
+          items={group.items}
+          notEvaluated={notEvaluated}
+        />
       ))}
     </Stack>
   );
@@ -222,4 +239,5 @@ TraceCheckLines.propTypes = {
       reason: PropTypes.string,
     }),
   ),
+  notEvaluated: PropTypes.bool,
 };

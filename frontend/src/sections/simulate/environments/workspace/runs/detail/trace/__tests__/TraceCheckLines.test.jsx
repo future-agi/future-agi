@@ -36,6 +36,37 @@ describe("TraceCheckLines", () => {
     expect(groups[1]).toHaveTextContent("Sub-goals · all 2 met");
   });
 
+  it("counts only the sub-goals that apply", () => {
+    render(
+      <TraceCheckLines
+        subGoals={[
+          ...goals([true, true]),
+          { name: "loyalty", passed: null, result: "not_applicable" },
+          { name: "confirmation", passed: null, result: "not_applicable" },
+        ]}
+      />,
+    );
+    expect(screen.getByTestId("trace-check-group-subGoals")).toHaveTextContent(
+      "Sub-goals · all 2 that apply met",
+    );
+  });
+
+  it("says a call nothing was scored on was not evaluated, not 0 met", () => {
+    render(
+      <TraceCheckLines notEvaluated subGoals={goals([null, null, null])} />,
+    );
+    expect(screen.getByTestId("trace-check-group-subGoals")).toHaveTextContent(
+      "Sub-goals · not evaluated",
+    );
+  });
+
+  it("keeps a verdict the harness gave even when the call was not scored", () => {
+    render(<TraceCheckLines notEvaluated subGoals={goals([true, null])} />);
+    expect(screen.getByTestId("trace-check-group-subGoals")).toHaveTextContent(
+      "Sub-goals · 1 of 2 met",
+    );
+  });
+
   it("folds a long group and opens it in place", async () => {
     render(
       <TraceCheckLines subGoals={goals([false, true, true, true, true])} />,

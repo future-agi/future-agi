@@ -363,6 +363,7 @@ export default function TraceTable({
                 </CustomTooltip>
               )}
               <TraceCheckLines
+                notEvaluated={t.scoringStatus === "not_applicable"}
                 subGoals={t.subGoalResults}
                 requiredEvals={(t.evalResults || []).filter(
                   (result) => result.required,
