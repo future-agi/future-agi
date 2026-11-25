@@ -396,6 +396,17 @@ def test_a_question_that_reads_audio_is_refused_for_a_decision_model():
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("mark", ["{{ x }}", "{% if x %}", "{# note #}"])
+def test_a_question_with_template_braces_is_refused(mark):
+    # The question starts the template's instructions; its braces would be read
+    # as variables or template code.
+    with pytest.raises(LaunchRefused) as refused:
+        typed_question("q1", f"Did the agent say {mark}?", kinds=(Kind.TRANSCRIPT,))
+
+    assert refused.value.code == "question_invalid"
+
+
+@pytest.mark.django_db
 def test_a_queue_that_refuses_the_job_leaves_infrastructure_errors_not_fails(
     organization, workspace, user, selection, gate_passes
 ):
@@ -491,7 +502,9 @@ def test_an_input_too_large_for_the_model_is_unmeasured_and_never_sent(
     """Instructions are never cut: too large is unmeasured, and costs nothing."""
     agent_version.configuration_snapshot = {
         **agent_version.configuration_snapshot,
-        "description": "x" * 200_000,
+        # Words, not one unbroken run: the shared URL-password redaction is slow
+        # on a single 200,000-character token.
+        "description": "Refund only with a receipt. " * 8_000,
     }
     agent_version.save(update_fields=["configuration_snapshot"])
     ask = _launch(selection, organization, workspace, user)
@@ -503,6 +516,10 @@ def test_an_input_too_large_for_the_model_is_unmeasured_and_never_sent(
     assert {r.cause for r in rows} == {"too_large"}
     assert {r.evaluator_log_id for r in rows} == {None}
     assert decision_model.requests == []
+    # Refused before the evaluator: it writes no usage log row of its own.
+    from ee.usage.models.usage import APICallLog
+
+    assert not APICallLog.objects.filter(organization=organization).exists()
 
 
 @pytest.mark.django_db
@@ -568,6 +585,9 @@ def test_credits_that_run_out_stop_the_ask_and_cancel_what_has_not_run(
         "simulate.services.ask_engine.run_eval_func", side_effect=refusal
     ) as evaluator:
         grade_row(str(first.id))
+        # The stop cancels what has not run, before anything else is graded.
+        second.refresh_from_db()
+        assert (second.state, second.cause) == (STATE.CANCELLED, "credits")
         grade_row(str(second.id))
 
     assert evaluator.call_count == 1
@@ -577,6 +597,51 @@ def test_credits_that_run_out_stop_the_ask_and_cancel_what_has_not_run(
     ask.refresh_from_db()
     assert ask.status == SimulateAsk.Status.STOPPED
     assert ask.stop_cause == "credits"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("status", ["insufficient_credits", "resource_limit"])
+def test_a_usage_log_that_refuses_for_credits_stops_the_ask_too(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+    status,
+):
+    # The shared evaluator's other refusal: its usage log row is not created as
+    # processing, and it raises ValueError("API call not allowed : ", status).
+    ask = _launch(selection, organization, workspace, user)
+    first, second = _rows(ask)
+    with patch(
+        "simulate.services.ask_engine.run_eval_func",
+        side_effect=ValueError("API call not allowed : ", status),
+    ):
+        grade_row(str(first.id))
+
+    rows = _rows(ask)
+    assert {r.state for r in rows} == {STATE.CANCELLED}
+    assert {r.cause for r in rows} == {"credits"}
+    ask.refresh_from_db()
+    assert ask.status == SimulateAsk.Status.STOPPED
+
+
+@pytest.mark.django_db
+def test_a_failure_of_the_step_itself_still_closes_the_claimed_row(
+    organization, workspace, user, selection, gate_passes, queued, decision_model
+):
+    ask = _launch(selection, organization, workspace, user)
+    row = _rows(ask)[0]
+
+    with patch.object(engine, "_too_large", side_effect=RuntimeError("boom")):
+        assert grade_row(str(row.id)) == "done"
+
+    row.refresh_from_db()
+    assert (row.state, row.cause) == (STATE.GRADING_ERROR, "step_failed")
+    assert "boom" not in (row.reason or "")
+    assert decision_model.requests == []
 
 
 # --- at most once, and at most four at a time --------------------------------------
@@ -607,6 +672,22 @@ def test_a_grading_delivered_twice_charges_once_and_leaves_one_row(
 
 
 @pytest.mark.django_db
+def test_the_claim_itself_refuses_a_row_another_delivery_took(
+    organization, workspace, user, selection, gate_passes, queued
+):
+    """Two deliveries that both read the row unclaimed: only one claim holds."""
+    ask = _launch(selection, organization, workspace, user)
+    row = _rows(ask)[0]
+    stale = SimulateEvalResult.objects.get(id=row.id)
+
+    first = engine._claim(stale)
+    second = engine._claim(stale)
+
+    assert first not in ("taken", "busy")
+    assert second == "taken"
+
+
+@pytest.mark.django_db
 def test_a_row_taken_by_a_worker_that_died_becomes_an_infrastructure_error(
     organization, workspace, user, selection, gate_passes, queued, decision_model
 ):
@@ -623,6 +704,69 @@ def test_a_row_taken_by_a_worker_that_died_becomes_an_infrastructure_error(
     assert row.cause == "worker_died"
     # It is not run again by itself; only the row nobody had taken was graded.
     assert len(decision_model.requests) == 1
+
+
+@pytest.mark.django_db
+def test_rows_still_waiting_when_the_job_runs_out_of_time_are_not_left_pending(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+    monkeypatch,
+):
+    ask = _launch(selection, organization, workspace, user)
+    # The organisation has no free place, and the job's time is already up.
+    monkeypatch.setattr(engine, "MAX_GRADING_AT_ONCE_PER_ORG", 0)
+    monkeypatch.setattr(engine, "RUN_TIME_LIMIT_SECONDS", 300)
+
+    _run_ask(ask)
+
+    rows = _rows(ask)
+    assert {(r.state, r.cause) for r in rows} == {
+        (STATE.INFRASTRUCTURE_ERROR, "not_run")
+    }
+    assert decision_model.requests == []
+    ask.refresh_from_db()
+    assert ask.status == SimulateAsk.Status.FINISHED
+
+
+@pytest.mark.django_db
+def test_an_ask_whose_job_ended_is_settled_when_read(
+    organization, workspace, user, selection, gate_passes, queued
+):
+    ask = _launch(selection, organization, workspace, user)
+    first, second = _rows(ask)
+    SimulateEvalResult.objects.filter(ask=ask).update(
+        created_at=timezone.now() - engine.SETTLE_AFTER - timedelta(seconds=1)
+    )
+    SimulateEvalResult.objects.filter(id=first.id).update(
+        claimed_at=timezone.now() - engine.GRADING_GIVE_UP - timedelta(seconds=1)
+    )
+
+    engine.settle_ask(ask.id)
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert (first.state, first.cause) == (STATE.INFRASTRUCTURE_ERROR, "worker_died")
+    assert (second.state, second.cause) == (STATE.INFRASTRUCTURE_ERROR, "job_ended")
+    ask.refresh_from_db()
+    assert ask.status == SimulateAsk.Status.FINISHED
+
+
+@pytest.mark.django_db
+def test_a_recent_ask_is_left_to_its_job_when_read(
+    organization, workspace, user, selection, gate_passes, queued
+):
+    ask = _launch(selection, organization, workspace, user)
+
+    engine.settle_ask(ask.id)
+
+    assert {r.state for r in _rows(ask)} == {STATE.PENDING}
+    ask.refresh_from_db()
+    assert ask.status == SimulateAsk.Status.RUNNING
 
 
 @pytest.mark.django_db

@@ -75,6 +75,7 @@ MAX_CATEGORIES = 10
 MAX_LABEL_LENGTH = 200
 MAX_DEFINITION_LENGTH = 2000
 YES_NO_LABELS = ("Yes", "No")
+TEMPLATE_MARKS = ("{{", "}}", "{%", "%}", "{#", "#}")
 # Gradings at once for one organisation (a guessed limit), so an ask cannot
 # crowd that organisation's own Instant Eval runs or use up its key's limits.
 MAX_GRADING_AT_ONCE_PER_ORG = 4
@@ -87,6 +88,8 @@ GRADING_GIVE_UP = timedelta(minutes=30)
 BUSY_WAIT_SECONDS = 2
 # The job's own ceiling: at most 200 calls x 5 questions, 4 at a time.
 RUN_TIME_LIMIT_SECONDS = 6 * 60 * 60
+# After this long since a launch, no job is still working on its ask.
+SETTLE_AFTER = timedelta(seconds=RUN_TIME_LIMIT_SECONDS) + GRADING_GIVE_UP
 # The source the evaluator's log row and usage name.
 EVAL_SOURCE = "simulate_ask"
 
@@ -175,6 +178,13 @@ def typed_question(
         raise LaunchRefused(
             "question_invalid",
             f"Write the question in 1 to {MAX_QUESTION_LENGTH} characters.",
+        )
+    if any(mark in text for mark in TEMPLATE_MARKS):
+        # The question is the start of the template's instructions, so its own
+        # braces would be read as variables or template code.
+        raise LaunchRefused(
+            "question_invalid",
+            "A question can't contain {{ }}, {% %} or {# #}.",
         )
     answer_type = AnswerType(answer_type)
     if answer_type == AnswerType.YES_NO:
@@ -335,9 +345,7 @@ def save_question_template(
         )
     name = _template_name(definition.name, at)
     step = 0
-    while EvalTemplate.no_workspace_objects.filter(
-        name=name, organization=organization, deleted=False
-    ).exists():
+    while _name_taken(EvalTemplate, name, organization):
         step += 1
         name = _template_name(definition.name, at + timedelta(seconds=step))
     template = EvalTemplate.no_workspace_objects.create(
@@ -371,6 +379,21 @@ def save_question_template(
         workspace=_workspace(workspace_id),
     )
     return template, version.version_number
+
+
+def _name_taken(model, name, organization) -> bool:
+    """The create-v2 view's uniqueness: the organisation's own templates and the
+    system's."""
+    from model_hub.models.choices import OwnerChoices
+
+    return (
+        model.no_workspace_objects.filter(
+            name=name, organization=organization, deleted=False
+        ).exists()
+        or model.no_workspace_objects.filter(
+            name=name, owner=OwnerChoices.SYSTEM.value, deleted=False
+        ).exists()
+    )
 
 
 def _workspace(workspace_id):
@@ -494,7 +517,6 @@ def _queue(ask_id) -> None:
 def run_ask(ask_id: str) -> None:
     """Grade every row of one ask nobody has taken, then close the ask. A row whose
     worker died is closed as an infrastructure error and not run again."""
-    _close_dead(ask_id)
     pending = list(
         _results()
         .filter(ask_id=ask_id, state=RESULT.PENDING, claimed_at__isnull=True)
@@ -515,7 +537,34 @@ def run_ask(ask_id: str) -> None:
                     pending,
                 )
             )
+    # Rows still waiting for a free place when the job's time ran out are not
+    # run by anyone; claimed rows of a second delivery are left to it.
+    _results().filter(
+        ask_id=ask_id, state=RESULT.PENDING, claimed_at__isnull=True
+    ).update(
+        state=RESULT.INFRASTRUCTURE_ERROR,
+        cause="not_run",
+        finished_at=timezone.now(),
+    )
+    settle_ask(ask_id)
+
+
+def settle_ask(ask_id) -> None:
+    """Close what no worker will finish, then the ask. A claim older than
+    ``GRADING_GIVE_UP`` lost its worker; once the job's own time limit has passed
+    since the launch, a row nobody claimed will not be run either. The job calls
+    this when it ends; a reader calls it first, for an ask whose job died."""
     _close_dead(ask_id)
+    _results().filter(
+        ask_id=ask_id,
+        state=RESULT.PENDING,
+        claimed_at__isnull=True,
+        created_at__lt=timezone.now() - SETTLE_AFTER,
+    ).update(
+        state=RESULT.INFRASTRUCTURE_ERROR,
+        cause="job_ended",
+        finished_at=timezone.now(),
+    )
     _finish(ask_id)
 
 
@@ -578,11 +627,45 @@ def grade_row(row_id: str) -> str:
     try:
         fields = _grade(row)
     except EvaluationDenied as denied:
-        cause = "credits" if _is_usage_limit(denied) else "denied"
-        _stop(row, claimed, cause)
+        _stop(row, claimed, "credits" if _is_usage_limit(denied) else "denied")
         return "done"
+    except _CreditsRefused:
+        _stop(row, claimed, "credits")
+        return "done"
+    except Exception as failed:
+        # Anything else after the claim still closes the row, so no claim is
+        # left holding one of the organisation's places.
+        logger.warning("simulate_ask_step_failed", error_type=type(failed).__name__)
+        fields = {
+            "state": RESULT.GRADING_ERROR,
+            "cause": "step_failed",
+            "reason": _GRADING_FAILED,
+        }
     _write(row, claimed, **fields)
     return "done"
+
+
+class _CreditsRefused(Exception):
+    """The evaluator's usage log refused the call for credits or a resource limit."""
+
+
+def _refused_for_credits(failed: Exception) -> bool:
+    # run_eval_func raises ValueError("API call not allowed : ", status) when its
+    # usage log row is not created as processing.
+    from tfc.constants.api_calls import APICallStatusChoices
+
+    args = getattr(failed, "args", ())
+    return (
+        isinstance(failed, ValueError)
+        and len(args) == 2
+        and isinstance(args[0], str)
+        and args[0].startswith("API call not allowed")
+        and args[1]
+        in (
+            APICallStatusChoices.INSUFFICIENT_CREDITS.value,
+            APICallStatusChoices.RESOURCE_LIMIT.value,
+        )
+    )
 
 
 def _claim(row):
@@ -685,6 +768,8 @@ def _grade(row) -> dict[str, Any]:
     except EvaluationDenied:
         raise
     except Exception as failed:
+        if _refused_for_credits(failed):
+            raise _CreditsRefused() from None
         return {**_failure(failed), "evidence": evidence}
     if not isinstance(result, dict):
         # A string answer is a refusal of the call itself (usage, rate).
