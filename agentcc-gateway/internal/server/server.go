@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/futureagi/agentcc-gateway/internal/audit"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -48,41 +50,76 @@ import (
 
 // Server is the Agentcc gateway HTTP server.
 type Server struct {
-	videoAudit       *audit.Logger
-	videoAuditOnce   sync.Once
-	cfg              *config.Config
-	configPath       string
-	httpServer       *http.Server
-	registry         *providers.Registry
-	engine           *pipeline.Engine
-	handlers         *Handlers
-	keyStore         *auth.KeyStore
-	keyHandlers      *KeyHandlers
-	metricsRegistry  *metrics.Registry
-	batchProcessor   *batch.Processor
-	clusterMgr       *cluster.Manager
-	TenantStore      *tenant.Store
-	OrgProviderCache *providers.OrgProviderCache
-	asyncWorker      *async.Worker
-	videoWorker      *lifecycle.Worker
-	videoExporter    otel.SpanExporter
-	videoInitErr     error
-	shadowFlusher    *routing.ShadowFlusher
-	ready            atomic.Bool
+	videoAudit          *audit.Logger
+	videoAuditOnce      sync.Once
+	cfg                 *config.Config
+	configPath          string
+	httpServer          *http.Server
+	registry            *providers.Registry
+	engine              *pipeline.Engine
+	handlers            *Handlers
+	catalogue           *modeldb.Catalogue
+	keyStore            *auth.KeyStore
+	keyHandlers         *KeyHandlers
+	metricsRegistry     *metrics.Registry
+	batchProcessor      *batch.Processor
+	clusterMgr          *cluster.Manager
+	TenantStore         *tenant.Store
+	OrgProviderCache    *providers.OrgProviderCache
+	asyncWorker         *async.Worker
+	videoWorker         *lifecycle.Worker
+	videoExporter       otel.SpanExporter
+	videoInitErr        error
+	shadowFlusher       *routing.ShadowFlusher
+	closeMCP            func()
+	router              *Router
+	internalInspections []RouteInspection
+	ready               atomic.Bool
+
+	// httpsServer serves the same handler over TLS when server.tls is on;
+	// certs feeds it the certificate and reloads it when its files change.
+	httpsServer    *http.Server
+	certs          *certReloader
+	stopCertReload context.CancelFunc
+	// lifecycle orders Start's setup against a Shutdown that arrives while
+	// it runs (a signal during startup); shuttingDown records that one did.
+	lifecycle    sync.Mutex
+	shuttingDown bool
+	// listenAddrs is each open listener's address by name ("http",
+	// "https"), set before ready.
+	listenAddrs map[string]string
 }
 
-// PriceTableName is the name the price table keys a provider's models under,
-// as the provider that served an org's request states it: the org's own
-// instance when the org has one, else the config.yaml provider with that ID.
-func (s *Server) PriceTableName(orgID, providerID string) string {
-	var p providers.Provider
-	if orgID != "" && s.OrgProviderCache != nil {
-		p = s.OrgProviderCache.Get(orgID, providerID)
+// ServedPriceTableName is the name the price table keys the models of the
+// provider that served rc under; see Handlers.servedPriceTableName.
+func (s *Server) ServedPriceTableName(rc *models.RequestContext) string {
+	return s.handlers.servedPriceTableName(rc)
+}
+
+// ReportedCostVendor is the vendor whose own statement of what rc cost the
+// cost plugin may record, judged on the provider instance that served rc, or
+// "" when rc is priced from the catalogue. See providers.ReportedCostVendor
+// for the rule.
+//
+// The instance is the one the chat handlers recorded as answering
+// (rc.ServedBy): an org's instance and the operator's share a provider ID,
+// and a model fallback can move a request from one to the other while the
+// routing markers still describe the first. Routes that record none have no
+// fallback, and are judged the way the handlers resolve them: the org's
+// instance when it served (an internal key never uses it), else the
+// config.yaml provider.
+func (s *Server) ReportedCostVendor(rc *models.RequestContext) string {
+	if p, ok := rc.ServedBy.(providers.Provider); ok && p != nil {
+		return providers.ReportedCostVendor(p, rc.Provider)
 	}
-	if p == nil && s.registry != nil {
-		p, _ = s.registry.GetProvider(providerID)
+	if s.handlers == nil {
+		return ""
 	}
-	return providers.PriceTableName(p)
+	p, ok := s.handlers.servingProvider(rc)
+	if !ok {
+		return ""
+	}
+	return providers.ReportedCostVendor(p, rc.Provider)
 }
 
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
@@ -95,6 +132,12 @@ func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {
 
 // New creates a new gateway server.
 func New(cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string), redisClients ...*redisstate.Client) *Server {
+	return NewWithStartupContext(context.Background(), cfg, configPath, registry, engine, keyStore, guardrailEngine, policyStore, metricsRegistry, modelDBPtr, tenantStore, onOrgConfigChange, redisClients...)
+}
+
+// NewWithStartupContext lets shutdown interrupt an in-progress MCP handshake.
+// Accepted sessions are owned by the server, not by the handshake context.
+func NewWithStartupContext(startup context.Context, cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string), redisClients ...*redisstate.Client) *Server {
 	var redisClient *redisstate.Client
 	if len(redisClients) > 0 {
 		redisClient = redisClients[0]
@@ -144,8 +187,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Create circuit breaker registry.
 	var cbReg *routing.CircuitBreakerRegistry
-	if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
-		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
+	if cfg.Routing.CircuitBreaker.Enabled {
+		var onChange func(string, bool)
+		if router := registry.Router(); router != nil {
+			onChange = router.SetHealthy
+		}
+		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, onChange)
 		slog.Info("circuit breaker enabled",
 			"failure_threshold", cfg.Routing.CircuitBreaker.FailureThreshold,
 			"cooldown", cfg.Routing.CircuitBreaker.Cooldown,
@@ -183,13 +230,22 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	// Create health monitor.
+	// Share the router's monitor so adaptive weights are driven by actual
+	// request outcomes. A separate monitor would stay empty forever.
 	var healthMonitor *routing.HealthMonitor
 	var latencyTracker *routing.LatencyTracker
-	if registry.Router() != nil {
-		latencyTracker = registry.Router().GetLatencyTracker()
+	if router := registry.Router(); router != nil {
+		latencyTracker = router.GetLatencyTracker()
+		healthMonitor = router.GetHealthMonitor()
 	}
-	healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	if healthMonitor == nil {
+		if latencyTracker == nil {
+			latencyTracker = routing.NewLatencyTracker(0.3)
+		}
+		healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	} else {
+		healthMonitor.SetCircuitBreakerRegistry(cbReg)
+	}
 
 	// Create traffic mirror.
 	var mirror *routing.Mirror
@@ -238,6 +294,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
 	handlers.videoIPACL = cfg.IPACL
+	handlers.trustedProxies = cfg.IPACL.TrustedProxies
 	s.handlers = handlers
 
 	// Set up Files API store.
@@ -263,9 +320,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Set up async inference support.
 	asyncStore := async.NewStore()
 	handlers.asyncStore = asyncStore
+	handlers.asyncKeyRequired = !authEnabled && cfg.LicenseAuth.Enabled
+	handlers.resultIPACL = cfg.IPACL
 
+	asyncInspection := s.registerInternalInspection("internal.async", "queued executor inspection is unsupported")
 	asyncProviderFn := func(ctx context.Context, req *models.ChatCompletionRequest, metadata map[string]string) (*models.ChatCompletionResponse, map[string]string, error) {
 		rc := models.AcquireRequestContext()
+		// Never restore HTTP inspection receipts or creator verdicts from job
+		// metadata. Selected blocking policies refuse this unqualified executor.
+		rc.Inspection = models.NewInspectionState(asyncInspection)
 		rc.Model = req.Model
 		rc.Request = req
 		rc.IsStream = false
@@ -281,10 +344,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil
@@ -356,6 +421,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		handlers.scheduledRetryAttempts = retryAttempts
 
 		// The execute function calls back into the gateway pipeline.
+		scheduledInspection := s.registerInternalInspection("internal.scheduled", "scheduled executor has no authenticated inspection context")
 		schedExecuteFn := func(requestJSON json.RawMessage) (json.RawMessage, error) {
 			var req models.ChatCompletionRequest
 			if err := json.Unmarshal(requestJSON, &req); err != nil {
@@ -363,6 +429,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			}
 
 			rc := models.AcquireRequestContext()
+			rc.Inspection = models.NewInspectionState(scheduledInspection)
 			rc.Model = req.Model
 			rc.Request = &req
 			rc.IsStream = false
@@ -375,10 +442,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			rc.Provider = provider.ID()
 
 			providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+				noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 				resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 				if err != nil {
 					return err
 				}
+				recordServedBy(callRC, provider)
 				callRC.Response = resp
 				callRC.ResolvedModel = resp.Model
 				return nil
@@ -410,24 +479,27 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		)
 	}
 
-	// Build route table.
+	// Build route table. Every registration, including future Handle calls,
+	// inherits declaration admission and the nonbuffering release boundary.
 	router := NewRouter()
+	router.configureInspection(engine, authKeyStore, cfg.IPACL, tenantStore)
 
-	// Proxy endpoints.
-	router.Handle("POST", "/v1/chat/completions", handlers.ChatCompletion)
-	router.Handle("POST", "/v1/completions", handlers.TextCompletion)
-	router.Handle("POST", "/v1/embeddings", handlers.CreateEmbedding)
+	// Text support is declared at registration, not guessed from an endpoint
+	// label later in the pipeline. Actual complete projections remain required.
+	router.HandleInspected("POST", "/v1/chat/completions", handlers.ChatCompletion, textInspection("chat.completions"))
+	router.HandleInspected("POST", "/v1/completions", handlers.TextCompletion, textInspection("completions"))
+	router.HandleInspected("POST", "/v1/embeddings", handlers.CreateEmbedding, models.InspectionContract{Operation: "embeddings.create", Input: models.InspectionSupported, Reason: "text-only input is inspected; embedding output is opaque"})
 	router.Handle("POST", "/v1/images/generations", handlers.CreateImage)
-	router.Handle("POST", "/v1/audio/speech", handlers.CreateSpeech)
+	router.HandleInspected("POST", "/v1/audio/speech", handlers.CreateSpeech, models.InspectionContract{Operation: "audio.speech", Input: models.InspectionSupported, Reason: "complete synthesis text is inspected; binary audio output is opaque"})
 	router.Handle("POST", "/v1/audio/transcriptions", handlers.CreateTranscription)
-	router.Handle("POST", "/v1/audio/speech/stream", handlers.StreamSpeech)
+	router.HandleInspected("POST", "/v1/audio/speech/stream", handlers.StreamSpeech, models.InspectionContract{Operation: "audio.speech.stream", Input: models.InspectionSupported, Reason: "complete synthesis text is inspected; binary audio stream output is opaque"})
 	router.Handle("POST", "/v1/audio/translations", handlers.CreateTranslation)
 	router.Handle("POST", "/v1/rerank", handlers.Rerank)
 	// Structured decisions, on the customer's own provider key only.
 	router.Handle("POST", "/v1/systemone", handlers.SystemOne)
 	router.Handle("POST", "/v1/decisions", handlers.Decisions)
-	router.Handle("GET", "/v1/decisions/models", handlers.DecisionModels)
-	router.Handle("POST", "/v1/responses", handlers.CreateResponse)
+	router.handleInspected("GET", "/v1/decisions/models", handlers.DecisionModels, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.HandleInspected("POST", "/v1/responses", handlers.CreateResponse, textInspection("responses.create"))
 	router.Handle("GET", "/v1/responses/{id}", handlers.GetResponse)
 	router.Handle("DELETE", "/v1/responses/{id}", handlers.DeleteResponse)
 	// Files API.
@@ -439,11 +511,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Native Anthropic Messages API.
 	router.Handle("POST", "/v1/messages/count_tokens", handlers.AnthropicCountTokens) // count_tokens before /v1/messages
-	router.Handle("POST", "/v1/messages", handlers.AnthropicMessages)
+	router.HandleInspected("POST", "/v1/messages", handlers.AnthropicMessages, textInspection("messages.create"))
 
-	router.Handle("POST", "/v1/count_tokens", handlers.CountTokens)
-	router.Handle("GET", "/v1/models", handlers.ListModels)
-	router.Handle("GET", "/v1/models/{model}", handlers.GetModel)
+	router.handleInspected("POST", "/v1/count_tokens", handlers.CountTokens, RouteInspection{Auth: inspectionAuthMiddleware})
+	modelCatalogInspection := RouteInspection{Auth: inspectionAuthCatalog, Contract: models.InspectionContract{
+		Input: models.InspectionNotApplicable, Output: models.InspectionNotApplicable,
+		Reason: "exact model catalog operation emits only configured model identifiers, owner, numeric limits/pricing and capability flags; it neither reads nor returns inference content",
+	}}
+	router.handleInspected("GET", "/v1/models", handlers.ListModels, modelCatalogInspection)
+	router.handleInspected("GET", "/v1/models/{model}", handlers.GetModel, modelCatalogInspection)
 
 	// Assistants API.
 	router.Handle("POST", "/v1/assistants", handlers.CreateAssistant)
@@ -494,8 +570,13 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("DELETE", "/v1/vector_stores/{vector_store_id}", handlers.DeleteVectorStore)
 
 	// Native Google GenAI API.
-	router.Handle("POST", "/v1beta/models/{model_action}", handlers.GenAIHandler)
-	router.Handle("POST", "/v1beta/models/{provider}/{model_action}", handlers.GenAIHandler)
+	genaiInspection := RouteInspection{Auth: inspectionAuthGenAI, Discriminator: "genai-action", Variants: []models.InspectionContract{
+		textInspection("generateContent"), textInspection("streamGenerateContent"),
+		{Operation: "countTokens", Reason: "native count input and response shape are not completely inspected"},
+		{Operation: "embedContent", Reason: "native embedding input and response shape are not completely inspected"},
+	}}
+	router.handleInspected("POST", "/v1beta/models/{model_action}", handlers.GenAIHandler, genaiInspection)
+	router.handleInspected("POST", "/v1beta/models/{provider}/{model_action}", handlers.GenAIHandler, genaiInspection)
 
 	// Search API.
 	router.Handle("POST", "/v1/search", handlers.Search)
@@ -514,11 +595,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		MaxMessageSize:     16 * 1024 * 1024,
 		AllowedOrigins:     cfg.CORS.AllowedOrigins,
 	})
-	router.Handle("GET", "/v1/realtime", realtimeHandler.HandleRealtime)
+	router.handleInspected("GET", "/v1/realtime", realtimeHandler.HandleRealtime, RouteInspection{Auth: inspectionAuthRealtime})
 
 	// Speech vendors' own streaming APIs (Deepgram, Cartesia), each under the vendor's name.
 	for _, ep := range speech.Endpoints() {
-		router.Handle("GET", "/"+ep.Vendor+ep.Path, handlers.SpeechRelay(ep.Vendor, ep.Path))
+		router.handleInspected("GET", "/"+ep.Vendor+ep.Path, handlers.SpeechRelay(ep.Vendor, ep.Path), RouteInspection{Auth: inspectionAuthSpeech})
 	}
 
 	// Video Generation API.
@@ -531,14 +612,14 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("DELETE", "/v1/videos/{video_id}", handlers.DeleteVideo)
 
 	// Scheduled completions API.
-	router.Handle("POST", "/v1/scheduled", handlers.SubmitScheduled)
-	router.Handle("GET", "/v1/scheduled", handlers.ListScheduledJobs)
-	router.Handle("GET", "/v1/scheduled/{job_id}", handlers.GetScheduledJob)
-	router.Handle("DELETE", "/v1/scheduled/{job_id}", handlers.CancelScheduledJob)
+	router.handleInspected("POST", "/v1/scheduled", handlers.SubmitScheduled, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.handleInspected("GET", "/v1/scheduled", handlers.ListScheduledJobs, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.handleInspected("GET", "/v1/scheduled/{job_id}", handlers.GetScheduledJob, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.handleInspected("DELETE", "/v1/scheduled/{job_id}", handlers.CancelScheduledJob, RouteInspection{Auth: inspectionAuthMiddleware})
 
 	// Async inference endpoints.
-	router.Handle("GET", "/v1/async/{job_id}", handlers.GetAsyncJob)
-	router.Handle("DELETE", "/v1/async/{job_id}", handlers.DeleteAsyncJob)
+	router.handleInspected("GET", "/v1/async/{job_id}", handlers.GetAsyncJob, RouteInspection{Auth: inspectionAuthStored})
+	router.handleInspected("DELETE", "/v1/async/{job_id}", handlers.DeleteAsyncJob, RouteInspection{Auth: inspectionAuthStored})
 
 	// Health endpoints.
 	router.Handle("GET", "/healthz", s.healthHandler)
@@ -548,6 +629,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Admin endpoints (core).
 	router.Handle("POST", "/-/reload", s.reloadHandler)
 	router.Handle("GET", "/-/config", s.configHandler)
+	router.Handle("GET", "/-/model-catalogue/source", s.catalogueSourceHandler)
 	router.Handle("GET", "/-/health/providers", s.providerHealthHandler)
 	router.Handle("GET", "/-/health/providers/{org_id}", s.orgProviderHealthHandler)
 
@@ -557,8 +639,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 
 	// Batch API endpoints.
+	batchInspection := s.registerInternalInspection("internal.batch", "batch executor has no authenticated inspection context")
 	batchHandler := func(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, map[string]string, error) {
 		rc := models.AcquireRequestContext()
+		rc.Inspection = models.NewInspectionState(batchInspection)
 		rc.Model = req.Model
 		rc.Request = req
 		rc.IsStream = false // batch requests are non-streaming
@@ -571,10 +655,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil
@@ -653,7 +739,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("GET", "/-/admin/video/unsettled", s.adminVideoUnsettled)
 	// Cluster admin endpoint.
 	if cfg.Cluster.Enabled {
-		clusterMgr := cluster.NewManager(cfg.Cluster, cfg.Addr(), "0.1.0")
+		clusterMgr := cluster.NewManager(cfg.Cluster, cfg.ServingAddr(), "0.1.0")
 		s.clusterMgr = clusterMgr
 		clusterHandlers := NewClusterHandlers(clusterMgr, cfg.Admin.Token)
 		router.Handle("GET", "/-/cluster/nodes", clusterHandlers.ListNodes)
@@ -685,6 +771,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			SessionTTL:      cfg.MCP.SessionTTL,
 			Separator:       cfg.MCP.Separator,
 		})
+
+		s.closeMCP = sync.OnceFunc(mcpServer.Close)
 
 		// Attach per-key tool filtering if auth is configured.
 		if authEnabled && authKeyStore != nil {
@@ -742,7 +830,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 				},
 				ToolsCacheTTL: serverCfg.ToolsCacheTTL,
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if startup.Err() != nil {
+				break
+			}
+			ctx, cancel := context.WithTimeout(startup, 30*time.Second)
 			if err := client.Connect(ctx); err != nil {
 				slog.Error("failed to connect to MCP server", "server", id, "error", err)
 				cancel()
@@ -752,8 +843,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			mcpServer.RegisterClient(client)
 		}
 
-		router.Handle("POST", endpoint, mcpServer.HandlePost)
-		router.Handle("GET", endpoint, mcpServer.HandleSSE)
+		router.handleInspected("POST", endpoint, mcpServer.HandlePost, RouteInspection{Auth: inspectionAuthMCP})
+		router.handleInspected("GET", endpoint, mcpServer.HandleSSE, RouteInspection{Auth: inspectionAuthMiddleware})
 
 		// Admin endpoints for MCP.
 		router.Handle("GET", "/-/mcp/status", func(w http.ResponseWriter, r *http.Request) {
@@ -854,7 +945,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		a2aRegistry := a2a.NewRegistry(agentConfigs)
-		a2aExecutor := func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		s.registerInternalInspection("internal.a2a.chat", "delegates to authenticated chat HTTP dispatch; outer A2A selected blocking operations are unsupported")
+		a2aExecutor := func(ctx context.Context, caller a2a.Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 			body, err := json.Marshal(req)
 			if err != nil {
 				return nil, err
@@ -862,12 +954,21 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 			httpReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
 			httpReq.Header.Set("Content-Type", "application/json")
-			if authHeader != "" {
-				httpReq.Header.Set("Authorization", authHeader)
+			if caller.Authorization != "" {
+				httpReq.Header.Set("Authorization", caller.Authorization)
+			}
+			// The chat handler records client_ip from the peer and the
+			// trusted X-Forwarded-For hops; give it the A2A caller's, not
+			// httptest's placeholder address.
+			httpReq.RemoteAddr = caller.RemoteAddr
+			for _, v := range caller.ForwardedFor {
+				httpReq.Header.Add("X-Forwarded-For", v)
 			}
 
 			rec := httptest.NewRecorder()
-			handlers.ChatCompletion(rec, httpReq)
+			// The executor is an internal HTTP caller, not an exemption from
+			// registration admission, current-key binding or release decisions.
+			router.ServeHTTP(rec, httpReq)
 
 			if rec.Code >= http.StatusBadRequest {
 				var errResp models.ErrorResponse
@@ -907,10 +1008,16 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		router.Handle("GET", "/.well-known/agent.json", a2aServer.HandleAgentCard)
-		router.Handle("GET", "/v1/.well-known/agent.json", a2aServer.HandleAgentCard)
-		router.Handle("POST", "/a2a", a2aServer.HandleMessage)
-		router.Handle("POST", "/v1/a2a", a2aServer.HandleMessage)
-		router.Handle("GET", "/v1/agents", a2aServer.ListAgents)
+		router.handleInspected("GET", "/v1/.well-known/agent.json", a2aServer.HandleAgentCard, RouteInspection{Auth: inspectionAuthMiddleware})
+		// All JSON-RPC methods remain opaque at dispatch. Do not parse/buffer a
+		// body merely to exempt a method: historical task artifacts are content.
+		a2aInspection := RouteInspection{Auth: inspectionAuthMiddleware, Discriminator: "opaque-a2a-method", Contract: models.InspectionContract{Reason: "A2A request and historical artifacts lack complete inspection"}}
+		for _, method := range []string{a2a.MethodMessageSend, a2a.MethodTasksSend, a2a.MethodMessageStream, a2a.MethodTasksGet, a2a.MethodTasksCancel} {
+			a2aInspection.Variants = append(a2aInspection.Variants, models.InspectionContract{Operation: method, Reason: a2aInspection.Contract.Reason})
+		}
+		router.handleInspected("POST", "/a2a", a2aServer.HandleMessage, a2aInspection)
+		router.handleInspected("POST", "/v1/a2a", a2aServer.HandleMessage, a2aInspection)
+		router.handleInspected("GET", "/v1/agents", a2aServer.ListAgents, RouteInspection{Auth: inspectionAuthMiddleware})
 
 		slog.Info("a2a protocol enabled", "agents", len(cfg.A2A.Agents))
 	}
@@ -930,10 +1037,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		json.NewEncoder(w).Encode(m.Store.Stats())
 	})
 
+	s.router = router
+
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
 	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
-	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
+	handler = requireKeyForServedPaths(router, middleware.KeyAuth(authKeyStore, authEnabled), handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
 	if cfg.CORS.Enabled {
@@ -948,33 +1057,151 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		ReadTimeout:       cfg.Server.ReadTimeout,
 		WriteTimeout:      cfg.Server.WriteTimeout,
 		IdleTimeout:       cfg.Server.IdleTimeout,
+		// 0 leaves net/http's default (1MB).
+		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
+	}
+	if cfg.Server.TLS.Enabled {
+		s.certs = newCertReloader(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile, cfg.Server.TLS.ReloadInterval)
+		minVersion, _ := config.ParseTLSMinVersion(cfg.Server.TLS.MinVersion) // Validate refused anything else
+		s.httpsServer = &http.Server{
+			Addr:              cfg.TLSAddr(),
+			Handler:           handler,
+			ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+			ReadTimeout:       cfg.Server.ReadTimeout,
+			WriteTimeout:      cfg.Server.WriteTimeout,
+			IdleTimeout:       cfg.Server.IdleTimeout,
+			MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
+			TLSConfig:         serverTLSConfig(minVersion, s.certs.GetCertificate),
+		}
 	}
 
 	return s
 }
 
+// tls12CipherSuites are the TLS 1.2 suites the gateway offers: ECDHE key
+// exchange with an AEAD cipher only. TLS 1.3 suites are Go's own and not
+// configurable.
+var tls12CipherSuites = []uint16{
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+}
+
+func serverTLSConfig(minVersion uint16, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *tls.Config {
+	return &tls.Config{
+		MinVersion:     minVersion,
+		CipherSuites:   tls12CipherSuites,
+		GetCertificate: getCertificate,
+	}
+}
+
+// gatewayListener is one open listener and how to serve it.
+type gatewayListener struct {
+	name  string
+	ln    net.Listener
+	serve func(net.Listener) error
+}
+
+// listen loads the TLS certificate and opens every enabled listener, so a
+// bad certificate or a taken port fails startup before anything is served.
+func (s *Server) listen() ([]gatewayListener, error) {
+	if s.certs != nil {
+		if err := s.certs.Load(); err != nil {
+			return nil, err
+		}
+	}
+	var lns []gatewayListener
+	closeAll := func() {
+		for _, l := range lns {
+			l.ln.Close()
+		}
+	}
+	if s.cfg.Server.HTTPOn() {
+		ln, err := net.Listen("tcp", s.httpServer.Addr)
+		if err != nil {
+			return nil, fmt.Errorf("server: listening on %s: %w", s.httpServer.Addr, err)
+		}
+		lns = append(lns, gatewayListener{"http", ln, s.httpServer.Serve})
+	}
+	if s.httpsServer != nil {
+		ln, err := net.Listen("tcp", s.httpsServer.Addr)
+		if err != nil {
+			closeAll()
+			return nil, fmt.Errorf("server.tls: listening on %s: %w", s.httpsServer.Addr, err)
+		}
+		lns = append(lns, gatewayListener{"https", ln, func(ln net.Listener) error {
+			return s.httpsServer.ServeTLS(ln, "", "")
+		}})
+	}
+	if len(lns) == 0 {
+		return nil, fmt.Errorf("server: no listener is on")
+	}
+	return lns, nil
+}
+
 // Start begins listening for HTTP requests. Blocks until the server stops.
-func (s *Server) Start() error {
+func (s *Server) Start() (err error) {
+	// New may already have connected MCP children. On a failed Start the
+	// caller can exit immediately, without ever entering Shutdown.
+	defer func() {
+		if err != nil && s.closeMCP != nil {
+			s.closeMCP()
+		}
+	}()
 	if s.videoInitErr != nil {
 		return fmt.Errorf("video initialization failed: %w", s.videoInitErr)
+	}
+	lns, err := s.listen()
+	if err != nil {
+		return err
+	}
+	s.lifecycle.Lock()
+	if s.shuttingDown {
+		s.lifecycle.Unlock()
+		for _, l := range lns {
+			l.ln.Close()
+		}
+		return nil
+	}
+	s.listenAddrs = make(map[string]string, len(lns))
+	for _, l := range lns {
+		s.listenAddrs[l.name] = l.ln.Addr().String()
 	}
 	if s.videoWorker != nil {
 		s.videoWorker.Start()
 	}
+	if s.certs != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.stopCertReload = cancel
+		go s.certs.Run(ctx)
+	}
 	s.ready.Store(true)
+	s.lifecycle.Unlock()
 
 	// Start cluster heartbeat if enabled.
 	if s.clusterMgr != nil {
 		s.clusterMgr.Start()
 	}
 
-	slog.Info("agentcc gateway starting",
-		"addr", s.httpServer.Addr,
+	attrs := []any{
 		"providers", s.registry.ProviderCount(),
 		"plugins", s.engine.PluginCount(),
-	)
+	}
+	for _, l := range lns {
+		attrs = append(attrs, l.name+"_addr", s.listenAddrs[l.name])
+	}
+	slog.Info("agentcc gateway starting", attrs...)
 
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	// Each server returns ErrServerClosed once Shutdown begins; Start returns
+	// then, as it always has, or on the first listener that fails.
+	errs := make(chan error, len(lns))
+	for _, l := range lns {
+		go func() { errs <- l.serve(l.ln) }()
+	}
+	if err := <-errs; err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
@@ -984,6 +1211,10 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	slog.Info("shutting down gateway...")
 	s.ready.Store(false)
+	// Let active requests drain, but also reap children on an early return.
+	if s.closeMCP != nil {
+		defer s.closeMCP()
+	}
 
 	// Drain and deregister cluster node.
 	if s.clusterMgr != nil {
@@ -1002,7 +1233,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.asyncWorker.Stop()
 	}
 
-	err := s.httpServer.Shutdown(ctx)
+	s.lifecycle.Lock()
+	s.shuttingDown = true
+	stopCertReload := s.stopCertReload
+	s.lifecycle.Unlock()
+	if stopCertReload != nil {
+		stopCertReload()
+	}
+	err := s.shutdownListeners(ctx)
 	// Send the shadow results captured so far with what is left of ctx; if
 	// the requests used it all, this logs how many were not sent.
 	if s.shadowFlusher != nil {
@@ -1031,6 +1269,47 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	slog.Info("gateway shut down cleanly")
 	return nil
+}
+
+// servingInfo describes the listeners for /-/config: port and scheme are the
+// active listener's (the HTTP one while it is on, as before), with both
+// listeners' own settings beside them.
+func servingInfo(cfg *config.Config) map[string]interface{} {
+	info := map[string]interface{}{
+		"port":         cfg.Server.Port,
+		"scheme":       "http",
+		"host":         cfg.Server.Host,
+		"http_enabled": cfg.Server.HTTPOn(),
+		"http_port":    cfg.Server.Port,
+		"tls_enabled":  cfg.Server.TLS.Enabled,
+	}
+	if cfg.Server.TLS.Enabled {
+		info["tls_port"] = cfg.Server.TLS.Port
+		if !cfg.Server.HTTPOn() {
+			info["port"] = cfg.Server.TLS.Port
+			info["scheme"] = "https"
+		}
+	}
+	return info
+}
+
+// shutdownListeners shuts down both servers at once, within ctx.
+func (s *Server) shutdownListeners(ctx context.Context) error {
+	servers := []*http.Server{s.httpServer}
+	if s.httpsServer != nil {
+		servers = append(servers, s.httpsServer)
+	}
+	errs := make(chan error, len(servers))
+	for _, srv := range servers {
+		go func() { errs <- srv.Shutdown(ctx) }()
+	}
+	var first error
+	for range servers {
+		if err := <-errs; err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // Health/ready handlers.
@@ -1114,14 +1393,34 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"server": map[string]interface{}{
-			"port": s.cfg.Server.Port,
-			"host": s.cfg.Server.Host,
-		},
+		"server":          servingInfo(s.cfg),
 		"providers_count": s.registry.ProviderCount(),
 		"models_count":    len(s.cfg.ModelMap),
 		"plugins_count":   s.engine.PluginCount(),
 	})
+}
+
+// SetCatalogue gives the server the catalogue that config reloads rebuild
+// from and the source endpoint reports on. Call it before serving.
+func (s *Server) SetCatalogue(c *modeldb.Catalogue) {
+	s.catalogue = c
+	s.handlers.catalogue = c
+}
+
+// catalogueSourceHandler reports which pricing catalogue is loaded.
+func (s *Server) catalogueSourceHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	if s.catalogue == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "no model catalogue is managed"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(s.catalogue.Info())
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1137,6 +1436,11 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	// Limit batch request body to 10MB to prevent OOM.
@@ -1180,6 +1484,11 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")
@@ -1234,6 +1543,11 @@ func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")

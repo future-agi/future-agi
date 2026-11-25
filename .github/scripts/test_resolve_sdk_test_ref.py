@@ -3,7 +3,7 @@
 import contextlib
 import importlib.util
 import io
-import re
+import runpy
 import subprocess
 import unittest
 from pathlib import Path
@@ -71,6 +71,21 @@ class ResolverTests(unittest.TestCase):
         probe, seen = self.probe({"fix/tracing": (SHA, []), "dev": (OTHER_SHA, [])})
         self.assertEqual(resolver.choose_ref("", "fix/tracing", "dev", probe), (SHA, "fix/tracing"))
         self.assertEqual(seen, ["fix/tracing"])
+
+    def test_main_bound_queue_prefers_main_to_dev_and_ignores_synthetic_ref(self):
+        queue = "gh-readonly-queue/main/pr-42"
+        probe, seen = self.probe({queue: (SHA, []), "dev": (SHA, []), "main": (OTHER_SHA, [])})
+        with patch.dict(resolver.os.environ, {"GITHUB_EVENT_NAME": "merge_group", "HEAD_REF": queue,
+                                              "BASE_REF": queue, "QUEUE_BASE_REF": "refs/heads/main"}):
+            self.assertEqual(resolver.choose_ref("", *resolver.branch_inputs(), probe), (OTHER_SHA, "main"))
+        self.assertEqual(seen, ["main"])
+
+    def test_malformed_queue_base_fails_instead_of_qualifying_dev(self):
+        for ref in ("", "main", "refs/tags/main", "refs/heads/", "refs/heads/bad..name"):
+            with self.subTest(ref=ref), patch.dict(resolver.os.environ, {
+                "GITHUB_EVENT_NAME": "merge_group", "QUEUE_BASE_REF": ref,
+            }), self.assertRaises(resolver.InvalidRefError):
+                resolver.branch_inputs()
 
     def test_incomplete_default_branches_use_exact_bootstrap(self):
         probe, seen = self.probe({
@@ -207,10 +222,15 @@ class ResolverTests(unittest.TestCase):
         self.assertNotIn(secret, str(error.exception))
 
     def test_script_only_changes_are_in_e2e_changes_gate(self):
-        workflow = Path(__file__).parents[1] / "workflows/e2e-ci.yml"
-        gate = workflow.read_text().split("            any:\n", 1)[1].split("      - id: always", 1)[0]
-        for path in [".github/scripts/resolve-sdk-test-ref.py", ".github/scripts/test_resolve_sdk_test_ref.py"]:
-            self.assertRegex(gate, r"(?m)^\s*-\s*['\"]" + re.escape(path) + r"['\"]\s*$")
+        scripts = Path(__file__).resolve().parent
+        workflow = (scripts.parent / "workflows/e2e-ci.yml").read_text()
+        self.assertIn("QUEUE_BASE_REF: ${{ github.event.merge_group.base_ref }}", workflow)
+        self.assertIn("any: ${{ steps.filter.outputs.any }}", workflow)
+        self.assertIn('file=.github/scripts/ci_scope.py', workflow)
+        # The planner selects the entire suite unless a path is certified metadata.
+        metadata = runpy.run_path(str(scripts / "ci_scope.py"))["METADATA"]
+        for name in ("resolve-sdk-test-ref.py", "test_resolve_sdk_test_ref.py"):
+            self.assertNotIn(f".github/scripts/{name}".encode(), metadata)
 
 
 if __name__ == "__main__":

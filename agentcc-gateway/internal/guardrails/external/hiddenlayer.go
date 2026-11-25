@@ -22,9 +22,9 @@ type hiddenlayerRequest struct {
 }
 
 type hiddenlayerResponse struct {
-	Flagged    bool                  `json:"flagged"`
-	RiskScore  float64               `json:"risk_score"`
-	Detections []hiddenlayerDetect   `json:"detections"`
+	Flagged    bool                `json:"flagged"`
+	RiskScore  float64             `json:"risk_score"`
+	Detections []hiddenlayerDetect `json:"detections"`
 }
 
 type hiddenlayerDetect struct {
@@ -51,9 +51,12 @@ func (a *hiddenlayerAdapter) buildRequest(ctx context.Context, text string) (*ht
 }
 
 func (a *hiddenlayerAdapter) parseResponse(body []byte) *guardrails.CheckResult {
+	if err := validateEnvelope(a, body); err != nil {
+		return guardrails.ExecutionFailure(err.Error())
+	}
 	var resp hiddenlayerResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse hiddenlayer response: %v", err)}
+		return guardrails.ExecutionFailure(fmt.Sprintf("failed to parse hiddenlayer response: %v", err))
 	}
 
 	if !resp.Flagged {

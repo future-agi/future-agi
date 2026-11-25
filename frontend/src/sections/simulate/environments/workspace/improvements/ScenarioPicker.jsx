@@ -227,7 +227,7 @@ export default function ScenarioPicker({
       <ScenarioList
         testId="cases-fix"
         title="Cases to fix"
-        note="The failing cases this improvement works on. Some are held back to prove the fix; it never sees them."
+        note="The failing cases this epoch works on. Some are held back to prove the change; it never sees them."
         items={fixable}
         chosen={targets}
         suggested={options.suggested.target_scenario_keys}
@@ -240,7 +240,7 @@ export default function ScenarioPicker({
       <ScenarioList
         testId="cases-protect"
         title="Cases to protect"
-        note="Cases that must keep passing. Suggested: every case that passed in this run."
+        note="Cases this epoch must not break. Suggested: every case that passed in this run."
         items={protectable}
         chosen={protectedKeys}
         suggested={options.suggested.protected_scenario_keys.filter(

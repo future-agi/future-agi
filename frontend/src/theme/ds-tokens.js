@@ -1,4 +1,4 @@
-/* Future AGI Design System v0.2.4 — MUI v5 mapping.
+/* Future AGI Design System v0.2.5 — MUI v5 mapping.
    Generated from frontend/design-system/tokens/tokens.json by `yarn tokens:build`.
    Do not edit by hand: change tokens.json and rebuild.
 
@@ -190,6 +190,12 @@ const palettes = {
       "#32247F",
       "#684BE3"
     ],
+    "dataBrand": [
+      "#7857FC",
+      "#22C55E",
+      "#EF4444",
+      "#F59E0B"
+    ],
     "control": {
       "checked": "#7857FC",
       "onChecked": "#FFFFFF",
@@ -374,6 +380,12 @@ const palettes = {
       "#B8AFFF",
       "#684BE3"
     ],
+    "dataBrand": [
+      "#A792FD",
+      "#22C55E",
+      "#EF4444",
+      "#F59E0B"
+    ],
     "control": {
       "checked": "#EFEFF1",
       "onChecked": "#09090B",
@@ -416,13 +428,13 @@ export const dsTypography = {
     "fontWeight": 600
   },
   "h5": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 500
   },
   "h6": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 500
   },
   "subtitle1": {
@@ -436,8 +448,8 @@ export const dsTypography = {
     "fontWeight": 500
   },
   "body1": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 400
   },
   "body2": {
@@ -487,13 +499,13 @@ export const dsTypography = {
     "fontWeight": 600
   },
   "title_xs": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 500
   },
   "body_md": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 400
   },
   "body_sm": {
@@ -539,8 +551,8 @@ export const dsTypography = {
     "lineHeight": "18px"
   },
   "s1_2": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px"
+    "fontSize": "0.75rem",
+    "lineHeight": "18px"
   },
   "s2": {
     "fontSize": "0.6875rem",
@@ -563,8 +575,8 @@ export const dsTypography = {
     "lineHeight": "22px"
   },
   "m3": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px"
+    "fontSize": "0.75rem",
+    "lineHeight": "18px"
   },
   "l1": {
     "fontSize": "1.5rem",

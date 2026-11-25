@@ -63,9 +63,29 @@ class ClusterAnalysisResult:
     synthesis: Optional[ClusterSynthesis] = None
     findings: list[ClusterFinding] = field(default_factory=list)
     turn_count: int = 0
-    terminated_reason: str = ""  # "synthesis_submitted" | "max_turns" | "error" | "stop"
+    terminated_reason: str = (
+        ""
+        # What the result carries, by exit: "synthesis_submitted" (the model
+        # concluded), "stopped" (an explicit user Stop, no synthesis),
+        # "synthesis_forced" (a loop exit it was salvaged from, by far the
+        # most common being a plain "stop"), "error". The pre-rewrite loop
+        # exits "stop", "max_turns", "cost_ceiling" and "converged" all
+        # become "synthesis_forced" when a synthesis was salvaged, and stay as
+        # they are when it was not; "error" stays "error" either way, so the
+        # failed run remains visible.
+    )
     error: Optional[str] = None
     cost_usd: float = 0.0
+    # True only when the investigation itself ended on the model's own
+    # submit_synthesis. A synthesis salvaged after a resource exit leaves
+    # this False, because the run did not get to finish on its own terms.
+    investigation_complete: bool = False
+    # True only when the synthesis is the deterministic last-resort text from
+    # ``_fallback_synthesis`` — the text that restates the evidence without
+    # concluding it. This, not ``investigation_complete``, is what the
+    # persist gate refuses: a model-authored synthesis is a conclusion even
+    # when a budget pushed the model to write it.
+    synthesis_is_last_resort: bool = False
 
 
 # --- WebSocket event contract --------------------------------------------------

@@ -1,17 +1,6 @@
-"""Black-box tests for AgentEvaluator's failure surface.
+"""Failure messages, output validation, diagnostic context and media anchors.
 
-Focused tests:
-  - USER_FACING_EVAL_FAILED is the single user-visible message
-  - Distinct structlog event names per failure cause (Sentry fingerprint)
-  - ``_failure_context()`` payload completeness + None-stripping
-  - ``_capture_target_info`` covers span / trace / session / call / row / custom
-  - Oversized + content_str → "recovered_oversized_attempt" info (no raise)
-  - Oversized + empty → "input_too_large" + raise
-  - Force-finalize fires only when content empty + tool_log non-empty
-  - Force-finalize preserves multimodal in user anchor
-
-The retry-loop tests are kept lean (assert ValueError propagates;
-non-ValueError retries) — we don't reconstruct the full agent loop.
+The real agent/retry integration is covered by test_grading_errors.py.
 """
 
 import asyncio
@@ -25,6 +14,7 @@ from structlog.testing import LogCapture
 from ee.evals.llm.agent_evaluator.evaluator import (
     AgentEvaluator,
     USER_FACING_EVAL_FAILED,
+    GradingError,
 )
 
 
@@ -70,8 +60,15 @@ def test_user_facing_message_is_generic():
     msg = USER_FACING_EVAL_FAILED.lower()
     # No model aliases / vendor names
     for forbidden in (
-        "turing", "context window", "compaction", "token", "retries",
-        "agent loop", "ml", "summarizer", "oversized",
+        "turing",
+        "context window",
+        "compaction",
+        "token",
+        "retries",
+        "agent loop",
+        "ml",
+        "summarizer",
+        "oversized",
     ):
         assert forbidden not in msg, f"leaked internal jargon: {forbidden!r}"
 
@@ -87,9 +84,9 @@ def test_user_facing_message_mentions_retry_path():
 
 
 def test_capture_target_info_span(evaluator):
-    evaluator._capture_target_info({
-        "span_context": {"id": "span-123", "name": "MySpan", "project_id": "pj-1"}
-    })
+    evaluator._capture_target_info(
+        {"span_context": {"id": "span-123", "name": "MySpan", "project_id": "pj-1"}}
+    )
     assert evaluator._target_type == "span"
     assert evaluator._target_id == "span-123"
     assert evaluator._target_name == "MySpan"
@@ -97,18 +94,18 @@ def test_capture_target_info_span(evaluator):
 
 
 def test_capture_target_info_trace(evaluator):
-    evaluator._capture_target_info({
-        "trace_context": {"id": "trace-abc", "project_id": "pj-X"}
-    })
+    evaluator._capture_target_info(
+        {"trace_context": {"id": "trace-abc", "project_id": "pj-X"}}
+    )
     assert evaluator._target_type == "trace"
     assert evaluator._target_id == "trace-abc"
     assert evaluator._target_project_id == "pj-X"
 
 
 def test_capture_target_info_session(evaluator):
-    evaluator._capture_target_info({
-        "session_context": {"id": "sess-1", "session_name": "Demo"}
-    })
+    evaluator._capture_target_info(
+        {"session_context": {"id": "sess-1", "session_name": "Demo"}}
+    )
     assert evaluator._target_type == "session"
     assert evaluator._target_id == "sess-1"
     assert evaluator._target_name == "Demo"
@@ -141,11 +138,13 @@ def test_capture_target_info_no_context_defaults_to_custom(evaluator):
 
 def test_capture_target_info_first_matching_wins(evaluator):
     """Span > Trace > Session > Call > Row priority."""
-    evaluator._capture_target_info({
-        "span_context": {"id": "S"},
-        "trace_context": {"id": "T"},
-        "session_context": {"id": "Z"},
-    })
+    evaluator._capture_target_info(
+        {
+            "span_context": {"id": "S"},
+            "trace_context": {"id": "T"},
+            "session_context": {"id": "Z"},
+        }
+    )
     assert evaluator._target_type == "span"
     assert evaluator._target_id == "S"
 
@@ -156,11 +155,13 @@ def test_capture_target_info_invalid_kwargs_safe(evaluator):
 
 
 def test_capture_target_info_empty_context_dicts_skipped(evaluator):
-    evaluator._capture_target_info({
-        "span_context": {},
-        "trace_context": None,
-        "session_context": {"id": "S-only-after-empties"},
-    })
+    evaluator._capture_target_info(
+        {
+            "span_context": {},
+            "trace_context": None,
+            "session_context": {"id": "S-only-after-empties"},
+        }
+    )
     assert evaluator._target_type == "session"
     assert evaluator._target_id == "S-only-after-empties"
 
@@ -228,13 +229,15 @@ def test_failure_context_truncates_input_preview(evaluator):
 def test_build_result_passfail_mismatch_raises_user_message(evaluator, log_capture):
     evaluator._output_type = "Pass/Fail"
     # Result not in pass/fail
-    agent_result = {"content": '{"result": "MAYBE", "explanation": "..."}',
-                    "tool_calls": []}
+    agent_result = {
+        "content": '{"result": "MAYBE", "explanation": "..."}',
+        "tool_calls": [],
+    }
     with pytest.raises(ValueError) as exc:
         evaluator._build_result(agent_result, runtime_ms=10)
     assert str(exc.value) == USER_FACING_EVAL_FAILED
-    events = [e["event"] for e in log_capture.entries]
-    assert "eval_result_type_mismatch_pass_fail" in events
+    assert isinstance(exc.value, GradingError)
+    assert exc.value.code == "invalid_output"
 
 
 def test_build_result_score_mismatch_raises_user_message(evaluator, log_capture):
@@ -243,8 +246,8 @@ def test_build_result_score_mismatch_raises_user_message(evaluator, log_capture)
     with pytest.raises(ValueError) as exc:
         evaluator._build_result(agent_result, runtime_ms=10)
     assert str(exc.value) == USER_FACING_EVAL_FAILED
-    events = [e["event"] for e in log_capture.entries]
-    assert "eval_result_type_mismatch_numeric" in events
+    assert isinstance(exc.value, GradingError)
+    assert exc.value.code == "invalid_output"
 
 
 def test_build_result_choices_mismatch_raises_user_message(evaluator, log_capture):
@@ -254,33 +257,21 @@ def test_build_result_choices_mismatch_raises_user_message(evaluator, log_captur
     with pytest.raises(ValueError) as exc:
         evaluator._build_result(agent_result, runtime_ms=10)
     assert str(exc.value) == USER_FACING_EVAL_FAILED
-    events = [e["event"] for e in log_capture.entries]
-    assert "eval_result_type_mismatch_choices" in events
+    assert isinstance(exc.value, GradingError)
+    assert exc.value.code == "invalid_output"
 
 
-def test_build_result_empty_content_raises_user_message(evaluator, log_capture):
-    """When content is empty AND no JSON could be extracted, _build_result
-    raises the user-facing message and logs ``agent_evaluator_no_json``."""
-    evaluator._output_type = "Pass/Fail"
-    agent_result = {"content": "", "tool_calls": []}
-    with pytest.raises(ValueError) as exc:
-        evaluator._build_result(agent_result, runtime_ms=10)
+@pytest.mark.parametrize(
+    "content",
+    ["", "I think it failed.", '{"result": "Pass", "explanation": "unfinished'],
+)
+def test_build_result_invalid_content_is_grading_error(evaluator, log_capture, content):
+    """Invalid output never synthesizes a grade; the caller logs the failure."""
+    with pytest.raises(GradingError) as exc:
+        evaluator._build_result({"content": content, "tool_calls": []}, runtime_ms=10)
     assert str(exc.value) == USER_FACING_EVAL_FAILED
-    events = [e["event"] for e in log_capture.entries]
-    assert "agent_evaluator_no_json" in events
-
-
-def test_build_result_nonempty_garbage_falls_back_to_fail(evaluator):
-    """If the agent returned text but with no parseable JSON, we don't
-    raise — we synthesize ``result=Fail`` from the raw content. This is
-    the existing fallback behavior; verify it still holds."""
-    evaluator._output_type = "Pass/Fail"
-    agent_result = {"content": "I think it failed.", "tool_calls": []}
-    # No JSON → fallback to Fail
-    out = evaluator._build_result(agent_result, runtime_ms=10)
-    # Accept either a dict-shaped or EvalResult-shaped return
-    failure = out.get("failure") if isinstance(out, dict) else out.failure
-    assert failure is True
+    assert exc.value.code == ("invalid_output" if content else "empty_output")
+    assert not log_capture.entries
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -458,7 +449,6 @@ def test_list_content_is_left_untouched_by_eval_client_l1():
     assert capped["content"] == msg["content"]
 
 
-
 # ──────────────────────────────────────────────────────────────────────────
 # Score clamping
 # ──────────────────────────────────────────────────────────────────────────
@@ -481,7 +471,10 @@ def test_list_content_is_left_untouched_by_eval_client_l1():
 )
 def test_build_result_clamps_score(evaluator, raw, expected):
     evaluator._output_type = "score"
-    agent_result = {"content": f'{{"result": {raw!r}, "explanation": "x"}}', "tool_calls": []}
+    agent_result = {
+        "content": f'{{"result": {raw!r}, "explanation": "x"}}',
+        "tool_calls": [],
+    }
     result = evaluator._build_result(agent_result, runtime_ms=10)
     assert result["data"]["result"] == expected
 
@@ -496,7 +489,10 @@ def test_build_result_clamps_numeric(evaluator):
 @pytest.mark.parametrize("label", ["Pass", "Fail"])
 def test_build_result_passfail_not_clamped(evaluator, label):
     evaluator._output_type = "Pass/Fail"
-    agent_result = {"content": f'{{"result": "{label}", "explanation": "x"}}', "tool_calls": []}
+    agent_result = {
+        "content": f'{{"result": "{label}", "explanation": "x"}}',
+        "tool_calls": [],
+    }
     result = evaluator._build_result(agent_result, runtime_ms=10)
     assert result["data"]["result"] == label
 
@@ -505,7 +501,10 @@ def test_build_result_passfail_not_clamped(evaluator, label):
 def test_build_result_choices_labels_not_clamped(evaluator, label):
     evaluator._output_type = "choices"
     evaluator._choices = ["1", "10", "joy"]
-    agent_result = {"content": f'{{"result": "{label}", "explanation": "x"}}', "tool_calls": []}
+    agent_result = {
+        "content": f'{{"result": "{label}", "explanation": "x"}}',
+        "tool_calls": [],
+    }
     result = evaluator._build_result(agent_result, runtime_ms=10)
     assert result["data"]["result"] == label
 
@@ -540,6 +539,9 @@ def _drive_run_agent(evaluator, *, agent_run_result, finalize_text):
     """
     mock_agent = MagicMock()
     mock_agent.run = AsyncMock(return_value=agent_run_result)
+    mock_agent.final_turn_content = agent_run_result.get("content", "")
+    mock_agent.total_input_tokens = 0
+    mock_agent.total_output_tokens = 0
 
     async def _fake_stream(messages, tools=None):
         yield {"choices": [{"delta": {"content": finalize_text}}]}
@@ -547,15 +549,21 @@ def _drive_run_agent(evaluator, *, agent_run_result, finalize_text):
     mock_client = MagicMock()
     mock_client.last_oversized_attempt = None
     mock_client._gateway_cost = 0
-    mock_client.stream_completion = _fake_stream
+    mock_client.take_retry.return_value = True
+    mock_client.stream_completion = MagicMock(side_effect=_fake_stream)
 
     from structlog.testing import capture_logs
 
-    with patch("ee.falcon_ai.agent.AgentLoop", return_value=mock_agent), \
-         patch("ee.evals.llm.agent_evaluator.evaluator.EvalLLMClient", return_value=mock_client), \
-         patch("ai_tools.registry.registry"), \
-         patch.object(evaluator, "_build_tool_context", return_value=MagicMock()), \
-         capture_logs() as captured:
+    with (
+        patch("ee.falcon_ai.agent.AgentLoop", return_value=mock_agent),
+        patch(
+            "ee.evals.llm.agent_evaluator.evaluator.EvalLLMClient",
+            return_value=mock_client,
+        ),
+        patch("ai_tools.registry.registry"),
+        patch.object(evaluator, "_build_tool_context", return_value=MagicMock()),
+        capture_logs() as captured,
+    ):
         result = evaluator._run_agent(
             "Judge whether the trace shows a hallucination.",
             include_trace_explorer=True,
@@ -570,11 +578,15 @@ def test_auto_mode_gets_wider_iteration_budget(evaluator):
     evaluator.agent_mode = "auto"
     _, mock_agent, _ = _drive_run_agent(
         evaluator,
-        agent_run_result={"content": '{"result": "Pass", "explanation": "ok"}',
-                          "tool_calls": []},
+        agent_run_result={
+            "content": '{"result": "Pass", "explanation": "ok"}',
+            "tool_calls": [],
+        },
         finalize_text="",
     )
     assert mock_agent.MAX_ITERATIONS == 7
+    mock_agent.run.assert_awaited_once()
+    mock_agent.llm_client.stream_completion.assert_not_called()
 
 
 def test_auto_mode_exhaustion_force_finalizes_to_verdict(evaluator):
@@ -584,14 +596,22 @@ def test_auto_mode_exhaustion_force_finalizes_to_verdict(evaluator):
     evaluator.agent_mode = "auto"
     evaluator._output_type = "Pass/Fail"
     tool_log = [
-        {"tool_name": "explore_trace", "params": {"trace_id": "t"},
-         "result_summary": "spans listed", "status": "ok"},
-        {"tool_name": "span_detail", "params": {"span_id": "s1"},
-         "result_summary": "input/output read", "status": "ok"},
+        {
+            "tool_name": "explore_trace",
+            "params": {"trace_id": "t"},
+            "result_summary": "spans listed",
+            "status": "ok",
+        },
+        {
+            "tool_name": "span_detail",
+            "params": {"span_id": "s1"},
+            "result_summary": "input/output read",
+            "status": "ok",
+        },
     ]
     verdict = '{"result": "Fail", "explanation": "The answer is not grounded in the retrieved context."}'
 
-    result, _, _ = _drive_run_agent(
+    result, mock_agent, _ = _drive_run_agent(
         evaluator,
         agent_run_result={"content": "", "tool_calls": tool_log},
         finalize_text=verdict,
@@ -600,3 +620,29 @@ def test_auto_mode_exhaustion_force_finalizes_to_verdict(evaluator):
     # Empty content + a non-empty tool log only resolves to the verdict via
     # force-finalize — recovering it proves the path fired and committed.
     assert result["content"] == verdict
+    mock_agent.run.assert_awaited_once()
+    mock_agent.llm_client.take_retry.assert_called_once()
+    mock_agent.llm_client.stream_completion.assert_called_once()
+    assert mock_agent.llm_client.stream_completion.call_args.kwargs["tools"] is None
+
+
+@pytest.mark.parametrize(
+    ("finalize_text", "code"),
+    [("", "empty_output"), ("Not a verdict", "invalid_output")],
+)
+def test_auto_mode_exhaustion_without_verdict_is_ungraded(
+    evaluator, finalize_text, code
+):
+    evaluator.agent_mode = "auto"
+    result, mock_agent, _ = _drive_run_agent(
+        evaluator,
+        agent_run_result={"content": "", "tool_calls": []},
+        finalize_text=finalize_text,
+    )
+    assert result["content"] == finalize_text
+    mock_agent.run.assert_awaited_once()
+    mock_agent.llm_client.stream_completion.assert_called_once()
+    with pytest.raises(GradingError) as exc:
+        evaluator._build_result(result, runtime_ms=10)
+    assert exc.value.code == code
+    assert exc.value.__cause__ is None

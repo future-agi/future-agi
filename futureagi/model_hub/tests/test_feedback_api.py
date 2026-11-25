@@ -252,9 +252,7 @@ def test_legacy_feedback_generated_routes_round_trip(auth_client, user, workspac
 
 
 @pytest.mark.django_db
-def test_get_template_returns_choice_scores_when_defined(
-    auth_client, user, workspace
-):
+def test_get_template_returns_choice_scores_when_defined(auth_client, user, workspace):
     """Feedback template must surface choice_scores so the FE can render a
     choice picker with derived scores instead of a raw numeric input."""
     organization = user.organization

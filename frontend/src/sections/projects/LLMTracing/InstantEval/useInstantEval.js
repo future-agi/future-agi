@@ -83,10 +83,29 @@ export const matchesSavedQuestion = (
   sameLabels(item.labels, labels) &&
   sameDefinitions(item.definitions, definitions);
 
+// A backend released before `fresh` existed refuses it as an unknown query
+// field: 400 with `details: { fresh: ["Unknown field."] }`.
+const refusedFresh = (error) =>
+  error?.statusCode === 400 &&
+  !!error?.details &&
+  Object.hasOwn(error.details, "fresh");
+
+// `fresh`: read from the primary database. What to create next is decided
+// from this list (reuse an evaluator, pick a unique name), so a question saved
+// a moment ago must be in it even when list reads go to a lagging replica.
+// The frontend can ship before the backend that knows `fresh`. Such a backend
+// is asked once more without it and answers as it always has.
 async function listProjectConfigs(projectId) {
-  const response = await axios.get(endpoints.project.getEvalTaskConfig(), {
-    params: { project_id: projectId },
-  });
+  const url = endpoints.project.getEvalTaskConfig();
+  let response;
+  try {
+    response = await axios.get(url, {
+      params: { project_id: projectId, fresh: true },
+    });
+  } catch (error) {
+    if (!refusedFresh(error)) throw error;
+    response = await axios.get(url, { params: { project_id: projectId } });
+  }
   return result(response) || [];
 }
 
@@ -269,8 +288,9 @@ export class AskRefused extends Error {
 }
 
 // Jev runs on the organization's own TypeSafe key; key problems point to the
-// AI Providers settings where it is added or replaced.
-export const AI_PROVIDERS_SETTINGS_PATH = "/dashboard/settings/ai-providers";
+// AI Providers settings where it is added or replaced, filtered to TypeSafe.
+export const AI_PROVIDERS_SETTINGS_PATH =
+  "/dashboard/settings/ai-providers?provider=typesafe";
 export const JEV_KEY_NEEDED =
   "Jev runs on your own TypeSafe key. Add it in Settings → AI Providers to start.";
 const JEV_KEY_MISSING = "JEV_KEY_MISSING";
@@ -419,7 +439,8 @@ export async function createContinuousTask({
     row_type: unit === "spans" ? "spans" : "traces",
     sampling_rate: 100,
   });
-  return result(response)?.id;
+  // A task id is an acknowledgement of saving, not of workflow startup.
+  return response?.data?.status === true ? result(response)?.id : undefined;
 }
 
 /**

@@ -39,6 +39,7 @@ import {
   useItemDiscussion,
 } from "src/api/annotation-queues/annotation-queues";
 import AnnotateHeader from "./annotate-header";
+import AnnotateItemError from "./annotate-item-error";
 import AnnotateFooter from "./annotate-footer";
 import ContentPanel from "./content-panel";
 import LabelPanel from "./label-panel";
@@ -60,7 +61,12 @@ import {
   resolveSelectedAnnotatorScope,
 } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
-import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
+import {
+  QUEUE_ROLES,
+  hasQueueRole,
+  isQueueAnnotatorRole,
+  shortId,
+} from "../constants";
 import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 
 const MAX_HISTORY = 50;
@@ -129,12 +135,6 @@ function isOpenBlockingReviewFeedback(comment) {
     isBlockingReviewFeedback(comment) &&
     (!comment?.thread_status || isOpenReviewStatus(comment.thread_status))
   );
-}
-
-function shortId(value) {
-  if (!value) return "";
-  const text = String(value);
-  return text.length > 8 ? text.slice(0, 8) : text;
 }
 
 function itemContextLabel(item, itemId) {
@@ -461,6 +461,8 @@ export default function AnnotateWorkspaceView() {
       !isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
     reserve: !isReviewWorkspaceMode && queueDetail?.annotations_required === 1,
     enabled: detailEnabled,
+    // Persistent workspace error states own these failures, not a transient toast.
+    meta: { errorHandled: true },
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
@@ -501,7 +503,9 @@ export default function AnnotateWorkspaceView() {
     currentScopeKey: detailNavigationScopeKey,
   });
   const { data: liveDiscussion } = useItemDiscussion(queueId, currentItemId, {
-    enabled: detailEnabled,
+    // Wait for this item's detail before polling a discussion we may not access.
+    enabled:
+      detailEnabled && detail?.item?.id === currentItemId && !detailError,
     refetchInterval: commentsOpen ? 3000 : 10000,
     refetchIntervalInBackground: false,
   });
@@ -1461,6 +1465,25 @@ export default function AnnotateWorkspaceView() {
     );
   }
 
+  const detailErrorStatus =
+    detailError?.statusCode ?? detailError?.response?.status;
+  const hasTransientRefetchError =
+    !!detailError &&
+    detail?.item?.id === currentItemId &&
+    (detailErrorStatus == null ||
+      detailErrorStatus === 429 ||
+      detailErrorStatus >= 500);
+
+  if (detailError && !hasTransientRefetchError) {
+    return (
+      <AnnotateItemError
+        statusCode={detailErrorStatus}
+        onBack={handleBack}
+        onRetry={refetchAnnotateDetail}
+      />
+    );
+  }
+
   // Queue not active — block annotation
   const queueStatus = effectiveQueueStatus;
   const completedToggleDisabled =
@@ -1569,6 +1592,23 @@ export default function AnnotateWorkspaceView() {
         minHeight: 0,
       }}
     >
+      {hasTransientRefetchError && (
+        <Alert
+          severity="warning"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              disabled={detailFetching}
+              onClick={() => refetchAnnotateDetail()}
+            >
+              Try Again
+            </Button>
+          }
+        >
+          Could not refresh this item. Your unsaved changes are still here.
+        </Alert>
+      )}
       <AnnotateHeader
         queueName={detail?.queue?.name}
         progress={detail?.progress}

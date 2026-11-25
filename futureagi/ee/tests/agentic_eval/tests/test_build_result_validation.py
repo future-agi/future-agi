@@ -24,9 +24,7 @@ EVAL_FAILED_MSG = (
 
 def _make_evaluator(output_type="Pass/Fail", choices=None, choice_scores=None):
     """Build a minimal AgentEvaluator with mocked ModelConfigs."""
-    with patch(
-        "ee.evals.llm.agent_evaluator.evaluator.ModelConfigs"
-    ) as mock_mc:
+    with patch("ee.evals.llm.agent_evaluator.evaluator.ModelConfigs") as mock_mc:
         mock_mc.get_config.return_value = {}
         mock_mc.is_turing.return_value = False
         ev = AgentEvaluator(
@@ -44,9 +42,7 @@ def _make_evaluator(output_type="Pass/Fail", choices=None, choice_scores=None):
 def _agent_result(result_value, explanation="test explanation"):
     """Build a minimal agent_result dict whose content is valid JSON."""
     return {
-        "content": json.dumps(
-            {"result": result_value, "explanation": explanation}
-        ),
+        "content": json.dumps({"result": result_value, "explanation": explanation}),
     }
 
 
@@ -115,30 +111,22 @@ class TestScoreValidation:
 
 class TestChoicesValidation:
     def test_valid_choice_accepted(self):
-        ev = _make_evaluator(
-            output_type="choices", choices=["Good", "Bad", "Neutral"]
-        )
+        ev = _make_evaluator(output_type="choices", choices=["Good", "Bad", "Neutral"])
         result = ev._build_result(_agent_result("Good"), runtime_ms=100)
         assert result["data"]["result"] == "Good"
 
     def test_case_insensitive_match(self):
-        ev = _make_evaluator(
-            output_type="choices", choices=["Good", "Bad"]
-        )
+        ev = _make_evaluator(output_type="choices", choices=["Good", "Bad"])
         result = ev._build_result(_agent_result("good"), runtime_ms=100)
         assert result["data"]["result"] == "good"
 
     def test_invalid_choice_rejected(self):
-        ev = _make_evaluator(
-            output_type="choices", choices=["Good", "Bad"]
-        )
+        ev = _make_evaluator(output_type="choices", choices=["Good", "Bad"])
         with pytest.raises(ValueError, match="Evaluation failed"):
             ev._build_result(_agent_result("Excellent"), runtime_ms=100)
 
     def test_numeric_for_choices_rejected(self):
-        ev = _make_evaluator(
-            output_type="choices", choices=["Good", "Bad"]
-        )
+        ev = _make_evaluator(output_type="choices", choices=["Good", "Bad"])
         with pytest.raises(ValueError, match="Evaluation failed"):
             ev._build_result(_agent_result(0.9), runtime_ms=100)
 

@@ -81,6 +81,7 @@ x-backend-env: &backend-env
   HOSTED_SANDBOX_PROVIDER: ${HOSTED_SANDBOX_PROVIDER:-daytona}
   ALK_HOSTED_BASE_EGRESS_DOMAINS: ${ALK_HOSTED_BASE_EGRESS_DOMAINS:-}
   ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS: ${ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS:-}
+  ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS: ${ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS:-}
   ALK_HOSTED_EGRESS_UNRESTRICTED: ${ALK_HOSTED_EGRESS_UNRESTRICTED:-false}
   ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS: ${ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS:-3600}
   ALK_HOSTED_AUTHORING_TIMEOUT: ${ALK_HOSTED_AUTHORING_TIMEOUT:-}
@@ -152,9 +153,12 @@ x-backend-env: &backend-env
   # port (./bin/install moves it when 4317 is taken).
   FI_COLLECTOR_HOST: fi-collector
   FI_COLLECTOR_OTLP_PORT: "4317"
-  # The OTLP/HTTP URL SDKs send traces to (their FI_BASE_URL), as the UI
+  # The OTLP/HTTP URL SDKs send traces to (their FI_TRACES_URL), as the UI
   # shows it.
   FI_COLLECTOR_PUBLIC_URL: ${FI_COLLECTOR_PUBLIC_URL:-http://localhost:${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}}
+  # The API's published port: with BASE_URL and VITE_HOST_API unset, the UI's
+  # SDK snippet hands out http://localhost:<BACKEND_PORT> as FI_BASE_URL.
+  BACKEND_PORT: ${BACKEND_PORT:-8000}
   # The UI's host, without a scheme: invite and password-reset links.
   APP_URL: ${APP_URL:-localhost:${FRONTEND_PORT:-3000}}
 
@@ -308,6 +312,27 @@ services:
       peerdb-flow-snapshot-worker:
         condition: service_started
 
+  # The Metrics ClickHouse schema (packaged files 009, 011 and 028-038), applied
+  # only while METRICS_ENABLED is on in .env; with it off the job exits at once.
+  # Receipts make every rerun a no-op, so turning Metrics on later and running
+  # `docker compose up -d` applies the files before the backend restarts.
+  metrics-schema-bootstrap:
+    <<: *backend-bootstrap
+    entrypoint: ["python", "-m", "tracer.services.derived_metrics.schema_install"]
+    # --advisory: a failure is logged and exits 0, so only Metrics stays
+    # unavailable (metric_schema_not_installed); the rest of the stack starts.
+    command: ["--apply", "--advisory"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: bootstrap
+      FI_MIGRATION_USER: metrics-schema-bootstrap
+    depends_on:
+      clickhouse-cdc-bootstrap:
+        condition: service_completed_successfully
+
   # ==========================================================================
   # Application
   # ==========================================================================
@@ -353,6 +378,8 @@ services:
     depends_on:
       clickhouse-cdc-bootstrap:
         condition: service_completed_successfully
+      metrics-schema-bootstrap:
+        condition: service_completed_successfully
       property-catalog-clickhouse-bootstrap:
         condition: service_completed_successfully
       postgres:
@@ -388,6 +415,8 @@ services:
     depends_on:
       clickhouse-cdc-bootstrap:
         condition: service_completed_successfully
+      metrics-schema-bootstrap:
+        condition: service_completed_successfully
       property-catalog-clickhouse-bootstrap:
         condition: service_completed_successfully
       temporal:
@@ -409,6 +438,8 @@ services:
           required: false
       depends_on:
         clickhouse-cdc-bootstrap:
+          condition: service_completed_successfully
+        metrics-schema-bootstrap:
           condition: service_completed_successfully
         property-catalog-clickhouse-bootstrap:
           condition: service_completed_successfully
@@ -995,7 +1026,7 @@ services:
   # ==========================================================================
 
   temporal:
-    image: temporalio/auto-setup:1.29.1
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -1070,7 +1101,7 @@ services:
     restart: unless-stopped
 
   peerdb-temporal:
-    image: temporalio/auto-setup:1.29
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     environment:
       DB: postgres12
       DB_PORT: 5432

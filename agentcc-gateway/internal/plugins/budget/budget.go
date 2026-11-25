@@ -499,6 +499,8 @@ func (p *Plugin) recordToCounter(bc *orgBudgetCounter, model string, cost float6
 		bc.modelSpend = make(map[string]float64)
 		bc.periodStart = start
 	}
+	// Recorded as the shared ledger records it, so the ledgers agree.
+	cost = models.SpendUSD(cost)
 	bc.totalSpend += cost
 	if model != "" {
 		bc.modelSpend[model] += cost
@@ -545,7 +547,8 @@ func (p *Plugin) getOrgHierarchy(orgID string) *orgHierarchyCounters {
 
 func (p *Plugin) calculateCost(rc *models.RequestContext) float64 {
 	// Try reading from metadata first (if cost plugin already ran).
-	if costStr := rc.Metadata["cost"]; costStr != "" {
+	costStr, hasCost := rc.Metadata["cost"]
+	if costStr != "" {
 		if cost, err := strconv.ParseFloat(costStr, 64); err == nil {
 			return cost
 		}
@@ -561,8 +564,11 @@ func (p *Plugin) calculateCost(rc *models.RequestContext) float64 {
 		model = rc.Model
 	}
 
+	knownFree := isFreeCatalogueTokenRequest(rc, hasCost)
 	if p.pricing == nil {
-		slog.Warn("budget: no pricing table available")
+		if !knownFree {
+			slog.Warn("budget: no pricing table available")
+		}
 		return 0
 	}
 
@@ -574,12 +580,22 @@ func (p *Plugin) calculateCost(rc *models.RequestContext) float64 {
 		}
 	}
 	if !ok {
-		if rc.Response.Usage.PromptTokens+rc.Response.Usage.CompletionTokens > 0 {
+		if !knownFree && rc.Response.Usage.PromptTokens+rc.Response.Usage.CompletionTokens > 0 {
 			p.warnUnpriced(rc, model)
 		}
 		return 0
 	}
 	return cost
+}
+
+// Only an absent cost can mean a stated-free token price; a malformed cost cannot.
+func isFreeCatalogueTokenRequest(rc *models.RequestContext, hasCost bool) bool {
+	switch rc.EndpointType {
+	case "", "chat", "completion", "responses", "embedding":
+		return !hasCost && rc.Metadata["cost_source"] == "catalogue"
+	default:
+		return false
+	}
 }
 
 // warnUnpriced logs, once per model, that spend for the model cannot be
