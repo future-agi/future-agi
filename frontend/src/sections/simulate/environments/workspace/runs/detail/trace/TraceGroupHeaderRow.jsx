@@ -10,9 +10,10 @@ import {
 
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
-import { SCORING_STATUS } from "../../runs.constants";
 import {
+  GROUP_METRIC_COLUMNS,
   HEAD_ROW_PX,
+  evalGrading,
   isBad,
   neutralCheckboxSx,
   pinnedLeftSx,
@@ -30,6 +31,120 @@ const DESC_KEYS = [
 ];
 const rowHover = (t) =>
   `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`;
+
+// A group's figure for one column: the value, red with a warning when bad,
+// over how it was aggregated. A dash when there is none.
+export function GroupMetricValue({
+  value,
+  suffix = "",
+  metric,
+  aggregation = "Avg",
+}) {
+  if (value == null) {
+    return (
+      <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+        -
+      </Typography>
+    );
+  }
+  const bad = metric
+    ? isBad(metric, typeof value === "number" ? value : Number(value))
+    : false;
+  return (
+    <Stack alignItems="flex-start" spacing={0.25}>
+      <Stack direction="row" alignItems="center" spacing={0.5}>
+        {bad && (
+          <Iconify
+            icon="solar:danger-triangle-bold"
+            width={13}
+            sx={{ color: "status.danger.solid", flexShrink: 0 }}
+          />
+        )}
+        <Typography
+          sx={{
+            typography: "s2",
+            fontWeight: "fontWeightSemiBold",
+            fontVariantNumeric: "tabular-nums",
+            color: bad ? "status.danger.fg" : "text.primary",
+          }}
+        >
+          {typeof value === "number"
+            ? value.toLocaleString(undefined, {
+                maximumFractionDigits: 1,
+              })
+            : value}
+          {suffix}
+        </Typography>
+      </Stack>
+      <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+        {aggregation}
+      </Typography>
+    </Stack>
+  );
+}
+GroupMetricValue.propTypes = {
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  suffix: PropTypes.string,
+  metric: PropTypes.string,
+  aggregation: PropTypes.string,
+};
+
+// A group's mean score for one eval, heat-tinted, over how many calls it
+// averages; a skeleton while grading and a dash when nothing is scored.
+export function GroupEvalMean({ aggregate, grading = false, sx }) {
+  if (!aggregate?.scored)
+    return grading ? (
+      <CellSkeleton />
+    ) : (
+      <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+        -
+      </Typography>
+    );
+  const meanScore = aggregate.scoreSum / aggregate.scored;
+  return (
+    <Box
+      sx={{
+        bgcolor: interpolateColorBasedOnScore(meanScore, 1),
+        color: "text.primary",
+        ...sx,
+      }}
+    >
+      <Typography
+        sx={{
+          typography: "s2",
+          fontWeight: "fontWeightSemiBold",
+          fontVariantNumeric: "tabular-nums",
+          color: "text.primary",
+        }}
+      >
+        {Math.round(meanScore * 100)}%
+      </Typography>
+      <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+        Avg · {aggregate.scored} scored
+      </Typography>
+    </Box>
+  );
+}
+GroupEvalMean.propTypes = {
+  aggregate: PropTypes.shape({
+    scored: PropTypes.number,
+    scoreSum: PropTypes.number,
+  }),
+  grading: PropTypes.bool,
+  sx: PropTypes.object,
+};
+
+// Fills the whole eval cell with the tint.
+const evalFillSx = {
+  position: "absolute",
+  inset: 0,
+  display: "flex",
+  flexDirection: "column",
+  justifyContent: "center",
+  alignItems: "flex-start",
+  px: 2,
+  py: 1.5,
+};
 
 // The collapsible group header: chevron + label on the first descriptive
 // column, a per-column aggregate summary on the rest, and a heat-tinted mean
@@ -104,52 +219,20 @@ export default function TraceGroupHeaderRow({
     return "-";
   };
 
-  const numCell = (value, suffix = "", metric, aggregation = "Avg") => {
-    const bad = metric
-      ? isBad(metric, typeof value === "number" ? value : Number(value))
-      : false;
-    return (
-      <TableCell sx={numCellSx}>
-        {value == null && loading ? (
-          <CellSkeleton />
-        ) : value == null ? (
-          <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-            -
-          </Typography>
-        ) : (
-          <Stack alignItems="flex-start" spacing={0.25}>
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              {bad && (
-                <Iconify
-                  icon="solar:danger-triangle-bold"
-                  width={13}
-                  sx={{ color: "status.danger.solid", flexShrink: 0 }}
-                />
-              )}
-              <Typography
-                sx={{
-                  typography: "s2",
-                  fontWeight: "fontWeightSemiBold",
-                  fontVariantNumeric: "tabular-nums",
-                  color: bad ? "status.danger.fg" : "text.primary",
-                }}
-              >
-                {typeof value === "number"
-                  ? value.toLocaleString(undefined, {
-                      maximumFractionDigits: 1,
-                    })
-                  : value}
-                {suffix}
-              </Typography>
-            </Stack>
-            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {aggregation}
-            </Typography>
-          </Stack>
-        )}
-      </TableCell>
-    );
-  };
+  const numCell = (key, value, suffix = "", metric, aggregation = "Avg") => (
+    <TableCell key={key} sx={numCellSx}>
+      {value == null && loading ? (
+        <CellSkeleton />
+      ) : (
+        <GroupMetricValue
+          value={value}
+          suffix={suffix}
+          metric={metric}
+          aggregation={aggregation}
+        />
+      )}
+    </TableCell>
+  );
 
   const label = (
     <Stack
@@ -228,66 +311,25 @@ export default function TraceGroupHeaderRow({
           </TableCell>
         ))
       )}
-      {show("csat") && numCell(a.csat, "", "csat")}
-      {show("turns") && numCell(a.turns, "", "turns")}
-      {show("latency") && numCell(a.latency, "ms", "latency")}
-      {show("stopLatency") && numCell(a.stopLatency, "ms")}
-      {show("aiInterruptions") && numCell(a.aiInterruptions)}
-      {show("tokens") && numCell(a.tokens, "", undefined, "Total")}
+      {GROUP_METRIC_COLUMNS.map(
+        (c) =>
+          show(c.key) &&
+          numCell(c.key, a[c.field], c.suffix, c.metric, c.aggregation),
+      )}
       {showEvals &&
         evals.map((e) => {
           const ea = a.evals?.[e.id];
-          if (!ea || !ea.scored) {
-            // A finished call can still be waiting on this eval's grade.
-            const grading = group.rows.some((t) =>
-              t.evalResults?.some(
-                (r) => r.id === e.id && r.status === SCORING_STATUS.PENDING,
-              ),
-            );
-            return (
-              <TableCell key={`eval-${e.id}`} sx={numCellSx}>
-                {loading || grading ? (
-                  <CellSkeleton />
-                ) : (
-                  <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                    -
-                  </Typography>
-                )}
-              </TableCell>
-            );
-          }
-          const meanScore = ea.scoreSum / ea.scored;
-          const rate = Math.round(meanScore * 100);
           return (
-            <TableCell key={`eval-${e.id}`} sx={{ ...numCellSx, p: 0 }}>
-              <Box
-                sx={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "center",
-                  alignItems: "flex-start",
-                  px: 2,
-                  py: 1.5,
-                  bgcolor: interpolateColorBasedOnScore(meanScore, 1),
-                  color: "text.primary",
-                }}
-              >
-                <Typography
-                  sx={{
-                    typography: "s2",
-                    fontWeight: "fontWeightSemiBold",
-                    fontVariantNumeric: "tabular-nums",
-                    color: "text.primary",
-                  }}
-                >
-                  {rate}%
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                  Avg · {ea.scored} scored
-                </Typography>
-              </Box>
+            <TableCell
+              key={`eval-${e.id}`}
+              sx={ea?.scored ? { ...numCellSx, p: 0 } : numCellSx}
+            >
+              <GroupEvalMean
+                aggregate={ea}
+                // A finished call can still be waiting on this eval's grade.
+                grading={loading || evalGrading(group.rows, e.id)}
+                sx={evalFillSx}
+              />
             </TableCell>
           );
         })}

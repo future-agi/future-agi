@@ -604,35 +604,42 @@ def scoring_input_from_values(row: Mapping[str, Any]) -> ScoringInput:
     )
 
 
-def _column(name: str) -> str:
-    return f'"{CallExecution._meta.db_table}"."{name}"'
+def scoring_sql(alias: str | None = None) -> tuple[str, str, str]:
+    """The meta, outputs and CSAT projections, over ``alias`` or the calls table."""
+    table = alias or f'"{CallExecution._meta.db_table}"'
+
+    def column(name: str) -> str:
+        return f'{table}."{name}"'
+
+    meta_pairs = ", ".join(
+        f"'{key}', {column('call_metadata')} -> '{key}'"
+        for key in SCORING_META_KEYS
+        if key != EVAL_DISPATCH_FAILED_KEY
+    )
+    # The dispatch failure is projected as a flag so its exception text never
+    # leaves the database.
+    meta = (
+        f"jsonb_strip_nulls(jsonb_build_object({meta_pairs}, "
+        f"'{EVAL_DISPATCH_FAILED_KEY}', CASE WHEN {column('call_metadata')} ? "
+        f"'{EVAL_DISPATCH_FAILED_KEY}' THEN 'true'::jsonb END))"
+    )
+    # Each entry reduced to the four keys the derivation reads. A non-object
+    # column or entry is skipped here rather than failing every read.
+    outputs = (
+        f"CASE WHEN jsonb_typeof({column('eval_outputs')}) = 'object' THEN ("
+        "SELECT COALESCE(jsonb_object_agg(entry.key, jsonb_strip_nulls("
+        "jsonb_build_object('status', entry.value -> 'status', "
+        "'source', entry.value -> 'source', 'error', entry.value -> 'error', "
+        "'skipped', entry.value -> 'skipped'))), '{}'::jsonb) "
+        f"FROM jsonb_each({column('eval_outputs')}) AS entry "
+        "WHERE jsonb_typeof(entry.value) = 'object'"
+        ") ELSE '{}'::jsonb END"
+    )
+    csat = f"{column('conversation_metrics_data')} -> 'csat_score'"
+    return meta, outputs, csat
 
 
-_META_PAIRS = ", ".join(
-    f"'{key}', {_column('call_metadata')} -> '{key}'"
-    for key in SCORING_META_KEYS
-    if key != EVAL_DISPATCH_FAILED_KEY
-)
-# The dispatch failure is projected as a flag so its exception text never
-# leaves the database.
-_SCORING_META_SQL = (
-    f"jsonb_strip_nulls(jsonb_build_object({_META_PAIRS}, "
-    f"'{EVAL_DISPATCH_FAILED_KEY}', CASE WHEN {_column('call_metadata')} ? "
-    f"'{EVAL_DISPATCH_FAILED_KEY}' THEN 'true'::jsonb END))"
-)
-# Each entry reduced to the four keys the derivation reads. A non-object
-# column or entry is skipped here rather than failing every read.
-_SCORING_OUTPUTS_SQL = (
-    f"CASE WHEN jsonb_typeof({_column('eval_outputs')}) = 'object' THEN ("
-    "SELECT COALESCE(jsonb_object_agg(entry.key, jsonb_strip_nulls("
-    "jsonb_build_object('status', entry.value -> 'status', "
-    "'source', entry.value -> 'source', 'error', entry.value -> 'error', "
-    "'skipped', entry.value -> 'skipped'))), '{}'::jsonb) "
-    f"FROM jsonb_each({_column('eval_outputs')}) AS entry "
-    "WHERE jsonb_typeof(entry.value) = 'object'"
-    ") ELSE '{}'::jsonb END"
-)
-_SCORING_CSAT_SQL = f"{_column('conversation_metrics_data')} -> 'csat_score'"
+_SCORING_META_SQL, _SCORING_OUTPUTS_SQL, _SCORING_CSAT_SQL = scoring_sql()
 
 
 # What ``scoring_values`` adds to each row besides ``id``: the fields
@@ -755,6 +762,27 @@ def derive_call_scoring(
     }
     status = next((part for part in _PRECEDENCE if part in parts), "not_applicable")
     return CallScoring(status, evals, missing, csat_status, csat_reason)
+
+
+def scoring_settled(inp: ScoringInput, scoring: CallScoring) -> bool:
+    """Whether ``scoring`` holds at any ``now``: none of it read a clock.
+
+    Only a pending eval or an open CSAT reaches the clocks, and a call still in
+    transport or ``analyzing`` reads none.
+    """
+    if inp.call_status in GRADING_STATUSES:
+        return True
+    return not (
+        scoring.missing
+        or any(
+            normalize_eval_entry(entry) == "pending"
+            for entry in inp.eval_entries.values()
+        )
+        or (
+            inp.metadata.get("csat_status") in CSAT_OPEN_STATUSES
+            and not inp.csat_scored
+        )
+    )
 
 
 def _derive_csat(

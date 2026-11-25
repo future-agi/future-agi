@@ -655,7 +655,7 @@ import type {
   HarnessAgentPolicyResponseApi,
   HarnessAgentVersionCreateApi,
   HarnessArtifactUploadResponseApi,
-  HarnessCompareApi,
+  HarnessCompareRunsApi,
   HarnessConversationAdjustmentApi,
   HarnessConversationAdjustmentResponseApi,
   HarnessConversationEventAckApi,
@@ -1329,7 +1329,7 @@ import type {
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
   SimulateApiHarnessEnvironmentsActorViewParams,
-  SimulateApiHarnessEnvironmentsCompareParams,
+  SimulateApiHarnessEnvironmentsCompareRunsParams,
   SimulateApiHarnessEnvironmentsDeleteActorParams,
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
@@ -62638,32 +62638,32 @@ export const simulateApiHarnessEnvironmentsAgentPolicy = async (
   );
 };
 
-export type simulateApiHarnessEnvironmentsCompareResponse200 = {
-  data: HarnessCompareApi;
+export type simulateApiHarnessEnvironmentsCompareRunsResponse200 = {
+  data: HarnessCompareRunsApi;
   status: 200;
 };
 
-export type simulateApiHarnessEnvironmentsCompareResponseDefault = {
+export type simulateApiHarnessEnvironmentsCompareRunsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
   status: Exclude<HTTPStatusCodes, 200>;
 };
 
-export type simulateApiHarnessEnvironmentsCompareResponseSuccess =
-  simulateApiHarnessEnvironmentsCompareResponse200 & {
+export type simulateApiHarnessEnvironmentsCompareRunsResponseSuccess =
+  simulateApiHarnessEnvironmentsCompareRunsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsCompareResponseError =
-  simulateApiHarnessEnvironmentsCompareResponseDefault & {
+export type simulateApiHarnessEnvironmentsCompareRunsResponseError =
+  simulateApiHarnessEnvironmentsCompareRunsResponseDefault & {
     headers: ApiResponseHeaders;
   };
 
-export type simulateApiHarnessEnvironmentsCompareResponse =
-  | simulateApiHarnessEnvironmentsCompareResponseSuccess
-  | simulateApiHarnessEnvironmentsCompareResponseError;
+export type simulateApiHarnessEnvironmentsCompareRunsResponse =
+  | simulateApiHarnessEnvironmentsCompareRunsResponseSuccess
+  | simulateApiHarnessEnvironmentsCompareRunsResponseError;
 
-export const getSimulateApiHarnessEnvironmentsCompareUrl = (
+export const getSimulateApiHarnessEnvironmentsCompareRunsUrl = (
   id: string,
-  params: SimulateApiHarnessEnvironmentsCompareParams,
+  params: SimulateApiHarnessEnvironmentsCompareRunsParams,
 ) => {
   const normalizedParams = new URLSearchParams();
 
@@ -62680,22 +62680,22 @@ export const getSimulateApiHarnessEnvironmentsCompareUrl = (
   const stringifiedParams = normalizedParams.toString();
 
   return stringifiedParams.length > 0
-    ? `/simulate/api/harness-environments/${id}/compare/?${stringifiedParams}`
-    : `/simulate/api/harness-environments/${id}/compare/`;
+    ? `/simulate/api/harness-environments/${id}/compare-runs/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/compare-runs/`;
 };
 
 /**
- * Two runs of this environment, scenario by scenario; against defaults to
-the previous completed run. Not gated on versioning: a run from before
-versioning compares too, with null versions.
+ * 2-8 finished runs of this environment, scenario version by scenario
+version, with the run detail's search, filters and grouping. The first
+run is the baseline. Not gated on versioning.
  */
-export const simulateApiHarnessEnvironmentsCompare = async (
+export const simulateApiHarnessEnvironmentsCompareRuns = async (
   id: string,
-  params: SimulateApiHarnessEnvironmentsCompareParams,
+  params: SimulateApiHarnessEnvironmentsCompareRunsParams,
   options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsCompareResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsCompareResponse>(
-    getSimulateApiHarnessEnvironmentsCompareUrl(id, params),
+): Promise<simulateApiHarnessEnvironmentsCompareRunsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCompareRunsResponse>(
+    getSimulateApiHarnessEnvironmentsCompareRunsUrl(id, params),
     {
       ...options,
       method: "GET",

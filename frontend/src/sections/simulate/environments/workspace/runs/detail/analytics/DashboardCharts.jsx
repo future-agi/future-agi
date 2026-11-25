@@ -306,6 +306,7 @@ export function Bars({
   histogram = false,
   angled = false,
   axisLabel,
+  stacked = true,
 }) {
   const theme = useTheme();
   const tick = tickOf(theme);
@@ -400,7 +401,7 @@ export function Bars({
                     ? roleColor(theme, s.role)
                     : dataColor(theme, s.colorIndex ?? index)
                 }
-                stackId="value"
+                stackId={stacked ? "value" : undefined}
                 maxBarSize={40}
                 isAnimationActive={false}
                 onClick={onOpen ? (row) => onOpen(row) : undefined}
@@ -478,6 +479,8 @@ Bars.propTypes = {
   histogram: PropTypes.bool,
   angled: PropTypes.bool,
   axisLabel: PropTypes.string,
+  // Off: one bar per series side by side, instead of one stacked bar.
+  stacked: PropTypes.bool,
 };
 export function TrendLine({
   rows = [],
