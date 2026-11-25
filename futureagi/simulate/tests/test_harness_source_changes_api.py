@@ -141,7 +141,13 @@ def test_one_entry_per_rule_whatever_number_each_case_gave_it(
     _with_rules_and_files(child, [lookup, now], {})
 
     def record(action, text, **link):
-        return {"kind": "rule", "action": action, "key": f"rule-{rule_key(text)}", "text": text, **link}
+        return {
+            "kind": "rule",
+            "action": action,
+            "key": f"rule-{rule_key(text)}",
+            "text": text,
+            **link,
+        }
 
     history = [
         record("removed", oldest, replaced_by=f"rule-{rule_key(was)}"),
@@ -194,10 +200,18 @@ def _reworded(environment, history_by_version):
 def _record(action, text, **link):
     from simulate.services.harness_versioning.review_items import rule_key
 
-    return {"kind": "rule", "action": action, "key": f"rule-{rule_key(text)}", "text": text, **link}
+    return {
+        "kind": "rule",
+        "action": action,
+        "key": f"rule-{rule_key(text)}",
+        "text": text,
+        **link,
+    }
 
 
-def test_a_rule_that_reads_the_same_in_both_versions_is_no_change(user, workspace, storage):
+def test_a_rule_that_reads_the_same_in_both_versions_is_no_change(
+    user, workspace, storage
+):
     """(a) A quote older than both versions names the same rule in each; (b) of a case's two rules, both cited with an
     empty ref, only the changed one is a change. Compare and the Source changed reading agree."""
     from simulate.services.harness_scenario_lifecycle import changed_refs
@@ -205,9 +219,15 @@ def test_a_rule_that_reads_the_same_in_both_versions_is_no_change(user, workspac
 
     environment = _environment(user, workspace, storage, "sc-same")
     _suite(environment, _ten())
-    lookup, oldest, kept = "Look up first.", "Refund within 14 days.", "Refund within 10 days."
+    lookup, oldest, kept = (
+        "Look up first.",
+        "Refund within 14 days.",
+        "Refund within 10 days.",
+    )
     was, now = "Ship within 5 days.", "Ship within 3 days."
-    parent = _with_rules_and_files(environment.environment_version, [lookup, kept, was], {})
+    parent = _with_rules_and_files(
+        environment.environment_version, [lookup, kept, was], {}
+    )
     child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
     _with_rules_and_files(child, [lookup, kept, now], {})
     history = [

@@ -944,7 +944,9 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChan
                 files.add(file_path(ref))
             entry = by_change.setdefault(
                 group,
-                SourceChange(kind=kind, ref=ref, before=before, after=after, cited_by=[]),
+                SourceChange(
+                    kind=kind, ref=ref, before=before, after=after, cited_by=[]
+                ),
             )
             if key not in entry["cited_by"]:
                 entry["cited_by"].append(key)

@@ -1481,7 +1481,9 @@ def remember_save(
     locked.save(update_fields=["payload", "updated_at"])
 
 
-def _archived_tokens(locked: HostedHarnessJob, scenarios: list[dict[str, Any]]) -> set[str]:
+def _archived_tokens(
+    locked: HostedHarnessJob, scenarios: list[dict[str, Any]]
+) -> set[str]:
     from simulate.services.harness_starting_records import scenario_token
     from simulate.services.harness_versioning.versions import archived_keys
 
@@ -1497,7 +1499,9 @@ def _archive_kept_refused() -> HostedHarnessError:
     )
 
 
-def without_archived(locked: HostedHarnessJob, files: dict[str, bytes]) -> dict[str, bytes]:
+def without_archived(
+    locked: HostedHarnessJob, files: dict[str, bytes]
+) -> dict[str, bytes]:
     """A drafted suite's files without its archived scenarios, for Validate to build from: Save leaves an archived
     case out of the suite whichever way it saves. The draft itself is not written."""
     from simulate.services.harness_starting_records import scenario_token
@@ -1507,7 +1511,11 @@ def without_archived(locked: HostedHarnessJob, files: dict[str, bytes]) -> dict[
     archived = _archived_tokens(locked, scenarios)
     if not archived:
         return files
-    kept = [one for one in scenarios if scenario_token(one.get("scenario_key")) not in archived]
+    kept = [
+        one
+        for one in scenarios
+        if scenario_token(one.get("scenario_key")) not in archived
+    ]
     rewritten = _rewritten_authoring_archive(archives.pack_archive(files), kept)
     if rewritten is None:
         raise _archive_kept_refused()
