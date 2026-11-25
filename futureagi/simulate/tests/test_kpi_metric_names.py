@@ -233,13 +233,17 @@ def test_noncolliding_keys_values_and_null_behavior(bind, kpis):
         bind(3, "Mood", "choices", "warm", choices=("Warm", "Cold")),
         bind(4, "Unscored", "score", None),
         bind(5, "Empty", "choices", None, choices=("Yes", "No")),
+        bind(6, "Gate", "Pass/Fail", None),
+        bind(7, "Strict", "Pass/Fail", "Failed"),
     ) == {
         **system,
         "avg_accuracy": 80,
         "avg_rank": 3,
         "mood": {"Warm": 1, "Cold": 0, "choices": ["Warm", "Cold"]},
-        "avg_unscored": 0,
+        "avg_unscored": None,
         "empty": {"Yes": 0, "No": 0, "choices": ["Yes", "No"]},
+        "avg_gate": None,
+        "avg_strict": 0,
     }
 
 
