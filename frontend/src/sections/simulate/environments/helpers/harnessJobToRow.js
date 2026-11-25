@@ -4,7 +4,11 @@ import {
   HARNESS_STAGE,
   terminalStages,
 } from "src/pages/dashboard/harness/harnessShared";
-import { ENV_STATUS, BUILD_STATUS } from "../myEnvironments.constants";
+import {
+  ENV_STATUS,
+  BUILD_STATUS,
+  NOT_PROVIDED,
+} from "../myEnvironments.constants";
 
 // ALK reports the transports it detected in the source under
 // credentials.detected_connectors (see `agentTypeIcon` in harnessShared). A
@@ -60,8 +64,10 @@ export const jobStatusFor = (status) =>
 // terminal-failed job as still building (the header stuck on "Building" with the
 // animation never stopping). A failed/canceled stage is now BUILD_STATUS.FAILED.
 export const buildStatusFor = (stage) => {
-  if (stage === HARNESS_STAGE.COMPLETED || stage === HARNESS_STAGE.RUNNING) return BUILD_STATUS.READY;
-  if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED) return BUILD_STATUS.FAILED;
+  if (stage === HARNESS_STAGE.COMPLETED || stage === HARNESS_STAGE.RUNNING)
+    return BUILD_STATUS.READY;
+  if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED)
+    return BUILD_STATUS.FAILED;
   return BUILD_STATUS.BUILDING;
 };
 
@@ -102,11 +108,23 @@ const ENV_AGENT_TYPE = {
   chat: AGENT_TYPES.CHAT,
 };
 
+// The value the API sent for `key`, null included, or NOT_PROVIDED when the
+// key isn't in the payload at all.
+const sent = (obj, key) =>
+  obj && Object.hasOwn(obj, key) ? obj[key] : NOT_PROVIDED;
+
+const lastRunOf = (run) => {
+  if (!run || run.pass_rate == null) return null;
+  return { rate: run.pass_rate, ordinal: run.run_number ?? null };
+};
+
+const versionLabelOf = (version) =>
+  version?.version_number != null ? `v${version.version_number}` : null;
+
 // Map one harness-environments list row to the flat row the My Environments
 // table reads. Unlike the harness-jobs projection, this payload carries the
 // real description and the tool / scenario counts, and its `status` is already
-// the four-state pill value. Sub-goals and total runs have no field in the list
-// yet, so they stay null and their columns keep a placeholder header.
+// the four-state pill value.
 export function harnessEnvToRow(item) {
   return {
     id: item?.id,
@@ -121,13 +139,17 @@ export function harnessEnvToRow(item) {
     domain: item?.domain ?? null,
     tools: item?.tools_count ?? null,
     scenarios: item?.scenario_count ?? null,
-    // §1 (updated contract) adds sub_goals_count / runs_count. They are read
-    // defensively: null until the backend actually serves them, at which point
-    // the real values flow through and the "coming soon" column headers can be
-    // dropped (Phase B). buildProgress feeds the status pill's inline "n/m
-    // steps" and the list carries no live progress, so it stays absent.
+    // buildProgress feeds the status pill's inline "n/m steps"; the list
+    // carries no live progress, so it stays absent.
     subgoals: item?.sub_goals_count ?? null,
     runsTotal: item?.runs_count ?? null,
     buildProgress: null,
+    agent: sent(item, "agent"),
+    envVersion: versionLabelOf(item?.environment_version),
+    // An older backend doesn't send last_run at all; null means never run.
+    lastRun:
+      sent(item, "last_run") === NOT_PROVIDED
+        ? NOT_PROVIDED
+        : lastRunOf(item.last_run),
   };
 }

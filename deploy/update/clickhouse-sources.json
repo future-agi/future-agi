@@ -434,8 +434,8 @@
     },
     {
       "pattern": "futureagi/tfc/utils/error_codes.py",
-      "reason": "Inspected old and new blobs: CREATE USER occurs only in the user-evaluation-template error text returned by get_error_message to the API response; the added Jev error mapping and API key expiry messages do not execute SQL. No removed ClickHouse operation.",
-      "sha256": "b74ce57a9a4cefeb8010898f4d26e925d9e0f89902eb5be1570c593d8fd6147e"
+      "reason": "Inspected old and new blobs: CREATE USER occurs only in the user-evaluation-template error text returned by get_error_message to the API response; the added Jev error mapping, Viewer read-only message and API key expiry messages and the removed duplicate MEMBER_NOT_IN_ORG entry do not execute SQL. No removed ClickHouse operation.",
+      "sha256": "115ee3962bcb85f75f547a521f939737c41713be26d25820077b3d49d631faf0"
     },
     {
       "pattern": "fi-collector/pkg/ingestbench/bench_test.go",

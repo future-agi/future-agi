@@ -8,7 +8,17 @@ from rest_framework import serializers
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import AgentTypeChoices
-from simulate.services.agent_definition import is_masked, sync_provider_credentials
+from simulate.serializers.websocket_fields import (
+    WebsocketHeadersField,
+    WebsocketUrlField,
+)
+from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
+    WebsocketFields,
+    is_masked,
+    merge_websocket_secrets,
+    sync_provider_credentials,
+)
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tfc.permissions.utils import cached_is_read_only_user
@@ -49,6 +59,22 @@ def _extract_credentials_input(
         livekit_max_concurrency=validated_data.pop("livekit_max_concurrency", None),
         provider_was_provided="provider" in validated_data,
     )
+
+
+def _save_credentials(version, creds_input):
+    try:
+        sync_provider_credentials(version, creds_input)
+    except CredentialsNeedReentry as error:
+        raise serializers.ValidationError(error.message) from error
+
+
+def _merged_websocket(data, instance: AgentDefinition) -> WebsocketFields:
+    try:
+        return merge_websocket_secrets(
+            data, instance.websocket_url, instance.websocket_headers
+        )
+    except CredentialsNeedReentry as error:
+        raise serializers.ValidationError(error.message) from error
 
 
 class AgentDefinitionOperationSerializer(serializers.Serializer):
@@ -93,6 +119,18 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
     )
     livekit_api_secret = serializers.CharField(
         write_only=True, required=False, allow_blank=True
+    )
+    websocket_url = WebsocketUrlField(
+        max_length=500,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        required=False,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
     )
 
     class Meta:
@@ -411,6 +449,8 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                     }
                 )
 
+        if self.instance is not None:
+            _merged_websocket(attrs, self.instance)
         return attrs
 
     @transaction.atomic
@@ -429,7 +469,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                 commit_message="Initial version",
                 status="draft",
             )
-        sync_provider_credentials(version, creds_input)
+        _save_credentials(version, creds_input)
         return instance
 
     @transaction.atomic
@@ -437,6 +477,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         instance = AgentDefinition.objects.select_for_update(of=("self",)).get(
             pk=instance.pk
         )
+        validated_data.update(_merged_websocket(validated_data, instance))
 
         creds_input = _extract_credentials_input(
             validated_data, fallback_provider=instance.provider or ""
@@ -451,7 +492,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         creds_input.provider = instance.provider or creds_input.provider
         version = instance.active_version or instance.latest_version
         if version:
-            sync_provider_credentials(version, creds_input)
+            _save_credentials(version, creds_input)
         return instance
 
 
@@ -460,6 +501,16 @@ class AgentDefinitionListSerializer(serializers.ModelSerializer):
 
     latest_version = serializers.SerializerMethodField()
     latest_version_id = serializers.SerializerMethodField()
+    websocket_url = WebsocketUrlField(
+        read_only=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        read_only=True,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
+    )
 
     class Meta:
         model = AgentDefinition
@@ -629,7 +680,7 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
         creds_input.provider = instance.provider or creds_input.provider
         version = instance.active_version or instance.latest_version
         if version:
-            sync_provider_credentials(version, creds_input)
+            _save_credentials(version, creds_input)
         return instance
 
     def to_representation(self, instance):

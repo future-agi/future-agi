@@ -9,7 +9,7 @@ import {
   uploadErrorText,
   uploadSourceFolder,
 } from "src/pages/dashboard/harness/sourceUpload";
-import { FolderInput } from "src/sections/simulate/environments/panels/PanelCodeUpload";
+import FolderInput from "src/sections/simulate/environments/components/FolderInput";
 
 /**
  * Pick a folder and upload it as one archive. Reports the stored upload, or
