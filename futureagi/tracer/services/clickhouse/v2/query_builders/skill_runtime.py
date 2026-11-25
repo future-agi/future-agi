@@ -1,9 +1,7 @@
 """Bounded runtime read building blocks for the shared usage/load API.
 
-Uses ST6's authoritative live-row fence, including attribute-less tombstones.
-The dependency must be integrated before queries are enabled. No ORM lookups or
-user-authored SQL fragments enter this builder; project permissions and version
-identities must be resolved by the calling service first.
+Load evidence comes from the winning physical span, including key-only deletes.
+Project permissions and catalogue identities are resolved by the caller.
 """
 
 from __future__ import annotations
@@ -36,8 +34,15 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
         self.params = {"project_ids": projects, "start_date": start, "end_date": end}
         self.compiler = ClickHouseFilterBuilderV2(project_ids=list(projects))
 
-    def _live_source(self, *, failed=False):
-        method = getattr(self.compiler, "skill_live_rows_sql", None)
+    def _live_source(self, *, failed=False, trace_batch=False, skill_window=None):
+        compiler = self.compiler
+        if trace_batch or skill_window is not None:
+            compiler = ClickHouseFilterBuilderV2(
+                project_ids=list(self.project_ids),
+                candidate_ids_param="trace_ids" if trace_batch else None,
+                skill_window=skill_window,
+            )
+        method = getattr(compiler, "skill_live_rows_sql", None)
         if method is None:
             raise RuntimeDependencyUnavailable(
                 "Runtime reads require the shared SKILL filter compiler"
@@ -313,8 +318,7 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
         return (
             f"""
             SELECT project_id, trace_id, span_id, start_time, service_name, agent_name, {fields}
-            FROM ({self._live_source(failed=failed)})
-            WHERE trace_id IN %(trace_ids)s
+            FROM ({self._live_source(failed=failed, trace_batch=True)})
             ORDER BY start_time, span_id LIMIT 10001
         """,
             params,

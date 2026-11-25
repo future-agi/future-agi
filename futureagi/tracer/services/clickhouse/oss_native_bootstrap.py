@@ -512,54 +512,6 @@ def inspect_native(
         ) from None
 
 
-def inspect_skill_extension(client, database, migration, *, require_receipt=True):
-    """Verify the selected 039 extension, not just its receipt. Never run DDL."""
-    targets = ("skill_trace_links", "skill_load_failures")
-    objects = ("schema_versions", *targets, *(f"{name}_mv" for name in targets))
-    params = {"database": database, "names": objects}
-    tables = {name: row for name, *row in _rows(client, _TABLES_SQL, params, 7)}
-    missing = [name for name in objects if name not in tables]
-    ledger = tables.get("schema_versions")
-    if ledger is not None:
-        if ledger[0] != "MergeTree":
-            raise NativeBootstrapError("expected local schema ledger")
-        prior = core.apply_schema.fetch_applied(client).get(migration.path.name)
-        if prior is None:
-            if require_receipt:
-                missing.append(migration.path.name)
-        elif prior != migration.sha256:
-            raise NativeBootstrapError("Skills migration hash drift")
-    statements = core.apply_schema.split_statements(migration.path.read_text())
-    for target, table_ddl, view_ddl in zip(
-        targets, statements[0::2], statements[1::2], strict=True
-    ):
-        view = f"{target}_mv"
-        if target in tables:
-            columns = {
-                name: shape
-                for name, *shape in _rows(
-                    client,
-                    "SELECT name, type, default_kind, default_expression FROM system.columns "
-                    "WHERE database = currentDatabase() AND table = %(table)s",
-                    {"table": target},
-                    4,
-                )
-            }
-            core._check_table(
-                target,
-                tables[target],
-                columns,
-                {},
-                table_ddl,
-                database=database,
-                native=True,
-            )
-        if view in tables:
-            ddl = _qualify_reference(view_ddl, "FROM", "spans", database)
-            _check_mv(client, view, tables[view], ddl, database)
-    return tuple(missing)
-
-
 def _stale_dictionaries(client, database, definitions, ch_user, ch_password):
     rows = _rows(
         client, _TABLES_SQL, {"database": database, "names": tuple(definitions)}, 7

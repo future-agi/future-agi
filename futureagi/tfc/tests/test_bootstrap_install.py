@@ -265,9 +265,7 @@ def test_clickhouse_native_schema_failure_is_fatal(
     with pytest.raises(command.BootstrapError, match="ClickHouse native schema"):
         command.clickhouse_native_schema(lambda _: None, 42)
 
-    assert seen == [
-        ["--phase", "native", "--apply", "--with-skill-schema", "--timeout", "42"]
-    ]
+    assert seen == [["--phase", "native", "--apply", "--timeout", "42"]]
 
 
 def test_wait_tcp_gives_up_with_an_actionable_message(

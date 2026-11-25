@@ -40,13 +40,6 @@ type exportDecoder func() (ptraceotlp.ExportRequest, error)
 // budget. Recheck the fresh tenant's
 // quota before restarting; conversion, enqueue and billing happen only once.
 func (s *Server) prepareExport(ctx context.Context, decode exportDecoder, headers auth.ProjectNameValues, held *exportWork) (preparedExport, *rejection) {
-	if s.startupBarrier != nil {
-		select {
-		case <-s.startupBarrier:
-		default:
-			return preparedExport{}, &rejection{kind: rejectBusy, reason: "startup_schema", msg: "ClickHouse Skills schema not ready; retry"}
-		}
-	}
 	for attempt := 0; ; attempt++ {
 		prepared, err := s.prepareExportAttempt(ctx, decode, headers, held)
 		if err == nil {

@@ -27,7 +27,15 @@ test('OBS-E2E-069: F2 correlate the skill and agent within one load', { tag:['@f
 }) }, async ({ scenario:s, probe, page }) => {
   test.setTimeout(180000);
   const t = s.emit('python', [s.agent('agent-a',[s.refund],false),s.agent('agent-b',[s.tone],false)])!;
-  const rows = () => probe.ch<{ project_id:string; agent_name:string; skill_id:string }>('SELECT project_id,agent_name,skill_id FROM skill_trace_links FINAL WHERE trace_id={t:String} ORDER BY agent_name',{t});
+  const rows = () => probe.ch<{ project_id:string; agent_name:string; skill_id:string }>(`
+    SELECT project_id, argMax(if(attrs_string['gen_ai.agent.name'] != '',
+             attrs_string['gen_ai.agent.name'], attrs_string['fi.context.name']), _version) AS agent_name,
+           argMax(attrs_string['fi.skill.id'], _version) AS skill_id
+    FROM spans WHERE trace_id={t:String}
+    GROUP BY project_id, trace_id, id
+    HAVING argMax(is_deleted, _version) = 0 AND argMax(name, _version) = 'skill.load'
+       AND argMax(attrs_string['fi.skill.version_id'], _version) != ''
+    ORDER BY agent_name`, {t});
   await expect.poll(async () => (await rows()).map(r => [r.agent_name,r.skill_id]), POLL.SPAN_VISIBLE).toEqual([['agent-a',s.refund.id],['agent-b',s.tone.id]]);
   const p = (await rows())[0].project_id;
   expect(await list(page,p,[item('version_id',s.refund.version.id),item('agent','agent-a')])).toEqual([t]);

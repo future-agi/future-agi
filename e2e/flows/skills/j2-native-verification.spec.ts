@@ -222,7 +222,13 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     // F8: the incident is retained, but completed native cells created no customer skill links.
     const [incident] = await probe.ch<{ project: string }>('SELECT toString(project_id) AS project FROM spans FINAL WHERE trace_id={t:String} LIMIT 1', { t: trace.traceId });
     expect(incident.project).toBeTruthy();
-    const [nativeLinks] = await probe.ch<{ n: string }>('SELECT count() AS n FROM skill_trace_links FINAL WHERE project_id={p:UUID} AND start_time >= fromUnixTimestamp64Nano({start:Int64})', { p: incident.project, start: String(start) });
+    const [nativeLinks] = await probe.ch<{ n: string }>(`SELECT count() AS n FROM (
+      SELECT id FROM spans WHERE project_id={p:UUID}
+      GROUP BY project_id, trace_id, id
+      HAVING argMax(is_deleted, _version) = 0 AND argMax(name, _version) = 'skill.load'
+         AND argMax(attrs_string['fi.skill.version_id'], _version) != ''
+         AND argMax(start_time, _version) >= fromUnixTimestamp64Nano({start:Int64})
+    )`, { p: incident.project, start: String(start) });
     expect(nativeLinks.n).toBe('0');
 
     // Human disagreement is appended beside the automatic grade.

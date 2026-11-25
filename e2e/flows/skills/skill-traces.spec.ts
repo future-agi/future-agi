@@ -11,6 +11,20 @@ const meta = (n: number, goal: string, steps: string[], checks: string[]) => ({ 
 test.describe.configure({ timeout: 180000 });
 test.beforeEach(async ({page}) => { page.setDefaultTimeout(20000); });
 
+// Classify loads after collapsing revisions so an update or deletion cannot leave stale evidence.
+const liveLoads = `(SELECT project_id, trace_id, argMax(start_time, _version) AS loaded_at,
+    argMax(status, _version) AS load_status,
+    argMax(attrs_string['fi.skill.version_id'], _version) AS skill_version_id,
+    argMax(attrs_string['fi.skill.id'], _version) AS skill_id,
+    argMax(attrs_string['fi.skill.name'], _version) AS skill_name,
+    argMax(attrs_string['fi.skill.digest'], _version) AS skill_digest,
+    argMax(attrs_string['error.type'], _version) AS error_type,
+    argMax(if(attrs_string['gen_ai.agent.name'] != '', attrs_string['gen_ai.agent.name'],
+              attrs_string['fi.context.name']), _version) AS agent_name
+  FROM spans GROUP BY project_id, trace_id, id
+  HAVING argMax(is_deleted, _version) = 0 AND argMax(name, _version) = 'skill.load')`;
+const verifiedLoads = `(SELECT * FROM ${liveLoads} WHERE skill_version_id != '')`;
+
 // Capture only after the same populated state is visible again, including after
 // theme reload. Empty/skeleton frames are never substitutes for the real surface.
 async function captureState(page:Page, info:TestInfo, name:string, ready:()=>Promise<void>) {
@@ -38,7 +52,7 @@ for (const [flow, language] of [[1, 'python'], [6, 'typescript']] as const) {
   async ({ scenario: s, page, probe }, info) => {
     const id = s.emit(language, [s.agent('billing', [s.refund, s.tone])])!;
     const rows = () => probe.ch<{ project_id: string; skill_version_id: string; skill_digest: string; agent_name: string }>(
-      'SELECT project_id, skill_version_id, skill_digest, agent_name FROM skill_trace_links FINAL WHERE trace_id={t:String} ORDER BY skill_version_id', { t: id });
+      `SELECT project_id, skill_version_id, skill_digest, agent_name FROM ${verifiedLoads} WHERE trace_id={t:String} ORDER BY skill_version_id`, { t: id });
     await expect.poll(async () => (await rows()).map(r => [r.skill_version_id, r.skill_digest, r.agent_name]), POLL.SPAN_VISIBLE)
       .toEqual([s.refund, s.tone].sort((a,b) => a.version.id.localeCompare(b.version.id)).map(r => [r.version.id, r.version.digest, 'billing']));
     const filter = [{ column_id: 'skill.version_id', filter_config: { col_type: 'SKILL', filter_type: 'text', filter_op: 'equals', filter_value: s.refund.version.id } }];
@@ -87,7 +101,7 @@ test('SKILLS-E2E-104: F4 distinguish loaded and unread links', meta(4, 'See whic
   ['Read two skills in a context with a third linked skill', 'Open its Runtime and Linked skills tabs'], ['The linked but unread skill stays out of the loaded rows']),
 async ({ scenario: s, page },info) => {
   s.emit('python', [s.agent('support', [s.refund, s.tone])]);
-  // Wait for the collector projection before the UI fixes its query window.
+  // Wait for the ingested loads before the UI fixes its query window.
   await s.waitForTraces(1);
   await page.goto(`/dashboard/skills/contexts/${s.context.id}?tab=runtime`);
   const table = page.getByRole('table', { name: 'Skills loaded at runtime' });
@@ -191,8 +205,9 @@ test('SKILLS-E2E-113: F13 retain failed load without a verified identity', meta(
   ['Read a damaged file with the real verifying SDK', 'Follow the failed-load link to the trace detail'], ['The failed load has no verified link; Observe filters to the actual failing request']),
 async ({ scenario:s, page, probe }) => {
   const trace = s.emit('python',[s.agent('support',[s.refund],false)],{damaged:true})!;
-  await expect.poll(() => probe.ch('SELECT skill_name,error_type FROM skill_load_failures FINAL WHERE trace_id={t:String}',{t:trace}),POLL.SPAN_VISIBLE).toEqual([{skill_name:s.refund.name,error_type:'integrity'}]);
-  expect(await probe.ch('SELECT skill_id FROM skill_trace_links FINAL WHERE trace_id={t:String}',{t:trace})).toEqual([]);
+  await expect.poll(() => probe.ch(`SELECT skill_name,error_type FROM ${liveLoads}
+    WHERE trace_id={t:String} AND load_status = 'ERROR' AND skill_version_id = ''`,{t:trace}),POLL.SPAN_VISIBLE).toEqual([{skill_name:s.refund.name,error_type:'integrity'}]);
+  expect(await probe.ch(`SELECT skill_id FROM ${verifiedLoads} WHERE trace_id={t:String}`,{t:trace})).toEqual([]);
   await page.goto(`/dashboard/skills/${s.refund.id}?tab=runtime`);
   const line = page.locator('[data-line="failed-loads"]');
   await expect(line).toContainText('integrity');
@@ -306,7 +321,7 @@ for (const [flow, goal] of [[3,'Read production adoption and the reason an agent
       }
       expect(result.metadata.total_rows_is_lower_bound).toBe(false);
       expect(result.metadata.total_rows).toBe(32);
-      const actual = await probe.ch<{trace_id:string}>('SELECT DISTINCT trace_id FROM skill_trace_links FINAL WHERE skill_version_id={version:String}', {version:v2.id});
+      const actual = await probe.ch<{trace_id:string}>(`SELECT DISTINCT trace_id FROM ${verifiedLoads} WHERE skill_version_id={version:String}`, {version:v2.id});
       expect(actual).toHaveLength(32);
       expect(actual.map(r => r.trace_id)).toContain(failed);
       expect(result.table.length).toBeGreaterThan(0);
@@ -325,7 +340,7 @@ for (const [flow, goal] of [[3,'Read production adoption and the reason an agent
     } else {
       await expect(page.getByText('Still on v1: the app asks for v1').first()).toBeVisible();
       for (const version of [1,2]) await expect(page.locator('tr[data-row="version"]').filter({hasText:`v${version}`})).toBeVisible();
-      const [row] = await probe.ch<{count:number}>('SELECT uniqExact(skill_version_id) AS count FROM skill_trace_links FINAL WHERE skill_id={skill:String}', {skill:s.refund.id});
+      const [row] = await probe.ch<{count:number}>(`SELECT uniqExact(skill_version_id) AS count FROM ${verifiedLoads} WHERE skill_id={skill:String}`, {skill:s.refund.id});
       expect(Number(row.count)).toBe(2);
     }
   });
@@ -414,7 +429,7 @@ test('SKILLS-E2E-108: F8 native verification emits no customer loads',meta(8,'Ke
   const {measuredConfiguration} = await import('../../lib/skills-native-fixtures');
   const {SkillsFixtures} = await import('../../lib/skills-fixtures');
   const control = s.emit('python',[s.agent('support',[s.refund],false)])!;
-  const lookup = () => probe.ch<{project_id:string}>('SELECT project_id FROM skill_trace_links FINAL WHERE trace_id={t:String}',{t:control});
+  const lookup = () => probe.ch<{project_id:string}>(`SELECT project_id FROM ${verifiedLoads} WHERE trace_id={t:String}`,{t:control});
   await expect.poll(async () => (await lookup()).length,POLL.SPAN_VISIBLE).toBe(1);
   const project = (await lookup())[0].project_id;
   const seeded = await seedApplication(s.call, s.project);
@@ -445,10 +460,10 @@ test('SKILLS-E2E-108: F8 native verification emits no customer loads',meta(8,'Ke
     const end = Date.now();
     const watermark = s.emit('python', [s.agent('support', [s.refund], false)])!;
     expect(watermark).not.toBe(control);
-    await expect.poll(() => probe.ch('SELECT project_id FROM skill_trace_links FINAL WHERE trace_id={t:String}',
+    await expect.poll(() => probe.ch(`SELECT project_id FROM ${verifiedLoads} WHERE trace_id={t:String}`,
       {t:watermark}), POLL.SPAN_VISIBLE).toEqual([{project_id:project}]);
-    expect(await probe.ch(`SELECT trace_id FROM skill_trace_links FINAL WHERE project_id={p:UUID}
-      AND start_time BETWEEN fromUnixTimestamp64Milli({start:Int64}) AND fromUnixTimestamp64Milli({end:Int64}) + INTERVAL 1 MILLISECOND
+    expect(await probe.ch(`SELECT trace_id FROM ${verifiedLoads} WHERE project_id={p:UUID}
+      AND loaded_at BETWEEN fromUnixTimestamp64Milli({start:Int64}) AND fromUnixTimestamp64Milli({end:Int64}) + INTERVAL 1 MILLISECOND
       AND trace_id NOT IN ({before:String}, {after:String})`, {p:project,start,end,before:control,after:watermark})).toEqual([]);
   } finally { await fixtures.dispose(); }
 });

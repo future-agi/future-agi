@@ -113,10 +113,8 @@ $COMPOSE run --rm \
   -e NO_STARTUP_DB_MUTATIONS=false \
   --entrypoint bash postgres-schema-bootstrap ./entrypoint.sh
 
-# 2. Native ClickHouse objects, including the Skills attribution views.
-#    Keep all span writers stopped until the read-only check succeeds.
-$COMPOSE run --rm clickhouse-native-bootstrap --phase native --apply --with-skill-schema
-$COMPOSE run --rm clickhouse-native-bootstrap
+# 2. Native ClickHouse objects.
+$COMPOSE run --rm clickhouse-native-bootstrap --phase native --apply
 
 # 3. PeerDB Temporal namespace, then peers and mirrors.
 $COMPOSE run --rm peerdb-temporal-init --apply
@@ -148,10 +146,7 @@ ones.
 
 Order matters: PostgreSQL migrations, then native ClickHouse tables, then the
 PeerDB snapshot/CDC pair, then the observed indexes. Step 4 depends on step 3's
-mirrors existing, which is why it waits rather than assuming. On retained
-installs, stop writers before step 2 as well. A receipt with a missing or
-incompatible view is an error: inspect and repair it explicitly. Neither the
-read-only check nor re-running bootstrap backfills earlier spans.
+mirrors existing, which is why it waits rather than assuming.
 
 Step 1 prints the commands it runs. It must reach `migrate`, `seed_system_evals`
 and `register_temporal_schedules` and exit 0 with "One-shot database bootstrap

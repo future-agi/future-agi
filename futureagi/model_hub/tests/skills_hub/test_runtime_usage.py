@@ -1,8 +1,4 @@
-"""Core runtime reads; cloud-only Postgres/ClickHouse validation.
-
-Integrate ST5 migration 039 and ST6's live-row compiler before this suite.
-These tests do not certify the not-yet-wired HTTP projections or eval reads.
-"""
+"""Core runtime reads; cloud-only Postgres/ClickHouse validation."""
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -23,6 +19,7 @@ from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
     SkillRuntimeQueryBuilder,
 )
 from tracer.tests._ch_seed import seed_ch_spans
+from tracer.tests.test_skill_filters import assert_skill_span_source
 
 START = datetime(2026, 11, 1, 12, tzinfo=UTC)
 END = START + timedelta(hours=1)
@@ -67,14 +64,13 @@ def test_missing_dependency_fails_closed_instead_of_reimplementing_live_semantic
         query.build_library_counts(verified_identities=[])
 
 
-def test_library_sql_is_parameterized_and_scoped_on_both_narrow_and_span_sources():
+def test_library_sql_scopes_span_candidates_and_winners_to_authorized_projects():
     project = str(uuid4())
     sql, params = builder(project).build_library_counts(
         verified_identities=[(SKILL, VERSION, DIGEST)]
     )
-    assert "skill_trace_links FINAL" in sql
+    assert_skill_span_source(sql)
     assert sql.count("project_id IN %(project_ids)s") >= 2
-    assert "argMax(is_deleted, _version) = 0" in sql
     assert "uniqExact(tuple(project_id, trace_id))" in sql
     assert "SETTINGS" in sql
     assert params["project_ids"] == (project,)
@@ -224,14 +220,14 @@ def execute(client, statement):
 def test_filter_values_are_live_verified_keyset_pages(runtime_ch):
     project, foreign = str(uuid4()), str(uuid4())
     identities = [(SKILL, VERSION, DIGEST)]
-    first, second, wrong = (span(project, uuid4().hex) for _ in range(3))
+    first, second, wrong = (span(project, str(uuid4())) for _ in range(3))
     first["span_attributes"]["gen_ai.agent.name"] = "a"
     second["span_attributes"]["gen_ai.agent.name"] = "b"
     wrong["span_attributes"].update(
         {"gen_ai.agent.name": "c", "fi.skill.digest": "wrong"}
     )
     seed_ch_spans(
-        [first, first, second, wrong, span(foreign, uuid4().hex)],
+        [first, first, second, wrong, span(foreign, str(uuid4()))],
         client=runtime_ch,
         version_from_created_at=True,
     )
@@ -276,7 +272,7 @@ def test_failed_filter_values_have_no_version_identity(runtime_ch):
     project = str(uuid4())
     failed = span(
         project,
-        uuid4().hex,
+        str(uuid4()),
         status="ERROR",
         span_attributes={
             "fi.skill.name": "unpublished",
@@ -423,6 +419,69 @@ def test_real_replay_digest_mismatch_project_collision_and_tombstone(runtime_ch)
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("had_name", [False, True], ids=["never-named", "name-removed"])
+def test_verified_load_without_a_name_hydrates_and_counts_once(runtime_ch, had_name):
+    project, trace = str(uuid4()), str(uuid4())
+    original = span(project, trace)
+    winner = {
+        **original,
+        "created_at": START + timedelta(seconds=1),
+        "span_attributes": dict(original["span_attributes"]),
+    }
+    del winner["span_attributes"]["fi.skill.name"]
+    if had_name:
+        seed_ch_spans([original], client=runtime_ch, version_from_created_at=True)
+    seed_ch_spans([winner], client=runtime_ch, version_from_created_at=True)
+    query = builder(project)
+    identities = [(SKILL, VERSION, DIGEST)]
+
+    def assert_visible_once():
+        (hydrated,) = execute(runtime_ch, query.build_trace_loads(trace_ids=[trace]))
+        assert hydrated["span_id"] == winner["id"]
+        (usage,) = execute(
+            runtime_ch,
+            query.build_usage_loads(identities=identities, skill_names=["support"]),
+        )
+        assert (usage["span_id"], usage["skill_name"]) == (winner["id"], "")
+        assert execute(
+            runtime_ch, query.build_library_counts(verified_identities=identities)
+        ) == [{"skill_id": SKILL, "traces": 1}]
+
+    assert_visible_once()
+    if had_name:
+        runtime_ch.command("OPTIMIZE TABLE spans FINAL")
+        assert runtime_ch.query(
+            "SELECT count() FROM spans WHERE project_id = %(project)s",
+            parameters={"project": project},
+        ).result_rows == [(1,)]
+        assert_visible_once()
+
+
+@pytest.mark.integration
+def test_winning_start_time_can_move_load_into_another_window(runtime_ch):
+    project, trace = str(uuid4()), str(uuid4())
+    original = span(project, trace)
+    later = START + timedelta(days=1)
+    moved = {
+        **original,
+        "start_time": later,
+        "end_time": later + timedelta(milliseconds=7),
+        "created_at": later,
+    }
+    query = builder(project).build_trace_loads(trace_ids=[trace])
+    seed_ch_spans([original], client=runtime_ch, version_from_created_at=True)
+    assert len(execute(runtime_ch, query)) == 1
+    seed_ch_spans([moved], client=runtime_ch, version_from_created_at=True)
+    assert execute(runtime_ch, query) == []
+    newer = SkillRuntimeQueryBuilder(
+        project_ids=[project], start=later, end=later + timedelta(hours=1)
+    )
+    (row,) = execute(runtime_ch, newer.build_trace_loads(trace_ids=[trace]))
+    assert row["span_id"] == original["id"]
+    assert row["start_time"].replace(tzinfo=UTC) == later
+
+
+@pytest.mark.integration
 def test_library_deduplicates_overlapping_versions_and_window_is_half_open(runtime_ch):
     project, trace = str(uuid4()), str(uuid4())
     other_version = str(uuid4())
@@ -468,24 +527,24 @@ def test_latest_load_replays_corrections_and_ignores_stamped_children(runtime_ch
     prefix = "fi.skill" if kind == "skill" else "fi.context"
     name = "skill.load" if kind == "skill" else "context.load"
     attrs = {f"{prefix}.id": SKILL, f"{prefix}.version_id": VERSION}
-    load = span(project, uuid4().hex, name=name, span_attributes=attrs)
+    load = span(project, str(uuid4()), name=name, span_attributes=attrs)
     newer_child = span(
         project,
-        uuid4().hex,
+        str(uuid4()),
         name="llm.chat",
         span_attributes=attrs,
         start_time=START + timedelta(minutes=1),
     )
     foreign_load = span(
         foreign,
-        uuid4().hex,
+        str(uuid4()),
         name=name,
         span_attributes=attrs,
         start_time=START + timedelta(minutes=2),
     )
     unknown_version = span(
         project,
-        uuid4().hex,
+        str(uuid4()),
         name=name,
         span_attributes={**attrs, f"{prefix}.version_id": str(uuid4())},
         start_time=START + timedelta(minutes=3),

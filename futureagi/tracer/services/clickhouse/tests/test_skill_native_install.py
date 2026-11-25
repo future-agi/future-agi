@@ -2,11 +2,10 @@
 
 No application bootstrap or CDC job is simulated. The Continue/Ready ordering is
 covered separately by each topology's installer contracts; here every selected
-native call goes through the real PG lock, driver, native DDL and schema ledger.
+native call uses the real driver, and native writes take the real PG lock.
 """
 
 import ast
-import hashlib
 import json
 import os
 import shlex
@@ -25,7 +24,11 @@ from conftest import (
     _is_loopback_ch25_host,
     _open_ch_test_http_client,
 )
-from tracer.tests.test_skill_filters import insert_rows, span_row
+from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
+    SkillRuntimeQueryBuilder,
+)
+from tracer.tests.test_skill_filters import END, START, insert_rows, span_row
+from tracer.tests.test_skill_trace_links import assert_no_skill_objects
 
 ROOT = Path(__file__).resolve().parents[5]
 NATIVE = "tracer.services.clickhouse.oss_cdc_install"
@@ -54,7 +57,7 @@ def installer(topology):
 
     # Extract the actual native stage call, including its options, from the
     # shipping Python entrypoint. Execute it with the real installer bindings,
-    # not a hand-written `--files 039` or a fake installer.
+    # not a hand-written argument list.
     if topology == "standalone":
         path = ROOT / "deploy/standalone/bin/bootstrap.py"
         method = "main"
@@ -131,54 +134,31 @@ def native_boot(args, db, *, check=True):
 
 @pytest.mark.integration
 @pytest.mark.parametrize("topology", ["distributed", "helm", "standalone"])
-def test_native_stage_fresh_and_retry(topology):
+def test_native_stage_reads_retained_and_new_loads_without_extra_schema(topology):
     with _ch_test_owned_database("test_skill_native_") as db:
         with _open_ch_test_http_client(database=db) as client:
             args = installer(topology)
+            assert client.query("SHOW TABLES").result_rows == []
+            native_boot(args, db)
+            assert_no_skill_objects(client)
 
-            def query(sql):
-                return client.query(sql).result_rows
-
-            assert query("SHOW TABLES") == []
             project = str(uuid4())
+            retained = span_row(project, "retained")
+            new = span_row(project, "new")
+            insert_rows(client, [retained])
             native_boot(args, db)
-            insert_rows(client, [span_row(project, "installed")])
-            native_boot(args, db)
-            assert query("SELECT count() FROM skill_trace_links FINAL") == [(1,)]
-            packaged = (
-                ROOT
-                / "futureagi/tracer/services/clickhouse/v2/schema/039_skill_attribution.sql"
+            insert_rows(client, [new])
+            assert_no_skill_objects(client)
+            query = SkillRuntimeQueryBuilder(
+                project_ids=[project], start=START, end=END
             )
-            # No unrelated schema file or duplicate receipt on re-entry.
-            assert query(
-                "SELECT filename, toString(sha256), notes FROM schema_versions"
-            ) == [
-                (
-                    packaged.name,
-                    hashlib.sha256(packaged.read_bytes()).hexdigest(),
-                    "schema-topology/v1/local",
-                )
-            ]
-            assert query("SELECT count() FROM spans FINAL") == [(1,)]
-
-
-@pytest.mark.integration
-def test_native_stage_upgrade_without_boot_backfill():
-    with _ch_test_owned_database("test_skill_upgrade_") as db:
-        with _open_ch_test_http_client(database=db) as client:
-            native_boot(["-m", NATIVE, "--phase", "native", "--apply"], db)
-            project = str(uuid4())
-            insert_rows(client, [span_row(project, "retained")])
-            native_boot(installer("distributed"), db)
-            assert client.query("SELECT count() FROM spans FINAL").result_rows == [(1,)]
-            assert client.query(
-                "SELECT count() FROM skill_trace_links FINAL"
-            ).result_rows == [(0,)]
-            insert_rows(client, [span_row(project, "new-after-upgrade")])
-            native_boot(installer("distributed"), db)
-            assert client.query(
-                "SELECT count() FROM skill_trace_links FINAL"
-            ).result_rows == [(1,)]
+            sql, params = query.build_trace_loads(
+                trace_ids=[retained["trace_id"], new["trace_id"]]
+            )
+            rows = client.query(sql, parameters=params).named_results()
+            assert sorted(row["span_id"] for row in rows) == sorted(
+                [retained["id"], new["id"]]
+            )
 
 
 @pytest.mark.integration
@@ -209,43 +189,13 @@ def test_production_native_operator_command_and_read_only_gate(monkeypatch):
     apply = module + shlex.split(line[len(prefix) :])
     with _ch_test_owned_database("test_skill_production_") as db:
         with _open_ch_test_http_client(database=db) as client:
-            native_boot([*module, "--phase", "native", "--apply"], db)
-            before = client.query("SHOW TABLES").result_rows
+            assert client.query("SHOW TABLES").result_rows == []
             missing = native_boot(check, db, check=False)
             assert missing.returncode == 1
-            assert (
-                "skill_trace_links_mv"
-                in json.loads(missing.stdout.splitlines()[-1])["missing_objects"]
-            )
-            assert client.query("SHOW TABLES").result_rows == before
+            result = json.loads(missing.stdout.splitlines()[-1])
+            assert "spans" in result["missing_objects"]
+            assert client.query("SHOW TABLES").result_rows == []
             for _ in range(2):
                 native_boot(apply, db)
                 native_boot(check, db)
-            assert client.query("SELECT count() FROM schema_versions").result_rows == [
-                (1,)
-            ]
-            client.command("DROP TABLE skill_trace_links_mv SYNC")
-            assert native_boot(check, db, check=False).returncode == 1
-            assert native_boot(apply, db, check=False).returncode == 1
-            assert client.query("EXISTS TABLE skill_trace_links_mv").result_rows == [
-                (0,)
-            ]
-
-
-@pytest.mark.integration
-def test_incompatible_retained_view_cannot_publish_ready_receipt():
-    with _ch_test_owned_database("test_skill_partial_") as db:
-        with _open_ch_test_http_client(database=db) as client:
-            native_boot(["-m", NATIVE, "--phase", "native", "--apply"], db)
-            # An interrupted or manual install left the expected name, not an MV.
-            client.command("CREATE VIEW skill_trace_links_mv AS SELECT 1 AS ignored")
-            apply = installer("distributed")
-            assert native_boot(apply, db, check=False).returncode == 1
-            assert client.query("SELECT count() FROM schema_versions").result_rows == [
-                (0,)
-            ]
-            client.command("DROP VIEW skill_trace_links_mv SYNC")
-            native_boot(apply, db)
-            assert client.query("SELECT count() FROM schema_versions").result_rows == [
-                (1,)
-            ]
+                assert_no_skill_objects(client)

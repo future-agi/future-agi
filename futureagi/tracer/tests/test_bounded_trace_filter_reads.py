@@ -5135,7 +5135,10 @@ def _check_page_enrichments(row_count, *, expect_offer, offer_query=None):
 
         def execute_ch_query(self, query, params, *, timeout_ms, settings):
             self.calls.append((params, timeout_ms, settings))
-            if "FROM skill_trace_links FINAL" in query:
+            if query.startswith("SELECT 1 FROM ("):
+                from tracer.tests.test_skill_filters import assert_skill_span_source
+
+                assert_skill_span_source(query)
                 assert params == {
                     "project_id": PROJECT_ID,
                     "start_date": END - timedelta(minutes=30),

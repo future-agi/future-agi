@@ -1,18 +1,13 @@
-"""Wire-routing and migration/backfill contracts; run on the cloud test host."""
+"""Skill span wire-routing contracts; run on the cloud test host."""
 
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
-from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from django.core.management import call_command
-from django.core.management.base import CommandError
 
-from tracer.management.commands import ch25_backfill_skill_trace_links as backfill
 from tracer.services.clickhouse.v2.adapter import CH_INSERT_COLUMNS, adapt, row_to_tuple
 
 VERSION = "11111111-1111-4111-8111-111111111111"
@@ -108,125 +103,3 @@ def test_adapter_tombstone_retains_full_load_row():
     assert wire["name"] == "skill.load"
     assert wire["attrs_string"] == attrs
     assert wire["start_time"] == datetime(2026, 11, 1, tzinfo=UTC)
-
-
-def test_schema_is_auto_discovered_and_does_not_backfill_during_boot():
-    from tracer.services.clickhouse.v2.apply_schema import discover_files
-
-    files = discover_files(backfill.SCHEMA_PATH.parent, None)
-    assert any(f.path.name == backfill.SCHEMA_PATH.name for f in files)
-    sql = backfill.SCHEMA_PATH.read_text(encoding="utf-8")
-    executable = "\n".join(
-        line for line in sql.splitlines() if not line.lstrip().startswith("--")
-    )
-    assert (
-        re.search(r"\b(MATERIALIZE|POPULATE|OPTIMIZE|INSERT)\b", executable, re.I)
-        is None
-    )
-    assert executable.count("ENGINE = ReplacingMergeTree(_version, is_deleted)") == 2
-    # Skill scope stays in span attributes: 039 must not alter the spans table.
-    assert re.search(r"\bALTER\s+TABLE\s+spans\b", executable, re.I) is None
-    assert "skill_version_ids" not in executable
-    assert "PROJECTION by_trace" in executable
-
-
-def test_backfill_uses_both_frozen_projections_and_keeps_tombstones():
-    projections = backfill.load_projections()
-    assert tuple(projections) == backfill.TARGETS
-    for table, projection in projections.items():
-        sql = backfill.backfill_sql(table, projection, project_scoped=True)
-        assert f"INSERT INTO {table}\n{projection}\n" in sql
-        assert "is_deleted, _version" in sql
-        assert "is_deleted = 0" not in sql
-        assert "FINAL" not in sql
-        assert "start_time >= %(start)s AND start_time < %(end)s" in sql
-        assert "AND project_id = %(project_id)s" in sql
-    assert "status = 'ERROR'" in projections["skill_load_failures"]
-    assert (
-        "attrs_string['fi.skill.version_id'] = ''" in projections["skill_load_failures"]
-    )
-    assert (
-        "attrs_string['fi.skill.version_id'] != ''" in projections["skill_trace_links"]
-    )
-
-
-@pytest.mark.parametrize(
-    "start,end",
-    [
-        ("bad", "2026-11-02"),
-        ("2026-11-02", "2026-11-01"),
-        ("2026-11-01", "2026-11-01"),
-        ("2026-10-01", "2026-11-02"),
-    ],
-)
-def test_backfill_rejects_invalid_or_unbounded_windows_before_connecting(
-    monkeypatch, start, end
-):
-    connect = Mock()
-    monkeypatch.setattr(backfill.Command, "_client", connect)
-    with pytest.raises(CommandError):
-        call_command("ch25_backfill_skill_trace_links", start_date=start, end_date=end)
-    connect.assert_not_called()
-
-
-def test_backfill_validates_project_before_connecting(monkeypatch):
-    connect = Mock()
-    monkeypatch.setattr(backfill.Command, "_client", connect)
-    with pytest.raises(CommandError, match="UUID"):
-        call_command(
-            "ch25_backfill_skill_trace_links",
-            start_date="2026-11-01",
-            end_date="2026-11-02",
-            project_id="not-a-project",
-        )
-    connect.assert_not_called()
-
-
-def test_backfill_dry_run_never_connects(monkeypatch):
-    connect = Mock()
-    monkeypatch.setattr(backfill.Command, "_client", connect)
-    call_command(
-        "ch25_backfill_skill_trace_links",
-        start_date="2026-11-01",
-        end_date="2026-11-02",
-        dry_run=True,
-    )
-    connect.assert_not_called()
-
-
-def test_backfill_runs_two_tables_per_day_and_closes_client(monkeypatch):
-    client = Mock()
-    monkeypatch.setattr(backfill.Command, "_client", lambda self: client)
-    call_command(
-        "ch25_backfill_skill_trace_links",
-        start_date="2026-11-01",
-        end_date="2026-11-03",
-        project_id=VERSION,
-    )
-    assert client.command.call_count == 4
-    calls = client.command.call_args_list
-    assert calls[0].kwargs["parameters"] == {
-        "start": datetime(2026, 11, 1, tzinfo=UTC),
-        "end": datetime(2026, 11, 2, tzinfo=UTC),
-        "project_id": VERSION,
-    }
-    assert calls[1].kwargs["parameters"] == calls[0].kwargs["parameters"]
-    assert (
-        calls[2].kwargs["parameters"]["start"] == calls[0].kwargs["parameters"]["end"]
-    )
-    assert all(c.kwargs["settings"] == backfill.QUERY_SETTINGS for c in calls)
-    client.close.assert_called_once()
-
-
-def test_backfill_stops_on_error_without_hiding_partial_completion(monkeypatch):
-    client = Mock()
-    client.command.side_effect = [None, RuntimeError("insert failed")]
-    monkeypatch.setattr(backfill.Command, "_client", lambda self: client)
-    with pytest.raises(RuntimeError, match="insert failed"):
-        call_command(
-            "ch25_backfill_skill_trace_links",
-            start_date="2026-11-01",
-            end_date="2026-11-03",
-        )
-    assert client.command.call_count == 2
-    client.close.assert_called_once()

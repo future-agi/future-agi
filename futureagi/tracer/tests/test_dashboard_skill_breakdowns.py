@@ -24,6 +24,7 @@ from tracer.tests.test_skill_filters import (
     SKILL,
     START,
     VERSION,
+    assert_skill_span_source,
     insert_rows,
     skill,
     span_row,
@@ -153,14 +154,12 @@ def test_dashboard_filter_qualifier_does_not_rewrite_nested_scope():
     clause = next(
         clause for clause in clauses if clause.startswith("/* skill membership */")
     )
-    assert clause.count("FROM skill_trace_links FINAL") == 1
+    assert_skill_span_source(clause)
     qualified = _prefix_spans_columns(clause)
     assert (
         "(s.project_id, s.trace_id) IN (SELECT project_id, trace_id FROM" in qualified
     )
-    assert (
-        "FROM skill_trace_links FINAL WHERE project_id IN %(project_ids)s" in qualified
-    )
+    assert "FROM spans WHERE project_id IN %(project_ids)s" in qualified
     assert "s.start_time" not in qualified
     assert SKILL in params.values()
 
@@ -176,7 +175,8 @@ def test_dashboard_adapter_canonical_filter_retains_skill_group():
         "canonical_filter": canonical,
     }
     clauses, _ = builder._build_where_clauses("spans", "start_time", [adapted], {})
-    assert any("FROM skill_trace_links FINAL" in clause for clause in clauses)
+    (clause,) = [c for c in clauses if c.startswith("/* skill membership */")]
+    assert_skill_span_source(clause)
 
 
 def test_unsupported_cohort_combinations_fail_instead_of_averaging_percentiles():

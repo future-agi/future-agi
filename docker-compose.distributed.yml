@@ -286,7 +286,7 @@ services:
   clickhouse-native-bootstrap:
     <<: *backend-bootstrap
     entrypoint: ["python", "-m", "tracer.services.clickhouse.oss_cdc_install"]
-    command: ["--phase", "native", "--apply", "--with-skill-schema"]
+    command: ["--phase", "native", "--apply"]
     environment:
       <<: *catalog-bootstrap-env
     depends_on:

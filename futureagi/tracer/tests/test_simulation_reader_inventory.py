@@ -1308,7 +1308,6 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "ClickHouseFilterBuilder._build_system_metric_condition": _FILTER_LEAF,
         "ClickHouseFilterBuilder._build_skill_conditions": _FILTER_LEAF,
         "ClickHouseFilterBuilder.skill_live_rows_sql": _FILTER_LEAF,
-        "ClickHouseFilterBuilder.skill_live_span_versions_sql": _FILTER_LEAF,
         "ClickHouseFilterBuilder._candidate_trace_filter": _FILTER_LEAF,
         "ClickHouseFilterBuilder._enduser_dimension_id_subquery": filed(
             NO_SPAN_TABLE,

@@ -3120,7 +3120,7 @@
 
 **Goal:** Tell which spans ran after a skill was loaded, and inspect the overlapping version cohorts
 
-**Spec:** `flows/observe/skill-filters.spec.ts:38`
+**Spec:** `flows/observe/skill-filters.spec.ts:46`
 
 **Tags:** —
 
@@ -4449,7 +4449,7 @@
 
 **Goal:** Inspect the two skill versions loaded by a python request
 
-**Spec:** `flows/skills/skill-traces.spec.ts:35`
+**Spec:** `flows/skills/skill-traces.spec.ts:49`
 
 **Tags:** —
 
@@ -4466,7 +4466,7 @@
 
 **Goal:** Read production adoption and the reason an agent stays on v1
 
-**Spec:** `flows/skills/skill-traces.spec.ts:261`
+**Spec:** `flows/skills/skill-traces.spec.ts:276`
 
 **Tags:** —
 
@@ -4484,7 +4484,7 @@
 
 **Goal:** See which linked skills the application actually loaded
 
-**Spec:** `flows/skills/skill-traces.spec.ts:86`
+**Spec:** `flows/skills/skill-traces.spec.ts:100`
 
 **Tags:** —
 
@@ -4501,7 +4501,7 @@
 
 **Goal:** Understand missing loads for an opted-out application
 
-**Spec:** `flows/skills/skill-traces.spec.ts:107`
+**Spec:** `flows/skills/skill-traces.spec.ts:121`
 
 **Tags:** —
 
@@ -4518,7 +4518,7 @@
 
 **Goal:** Inspect the two skill versions loaded by a typescript request
 
-**Spec:** `flows/skills/skill-traces.spec.ts:35`
+**Spec:** `flows/skills/skill-traces.spec.ts:49`
 
 **Tags:** —
 
@@ -4535,7 +4535,7 @@
 
 **Goal:** Load a skill without installing a telemetry stack
 
-**Spec:** `flows/skills/skill-traces.spec.ts:118`
+**Spec:** `flows/skills/skill-traces.spec.ts:132`
 
 **Tags:** —
 
@@ -4552,7 +4552,7 @@
 
 **Goal:** Keep native test runs out of production attribution
 
-**Spec:** `flows/skills/skill-traces.spec.ts:409`
+**Spec:** `flows/skills/skill-traces.spec.ts:424`
 
 **Tags:** —
 
@@ -4570,7 +4570,7 @@
 
 **Goal:** Return to a saved skill cohort from its Runtime metric
 
-**Spec:** `flows/skills/skill-traces.spec.ts:149`
+**Spec:** `flows/skills/skill-traces.spec.ts:163`
 
 **Tags:** —
 
@@ -4587,7 +4587,7 @@
 
 **Goal:** Read the score and coverage on the skill version cohort
 
-**Spec:** `flows/skills/skill-traces.spec.ts:336`
+**Spec:** `flows/skills/skill-traces.spec.ts:351`
 
 **Tags:** —
 
@@ -4605,7 +4605,7 @@
 
 **Goal:** Open failing requests after a production change
 
-**Spec:** `flows/skills/skill-traces.spec.ts:261`
+**Spec:** `flows/skills/skill-traces.spec.ts:276`
 
 **Tags:** —
 
@@ -4623,7 +4623,7 @@
 
 **Goal:** Open the exact per-project cohort, without a dialog
 
-**Spec:** `flows/skills/skill-traces.spec.ts:171`
+**Spec:** `flows/skills/skill-traces.spec.ts:185`
 
 **Tags:** —
 
@@ -4640,7 +4640,7 @@
 
 **Goal:** Inspect a failed integrity check separately from verified loads
 
-**Spec:** `flows/skills/skill-traces.spec.ts:190`
+**Spec:** `flows/skills/skill-traces.spec.ts:204`
 
 **Tags:** —
 
@@ -4657,7 +4657,7 @@
 
 **Goal:** Diagnose first-day fetches without suggesting a runtime load
 
-**Spec:** `flows/skills/skill-traces.spec.ts:206`
+**Spec:** `flows/skills/skill-traces.spec.ts:221`
 
 **Tags:** —
 
@@ -4674,7 +4674,7 @@
 
 **Goal:** Verify the skill that changed across two reviewed context releases
 
-**Spec:** `flows/skills/skill-traces.spec.ts:366`
+**Spec:** `flows/skills/skill-traces.spec.ts:381`
 
 **Tags:** —
 
@@ -4692,7 +4692,7 @@
 
 **Goal:** Distinguish an unreleased follower from a pinned skill
 
-**Spec:** `flows/skills/skill-traces.spec.ts:261`
+**Spec:** `flows/skills/skill-traces.spec.ts:276`
 
 **Tags:** —
 
@@ -4710,7 +4710,7 @@
 
 **Goal:** Inspect the same agent and its skills from Runtime and Observe
 
-**Spec:** `flows/skills/skill-traces.spec.ts:220`
+**Spec:** `flows/skills/skill-traces.spec.ts:235`
 
 **Tags:** —
 
@@ -4727,7 +4727,7 @@
 
 **Goal:** Confirm a new application load reaches the project
 
-**Spec:** `flows/skills/skill-traces.spec.ts:125`
+**Spec:** `flows/skills/skill-traces.spec.ts:139`
 
 **Tags:** —
 
@@ -4744,7 +4744,7 @@
 
 **Goal:** See the SDK version that fetched the skill and context
 
-**Spec:** `flows/skills/skill-traces.spec.ts:135`
+**Spec:** `flows/skills/skill-traces.spec.ts:149`
 
 **Tags:** —
 
@@ -4795,5 +4795,6 @@
 
 **Backend state verified:**
 
+- The standalone database has neither the retired skill load tables nor their materialized views.
 - The Runtime endpoint returns a zero-trace summary.
-- Both load tables and their materialized views exist.
+- The ordinary trace has no live skill.load spans.

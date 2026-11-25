@@ -250,14 +250,7 @@ def clickhouse_native_schema(log: Callable[[str], None], timeout: int) -> None:
     started = time.monotonic()
     if run_cli(
         oss_cdc_install.main,
-        [
-            "--phase",
-            "native",
-            "--apply",
-            "--with-skill-schema",
-            "--timeout",
-            str(timeout),
-        ],
+        ["--phase", "native", "--apply", "--timeout", str(timeout)],
     ):
         raise BootstrapError(
             "ClickHouse native schema install failed (see above). Check CH_HOST, "

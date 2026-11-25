@@ -214,15 +214,11 @@ class StartupComposeContractTests(unittest.TestCase):
                     self.assert_python_job(job, ["python", "-m", module])
                     self.assertEqual(job["image"], services["backend"]["image"])
                     self.assertEqual("--apply" in argv(job), variant in ("root", "e2e"))
-                self.assertEqual(
-                    "--with-skill-schema"
-                    in argv(services[self.phase_job(services, "native")]),
-                    variant in ("root", "e2e"),
-                )
-                self.assertEqual(
-                    "--require-skill-schema" in argv(services[self.phase_job(services, "native")]),
-                    variant == "production",
-                )
+                native_args = ["--phase", "native"]
+                if variant in ("root", "e2e"):
+                    native_args.append("--apply")
+                native_job = services[self.phase_job(services, "native")]
+                self.assertEqual(argv(native_job)[3:], native_args)
                 cdc_command = argv(services[self.phase_job(services, "cdc")])
                 self.assertIn("--wait-for-mirrors", cdc_command)
                 self.assertIn("--timeout", cdc_command)

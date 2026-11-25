@@ -102,9 +102,14 @@ class SkillEvidenceWindow:
     replayed metrics, or use an excluded timestamp to hide a newer tombstone.
     """
 
-    bounds = "start_time >= fromUnixTimestamp64Micro(%(skill_window_start_us)s) AND start_time < fromUnixTimestamp64Micro(%(skill_window_end_us)s)"
     condition: str
     params: dict[str, Any]
+    bounds: str = (
+        "start_time >= fromUnixTimestamp64Micro(%(skill_window_start_us)s) "
+        "AND start_time < fromUnixTimestamp64Micro(%(skill_window_end_us)s)"
+    )
+    # A cohort may additionally require a catalogue match on successful loads.
+    loaded_identity_condition: str | None = None
 
     @classmethod
     def from_bounds(cls, start: datetime, end: datetime, filters: list[dict]):
@@ -1835,59 +1840,88 @@ class ClickHouseFilterBuilder:
             else "start_time >= %(start_date)s AND start_time < %(end_date)s"
         )
 
-    def skill_live_span_versions_sql(self) -> str:
-        """Bounded, authoritative span winners, including key-only tombstones.
+    def skill_live_rows_sql(self, *, failed: bool = False) -> str:
+        """Live load evidence from the latest revision of each candidate span.
 
-        The narrow MV's FINAL key contains mutable load dimensions. Match its
-        version to the latest physical span, rather than trusting FINAL alone.
-        The caller binds start_date/end_date, as on every bounded Observe read.
+        The load window and closed snapshot choose keys, not revisions. Replay
+        those keys across all dates so corrections and key-only deletes win.
         """
         if not self.project_ids:
             raise _unsupported_filter_shape("SKILL filters require a project scope")
-        candidate = (
-            self._candidate_filter("trace_id")
-            if self.query_mode == self.QUERY_MODE_TRACE
-            else ""
-        )
         from tracer.services.clickhouse.query_builders.session_list import (
             ResolvedSpanSource,
         )
 
-        # A closed sampling snapshot admits only spans whose latest state arrived
-        # before it. Skill evidence must come from those same spans, so a late
-        # child load cannot change an already closed sample.
+        project = self._project_scope_predicate()
+        candidate = ""
+        if self.query_mode == self.QUERY_MODE_TRACE:
+            candidate = self._candidate_filter("trace_id")
+        elif self.query_mode == self.QUERY_MODE_SPAN:
+            span_batch = self._candidate_span_entity_filter("trace_id", "id")
+            if span_batch:
+                # The load can be a sibling of a candidate span.
+                span_source = self.resolved_candidate_spans_table or "spans"
+                candidate = (
+                    " AND (project_id, trace_id) IN (SELECT project_id, trace_id "
+                    f"FROM {span_source} WHERE {project}{span_batch})"
+                )
         snapshot = (
             " AND (project_id, trace_id, id) IN "
             f"(SELECT project_id, trace_id, id FROM {ResolvedSpanSource.SAMPLING.value})"
             if self.table == ResolvedSpanSource.SAMPLING.value
             else ""
         )
-        return (
-            "SELECT project_id, trace_id, id, max(_version) AS live_version "
-            "FROM spans WHERE "
-            + self._project_scope_predicate()
-            + f" AND {self._skill_window_bounds()}"
-            + candidate
-            + snapshot
-            + " GROUP BY project_id, trace_id, id HAVING argMax(is_deleted, _version) = 0"
+        bounds = self._skill_window_bounds()
+        window = self.skill_window.condition if self.skill_window else bounds
+        outcome = (
+            "status = 'ERROR' AND skill_version_id = ''"
+            if failed
+            else "skill_version_id != '' AND status != 'ERROR'"
         )
-
-    def skill_live_rows_sql(self, *, failed: bool = False) -> str:
-        """Shared live load source for filters and cohort dimensions (ST8)."""
-        table = "skill_load_failures" if failed else "skill_trace_links"
-        outcome = "" if failed else "AND status != 'ERROR' "
-        window = (
-            self.skill_window.condition
-            if self.skill_window
-            else self._skill_window_bounds()
+        if (
+            not failed
+            and self.skill_window
+            and self.skill_window.loaded_identity_condition
+        ):
+            outcome += f" AND ({self.skill_window.loaded_identity_condition})"
+        error_type = (
+            "argMax(attrs_string['error.type'], _version) AS error_type,"
+            if failed
+            else ""
         )
-        return (
-            f"SELECT * FROM {table} FINAL WHERE {self._project_scope_predicate()} "
-            f"AND is_deleted = 0 {outcome}AND {window} "
-            "AND (project_id, trace_id, span_id, _version) IN ("
-            + self.skill_live_span_versions_sql()
-            + ")"
-        )
+        return f"""
+            SELECT * EXCEPT (latest_name, latest_deleted, live_version),
+                   latest_deleted AS is_deleted, live_version AS _version
+            FROM (
+                SELECT project_id, trace_id, id AS span_id,
+                       argMax(start_time, _version) AS start_time,
+                       argMax(attrs_string['fi.skill.id'], _version) AS skill_id,
+                       argMax(attrs_string['fi.skill.version_id'], _version) AS skill_version_id,
+                       argMax(attrs_string['fi.skill.name'], _version) AS skill_name,
+                       argMax(toUInt32(attrs_number['fi.skill.version']), _version) AS skill_version,
+                       argMax(attrs_string['fi.skill.digest'], _version) AS skill_digest,
+                       argMax(attrs_string['fi.skill.requested_label'], _version) AS requested_label,
+                       argMax(toUInt32(attrs_number['fi.skill.requested_version']), _version) AS requested_version,
+                       argMax(attrs_string['fi.skill.load.via'], _version) AS load_via,
+                       argMax(attrs_string['fi.skill.load.evidence'], _version) AS evidence,
+                       argMax(toUInt8(attrs_bool['fi.skill.load.cached']), _version) AS cached,
+                       argMax(toUInt8(attrs_bool['fi.skill.load.root_file']), _version) AS root_file,
+                       argMax(status, _version) AS status, argMax(service_name, _version) AS service_name,
+                       argMax(if(attrs_string['gen_ai.agent.name'] != '', attrs_string['gen_ai.agent.name'],
+                                 attrs_string['fi.context.name']), _version) AS agent_name,
+                       argMax(attrs_string['fi.context.id'], _version) AS context_id,
+                       argMax(attrs_string['fi.context.version_id'], _version) AS context_version_id,
+                       argMax(attrs_string['fi.skill.via_context.version_id'], _version) AS via_context_version_id,
+                       argMax(attrs_string['fi.context.binding_id'], _version) AS binding_id,
+                       {error_type}
+                       argMax(name, _version) AS latest_name, argMax(is_deleted, _version) AS latest_deleted,
+                       max(_version) AS live_version
+                FROM spans WHERE {project} AND (project_id, trace_id, id) IN (
+                    SELECT project_id, trace_id, id FROM spans WHERE {project} AND {bounds}
+                      AND name = 'skill.load'{candidate}{snapshot}
+                ) GROUP BY project_id, trace_id, id
+            ) WHERE latest_deleted = 0 AND latest_name = 'skill.load' AND ({window}) AND {outcome}
+        """.strip()
 
     def skill_cohort_rows_sql(
         self,

@@ -80,7 +80,6 @@ type Config struct {
 // the only difference: gRPC uses the generated stub; HTTP accepts
 // `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
-	startupBarrier  <-chan struct{}
 	traceNotifier   TraceNotifier
 	cfg             Config
 	writer          *chwriter.Writer
@@ -174,7 +173,6 @@ type Server struct {
 
 // Option configures optional Server dependencies.
 type Option struct {
-	startupBarrier  <-chan struct{}
 	traceNotifier   TraceNotifier
 	log             *slog.Logger
 	pricer          chexp.Pricer
@@ -188,10 +186,6 @@ type TraceNotifier interface {
 }
 
 func WithTraceNotifier(n TraceNotifier) Option { return Option{traceNotifier: n} }
-
-// WithStartupBarrier refuses both transports until ready closes. It has no
-// effect on Pod health: a post-install job may be responsible for opening it.
-func WithStartupBarrier(ready <-chan struct{}) Option { return Option{startupBarrier: ready} }
 
 // WithLogger sets the server's logger.
 func WithLogger(l *slog.Logger) Option { return Option{log: l} }
@@ -248,11 +242,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	if authenticator != nil {
 		router = authenticator
 	}
-	var startupBarrier <-chan struct{}
 	for _, o := range opts {
-		if o.startupBarrier != nil {
-			startupBarrier = o.startupBarrier
-		}
 		if o.router != nil {
 			router = o.router
 		}
@@ -271,7 +261,6 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	}
 
 	s := &Server{
-		startupBarrier:  startupBarrier,
 		traceNotifier:   traceNotifier,
 		cfg:             cfg,
 		writer:          writer,

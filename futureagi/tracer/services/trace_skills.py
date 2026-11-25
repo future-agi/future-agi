@@ -172,15 +172,14 @@ def trace_skills_projection(*, principal, workspace, query):
         start=datetime(1970, 1, 1, tzinfo=UTC),
         end=datetime(2100, 1, 1, tzinfo=UTC),
     )
-    builder.params["trace_ids"] = tuple(page)
     rows = read_runtime_statement(
         session, builder.build_trace_loads(trace_ids=page), max_rows=10000
     )
     failed = read_runtime_statement(
         session, builder.build_trace_loads(trace_ids=page, failed=True), max_rows=10000
     )
-    # Successful load MVs also retain ERROR rows with resolved IDs. They must
-    # not be presented as delivered bytes or contribute scope coverage.
+    # A correction can arrive between reads. Do not report a now-failed load
+    # as delivered bytes or count it toward scope coverage.
     failed_ids = {(row["trace_id"], row["span_id"]) for row in failed}
     rows = [row for row in rows if (row["trace_id"], row["span_id"]) not in failed_ids]
     catalog = _catalog(principal, [row["skill_version_id"] for row in rows], "skill")
@@ -212,7 +211,9 @@ def trace_skills_projection(*, principal, workspace, query):
             else None,
             "truncated": False,
         }
-    spans = read_runtime_statement(session, builder.build_spans(), max_rows=10000)
+    spans = read_runtime_statement(
+        session, builder.build_spans(trace_ids=page), max_rows=10000
+    )
     context_spans = [
         row
         for row in spans

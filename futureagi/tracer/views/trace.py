@@ -5328,8 +5328,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             and validated_data.get("include_skill_links")
             and page_number == 0
         ):
-            # This is a column-availability hint, not delivery evidence. Probe
-            # the narrow link table for the project/window, not this page's IDs.
+            # Probe live loads across the project/window, not just this page's IDs.
             from tracer.services.clickhouse.v2.query_builders.filters import (
                 ClickHouseFilterBuilderV2,
             )

@@ -72,7 +72,6 @@ func resolveAdminAddr(cfg rootConfig) string {
 }
 
 func main() {
-	requireSkillSchema := flag.Bool("require-skill-schema", false, "refuse OTLP exports until local Skills attribution is installed")
 	var configPath string
 	flag.StringVar(&configPath, "config", "/etc/fi-collector/config.yaml", "path to YAML config")
 	flag.Parse()
@@ -148,27 +147,6 @@ func main() {
 	}
 
 	opts := []server.Option{server.WithLogger(log)}
-	if *requireSkillSchema {
-		ready := make(chan struct{})
-		opts = append(opts, server.WithStartupBarrier(ready))
-		go func() {
-			// Never make pod health or listener startup wait for a post-install hook.
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
-			for {
-				if writer.SkillSchemaReady(ctx) {
-					close(ready)
-					log.Info("ClickHouse Skills schema ready; admitting OTLP exports")
-					return
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-				}
-			}
-		}()
-	}
 	if pricer != nil {
 		opts = append(opts, server.WithPricer(pricer))
 	}

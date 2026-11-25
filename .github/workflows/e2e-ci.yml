@@ -219,7 +219,6 @@ jobs:
           all='["j3","j4","056","057","058","059","063"]'
           shared=(
             'futureagi/**/*skill*' 'futureagi/**/*skill*/**'
-            'futureagi/tracer/services/clickhouse/v2/schema/039_skill_attribution.sql'
             'frontend/src/**/*kill*' 'frontend/src/**/*kill*/**'
             'e2e/lib/skills-r3/**' 'e2e/benchmarks/context-hub/**'
             'e2e/harness/skills-r3/qualification-contract.json'

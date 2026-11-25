@@ -11,16 +11,17 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from django.core.management import call_command
 
 from conftest import (
     _ch_test_apply_v2_schema,
     _ch_test_owned_database,
     _open_ch_test_http_client,
 )
-from tracer.management.commands import ch25_backfill_skill_trace_links as backfill
 from tracer.services.clickhouse.query_builders.filters import SKILL_VERSION_IDS_SQL
 from tracer.services.clickhouse.v2.adapter import CH_INSERT_COLUMNS, adapt, row_to_tuple
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2,
+)
 from tracer.tests._ch_seed import seed_ch_spans
 
 pytestmark = pytest.mark.integration
@@ -41,6 +42,20 @@ def skill_client():
             yield client
         finally:
             client.close()
+
+
+def assert_no_skill_objects(client):
+    installed = {name for (name,) in client.query("SHOW TABLES").result_rows}
+    assert {
+        "skill_trace_links",
+        "skill_trace_links_mv",
+        "skill_load_failures",
+        "skill_load_failures_mv",
+    }.isdisjoint(installed)
+
+
+def test_packaged_schema_creates_no_skill_objects(skill_client):
+    assert_no_skill_objects(skill_client)
 
 
 def load_span(**overrides):
@@ -99,13 +114,20 @@ def insert_span(client, span, writer="python"):
     client.raw_insert("spans", insert_block=json.dumps(row).encode(), fmt="JSONEachRow")
 
 
-def evidence_rows(client, span, table="skill_trace_links"):
-    assert table in backfill.TARGETS
+def evidence_rows(client, span, *, failed=False):
+    project = span["project_id"]
+    source = ClickHouseFilterBuilderV2(
+        project_id=project, candidate_ids_param="traces"
+    ).skill_live_rows_sql(failed=failed)
     return list(
         client.query(
-            f"SELECT * FROM {table} FINAL "
-            "WHERE project_id = %(p)s AND trace_id = %(t)s AND is_deleted = 0",
-            parameters={"p": span["project_id"], "t": span["trace_id"]},
+            source,
+            parameters={
+                "project_id": project,
+                "traces": (span["trace_id"],),
+                "start_date": START,
+                "end_date": START + timedelta(hours=1),
+            },
         ).named_results()
     )
 
@@ -141,7 +163,7 @@ def test_load_populates_correlated_evidence_and_indexed_list(skill_client, write
         "is_deleted": 0,
     }
     assert {key: row[key] for key in expected} == expected
-    assert evidence_rows(skill_client, span, "skill_load_failures") == []
+    assert evidence_rows(skill_client, span, failed=True) == []
     # Scope is read from span attributes; spans gains no column or index.
     result = skill_client.query(
         f"SELECT {SKILL_VERSION_IDS_SQL} FROM spans WHERE project_id = %(p)s AND id = %(id)s",
@@ -156,7 +178,8 @@ def test_load_populates_correlated_evidence_and_indexed_list(skill_client, write
 
 
 @pytest.mark.parametrize("writer", ["python", "json_each_row"])
-def test_full_row_reversion_retry_and_tombstone(skill_client, writer):
+@pytest.mark.parametrize("key_only", [False, True], ids=["full-row", "key-only"])
+def test_full_row_reversion_retry_and_tombstone(skill_client, writer, key_only):
     span = load_span()
     insert_span(skill_client, span, writer)
     insert_span(skill_client, span, writer)
@@ -177,11 +200,13 @@ def test_full_row_reversion_retry_and_tombstone(skill_client, writer):
     insert_span(skill_client, span, writer)
     assert evidence_rows(skill_client, span)[0]["cached"] == 0
     tombstone = {**newer, "created_at": START + timedelta(seconds=2), "deleted": True}
+    if key_only:
+        tombstone.update(name="", span_attributes={})
     insert_span(skill_client, tombstone, writer)
     insert_span(skill_client, newer, writer)
     assert evidence_rows(skill_client, span) == []
-    # Projection rebuilds must also permit physical replacement merges.
-    skill_client.command("OPTIMIZE TABLE skill_trace_links FINAL")
+    # Physical replacement must not resurrect the replayed load.
+    skill_client.command("OPTIMIZE TABLE spans FINAL")
     insert_span(skill_client, span, writer)
     assert evidence_rows(skill_client, span) == []
 
@@ -209,101 +234,4 @@ def test_non_load_spans_never_create_evidence(skill_client, name):
     span = load_span(name=name)
     insert_span(skill_client, span)
     assert evidence_rows(skill_client, span) == []
-    assert evidence_rows(skill_client, span, "skill_load_failures") == []
-
-
-def test_old_parts_and_bounded_backfill_through_schema_applier(monkeypatch):
-    from tracer.services.clickhouse.v2.apply_schema import (
-        SchemaFile,
-        apply_file,
-        ensure_versions_table,
-    )
-
-    with _ch_test_owned_database("test_skill_pre028_") as database:
-        client = _open_ch_test_http_client(database=database)
-        try:
-            ensure_versions_table(client)
-            # The real pre-039 spans layout, without unrelated dictionary/MV dependencies.
-            for filename in ("002_spans_v2.sql", "013_attributes_extra_as_string.sql"):
-                apply_file(
-                    client,
-                    SchemaFile.from_path(backfill.SCHEMA_PATH.with_name(filename)),
-                    "skill-test",
-                )
-            # Mirror 020 for spans without its unrelated table dependencies.
-            client.command("ALTER TABLE spans REMOVE TTL")
-            historical = load_span()
-            ordinary = load_span(
-                project_id=historical["project_id"], name="llm.chat", span_attributes={}
-            )
-            failed = load_span(
-                project_id=historical["project_id"],
-                status="ERROR",
-                span_attributes={
-                    "fi.skill.name": "policy",
-                    "fi.skill.requested_label": "production",
-                    "error.type": "integrity",
-                },
-            )
-            boundary = load_span(
-                project_id=historical["project_id"],
-                start_time=START.replace(hour=0) + timedelta(days=1),
-            )
-            other_project = load_span()
-            deleted = load_span(project_id=historical["project_id"])
-            for span in (
-                historical,
-                ordinary,
-                failed,
-                boundary,
-                other_project,
-                deleted,
-            ):
-                insert_span(client, span)
-            insert_span(
-                client,
-                {
-                    **deleted,
-                    "deleted": True,
-                    "created_at": START + timedelta(seconds=1),
-                },
-            )
-            span_mutations = (
-                "SELECT count() FROM system.mutations WHERE database = currentDatabase() "
-                "AND table = 'spans'"
-            )
-            mutations_before = client.query(span_mutations).result_rows[0][0]
-            apply_file(client, SchemaFile.from_path(backfill.SCHEMA_PATH), "skill-test")
-            # Applying the DDL a second time is harmless and never populates history.
-            apply_file(client, SchemaFile.from_path(backfill.SCHEMA_PATH), "skill-test")
-            assert evidence_rows(client, historical) == []
-            assert evidence_rows(client, failed, "skill_load_failures") == []
-            old_lists = dict(
-                client.query(
-                    f"SELECT id, {SKILL_VERSION_IDS_SQL} FROM spans WHERE id IN %(ids)s",
-                    parameters={"ids": (historical["id"], ordinary["id"])},
-                ).result_rows
-            )
-            assert old_lists == {historical["id"]: [VERSION], ordinary["id"]: []}
-            # 039 never alters or mutates spans.
-            assert client.query(span_mutations).result_rows[0][0] == mutations_before
-            monkeypatch.setattr(
-                backfill.Command,
-                "_client",
-                lambda self: _open_ch_test_http_client(database=database),
-            )
-            for _ in range(2):
-                call_command(
-                    "ch25_backfill_skill_trace_links",
-                    start_date="2026-11-01",
-                    end_date="2026-11-02",
-                    project_id=historical["project_id"],
-                )
-                assert len(evidence_rows(client, historical)) == 1
-                assert len(evidence_rows(client, failed, "skill_load_failures")) == 1
-                assert evidence_rows(client, failed) == []
-                assert evidence_rows(client, deleted) == []
-                assert evidence_rows(client, boundary) == []
-                assert evidence_rows(client, other_project) == []
-        finally:
-            client.close()
+    assert evidence_rows(skill_client, span, failed=True) == []

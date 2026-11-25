@@ -8,6 +8,7 @@ from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
 )
 from tracer.services.clickhouse.query_builders.filters import (
     SKILL_VERSION_IDS_SQL,
+    SkillEvidenceWindow,
     is_skill_filter,
 )
 from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
@@ -16,16 +17,7 @@ from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
 
 
 class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
-    def _live_source(self, *, failed=False):
-        # Identity reads may span all retained history, but never scan the whole
-        # project's history. Push the requested trace ids into both the narrow
-        # projection and the authoritative winner fence (including tombstones).
-        source = super()._live_source(failed=failed)
-        if "trace_ids" in self.params:
-            source = source.replace("WHERE ", "WHERE trace_id IN %(trace_ids)s AND ")
-        return source
-
-    def build_spans(self):
+    def build_spans(self, *, trace_ids):
         return (
             f"""
             SELECT id, state.1 AS start_time, state.2 AS name,
@@ -38,7 +30,7 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
                 GROUP BY id
             ) WHERE state.7 = 0 ORDER BY start_time, id LIMIT 10001
         """,
-            self.params,
+            {**self.params, "trace_ids": tuple(trace_ids)},
         )
 
     def build_summary(self, *, filters, verified_identities):
@@ -65,55 +57,48 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
         )
         # The shared Observe parser normalizes bounds to naive UTC; runtime
         # serializers supply aware dates. Compare in UTC without losing offsets.
-        self.params.update(
-            start_date=max(self.start, window.start.replace(tzinfo=UTC)),
-            end_date=min(self.end, window.end.replace(tzinfo=UTC)),
-        )
-        plan = compile_exact_graph_row_predicates(
-            filters, project_id=project_id, observe_type="trace"
-        )
-        params = {
-            **self.params,
-            "project_id": project_id,
-            **plan.params,
-            "summary_verified_identities": tuple(verified_identities),
-        }
-        verified = (
-            "(skill_id, skill_version_id, skill_digest) IN %(summary_verified_identities)s"
-            if verified_identities
-            else "0 = 1"
-        )
+        bounds = "start_time >= %(start_date)s AND start_time < %(end_date)s"
         exclusion, exclusion_params = BaseQueryBuilder.bounded_datetime_exclusion_sql(
             filters,
             column="start_time",
             param_prefix="cohort_exclusion",
         )
-        params.update(exclusion_params)
-        in_window = (
-            "0 = 1"
-            if window.empty
-            else "start_time >= %(start_date)s AND start_time < %(end_date)s"
-        )
+        in_window = "0 = 1" if window.empty else bounds
         if exclusion:
             in_window += f" AND ({exclusion})"
-        predicates = []
-        for predicate, window_only in zip(
-            plan.predicates, plan.output_window_only, strict=True
-        ):
-            predicate = predicate.replace(
-                "FROM skill_trace_links FINAL WHERE ",
-                f"FROM skill_trace_links FINAL WHERE ({verified}) AND ",
+        load_scope = SkillEvidenceWindow(
+            bounds=bounds,
+            condition=in_window,
+            params={
+                "start_date": max(self.start, window.start.replace(tzinfo=UTC)),
+                "end_date": min(self.end, window.end.replace(tzinfo=UTC)),
+                "summary_verified_identities": tuple(verified_identities),
+                **exclusion_params,
+            },
+            loaded_identity_condition=(
+                "(skill_id, skill_version_id, skill_digest) IN %(summary_verified_identities)s"
+                if verified_identities
+                else "0 = 1"
+            ),
+        )
+        plan = compile_exact_graph_row_predicates(
+            filters,
+            project_id=project_id,
+            observe_type="trace",
+            skill_window=load_scope,
+        )
+        params = {
+            **self.params,
+            "project_id": project_id,
+            **plan.params,
+            **load_scope.params,
+        }
+        predicates = [
+            f"({predicate}) AND ({in_window})" if window_only else predicate
+            for predicate, window_only in zip(
+                plan.predicates, plan.output_window_only, strict=True
             )
-            if exclusion:
-                # Keep the shared SKILL subqueries on the same excluded load
-                # windows as candidate membership, without clipping metrics.
-                predicate = predicate.replace(
-                    "start_time < %(end_date)s",
-                    f"start_time < %(end_date)s AND ({exclusion})",
-                )
-            predicates.append(
-                f"({predicate}) AND ({in_window})" if window_only else predicate
-            )
+        ]
         values = [
             "parent_span_id",
             "status",
@@ -130,7 +115,9 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
             for item in filters
         )
         if positive_skill:
-            members = f"SELECT DISTINCT project_id, trace_id FROM ({self._live_source()}) WHERE ({verified}) AND {in_window} UNION DISTINCT SELECT DISTINCT project_id, trace_id FROM ({self._live_source(failed=True)}) WHERE {in_window}"
+            loaded = self._live_source(skill_window=load_scope)
+            failed = self._live_source(skill_window=load_scope, failed=True)
+            members = f"SELECT DISTINCT project_id, trace_id FROM ({loaded}) UNION DISTINCT SELECT DISTINCT project_id, trace_id FROM ({failed})"
         else:
             # Negative skill filters include traces with no load evidence.
             members = f"SELECT DISTINCT project_id, trace_id FROM spans WHERE project_id IN %(project_ids)s AND {in_window}"

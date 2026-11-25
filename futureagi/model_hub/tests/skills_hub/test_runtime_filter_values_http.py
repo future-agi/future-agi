@@ -13,6 +13,7 @@ from accounts.models.workspace import Workspace
 from model_hub.services.skills_hub import runtime_reads
 from model_hub.views.skills_hub_runtime import SkillFilterValuesView
 from tracer.models.project import Project
+from tracer.tests.test_skill_filters import assert_skill_span_source
 
 pytestmark = pytest.mark.django_db
 URL = "/model-hub/skills/filter-values/"
@@ -371,4 +372,4 @@ def test_failed_names_are_unverified(user, organization, workspace, query, monke
     assert response.data["result"]["values"] == [
         {"value": "not-published", "label": "not-published"}
     ]
-    assert "skill_load_failures" in statements[0][0]
+    assert_skill_span_source(statements[0][0], failed=True)

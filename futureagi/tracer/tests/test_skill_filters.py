@@ -81,6 +81,21 @@ def compile_filters(items, *, project=PROJECT, mode="trace", **kwargs):
     ).translate(items)
 
 
+def assert_skill_span_source(sql, *, groups=1, failed=False):
+    sql = " ".join(sql.split())
+    assert sql.count("SELECT project_id, trace_id, id FROM spans WHERE") == groups
+    assert sql.count("AND name = 'skill.load'") == groups
+    assert "argMax(attrs_string['fi.skill.name'], _version) AS skill_name" in sql
+    assert "argMax(is_deleted, _version) AS latest_deleted" in sql
+    assert "WHERE latest_deleted = 0 AND latest_name = 'skill.load'" in sql
+    outcome = (
+        "status = 'ERROR' AND skill_version_id = ''"
+        if failed
+        else "skill_version_id != '' AND status != 'ERROR'"
+    )
+    assert outcome in sql
+
+
 @pytest.mark.parametrize(
     "items",
     [
@@ -152,11 +167,11 @@ def test_invalid_skill_shapes_are_rejected(items):
 def test_same_group_is_one_source_and_separate_groups_are_separate_sources():
     items = [skill("id", SKILL), skill("version", 3), skill("agent", "A")]
     sql, params = compile_filters(items)
-    assert sql.count("FROM skill_trace_links FINAL") == 1
+    assert_skill_span_source(sql)
     assert "skill_id = " in sql and "skill_version = " in sql and "agent_name = " in sql
     assert SKILL in params.values() and 3 in params.values() and "A" in params.values()
     sql, _ = compile_filters(items + [skill("name", "tone", group=1)])
-    assert sql.count("FROM skill_trace_links FINAL") == 2
+    assert_skill_span_source(sql, groups=2)
 
 
 def test_negative_means_absence_and_values_are_bound():
@@ -164,8 +179,8 @@ def test_negative_means_absence_and_values_are_bound():
     sql, params = compile_filters([skill("version_id", [value], "not_in")])
     assert "(toUUID(%(project_id)s), trace_id) NOT IN" in sql
     assert value not in sql and (value,) in params.values()
-    assert "argMax(is_deleted, _version) = 0" in sql
-    assert "span_id, _version) IN" in sql
+    assert_skill_span_source(sql)
+    assert "(project_id, trace_id, id) IN" in sql
     assert "start_time < %(end_date)s" in sql
 
 
@@ -187,15 +202,10 @@ def test_skill_filters_with_a_metric_identity_are_rejected_by_the_compiler():
             compile_filters([item])
 
 
-def test_closed_sampling_snapshot_limits_skill_evidence_to_admitted_spans():
-    # A child load arriving after the snapshot is absent from sampling_source,
-    # so it must not make an earlier root qualify on a repeat read.
+def test_only_sampled_skill_filters_reference_sampling_source():
     sampled, _ = compile_filters([skill("name", "refund")], table="sampling_source")
-    assert (
-        "(project_id, trace_id, id) IN (SELECT project_id, trace_id, id FROM sampling_source)"
-        in sampled
-    )
     live, _ = compile_filters([skill("name", "refund")])
+    assert "FROM sampling_source" in sampled
     assert "FROM sampling_source" not in live
 
 
@@ -220,7 +230,7 @@ def test_exact_graph_does_not_compile_skill_leaves_independently():
         items, project_id=PROJECT, observe_type="trace"
     )
     assert len(plan.predicates) == 1
-    assert plan.predicates[0].count("FROM skill_trace_links FINAL") == 1
+    assert_skill_span_source(plan.predicates[0])
     assert plan.match_condition_groups == (((0, True),),)
 
 
@@ -237,7 +247,7 @@ def test_session_classifier_compiles_all_skill_leaves_in_one_trace_requirement()
         available_params={"project_id": PROJECT, "start_date": START, "end_date": END},
     )
     assert len(predicates) == 1
-    assert predicates[0].count("FROM skill_trace_links FINAL") == 1
+    assert_skill_span_source(predicates[0])
     assert "candidate_relational_trace_ids" in ctes
     assert SKILL in params.values()
 
@@ -258,7 +268,7 @@ def test_failed_id_resolution_retains_project_and_name_pairs(monkeypatch):
         lambda ids, projects: [(PROJECT, "refund")],
     )
     sql, params = compile_filters([skill("id", SKILL), skill("load_result", "failed")])
-    assert "FROM skill_load_failures FINAL" in sql
+    assert_skill_span_source(sql, failed=True)
     assert "(toString(project_id), skill_name) IN" in sql
     assert ((PROJECT, "refund"),) in params.values()
 
@@ -291,7 +301,8 @@ def test_failed_skill_names_are_resolved_only_in_project_workspace(
     ]
 
 
-def test_eval_failure_filter_combines_without_changing_skill_group():
+@pytest.mark.parametrize("include_attribute", [False, True])
+def test_eval_and_skill_filters_compile_with_optional_span_attribute(include_attribute):
     eval_id, config_id = str(uuid4()), str(uuid4())
     eval_filter = {
         "column_id": eval_id,
@@ -302,12 +313,30 @@ def test_eval_failure_filter_combines_without_changing_skill_group():
             "filter_value": "FAIL",
         },
     }
+    attr_filter = {
+        "column_id": "fi.skill.name",
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "refund",
+        },
+    }
+    items = [skill("id", SKILL), skill("version", 3), eval_filter]
+    if include_attribute:
+        items.append(attr_filter)
     sql, params = compile_filters(
-        [skill("id", SKILL), skill("version", 3), eval_filter],
+        items,
         eval_filter_metadata={eval_id: EvalFilterMetadata((config_id,), "PASS_FAIL")},
     )
-    assert sql.count("FROM skill_trace_links FINAL") == 1
-    assert "eval" in sql and params
+    assert_skill_span_source(sql)
+    assert "output_bool IN" in sql and (config_id,) in params.values()
+    assert (0,) in params.values()
+    if include_attribute:
+        (key,) = [p for p, value in params.items() if value == "fi.skill.name"]
+        assert f"mapContains(attrs_string, %({key})s)" in sql
+        assert "refund" in params.values()
+    assert "skill_id = " in sql and "skill_version = " in sql
     # The pre-existing latency key is already root latency in trace lists.
     assert TraceListQueryBuilderV2.SORT_FIELD_MAP["latency"] == "latency_ms"
 
@@ -402,6 +431,84 @@ def matching_traces(client, project, filters):
 
 
 @pytest.mark.integration
+def test_closed_snapshot_excludes_late_skill_revisions_and_new_loads(
+    skill_query_client,
+):
+    from tracer.models.eval_task import EvalTask
+    from tracer.services.eval_tasks.sampling.policy import validate_policy
+    from tracer.services.eval_tasks.sampling.query import READ_SETTINGS, SamplingQuery
+
+    project = str(uuid4())
+    root, late_root = (
+        span_row(project, label, name="request", parent_span_id="", span_attributes={})
+        for label in ("revised", "late-child")
+    )
+    admitted = span_row(
+        project,
+        "revised",
+        parent_span_id=root["id"],
+        resource_attributes={"service.name": "original"},
+    )
+    insert_rows(skill_query_client, [root, late_root, admitted])
+    policy = validate_policy(
+        {
+            "version": 1,
+            "mode": "closed",
+            "sampling_unit": "trace",
+            "window": {"start": START.isoformat(), "end": END.isoformat()},
+        },
+        row_type="traces",
+        now=END,
+    )
+
+    def closed_matches(version):
+        task = EvalTask(
+            project_id=project,
+            row_type="traces",
+            filters={"filters": [skill("version_id", version)]},
+        )
+        sql, params = SamplingQuery(task, policy, "v1", END).rows()
+        result = skill_query_client.query(
+            sql, parameters=params, settings=READ_SETTINGS
+        )
+        return {row[0] for row in result.result_rows}
+
+    assert closed_matches(VERSION) == trace_ids("revised")
+    late = END + timedelta(seconds=1)
+    # A service change leaves the admitted revision under its original sorting key.
+    correction = {
+        **admitted,
+        "resource_attributes": {"service.name": "corrected"},
+        "created_at": late,
+        "span_attributes": {
+            **admitted["span_attributes"],
+            "fi.skill.version_id": OTHER_VERSION,
+        },
+    }
+    new_child = span_row(
+        project,
+        "late-child",
+        parent_span_id=late_root["id"],
+        version=OTHER_VERSION,
+        created_at=late,
+    )
+    insert_rows(skill_query_client, [correction, new_child])
+    assert skill_query_client.query(
+        "SELECT service_name FROM spans FINAL WHERE project_id = %(project)s "
+        "AND trace_id = %(trace)s AND id = %(id)s ORDER BY _version",
+        parameters={
+            "project": project,
+            "trace": admitted["trace_id"],
+            "id": admitted["id"],
+        },
+    ).result_rows == [("original",), ("corrected",)]
+    assert matching_traces(
+        skill_query_client, project, [skill("version_id", OTHER_VERSION)]
+    ) == trace_ids("revised", "late-child")
+    assert closed_matches(OTHER_VERSION) == set()
+
+
+@pytest.mark.integration
 def test_live_correlation_negative_groups_failed_and_root_status(skill_query_client):
     client = skill_query_client
     project = str(uuid4())
@@ -464,6 +571,42 @@ def test_live_correlation_negative_groups_failed_and_root_status(skill_query_cli
     assert matching_traces(client, project, [skill("binding_id", SKILL)]) == trace_ids(
         "cross", "match", "mixed"
     )
+
+
+@pytest.mark.integration
+def test_summary_requires_catalog_identity_only_for_loaded_groups(skill_query_client):
+    from tracer.services.clickhouse.v2.query_builders.trace_skills import (
+        TraceSkillsQueryBuilder,
+    )
+
+    project = str(uuid4())
+    rows = [span_row(project, label) for label in ("verified", "both", "wrong-digest")]
+    rows[-1]["span_attributes"]["fi.skill.digest"] = "unknown"
+    for label in ("both", "wrong-digest", "failed-only"):
+        rows.append(
+            span_row(
+                project,
+                label,
+                status="ERROR",
+                span_attributes={"fi.skill.name": "refund", "error.type": "integrity"},
+            )
+        )
+    insert_rows(skill_query_client, rows)
+    query = TraceSkillsQueryBuilder(project_ids=[project], start=START, end=END)
+    verified = [(SKILL, VERSION, DIGEST)]
+    loaded = [skill("version_id", VERSION)]
+    failed = [skill("load_result", "failed", group=1), skill("name", "refund", group=1)]
+
+    def trace_count(filters, identities):
+        sql, params = query.build_summary(
+            filters=filters, verified_identities=identities
+        )
+        (row,) = skill_query_client.query(sql, parameters=params).named_results()
+        return row["traces"]
+
+    assert trace_count(loaded, verified) == 2
+    assert trace_count(loaded + failed, verified) == 1
+    assert trace_count(failed, []) == 3
 
 
 @pytest.mark.integration
@@ -582,11 +725,17 @@ def test_live_bounded_trace_and_span_readers_keep_group_correlation(skill_query_
             SpanListQueryBuilderV2(project_id=project, filters=items),
             [matching["id"], cross_b["id"]],
         ),
+        (
+            SpanListQueryBuilderV2(project_id=project, filters=items),
+            [root_match["id"], root_cross["id"]],
+        ),
     ):
         sql, params = builder.build_filter_match_query(candidates)
         result = list(client.query(sql, parameters=params).named_results())
         assert len(result) == 1
         assert str(result[0]["trace_id"]) == trace_id("matched")
+        if isinstance(builder, SpanListQueryBuilderV2):
+            assert result[0]["id"] == candidates[0]
 
 
 @pytest.mark.integration
@@ -594,7 +743,11 @@ def test_live_replacement_and_key_only_attribute_tombstone(skill_query_client):
     client = skill_query_client
     project = str(uuid4())
     row = span_row(project, "replayed")
-    insert_rows(client, [row, row])
+    # Keep a live candidate even after the load is deleted.
+    root = span_row(
+        project, "replayed", name="request", parent_span_id="", span_attributes={}
+    )
+    insert_rows(client, [root, row, row])
     assert matching_traces(
         client, project, [skill("version_id", VERSION)]
     ) == trace_ids("replayed")
@@ -612,8 +765,6 @@ def test_live_replacement_and_key_only_attribute_tombstone(skill_query_client):
     assert matching_traces(
         client, project, [skill("version_id", OTHER_VERSION)]
     ) == trace_ids("replayed")
-    # No load attributes: neither MV receives a tombstone. The reader's live
-    # span-version fence must still remove the stale narrow-table records.
     insert_rows(
         client,
         [
@@ -621,6 +772,7 @@ def test_live_replacement_and_key_only_attribute_tombstone(skill_query_client):
                 **correction,
                 "created_at": START + timedelta(seconds=2),
                 "deleted": True,
+                "name": "",
                 "span_attributes": {},
             }
         ],
@@ -719,8 +871,17 @@ def test_column_offer_uses_current_successful_sources(skill_query_client):
         start_time=start,
         span_attributes={},
     )
-    failed = span_row(PROJECT_ID, "column-offer", start_time=start, status="ERROR")
-    insert_rows(client, [ordinary, failed])
+    failed = span_row(
+        PROJECT_ID,
+        "column-offer",
+        start_time=start,
+        status="ERROR",
+        span_attributes={"fi.skill.name": "refund", "error.type": "integrity"},
+    )
+    error_with_version = span_row(
+        PROJECT_ID, "column-offer", start_time=start, status="ERROR"
+    )
+    insert_rows(client, [ordinary, failed, error_with_version])
     _check_page_enrichments(1, expect_offer=False, offer_query=probe)
     load = span_row(PROJECT_ID, "column-offer", start_time=start)
     load["span_attributes"]["fi.skill.digest"] = "unverified"
@@ -733,6 +894,7 @@ def test_column_offer_uses_current_successful_sources(skill_query_client):
                 **load,
                 "created_at": load["created_at"] + timedelta(seconds=1),
                 "deleted": True,
+                "name": "",
                 "span_attributes": {},
             }
         ],
@@ -740,9 +902,5 @@ def test_column_offer_uses_current_successful_sources(skill_query_client):
     assert client.query(
         "SELECT count() FROM spans FINAL WHERE id = %(id)s AND is_deleted = 0",
         parameters={"id": ordinary["id"]},
-    ).result_rows == [(1,)]
-    assert client.query(
-        "SELECT count() FROM skill_trace_links FINAL WHERE span_id = %(id)s AND is_deleted = 0",
-        parameters={"id": load["id"]},
     ).result_rows == [(1,)]
     _check_page_enrichments(1, expect_offer=False, offer_query=probe)
