@@ -1632,7 +1632,7 @@ class TestTestExecutionRuntimeContracts:
         "simulate.views.run_test.run_eval_summary_task.apply_async",
         side_effect=TimeoutError("temporal dispatch timed out"),
     )
-    def test_eval_summary_refresh_tolerates_dispatch_failure(
+    def test_eval_summary_refresh_that_cannot_queue_says_so(
         self, mock_apply_async, auth_client, test_execution
     ):
         url = (
@@ -1642,9 +1642,7 @@ class TestTestExecutionRuntimeContracts:
 
         response = auth_client.post(url, {}, format="json")
 
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data["status"] is True
-        assert "marked pending" in response.data["result"]["message"]
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
         mock_apply_async.assert_called_once_with(args=(str(test_execution.id),))
         test_execution.refresh_from_db()
         assert (
@@ -2948,11 +2946,11 @@ class TestEvalExplanationSummaryRefreshView:
         "simulate.views.run_test.run_eval_summary_task.apply_async",
         side_effect=TimeoutError("temporal dispatch timed out"),
     )
-    def test_eval_explanation_refresh_marks_failed_when_dispatch_fails(
+    def test_eval_explanation_refresh_that_cannot_queue_keeps_the_summary_it_had(
         self, mock_apply_async, auth_client, test_execution
     ):
-        # Seed a terminal state so we can prove the view moved it off COMPLETED
-        # and did not leave it stuck mid-refresh when dispatch blew up.
+        # A current summary stays current when the refresh could not be
+        # queued; it is never left running with no job behind it.
         test_execution.eval_explanation_summary_status = (
             EvalExplanationSummaryStatus.COMPLETED
         )
@@ -2961,22 +2959,14 @@ class TestEvalExplanationSummaryRefreshView:
         url = self.URL_TEMPLATE.format(test_execution.id)
         response = auth_client.post(url, {}, format="json")
 
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data["status"] is True
-        assert "marked pending" in response.data["result"]["message"]
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
         mock_apply_async.assert_called_once_with(args=(str(test_execution.id),))
 
         test_execution.refresh_from_db()
-        # Should be PENDING or FAILED; must not be stuck in a live state like
-        # RUNNING or lie about COMPLETED.
-        assert test_execution.eval_explanation_summary_status in {
-            EvalExplanationSummaryStatus.PENDING,
-            EvalExplanationSummaryStatus.FAILED,
-        }
-        assert test_execution.eval_explanation_summary_status not in {
-            EvalExplanationSummaryStatus.RUNNING,
-            EvalExplanationSummaryStatus.COMPLETED,
-        }
+        assert (
+            test_execution.eval_explanation_summary_status
+            == EvalExplanationSummaryStatus.COMPLETED
+        )
 
 
 @pytest.mark.integration

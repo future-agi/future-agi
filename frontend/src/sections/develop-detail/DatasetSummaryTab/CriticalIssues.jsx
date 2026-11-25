@@ -16,13 +16,19 @@ import CustomTooltip from "../../../components/tooltip/CustomTooltip";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge";
+import { enqueueSnackbar } from "notistack";
 import {
   CriticalIssueStatus,
+  FAILED_MESSAGE,
+  FAILED_WITH_EARLIER_MESSAGE,
   NOT_ANALYSED_MESSAGE,
   OUT_OF_DATE_MESSAGE,
+  isCriticalIssueFailed,
   isCriticalIssueInProgress,
   isCriticalIssueNotAnalysed,
   isCriticalIssueOutOfDate,
+  refreshErrorMessage,
 } from "./criticalIssueStatus";
 
 const MinimumTotalCallsForCriticalIssue = 5;
@@ -154,7 +160,17 @@ const CriticalIssues = ({ mode = "develop" }) => {
       onSuccess: () => {
         refetch();
       },
+      // A simulation run's refresh says itself why it did not start.
+      meta: { errorHandled: mode === "simulate" },
+      onError: (error) => {
+        if (mode === "simulate") {
+          enqueueSnackbar(refreshErrorMessage(error), { variant: "error" });
+        }
+      },
     });
+
+  const hasStoredResult = data?.result !== null && data?.result !== undefined;
+  const isFailed = isCriticalIssueFailed(mode, data?.status);
 
   const isReconfiguring =
     isLoading ||
@@ -212,7 +228,9 @@ const CriticalIssues = ({ mode = "develop" }) => {
         </Typography>
         <ShowComponent condition={!isLoading && isCriticalIssueFetchingAllowed}>
           <IconButton
-            disabled={isLoading}
+            // Pressable while a summary runs, so a job that died can be
+            // started again; only a press already on its way is blocked.
+            disabled={isLoading || isRefetchingCriticalIssue}
             size="small"
             onClick={() => {
               refreshCriticalIssue();
@@ -266,13 +284,32 @@ const CriticalIssues = ({ mode = "develop" }) => {
         </Stack>
       )}
       {isCriticalIssueOutOfDate(mode, data?.status, data?.result) && (
-        <Typography
-          typography="s2"
-          fontWeight={"fontWeightRegular"}
-          color={"text.secondary"}
-        >
-          {OUT_OF_DATE_MESSAGE}
-        </Typography>
+        <Stack direction={"row"} gap={1} alignItems={"center"} mt={1}>
+          <StatusBadge
+            status="out_of_date"
+            role="warning"
+            label="Out of date"
+          />
+          <Typography
+            typography="s1"
+            fontWeight={"fontWeightRegular"}
+            color={"text.primary"}
+          >
+            {OUT_OF_DATE_MESSAGE}
+          </Typography>
+        </Stack>
+      )}
+      {isFailed && hasStoredResult && (
+        <Stack direction={"row"} gap={1} alignItems={"center"} mt={1}>
+          <StatusBadge status="failed" />
+          <Typography
+            typography="s1"
+            fontWeight={"fontWeightRegular"}
+            color={"text.primary"}
+          >
+            {FAILED_WITH_EARLIER_MESSAGE}
+          </Typography>
+        </Stack>
       )}
 
       <Box
@@ -310,6 +347,17 @@ const CriticalIssues = ({ mode = "develop" }) => {
           >
             {`At least ${data?.minRowsRequired || 15} data rows are needed for critical issues analysis. Your dataset currently has ${data?.rowCount ?? 0} rows.`}
           </Typography>
+        ) : isFailed && !hasStoredResult && isCriticalIssueFetchingAllowed ? (
+          <Stack direction={"row"} gap={1} alignItems={"center"}>
+            <StatusBadge status="failed" />
+            <Typography
+              typography={"s1"}
+              color={"text.primary"}
+              fontWeight={"fontWeightRegular"}
+            >
+              {FAILED_MESSAGE}
+            </Typography>
+          </Stack>
         ) : isCriticalIssueNotAnalysed(mode, data?.status, data?.result) &&
           isCriticalIssueFetchingAllowed ? (
           <Typography

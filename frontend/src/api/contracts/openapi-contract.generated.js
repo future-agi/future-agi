@@ -34149,7 +34149,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             404: {
               $ref: "#/definitions/ApiTextErrorResponse",
             },
+            409: {
+              $ref: "#/definitions/ApiTextErrorResponse",
+            },
             500: {
+              $ref: "#/definitions/ApiTextErrorResponse",
+            },
+            503: {
               $ref: "#/definitions/ApiTextErrorResponse",
             },
             default: {
@@ -34223,6 +34229,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
               $ref: "#/definitions/ApiTextErrorResponse",
             },
             404: {
+              $ref: "#/definitions/ApiTextErrorResponse",
+            },
+            409: {
               $ref: "#/definitions/ApiTextErrorResponse",
             },
             500: {

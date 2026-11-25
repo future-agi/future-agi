@@ -1,3 +1,5 @@
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+
 // pending running completed failed
 export const CriticalIssueStatus = {
   PENDING: "pending",
@@ -33,6 +35,25 @@ export const isCriticalIssueNotAnalysed = (mode, status, result) =>
 
 export const OUT_OF_DATE_MESSAGE =
   "Found before the run's latest grading. Press Refresh to update them.";
+
+export const FAILED_MESSAGE =
+  "The last analysis could not be finished. Press Refresh to try again.";
+
+export const FAILED_WITH_EARLIER_MESSAGE =
+  "The last analysis could not be finished; these are the issues found before it. Press Refresh to try again.";
+
+export const REFRESH_NOT_STARTED_MESSAGE =
+  "The analysis could not be started. Please try again.";
+
+// A simulation run's last requested summary failed. Any summary stored
+// before it is kept and shown under the failed note.
+export const isCriticalIssueFailed = (mode, status) =>
+  mode === "simulate" && status === CriticalIssueStatus.FAILED;
+
+// A refused refresh: the server's own reason when it is one a person can act
+// on (the run is still being graded), else that the analysis did not start.
+export const refreshErrorMessage = (error) =>
+  getSafeActionErrorMessage(error, REFRESH_NOT_STARTED_MESSAGE);
 
 // A stored summary with "pending" was made before the run's verdicts last
 // changed (a rerun or a late verdict); nobody has asked for a new one.

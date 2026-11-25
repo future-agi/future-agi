@@ -16,11 +16,22 @@ from typing import Any, Literal
 
 import structlog
 from django.db import transaction
-from django.db.models import Exists, JSONField, OuterRef, Q, QuerySet
+from django.db.models import (
+    Case,
+    CharField,
+    Exists,
+    JSONField,
+    OuterRef,
+    Q,
+    QuerySet,
+    Value,
+    When,
+)
 from django.db.models.expressions import RawSQL
 from django.utils import timezone
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.services.harness_run_evals import (
     EVAL_COMPLETED_KEY,
     EVAL_QUEUE_STAMP_SKEW,
@@ -30,6 +41,20 @@ from simulate.services.harness_run_evals import (
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 
 logger = structlog.get_logger(__name__)
+
+
+def summary_status_once_graded():
+    """The summary status a run gets when its grading ends: pending (nobody
+    has asked since the verdicts last changed), except a summary a person is
+    waiting for, which stays running so the page keeps polling. That job
+    sees for itself whether the grading changed while it ran."""
+    running = EvalExplanationSummaryStatus.RUNNING
+    return Case(
+        When(eval_explanation_summary_status=running, then=Value(running)),
+        default=Value(EvalExplanationSummaryStatus.PENDING),
+        output_field=CharField(),
+    )
+
 
 # A started job that makes no progress for this long is stuck.
 SCORING_JOB_TIMEOUT = timedelta(minutes=10)

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   CriticalIssueStatus,
+  REFRESH_NOT_STARTED_MESSAGE,
+  isCriticalIssueFailed,
   isCriticalIssueInProgress,
   isCriticalIssueNotAnalysed,
   isCriticalIssueOutOfDate,
+  refreshErrorMessage,
 } from "./criticalIssueStatus";
 
 const { PENDING, RUNNING, COMPLETED, FAILED } = CriticalIssueStatus;
@@ -56,6 +59,41 @@ describe("a simulation run's stored critical issues", () => {
   it("are never out of date on a dataset", () => {
     expect(isCriticalIssueOutOfDate("develop", PENDING, { e1: [] })).toBe(
       false,
+    );
+  });
+});
+
+describe("a simulation run whose last analysis failed", () => {
+  it("says so, with or without issues found before it", () => {
+    expect(isCriticalIssueFailed("simulate", FAILED)).toBe(true);
+    for (const status of [PENDING, RUNNING, COMPLETED, undefined]) {
+      expect(isCriticalIssueFailed("simulate", status)).toBe(false);
+    }
+  });
+
+  it("is not a dataset state", () => {
+    expect(isCriticalIssueFailed("develop", FAILED)).toBe(false);
+  });
+});
+
+describe("a refresh the server refused", () => {
+  it("shows the server's reason when the run is still being graded", () => {
+    const reason =
+      "This run is still being graded. Refresh once grading has finished.";
+    expect(refreshErrorMessage({ statusCode: 409, result: reason })).toBe(
+      reason,
+    );
+  });
+
+  it("says the analysis did not start when it could not be queued", () => {
+    expect(
+      refreshErrorMessage({
+        statusCode: 503,
+        result: "The summary could not be started. Please try again.",
+      }),
+    ).toBe(REFRESH_NOT_STARTED_MESSAGE);
+    expect(refreshErrorMessage({ statusCode: 500, result: "boom" })).toBe(
+      REFRESH_NOT_STARTED_MESSAGE,
     );
   });
 });
