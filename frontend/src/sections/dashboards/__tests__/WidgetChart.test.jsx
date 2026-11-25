@@ -1868,3 +1868,67 @@ describe("WidgetChart — line interpolation", () => {
     expect(h.apex.mock.calls.at(-1)[0].options.stroke.curve).toBe("smooth");
   });
 });
+
+describe("WidgetChart — derived-metric interval on a metric card", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.query.isPending = false;
+    h.query.isError = false;
+  });
+
+  const metricWidget = {
+    ...baseWidget,
+    chart_config: { chart_type: "metric" },
+  };
+
+  it("keeps the value heading and adds the persisted 95% interval as text", () => {
+    h.query.data = queryResult([
+      {
+        timestamp: "2026-07-09T00:00:00Z",
+        value: 0.5,
+        ci_low: 0.25,
+        ci_high: 0.75,
+        ci_reason: "",
+      },
+    ]);
+    render(<WidgetChart widget={metricWidget} globalDateRange={null} />);
+
+    expect(
+      screen.getByRole("heading", { name: /^0\.50*$/ }),
+    ).toBeInTheDocument();
+    const interval = screen.getByTestId("metric-card-interval");
+    expect(interval).toHaveTextContent(/^95% interval 0\.250* – 0\.750*$/);
+    expect(screen.getAllByRole("heading")).toHaveLength(1);
+  });
+
+  it("says why no interval exists instead of inventing one", () => {
+    h.query.data = queryResult([
+      {
+        timestamp: "2026-07-09T00:00:00Z",
+        value: 3,
+        ci_low: null,
+        ci_high: null,
+        ci_reason: "single_unit_stratum",
+      },
+    ]);
+    render(<WidgetChart widget={metricWidget} globalDateRange={null} />);
+
+    expect(screen.getByTestId("metric-card-interval")).toHaveTextContent(
+      /^No 95% interval: single unit stratum$/,
+    );
+    // The reason itself contains "95% interval". Only a range label starts
+    // with that phrase; an unanchored match contradicts the assertion above.
+    expect(screen.queryByText(/^95% interval /)).not.toBeInTheDocument();
+  });
+
+  it("shows nothing extra for ordinary metric cards", () => {
+    h.query.data = queryResult([
+      { timestamp: "2026-07-09T00:00:00Z", value: 7 },
+    ]);
+    render(<WidgetChart widget={metricWidget} globalDateRange={null} />);
+
+    expect(
+      screen.queryByTestId("metric-card-interval"),
+    ).not.toBeInTheDocument();
+  });
+});

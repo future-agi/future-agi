@@ -385,7 +385,7 @@ class ComposeContractTests(unittest.TestCase):
             runner.split("SERVICES=(", 1)[1].split(")", 1)[0],
         )
 
-    def test_e2e_manages_exact_aggregation_worker_without_other_worker_profiles(self):
+    def test_e2e_manages_exact_aggregation_and_sql_workers_without_other_worker_profiles(self):
         # Parse only the literal list; never execute the harness or Compose.
         runner = (ROOT / "bin/e2e").read_text()
         services = shlex.split(
@@ -397,7 +397,12 @@ class ComposeContractTests(unittest.TestCase):
                 "frontend",
                 "backend",
                 "worker",
+                "worker-reading",
                 "worker-exact-aggregation",
+                "worker-sql-workbench",
+                "code-executor",
+                "link-canary",
+                "link-worker-canary",
                 "postgres",
                 "clickhouse",
                 "redis",
@@ -408,6 +413,8 @@ class ComposeContractTests(unittest.TestCase):
                 "fi-property-catalog-consumer",
                 "mock-llm",
                 "mock-slack",
+                "mock-daytona",
+                "mock-google",
                 "peerdb-server",
                 "peerdb-flow-worker",
                 "peerdb-flow-snapshot-worker",
@@ -518,7 +525,8 @@ class ProductionCatalogContractTests(unittest.TestCase):
             "worker-simulation-runner": "futureagi/future-agi-simulation-runner:contract-test",
         }
         for name in ("backend", "postgres-schema-bootstrap", "clickhouse-native-bootstrap",
-                     "clickhouse-cdc-bootstrap", "peerdb-init", "peerdb-temporal-init"):
+                     "clickhouse-cdc-bootstrap", "metrics-schema-bootstrap", "peerdb-init",
+                     "peerdb-temporal-init"):
             expected[name] = "futureagi/future-agi:contract-test"
         for name in services:
             if name.startswith("worker") and name != "worker-simulation-runner":
@@ -551,6 +559,7 @@ class ProductionCatalogContractTests(unittest.TestCase):
             "peerdb-temporal-init": [],
             "peerdb-init": ["--wait-for-mirrors", "--timeout", "900"],
             "clickhouse-cdc-bootstrap": ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"],
+            "metrics-schema-bootstrap": ["--check", "--advisory"],
         }
         for name, command in expected.items():
             self.assertEqual(services[name]["command"], command)
@@ -612,7 +621,8 @@ class ProductionCatalogContractTests(unittest.TestCase):
                     for name in services
                     if name == "backend" or name.startswith("worker")
                 }
-                self.assertEqual(len(runtimes), 10)
+                self.assertIn("worker-sql-workbench", runtimes)
+                self.assertEqual(len(runtimes), 11)
                 for name in sorted(runtimes):
                     with self.subTest(runtime=name):
                         runtime = services[name]["environment"]

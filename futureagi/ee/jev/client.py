@@ -186,20 +186,25 @@ class JevSystemOneClient:
         )
         return JevGatewayError(code)
 
+    def _transport(self, payload):
+        # Only an explicit "direct" leaves the gateway.
+        gateway = getattr(settings, "JEV_TRANSPORT", "gateway") != "direct"
+        if gateway:
+            return (
+                self._gateway_url(),
+                {**payload, "model": "typesafe/" + payload["model"]},
+                True,
+            )
+        base_url = getattr(settings, "TYPESAFE_BASE_URL", "") or TYPESAFE_BASE_URL
+        return base_url.rstrip("/") + "/v1/systemone", payload, False
+
     def _request(self, payload, timeout):
         import httpx
 
         self.gateway_request_id = None
         if not self.api_key:
             raise JevGatewayError("JEV_KEY_MISSING")
-        # Only an explicit "direct" leaves the gateway.
-        gateway = getattr(settings, "JEV_TRANSPORT", "gateway") != "direct"
-        if gateway:
-            url = self._gateway_url()
-            body = {**payload, "model": "typesafe/" + payload["model"]}
-        else:
-            base_url = getattr(settings, "TYPESAFE_BASE_URL", "") or TYPESAFE_BASE_URL
-            url, body = base_url.rstrip("/") + "/v1/systemone", payload
+        url, body, gateway = self._transport(payload)
         try:
             # The headers are built in the call and never bound to a name: the
             # errors raised below keep this frame, and Sentry reports a
@@ -244,11 +249,14 @@ class JevSystemOneClient:
         except ValueError:
             raise self.invalid_response("not_json") from None
 
-    def evaluate(self, model, state, questions, *, timeout=35):
+    def _validate_model(self, model):
         if not is_jev_model(model):
             raise JevMappingError(
                 "JEV_MODEL_UNKNOWN", "model", "Unsupported Jev model."
             )
+
+    def evaluate(self, model, state, questions, *, timeout=35):
+        self._validate_model(model)
         payload = {"model": model, "state": state, "questions": questions}
         check_input_size(payload)
         self.attempt, self.attempts = 0, []

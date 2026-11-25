@@ -189,7 +189,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
           <Typography fontWeight={600} fontSize="20px">
             Experiment with Hugging Face 🤗
           </Typography>
-          <Typography fontSize="13px">
+          <Typography fontSize="12px">
             Grab a HuggingFace dataset, and start experimenting in Future AGI
           </Typography>
         </Box>
@@ -246,7 +246,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
               <Typography
                 fontWeight={600}
-                fontSize="13px"
+                fontSize="12px"
                 color="text.secondary"
               >
                 Dataset Details

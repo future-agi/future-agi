@@ -165,33 +165,173 @@ func TestErrorResults(t *testing.T) {
 	}
 }
 
+func startCancellationTestBatch(t *testing.T, handler BatchHandler, n int) (*Processor, *Batch, <-chan struct{}) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	requests := makeRequests(n)
+	p := &Processor{handler: handler}
+	b := &Batch{
+		ID:        "batch-cancel-test",
+		Status:    "processing",
+		Total:     n,
+		Results:   make([]*Result, n),
+		MaxConc:   1,
+		CreatedAt: time.Now(),
+		cancel:    cancel,
+	}
+	for i := range b.Results {
+		b.Results[i] = &Result{Index: i, Status: "pending"}
+	}
+	p.batches.Store(b.ID, b)
+	done := make(chan struct{})
+	go func() {
+		p.processBatch(ctx, b, requests)
+		close(done)
+	}()
+	return p, b, done
+}
+
+func waitForBatchSignal(t *testing.T, signal <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for batch signal")
+	}
+}
+
 func TestCancel(t *testing.T) {
-	p := NewProcessor(slowHandler)
-	b := p.Submit(makeRequests(5), 1) // concurrency 1, slow handler
+	entered := make(chan struct{})
+	p, b, done := startCancellationTestBatch(t, func(ctx context.Context, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, map[string]string, error) {
+		close(entered)
+		<-ctx.Done()
+		return nil, nil, ctx.Err()
+	}, 5)
+	waitForBatchSignal(t, entered)
 
-	// Cancel after short delay.
-	time.Sleep(50 * time.Millisecond)
-	b, ok := p.Cancel(b.ID)
-	if !ok {
-		t.Fatal("cancel failed")
+	cancel := b.cancel
+	b.cancel = func() {
+		cancel()
+		// Force finalization before Cancel proceeds past its cancellation signal.
+		waitForBatchSignal(t, done)
 	}
-	if b.GetStatus() != "cancelled" {
-		t.Fatalf("Status = %q, want cancelled", b.Status)
+	got, ok := p.Cancel(b.ID)
+	if !ok || got != b {
+		t.Fatal("Cancel did not return the batch")
+	}
+	if status := b.GetStatus(); status != "cancelled" {
+		t.Fatalf("Status = %q, want cancelled", status)
+	}
+	if b.GetCompletedAt() == nil {
+		t.Fatal("CompletedAt should be set after processing drains")
 	}
 
-	// Wait for goroutines to finish.
-	time.Sleep(600 * time.Millisecond)
-
-	b, _ = p.Get(b.ID)
-	cancelled := 0
-	for _, r := range b.GetResults() {
-		if r.Status == "cancelled" {
+	failed, cancelled := 0, 0
+	for i, r := range b.GetResults() {
+		if r == nil || r.Index != i {
+			t.Fatalf("result[%d] missing or has incorrect index", i)
+		}
+		switch r.Status {
+		case "error":
+			failed++
+			if r.Error != context.Canceled.Error() {
+				t.Fatalf("result[%d].Error = %q, want context canceled", i, r.Error)
+			}
+		case "cancelled":
 			cancelled++
+		default:
+			t.Fatalf("result[%d].Status = %q, want error or cancelled", i, r.Status)
 		}
 	}
-	// At least some should be cancelled.
-	if cancelled == 0 {
-		t.Fatal("expected at least 1 cancelled result")
+	if failed != 1 || cancelled != 4 {
+		t.Fatalf("result counts: errors = %d, cancelled = %d, want 1 and 4", failed, cancelled)
+	}
+	if s := b.Summary(); s.Completed != 1 || s.Failed != 1 || s.Cancelled != 4 {
+		t.Fatalf("unexpected summary after cancellation: %+v", s)
+	}
+}
+
+func TestCancelCompletedRepeated(t *testing.T) {
+	p, b, done := startCancellationTestBatch(t, successHandler, 1)
+	waitForBatchSignal(t, done)
+	if status := b.GetStatus(); status != "completed" {
+		t.Fatalf("Status = %q, want completed", status)
+	}
+	completedAt := b.GetCompletedAt()
+	if completedAt == nil {
+		t.Fatal("CompletedAt should be set")
+	}
+	result := *b.GetResults()[0]
+	if result.Status != "success" || result.Response == nil {
+		t.Fatalf("unexpected completed result: %+v", result)
+	}
+	summary := b.Summary()
+	for i := 0; i < 2; i++ {
+		got, ok := p.Cancel(b.ID)
+		if !ok || got != b {
+			t.Fatal("Cancel did not return the batch")
+		}
+		if status := b.GetStatus(); status != "completed" {
+			t.Fatalf("Status = %q, want completed", status)
+		}
+		if b.GetCompletedAt() != completedAt {
+			t.Fatal("Cancel changed CompletedAt")
+		}
+		if *b.GetResults()[0] != result || b.Summary() != summary {
+			t.Fatal("Cancel changed completed results or summary")
+		}
+	}
+}
+
+func TestCancelActiveRepeated(t *testing.T) {
+	entered := make(chan struct{})
+	drainCtx, release := context.WithCancel(context.Background())
+	defer release()
+	p, b, done := startCancellationTestBatch(t, func(ctx context.Context, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, map[string]string, error) {
+		close(entered)
+		<-ctx.Done()
+		<-drainCtx.Done()
+		return nil, nil, ctx.Err()
+	}, 1)
+	waitForBatchSignal(t, entered)
+
+	for i := 0; i < 2; i++ {
+		cancelDone := make(chan struct{})
+		var got *Batch
+		var ok bool
+		go func() {
+			got, ok = p.Cancel(b.ID)
+			close(cancelDone)
+		}()
+		waitForBatchSignal(t, cancelDone)
+		if !ok || got != b {
+			t.Fatal("Cancel did not return the batch")
+		}
+		if status := b.GetStatus(); status != "cancelled" {
+			t.Fatalf("Status = %q, want cancelled", status)
+		}
+		if b.GetCompletedAt() != nil {
+			t.Fatal("CompletedAt set before processing drains")
+		}
+		if b.GetResults()[0].Status != "pending" || b.Summary() != (Summary{}) {
+			t.Fatal("Cancel changed results or summary before processing drains")
+		}
+	}
+
+	release()
+	waitForBatchSignal(t, done)
+	if status := b.GetStatus(); status != "cancelled" {
+		t.Fatalf("Status = %q after drainage, want cancelled", status)
+	}
+	if b.GetCompletedAt() == nil {
+		t.Fatal("CompletedAt should be set after processing drains")
+	}
+	if result := b.GetResults()[0]; result.Status != "error" || result.Error != context.Canceled.Error() {
+		t.Fatalf("unexpected cancelled handler result: %+v", result)
+	}
+	if s := b.Summary(); s.Completed != 1 || s.Failed != 1 || s.Cancelled != 0 {
+		t.Fatalf("unexpected summary after drainage: %+v", s)
 	}
 }
 

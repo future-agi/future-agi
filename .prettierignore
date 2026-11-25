@@ -8,3 +8,5 @@ deploy/helm/futureagi/README.md
 # Written by scripts/generate-mcp-tools.py; its `--check` (backend-contracts CI)
 # fails on any other formatting.
 futureagi/mcp_server/catalog/tools.generated.json
+# Hand-curated with one-line flow mappings; the fi CLI vendors it byte for byte.
+futureagi/mcp_server/catalog/tools.yaml

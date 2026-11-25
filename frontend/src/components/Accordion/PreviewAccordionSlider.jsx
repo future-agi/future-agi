@@ -127,7 +127,7 @@ export default function PreviewAccordionSlider({
           >
             <Typography
               sx={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 600,
                 color: theme.palette.text.secondary,
               }}

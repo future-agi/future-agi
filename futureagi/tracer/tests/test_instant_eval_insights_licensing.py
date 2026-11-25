@@ -660,9 +660,13 @@ def test_an_insights_stage_without_ee_fails_for_good_not_on_import(monkeypatch):
 
     def no_ee(name, *args, **kwargs):
         if name.startswith("ee.agenthub.insights"):
-            raise ImportError(name)
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
         return real_import(name, *args, **kwargs)
 
+    oss()
+    monkeypatch.delenv("EE_LICENSE_KEY", raising=False)
+    monkeypatch.delenv("CLOUD_DEPLOYMENT", raising=False)
+    monkeypatch.setattr("tfc.ee_loader.has_ee", lambda module: False)
     monkeypatch.setattr(builtins, "__import__", no_ee)
     with pytest.raises(ApplicationError) as refused:
         activities._pipeline("prepare")

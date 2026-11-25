@@ -355,6 +355,24 @@ class BudgetFileTests(unittest.TestCase):
                     if projected is not None:
                         self.assertGreater(budget.budget_for(entry, arch), projected)
 
+    def test_the_slim_layer_entries_state_their_measured_size(self):
+        # The docs render measured_mb, and the notes of -slim and of the
+        # standalone image and install that inherit its layer explain each
+        # budget with measurements: they must carry the same figure.
+        by_key = {
+            (e["image"], e.get("tag_suffix", "")): e for e in self.config["images"]
+        }
+        entries = {
+            "-slim": by_key[("futureagi/future-agi", "-slim")],
+            "standalone": by_key[("futureagi/standalone", "")],
+            "standalone_install": self.config["standalone_install"],
+        }
+        for name, entry in entries.items():
+            measured = entry["measured_mb"]
+            with self.subTest(entry=name):
+                self.assertIn(f"{measured:g} MB", entry["note"])
+                self.assertLessEqual(measured, entry["budget_mb"])
+
     def test_every_released_image_has_a_budget(self):
         workflow = (ROOT / ".github/workflows/release-images.yml").read_text()
         released = set(re.findall(r"\bimage:\s*(futureagi/[a-z0-9-]+)", workflow))

@@ -182,6 +182,14 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
   page.setDefaultTimeout(UI_READY);
   // PrimaryGraph's session transport can disable the shared Reload control.
   // Keep its actual request/response alongside list evidence if that gate fails.
+  // Synchronous metadata only: initial catalog failures survive navigation,
+  // without response-body callbacks outliving the browser context.
+  const catalogResponses: unknown[] = [];
+  page.on('response', response => {
+    if (new URL(response.url()).pathname !== METRICS || response.request().method() !== 'POST') return;
+    if (catalogResponses.length < 100) catalogResponses.push({ endpoint: METRICS,
+      method: 'POST', status: response.status() });
+  });
   const graphResponses: unknown[] = [];
   const graphReads = new Set<Promise<void>>();
   page.on('response', response => {
@@ -391,9 +399,43 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
           for (const wanted of phase ? [0, 1] as const : [0] as const) {
             await page.goto(url, { waitUntil: 'domcontentloaded' });
             await page.getByRole('button', { name: 'Filter', exact: true }).click();
-            await page.getByRole('button', { name: 'Property', exact: true }).first().click();
-            await page.getByPlaceholder('Search properties...').fill(label.name);
-            await page.locator(`[data-filter-property-option="${label.id}"][data-filter-property-category="annotation"]`).click();
+            const pickerDeadline = Date.now() + UI_READY;
+            const pickerRemaining = () => {
+              const remaining = pickerDeadline - Date.now();
+              expect(remaining, 'catalog response/body/option share one UI_READY budget').toBeGreaterThan(0);
+              return remaining;
+            };
+            const property = page.getByRole('button', { name: 'Property', exact: true }).filter({ visible: true });
+            await expect(property).toHaveCount(1, { timeout: pickerRemaining() });
+            await property.click({ timeout: pickerRemaining() });
+            // TraceFilterPanel/useMetricsCatalog sends source/project_ids/search.
+            // Do NOT match on status: a cache 503 must fail here, not as a missing option.
+            const metricsReady = page.waitForResponse(response => {
+              if (new URL(response.url()).pathname !== METRICS || response.request().method() !== 'POST') return false;
+              const params = response.request().postDataJSON();
+              return params.source === 'traces' && params.project_ids === projectId && params.search === label.name;
+            }, { timeout: pickerRemaining() });
+            const [catalogResponse] = await Promise.all([metricsReady,
+              page.getByPlaceholder('Search properties...').fill(label.name, { timeout: pickerRemaining() })]);
+            const receipt = { endpoint: METRICS, method: 'POST', status: catalogResponse.status(),
+              request: { source: 'traces', project_ids: projectId, search: label.name },
+              code: null as string | null, bodyRead: 'pending' };
+            try {
+              const body = await readJsonWithin<{ code?: unknown }>(catalogResponse, Math.min(10_000, pickerRemaining()));
+              // Never attach arbitrary response text, headers or bearer credentials.
+              receipt.code = body.code === 'service_unavailable' ? body.code : null;
+              receipt.bodyRead = 'complete';
+            } catch (error) {
+              receipt.bodyRead = 'failed';
+              throw error;
+            } finally {
+              await testInfo.attach(`browser-catalog-${label.id}-${phase}-${wanted}`,
+                { body: JSON.stringify(receipt), contentType: 'application/json' });
+            }
+            expect(catalogResponse.status(), `${METRICS} ${receipt.code ?? ''}`).toBe(200);
+            const option = page.locator(`[data-filter-property-option="${label.id}"][data-filter-property-category="annotation"]`);
+            await expect(option).toHaveCount(1, { timeout: pickerRemaining() });
+            await option.click({ timeout: pickerRemaining() });
             // buildApiFilterFromPanelRow + metricToTraceFilterProperty: exact native wire.
             const filterType = ['numeric', 'star'].includes(label.type) ? 'number'
               : label.type === 'thumbs_up_down' ? 'thumbs' : label.type;
@@ -496,6 +538,7 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
       await testInfo.attach('deleted-score-state', { body: JSON.stringify({ postgres: deleted, clickhouse: await readCH(), refreshed: body }), contentType: 'application/json' });
     });
   } finally {
+    await testInfo.attach('browser-catalog-statuses', { body: JSON.stringify(catalogResponses), contentType: 'application/json' });
     await testInfo.attach('catalog-and-scope-receipts', { body: JSON.stringify(receipts), contentType: 'application/json' });
     await context.close(); // scopeActors/scopeProbe fixtures dispose their own clients/probe.
     await Promise.all(graphReads);
