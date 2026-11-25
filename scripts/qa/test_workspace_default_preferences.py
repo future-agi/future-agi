@@ -8,9 +8,10 @@ Run directly with Python/unittest, not the backend pytest bootstrap.
 
 import ast
 import re
+import time
 import unittest
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,10 @@ SOURCE = Path(__file__).resolve().parents[2] / "futureagi/accounts/authenticatio
 
 class PermissionDenied(Exception):
     status_code = 403
+
+    def __init__(self, detail=None, code=None):
+        super().__init__(detail)
+        self.code = code
 
 
 class AuthenticationFailed(Exception):
@@ -38,6 +43,14 @@ class InterfaceError(Exception):
     pass
 
 
+class SamlCredentialInvalid(Exception):
+    pass
+
+
+class CacheUnavailable(Exception):
+    pass
+
+
 def load_auth_definitions():
     """Compile real source bodies without importing application startup code."""
     names = {
@@ -46,19 +59,33 @@ def load_auth_definitions():
         "_resolve_view_class",
         "_is_workspace_write_exempt_view",
         "_is_annotation_queue_role_scoped_write_path",
+        "_is_workspace_write",
+        "workspace_write_denied",
+        "_viewer_denied_action",
+        "ViewerReadOnly",
+        "_AccessTokenCache",
+        "_cache_transport_category",
+        "_cache_unavailable_metadata",
+        "_touch_non_saml_access_token",
+    }
+    constants = {
+        "ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS",
+        "WORKSPACE_WRITE_DENIED",
+        "_VIEWER_REASON_PREFIX",
+        "WORKSPACE_WRITE_EXEMPT_PATHS",
+        "_WRITE_METHODS",
+        "NO_ORGANIZATION_WRITE_DENIED",
     }
     tree = ast.parse(SOURCE.read_text(), filename=str(SOURCE))
     definitions = [node for node in tree.body if getattr(node, "name", None) in names]
     assert {node.name for node in definitions} == names
-    patterns = next(
+    assignments = [
         node
         for node in tree.body
         if isinstance(node, ast.Assign)
-        and any(
-            getattr(target, "id", None) == "ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS"
-            for target in node.targets
-        )
-    )
+        and any(getattr(target, "id", None) in constants for target in node.targets)
+    ]
+    assert {node.targets[0].id for node in assignments} == constants
     namespace = {
         "BaseAuthentication": object,
         "PermissionDenied": PermissionDenied,
@@ -70,11 +97,24 @@ def load_auth_definitions():
         "re": re,
         "traceback": MagicMock(),
         "AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES": 60,
+        "VIEWER_READ_ONLY_CODE": "viewer_read_only",
+        "viewer_denied_message": MagicMock(return_value="synthetic viewer refusal"),
+        "SamlCredentialInvalid": SamlCredentialInvalid,
+        "_CACHE_UNAVAILABLE_ERRORS": (CacheUnavailable,),
+        "INFRASTRUCTURE_ERRORS": (DatabaseError, InterfaceError, CacheUnavailable),
+        "time": time,
+        "Level": SimpleNamespace(VIEWER=1, MEMBER=3, ADMIN=8, OWNER=15),
+        "timedelta": timedelta,
+        "AuthTokenType": SimpleNamespace(ACCESS=SimpleNamespace(value="access")),
+        "AuthTokenOrigin": SimpleNamespace(SAML="saml"),
+        "validate_saml_credential": MagicMock(
+            side_effect=AssertionError("unexpected SAML validation")
+        ),
         "timezone": SimpleNamespace(now=lambda: datetime(2026, 9, 9, tzinfo=UTC)),
     }
-    exec(
+    exec(  # noqa: S102
         compile(
-            ast.Module(body=[patterns, *definitions], type_ignores=[]),
+            ast.Module(body=[*assignments, *definitions], type_ignores=[]),
             str(SOURCE),
             "exec",
         ),
@@ -109,6 +149,7 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
             organization_id=self.org.id,
             config={},
             _state=SimpleNamespace(fields_cache={"organization": self.org}),
+            get_membership_level=MagicMock(return_value=15),
             can_access_organization=MagicMock(
                 side_effect=lambda org: org.id == self.org.id
             ),
@@ -157,8 +198,13 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
         self.org_memberships.filter.return_value.exists.return_value = True
         self.keys = MagicMock()
         self.tokens = MagicMock()
+        self.tokens.filter.return_value.exclude.return_value.update.return_value = 1
         self.cache = MagicMock()
-        self.cache_entry = {"user": self.user, "token": "existing-token"}
+        self.cache_entry = {
+            "user": self.user,
+            "token": "existing-token",
+            "non_saml_v1": True,
+        }
         self.cache.get.side_effect = lambda _key: self.cache_entry
         self.ns.update(
             User=SimpleNamespace(objects=self.users),
@@ -251,7 +297,9 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
         self.assertEqual(self.cache.get.call_count, 2)
         self.cache.get.assert_called_with("access_token_old-token-id")
         self.assertEqual(self.cache.set.call_count, 2)
-        self.assertEqual(self.tokens.filter.return_value.update.call_count, 2)
+        self.assertEqual(
+            self.tokens.filter.return_value.exclude.return_value.update.call_count, 2
+        )
         self.users.select_related.assert_not_called()
 
     def test_fresh_org_map_precedes_both_legacy_preferences(self):
@@ -317,6 +365,7 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
             organization_id=self.org.id,
             workspace=self.a2,
             enabled=True,
+            is_expired=False,
             type="user",
             user=self.user,
         )
@@ -339,7 +388,6 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
         self.keys.select_related.return_value.get.assert_called_once_with(
             api_key="synthetic-key",
             secret_key="synthetic-secret",
-            enabled=True,
             deleted=False,
         )
 
@@ -386,6 +434,18 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
             self.auth.authenticate(self.request(method="POST"))
         self.assertEqual(str(raised.exception), "Write access denied to this workspace")
         self.user.can_write_to_workspace.assert_called_once_with(self.a1)
+        self.context.assert_not_called()
+
+    def test_simulation_write_denial_names_the_viewer_refusal(self):
+        self.persisted_config = {"currentWorkspaceId": "a1"}
+        self.user.can_write_to_workspace.return_value = False
+        request = self.request(method="POST")
+        request.path = "/simulate/api/harness-environments/"
+        with self.assertRaises(self.ns["ViewerReadOnly"]) as raised:
+            self.auth.authenticate(request)
+        self.assertEqual(str(raised.exception), "synthetic viewer refusal")
+        self.assertEqual(raised.exception.code, "viewer_read_only")
+        self.ns["viewer_denied_message"].assert_called_once_with(None)
         self.context.assert_not_called()
 
     def test_viewer_read_allowed_without_write_access(self):

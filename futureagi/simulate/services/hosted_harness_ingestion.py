@@ -14,6 +14,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES, TRIAL_STATE_KEY
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -40,7 +41,8 @@ from simulate.services.hosted_harness_validation import (
     receipt_call_times,
     validate_jsonb_strings,
 )
-from simulate.types import CallCallActors
+from simulate.tasks.alk_sim import dispatch_worker_read
+from simulate.types import CallCallActors, is_worker_subject
 from simulate.utils.test_execution_utils import is_fix_check_run
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
@@ -95,6 +97,10 @@ _DEGRADE_REASONS = {
     "conformance_gate_failed",
 }
 _TERMINAL_STAGES = {"completed", "failed", "canceled"}
+_TRIAL_FAILURE_COPY = {
+    "agent_exited_before_ready": "The agent stopped before it was ready.",
+    "target_agent_stalled": "The agent stopped responding during the trial.",
+}
 _ARTIFACT_KINDS = {
     "recording_combined",
     "recording_stereo",
@@ -763,9 +769,12 @@ def _store_event(
         )
     if rejection is None and event["type"] == "terminal":
         payload = event["payload"]
-        attempt.terminal_stage = payload["stage"]
+        from simulate.services.hosted_harness import platform_set_failure
+
+        kept = platform_set_failure(attempt)
+        attempt.terminal_stage = "failed" if kept else payload["stage"]
         attempt.terminal_reason = payload.get("reason")
-        attempt.terminal_failure = payload.get("failure")
+        attempt.terminal_failure = kept or payload.get("failure")
         attempt.terminal_event_received = True
         attempt.state = HostedHarnessAttempt.State.FINALIZING
 
@@ -943,7 +952,8 @@ def _apply_receipt_to_call(
         call.started_at, call.ended_at = receipt_call_times(call_data)
         call.completed_at = call.ended_at
         call.duration_seconds = round(call_data["duration_ms"] / 1000)
-    elif body["status"] == "skipped":
+    elif body["status"] == "skipped" or call.completed_at is None:
+        # Every receipt ends its trial: one with no call data still gets its end, so its worker read is due.
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
     previous_receipt = metadata.get("hosted_harness_receipt") or {}
@@ -964,6 +974,12 @@ def _apply_receipt_to_call(
     else:
         metadata["harness_grading_status"] = "failed"
         failure = body.get("failure") or {}
+        ending = "This is a grading failure, not an agent failure."
+        if failure:
+            ending = "The trial ended before grading could finish."
+            code = failure.get("code")
+            if isinstance(code, str):
+                ending = _TRIAL_FAILURE_COPY.get(code, ending)
         metadata["harness_grading_error"] = (
             "Required evaluation coverage was incomplete "
             f"({coverage['executed']}/{coverage['expected']} executed"
@@ -972,12 +988,7 @@ def _apply_receipt_to_call(
                 if coverage.get("unmeasured")
                 else ""
             )
-            + "). "
-            + (
-                f"The trial ended with {failure.get('code') or failure.get('message')}."
-                if failure
-                else "This is a grading failure, not an agent failure."
-            )
+            + f"). {ending}"
         )
     update_fields = [
         "status",
@@ -1126,6 +1137,8 @@ def _apply_receipt_to_call(
                 ]
             )
     _apply_target_metrics(call, (call_data or {}).get("target_metrics"))
+    if call.simulation_call_type == CallExecution.SimulationCallType.TEXT:
+        _apply_receipt_turn_count(call, call_data)
     update_fields.extend(
         [
             "customer_call_id",
@@ -1138,6 +1151,9 @@ def _apply_receipt_to_call(
     call.save(update_fields=list(dict.fromkeys(update_fields)))
     if resolved_modality == CallExecution.SimulationCallType.VOICE:
         _ensure_run_agent_is_voice(job)
+    # Every trial that ended, however it ended: a worker's end state is what the trial's ending made it.
+    finished_id = call.id
+    transaction.on_commit(lambda: dispatch_worker_read(finished_id), robust=True)
     if call.status == CallExecution.CallStatus.COMPLETED:
         call_id = call.id
         run_test_id = getattr(call.test_execution, "run_test_id", None)
@@ -1157,6 +1173,8 @@ def _apply_receipt_to_call(
                 # version's and the winner's runs once it has a winner.
                 if is_fix_check_run(call.test_execution_id):
                     selected, tool_on = [], False
+            if (body.get("failure") or {}).get("code") in SCENARIO_FAILURE_CODES:
+                selected, tool_on = [], False
         except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
                 "harness_eval_selection_lookup_failed for call %s", call_id
@@ -1241,6 +1259,10 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     outcome = body["status"]
     if outcome == "skipped":
         return CallExecution.CallStatus.CANCELLED
+    failure = body.get("failure")
+    if isinstance(failure, dict) and failure.get("code") == "user_canceled":
+        # Stopped by the user during the call: cancelled, whatever part of the call ran.
+        return CallExecution.CallStatus.CANCELLED
     call = body.get("call")
     if isinstance(call, dict) and call.get("started_at") and call.get("ended_at"):
         return CallExecution.CallStatus.COMPLETED
@@ -1251,10 +1273,11 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:
     """The receipt's status, or no_score when no sub-goal or evaluation passed or failed; an error stays an error."""
+    # A worker's own check is reported beside the task's, never in the call's outcome.
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []
-        if isinstance(one, dict)
+        if isinstance(one, dict) and not is_worker_subject(one.get("subject"))
     }
     decided = any(
         isinstance(one, dict)
@@ -1303,6 +1326,12 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
                 "passed": SUB_GOAL_PASSED.get(result),
                 "reason": str(goal.get("reason") or ""),
                 **({"result": result} if result not in ("pass", "fail") else {}),
+                # A worker's own check, reported beside the task's: kept apart wherever results are listed.
+                **(
+                    {"subject": str(goal["subject"])}
+                    if is_worker_subject(goal.get("subject"))
+                    else {}
+                ),
             }
         )
     for evaluation in body.get("evaluations") or []:
@@ -1488,6 +1517,26 @@ def _apply_target_metrics(call: CallExecution, target: dict[str, Any] | None) ->
     call.conversation_metrics_data = metrics
 
 
+def _apply_receipt_turn_count(
+    call: CallExecution, call_data: dict[str, Any] | None
+) -> None:
+    """Store a text call's turn count from its receipt.
+
+    Voice calls derive their counts from the stored transcript; a text call
+    never does, so without this its ``turn_count`` reads as missing and the
+    run's average turn count as 0. The receipt's ``turns`` counts exchanges,
+    the same meaning as a native chat call's ``turn_count``. A rerun reuses
+    the row, so a receipt without a call clears the last attempt's count.
+    """
+    metrics = dict(call.conversation_metrics_data or {})
+    turns = (call_data or {}).get("turns")
+    if isinstance(turns, int) and not isinstance(turns, bool) and turns >= 0:
+        metrics["turn_count"] = turns
+    else:
+        metrics.pop("turn_count", None)
+    call.conversation_metrics_data = metrics
+
+
 def _epoch_seconds(value: Any) -> float | None:
     """Epoch seconds for a datetime or ISO string; None when it can't be read."""
     if isinstance(value, str):
@@ -1497,8 +1546,6 @@ def _epoch_seconds(value: Any) -> float | None:
 
 # Where a call keeps its world actors' actions, sealed in the transcript beside the actors.
 WORLD_ACTIONS_KEY = "harness_world_actions"
-# Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
-TRIAL_STATE_KEY = "harness_trial_state"
 # What started a call that no person began: the scenario's own task.
 STARTED_BY_KEY = "harness_started_by"
 STARTED_BY_TASK = "task"
@@ -1576,6 +1623,12 @@ def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
     elif world.get("door") is True:
         # A door stood for these counts; a record without this is from before the harness said so.
         kept["door"] = True
+        if world.get("worker_channels") is True:
+            # And it held each separate worker on its own channel: the only evidence a worker was held.
+            kept["worker_channels"] = True
+    if world.get("stopped_workers_unreadable") is True:
+        # Which workers the harness stopped could not be read: never read as "none was".
+        kept["stopped_workers_unreadable"] = True
     records = world.get("records")
     if world.get("unreadable") or (
         isinstance(records, dict) and records.get("unreadable")
@@ -1668,9 +1721,17 @@ def _ingest_hosted_transcript(
                     "approvals",
                     "usage",
                     "duplicates",
+                    "shared_records",
+                    "stopped_workers",
+                    "unenforced_deadlines",
                 )
                 if isinstance(world, dict) and isinstance(world.get(key), list)
             }
+            # Whether the harness cut the list of shared records, as it sealed it beside the list.
+            if isinstance(world, dict) and isinstance(
+                world.get("shared_records_truncated"), bool
+            ):
+                trial["shared_records_truncated"] = world["shared_records_truncated"]
             # The limits the trial ran with, so the record says which applied.
             if isinstance(world, dict) and isinstance(world.get("limits"), dict):
                 trial["limits"] = _actor_limits(world["limits"])
@@ -1681,9 +1742,25 @@ def _ingest_hosted_transcript(
             notices = [
                 # A fault's notice names its action, call and mode; evidence_incomplete counts the pieces instead.
                 {
-                    key: one.get(key)
-                    for key in ("code", "message", "action", "on_call", "mode", "count")
-                    if key in one
+                    **{
+                        key: one.get(key)
+                        for key in (
+                            "code",
+                            "message",
+                            "action",
+                            "on_call",
+                            "mode",
+                            "count",
+                        )
+                        if key in one
+                    },
+                    # The workers a notice names, e.g. a separate worker that bypassed its channel.
+                    **(
+                        {"workers": one["workers"]}
+                        if isinstance(one.get("workers"), list)
+                        and all(isinstance(worker, str) for worker in one["workers"])
+                        else {}
+                    ),
                 }
                 for one in _entries(notices)
                 if isinstance(one.get("message"), str)

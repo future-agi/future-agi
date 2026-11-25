@@ -25,18 +25,18 @@ class RemoveUserTool(BaseTool):
     input_model = RemoveUserInput
 
     def execute(self, params: RemoveUserInput, context: ToolContext) -> ToolResult:
-
         from accounts.models.user import User
-        from accounts.models.workspace import OrganizationRoles, WorkspaceMembership
+        from accounts.models.workspace import WorkspaceMembership
+        from accounts.services.organization_access import (
+            is_organization_admin,
+            membership_level,
+        )
+        from tfc.constants.levels import Level
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
+        if not is_organization_admin(actor, org):
             return ToolResult.error(
                 "You do not have permission to remove users. "
                 "Only Owner or Admin roles can remove users.",
@@ -55,10 +55,9 @@ class RemoveUserTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        # Prevent removing owners unless you're an owner
         if (
-            target_user.organization_role == OrganizationRoles.OWNER
-            and actor.organization_role != OrganizationRoles.OWNER
+            membership_level(target_user, org) >= Level.OWNER
+            and membership_level(actor, org) < Level.OWNER
         ):
             return ToolResult.error(
                 "Only Owners can remove another Owner.",

@@ -136,6 +136,14 @@ $COMPOSE run --rm \
   -e CLICKHOUSE_PASSWORD=<clickhouse admin password> \
   --entrypoint /bin/sh property-catalog-clickhouse-bootstrap \
   /bootstrap/bootstrap_clickhouse.sh
+
+# 6. The Metrics ClickHouse schema (packaged files 009, 011 and 028-038).
+#    Only while METRICS_ENABLED=1; with it off this exits without a change.
+#    Run it again whenever you turn Metrics on. The overlay's advisory --check
+#    only logs a missing schema: the product starts, and Metrics answers
+#    metric_schema_not_installed until this ran. Each file has a receipt, so a
+#    rerun applies only what is missing.
+$COMPOSE run --rm metrics-schema-bootstrap --apply
 ```
 
 The writer and reader passwords this step installs come from
@@ -442,7 +450,20 @@ matching key in `tls.key`; protect the private key, but keep it readable by
 the user each image reads it as: the gateway runs as uid and gid 65532
 (`chown 65532:65532 certs/gateway/tls.key; chmod 0400 certs/gateway/tls.key`),
 and the frontend's nginx master reads its key as root before it starts the
-workers. For example:
+workers. Both images expect a key readable by its owner and at most also by
+its group (`0400` or `0600`, or `0440` from a Kubernetes Secret mounted with
+an `fsGroup`); a key that its group can write or anyone else can read or write
+still loads, but the image logs a warning naming the file and its mode (never
+the key) at startup and on each certificate rotation (a mode change alone is
+checked at the next rotation). Neither image refuses a key for its mode.
+Kubernetes mounts Secret files `0644` unless the volume sets `defaultMode` (or
+the item a `mode`), so in your own manifests set `0440` there together with
+an `fsGroup` the container runs in. The Helm chart does this for both images
+whenever the pod has an `fsGroup`, as it does by default, so a default Helm
+install logs no warning; without one (OpenShift security-context adaptation,
+or the `fsGroup` removed) the chart keeps the Secret default `0644` so the key
+stays readable, and the warning is expected. A missing, empty or unreadable
+key still fails startup. For example:
 
 ```yaml
 # docker-compose.native-tls.yml, next to docker-compose.distributed.yml
@@ -510,6 +531,45 @@ the frontend image healthcheck selects HTTPS automatically. Both services
 refuse an expired certificate at startup, retain their last good certificate
 on a bad or expired renewal and poll for replacements (every 30s by default);
 confirm rotation with no container restart.
+
+### Read-only root filesystem (frontend image outside Helm)
+
+The Helm chart already runs the frontend on a read-only root with its own
+nginx configuration. To run the `frontend` image with its built-in
+configuration on a read-only root (Compose, `docker run` or another
+orchestrator), keep these paths writable; the same mounts serve plain HTTP and
+native HTTPS:
+
+| Path | Written by | Mount |
+|---|---|---|
+| `/tmp` | the entrypoint, on every start: `/tmp/futureagi-nginx/listen.conf` holds the HTTP and HTTPS `listen` directives | tmpfs |
+| `/var/cache/nginx` | nginx temporary files | tmpfs |
+| `/run` | `nginx.pid` | tmpfs |
+| `/usr/share/nginx/html/config.js` | the entrypoint, on every start: the browser settings (`VITE_*`) | a writable bind mount of that one file; a mount over `/usr/share/nginx/html` would hide the app |
+
+```yaml
+# docker-compose.read-only.yml, next to docker-compose.distributed.yml
+services:
+  frontend:
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /run
+    volumes:
+      - ./frontend-runtime/config.js:/usr/share/nginx/html/config.js
+```
+
+Create the file before the first start (`mkdir -p frontend-runtime && touch
+frontend-runtime/config.js`): for a missing source Docker creates a directory
+instead. For HTTPS, add the certificate directory mount and `FRONTEND_TLS_*`
+settings above. Without a writable `/tmp` the container exits with
+`[entrypoint] cannot write /tmp/futureagi-nginx/listen.conf`. Without a
+writable `config.js` it still starts, but logs `[entrypoint] warning: cannot
+write /usr/share/nginx/html/config.js` and serves the image's empty placeholder,
+so the browser gets none of the `VITE_*` settings. Moving `config.js` elsewhere with
+`CONFIG_PATH` needs your own nginx configuration that serves `/config.js` from
+that path, as the Helm chart does.
 
 ## Reverse proxy + TLS
 
@@ -596,7 +656,8 @@ git fetch --tags && git checkout vX.Y.Z
 $COMPOSE pull
 # run the release's initialization jobs: the commands of "Performing that
 # initialization" above that its release notes call for (every release with
-# database migrations needs step 1); `run --rm` starts nothing else
+# database migrations needs step 1, and step 6 is a no-op unless
+# METRICS_ENABLED=1); `run --rm` starts nothing else
 $COMPOSE up -d --no-build --wait --wait-timeout 1200
 ```
 

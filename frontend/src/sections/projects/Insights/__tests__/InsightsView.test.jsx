@@ -492,12 +492,17 @@ describe("InsightsView", () => {
         await screen.findByText("Summarising each item: 16 of 18 sessions"),
       ).toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-      fireEvent.click(
-        within(await screen.findByRole("dialog")).getByRole("button", {
-          name: "Stop run",
-        }),
+      // Red is kept for the confirmation, not the button that asks for it.
+      expect(screen.getByRole("button", { name: "Stop" })).not.toHaveClass(
+        "MuiButton-outlinedError",
       );
+      fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+      const confirm = within(await screen.findByRole("dialog")).getByRole(
+        "button",
+        { name: "Stop run" },
+      );
+      expect(confirm).toHaveClass("MuiButton-containedError");
+      fireEvent.click(confirm);
       await waitFor(
         () =>
           expect(
@@ -878,16 +883,56 @@ describe("InsightsView", () => {
           listed[1].id,
         ),
       );
-    else
-      expect(
-        await screen.findByText(
-          "What do you want to learn about your traffic?",
-        ),
-      ).toBeInTheDocument();
+    else expect(await screen.findByText("No reports yet")).toBeInTheDocument();
     expect(screen.getByTestId("location").textContent).not.toContain(CONFIG_ID);
     expect(
       screen.queryByText(/This report could not be loaded/),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows the shared first-run state with one New report action", async () => {
+    const base = mocks.readQuery.getMockImplementation();
+    mocks.readQuery.mockImplementation((url, options) =>
+      url === "/tracer/insights/configs/"
+        ? ok({ ...configsFixture.result, configs: [] })
+        : base(url, options),
+    );
+    renderAt("");
+    const main = await screen.findByRole("main");
+    expect(
+      await within(main).findByRole("heading", { name: "No reports yet" }),
+    ).toBeInTheDocument();
+    // One button in the pane; the templates stay in the rail.
+    expect(within(main).getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByText("Start from a template")).toBeInTheDocument();
+    fireEvent.click(within(main).getByRole("button", { name: "New report" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toContain("new=1"),
+    );
+    // The lens is picked in the creation flow.
+    expect(
+      await screen.findByRole("radiogroup", { name: "What to learn" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens New report on the template picked from the rail", async () => {
+    const base = mocks.readQuery.getMockImplementation();
+    mocks.readQuery.mockImplementation((url, options) =>
+      url === "/tracer/insights/configs/"
+        ? ok({ ...configsFixture.result, configs: [] })
+        : base(url, options),
+    );
+    renderAt("");
+    await screen.findByText("No reports yet");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Where is the agent failing?" }),
+    );
+    expect(
+      await screen.findByRole("radio", { name: /Failures/ }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("location").textContent).toContain(
+      "lens=failures",
+    );
   });
 
   it("shows why the reports didn't load in the page, with the rail closed", async () => {
@@ -1088,6 +1133,20 @@ describe("InsightsView", () => {
     ).toBeInTheDocument();
   });
 
+  it("leaves the category table's header to the shared table theme", async () => {
+    const theme = createTheme({ palette: palette("light"), typography });
+    renderAt(`?report=${CONFIG_ID}`);
+    await screen.findByRole("button", {
+      name: "Show subcategories of Unresponsive Support and No Escalation",
+    });
+    const header = within(screen.getByRole("table")).getByRole("columnheader", {
+      name: "Category",
+    });
+    expect(header).not.toHaveStyle({
+      backgroundColor: theme.palette.background.neutral,
+    });
+  });
+
   it("switches columns from the Columns menu and keeps the choice", async () => {
     const store = new Map();
     vi.stubGlobal("localStorage", {
@@ -1258,7 +1317,9 @@ describe("InsightsView", () => {
     );
     renderAt(`?report=${CONFIG_ID}&run=${RUN_ID}`);
     const shown = await screen.findAllByText("Oct 22–23 · 1 filter");
-    expect(shown.some((label) => label.closest(".MuiChip-root"))).toBe(true);
+    expect(
+      shown.some((label) => label.closest('[data-testid="report-meta"]')),
+    ).toBe(true);
     expect(screen.queryByText(/Custom range/)).toBeNull();
   });
 
@@ -1564,6 +1625,25 @@ describe("InsightsView", () => {
     });
   });
 
+  it("still says a run keeps going when the scope can't be counted", async () => {
+    mocks.post.mockImplementation((url) =>
+      url === "/tracer/insights/estimate/"
+        ? Promise.reject({ statusCode: 503 })
+        : ok({ run_id: RUN_ID, config_id: CONFIG_ID }),
+    );
+    renderAt("?new=1&lens=failures");
+    expect(
+      await screen.findByText(
+        "The scope and report cost could not be checked.",
+      ),
+    ).toBeInTheDocument();
+    // The line under Run report keeps its note rather than going blank.
+    expect(
+      screen.getByText(/it keeps running if you leave/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Counting the /)).toBeNull();
+  });
+
   it("guides a new report and starts it on the scope the server reads", async () => {
     renderAt("?new=1&lens=failures");
     expect(
@@ -1609,6 +1689,130 @@ describe("InsightsView", () => {
       expect(screen.getByTestId("location").textContent).toBe(
         `?report=${CONFIG_ID}&run=${RUN_ID}&tab=insights`,
       ),
+    );
+  });
+
+  it("marks the selected lens with a neutral border, not purple", async () => {
+    const theme = createTheme({ palette: palette("light"), typography });
+    renderAt("?new=1&lens=failures");
+    const failures = await screen.findByRole("radio", { name: /Failures/ });
+    expect(failures).toHaveAttribute("aria-checked", "true");
+    expect(failures).toHaveStyle({
+      borderColor: theme.palette.text.secondary,
+      backgroundColor: theme.palette.action.selected,
+    });
+    expect(screen.getByRole("radio", { name: /Usage/ })).toHaveStyle({
+      borderColor: theme.palette.divider,
+    });
+  });
+
+  it("counts the unit the user picks while the sessions check is still out", async () => {
+    // The check for sessions never answers.
+    mocks.collect.mockImplementation(({ unit, limit }) =>
+      unit === "sessions" && limit === 1
+        ? new Promise(() => {})
+        : Promise.resolve({
+            items: population.slice(0, limit),
+            total: 108,
+            totalIsLowerBound: false,
+            truncated: false,
+          }),
+    );
+    renderAt("?new=1&lens=failures");
+    await screen.findByRole("radio", { name: /Failures/ });
+    await waitFor(() =>
+      expect(mocks.collect).toHaveBeenCalledWith(
+        expect.objectContaining({ unit: "sessions", limit: 1 }),
+      ),
+    );
+    expect(postsTo("/tracer/insights/estimate/")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Run report" })).toBeDisabled();
+    // The footer says what it waits for, not the tail of a sentence.
+    expect(screen.getByText("Counting the sessions…")).toBeInTheDocument();
+    expect(screen.queryByText(/it keeps running if you leave/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Traces" }));
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/estimate/")).toHaveLength(1),
+    );
+    const [[, counted]] = postsTo("/tracer/insights/estimate/");
+    expect(counted.unit).toBe("traces");
+    expect(
+      (await screen.findAllByText(/Analysing all 108 traces/)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Run report" }),
+      ).not.toBeDisabled(),
+    );
+  });
+
+  it("moves an untouched form to traces when the project has no sessions", async () => {
+    mocks.collect.mockImplementation(({ unit, limit }) =>
+      Promise.resolve(
+        unit === "sessions"
+          ? { items: [], total: 0, totalIsLowerBound: false, truncated: false }
+          : {
+              items: population.slice(0, limit),
+              total: 108,
+              totalIsLowerBound: false,
+              truncated: false,
+            },
+      ),
+    );
+    renderAt("?new=1&lens=failures");
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/estimate/")).toHaveLength(1),
+    );
+    // Counted once, for traces: never first for sessions and thrown away.
+    const [[, counted]] = postsTo("/tracer/insights/estimate/");
+    expect(counted.unit).toBe("traces");
+    expect(screen.getByRole("button", { name: "Traces" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Run report" }),
+      ).not.toBeDisabled(),
+    );
+  });
+
+  it("counts sessions when the user clicks Sessions while the check is still out", async () => {
+    // The check for sessions never answers.
+    mocks.collect.mockImplementation(({ unit, limit }) =>
+      unit === "sessions" && limit === 1
+        ? new Promise(() => {})
+        : Promise.resolve({
+            items: population.slice(0, limit),
+            total: 108,
+            totalIsLowerBound: false,
+            truncated: false,
+          }),
+    );
+    renderAt("?new=1&lens=failures");
+    await screen.findByRole("radio", { name: /Failures/ });
+    await waitFor(() =>
+      expect(mocks.collect).toHaveBeenCalledWith(
+        expect.objectContaining({ unit: "sessions", limit: 1 }),
+      ),
+    );
+    expect(postsTo("/tracer/insights/estimate/")).toHaveLength(0);
+    const sessions = screen.getByRole("button", { name: "Sessions" });
+    expect(sessions).toHaveAttribute("aria-pressed", "true");
+
+    // Sessions is already shown; clicking it makes it the user's choice.
+    fireEvent.click(sessions);
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/estimate/")).toHaveLength(1),
+    );
+    const [[, counted]] = postsTo("/tracer/insights/estimate/");
+    expect(counted.unit).toBe("sessions");
+    expect(sessions).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Run report" }),
+      ).not.toBeDisabled(),
     );
   });
 

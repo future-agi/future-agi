@@ -4,6 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent, within } from "src/utils/test-utils";
 import SessionExplorer from "./SessionExplorer";
 
+import RequestDetailDrawer from "./RequestDetailDrawer";
+import useRequestDetail from "./hooks/useRequestDetail";
+
+vi.mock("./hooks/useRequestDetail");
+vi.mock("../guardrails/FeedbackWidget", () => ({ default: () => null }));
+
 const mockUseSessions = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({
@@ -15,6 +21,46 @@ vi.mock("./hooks/useSessions", () => ({
 }));
 
 describe("SessionExplorer", () => {
+  it.each([
+    ["priced", "0.5", { cost_source: "catalog" }, "$0.5000"],
+    ["free", 0, { cost_source: "org_custom" }, "$0.00"],
+    ["unpriced", 0, { cost_source: "unpriced" }, "Unpriced"],
+    ["empty unpriced", null, { cost_source: "unpriced" }, "Unpriced"],
+    ["unknown source", 0, {}, "$0.00"],
+  ])(
+    "matches the drawer for a %s request",
+    async (_, cost, metadata, expected) => {
+      const log = {
+        id: "cost-log",
+        model: "test-model",
+        status_code: 200,
+        cost,
+        metadata,
+      };
+      mockUseSessions.mockReturnValue({
+        data: {
+          results: [{ session_id: "cost-session", request_count: 1 }],
+          count: 1,
+        },
+      });
+      vi.mocked(useQuery).mockReturnValue({ data: { results: [log] } });
+      const view = render(
+        <SessionExplorer filters={{}} onRequestClick={vi.fn()} />,
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: /cost-session/ }),
+      );
+      const row = await screen.findByRole("row", { name: /test-model/ });
+      const rowCost = within(row).getByText(expected).textContent;
+      view.unmount();
+      vi.mocked(useRequestDetail).mockReturnValue({ data: { result: log } });
+      render(<RequestDetailDrawer open logId={log.id} onClose={vi.fn()} />);
+      expect(
+        within(screen.getByText("Cost").parentElement).getByText(rowCost),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("renders session aggregate and detail rows using canonical snake_case fields", async () => {
     const onRequestClick = vi.fn();
     mockUseSessions.mockReturnValue({
