@@ -123,14 +123,10 @@ def browser_evidence(call: CallExecution) -> BrowserEvidence:
 def _read(stored: HostedHarnessArtifact) -> dict[str, Any]:
     if stored.size > FILE_BYTES:
         raise _Unreadable("too_large")
-    response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, stored.object_key)
     try:
-        data = response.read(FILE_BYTES + 1)
-    finally:
-        response.close()
-        release = getattr(response, "release_conn", None)
-        if callable(release):
-            release()
+        data = _fetch(stored.object_key)
+    except Exception as error:  # noqa: BLE001 - storage that cannot give the file is said, never a failed page
+        raise _Unreadable("not_fetched") from error
     if len(data) > FILE_BYTES:
         raise _Unreadable("too_large")
     try:
@@ -140,6 +136,26 @@ def _read(stored: HostedHarnessArtifact) -> dict[str, Any]:
     if not isinstance(body, dict) or body.get("schema") not in SCHEMAS:
         raise _Unreadable("unknown_schema")
     return body
+
+
+def _fetch(object_key: str) -> bytes:
+    """The stored file, read up to one byte past the cap, however the store gives it."""
+    response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
+    pieces: list[bytes] = []
+    held = 0
+    try:
+        while held <= FILE_BYTES:
+            piece = response.read(min(1024 * 1024, FILE_BYTES + 1 - held))
+            if not piece:
+                break
+            pieces.append(piece)
+            held += len(piece)
+    finally:
+        response.close()
+        release = getattr(response, "release_conn", None)
+        if callable(release):
+            release()
+    return b"".join(pieces)
 
 
 def _digest(row: Mapping[str, Any]) -> str | None:
