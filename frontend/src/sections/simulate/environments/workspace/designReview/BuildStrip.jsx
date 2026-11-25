@@ -2,12 +2,7 @@ import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { Box, Stack, Typography } from "@mui/material";
 import BuildPhaseTable from "../BuildPhaseTable";
-import {
-  BUILD_STEP_TOTAL,
-  phaseOfStep,
-  phaseRows,
-  stepOfStage,
-} from "../buildSteps";
+import { BUILD_STEP_TOTAL, phaseOfStep, phaseRows } from "../buildSteps";
 import { BUILD_COPY, elapsedWords } from "./designReview.constants";
 
 function Spinner() {
@@ -28,13 +23,18 @@ function Spinner() {
   );
 }
 
-export default function BuildStrip({ name, stage, startedAt, readsAgent }) {
+export default function BuildStrip({
+  name,
+  step,
+  stopping = false,
+  startedAt,
+  readsAgent,
+}) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  const step = stepOfStage(stage, { readsAgent });
   const phase = phaseOfStep(step);
   const started = startedAt ? Date.parse(startedAt) : NaN;
   return (
@@ -67,7 +67,11 @@ export default function BuildStrip({ name, stage, startedAt, readsAgent }) {
               fontVariantNumeric: "tabular-nums",
             }}
           >
-            {BUILD_COPY.line(name, phase?.label, step?.label)}
+            {(stopping ? BUILD_COPY.stoppingLine : BUILD_COPY.line)(
+              name,
+              phase?.label,
+              step?.label,
+            )}
             {step && (
               <Box
                 component="span"
@@ -80,12 +84,16 @@ export default function BuildStrip({ name, stage, startedAt, readsAgent }) {
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
           >
-            {Number.isFinite(started)
-              ? BUILD_COPY.after(elapsedWords(now - started))
-              : BUILD_COPY.afterNoClock}
+            {stopping
+              ? BUILD_COPY.stoppingAfter
+              : Number.isFinite(started)
+                ? BUILD_COPY.after(elapsedWords(now - started))
+                : BUILD_COPY.afterNoClock}
           </Typography>
         </Stack>
-        {step && <BuildPhaseTable rows={phaseRows(step, { readsAgent })} />}
+        {step && (
+          <BuildPhaseTable rows={phaseRows(step, { stopping, readsAgent })} />
+        )}
       </Box>
     </Box>
   );
@@ -93,7 +101,12 @@ export default function BuildStrip({ name, stage, startedAt, readsAgent }) {
 
 BuildStrip.propTypes = {
   name: PropTypes.string,
-  stage: PropTypes.string,
+  step: PropTypes.shape({
+    no: PropTypes.number.isRequired,
+    phase: PropTypes.string,
+    label: PropTypes.string.isRequired,
+  }),
+  stopping: PropTypes.bool,
   startedAt: PropTypes.string,
   readsAgent: PropTypes.bool,
 };

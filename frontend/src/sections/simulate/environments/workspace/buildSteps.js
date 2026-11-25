@@ -124,6 +124,18 @@ export function stoppedStep(status, { events, outputs, designApproved } = {}) {
   return stepOfStage(step.stage, { readsAgent: !designApproved });
 }
 
+export const stoppingStep = ({ events, outputs, designApproved } = {}) =>
+  stoppedStep(
+    { stage: "canceled" },
+    {
+      events: (events || []).filter(
+        (event) => event?.payload?.stage !== "cleaning_up",
+      ),
+      outputs,
+      designApproved,
+    },
+  );
+
 const plural = (n, one, many = `${one}s`) =>
   `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
@@ -149,7 +161,13 @@ const rangeOf = (steps) =>
 
 export function phaseRows(
   step,
-  { stopped = false, kept = false, readsAgent = false, counts = {} } = {},
+  {
+    stopped = false,
+    stopping = false,
+    kept = false,
+    readsAgent = false,
+    counts = {},
+  } = {},
 ) {
   const phases = buildPhases(readsAgent || step.phase === "agent");
   const at = phases.findIndex((phase) => phase.id === step.phase);
@@ -165,6 +183,8 @@ export function phaseRows(
         note: made ? `${word} · ${made}` : word,
       };
     }
+    if (index === at && stopping)
+      return { ...base, state: "now", note: `Stopping at ${step.label}` };
     if (index === at) {
       const before = steps.filter((one) => one.no < step.no).length;
       const progress = before
@@ -179,7 +199,7 @@ export function phaseRows(
     return {
       ...base,
       state: "next",
-      note: stopped ? "Not run" : "Not started",
+      note: stopped || stopping ? "Not run" : "Not started",
     };
   });
 }

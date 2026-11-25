@@ -7,6 +7,7 @@ import {
   stopCase,
   stopSentence,
   stoppedStep,
+  stoppingStep,
   tabWaits,
 } from "../buildSteps";
 
@@ -59,7 +60,43 @@ describe("stoppedStep", () => {
   });
 });
 
+describe("stoppingStep", () => {
+  const event = (type, stage) => ({ type, payload: { stage } });
+
+  it("places a stop at the last step the build reached, not at the cleanup", () => {
+    const step = stoppingStep({
+      events: [
+        event("stage.started", "environment"),
+        event("stage.completed", "environment"),
+        event("stage.started", "scenarios"),
+        event("stage.started", "cleaning_up"),
+      ],
+      designApproved: true,
+    });
+    expect(step.label).toBe("Generating scenarios");
+  });
+
+  it("falls back to what the build produced when no stage started", () => {
+    const step = stoppingStep({
+      outputs: [{ kind: "contract" }, { kind: "environment" }],
+      designApproved: true,
+    });
+    expect(step.label).toBe("Generating scenarios");
+  });
+});
+
 describe("phaseRows", () => {
+  it("says stopping at the step reached and counts no steps of it done", () => {
+    const rows = phaseRows(stepOfStage("connecting_agent"), {
+      stopping: true,
+    });
+    expect(rows.map((row) => [row.id, row.state, row.note])).toEqual([
+      ["world", "done", "Done"],
+      ["scenarios", "done", "Done"],
+      ["checks", "now", "Stopping at Connecting agent"],
+    ]);
+  });
+
   it("keeps finished phases, stops at one and leaves the rest not run", () => {
     const rows = phaseRows(stepOfStage("validating_environment"), {
       stopped: true,

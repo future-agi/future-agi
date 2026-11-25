@@ -155,6 +155,15 @@ export const BUILD_COPY = {
     ]
       .filter(Boolean)
       .join(" · "),
+  stoppingLine: (name, phase, step) =>
+    [
+      name ? `Stopping the build of ${name}` : "Stopping the build",
+      phase,
+      step,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  stoppingAfter: "Stopping takes a moment",
   count: (no, total) => ` · ${no} of ${total}`,
   after: (elapsed) => `Runs start once it's ready · ${elapsed} so far`,
   afterNoClock: "Runs start once it's ready",
