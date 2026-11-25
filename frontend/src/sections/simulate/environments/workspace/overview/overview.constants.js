@@ -239,13 +239,21 @@ export const packStatsFor = (env) => {
   };
 };
 
+const isPlainObject = (value) =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const rowCountOf = (rows) => {
+  if (Array.isArray(rows)) return rows.length;
+  if (!isPlainObject(rows)) return null;
+  const records = Object.values(rows);
+  return records.length && records.every(isPlainObject) ? records.length : null;
+};
+
 export const startingCollections = (baseEnvironment) =>
-  baseEnvironment &&
-  typeof baseEnvironment === "object" &&
-  !Array.isArray(baseEnvironment)
+  isPlainObject(baseEnvironment)
     ? Object.entries(baseEnvironment)
-        .filter(([, rows]) => Array.isArray(rows))
-        .map(([name, rows]) => ({ name, rows: rows.length }))
+        .map(([name, rows]) => ({ name, rows: rowCountOf(rows) }))
+        .filter((collection) => collection.rows !== null)
     : [];
 
 export const ruleRowsFor = (env) =>
