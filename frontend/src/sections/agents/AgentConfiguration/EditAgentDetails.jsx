@@ -39,6 +39,7 @@ import {
   VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
   supportsConcurrency,
+  concurrencyFieldProps,
   validateLiveKitCredentials,
 } from "../constants";
 import { ShowComponent } from "src/components/show";
@@ -52,6 +53,7 @@ import { formatDistanceToNow } from "date-fns";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
 import { MODEL_TYPES } from "../../develop-detail/RunPrompt/common";
 import { useAuthContext } from "src/auth/hooks";
+import ProviderConnectionHealth from "./ProviderConnectionHealth";
 
 const EditAgentDetails = ({
   control,
@@ -566,6 +568,7 @@ const EditAgentDetails = ({
               <FormTextFieldV2
                 control={control}
                 fieldName="apiKey"
+                fieldType="password"
                 placeholder="Enter API key"
                 label="Provider API Key"
                 required={
@@ -606,6 +609,7 @@ const EditAgentDetails = ({
             <FormTextFieldV2
               control={control}
               fieldName="livekitApiKey"
+              type="password"
               placeholder="APIxxxxxxxxxxxxxxxx"
               label="LiveKit API Key"
               required={!isSourceAgent}
@@ -708,8 +712,7 @@ const EditAgentDetails = ({
               type="number"
               size="small"
               fullWidth
-              inputProps={{ min: 1, max: orgLimit }}
-              helperText={`Max simultaneous test calls. If you have multiple agent workers, set this to the total capacity across all workers (default: 5, max: ${orgLimit})`}
+              {...concurrencyFieldProps(orgLimit)}
             />
           </ShowComponent>
           <ShowComponent
@@ -1105,6 +1108,9 @@ const EditAgentDetails = ({
             >
               Enable if you want to monitor this agent
             </Typography>
+            {!isSourceAgent && (
+              <ProviderConnectionHealth agentDefinitionId={agentDefinitionId} />
+            )}
           </Stack>
         </ShowComponent>
       </Box>

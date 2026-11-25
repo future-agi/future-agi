@@ -75,7 +75,7 @@ function assertClosedKeys(value: unknown, schema: Schema, root: Schema): void {
     for (const [key, item] of Object.entries(value)) assertClosedKeys(item, properties[key], root);
   }
 }
-
+test.skip(process.env.E2E_STACK === 'standalone', 'Host status bind extension is Distributed-only; Standalone remains unchanged');
 test('SET-E2E-002: admin reads fresh host update reports and missing reporting stays unknown', {
   tag: ['@flow'],
   annotation: flowAnnotation({
@@ -100,7 +100,6 @@ test('SET-E2E-002: admin reads fresh host update reports and missing reporting s
   test.setTimeout(240_000);
   // Three page-load stages share UI_READY within each stage: 3 × 60s + 60s for
   // seeding/API work. Five individual UI waits already exceed the 120s default.
-  test.skip(process.env.E2E_STACK === 'standalone', 'Host status bind extension is Distributed-only; Standalone remains unchanged');
   const directory = process.env.E2E_HOST_UPDATE_STATUS_DIR;
   expect(directory, 'Run through bin/e2e or set the mounted E2E_HOST_UPDATE_STATUS_DIR in attach mode').toBeTruthy();
   const statusPath = join(directory!, 'status.json');

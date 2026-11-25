@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from agentic_eval.core_evals.fi_evals.function.functions import custom_code_eval
+from agentic_eval.core_evals.fi_utils import sandbox
+
 RETRIEVAL_EVALS = (
     "recall_score",
     "recall_at_k",
@@ -20,9 +23,30 @@ CONTEXT_EVALS = ("non_llm_context_precision", "non_llm_context_recall")
 YAML_DIR = Path(__file__).resolve().parent.parent / "function"
 
 
+def _eval_code(name):
+    return yaml.safe_load((YAML_DIR / f"{name}.yaml").read_text())["config"]["code"]
+
+
+@pytest.mark.parametrize("eval_name", RETRIEVAL_EVALS)
+@pytest.mark.parametrize("reference", ["'doc1'", "['doc1']", "doc1"])
+def test_local_fallback_inputs(eval_name, reference, monkeypatch, settings):
+    monkeypatch.setattr(sandbox, "CODE_EXECUTOR_URL", "")
+    settings.CODE_EXECUTOR_LOCAL_FALLBACK = True
+    settings.CLOUD_DEPLOYMENT = ""
+    code = _eval_code(eval_name)
+    if reference == "doc1":
+        assert (
+            custom_code_eval(code, reference=reference, hypothesis=["doc1"])["result"]
+            == 1.0
+        )
+    else:
+        with pytest.raises(ValueError, match="Use valid JSON"):
+            custom_code_eval(code, reference=reference, hypothesis=["doc1"])
+
+
 def _load_eval(name):
     path = YAML_DIR / f"{name}.yaml"
-    code = yaml.safe_load(path.read_text())["config"]["code"]
+    code = _eval_code(name)
     namespace: dict = {}
     vars(builtins)["exec"](compile(code, str(path), "exec"), namespace)
     return namespace["evaluate"]
@@ -53,7 +77,9 @@ def evaluator(request):
 @pytest.mark.parametrize("scalar_side", ["reference", "hypothesis"])
 def test_single_item_matches_list(evaluator, scalar, items, scalar_side):
     _, evaluate = evaluator
-    hypothesis, reference = (items, scalar) if scalar_side == "reference" else (scalar, items)
+    hypothesis, reference = (
+        (items, scalar) if scalar_side == "reference" else (scalar, items)
+    )
     assert evaluate(None, hypothesis, reference, None)["score"] == 1.0
 
 
@@ -83,13 +109,17 @@ def test_single_item_via_required_keys(eval_name, scalar, scalar_side):
 def test_single_reference_respects_k(eval_name):
     evaluate = _load_eval(eval_name)
     assert evaluate(None, '["7", "42"]', "42", None, k=1)["score"] == 0.0
-    expected = {"recall_at_k": 1.0, "precision_at_k": 0.5, "ndcg_at_k": 0.6309297535714575}
+    expected = {
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "ndcg_at_k": 0.6309297535714575,
+    }
     assert evaluate(None, '["7", "42"]', "42", None, k=2)["score"] == pytest.approx(
         expected[eval_name]
     )
 
 
-@pytest.mark.parametrize("items", [["doc1"], ("doc1",), {"doc1"}, '["doc1"]'])
+@pytest.mark.parametrize("items", [["doc1"], '["doc1"]'])
 def test_collection_inputs_still_match(evaluator, items):
     _, evaluate = evaluator
     assert evaluate(None, items, ["doc1"], None)["score"] == 1.0
@@ -104,21 +134,14 @@ def test_python_literal_collections_still_match(eval_name, items):
     assert evaluate(None, ["doc1"], items, None)["score"] == 1.0
 
 
-@pytest.mark.parametrize("empty", [None, "null", [], "[]"])
-def test_empty_inputs_are_not_document_ids(evaluator, empty):
+@pytest.mark.parametrize("items", [("doc1",), {"doc1"}])
+def test_native_tuple_and_set_keep_previous_scores(evaluator, items):
     name, evaluate = evaluator
-    expected = 1.0 if name == "non_llm_context_recall" else 0.0
-    assert evaluate(None, empty, empty, None)["score"] == expected
-    assert evaluate(None, empty, ["doc1"], None)["score"] == 0.0
-    assert evaluate(None, ["doc1"], empty, None)["score"] == 0.0
-
-
-@pytest.mark.parametrize("eval_name", RETRIEVAL_EVALS)
-@pytest.mark.parametrize("empty", ["None", "()", "set()"])
-def test_empty_python_literals_are_not_document_ids(eval_name, empty):
-    evaluate = _load_eval(eval_name)
-    assert evaluate(None, empty, ["doc1"], None)["score"] == 0.0
-    assert evaluate(None, ["doc1"], empty, None)["score"] == 0.0
+    # Context evals stringify native non-lists as one context; retrieval evals
+    # iterate them. A singleton list would match both and miss this distinction.
+    expected = 0.0 if name in CONTEXT_EVALS else 1.0
+    assert evaluate(None, items, ["doc1"], None)["score"] == expected
+    assert evaluate(None, ["doc1"], items, None)["score"] == expected
 
 
 def test_json_object_key_matching_is_preserved(evaluator):

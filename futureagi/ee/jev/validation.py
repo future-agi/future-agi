@@ -44,7 +44,10 @@ def validate_answer(
     actual_model,
 ):
     _require(isinstance(actual_model, str) and bool(actual_model.strip()))
-    if requested_model == "jev-1.13.0" and actual_model != requested_model:
+    if (
+        requested_model in ("jev-1.13.0", "jev-1.14.0")
+        and actual_model != requested_model
+    ):
         raise JevResponseError("JEV_MODEL_MISMATCH")
     _require(isinstance(answer, dict) and answer.get("type") == question_type)
     _finite_tree(answer)

@@ -41,7 +41,9 @@ SendCallback = Callable[[dict], Awaitable[None]]
 _DONE = object()
 
 
-def _resolve_cluster(organization: Any, workspace: Any, label: str, project_id: Optional[str]):
+def _resolve_cluster(
+    organization: Any, workspace: Any, label: str, project_id: Optional[str]
+):
     """Resolve a cluster CharField label (e.g. "C01") to (uuid, project_uuid,
     error_count) within the caller's org/workspace scope. Returns None if the
     label can't be resolved — caller falls through to normal Falcon."""
@@ -68,7 +70,9 @@ def _resolve_cluster(organization: Any, workspace: Any, label: str, project_id: 
     return str(cluster.id), str(cluster.project_id), int(cluster.error_count or 0)
 
 
-def _persist_synthesis(cluster_uuid: str, synthesis: Any, error_count_at_run: int, trace: list[dict] | None) -> None:
+def _persist_synthesis(
+    cluster_uuid: str, synthesis: Any, error_count_at_run: int, trace: list[dict] | None
+) -> None:
     """Cache the synthesis + investigation trail onto the cluster row (the
     headline card reads the synthesis; the Analyze tab replays the trail)."""
     from django.utils import timezone
@@ -90,6 +94,59 @@ def _persist_synthesis(cluster_uuid: str, synthesis: Any, error_count_at_run: in
     from tracer.utils.feed import post_rca_comment_to_linked_issue
 
     post_rca_comment_to_linked_issue(cluster_uuid)
+
+
+def persist_run_result(
+    cluster_uuid: str, result: Any, error_count_at_run: int, trace: list[dict] | None
+) -> bool:
+    """The post-run persist step, lifted out of ``run_agent`` so a test can
+    drive the same call the worker thread makes rather than reaching for the
+    gate directly.
+
+    ``close_old_connections`` is not part of this function: the thread owns its
+    connection lifetime, and a test has no thread to clean up after.
+
+    Returns True when the run was persisted.
+    """
+    if getattr(result, "synthesis", None) is None:
+        return False
+    return persist_result_if_diagnosis(cluster_uuid, result, error_count_at_run, trace)
+
+
+def persist_result_if_diagnosis(
+    cluster_uuid: str,
+    result: Any,
+    error_count_at_run: int,
+    trace: list[dict] | None,
+) -> bool:
+    """Store a run's synthesis unless the run never reasoned one out.
+
+    The single thing refused here is ``synthesis_is_last_resort``: the
+    deterministic text ``_fallback_synthesis`` writes when the loop died
+    without any conclusion. That text restates the evidence instead of
+    concluding it, so it must not replace an earlier completed diagnosis and
+    must not be posted to a linked issue as a finished result.
+
+    Everything else persists, including a synthesis the model wrote *after* a
+    resource exit pushed it to conclude: that is still the model's own text,
+    its own confidence and its own evidence, which is what a diagnosis is.
+    Confidence is not the gate — a completed run that only came out LOW
+    persists exactly as it always has.
+
+    Returns True when the run was persisted.
+    """
+    synthesis = getattr(result, "synthesis", None)
+    if synthesis is None:
+        return False
+    if getattr(result, "synthesis_is_last_resort", False):
+        logger.info(
+            "cluster_rca_bridge_skipped_last_resort_persist",
+            cluster_id=cluster_uuid,
+            terminated_reason=getattr(result, "terminated_reason", None),
+        )
+        return False
+    _persist_synthesis(cluster_uuid, synthesis, error_count_at_run, trace)
+    return True
 
 
 def _bill_cost_from_thread(organization: Any, cost_usd: float) -> None:
@@ -294,16 +351,21 @@ async def run_cluster_rca(
             result = agent.run()
             # Persist from the thread so the run survives the consumer
             # coroutine being cancelled by a client disconnect mid-run.
-            if getattr(result, "synthesis", None) is not None:
-                try:
-                    close_old_connections()
-                    _persist_synthesis(
-                        cluster_uuid, result.synthesis, error_count, trace
-                    )
-                except Exception:
-                    logger.exception(
-                        "cluster_rca_bridge_persist_failed", cluster_id=cluster_uuid
-                    )
+            #
+            # The gate inside refuses only a run whose synthesis is the
+            # deterministic last-resort text: that restates the evidence rather
+            # than concluding it, so writing it here would overwrite an earlier
+            # completed diagnosis and posting it would hand a linked ticket a
+            # finished-looking result the run never reached. A synthesis the
+            # model wrote itself — even one a budget pushed it to write — is a
+            # diagnosis and persists as it always has.
+            try:
+                close_old_connections()
+                persist_run_result(cluster_uuid, result, error_count, trace)
+            except Exception:
+                logger.exception(
+                    "cluster_rca_bridge_persist_failed", cluster_id=cluster_uuid
+                )
             # On an explicit Stop the consumer coroutine is cancelled before it
             # can bill, so the partial spend would go un-billed. Bill it here
             # from the thread (same reasoning as thread-side persistence above).
@@ -397,9 +459,7 @@ async def run_cluster_rca(
         result = await fut
     except Exception:
         logger.exception("cluster_rca_bridge_run_failed", cluster_id=cluster_uuid)
-        await send_callback(
-            RcaErrorEvent(message_id=assistant_message_id).to_frame()
-        )
+        await send_callback(RcaErrorEvent(message_id=assistant_message_id).to_frame())
         return {
             "id": assistant_message_id,
             "content": "",

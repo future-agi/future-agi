@@ -1,4 +1,4 @@
-import { request } from '@playwright/test';
+import { newBackendRequest } from '../../lib/backend-request';
 import { test, expect } from '../../lib/fixtures';
 import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
@@ -72,7 +72,7 @@ test(
     // default, so a slow run ends on the assertion that ran out rather than a
     // bare timeout.
     test.setTimeout(240_000);
-    const req = await request.newContext();
+    const req = await newBackendRequest();
     const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
     const checkout = `e2e-checkout-${suffix}`;
     const search = `e2e-search-${suffix}`;

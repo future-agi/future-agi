@@ -62,6 +62,76 @@ def test_an_organization_at_its_limit_is_limited(organization, call_type):
     assert _limited(organization, call_type, "simulate") is True
 
 
+def test_unset_minute_limit_still_checks_hourly_window(organization, call_type):
+    RateLimit.objects.filter(api_call_type=call_type).update(
+        minute_limit=None, hour_limit=1
+    )
+    _logged(organization, call_type, "simulate")
+
+    limited, config = check_if_api_call_is_rate_limited(
+        organization, call_type.name, "simulate"
+    )
+
+    assert limited is True
+    assert config == {
+        "api_call_type": call_type.name,
+        "time": "hourly",
+        "title": " ".join(call_type.name.split("_")),
+        "duration": "hour",
+        "limit": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("unset_window", "reached_window", "expected_time"),
+    [("hour", "day", "daily"), ("day", "month", "monthly")],
+)
+def test_unset_window_still_checks_later_window(
+    organization, call_type, unset_window, reached_window, expected_time
+):
+    limits = {"minute_limit": 2, "hour_limit": 2, "day_limit": 2, "month_limit": 2}
+    limits[f"{unset_window}_limit"] = None
+    limits[f"{reached_window}_limit"] = 1
+    RateLimit.objects.filter(api_call_type=call_type).update(**limits)
+    _logged(organization, call_type, "simulate")
+
+    limited, config = check_if_api_call_is_rate_limited(
+        organization, call_type.name, "simulate"
+    )
+
+    assert limited is True
+    assert config["time"] == expected_time
+    assert config["limit"] == 1
+
+
+def test_all_unset_windows_allow_call(organization, call_type):
+    RateLimit.objects.filter(api_call_type=call_type).update(
+        minute_limit=None, hour_limit=None, day_limit=None, month_limit=None
+    )
+    _logged(organization, call_type, "simulate")
+
+    assert check_if_api_call_is_rate_limited(
+        organization, call_type.name, "simulate"
+    ) == (
+        False,
+        {},
+    )
+
+
+def test_all_set_windows_under_limit_allow_call(organization, call_type):
+    RateLimit.objects.filter(api_call_type=call_type).update(
+        minute_limit=2, hour_limit=2, day_limit=2, month_limit=2
+    )
+    _logged(organization, call_type, "simulate")
+
+    assert check_if_api_call_is_rate_limited(
+        organization, call_type.name, "simulate"
+    ) == (
+        False,
+        {},
+    )
+
+
 def test_a_check_run_eval_passes_an_organization_at_its_limit(organization, call_type):
     _logged(organization, call_type, "simulate")
 

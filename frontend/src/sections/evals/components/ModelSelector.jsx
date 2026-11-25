@@ -6,6 +6,7 @@ import {
   CircularProgress,
   Divider,
   IconButton,
+  InputBase,
   Menu,
   MenuItem,
   Popover,
@@ -42,6 +43,20 @@ import {
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { getProviderLogoFilterSx } from "./modelLogo";
+import DecisionModelSection from "./DecisionModelSection";
+import { FagiMark, PickerRow, PickerSectionLabel } from "./ModelPickerParts";
+import useDecisionModels from "src/api/evaluations/decision-models";
+import {
+  decisionModelLabel,
+  filterDecisionGroups,
+  findDecisionGroup,
+  isDecisionModel,
+  isJevDecisionModel,
+  isNativeJevModel,
+  legacyDecisionGroups,
+  NATIVE_JEV_LABELS,
+} from "../utils/decisionModels";
+import { paths } from "src/routes/paths";
 
 // ---------------------------------------------------------------------------
 // Modes — how the evaluator runs
@@ -176,42 +191,27 @@ const FAGI_MODELS = [
     value: "turing_large",
     label: "Turing Large",
     description: "Best accuracy for complex evaluations",
-    icon: "solar:star-bold",
   },
   {
     value: "turing_small",
     label: "Turing Small",
     description: "Balanced accuracy, lower cost",
-    icon: "solar:star-2-linear",
   },
   {
     value: "turing_flash",
     label: "Turing Flash",
     description: "Fast, low-latency evaluations",
-    icon: "solar:bolt-linear",
   },
 ];
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
 
-export const JEV_MODELS = [
-  {
-    value: "jev-1.13.0",
-    label: "Jev 1.13 (pinned)",
-    description: "Pinned System One model (jev-1.13.0)",
-  },
-  {
-    value: "jev-latest",
-    label: "Jev latest",
-    description: "Tracks the current Jev release (jev-latest)",
-  },
-];
-export const JEV_MODEL_VALUES = new Set(JEV_MODELS.map((m) => m.value));
+export const JEV_MODEL_VALUES = new Set(Object.keys(NATIVE_JEV_LABELS));
 
 const FAGI_MODEL_LOCKED_TOOLTIP =
   "Turing models aren't enabled for this workspace. Select your own model.";
 
-// Turing and Jev rows share the same layout and selection affordances.
+// Turing rows: the Future AGI mark, the name and what the model is for.
 const EvaluatorModelRow = ({
   m,
   selected,
@@ -220,61 +220,16 @@ const EvaluatorModelRow = ({
   secondaryText,
   onSelect,
 }) => (
-  <Tooltip title={locked ? lockedTooltip : ""} placement="right" arrow>
-    <span>
-      <MenuItem
-        selected={selected}
-        disabled={locked}
-        onClick={onSelect}
-        sx={{
-          mx: 0.5,
-          borderRadius: "6px",
-          py: 0.75,
-          gap: 1,
-          width: "auto",
-        }}
-      >
-        <Iconify
-          icon={m.icon || "solar:star-bold"}
-          width={20}
-          sx={{
-            color: selected ? "primary.main" : "text.secondary",
-            flexShrink: 0,
-          }}
-        />
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography
-            variant="body2"
-            sx={{ fontSize: "13px", fontWeight: 500 }}
-          >
-            {m.label}
-          </Typography>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontSize: "12px" }}
-          >
-            {secondaryText}
-          </Typography>
-        </Box>
-        {locked ? (
-          <Iconify
-            icon="solar:lock-linear"
-            width={16}
-            sx={{ color: "text.disabled", flexShrink: 0 }}
-          />
-        ) : (
-          selected && (
-            <Iconify
-              icon="solar:check-linear"
-              width={16}
-              sx={{ color: "primary.main", flexShrink: 0 }}
-            />
-          )
-        )}
-      </MenuItem>
-    </span>
-  </Tooltip>
+  <PickerRow
+    icon={<FagiMark />}
+    label={m.label}
+    meta={secondaryText}
+    selected={selected}
+    disabled={locked}
+    tooltip={locked ? lockedTooltip : ""}
+    trailing={locked ? "lock" : selected ? "check" : undefined}
+    onClick={onSelect}
+  />
 );
 EvaluatorModelRow.propTypes = {
   m: PropTypes.object.isRequired,
@@ -435,7 +390,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
           onChange={(e) => setEditName(e.target.value)}
           sx={{
             mb: 1,
-            "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
+            "& .MuiInputBase-root": { fontSize: "12px", height: 30 },
           }}
         />
         <TextField
@@ -446,7 +401,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
           placeholder="Summary criteria — e.g. 'Provide a concise 2-3 sentence summary focusing on accuracy issues and suggested fixes'"
           value={editCriteria}
           onChange={(e) => setEditCriteria(e.target.value)}
-          sx={{ mb: 1, "& .MuiInputBase-root": { fontSize: "13px" } }}
+          sx={{ mb: 1, "& .MuiInputBase-root": { fontSize: "12px" } }}
         />
         <Box sx={{ display: "flex", gap: 0.5, justifyContent: "flex-end" }}>
           <IconButton
@@ -493,7 +448,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
         <Box>
           <Typography
             variant="body2"
-            sx={{ fontSize: "13px", fontWeight: 500 }}
+            sx={{ fontSize: "12px", fontWeight: 500 }}
           >
             None
           </Typography>
@@ -530,7 +485,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
             <Box>
               <Typography
                 variant="body2"
-                sx={{ fontSize: "13px", fontWeight: 500 }}
+                sx={{ fontSize: "12px", fontWeight: 500 }}
               >
                 {opt.label}
               </Typography>
@@ -586,7 +541,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
                   <Typography
                     variant="body2"
                     noWrap
-                    sx={{ fontSize: "13px", fontWeight: 500 }}
+                    sx={{ fontSize: "12px", fontWeight: 500 }}
                   >
                     {tmpl.name}
                   </Typography>
@@ -706,6 +661,8 @@ const ModelSelector = ({
   // menu arrive together. A counter rather than a boolean so repeat attempts
   // re-open it without the parent having to reset the flag.
   openModelMenuSignal = 0,
+  outputType,
+  choiceCount,
 }) => {
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
@@ -717,7 +674,10 @@ const ModelSelector = ({
     },
     [onModeChange],
   );
-  const isJevModel = JEV_MODEL_VALUES.has(model);
+  const isJevModel = isDecisionModel(model);
+  const typedModelName = isNativeJevModel(model)
+    ? "Jev"
+    : "This decision model";
   const previousModeLocalRef = useRef(null);
   const previousModeRef = previousModeRefProp || previousModeLocalRef;
 
@@ -821,7 +781,7 @@ const ModelSelector = ({
     setKeysDrawerModel(null);
   };
   const selectModel = (value) => {
-    if (JEV_MODEL_VALUES.has(value)) {
+    if (isDecisionModel(value)) {
       if (!isJevModel) previousModeRef.current = mode;
       setMode("quick");
     } else if (isJevModel && previousModeRef.current !== null) {
@@ -845,9 +805,26 @@ const ModelSelector = ({
   const jevModelsLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
   // Jev runs on the org's own TypeSafe key (Settings -> AI Providers).
   const { data: providerStatuses } = useApiKeysStatus();
-  const hasTypesafeKey = (providerStatuses || []).some(
-    (p) => p.provider === "typesafe" && p.hasKey,
-  );
+  const decisionCatalog = useDecisionModels(Boolean(modelAnchor) || isJevModel);
+  const decisionGroups = useMemo(() => {
+    // Catalog readiness uses the backend's exact workspace key resolver.
+    // The older provider-status list is only a fallback for legacy Jev rows.
+    if (decisionCatalog.data?.length) return decisionCatalog.data;
+    return legacyDecisionGroups.map((group) => ({
+      ...group,
+      connections: group.connections.map((connection) => {
+        const status = providerStatuses?.find(
+          (item) => item.provider === connection.provider,
+        );
+        return {
+          ...connection,
+          is_available: status
+            ? status.hasKey
+            : connection.is_available === true,
+        };
+      }),
+    }));
+  }, [decisionCatalog.data, providerStatuses]);
   const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
   const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
 
@@ -934,13 +911,20 @@ const ModelSelector = ({
     const all =
       modelPages?.pages.reduce((acc, p) => [...acc, ...p.data.results], []) ||
       [];
-    // Filter out FAGI models to avoid duplicates
+    // Filter immediately while the server-side search debounce is pending;
+    // stale general models must not crowd the matching decision results.
+    const query = modelSearch.trim().toLowerCase();
     return all.filter(
       (m) =>
         !FAGI_MODEL_VALUES.has(m.model_name) &&
-        !JEV_MODEL_VALUES.has(m.model_name),
+        !isDecisionModel(m.model_name) &&
+        m.type !== "decision" &&
+        (!query ||
+          [m.model_name, m.providers].some((value) =>
+            value?.toLowerCase().includes(query),
+          )),
     );
-  }, [modelPages]);
+  }, [modelPages, modelSearch]);
 
   // Determine display name for the current model. Match on the full
   // canonical value first (e.g. "turing_small"); fall back to a suffix
@@ -949,14 +933,22 @@ const ModelSelector = ({
   // — still resolves to its FAGI label instead of rendering as "small".
   const modelDisplayName = useMemo(() => {
     if (!model) return "Select model";
-    const jev = JEV_MODELS.find((m) => m.value === model);
-    if (jev) return jev.label;
+    if (isDecisionModel(model)) {
+      const group = findDecisionGroup(decisionGroups, model);
+      const connection = group?.connections.find(
+        (route) => route.model_name === model,
+      );
+      const label = decisionModelLabel(model, decisionGroups);
+      return isNativeJevModel(model) || !connection
+        ? label
+        : `${label} · ${connection.label}`;
+    }
     const exact = FAGI_MODELS.find((m) => m.value === model);
     if (exact) return exact.label;
     const suffix = FAGI_MODELS.find((m) => m.value.endsWith(`_${model}`));
     if (suffix) return suffix.label;
     return model;
-  }, [model]);
+  }, [model, decisionGroups]);
 
   const handleToggleConnector = useCallback((id) => {
     setActiveConnectorIds((prev) =>
@@ -978,12 +970,10 @@ const ModelSelector = ({
     );
   }, [modelSearch]);
 
-  const filteredJevModels = useMemo(() => {
-    const search = modelSearch.toLowerCase();
-    return JEV_MODELS.filter(
-      (m) => m.label.toLowerCase().includes(search) || m.value.includes(search),
-    );
-  }, [modelSearch]);
+  const filteredDecisionModels = useMemo(
+    () => filterDecisionGroups(decisionGroups, modelSearch),
+    [decisionGroups, modelSearch],
+  );
 
   // When Turing models aren't enabled, callers still seed `model` with
   // "turing_large". Drop it so the pill reads "Select model" instead of
@@ -1037,7 +1027,7 @@ const ModelSelector = ({
           />
           <Typography
             variant="body2"
-            sx={{ fontSize: "13px", fontWeight: 500 }}
+            sx={{ fontSize: "12px", fontWeight: 500 }}
           >
             {currentMode.label}
           </Typography>
@@ -1077,7 +1067,7 @@ const ModelSelector = ({
       >
         <Typography
           variant="body2"
-          sx={{ fontSize: "13px", color: "text.secondary" }}
+          sx={{ fontSize: "12px", color: "text.secondary" }}
         >
           {modelDisplayName}
         </Typography>
@@ -1303,7 +1293,7 @@ const ModelSelector = ({
             <Box sx={{ flex: 1 }}>
               <Typography
                 variant="body2"
-                sx={{ fontSize: "13px", fontWeight: 500 }}
+                sx={{ fontSize: "12px", fontWeight: 500 }}
               >
                 {m.label}
               </Typography>
@@ -1313,7 +1303,7 @@ const ModelSelector = ({
                 sx={{ fontSize: "12px" }}
               >
                 {isJevModel && m.value !== "quick"
-                  ? "Jev runs in Quick mode only. Your previous mode is preserved."
+                  ? `${typedModelName} runs in Quick mode only. Your previous mode is preserved.`
                   : m.description}
               </Typography>
             </Box>
@@ -1336,35 +1326,62 @@ const ModelSelector = ({
         onKeyDown={(event) => handleMenuNavigation(event, closeModelMenu)}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
-        slotProps={{ paper: { sx: { width: 320, borderRadius: "8px", p: 0 } } }}
+        slotProps={{
+          paper: {
+            sx: {
+              width: 360,
+              maxWidth: "calc(100vw - 32px)",
+              // Keep asynchronous results below decision rows from moving the
+              // popover under a pointer gesture. MUI's paper maxHeight still
+              // constrains this footprint to the viewport's 16px margins.
+              height: 528,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              borderRadius: "8px",
+              p: 0,
+            },
+          },
+        }}
       >
-        {/* Search */}
-        <Box sx={{ p: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-          <TextField
-            size="small"
+        {/* Search: an inline field on the menu, not a box inside the box */}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            px: 1.5,
+            height: 36,
+            flexShrink: 0,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Iconify
+            icon="solar:magnifer-linear"
+            width={16}
+            sx={{ color: "text.disabled", flexShrink: 0 }}
+          />
+          <InputBase
             fullWidth
             autoFocus
             placeholder="Search models..."
             inputProps={{ "aria-label": "Search models" }}
             value={modelSearch}
             onChange={(e) => setModelSearch(e.target.value)}
-            InputProps={{
-              startAdornment: (
-                <Iconify
-                  icon="solar:magnifier-linear"
-                  width={16}
-                  sx={{ mr: 0.5, color: "text.disabled" }}
-                />
-              ),
-              sx: { fontSize: "13px", height: 32 },
-            }}
+            sx={{ fontSize: 12, "& input": { p: 0 } }}
           />
         </Box>
 
         <Box
           role="menu"
           aria-label="Evaluation models"
-          sx={{ maxHeight: 350, overflowY: "auto" }}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: "auto",
+            scrollbarGutter: "stable",
+          }}
           onScroll={(e) => {
             const { scrollTop, scrollHeight, clientHeight } = e.target;
             if (
@@ -1375,25 +1392,10 @@ const ModelSelector = ({
             }
           }}
         >
-          {/* Section 1: FutureAGI Models */}
+          {/* Section 1: Future AGI */}
           {filteredFagiModels.length > 0 && (
             <>
-              <Typography
-                variant="caption"
-                sx={{
-                  px: 1.5,
-                  pt: 1.5,
-                  pb: 0.5,
-                  display: "block",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  textTransform: "none",
-                  letterSpacing: "0.5px",
-                  color: "primary.main",
-                }}
-              >
-                FutureAGI Models
-              </Typography>
+              <PickerSectionLabel>Future AGI</PickerSectionLabel>
               {filteredFagiModels.map((m) => (
                 <EvaluatorModelRow
                   key={m.value}
@@ -1410,81 +1412,61 @@ const ModelSelector = ({
             </>
           )}
 
-          {filteredJevModels.length > 0 && (
-            <>
-              <Typography
-                variant="caption"
-                sx={{
-                  px: 1.5,
-                  pt: 1.5,
-                  pb: 0.5,
-                  display: "block",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  textTransform: "none",
-                  letterSpacing: "0.5px",
-                  color: "primary.main",
-                }}
-              >
-                Jev models
-              </Typography>
-              {filteredJevModels.map((m) => (
-                <EvaluatorModelRow
-                  key={m.value}
-                  m={m}
-                  selected={m.value === model}
-                  locked={jevModelsLocked}
-                  lockedTooltip="Not included in your plan"
-                  secondaryText={
-                    hasTypesafeKey ? m.value : "Add your TypeSafe API key"
-                  }
-                  onSelect={() => {
-                    if (!hasTypesafeKey) {
-                      // Close the picker so its backdrop doesn't swallow the
-                      // first click in the keys drawer.
-                      openKeysDrawer({
-                        model_name: m.value,
-                        providers: "typesafe",
-                      });
-                      return;
-                    }
-                    selectModel(m.value);
-                  }}
-                />
-              ))}
-            </>
-          )}
-
-          {/* Divider between sections */}
-          {(filteredFagiModels.length > 0 || filteredJevModels.length > 0) &&
-            apiModels.length > 0 && <Divider sx={{ my: 0.5 }} />}
+          <DecisionModelSection
+            groups={filteredDecisionModels}
+            model={model}
+            search={modelSearch}
+            outputType={outputType}
+            choiceCount={choiceCount}
+            jevLocked={jevModelsLocked}
+            loading={decisionCatalog.isLoading}
+            error={decisionCatalog.isError}
+            onRetry={decisionCatalog.refetch}
+            onSelect={selectModel}
+            onAddKey={openKeysDrawer}
+          />
 
           {/* Section 2: Your LLM Models (BYOK) */}
           {(apiModels.length > 0 || modelsLoading) && (
             <>
-              <Typography
-                variant="caption"
-                sx={{
-                  px: 1.5,
-                  pt: 1,
-                  pb: 0.5,
-                  display: "block",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  textTransform: "none",
-                  letterSpacing: "0.5px",
-                  color: "text.disabled",
-                }}
-              >
-                Your Models
-              </Typography>
+              <PickerSectionLabel>Your models</PickerSectionLabel>
               {apiModels.map((m) => {
                 const available = m.is_available !== false;
                 const logoUrl = m.logo_url;
+                const meta = [m.providers, !available && "Add API key"]
+                  .filter(Boolean)
+                  .join(" · ");
                 return (
-                  <MenuItem
+                  <PickerRow
                     key={m.model_name}
+                    icon={
+                      logoUrl ? (
+                        <Box
+                          component="img"
+                          src={logoUrl}
+                          alt=""
+                          sx={{
+                            width: 16,
+                            height: 16,
+                            borderRadius: "4px",
+                            flexShrink: 0,
+                            ...getProviderLogoFilterSx(m.providers),
+                          }}
+                        />
+                      ) : (
+                        "solar:box-linear"
+                      )
+                    }
+                    label={m.model_name}
+                    meta={meta}
                     selected={m.model_name === model}
+                    trailing={
+                      !available
+                        ? "key"
+                        : m.model_name === model
+                          ? "check"
+                          : undefined
+                    }
                     onClick={() => {
                       if (!available) {
                         // Open keys drawer for this model; close the picker
@@ -1494,84 +1476,7 @@ const ModelSelector = ({
                       }
                       selectModel(m.model_name);
                     }}
-                    sx={{
-                      mx: 0.5,
-                      borderRadius: "6px",
-                      py: 0.75,
-                      gap: 1,
-                      ...(!available && {
-                        opacity: 0.8,
-                        "&:hover": { backgroundColor: "status.danger.bg" },
-                      }),
-                    }}
-                  >
-                    {logoUrl ? (
-                      <Box
-                        component="img"
-                        src={logoUrl}
-                        sx={{
-                          width: 18,
-                          height: 18,
-                          borderRadius: "4px",
-                          flexShrink: 0,
-                          ...getProviderLogoFilterSx(m.providers),
-                        }}
-                      />
-                    ) : (
-                      <Iconify
-                        icon="solar:box-linear"
-                        width={20}
-                        sx={{
-                          color: available
-                            ? "text.secondary"
-                            : "status.danger.fg",
-                          flexShrink: 0,
-                        }}
-                      />
-                    )}
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography
-                        variant="body2"
-                        noWrap
-                        sx={{
-                          fontSize: "13px",
-                          fontWeight: 500,
-                          color: available
-                            ? "text.primary"
-                            : "status.danger.fg",
-                        }}
-                      >
-                        {m.model_name}
-                      </Typography>
-                      {m.providers && (
-                        <Typography
-                          variant="caption"
-                          noWrap
-                          sx={{
-                            fontSize: "12px",
-                            color: available
-                              ? "text.secondary"
-                              : "status.danger.fg",
-                          }}
-                        >
-                          {m.providers}
-                        </Typography>
-                      )}
-                    </Box>
-                    {!available ? (
-                      <Iconify
-                        icon="solar:key-linear"
-                        width={16}
-                        sx={{ color: "status.danger.fg", flexShrink: 0 }}
-                      />
-                    ) : m.model_name === model ? (
-                      <Iconify
-                        icon="solar:check-linear"
-                        width={16}
-                        sx={{ color: "primary.main", flexShrink: 0 }}
-                      />
-                    ) : null}
-                  </MenuItem>
+                  />
                 );
               })}
               {(modelsLoading || isFetchingNextPage) && (
@@ -1586,13 +1491,18 @@ const ModelSelector = ({
 
           {/* Empty state */}
           {!modelsLoading &&
+            !decisionCatalog.isLoading &&
+            !decisionCatalog.isError &&
             filteredFagiModels.length === 0 &&
-            filteredJevModels.length === 0 &&
+            filteredDecisionModels.length === 0 &&
             apiModels.length === 0 && (
               <Typography
-                variant="body2"
-                color="text.disabled"
-                sx={{ py: 3, textAlign: "center", fontSize: "13px" }}
+                sx={{
+                  py: 3,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "text.disabled",
+                }}
               >
                 No models found
               </Typography>
@@ -1632,7 +1542,7 @@ const ModelSelector = ({
             <Box sx={{ flex: 1 }}>
               <Typography
                 variant="body2"
-                sx={{ fontSize: "13px", fontWeight: 500 }}
+                sx={{ fontSize: "12px", fontWeight: 500 }}
               >
                 Use Internet
               </Typography>
@@ -1642,7 +1552,7 @@ const ModelSelector = ({
                 sx={{ fontSize: "12px" }}
               >
                 {isJevModel
-                  ? "Jev does not support internet access. Your selection is preserved."
+                  ? `${typedModelName} does not support internet access through this setting. Your selection is preserved.`
                   : "Search the web during evaluation"}
               </Typography>
             </Box>
@@ -1721,7 +1631,7 @@ const ModelSelector = ({
                 <Box sx={{ flex: 1 }}>
                   <Typography
                     variant="body2"
-                    sx={{ fontSize: "13px", fontWeight: 500 }}
+                    sx={{ fontSize: "12px", fontWeight: 500 }}
                   >
                     {item.label}
                   </Typography>
@@ -1731,7 +1641,7 @@ const ModelSelector = ({
                     sx={{ fontSize: "12px" }}
                   >
                     {isJevModel
-                      ? `Jev does not support ${item.key === "injection" ? "automatic context" : item.label.toLowerCase()}. Your selection is preserved.`
+                      ? `${typedModelName} does not support ${item.key === "injection" ? "automatic context" : item.label.toLowerCase()}. Your selection is preserved.`
                       : item.desc}
                   </Typography>
                 </Box>
@@ -1772,7 +1682,7 @@ const ModelSelector = ({
                             sx={{ mr: 0.5, color: "text.disabled" }}
                           />
                         ),
-                        sx: { fontSize: "13px", height: 30 },
+                        sx: { fontSize: "12px", height: 30 },
                       }}
                     />
                   </Box>
@@ -1802,7 +1712,7 @@ const ModelSelector = ({
                               : "text.disabled",
                           }}
                         />
-                        <Typography variant="body2" sx={{ fontSize: "13px" }}>
+                        <Typography variant="body2" sx={{ fontSize: "12px" }}>
                           {conn.name}
                         </Typography>
                       </Box>
@@ -1819,7 +1729,7 @@ const ModelSelector = ({
                   <MenuItem disabled sx={{ py: 1 }}>
                     <Typography
                       sx={{
-                        fontSize: 13,
+                        fontSize: 12,
                         fontStyle: "italic",
                         color: "text.disabled",
                       }}
@@ -1833,7 +1743,7 @@ const ModelSelector = ({
                   onClick={() => {
                     setPlusAnchor(null);
                     setPlusSubmenu(null);
-                    navigate("/dashboard/settings/falcon-ai-connectors");
+                    navigate(paths.dashboard.settings.falconAIConnectors);
                   }}
                   sx={{ borderRadius: "6px", py: 0.75, gap: 1 }}
                 >
@@ -1842,7 +1752,7 @@ const ModelSelector = ({
                     width={16}
                     sx={{ color: "text.secondary" }}
                   />
-                  <Typography variant="body2" sx={{ fontSize: "13px" }}>
+                  <Typography variant="body2" sx={{ fontSize: "12px" }}>
                     Manage connectors
                   </Typography>
                 </MenuItem>
@@ -2132,7 +2042,7 @@ const ModelSelector = ({
             !pending ||
             disabled ||
             provider.toLowerCase() !== pending.providers?.toLowerCase() ||
-            (JEV_MODEL_VALUES.has(pending.model_name) && jevModelsLocked)
+            (isJevDecisionModel(pending.model_name) && jevModelsLocked)
           )
             return;
           selectModel(pending.model_name);
@@ -2150,6 +2060,8 @@ ModelSelector.propTypes = {
   showPlus: PropTypes.bool,
   hideDatasetContextToggle: PropTypes.bool,
   openModelMenuSignal: PropTypes.number,
+  outputType: PropTypes.string,
+  choiceCount: PropTypes.number,
 };
 
 export default ModelSelector;

@@ -70,6 +70,14 @@ MEMBER_FIELDS = (
     "keywords",
     "background_noise",
     "max_turns",
+    "actors",
+    # Who talked before the run, what starts it, the world's faults and the scenario's own actor limits: each
+    # changes what a scenario tests, so an edit to one alone is a change.
+    "pre_run",
+    "history",
+    "starts_with",
+    "faults",
+    "limits",
 )
 
 
@@ -100,6 +108,10 @@ class Pieces:
 
 def versioning_enabled() -> bool:
     return bool(getattr(settings, "HARNESS_VERSIONING_ENABLED", False))
+
+
+def actors_enabled() -> bool:
+    return bool(getattr(settings, "HARNESS_ACTORS_ENABLED", False))
 
 
 def environment_head(job: HostedHarnessJob) -> HostedHarnessJob | None:
@@ -188,14 +200,53 @@ def _stage_outputs(pair_body: bytes) -> list[dict[str, Any]]:
     return authoring_stage_outputs_from_archive(pair_body)
 
 
+def run_contract(
+    job: HostedHarnessJob,
+    split: archives.SplitArchive,
+    *,
+    built: bool,
+    full_build: bool = True,
+) -> dict[str, Any]:
+    """The contract a version runs with, as its readers show it; recorded beside the authored one, which diffs
+    compare.
+
+    A build can amend the authored contract while it builds (a tool served from the agent's tools service instead
+    of imported, say) and seals the amended one, so a version a full build sealed from this tree has the sealed
+    contract. A save (``full_build`` False) reseals, and any other version records, the author's entries again, so
+    each tool it did not change is reached as the default version runs it, recorded here so a later read stops at
+    this version instead of walking back through its ancestry.
+    """
+    from simulate.selectors.environment_documents import (
+        reach_as_built,
+        version_contract,
+    )
+
+    default = job.environment_version
+    authored = _json(split.environment, "contract.json")
+    authored = authored if isinstance(authored, dict) else {}
+    sealed = _json(split.sealed, archives.SEALED_CONTRACT) if built else None
+    if isinstance(sealed, dict) and sealed:
+        return sealed if full_build else reach_as_built(job, sealed, authored, default)
+    if default is not None and default.contract_hash_raw == hashing.contract_hash_raw(
+        split.environment
+    ):
+        inherited = version_contract(job)
+        if inherited:
+            return inherited
+    return reach_as_built(job, authored, authored, default)
+
+
 def prepare_pieces(
     job: HostedHarnessJob,
     split: archives.SplitArchive,
     *,
     outputs: list[dict[str, Any]],
     authoring_revision: str,
+    built: bool = False,
+    full_build: bool = True,
 ) -> Pieces:
-    """Pack, key and hash both pieces and their readable documents; stores nothing."""
+    """Pack, key and hash both pieces and their readable documents; stores nothing. ``built``: the archive's sealed
+    bundle was sealed from this tree, by a full build unless ``full_build`` is False (a save's reseal)."""
     payload = job.payload or {}
     connector = str((payload.get("agent") or {}).get("connector") or "")
     environment_body = archives.pack_archive(split.environment)
@@ -205,12 +256,23 @@ def prepare_pieces(
     )
     suite_key = archives.suite_key(job.organization_id, job.id, suite_body)
     contract = _json(split.environment, "contract.json") or {}
+    from simulate.selectors.environment_documents import RUN_CONTRACT_VERSION
+
+    runs_with = run_contract(job, split, built=built, full_build=full_build)
     sub_goals = _sub_goals(split.environment)
     scenarios = suite_documents(split.suite)
     environment_documents = {
         "contract": contract,
+        # Only where it differs from the authored contract, so a version's diff still compares authored ones.
+        **(
+            {"run_contract": runs_with, "run_contract_version": RUN_CONTRACT_VERSION}
+            if runs_with != contract
+            else {}
+        ),
         "sub_goals": sub_goals,
         "sub_goal_digests": hashing.sub_goal_digests(sub_goals),
+        "actor_digests": hashing.actor_digests(split.environment),
+        "actor_names": hashing.actor_names(split.environment),
         "file_digests": _file_digests(split.environment),
         "stage_outputs": [
             one for one in outputs if one.get("kind") not in SUITE_OUTPUT_KINDS
@@ -455,8 +517,18 @@ def _proved_at(proof: Mapping[str, Any]) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+# Fields a scenario only has when it uses them; empty is the same as absent, so a member stored before they were kept
+# compares equal to the same scenario now.
+OPTIONAL_MEMBER_FIELDS = ("pre_run", "history", "starts_with", "faults", "limits")
+
+
 def _member_content(document: Mapping[str, Any]) -> dict[str, Any]:
-    return {field: document[field] for field in MEMBER_FIELDS if field in document}
+    return {
+        field: document[field]
+        for field in MEMBER_FIELDS
+        if field in document
+        and not (field in OPTIONAL_MEMBER_FIELDS and not document[field])
+    }
 
 
 def _add_members(
@@ -477,6 +549,27 @@ def _add_members(
     )
 
 
+def with_actor_digests(
+    version: HarnessEnvironmentVersion, documents: Mapping[str, Any]
+) -> dict[str, Any]:
+    """A version's documents with its actor digests. A version saved before they were recorded has its cast read
+    from its own files, so an actor it already had never reads as added."""
+    documents = dict(documents or {})
+    if (
+        "actor_digests" not in documents or "actor_names" not in documents
+    ) and version.archive_object_key:
+        try:
+            files = archives.read_archive(
+                archives.get_archive(version.archive_object_key)
+            )
+        except (S3Error, HostedHarnessError):
+            # Its files are gone or unreadable: its cast is unknown, as before.
+            return documents
+        documents.setdefault("actor_digests", hashing.actor_digests(files))
+        documents["actor_names"] = hashing.actor_names(files)
+    return documents
+
+
 def environment_change(
     base: HarnessEnvironmentVersion | None,
     contract: Any,
@@ -485,7 +578,7 @@ def environment_change(
     """The environment documents' diff against ``base``, and its summary."""
     diff = None
     if base is not None:
-        previous = base.documents or {}
+        previous = with_actor_digests(base, base.documents)
         diff = diffs.environment_diff(
             previous_contract=previous.get("contract"),
             contract=contract,
@@ -493,6 +586,10 @@ def environment_change(
             sub_goals=documents.get("sub_goal_digests") or {},
             previous_files=previous.get("file_digests"),
             files=documents.get("file_digests") or {},
+            previous_actors=previous.get("actor_digests"),
+            actors=documents.get("actor_digests"),
+            previous_actor_names=previous.get("actor_names"),
+            actor_names=documents.get("actor_names"),
         )
     return diff, diffs.summarize_environment(diff)
 
@@ -665,7 +762,12 @@ def record_authoring(
     pair_key = archives.pair_key(job.organization_id, job.id, pair_body)
     revision = authoring_content_digest(pair_body)
     pieces = prepare_pieces(
-        job, split, outputs=_stage_outputs(pair_body), authoring_revision=revision
+        job,
+        split,
+        outputs=_stage_outputs(pair_body),
+        authoring_revision=revision,
+        # Only a build seals this archive's own bundle; an edit carries an older one.
+        built=origin in PROVED_ORIGINS and SEALED_MANIFEST in split.sealed,
     )
     if origin in USER_ORIGINS:
         # Refused before anything is uploaded; checked again under the lock below.
@@ -1450,9 +1552,14 @@ def move_default(
         if piece == "agent":
             return _move_agent_default(locked, version_id, expected_default_id, user)
         require_no_rebuild(locked, piece=piece)
-        version = model.no_workspace_objects.filter(
+        versions = model.no_workspace_objects.filter(
             job=locked, id=version_id, status=VersionStatus.ACTIVE
-        ).first()
+        )
+        if piece == "suite":
+            # A suite version private to a fix never becomes the default. The model is
+            # HarnessSuiteVersion here; mypy checks the lookup on both models.
+            versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
+        version = versions.first()
         if version is None:
             raise _not_pickable(piece)
         current = getattr(locked, f"{piece}_version")

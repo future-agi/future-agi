@@ -380,7 +380,7 @@ const TimelineRow = ({
               <Typography
                 component="span"
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: isSelected ? 600 : 500,
                   color: "text.primary",
                   lineHeight: 1.4,

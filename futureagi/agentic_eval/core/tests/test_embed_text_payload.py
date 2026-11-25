@@ -114,9 +114,9 @@ class TestEmbedTextPayload:
         with patch.object(client.session, "post", side_effect=service):
             result = _call(client.embed_text, eval_input)
 
-        assert not (
-            isinstance(result, RuntimeError) and "422" in str(result)
-        ), f"embed_text raised {result!r}"
+        assert not (isinstance(result, RuntimeError) and "422" in str(result)), (
+            f"embed_text raised {result!r}"
+        )
         assert result == VECTOR
         sent = service.payloads[-1]["text"]
         assert isinstance(sent, list) and all(isinstance(t, str) for t in sent)

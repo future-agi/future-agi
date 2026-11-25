@@ -4,9 +4,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import {
+  CHECK_POLL_MS,
   mapAgentDetail,
   mapVersionDetail,
-  passRateOf,
+  pollWhileChecking,
   toRun,
   toVersion,
   useAgentDetail,
@@ -74,20 +75,6 @@ beforeEach(() => {
   listHarnessEnvironments.mockReset();
 });
 
-describe("passRateOf", () => {
-  it("is passed over everything measured, as a whole percent", () => {
-    expect(passRateOf({ passed: 3, failed: 7, skipped: 0 })).toBe(30);
-    expect(passRateOf({ passed: 2, failed: 0, skipped: 1 })).toBe(67);
-  });
-
-  it("is null when nothing was measured or outcomes are null", () => {
-    expect(passRateOf({ passed: 0, failed: 0, skipped: 0 })).toBeNull();
-    expect(
-      passRateOf({ passed: null, failed: null, skipped: null }),
-    ).toBeNull();
-  });
-});
-
 describe("toRun", () => {
   it("maps an environment run", () => {
     expect(toRun(ENVIRONMENT_RUN)).toEqual({
@@ -102,10 +89,20 @@ describe("toRun", () => {
         name: "ride-voice-agent",
       },
       agentVersion: { id: "93956ae6", number: 3 },
+      environmentVersion: { id: "7e1c2a90", number: 7 },
+      partial: false,
       passed: 3,
       failed: 7,
+      errored: 0,
+      noScore: 0,
       skipped: 0,
-      passRate: 30,
+      // The trial pass the environment's runs list shows, never the older call-based rate.
+      passRate: 33.33,
+      trialsPassed: 3,
+      trialsEvaluated: 9,
+      trialsInconclusive: 1,
+      trialsExcluded: 0,
+      scored: 10,
       startedAt: "2026-10-14T11:58:53.368130+00:00",
       completedAt: "2026-10-14T12:27:36.569945+00:00",
     });
@@ -115,6 +112,8 @@ describe("toRun", () => {
     const r = toRun(SIMULATE_RUN);
     expect(r.environment).toBeNull();
     expect(r.agentVersion).toBeNull();
+    expect(r.environmentVersion).toBeNull();
+    expect(r.partial).toBeNull();
     expect(r.passRate).toBeNull();
     expect(r.completedAt).toBeNull();
   });
@@ -129,8 +128,36 @@ describe("toVersion", () => {
       label: "v2",
       isActive: true,
       isLatest: true,
+      isDraft: false,
       commitMessage: "Shorter greeting",
       createdAt: "2026-10-15T09:00:00Z",
+      origin: null,
+      check: null,
+      checkStep: null,
+      checkStartedAt: null,
+      checkFailure: null,
+      environmentsCount: 0,
+      source: null,
+    });
+  });
+
+  it("carries a version's origin, check, environments and source when the list has them", () => {
+    const raw = {
+      ...HOSTED_AGENT_DETAIL.versions[0],
+      origin: "sync",
+      preflight_status: "pending",
+      environments_count: 2,
+      source: {
+        kind: "github",
+        repository: "acme/agent",
+        commit_sha: "a".repeat(40),
+      },
+    };
+    expect(toVersion(raw)).toMatchObject({
+      origin: "sync",
+      check: "pending",
+      environmentsCount: 2,
+      source: { kind: "github", repository: "acme/agent" },
     });
   });
 });
@@ -181,6 +208,35 @@ describe("mapVersionDetail", () => {
       commitMessage: null,
       createdAt: "2026-10-15T09:00:00Z",
     });
+  });
+
+  it("reads a linked version's check the way the list does", () => {
+    const failed = {
+      ...CODE_VERSION_DETAIL,
+      status: "draft",
+      preflight_status: "failed",
+      check_step: null,
+      check_failure: {
+        code: "agent_reading_unavailable",
+        message: "Reading the agent couldn't finish. Try again.",
+        retryable: true,
+      },
+      environments_count: 2,
+    };
+
+    const v = mapVersionDetail(failed);
+
+    expect(v).toMatchObject({
+      check: "failed",
+      isDraft: true,
+      environmentsCount: 2,
+      checkFailure: {
+        code: "agent_reading_unavailable",
+        message: "Reading the agent couldn't finish. Try again.",
+        retryable: true,
+      },
+    });
+    expect(v).toMatchObject({ ...toVersion(failed), agentKind: "source" });
   });
 
   it("keeps a hosted version's snapshot and masked key", () => {
@@ -238,12 +294,16 @@ describe("hooks", () => {
         id: "e5391b8a",
         name: "ride-voice-agent",
         status: "ready",
+        agentVersion: { id: "93956ae6", number: 3 },
+        policy: "follow",
         lastRun: toRun(ENVIRONMENT_RUN),
       },
       {
         id: "e9999999",
         name: "Refund edge cases",
         status: "failed",
+        agentVersion: null,
+        policy: "follow",
         lastRun: null,
       },
     ]);
@@ -307,5 +367,31 @@ describe("hooks", () => {
       },
     );
     expect(spy).toHaveBeenCalledWith({ queryKey: ["agents", "detail", "a1"] });
+  });
+});
+
+describe("pollWhileChecking", () => {
+  const query = (...pages) => ({
+    state: { data: { pages: pages.map((results) => ({ results })) } },
+  });
+
+  it("polls while any loaded version is still being checked", () => {
+    expect(
+      pollWhileChecking(
+        query(
+          [{ preflight_status: "passed" }],
+          [{ preflight_status: "pending" }],
+        ),
+      ),
+    ).toBe(CHECK_POLL_MS);
+  });
+
+  it("stops once no version is being checked", () => {
+    expect(
+      pollWhileChecking(
+        query([{ preflight_status: "passed" }, { preflight_status: null }]),
+      ),
+    ).toBe(false);
+    expect(pollWhileChecking({ state: {} })).toBe(false);
   });
 });

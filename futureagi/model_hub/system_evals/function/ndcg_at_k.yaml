@@ -33,25 +33,31 @@ config:
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         import json
-        import ast
         import math
-        def _parse(val):
-            if isinstance(val, str):
-                try:
-                    val = json.loads(val)
-                except (json.JSONDecodeError, ValueError):
-                    try:
-                        val = ast.literal_eval(val)
-                    except (ValueError, SyntaxError):
-                        pass
+        def parse_items(val):
             if val is None:
                 return []
-            # Preserve dictionary key handling; scalar IDs are single items.
-            if isinstance(val, (list, tuple, set, dict)):
-                return list(val)
-            return [val]
-        reference = _parse(kwargs.get("reference", expected))
-        hypothesis = _parse(kwargs.get("hypothesis", output))
+            if isinstance(val, list):
+                return val
+            if isinstance(val, str):
+                try:
+                    parsed = json.loads(val)
+                except (json.JSONDecodeError, ValueError):
+                    try:
+                        import ast
+                        parsed = ast.literal_eval(val)
+                    except ImportError:
+                        if val.lstrip().startswith(("'", '"', "[", "(", "{")):
+                            raise ValueError("Use valid JSON for quoted IDs or collections in the local executor")
+                        return [val]
+                    except (ValueError, SyntaxError):
+                        return [val]
+                return [parsed] if isinstance(parsed, (str, int, float)) else parsed
+            if isinstance(val, (int, float)):
+                return [val]
+            return list(val)
+        reference = parse_items(kwargs.get("reference", expected))
+        hypothesis = parse_items(kwargs.get("hypothesis", output))
         k = kwargs.get("k", None)
         if not reference:
             return {"score": 0.0, "reason": "NDCG@K requires at least one ground-truth item"}

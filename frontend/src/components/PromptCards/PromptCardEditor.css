@@ -16,7 +16,7 @@
   border: none !important;
   padding: 0;
   /* Design system: reading text and inputs are 13/20. */
-  font-size: 13px;
+  font-size: 12px;
   line-height: 20px;
   color: var(--text-primary);
   background-color: transparent;

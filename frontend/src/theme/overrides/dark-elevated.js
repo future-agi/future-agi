@@ -18,8 +18,10 @@ export function darkElevatedStyles(theme, { boxShadow, borderOnly } = {}) {
     return { border: `1px solid ${border}` };
   }
 
+  // No border here: the dropdown shadow already draws the 1px ring
+  // (0 0 0 1px …), and a border on top of it doubles the outline.
   return {
-    border: `1px solid ${border}`,
+    ...(boxShadow && { border: `1px solid ${border}` }),
     backgroundColor: theme.palette.background.overlay,
     "--input-surface": theme.palette.background.overlay,
     backgroundImage: "none",
