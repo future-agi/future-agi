@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 
@@ -273,7 +274,88 @@ func TestListModels_PrefixedModelQuotesTheProviderItNames(t *testing.T) {
 		if p := m.Pricing; p == nil || math.Abs(p.InputPerMTokens-entry.Pricing.InputPerMTok()) > 1e-9 {
 			t.Errorf("pricing = %+v, want claude-sonnet-5-5's %v per M in", p, entry.Pricing.InputPerMTok())
 		}
+		for _, pathID := range []string{m.ID, "anthropic%2Fclaude-sonnet-5-5"} {
+			req := httptest.NewRequest(http.MethodGet, "/v1/models/"+pathID, nil)
+			req.Header.Set("Authorization", "Bearer "+orgKey)
+			w := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(w, req)
+			var detail models.EnrichedModelObject
+			if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &detail) != nil || !reflect.DeepEqual(detail, m) {
+				t.Errorf("detail for %s: status %d body %s, want listed object %+v", pathID, w.Code, w.Body.String(), m)
+			}
+		}
 		return
 	}
 	t.Fatalf("anthropic/claude-sonnet-5-5 not listed: %s", w.Body.String())
+}
+
+func TestListModels_QuoteUsesEligibleInstance(t *testing.T) {
+	for _, tc := range []struct {
+		keyType, credential string
+	}{
+		{"internal", "org-key"}, {"internal", ""}, {"byok", "org-key"}, {"byok", ""},
+	} {
+		t.Run(tc.keyType+"/"+tc.credential, func(t *testing.T) {
+			const key = "sk-agentcc-discovery"
+			cfg := config.DefaultConfig()
+			cfg.Auth.Enabled = true
+			cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "discovery", Key: key, KeyType: tc.keyType, Metadata: map[string]string{"org_id": "team"}}}
+			cfg.Providers["google"] = config.ProviderConfig{APIFormat: "gemini", BaseURL: "https://generativelanguage.googleapis.com", Models: []string{"explicit", "implicit"}}
+			registry, err := providers.NewRegistry(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := tenant.NewStore()
+			store.Set("team", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+				"google": {Enabled: true, APIKey: tc.credential, BaseURL: "https://us-central1-aiplatform.googleapis.com", APIFormat: "gemini", Models: []string{"explicit"}},
+			}})
+			table := make(map[string]*modeldb.ModelInfo)
+			for _, model := range []string{"explicit", "implicit"} {
+				for provider, rate := range map[string]float64{"gemini": 1e-6, "vertex_ai": 5e-6} {
+					table[provider+"/"+model] = &modeldb.ModelInfo{Provider: provider, Mode: modeldb.ModeChat, Pricing: modeldb.PricingInfo{InputPerToken: rate}}
+				}
+			}
+			var db atomic.Pointer[modeldb.ModelDB]
+			db.Store(modeldb.New(table, nil))
+			srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, &db, store, nil)
+			srv.ready.Store(true)
+			get := func(path string, v any) {
+				t.Helper()
+				r := httptest.NewRequest(http.MethodGet, path, nil)
+				r.Header.Set("Authorization", "Bearer "+key)
+				w := httptest.NewRecorder()
+				srv.httpServer.Handler.ServeHTTP(w, r)
+				if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), v) != nil {
+					t.Fatalf("GET %s: %d %s", path, w.Code, w.Body.String())
+				}
+			}
+			var list models.EnrichedModelListResponse
+			get("/v1/models", &list)
+			want := map[string]float64{"explicit": 1}
+			if tc.credential != "" {
+				want["explicit"] = 5
+			}
+			if tc.keyType == "internal" {
+				want["implicit"] = 1
+			}
+			for _, m := range list.Data {
+				rate, ok := want[m.ID]
+				if !ok {
+					continue
+				}
+				if m.Pricing == nil || m.Pricing.InputPerMTokens != rate {
+					t.Errorf("%s pricing = %+v, want %v per M", m.ID, m.Pricing, rate)
+				}
+				var detail models.EnrichedModelObject
+				get("/v1/models/"+m.ID, &detail)
+				if !reflect.DeepEqual(detail, m) {
+					t.Errorf("%s detail %+v differs from list %+v", m.ID, detail, m)
+				}
+				delete(want, m.ID)
+			}
+			if len(want) != 0 {
+				t.Fatalf("missing models: %v", want)
+			}
+		})
+	}
 }

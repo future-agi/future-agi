@@ -175,7 +175,7 @@ func shouldApplyOrgProviderOverride(rc *models.RequestContext) bool {
 	if rc == nil {
 		return false
 	}
-	if rc.Metadata["key_type"] == "internal" {
+	if !allowsImplicitOrgOverride(rc.Metadata["key_type"]) {
 		return false
 	}
 	if rc.Metadata["org_provider"] == "true" {
@@ -186,6 +186,9 @@ func shouldApplyOrgProviderOverride(rc *models.RequestContext) bool {
 	}
 	return true
 }
+
+// Internal keys keep the base provider unless the model explicitly selects an org provider.
+func allowsImplicitOrgOverride(keyType string) bool { return keyType != "internal" }
 
 func mergeModelObjects(globalModels, orgModels []models.ModelObject) []models.ModelObject {
 	if len(orgModels) == 0 {
@@ -2485,15 +2488,10 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 		allModels = mergeModelObjects(allModels, scopedModels)
 	}
 
-	orgID := h.headerOrgID(r)
-	tables := map[string]string{} // price-table name per provider, resolved once
+	quote := h.discoveryQuote(r)
 	enriched := make([]models.EnrichedModelObject, 0, len(allModels))
 	for _, m := range allModels {
-		table, ok := tables[m.OwnedBy]
-		if !ok {
-			table = h.priceTableName(orgID, m.OwnedBy)
-			tables[m.OwnedBy] = table
-		}
+		table := quote(m)
 		enriched = append(enriched, enrichModel(db, m, table))
 	}
 
@@ -2559,7 +2557,7 @@ func enrichModel(db *modeldb.ModelDB, m models.ModelObject, table string) models
 func (h *Handlers) priceTableName(orgID, providerID string) string {
 	if orgID != "" && h.orgProviderCache != nil && h.tenantStore != nil {
 		if cfg := h.tenantStore.Get(orgID); cfg != nil {
-			if pc := cfg.Providers[providerID]; pc != nil && pc.Enabled {
+			if pc := cfg.Providers[providerID]; pc != nil && pc.Enabled && pc.HasCredentials() {
 				return h.orgProviderCache.PriceTableName(providerID, pc)
 			}
 		}
@@ -2571,12 +2569,29 @@ func (h *Handlers) priceTableName(orgID, providerID string) string {
 	return providers.PriceTableName(p)
 }
 
-// headerOrgID is the org of the API key presented in r's headers, or "".
-func (h *Handlers) headerOrgID(r *http.Request) string {
-	if ki := h.lookupHeaderKey(r); ki != nil {
-		return ki.Metadata["org_id"]
+// discoveryQuote caches table names by instance, not just provider ID: the
+// same internal key may see base and explicitly selected org models together.
+func (h *Handlers) discoveryQuote(r *http.Request) func(models.ModelObject) string {
+	var orgID, keyType string
+	var cfg *tenant.OrgConfig
+	if key := h.lookupHeaderKey(r); key != nil && h.tenantStore != nil {
+		orgID, keyType = key.Metadata["org_id"], key.KeyType
+		cfg = h.tenantStore.Get(orgID)
 	}
-	return ""
+	type instance struct{ org, provider string }
+	tables := make(map[instance]string)
+	return func(m models.ModelObject) string {
+		id := instance{provider: m.OwnedBy}
+		if cfg != nil && cfg.Providers[m.OwnedBy] != nil && (allowsImplicitOrgOverride(keyType) ||
+			len(orgModelMatches(cfg, []string{m.OwnedBy}, m.ID)) != 0) {
+			id.org = orgID
+		}
+		if table, ok := tables[id]; ok {
+			return table
+		}
+		tables[id] = h.priceTableName(id.org, id.provider)
+		return tables[id]
+	}
 }
 
 // lookupHeaderKey returns the API key presented in r's headers, or nil.
@@ -2652,7 +2667,7 @@ func (h *Handlers) GetModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	found := func(m models.ModelObject) {
-		em := enrichModel(h.ModelDB(), m, h.priceTableName(h.headerOrgID(r), m.OwnedBy))
+		em := enrichModel(h.ModelDB(), m, h.discoveryQuote(r)(m))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(em)

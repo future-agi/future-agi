@@ -29,6 +29,16 @@ type paramRoute struct {
 	handler http.HandlerFunc
 }
 
+type remainderRoute struct {
+	method, prefix, name string
+	handler              http.HandlerFunc
+}
+
+func (rr remainderRoute) match(path string) (string, bool) {
+	value, ok := strings.CutPrefix("/"+strings.Trim(path, "/"), rr.prefix)
+	return value, ok && value != ""
+}
+
 // paramKey indexes parametric routes by segment count and HTTP method.
 type paramKey struct {
 	segments int
@@ -42,6 +52,9 @@ type Router struct {
 
 	// Parametric routes indexed by (segment count, method) for fast narrowing.
 	paramIndex map[paramKey][]paramRoute
+
+	// Terminal remainder parameters under literal prefixes, tried after exact routes.
+	remainders []remainderRoute
 
 	// Track which paths exist (for 405 detection).
 	// Key is the normalized path pattern.
@@ -122,6 +135,11 @@ func (rt *Router) handleInspected(method, pattern string, handler http.HandlerFu
 		return
 	}
 
+	if prefix, param, ok := strings.Cut(pattern, "{"); ok && strings.HasSuffix(param, "...}") {
+		rt.remainders = append(rt.remainders, remainderRoute{method, prefix, strings.TrimSuffix(param, "...}"), handler})
+		return
+	}
+
 	// Parametric route — pre-parse and index by segment count.
 	trimmed := strings.Trim(pattern, "/")
 	rawParts := strings.Split(trimmed, "/")
@@ -177,8 +195,20 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	otherMethod := false
+	for _, route := range rt.remainders {
+		if value, ok := route.match(path); ok {
+			if route.method == method {
+				setPathParams(r, map[string]string{route.name: value})
+				route.handler(w, r)
+				return
+			}
+			otherMethod = true
+		}
+	}
+
 	// Phase 3: Check for method-not-allowed (path matches but different method).
-	if rt.isMethodNotAllowed(path, method, pathParts, segCount) {
+	if otherMethod || rt.isMethodNotAllowed(path, method, pathParts, segCount) {
 		models.WriteError(w, &models.APIError{
 			Status:  http.StatusMethodNotAllowed,
 			Type:    models.ErrTypeInvalidRequest,
@@ -195,6 +225,11 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // method. It matches the way ServeHTTP does, so ServeHTTP answers a path it
 // rejects with 404 and runs no handler.
 func (rt *Router) ServesPath(path string) bool {
+	for _, route := range rt.remainders {
+		if _, ok := route.match(path); ok {
+			return true
+		}
+	}
 	if rt.knownPaths[path] {
 		return true
 	}
