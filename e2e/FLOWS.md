@@ -3071,7 +3071,7 @@
 
 **Goal:** Write a question for Jev, add example questions without losing the Ask button, confirm the read, and start the run
 
-**Spec:** `flows/observe/ask-jev-composer.spec.ts:82`
+**Spec:** `flows/observe/ask-jev-composer.spec.ts:123`
 
 **Tags:** —
 
@@ -3079,20 +3079,25 @@
 
 1. send 4 traces to a new Observe project
 2. save the org TypeSafe key through the endpoint AI Providers uses
-3. open the project's Traces view, its Evaluate menu, and choose Ask a question
-4. type a question and add two example questions from Try one
-5. click Ask Jev and read the confirm for 4 traces
-6. click Start
+3. open the project's Traces view, its Evaluate menu, and choose Ask a question, with the count held back
+4. open Past questions, switch to the horizontal nav layout and narrow the window 40 px at a time, then restore the window, Past questions and the vertical layout
+5. type a question and add two example questions from Try one
+6. click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back
+7. click Ask Jev again and click Start
 
 **Backend state verified:**
 
 - POST /tracer/instant-eval/estimate/ answers rows_to_read 4 and needs_confirm true for the project's traces
+- no POST /tracer/instant-eval/start/ is sent from Enter on the confirm's focused Back
 - POST /tracer/instant-eval/start/ is sent confirmed for 4 rows and returns a task_id, and PG holds its tracer_eval_task and tracer_instant_eval_run for the actor org with rows_requested 4
 
 **Browser observations:**
 
+- Question 1 stays at the same height on the page while the count is held back and after the size cards land
+- with Past questions open on the horizontal nav layout, narrowing the window 40 px at a time from 1280 px to 600 px (until the composer is under 220 px), the size card stays inside its pane, the size block never overflows, and the pane does not scroll sideways while the composer has 240 px
 - the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it
-- Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button and has focus
+- Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button, and Back has focus
+- Enter on the focused Back closes the confirm and gives Ask Jev focus again
 
 ### OBS-E2E-065 — Ask Jev reads every trace and shows each answer
 
@@ -3375,14 +3380,14 @@
 
 **Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
 
-**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:44`
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:50`
 
 **Tags:** —
 
 **User steps:**
 
 1. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
-2. open the environment's Scenarios tab, choose Import evidence, then Add a transcript
+2. open the environment's Scenarios tab, choose Add scenarios, then Upload transcript or file
 3. paste a transcript whose second line has an unknown speaker, import it and read the refusal
 4. fix the line, name the transcript and import it
 5. land on the Scenarios tab with the import's review open

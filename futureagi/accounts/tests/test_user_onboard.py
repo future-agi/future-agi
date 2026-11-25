@@ -7,6 +7,7 @@ Tests the create_demo_traces_and_spans function to ensure:
 3. All demo data (projects, traces, sessions, spans) are created correctly
 """
 
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -145,6 +146,55 @@ class TestCreateDemoTracesAndSpans:
         assert projects.count() == 2
         assert Trace.objects.filter(project__in=projects).count() == 2
         assert ObservationSpan.objects.filter(project__in=projects).count() == 70
+
+    @pytest.mark.django_db(transaction=True)
+    def test_publication_with_missing_session_finishes_once(
+        self, user_with_workspace, monkeypatch
+    ):
+        from accounts.models.demo_seed import DemoTracePublication
+        from tfc.temporal.background_tasks.activities import publish_demo_trace_activity
+        from tracer.services.clickhouse.v2.adapter import CH_INSERT_COLUMNS
+
+        monkeypatch.setenv("CH25_TRACE_DUAL_WRITE", "true")
+        with patch("tfc.temporal.drop_in.start_activity"):
+            assert (
+                create_demo_traces_and_spans(
+                    user_with_workspace.organization_id, user_with_workspace.id
+                )
+                is None
+            )
+        trace = Trace.objects.get(
+            project__organization=user_with_workspace.organization,
+            project__trace_type="observe",
+        )
+        missing_id = uuid.uuid4()
+        Trace.objects.filter(pk=trace.pk).update(session_id=missing_id)
+        with (
+            patch("clickhouse_connect.get_client") as connect,
+            patch("accounts.user_onboard.logger") as log,
+        ):
+            client = connect.return_value.__enter__.return_value
+            client.query.return_value.named_results.return_value = [
+                {"name": col, "type": "String"}
+                for col in [*CH_INSERT_COLUMNS, "trace_name"]
+            ]
+            publish_demo_trace_activity(str(trace.pk))
+            publish_demo_trace_activity(str(trace.pk))
+
+        log.info.assert_called_once_with(
+            "demo_trace_session_missing",
+            trace_id=str(trace.pk),
+            session_id=str(missing_id),
+        )
+        assert DemoTracePublication.objects.get(trace=trace).completed_at is not None
+        writes = client.insert.call_args_list
+        assert [call.args[0] for call in writes] == ["traces", "spans"]
+        assert len(writes[1].args[1]) == 35
+        for call, column in zip(
+            writes, ("session_id", "trace_session_id"), strict=True
+        ):
+            index = call.kwargs["column_names"].index(column)
+            assert all(str(row[index]) == str(missing_id) for row in call.args[1])
 
     def test_creates_demo_projects_with_existing_workspace(self, user_with_workspace):
         """Demo projects are created with the existing default workspace."""
