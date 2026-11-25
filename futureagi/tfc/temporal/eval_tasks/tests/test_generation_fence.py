@@ -233,7 +233,9 @@ def instant_stale_entry(stale_running_entry):
 def _answers(task):
     from tracer.models.instant_eval import InstantEvalAnswer
 
-    return list(InstantEvalAnswer.objects.filter(task=task).values_list("label", flat=True))
+    return list(
+        InstantEvalAnswer.objects.filter(task=task).values_list("label", flat=True)
+    )
 
 
 @pytest.mark.django_db(transaction=True)

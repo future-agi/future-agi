@@ -133,7 +133,9 @@ class TemporalCliScriptTest(unittest.TestCase):
     def test_the_header_names_the_locked_temporalio(self):
         lock = tomllib.loads((ROOT / "futureagi/uv.lock").read_text(encoding="utf-8"))
         (locked,) = [p["version"] for p in lock["package"] if p["name"] == "temporalio"]
-        pinned = re.search(r"pinned for temporalio==(\S+) \(uv\.lock\)", SCRIPT.read_text())
+        pinned = re.search(
+            r"pinned for temporalio==(\S+) \(uv\.lock\)", SCRIPT.read_text()
+        )
         self.assertIsNotNone(pinned)
         self.assertEqual(pinned.group(1), locked)
 
