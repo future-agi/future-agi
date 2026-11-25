@@ -264,6 +264,27 @@ def test_a_filter_becomes_the_calls_it_matches_at_asking(
 
 
 @pytest.mark.django_db
+def test_a_filter_keeps_the_run_pages_order(organization, workspace, run, scenario):
+    calls = _calls(run, scenario, 3)
+    now = timezone.now()
+    for minutes, call in zip((5, 1, 9), calls, strict=True):
+        CallExecution.objects.filter(id=call.id).update(
+            started_at=now - timedelta(minutes=minutes)
+        )
+
+    frozen = _freeze(
+        organization,
+        workspace,
+        SelectionKind.FILTER,
+        [run],
+        filters={"call_execution_id": list(_ids(calls))},
+    )
+
+    # The page shows the latest start first.
+    assert frozen.call_ids == _ids([calls[1], calls[0], calls[2]])
+
+
+@pytest.mark.django_db
 def test_a_filter_the_run_page_does_not_take_is_refused(
     organization, workspace, run, scenario
 ):
@@ -354,8 +375,11 @@ def test_a_call_not_in_the_selected_runs_is_refused(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "kind", [SelectionKind.RUNS, SelectionKind.FILTER, SelectionKind.SCENARIOS]
+)
 def test_the_requests_workspace_context_does_not_widen_or_narrow_it(
-    organization, workspace, user, run, scenario
+    organization, workspace, user, run, scenario, kind
 ):
     from tfc.middleware.workspace_context import (
         get_current_workspace,
@@ -363,19 +387,25 @@ def test_the_requests_workspace_context_does_not_widen_or_narrow_it(
     )
 
     calls = _calls(run, scenario, 2)
+    picked = {
+        SelectionKind.RUNS: {},
+        SelectionKind.FILTER: {"filters": {"call_execution_id": list(_ids(calls))}},
+        SelectionKind.SCENARIOS: {"scenario_ids": [str(scenario.id)]},
+    }[kind]
     elsewhere = Workspace.objects.create(
         name=f"ws-{uuid.uuid4().hex[:6]}", organization=organization, created_by=user
     )
     before = get_current_workspace()
     set_workspace_context(workspace=elsewhere)
     try:
-        frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+        frozen = _freeze(organization, workspace, kind, [run], **picked)
         with pytest.raises(SelectionRefused):
-            _freeze(organization, elsewhere, SelectionKind.RUNS, [run])
+            _freeze(organization, elsewhere, kind, [run], **picked)
     finally:
         set_workspace_context(workspace=before)
 
-    assert frozen.call_ids == _ids(calls)
+    # The filter keeps the run page's order; the order is tested on its own.
+    assert sorted(frozen.call_ids) == sorted(_ids(calls))
 
 
 @pytest.mark.django_db
@@ -657,6 +687,64 @@ def test_each_saved_contract_and_seed_is_read_once_for_the_whole_check(
         )
 
     contract.assert_called_once()
+
+    # Every trial of one hosted run starts from the same sealed seed.
+    for call in CallExecution.objects.filter(id__in=frozen.call_ids):
+        call.call_metadata = {
+            "harness_trial_state": {
+                "recorded": True,
+                "start": {"state": "seeded", "against": "sealed_seed"},
+            }
+        }
+        call.save(update_fields=["call_metadata"])
+    trial = call_evidence.HostedTrial(
+        job_id=uuid.uuid4(),
+        connector="phone",
+        artifact_level="traces",
+        attempts=1,
+        trials=1,
+        environment_version_id=uuid.uuid4(),
+    )
+    start = Question(
+        name="Start?", kinds=(Kind.WORLD_STATE_START,), decision_model="jev-latest"
+    )
+    with (
+        patch.object(call_evidence, "hosted_trial", return_value=trial),
+        patch.object(
+            call_evidence,
+            "environment_files",
+            return_value={"store.json": b'{"rows": {"orders": []}}'},
+        ) as seed,
+    ):
+        check = check_before_launch(
+            frozen, [start], organization=organization, workspace_id=workspace.id
+        )
+
+    seed.assert_called_once_with(trial.environment_version_id)
+    assert check["questions"][0]["by_kind"]["world_state_start"]["present"] == 3
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("how", ["soft", "hard"])
+def test_a_call_deleted_since_freezing_refuses_the_check(
+    organization, workspace, run, scenario, how
+):
+    calls = _calls(run, scenario, 2)
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+    if how == "soft":
+        CallExecution.objects.filter(id=calls[1].id).update(deleted=True)
+    else:
+        CallExecution.objects.filter(id=calls[1].id).delete()
+
+    with pytest.raises(LaunchRefused) as refused:
+        check_before_launch(
+            frozen, [TOOLS], organization=organization, workspace_id=workspace.id
+        )
+
+    assert refused.value.code == "calls_gone"
+    assert refused.value.message == (
+        "1 of the 2 selected calls has been deleted since the ask was made."
+    )
 
 
 @pytest.mark.django_db

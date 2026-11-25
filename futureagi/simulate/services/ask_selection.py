@@ -195,9 +195,13 @@ def _uuids(values: Iterable[Any]) -> list[uuid.UUID]:
 
 def _calls_of(runs: list, where: Q) -> list[CallExecution]:
     """The runs' calls matching ``where``, run by run in the order picked."""
-    rows = CallExecution._base_manager.filter(
-        where, test_execution_id__in=[run.id for run in runs], deleted=False
-    ).order_by("created_at", "id")
+    rows = (
+        CallExecution._base_manager.filter(
+            where, test_execution_id__in=[run.id for run in runs], deleted=False
+        )
+        .only("id", "status", "test_execution_id")
+        .order_by("created_at", "id")
+    )
     by_run: dict[Any, list[CallExecution]] = {run.id: [] for run in runs}
     for call in rows:
         by_run[call.test_execution_id].append(call)
@@ -283,9 +287,16 @@ def check_before_launch(
     calls = {
         str(call.id): call
         for call in CallExecution._base_manager.filter(
-            id__in=list(selection.call_ids)
+            id__in=list(selection.call_ids), deleted=False
         ).select_related("test_execution__run_test")
     }
+    if gone := len(selection.call_ids) - len(calls):
+        raise LaunchRefused(
+            "calls_gone",
+            f"{gone} of the {len(selection.call_ids)} selected calls "
+            f"{'has' if gone == 1 else 'have'} been deleted since the ask was made.",
+            gone=gone,
+        )
     shared: dict[Any, Any] = {}
     states = [
         {
