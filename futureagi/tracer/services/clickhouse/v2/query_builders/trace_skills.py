@@ -139,9 +139,7 @@ def _identity_constraint(item):
 def _catalog_for_groups(identities, groups):
     """Separate positive load witnesses from identities that can exclude a trace."""
     positives = []
-    excluded: dict[
-        tuple[int, frozenset[Any]], list[tuple[str, str, str]]
-    ] = {}
+    excluded: dict[tuple[int, frozenset[Any]], list[tuple[str, str, str]]] = {}
     exclusion_groups = set()
     for key, group in groups.items():
         loads = [item for item in group if item["column_id"] not in _TRACE_SELECTORS]
