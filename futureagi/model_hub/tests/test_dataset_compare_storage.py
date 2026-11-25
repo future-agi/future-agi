@@ -256,7 +256,8 @@ class _PolicyClient(_BucketAclClient):
 
 
 @pytest.mark.parametrize(
-    "code, accepted", [("NoSuchBucketPolicy", True), ("AccessDenied", False)]
+    "code, accepted",
+    [("NoSuchBucketPolicy", True), ("AccessDenied", False), ("NotImplemented", False)],
 )
 def test_a_bucket_whose_policy_cannot_be_read_is_not_used(
     monkeypatch, settings, code, accepted

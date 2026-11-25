@@ -439,10 +439,6 @@ class PrivateBucketMissing(PrivateBucketRefused):
         )
 
 
-# Answers to a policy read that mean the bucket has no policy: none is set,
-# or the service has no bucket policies at all. Anything else, AccessDenied
-# included, leaves the bucket unchecked and refused.
-_NO_POLICY_CODES = ("NoSuchBucketPolicy", "NotImplemented")
 # Only a bucket these credentials already own may be reused after a creation
 # race. BucketAlreadyExists means another account owns that name.
 _BUCKET_ALREADY_CREATED_CODES = ("BucketAlreadyOwnedByYou",)
@@ -633,11 +629,11 @@ def _check_private_bucket(client: Minio, bucket_name: str) -> None:
         policy = client.get_bucket_policy(bucket_name)
     except Exception as exc:
         code = getattr(exc, "code", None)
-        if code == "AccessDenied":
-            # Whether anyone else may read it cannot be told: do not use it.
+        if code in ("AccessDenied", "NotImplemented"):
+            # A denied or unsupported policy read cannot establish privacy.
             logger.error("storage_private_bucket_policy_unreadable", bucket=bucket_name)
             raise PrivateBucketRefused(bucket_name) from exc
-        if code not in _NO_POLICY_CODES:
+        if code != "NoSuchBucketPolicy":
             raise
         policy = None
     if policy and policy_allows_anyone(policy):
