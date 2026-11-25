@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Box, Link, MenuItem, TextField, Typography } from "@mui/material";
 
@@ -170,12 +170,19 @@ export default function ImprovementsPanel({ env }) {
     pageSize,
     states: option.states,
   });
+  // A failed read keeps the last total it knew, so the page stays where it is
+  // with its pager and says why it is empty.
+  const known = useRef(count);
+  if (!error && !isLoading) known.current = count;
+  const total = error ? known.current : count;
   // Epochs leave a status as they run, so a poll can shrink the count past
   // this page: the server refuses a page past the end, and the one before it
-  // says where the end is now. Until then nothing reads as empty.
-  const lastPage = Math.max(0, Math.ceil(count / pageSize) - 1);
+  // says where the end is now. Until then nothing reads as empty. Any other
+  // failure is not a sign of the end.
+  const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
   const gone = isNotFound(error);
-  const pastEnd = page > 0 && (gone || (!isLoading && page > lastPage));
+  const pastEnd =
+    page > 0 && (gone || (!error && !isLoading && page > lastPage));
   useEffect(() => {
     if (pastEnd) setPage(gone ? page - 1 : lastPage);
   }, [pastEnd, gone, page, lastPage]);
@@ -214,7 +221,7 @@ export default function ImprovementsPanel({ env }) {
         columns={columns}
         data={fixes}
         isLoading={isLoading || pastEnd}
-        rowCount={count}
+        rowCount={total}
         getRowId={(fix) => fix.id}
         onRowClick={(fix) =>
           navigate(
@@ -232,11 +239,11 @@ export default function ImprovementsPanel({ env }) {
               : "No epochs have run in this environment yet. To start one, open Debug failures on a finished run and choose Run Epoch."
         }
       />
-      {count > 0 && (
+      {total > 0 && (
         <DataTablePagination
           page={page}
           pageSize={pageSize}
-          total={count}
+          total={total}
           onPageChange={setPage}
           onPageSizeChange={(size) => {
             setPageSize(size);
