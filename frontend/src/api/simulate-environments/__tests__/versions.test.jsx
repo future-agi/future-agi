@@ -52,6 +52,7 @@ const {
   versionFromApi,
   isVersioningDisabled,
   isStuck,
+  lockedRelease,
 } = await import("../versions");
 const { harnessEnvironmentKey, harnessJobQuery } = await import(
   "../environment"
@@ -205,6 +206,25 @@ describe("versionFromApi / toVersions", () => {
   });
 });
 
+describe("lockedRelease", () => {
+  const release = (overrides) => ({
+    id: "r1",
+    environmentVersionId: "e2",
+    suiteVersionId: "s3",
+    unlockedAt: null,
+    ...overrides,
+  });
+
+  it("finds the pair's locked release, never an unlocked one", () => {
+    const unlocked = release({ id: "r0", unlockedAt: "2026-11-01T09:00:00Z" });
+    const locked = release();
+    expect(lockedRelease([unlocked, locked], "e2", "s3")).toBe(locked);
+    expect(lockedRelease([unlocked], "e2", "s3")).toBeNull();
+    expect(lockedRelease([locked], "e1", "s3")).toBeNull();
+    expect(lockedRelease(undefined, "e2", "s3")).toBeNull();
+  });
+});
+
 describe("useEnvironmentVersions", () => {
   it("reads the environment's versions under its own key", async () => {
     axios.get.mockResolvedValue({ data: RESPONSE });
@@ -355,6 +375,7 @@ describe("useRunPlan", () => {
       "e1",
       null,
       null,
+      null,
     ]);
     expect(
       client.getQueryData(runPlanKey("env-1", { environment: "e1" })),
@@ -371,6 +392,22 @@ describe("useRunPlan", () => {
     expect(axios.get).toHaveBeenCalledWith(
       "/simulate/api/harness-environments/env-1/run-plan/",
       { params: { scenario_keys: "k1,k2" } },
+    );
+  });
+
+  it("asks about a release split, keyed apart from the whole suite", async () => {
+    axios.get.mockResolvedValue({ data: PLAN });
+    const { result } = renderHook(
+      () => useRunPlan("env-1", {}, { split: "test" }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/run-plan/",
+      { params: { split: "test" } },
+    );
+    expect(runPlanKey("env-1", {}, null, "test")).not.toEqual(
+      runPlanKey("env-1", {}, null),
     );
   });
 

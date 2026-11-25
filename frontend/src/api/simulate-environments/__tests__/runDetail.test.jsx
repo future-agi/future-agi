@@ -952,6 +952,8 @@ describe("useRunDetail", () => {
           pinned_agent_version: { id: "a4", label: "v4" },
           environment_version: { id: "e2", label: "v2" },
           suite_version: { id: "s3", label: "v3" },
+          split: "train",
+          release: { label: "2026.11.1", locked: true },
           agent_differs: true,
           resume: {
             resumable: true,
@@ -1000,6 +1002,11 @@ describe("useRunDetail", () => {
     expect(result.current.identity.suiteVersion).toEqual({
       id: "s3",
       label: "v3",
+    });
+    expect(result.current.identity.split).toBe("train");
+    expect(result.current.identity.release).toEqual({
+      label: "2026.11.1",
+      locked: true,
     });
     expect(result.current.identity.agentDiffers).toBe(true);
     expect(result.current.identity.resume).toEqual({

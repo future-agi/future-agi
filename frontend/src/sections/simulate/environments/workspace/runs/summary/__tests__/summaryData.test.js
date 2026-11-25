@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildSummaryRow, buildEvalSeries, countCoveredScenarios, deriveEvals } from "../summaryData";
+import {
+  buildSummaryRow,
+  buildEvalSeries,
+  countCoveredScenarios,
+  deriveEvals,
+} from "../summaryData";
 
 // A run row as produced by `mapExecutions` (newest-first ordinal already
 // stamped), extended with the run-level duration the summary table shows.
@@ -44,6 +49,15 @@ describe("buildSummaryRow", () => {
     expect(row).not.toHaveProperty("meanReturn");
   });
 
+  it("carries the run's release split for its tag", () => {
+    const release = { label: "2026.11.1", locked: true };
+    const row = buildSummaryRow({ ...run, split: "test", release }, {});
+    expect(row.split).toBe("test");
+    expect(row.release).toEqual(release);
+    expect(buildSummaryRow(run, {}).split).toBeNull();
+    expect(buildSummaryRow(run, {}).release).toBeNull();
+  });
+
   it("shows no rate for a run the server scored nothing in", () => {
     expect(buildSummaryRow({ ...run, passRate: null }, {}).passRate).toBeNull();
   });
@@ -62,7 +76,11 @@ describe("buildEvalSeries", () => {
   it("builds one series per applied eval, carrying name and colour index", () => {
     const series = buildEvalSeries(rowsChrono, evals);
     expect(series).toHaveLength(2);
-    expect(series[0]).toMatchObject({ id: "task_success", name: "Task success", colorIndex: 0 });
+    expect(series[0]).toMatchObject({
+      id: "task_success",
+      name: "Task success",
+      colorIndex: 0,
+    });
   });
 
   it("reads each run's score for the eval and leaves a null gap when absent", () => {
@@ -84,7 +102,10 @@ describe("deriveEvals", () => {
 
   it("derives the eval set from the union of the runs' score keys, first-seen order", () => {
     const evals = deriveEvals(rows);
-    expect(evals.map((e) => e.id)).toEqual(["task_success", "policy_adherence"]);
+    expect(evals.map((e) => e.id)).toEqual([
+      "task_success",
+      "policy_adherence",
+    ]);
   });
 
   it("humanises the score key into a sentence-case display name", () => {

@@ -34,8 +34,8 @@ vi.mock("src/api/simulate-environments/versions", async () => {
       error: state.versionsError,
     })),
     // A plan is its data, `{ loading: true }` or `{ error }`.
-    useRunPlan: vi.fn((envId, picks, { enabled, scenarioKeys } = {}) => {
-      planCalls.push({ picks, enabled, scenarioKeys });
+    useRunPlan: vi.fn((envId, picks, { enabled, scenarioKeys, split } = {}) => {
+      planCalls.push({ picks, enabled, scenarioKeys, split });
       const plan = { ...PLAN_OK, ...state.plans[JSON.stringify(picks)] };
       if (!enabled) return { isLoading: false, isError: false };
       if (plan.loading) return { isLoading: true, isError: false };
@@ -262,11 +262,18 @@ describe("RunDialog", () => {
       ["k1", "k2"],
       resolved({ agent: "a3" }),
       null,
+      null,
     );
 
     await pickOption(user, "Agent version", "v4 (default)");
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenLastCalledWith({}, ["k1", "k2"], DEFAULTS, null);
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      null,
+      null,
+    );
   });
 
   it("pre-selects a re-run's agent version", () => {
@@ -284,7 +291,13 @@ describe("RunDialog", () => {
     expect(planCalls.at(-1)).toMatchObject({ picks: {}, enabled: true });
 
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS, null);
+    expect(onSubmit).toHaveBeenCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      null,
+      null,
+    );
   });
 
   it("sends only the versions the user changed", async () => {
@@ -299,6 +312,7 @@ describe("RunDialog", () => {
       ["k1", "k2"],
       resolved({ environment: "e1" }),
       null,
+      null,
     );
 
     await pickOption(user, "Scenario version", "v2");
@@ -308,6 +322,7 @@ describe("RunDialog", () => {
       { suite: "s2" },
       ["k1"],
       resolved({ suite: "s2" }),
+      null,
       null,
     );
   });
@@ -344,6 +359,7 @@ describe("RunDialog", () => {
       { environment: "e1" },
       ["k1", "k2"],
       resolved({ environment: "e1" }),
+      null,
       null,
     );
   });
@@ -450,6 +466,7 @@ describe("RunDialog", () => {
       ["k1", "k2"],
       resolved({ environment: "e1" }),
       null,
+      null,
     );
     expect(screen.queryByTestId("rerun-fallback")).toBeNull();
   });
@@ -522,7 +539,13 @@ describe("RunDialog", () => {
     );
     await user.click(runButton());
     const kept = { environment: "e1", suite: "s2" };
-    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept), null);
+    expect(onSubmit).toHaveBeenCalledWith(
+      kept,
+      ["k1"],
+      resolved(kept),
+      null,
+      null,
+    );
   });
 
   it("keeps a pre-change run's other versions when its agent can't be picked", async () => {
@@ -541,7 +564,13 @@ describe("RunDialog", () => {
     );
     await user.click(runButton());
     const kept = { environment: "e1", suite: "s2" };
-    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept), null);
+    expect(onSubmit).toHaveBeenCalledWith(
+      kept,
+      ["k1"],
+      resolved(kept),
+      null,
+      null,
+    );
   });
 
   it("drops only the agent when the server refuses a re-run's agent pick", async () => {
@@ -569,7 +598,13 @@ describe("RunDialog", () => {
     expect(screen.queryByTestId("run-error")).toBeNull();
     await user.click(runButton());
     const kept = { environment: "e1", suite: "s2" };
-    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept), null);
+    expect(onSubmit).toHaveBeenCalledWith(
+      kept,
+      ["k1"],
+      resolved(kept),
+      null,
+      null,
+    );
   });
 
   it("falls back to every default when the kept versions are refused too", async () => {
@@ -588,7 +623,13 @@ describe("RunDialog", () => {
     );
     expect(screen.queryByTestId("run-error")).toBeNull();
     await user.click(runButton());
-    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS, null);
+    expect(onSubmit).toHaveBeenCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      null,
+      null,
+    );
   });
 
   it("falls back to the defaults when a re-run's versions are refused", async () => {
@@ -606,7 +647,13 @@ describe("RunDialog", () => {
     expect(screen.getByTestId("rerun-fallback")).toBeInTheDocument();
     expect(screen.queryByTestId("run-error")).toBeNull();
     await user.click(runButton());
-    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS, null);
+    expect(onSubmit).toHaveBeenCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      null,
+      null,
+    );
 
     // Picking again drops the note.
     await pickOption(user, "Environment version", "v1");
@@ -674,6 +721,7 @@ describe("RunDialog", () => {
       ["k1", "k9"],
       resolved({ suite: "s2" }),
       null,
+      null,
     );
   });
 
@@ -686,7 +734,7 @@ describe("RunDialog", () => {
     // The default suite runs the server's current list, so no count is promised.
     expect(screen.getByText("Runs all scenarios in v3.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenCalledWith({}, undefined, DEFAULTS, null);
+    expect(onSubmit).toHaveBeenCalledWith({}, undefined, DEFAULTS, null, null);
   });
 
   it("runs the default suite's own scenarios with versioning on, even before the drafts are known", async () => {
@@ -698,6 +746,7 @@ describe("RunDialog", () => {
       {},
       ["k1", "k2", "k3"],
       DEFAULTS,
+      null,
       null,
     );
   });
@@ -881,6 +930,7 @@ describe("RunDialog", () => {
       ["k1", "k2"],
       DEFAULTS,
       "9223372036854775808",
+      null,
     );
   });
 
@@ -919,7 +969,13 @@ describe("RunDialog", () => {
     expect(seed).not.toHaveAccessibleDescription(/2\^63/);
     await waitFor(() => expect(runButton()).toBeEnabled());
     await user.click(runButton());
-    expect(onSubmit).toHaveBeenLastCalledWith({}, ["k1", "k2"], DEFAULTS, "42");
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      "42",
+      null,
+    );
   });
 
   it("starts a re-run from its run's seed, exactly, past what a JavaScript number holds", async () => {
@@ -935,6 +991,208 @@ describe("RunDialog", () => {
       ["k1", "k2"],
       DEFAULTS,
       "7902065059689103066",
+      null,
+    );
+  });
+});
+
+describe("RunDialog release split", () => {
+  // The default pair (e2, s3) is locked as release 2026.11.1; e1 with s3 was
+  // locked once and unlocked.
+  const release = (overrides) => ({
+    id: "r1",
+    label: "2026.11.1",
+    environment_version_id: "e2",
+    suite_version_id: "s3",
+    locked_at: "2026-11-20T09:00:00Z",
+    unlocked_at: null,
+    train: 3,
+    test: 2,
+    ...overrides,
+  });
+  const RELEASES = [
+    release(),
+    release({
+      id: "r0",
+      label: "2026.10.1",
+      environment_version_id: "e1",
+      unlocked_at: "2026-11-01T09:00:00Z",
+    }),
+  ];
+  const splitPicker = () =>
+    screen.queryByRole("combobox", { name: "Release split" });
+
+  beforeEach(() => {
+    state.versions = { ...VERSIONS, releases: RELEASES };
+    state.plans = {};
+    state.members = { s3: members("k1", "k2", "k3"), s2: members("k1", "k9") };
+    planCalls.length = 0;
+    state.drafts = null;
+    state.versionsError = undefined;
+  });
+
+  it("offers no split when the environment has no release", () => {
+    state.versions = VERSIONS;
+    renderDialog({ scenarioIds: undefined });
+    expect(splitPicker()).toBeNull();
+  });
+
+  it("offers no split when the picked versions' release is unlocked", async () => {
+    const user = userEvent.setup();
+    renderDialog({ scenarioIds: undefined });
+    await pickOption(user, "Environment version", "v1");
+    // e1 with s3 was unlocked: its split is no longer offered.
+    expect(splitPicker()).toBeNull();
+  });
+
+  it("offers the locked release's splits with their sizes, all scenarios first", async () => {
+    const user = userEvent.setup();
+    renderDialog({ scenarioIds: undefined });
+    expect(splitPicker()).toHaveTextContent("All scenarios");
+    await user.click(splitPicker());
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual([
+      "All scenarios",
+      "Train split · 3 scenarios",
+      "Test split · 2 scenarios",
+    ]);
+  });
+
+  it("runs a split of the whole release without listing its scenarios", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog({ scenarioIds: undefined, trials: 3 });
+
+    await pickOption(user, "Release split", "Test split · 2 scenarios");
+    expect(planCalls.at(-1)).toMatchObject({
+      picks: {},
+      scenarioKeys: null,
+      split: "test",
+    });
+    expect(
+      screen.getByText(
+        "Runs the test split of release 2026.11.1: 2 scenarios. 3 repeats each.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      {},
+      undefined,
+      DEFAULTS,
+      null,
+      "test",
+    );
+  });
+
+  it("asks the plan with no split until one is picked", () => {
+    renderDialog({ scenarioIds: undefined });
+    expect(planCalls.at(-1).split).toBeNull();
+  });
+
+  it("keeps Run off for an empty split", async () => {
+    const user = userEvent.setup();
+    state.versions = { ...VERSIONS, releases: [release({ test: 0 })] };
+    renderDialog({ scenarioIds: undefined });
+    await pickOption(user, "Release split", "Test split · 0 scenarios");
+    expect(screen.getByTestId("run-blocked")).toHaveTextContent(
+      "The test split has no scenarios to run.",
+    );
+    expect(runButton()).toBeDisabled();
+  });
+
+  it("drops the split when the picked versions have no locked release", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog({ scenarioIds: undefined });
+    await pickOption(user, "Release split", "Train split · 3 scenarios");
+
+    await pickOption(user, "Environment version", "v1");
+    expect(splitPicker()).toBeNull();
+    expect(planCalls.at(-1).split).toBeNull();
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      { environment: "e1" },
+      ["k1", "k2", "k3"],
+      resolved({ environment: "e1" }),
+      null,
+      null,
+    );
+  });
+
+  it("sends the selected scenarios with the split", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog();
+    await pickOption(user, "Release split", "Train split · 3 scenarios");
+    expect(planCalls.at(-1)).toMatchObject({
+      scenarioKeys: ["k1", "k2"],
+      split: "train",
+    });
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      null,
+      "train",
+    );
+  });
+
+  it("pre-selects a re-run's split", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog({
+      initialPicks: { environment: "e2", suite: "s3", split: "test" },
+    });
+    expect(splitPicker()).toHaveTextContent("Test split · 2 scenarios");
+    expect(screen.queryByTestId("rerun-split-fallback")).toBeNull();
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      null,
+      "test",
+    );
+  });
+
+  it("says when a re-run's release is no longer locked and runs without its split", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog({
+      initialPicks: { environment: "e1", suite: "s3", split: "test" },
+    });
+    expect(splitPicker()).toBeNull();
+    expect(screen.getByTestId("rerun-split-fallback")).toHaveTextContent(
+      "That run's release isn't locked now, so this run doesn't use its split.",
+    );
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      { environment: "e1" },
+      ["k1", "k2"],
+      resolved({ environment: "e1" }),
+      null,
+      null,
+    );
+  });
+
+  it("explains a refused split inline", () => {
+    renderDialog({
+      error: refusal(
+        "split_scenario_outside",
+        "k1 is not in the test split of release 2026.11.1.",
+      ),
+    });
+    expect(screen.getByTestId("run-error")).toHaveTextContent(
+      "k1 is not in the test split of release 2026.11.1.",
+    );
+  });
+
+  it("explains a split the versions can't take inline", () => {
+    renderDialog({
+      error: refusal(
+        "split_needs_release",
+        "Lock a release on these versions to run its train or test split.",
+      ),
+    });
+    expect(screen.getByTestId("run-error")).toHaveTextContent(
+      "Lock a release on these versions to run its train or test split.",
     );
   });
 });

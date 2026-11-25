@@ -131,6 +131,38 @@ describe("runHarnessEnvironment", () => {
       { headers: { "Idempotency-Key": "request-2" } },
     );
   });
+
+  it("runs a release split with no scenario list, so the server takes the split's", async () => {
+    await runHarnessEnvironment(
+      "env-6",
+      undefined,
+      2,
+      "request-3",
+      {},
+      null,
+      "test",
+    );
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect(body).toEqual({ trials: 2, split: "test" });
+    expect(body).not.toHaveProperty("scenario_ids");
+  });
+
+  it("sends the selected scenarios with their split", async () => {
+    await runHarnessEnvironment(
+      "env-6",
+      ["scenario-a"],
+      1,
+      "request-4",
+      {},
+      null,
+      "train",
+    );
+    expect(axios.post.mock.calls.at(-1)[1]).toEqual({
+      scenario_ids: ["scenario-a"],
+      trials: 1,
+      split: "train",
+    });
+  });
 });
 
 describe("renameHarnessEnvironment (§8)", () => {

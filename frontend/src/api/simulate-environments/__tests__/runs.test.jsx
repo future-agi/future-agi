@@ -170,6 +170,21 @@ describe("executionToRun", () => {
     expect(unpinned.agentDiffers).toBe(false);
   });
 
+  it("carries the run's release split and its release", () => {
+    const run = executionToRun({
+      id: "ex-9",
+      status: "Completed",
+      split: "test",
+      release: { label: "2026.11.1", locked: true },
+    });
+    expect(run.split).toBe("test");
+    expect(run.release).toEqual({ label: "2026.11.1", locked: true });
+
+    const whole = executionToRun({ id: "ex-10", status: "Completed" });
+    expect(whole.split).toBeNull();
+    expect(whole.release).toBeNull();
+  });
+
   it("carries the run-level duration (seconds) the summary table shows", () => {
     const run = executionToRun({
       id: "ex-6",

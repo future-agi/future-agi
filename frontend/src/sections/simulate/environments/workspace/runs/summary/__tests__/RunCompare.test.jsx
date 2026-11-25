@@ -310,6 +310,69 @@ describe("RunCompare", () => {
     });
     renderCompare();
 
-    expect(within(section()).getByText(/^2 trials left out/)).toBeInTheDocument();
+    expect(
+      within(section()).getByText(/^2 trials left out/),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about comparability for runs that compare", () => {
+    useCompareRuns.mockReturnValue({
+      data: {
+        ...comparison,
+        comparability: { comparable: true, reasons: [] },
+      },
+      isPending: false,
+      isError: false,
+    });
+    renderCompare();
+
+    expect(screen.queryByTestId("compare-not-comparable")).toBeNull();
+    expect(
+      within(row("Card dispute")).getByText("Regressed"),
+    ).toBeInTheDocument();
+  });
+
+  it("names each run's release split and withholds the verdicts across splits", () => {
+    const split = (versions, name) => ({
+      ...versions,
+      split: name,
+      release: { label: "2026.11.1", locked: true },
+    });
+    useCompareRuns.mockReturnValue({
+      data: {
+        ...comparison,
+        // The server clears every verdict and its count.
+        pairs: comparison.pairs.map((one) => ({ ...one, verdict: null })),
+        summary: {
+          ...comparison.summary,
+          improved: null,
+          regressed: null,
+          no_meaningful_change: null,
+          inconclusive: null,
+        },
+        versions: {
+          current: split(comparison.versions.current, "test"),
+          against: split(comparison.versions.current, "train"),
+        },
+        comparability: { comparable: false, reasons: ["different_split"] },
+      },
+      isPending: false,
+      isError: false,
+    });
+    renderCompare();
+
+    expect(screen.getByTestId("compare-not-comparable")).toHaveTextContent(
+      "Not comparable: these runs are on different releases or splits.",
+    );
+    expect(
+      within(section()).getByText(
+        "Run 2: Agent v2 · Environment v2 · Scenarios v3 · Release 2026.11.1 · Test split · Run 1: Agent v2 · Environment v2 · Scenarios v3 · Release 2026.11.1 · Train split",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(section()).getByText("1 new · 1 n/a · 1 criteria changed"),
+    ).toBeInTheDocument();
+    expect(within(section()).queryByText("Regressed")).toBeNull();
+    expect(within(section()).queryByText("Improved")).toBeNull();
   });
 });
