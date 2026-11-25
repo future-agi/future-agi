@@ -58,13 +58,18 @@ const stage = (id) => ({ id, label: STAGE_LABEL[id] });
 const VARIATIONS_STAGE = stage("variations");
 const STAGES = ["reproduce", "diagnose", "search", "verify"].map(stage);
 
-// The engine has no diagnose step: it diagnoses as its search starts. A search
-// with no diagnosis and no candidate yet is still diagnosing; the report's
-// diagnosis is optional, so a candidate means it has moved on. The issue job's
-// summary of an epoch carries neither, so it reads as the search.
+// The engine has no diagnose step: it diagnoses as its search starts, and names
+// that stage Diagnose. A search reads as diagnosing only while the engine says
+// so and nothing it found has arrived, so one that skipped its diagnosis reads
+// as the search. The issue job's summary of an epoch carries no stage, so it
+// reads as the search.
 export function stageOf(fix) {
   if (fix.step !== "search" || fix.summary) return fix.step;
-  return fix.diagnosis || (fix.candidates || []).length ? "search" : "diagnose";
+  const diagnosing =
+    /^Diagnose/.test(fix.stage || "") &&
+    !fix.diagnosis &&
+    !(fix.candidates || []).length;
+  return diagnosing ? "diagnose" : "search";
 }
 
 // The stage a running epoch is in, beside its status.

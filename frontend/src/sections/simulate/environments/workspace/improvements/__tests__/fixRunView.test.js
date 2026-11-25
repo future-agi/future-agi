@@ -687,6 +687,17 @@ describe("step rows", () => {
     });
     // The issue job's summary carries no diagnosis: it reads as the search.
     expect(stageOf({ ...fix, summary: true })).toBe("search");
+    // An engine that skipped its diagnosis names its next stage: no diagnosis
+    // and no candidate yet still reads as the search, never Diagnosing.
+    const skipped = { ...fix, stage: "Propose · attempt 1" };
+    expect(stageOf(skipped)).toBe("search");
+    expect(stageLabel(skipped)).toBe("Proposing");
+    expect(stepRows(skipped).map((r) => r.state)).toEqual([
+      "done",
+      "done",
+      "now",
+      "todo",
+    ]);
   });
 
   it("lists every cause the diagnosis found", () => {
