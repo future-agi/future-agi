@@ -3084,7 +3084,7 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
     def continue_as_new(arg):
         raise Hop(arg)
 
-    async def reconciled(task_id):
+    async def reconciled(task_id, generation=None):
         return True
 
     for name, fn in {
