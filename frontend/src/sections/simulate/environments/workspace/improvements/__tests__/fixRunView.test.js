@@ -15,6 +15,8 @@ import {
   heldToRows,
   identityLine,
   isShipped,
+  listResult,
+  noSafeHeadline,
   checkIcon,
   checkLabel,
   describeChecks,
@@ -101,6 +103,18 @@ describe("headline", () => {
     expect(headline(byId("fix-ready-no-held"))).toBe(
       "Target pass rate 33% → 100%. No must-pass scenario broke.",
     );
+  });
+
+  it("counts broken must-pass scenarios, not the checks the verdict names", () => {
+    const fix = structuredClone(byId("fix-ready-archive"));
+    winnerOf(fix).verdict.must_pass_regressions = [
+      "on-time-cancel: escalated",
+      "on-time-cancel: polite",
+    ];
+    expect(headline(fix)).toBe(
+      "Held-back pass rate 17% → 83%. 1 must-pass scenario broke.",
+    );
+    expect(listResult(fix).note).toBe("broke 1 must-pass");
   });
 
   it("says why every other ending ended and what to do next, never the engine's summary", () => {
@@ -1023,8 +1037,12 @@ describe("candidateGroups", () => {
     expect(candidateGroups(fix).map((g) => g.label)).toEqual([
       "Didn't hold over repeat runs",
       "Went over the reply-time or cost limit",
-      "Called a model outside the approved list",
+      // The lock fails on what the change names too, so the heading claims no call.
+      "Didn't keep to the approved models",
     ]);
+    expect(noSafeHeadline({ ...fix, candidates: fix.candidates.slice(2) })).toBe(
+      "No safe improvement: the only candidate didn't keep to the approved models.",
+    );
   });
 
   it("orders the furthest check first, opens held back with no winner, and keeps every candidate", () => {
@@ -1042,7 +1060,10 @@ describe("candidateGroups", () => {
         cand(
           2,
           "rejected",
-          rejectedAt("must-pass", { must_pass_regressions: ["a", "b"] }),
+          // Two scenarios, one of them named for two of its checks.
+          rejectedAt("must-pass", {
+            must_pass_regressions: ["a: polite", "a: refunded", "b: polite"],
+          }),
         ),
         cand(3, "rejected", rejectedAt("sandbox-fit")),
         cand(4, "rejected", null),

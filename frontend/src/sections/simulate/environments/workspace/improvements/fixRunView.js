@@ -1,5 +1,7 @@
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 
+import { mustPassScenarioKeys } from "./scenarioOutcomes";
+
 // What the fix page says about a fix, derived from one contract read
 // (GET /simulate/api/agent-fix-runs/{id}/). Only simple differences are
 // computed here; every number comes from the platform or the engine.
@@ -139,6 +141,11 @@ export const isShipped = (fix, candidate) =>
   !!candidate &&
   candidate.agent_version_id === fix.environment?.default_agent_version_id;
 
+// The must-pass scenarios a verdict counted as broken: it names each one once
+// per check, so the count is of scenarios, not checks.
+const brokeCount = (verdict) =>
+  mustPassScenarioKeys(verdict?.must_pass_regressions).size;
+
 const brokeText = (n) =>
   n
     ? `${n} must-pass ${n === 1 ? "scenario" : "scenarios"} broke.`
@@ -210,7 +217,7 @@ export function headline(fix) {
   }
   if (fix.state !== "ready" || !winner || !fix.plan) return endingText(fix);
   const { verdict } = winner;
-  const broke = brokeText(verdict.must_pass_regressions.length);
+  const broke = brokeText(brokeCount(verdict));
   if (verdict.held_back_pass_rate) {
     return `Held-back pass rate ${rateChange(verdict.held_back_pass_rate)}. ${broke}`;
   }
@@ -470,7 +477,7 @@ function tierLine(tier, verdict, plan, request) {
         " on scenarios the epoch never saw",
       );
     case "must-pass": {
-      const broke = (verdict?.must_pass_regressions || []).length;
+      const broke = brokeCount(verdict);
       if (!passed)
         return broke ? brokeText(broke) : "A must-pass scenario broke.";
       const kept = plan?.protected
@@ -582,7 +589,7 @@ const NO_SAFE_WHY = {
   },
   // The same words as the candidates' group heading.
   ceilings: { did: "went over the reply-time or cost limit" },
-  "model-lock": { did: "called a model outside the approved list" },
+  "model-lock": { did: "didn't keep to the approved models" },
 };
 
 const whyClause = (name, count, request) => {
@@ -697,7 +704,8 @@ const GROUP_HEADING = {
   repeats: "Didn't hold over repeat runs",
   target: "Didn't improve the target scenarios",
   ceilings: "Went over the reply-time or cost limit",
-  "model-lock": "Called a model outside the approved list",
+  // The lock also fails on what the change names, with no call observed.
+  "model-lock": "Didn't keep to the approved models",
   static: "The change wasn't valid",
 };
 
@@ -715,7 +723,7 @@ function candidateResult(c, group, fix, live) {
   if (group === "rejected")
     return { result: oldVerdictLine(c.verdict), broke: false };
   if (group === "must-pass") {
-    const n = (c.verdict?.must_pass_regressions || []).length;
+    const n = brokeCount(c.verdict);
     return {
       result: n
         ? `Broke ${n} must-pass ${n === 1 ? "scenario" : "scenarios"}`
@@ -1027,7 +1035,7 @@ function verdictResult(fix) {
   const winner = winnerOf(fix);
   if (fix.state !== "ready" || !winner || !fix.plan) return null;
   const { verdict } = winner;
-  const broke = verdict.must_pass_regressions.length;
+  const broke = brokeCount(verdict);
   if (verdict.held_back_pass_rate) {
     return {
       text: `Held back ${rateChange(verdict.held_back_pass_rate)}`,
