@@ -1099,6 +1099,31 @@
 - the in-document link moves the preview to its page and the external link opens in a new tab
 - a section link scrolls its destination position to the top of the preview, on its own page or another
 
+### DATA-E2E-005 — a missing dataset or deleted Observe project link shows a recovery page that returns to its list
+
+**Goal:** A user who opens a link to a dataset that does not exist, or to an Observe project that was deleted, sees that it is unavailable and goes back to the list instead of waiting on a loading page.
+
+**Spec:** `flows/datasets/unavailable-links.spec.ts:61`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a dataset link whose id matches no dataset
+2. read the "doesn't exist or you don't have access" message and click Back to datasets
+3. land on the dataset list
+4. create two Observe projects through the API and open one of them
+5. delete that project through the API (the Observe list's delete request) and reopen its link
+6. read the same message for the project and click Back to Observe
+7. land on the Observe list, which shows the other project and not the deleted one
+
+**Backend state verified:**
+
+- no Postgres model_hub_dataset row exists for the opened dataset id, and the browser's own dataset read is refused as not found (404, or 400 with the exact missing-dataset message)
+- the deleted project keeps its Postgres tracer_project row in the actor organization, marked deleted, while the other project stays live
+- the browser's project read answers 200 before the delete and is refused as not found after it (404, or 400 with the exact missing-project message)
+- the Observe list read after Back to Observe includes the live project and not the deleted one
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
