@@ -11,9 +11,11 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.authentication import viewer_denied
 from simulate.models import HostedHarnessJob
 from simulate.serializers.harness_job import HarnessJobReadSerializer
 from simulate.serializers.harness_release import (
+    HarnessAdaptationApprovedSerializer,
     HarnessAdaptationDesignSerializer,
     HarnessHostedAgentRequestSerializer,
     HarnessHostedAgentResponseSerializer,
@@ -90,6 +92,7 @@ class HarnessReleaseViewSet(viewsets.ViewSet):
             return _no_organization()
         return Response({"results": list_releases(organization)})
 
+    @viewer_denied("check how an agent fits an environment")
     @validated_request(
         request_serializer=HarnessReleaseFitRequestSerializer,
         responses={200: HarnessReleaseFitResponseSerializer},
@@ -122,6 +125,7 @@ class HarnessReleaseViewSet(viewsets.ViewSet):
 class HarnessAdaptationViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("adapt an agent")
     @validated_request(
         request_serializer=HarnessReleaseAgentRequestSerializer,
         responses={202: HarnessJobReadSerializer, 404: ApiTextErrorResponseSerializer},
@@ -148,10 +152,11 @@ class HarnessAdaptationViewSet(viewsets.ViewSet):
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
 
+    @viewer_denied("approve an adaptation")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
-            202: HarnessJobReadSerializer,
+            202: HarnessAdaptationApprovedSerializer,
             404: ApiTextErrorResponseSerializer,
             409: ApiTextErrorResponseSerializer,
         },
@@ -172,6 +177,7 @@ class HarnessAdaptationViewSet(viewsets.ViewSet):
 class HarnessHostedAgentViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("create an environment")
     @validated_request(
         request_serializer=HarnessHostedAgentRequestSerializer,
         responses={

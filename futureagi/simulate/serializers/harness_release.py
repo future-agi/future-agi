@@ -241,3 +241,7 @@ class HarnessAdaptationDesignSerializer(serializers.Serializer):
         allow_null=True,
         help_text="What checking the mapping on every case found, once it has: the approval's data.",
     )
+
+
+class HarnessAdaptationApprovedSerializer(serializers.Serializer):
+    id = serializers.UUIDField(help_text="The adaptation that was approved.")

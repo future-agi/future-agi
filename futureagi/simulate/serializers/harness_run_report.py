@@ -16,6 +16,7 @@ class HarnessRunReportManifestSerializer(serializers.Serializer):
     environment = serializers.ListField(child=serializers.DictField())
     suite = serializers.DictField()
     binding = serializers.DictField()
+    binding_proof = serializers.DictField(allow_null=True)
     agent = serializers.DictField()
     selection = serializers.DictField()
     simulator = serializers.DictField()
