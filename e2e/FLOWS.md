@@ -3121,6 +3121,31 @@
 - the status line says 3 traces answered and the counts read 2 Yes · 1 No
 - the traces table shows exactly the three seeded traces, each with the same answer as the rows API
 
+### OBS-E2E-071 — select-all add to a new dataset keeps the grid filter, time window and deselections
+
+**Goal:** A developer filters the trace list, narrows the time window, selects all but one trace and gets a new dataset holding exactly those traces
+
+**Spec:** `flows/observe/bulk-add-to-dataset.spec.ts:74`
+
+**Tags:** —
+
+**User steps:**
+
+1. send three matching traces now, one non-matching trace now and two matching traces ten days ago
+2. open the project's trace list and widen the date range to Past 30D
+3. filter by the shared trace name and see all five matching traces
+4. narrow the date range to Past 7D and see only the three recent ones
+5. select all with the header checkbox, then untick one row
+6. Actions → Move to dataset → Add to a new dataset with the default mapping
+7. filter by a trace name that matches nothing, select all and try to add to another new dataset
+
+**Backend state verified:**
+
+- all twelve seeded spans present in CH `spans` (FINAL) under the auto-created project
+- the new dataset has exactly the grid count minus one rows in PG model_hub_row
+- the dataset's `id` cells in PG model_hub_cell are exactly the root spans of the two still-selected recent traces: no unticked, non-matching or out-of-window trace
+- the no-match add is refused with a 400 and the "No rows match the selection." toast, and no dataset of that name exists in PG model_hub_dataset
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
