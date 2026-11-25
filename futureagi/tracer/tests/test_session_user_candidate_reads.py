@@ -213,6 +213,7 @@ def _inline_user_metric_rows(sql, params, span_rows, user_id, session_id):
         {
             "columns": columns,
             "rows": tuple(span_rows),
+            "project_id": span_rows[0][0],
             "user_id": user_id,
             "session_id": session_id,
             "raw_user_id": str(uuid.UUID(int=20)),
@@ -225,7 +226,8 @@ def _inline_user_metric_rows(sql, params, span_rows, user_id, session_id):
         WITH spans AS (
             SELECT * FROM values({literals["columns"]}, {literals["rows"][1:-1]})
         ), end_users AS (
-            SELECT toUUID({literals["user_id"]}) AS end_user_id
+            SELECT toUUID({literals["project_id"]}) AS project_id,
+                toUUID({literals["user_id"]}) AS end_user_id
         ), end_user_id_remap AS (
             SELECT toUUID({literals["user_id"]}) AS old_id,
                 toUUID({literals["raw_user_id"]}) AS new_id
