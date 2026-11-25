@@ -98,7 +98,7 @@ describe("ScenarioTable — opening a row", () => {
     onOpen.mockClear();
     fireEvent.click(boxes[1]);
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+      screen.getAllByRole("button", { name: /^Edit (?!tags$)/ })[0],
     );
     expect(onOpen).not.toHaveBeenCalled();
   });
@@ -127,5 +127,17 @@ describe("ScenarioTable actors", () => {
       ],
     });
     expect(screen.getAllByText("With Rowan")).toHaveLength(1);
+  });
+});
+
+describe("scenario row buttons", () => {
+  it("name the scenario they act on", async () => {
+    const { SCENARIOS_COPY } = await import("../scenarios.constants");
+    expect(SCENARIOS_COPY.editNamed("refund_after_cancel")).toBe(
+      "Edit refund_after_cancel",
+    );
+    expect(SCENARIOS_COPY.removeNamed("refund_after_cancel")).toBe(
+      "Remove refund_after_cancel from this environment",
+    );
   });
 });

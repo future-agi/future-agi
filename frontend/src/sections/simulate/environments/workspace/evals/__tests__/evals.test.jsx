@@ -16,6 +16,9 @@ import {
   selectedEntry,
 } from "./fixtures/evalEntries";
 
+const ROW_REMOVE = /^Remove (?!evaluation$)/;
+const ROW_EDIT = /^Edit (?!evaluation$)/;
+
 // The API client, mocked so a backed-env remove exercises the real DELETE path
 // without the apiPath contract throw.
 vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
@@ -283,7 +286,7 @@ describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () =>
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.remove }));
+    fireEvent.click(screen.getByRole("button", { name: ROW_REMOVE }));
 
     expect(patchSpy).toHaveBeenCalledWith({ evals: [] });
     // The persisted seed flag keeps the suggestions from looping straight back in.
@@ -323,9 +326,7 @@ describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () =>
     expect(screen.getByText("Added evaluations (3)")).toBeInTheDocument();
     // Remove all three.
     for (let i = 0; i < 3; i += 1) {
-      fireEvent.click(
-        screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
-      );
+      fireEvent.click(screen.getAllByRole("button", { name: ROW_REMOVE })[0]);
     }
     expect(screen.getByText("Added evaluations")).toBeInTheDocument();
 
@@ -435,7 +436,7 @@ describe("EvalsStep — template lock (read-only until forked)", () => {
     renderLocked(true);
     expect(screen.getByRole("button", { name: EVALS_COPY.add })).toBeDisabled();
     expect(
-      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+      screen.getAllByRole("button", { name: ROW_REMOVE })[0],
     ).toBeDisabled();
     expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
   });
@@ -455,7 +456,7 @@ describe("EvalsStep — template lock (read-only until forked)", () => {
     renderLocked(false);
     expect(screen.getByRole("button", { name: EVALS_COPY.add })).toBeEnabled();
     expect(
-      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+      screen.getAllByRole("button", { name: ROW_REMOVE })[0],
     ).toBeEnabled();
     expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
   });
@@ -542,9 +543,7 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
 
     expect(await screen.findByText("no_misselling")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
-    );
+    fireEvent.click(screen.getAllByRole("button", { name: ROW_REMOVE })[0]);
     expect(deleteAppliedEvaluation).not.toHaveBeenCalled();
 
     await confirmRemove("no_misselling");
@@ -559,9 +558,7 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
 
     await screen.findByText("no_misselling");
-    fireEvent.click(
-      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
-    );
+    fireEvent.click(screen.getAllByRole("button", { name: ROW_REMOVE })[0]);
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Close dialog" }),
@@ -584,9 +581,7 @@ describe("EvalsStep — remove on a backend-backed env", () => {
       />,
     );
 
-    fireEvent.click(
-      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
-    );
+    fireEvent.click(screen.getAllByRole("button", { name: ROW_REMOVE })[0]);
 
     expect(deleteAppliedEvaluation).not.toHaveBeenCalled();
     expect(patchSpy).toHaveBeenCalledWith(
@@ -605,7 +600,7 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     );
     expect(await screen.findByText("no_misselling")).toBeInTheDocument();
     expect(
-      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+      screen.getAllByRole("button", { name: ROW_REMOVE })[0],
     ).toBeDisabled();
   });
 
@@ -650,9 +645,7 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
 
     await screen.findByText("no_misselling");
-    fireEvent.click(
-      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
-    );
+    fireEvent.click(screen.getAllByRole("button", { name: ROW_REMOVE })[0]);
     await confirmRemove("no_misselling");
 
     // The Alert names which row the refusal belongs to, not just the
@@ -700,7 +693,7 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
 
   const openEditor = async () => {
     fireEvent.click(
-      (await screen.findAllByRole("button", { name: EVALS_COPY.edit }))[0],
+      (await screen.findAllByRole("button", { name: ROW_EDIT }))[0],
     );
     await waitFor(() =>
       expect(picker.calls.at(-1)?.initialEval?.userEvalId).toBe("cfg-1"),
@@ -726,9 +719,7 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
         patchSpy={vi.fn()}
       />,
     );
-    const edit = (
-      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
-    )[0];
+    const edit = (await screen.findAllByRole("button", { name: ROW_EDIT }))[0];
     expect(edit).toBeDisabled();
     fireEvent.mouseOver(edit.parentElement);
     expect(
@@ -740,13 +731,11 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
 
   it("holds edits while a run is being graded, and says why", async () => {
     render(<Harness backed grading initial={state} patchSpy={vi.fn()} />);
-    const edit = (
-      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
-    )[0];
+    const edit = (await screen.findAllByRole("button", { name: ROW_EDIT }))[0];
     expect(edit).toBeDisabled();
     // Only the edit waits for grading.
     expect(
-      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+      screen.getAllByRole("button", { name: ROW_REMOVE })[0],
     ).toBeEnabled();
     fireEvent.mouseOver(edit.parentElement);
     expect(
@@ -759,7 +748,7 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
       <Harness backed grading={false} initial={state} patchSpy={vi.fn()} />,
     );
     expect(
-      (await screen.findAllByRole("button", { name: EVALS_COPY.edit }))[0],
+      (await screen.findAllByRole("button", { name: ROW_EDIT }))[0],
     ).toBeEnabled();
   });
 
@@ -773,9 +762,7 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
       },
     });
     render(<Harness backed grading initial={state} patchSpy={vi.fn()} />);
-    const edit = (
-      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
-    )[0];
+    const edit = (await screen.findAllByRole("button", { name: ROW_EDIT }))[0];
     fireEvent.mouseOver(edit.parentElement);
     expect(await screen.findByText(EVALS_COPY.notEditable)).toBeInTheDocument();
     expect(screen.queryByText(EVALS_COPY.gradingLocked)).toBeNull();
@@ -787,9 +774,7 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
         <EvalsStep env={ENV} envState={state} patch={vi.fn()} backed locked />
       </QueryClientProvider>,
     );
-    const edit = (
-      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
-    )[0];
+    const edit = (await screen.findAllByRole("button", { name: ROW_EDIT }))[0];
     expect(edit).toBeDisabled();
     fireEvent.mouseOver(edit.parentElement);
     expect(
@@ -807,9 +792,7 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
       },
     });
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
-    const edit = (
-      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
-    )[0];
+    const edit = (await screen.findAllByRole("button", { name: ROW_EDIT }))[0];
     expect(edit).toBeDisabled();
     fireEvent.mouseOver(edit.parentElement);
     expect(await screen.findByText(EVALS_COPY.notEditable)).toBeInTheDocument();
@@ -822,7 +805,7 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
     });
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
     expect(
-      (await screen.findAllByRole("button", { name: EVALS_COPY.edit }))[0],
+      (await screen.findAllByRole("button", { name: ROW_EDIT }))[0],
     ).toBeDisabled();
   });
 
@@ -836,7 +819,7 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
         patchSpy={vi.fn()}
       />,
     );
-    expect(screen.queryByRole("button", { name: EVALS_COPY.edit })).toBeNull();
+    expect(screen.queryByRole("button", { name: ROW_EDIT })).toBeNull();
   });
 
   it("saves through the environment's edit and grades nothing", async () => {
@@ -857,22 +840,20 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
     );
     expect(addRunEvaluation).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByTestId("eval-picker")).toBeNull());
-    expect(
-      screen.getAllByRole("button", { name: EVALS_COPY.edit })[0],
-    ).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: ROW_EDIT })[0]).toBeEnabled();
   });
 
   it("holds edits while an eval is being removed", async () => {
     deleteAppliedEvaluation.mockReturnValue(new Promise(() => {}));
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
     fireEvent.click(
-      (await screen.findAllByRole("button", { name: EVALS_COPY.remove }))[0],
+      (await screen.findAllByRole("button", { name: ROW_REMOVE }))[0],
     );
     await confirmRemove("no_misselling");
 
     await waitFor(() =>
       expect(
-        screen.getAllByRole("button", { name: EVALS_COPY.edit })[0],
+        screen.getAllByRole("button", { name: ROW_EDIT })[0],
       ).toBeDisabled(),
     );
   });
@@ -884,9 +865,7 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
     fireEvent.click(screen.getByText("picker-close"));
     await waitFor(() => expect(screen.queryByTestId("eval-picker")).toBeNull());
     expect(updateAppliedEvaluation).not.toHaveBeenCalled();
-    expect(
-      screen.getAllByRole("button", { name: EVALS_COPY.edit })[0],
-    ).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: ROW_EDIT })[0]).toBeEnabled();
   });
 });
 
@@ -1167,5 +1146,12 @@ describe("EvalsStep - Required and threshold on an added eval", () => {
       }),
     ).toBeNull();
     expect(screen.getByText("pass ≥ 60%")).toBeInTheDocument();
+  });
+});
+
+describe("evaluation row buttons", () => {
+  it("name the evaluation they act on", () => {
+    expect(EVALS_COPY.removeNamed("Tone check")).toBe("Remove Tone check");
+    expect(EVALS_COPY.editNamed("Tone check")).toBe("Edit Tone check");
   });
 });

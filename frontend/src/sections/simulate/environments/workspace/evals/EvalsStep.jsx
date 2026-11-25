@@ -576,7 +576,7 @@ export default function EvalsStep({
                     <IconButton
                       size="small"
                       disabled={removeDisabled}
-                      aria-label={EVALS_COPY.remove}
+                      aria-label={EVALS_COPY.removeNamed(e.name)}
                       onClick={() =>
                         backed ? setConfirmRemove(e) : onRemove(e.id)
                       }
@@ -620,7 +620,7 @@ export default function EvalsStep({
                         removeEval.isPending ||
                         Boolean(editingId)
                       }
-                      aria-label={EVALS_COPY.edit}
+                      aria-label={EVALS_COPY.editNamed(e.name)}
                       onClick={() => setEditingId(e.id)}
                     >
                       <Iconify

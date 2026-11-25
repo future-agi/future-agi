@@ -625,7 +625,9 @@ export default function ScenarioTable({
                         <IconButton
                           size="small"
                           disabled={locked}
-                          aria-label={SCENARIOS_COPY.editLabel}
+                          aria-label={SCENARIOS_COPY.editNamed(
+                            row.name || row.title,
+                          )}
                           onClick={() => onEdit?.(row)}
                         >
                           <Iconify
@@ -644,7 +646,9 @@ export default function ScenarioTable({
                         <IconButton
                           size="small"
                           disabled={locked}
-                          aria-label={SCENARIOS_COPY.removeLabel}
+                          aria-label={SCENARIOS_COPY.removeNamed(
+                            row.name || row.title,
+                          )}
                           onClick={() => onRemove(row.id)}
                         >
                           <Iconify
