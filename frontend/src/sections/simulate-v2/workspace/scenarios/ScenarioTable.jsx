@@ -477,7 +477,15 @@ const failingInOf = (row, latestOf) => {
    amber flaky. Hollow when that run played an earlier version of the
    scenario. A scenario that never ran shows nothing. */
 function RunDots({ history, version, current, envLabel }) {
-  const dots = recentDotsOf(history, version, undefined, current, envLabel);
+  /* A run on a non-comparable version of the scenario says nothing about
+     it now: no dot, and a blank column when none of its runs compare. */
+  const dots = recentDotsOf(
+    history,
+    version,
+    undefined,
+    current,
+    envLabel,
+  ).filter((d) => d.comparable);
   if (!dots.length) return null;
   return (
     <Stack direction="row" spacing={0.5} alignItems="center">

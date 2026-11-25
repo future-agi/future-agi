@@ -42,7 +42,18 @@ export default function TrialDots({ samples }) {
         spacing={0.75}
         sx={{ flexShrink: 0 }}
       >
-        <Stack direction="row" spacing={0.375} aria-hidden>
+        {/* A dotted line under the dots: hover for each trial. */}
+        <Stack
+          direction="row"
+          spacing={0.375}
+          aria-hidden
+          sx={{
+            cursor: "help",
+            pb: "2px",
+            borderBottom: "1px dotted",
+            borderColor: "text.disabled",
+          }}
+        >
           {samples.map((s, i) => (
             <Box
               key={i}

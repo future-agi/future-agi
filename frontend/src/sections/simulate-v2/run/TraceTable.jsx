@@ -662,6 +662,9 @@ export default function TraceTable({
         blockers,
         /* Scenarios ran more than once: the group reads "passed every trial". */
         repeated: rows.some((r) => (r.samples?.length || 0) > 1),
+        /* Grouped by actor, a group of one scenario reads as its trials;
+           by goal (or anything else) a row always counts scenarios. */
+        trialsWhenOne: groupBy === "persona",
         count: rows.length,
         pct: measured.length
           ? Math.round((passed / measured.length) * 100)
@@ -1549,36 +1552,27 @@ function GroupHeaderRow({
            "2 flaky · 1 failed" of the group's 3 scenarios. A group of one
            scenario (a persona, say) is that scenario's trials instead. */
         <>
-          {groupOutcomeParts(group).map((p) => (
+          {/* Counts in coloured words, no dots: on this page a dot is
+              always one trial. They add up to the group's scenarios. */}
+          {groupOutcomeParts(group).map((p, i) => (
             <React.Fragment key={p.key}>
-              {/* Counts only: they add up to the group's scenarios (the
-                  total is on the name's hover). */}
-              <Box
-                component="span"
-                sx={{ display: "inline-block", width: 10 }}
-              />
+              {i === 0 ? (
+                <Box
+                  component="span"
+                  sx={{ display: "inline-block", width: 10 }}
+                />
+              ) : (
+                " · "
+              )}
               <Box
                 component="span"
                 sx={{
-                  display: "inline-block",
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  bgcolor: p.dot,
-                  verticalAlign: "middle",
-                  mr: 0.5,
-                  mb: "1px",
+                  color: String(p.dot).replace(/\.solid$/, ".fg"),
+                  fontWeight: 600,
                 }}
-              />
-              {p.n !== "" && (
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: 600 }}
-                >
-                  {p.n}
-                </Box>
-              )}
-              {p.n !== "" ? ` ${p.word}` : p.word}
+              >
+                {p.n !== "" ? `${p.n} ${p.word}` : p.word}
+              </Box>
             </React.Fragment>
           ))}
         </>
@@ -2255,7 +2249,8 @@ function VerdictLabel({ task, outcome }) {
   const { envId } = useParams();
   const v = task.verdictCause;
   let label = outcome.label;
-  let color = outcome.color;
+  /* The result in its colour, as a word — the dots beside it are trials. */
+  let color = task.status === "flaky" ? "status.warning.fg" : outcome.color;
   let tip = "";
   if (v?.pulled) {
     label = "Pulled for review";

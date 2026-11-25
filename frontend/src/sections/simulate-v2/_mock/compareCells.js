@@ -40,8 +40,10 @@ export const phraseOf = (c) => {
 };
 
 /* "3/3" — trials passed of trials run, when there were trials to count. */
+/* Only on flaky: "Passed" already means every trial and "Failed" none, so
+   a count there just repeats itself on every row. */
 export const trialCountOf = (c) =>
-  c && c.repeats > 1 && c.passes != null && c.measured
+  c && c.status === "flaky" && c.repeats > 1 && c.passes != null && c.measured
     ? `${c.passes}/${c.repeats}`
     : null;
 

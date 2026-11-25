@@ -1502,7 +1502,7 @@ export default function RunPlanDialog({
                   </Tooltip>
                   {trialsHelpOf(attempts) && (
                     <Typography sx={{ ...VALUE_SX, color: "text.tertiary" }}>
-                      · 3+ spots flaky
+                      · Use 3+ trials to spot flaky
                     </Typography>
                   )}
                 </Stack>

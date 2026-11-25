@@ -696,7 +696,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                   environment versions show no change.
                 </>
               ) : (
-                "Select two or more to compare them scenario by scenario"
+                "Changes: each run vs the run before it · select two or more to compare"
               )}
             </Typography>
           </Box>

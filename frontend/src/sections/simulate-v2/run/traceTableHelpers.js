@@ -289,7 +289,11 @@ export const groupOutcomeParts = (group) => {
         text: "Not scored",
       },
     ];
-  if (rows.length === 1 && (rows[0].samples?.length || 0) > 1) {
+  if (
+    group.trialsWhenOne &&
+    rows.length === 1 &&
+    (rows[0].samples?.length || 0) > 1
+  ) {
     const samples = rows[0].samples;
     const passed = samples.filter((s) => s === "passed").length;
     const status = rows[0].status;

@@ -9,8 +9,16 @@ describe("groupOutcomeParts", () => {
     });
     expect(parts.map((p) => p.text)).toEqual(["2 flaky", "1 failed"]);
   });
-  it("reads a one-scenario group as that scenario's trials", () => {
+  it("by goal, a one-scenario group still counts scenarios", () => {
     const parts = groupOutcomeParts({
+      rows: [{ status: "flaky", samples: ["passed", "failed", "failed"] }],
+      outcomes: { mixed: 1 },
+    });
+    expect(parts.map((p) => p.text)).toEqual(["1 flaky"]);
+  });
+  it("by actor, a one-scenario group reads as that scenario's trials", () => {
+    const parts = groupOutcomeParts({
+      trialsWhenOne: true,
       rows: [{ status: "flaky", samples: ["passed", "failed", "failed"] }],
       outcomes: { mixed: 1 },
     });
