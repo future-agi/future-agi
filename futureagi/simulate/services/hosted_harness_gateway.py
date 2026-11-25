@@ -1680,14 +1680,28 @@ _MODEL_BASE_URL_ALIAS = re.compile(
 
 
 def _model_hosts(
-    secrets_map: Mapping[str, Any], simulator_env: Mapping[str, Any]
+    secrets_map: Mapping[str, Any],
+    simulator_env: Mapping[str, Any],
+    payload: Mapping[str, Any] | None = None,
 ) -> tuple[str, ...]:
     """The hosts the agent's model calls go to that the sandbox would not know as model APIs:
-    the platform's model gateway, and the host of any model base URL the agent declares."""
+    the platform's model gateway, and the host of any model base URL the agent declares, in
+    the run's resolved secrets, its non-secret environment values or the agent's config.
+
+    Only hostnames, and only for measurement: nothing here widens what the sandbox may reach.
+    """
+    payload = payload or {}
+    declared = (
+        secrets_map,
+        (payload.get("source") or {}).get("environment_values"),
+        (payload.get("agent") or {}).get("config"),
+    )
     hosts = {_hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))}
     hosts.update(
         _hostname_from_url(value)
-        for alias, value in secrets_map.items()
+        for values in declared
+        if isinstance(values, Mapping)
+        for alias, value in values.items()
         if _MODEL_BASE_URL_ALIAS.fullmatch(str(alias).upper())
     )
     return tuple(sorted(host for host in hosts if host))
@@ -2850,7 +2864,9 @@ class HostedHarnessGateway:
             max_egress_domains=self.client.max_egress_domains,
         )
         simulation_mark, mark_accepted = _simulation_mark(
-            job, export_plan, model_hosts=_model_hosts(secrets_map, simulator_env)
+            job,
+            export_plan,
+            model_hosts=_model_hosts(secrets_map, simulator_env, payload),
         )
         if not mark_accepted:
             # A guest must never get our key without the dictionary that says what to do
