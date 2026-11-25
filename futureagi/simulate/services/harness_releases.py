@@ -1713,18 +1713,17 @@ def _settle_adaptation(
     adaptation_result: dict[str, Any] = {}
     failure: dict[str, Any] | None = None
     canceled = bool(job.cancel_requested_at or job.deleted)
-    if not canceled and (
-        output is None or not (Path(output) / "result.json").is_file()
-    ):
-        failure = _adaptation_failure(
-            "adaptation_result_missing",
-            "the adaptation process left no readable result.json",
-        )
-    elif not canceled:
-        try:
-            adaptation_result, failure = _adapt(job, Path(output), verified)
-        except HostedHarnessError as exc:
-            failure = _adaptation_failure(exc.code, exc.message)
+    if not canceled:
+        if output is None or not (Path(output) / "result.json").is_file():
+            failure = _adaptation_failure(
+                "adaptation_result_missing",
+                "the adaptation process left no readable result.json",
+            )
+        else:
+            try:
+                adaptation_result, failure = _adapt(job, Path(output), verified)
+            except HostedHarnessError as exc:
+                failure = _adaptation_failure(exc.code, exc.message)
     now = timezone.now()
     payload = dict(job.payload)
     payload["metadata"] = {

@@ -173,7 +173,7 @@ def _applied(
             422,
         )
     proof_path = change / "binding-proof.json"
-    proof = _read(proof_path) if proof_path.is_file() else None
+    proof: Any = _read(proof_path) if proof_path.is_file() else None
     binding = composition["binding"]
     _checked_binding(
         binding,
