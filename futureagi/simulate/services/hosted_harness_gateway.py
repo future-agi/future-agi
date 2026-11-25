@@ -1684,11 +1684,13 @@ def _model_hosts(
     simulator_env: Mapping[str, Any],
     payload: Mapping[str, Any] | None = None,
 ) -> tuple[str, ...]:
-    """The hosts the agent's model calls go to that the sandbox would not know as model APIs:
-    the platform's model gateway, and the host of any model base URL the agent declares, in
-    the run's resolved secrets, its non-secret environment values or the agent's config.
+    """The hosts the agent's model calls go to that the sandbox would not know as model
+    APIs: the platform's model gateway, and the host of any model base URL the agent
+    declares, in the run's resolved secrets, its non-secret environment values or the
+    agent's config.
 
-    Only hostnames, and only for measurement: nothing here widens what the sandbox may reach.
+    Only hostnames, and only for measurement: nothing here widens what the sandbox may
+    reach.
     """
     payload = payload or {}
     declared = (
@@ -6434,9 +6436,9 @@ def _pinned_folder(one: dict, folders: set[str]) -> str | None:
 def _scenario_folder_kept(
     folder: str, document: object, suite: list[dict], folders: set[str]
 ) -> bool:
-    """A folder goes only when its own scenario.json names a scenario the suite no longer
-    has. An entry naming this very folder keeps it; one naming another folder the suite
-    has speaks for that folder alone, never for this one by a shared name."""
+    """A folder goes only when its own scenario.json names a scenario the suite no
+    longer has. An entry naming this very folder keeps it; one naming another folder
+    the suite has speaks for that folder alone, never for this one by a shared name."""
     if not isinstance(document, dict):
         return True
     if any(_pinned_folder(one, folders) == folder for one in suite):
@@ -6448,7 +6450,9 @@ def _scenario_folder_kept(
 def _edit_for(
     folder: str, document: object, suite: list[dict], folders: set[str]
 ) -> dict | None:
-    pinned = next((one for one in suite if _pinned_folder(one, folders) == folder), None)
+    pinned = next(
+        (one for one in suite if _pinned_folder(one, folders) == folder), None
+    )
     if pinned is not None:
         return pinned
     own = _document_tokens(folder, document)

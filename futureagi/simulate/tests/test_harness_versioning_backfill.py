@@ -2194,7 +2194,9 @@ def test_two_folders_sharing_a_key_keep_their_own_folders_and_rows():
     match = match_members(
         [
             Row(id=2, scenario_key="refund", name="Refund", folder="refund_b"),
-            Row(id=1, scenario_key="refund", name="Refund", folder="scenarios/refund_a"),
+            Row(
+                id=1, scenario_key="refund", name="Refund", folder="scenarios/refund_a"
+            ),
         ],
         scenarios,
     )
@@ -2212,7 +2214,9 @@ def test_an_index_entry_naming_its_folder_by_path_takes_that_folder():
         "scenarios.json": json.dumps(
             [{"folder": "scenarios/refund_b", "scenario_key": "refund"}]
         ).encode(),
-        "scenarios/refund-b/scenario.json": json.dumps({"instruction": "lookalike"}).encode(),
+        "scenarios/refund-b/scenario.json": json.dumps(
+            {"instruction": "lookalike"}
+        ).encode(),
         "scenarios/refund_b/scenario.json": json.dumps({"instruction": "own"}).encode(),
     }
 

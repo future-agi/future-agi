@@ -922,7 +922,9 @@ def write_suite_edit(
     problems = [
         one
         for doc in suite
-        if _edited(doc, before.get(str(doc.get("scenario_key") or doc.get("name") or "")))
+        if _edited(
+            doc, before.get(str(doc.get("scenario_key") or doc.get("name") or ""))
+        )
         for one in actor_reference_problems(doc, known)
     ]
     if problems:
