@@ -1061,7 +1061,7 @@ a Mixpanel token.
     keys = ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"]
     default = "`2026-10-28T00:00:00Z`"
     setups = ["S", "D", "H"]
-    text = "ISO-8601 date and time, such as `2026-10-14T12:30:00Z`. Organizations created at or after it see only Environments in Simulate; Agent Definition, Scenarios, Personas and Run Simulation are hidden from them. Organizations created before it keep every page. A value without a zone is UTC. Set it blank to show every Simulate page to every organization. The app refuses to start on a value that is not a date and time, including a date alone."
+    text = "ISO-8601 date and time, such as `2026-10-14T12:30:00Z`. Organizations created at or after it see only Environments in Simulate; Agent Definition, Scenarios, Personas and Run Simulation are hidden from them. Organizations created before it keep every page. Upgrading to a release with this default hides those pages from organizations created since 2026-10-28. A value without a zone is UTC. Set it blank to show every Simulate page to every organization. The app refuses to start on a value that is not a date and time, including a date alone."
 
   [[part.section]]
   heading = "Sign-up and sign-in"
