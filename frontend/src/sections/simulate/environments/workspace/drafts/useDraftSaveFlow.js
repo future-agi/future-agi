@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import {
   useDiscardDraft,
@@ -62,7 +62,11 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
   const failed = useRef({});
   failed.current = {
     save: save.isError && save.error?.error !== "draft_changed",
+    // needsValidate reads validation_required off the save, so a decision keeps that one.
+    saveRefused: save.isError && save.error?.error !== "validation_required",
     discard: discard.isError,
+    validate: validate.isError,
+    saveValidated: saveValidated.isError,
   };
   const { reset: resetSave } = save;
   const { reset: resetDiscard } = discard;
@@ -70,9 +74,23 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
     if (failed.current.save) resetSave();
     if (failed.current.discard) resetDiscard();
   }, [signature, resetSave, resetDiscard]);
+  // Validate and the validated Save refetch the drafts when refused, so those refusals stay over the refetch: they go
+  // with the person's next decision, or with the drafts. One still being sent is left alone.
+  const { reset: resetValidate } = validate;
+  const { reset: resetSaveValidated } = saveValidated;
+  const clearRefusals = useCallback(() => {
+    if (failed.current.saveRefused) resetSave();
+    if (failed.current.discard) resetDiscard();
+    if (failed.current.validate) resetValidate();
+    if (failed.current.saveValidated) resetSaveValidated();
+  }, [resetSave, resetDiscard, resetValidate, resetSaveValidated]);
+  const gone = drafts ? !drafts.any : false;
+  useEffect(() => {
+    if (gone) clearRefusals();
+  }, [gone, clearRefusals]);
 
   if (!enabled || !drafts?.any)
-    return { open: false, drafts, review: review.data };
+    return { open: false, drafts, review: review.data, clearRefusals };
 
   // The server says when a Save must go through Validate (a reviewed change, where checks can run). Where they
   // can't, reviewed changes save as they are.
@@ -169,8 +187,9 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
       if (options) save.mutate(vars, options);
       else save.mutate(vars);
     },
+    clearRefusals,
     onDiscard: (options) => {
-      save.reset();
+      clearRefusals();
       if (options) discard.mutate(drafts.pieces, options);
       else discard.mutate(drafts.pieces);
     },

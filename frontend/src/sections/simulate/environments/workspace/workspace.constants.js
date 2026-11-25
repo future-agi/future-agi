@@ -766,9 +766,9 @@ export const REVIEW_COPY = {
       : `The world goes back to ${saved} as it was saved. This can't be undone.`;
   },
   discard: "Discard",
-  saveLine: ({ kind, piece, next, rechecked }) =>
-    `${SAVE_KIND[kind]} → ${SAVE_TARGET[piece]}${next ? ` ${next}` : ""} · ${scenarioWord(rechecked)} rechecked`,
-  save: (next) => (next ? `Save version ${next}` : "Save version"),
+  saveLine: ({ kind, rechecked }) =>
+    `${SAVE_KIND[kind]} → new version · ${scenarioWord(rechecked)} rechecked`,
+  save: "Save version",
   validate: "Validate",
   validating: "Validating…",
   saved: "Saved as a new version.",

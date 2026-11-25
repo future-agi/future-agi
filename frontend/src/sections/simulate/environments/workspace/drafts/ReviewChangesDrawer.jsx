@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   CircularProgress,
+  Collapse,
   Stack,
   TextField,
   Typography,
@@ -80,17 +81,19 @@ export default function ReviewChangesDrawer({
     enabled: open && Boolean(env?.versioning?.enabled),
   });
   const decide = useDecideChanges(env?.id);
-  const [name, setName] = useState("");
+  // The name as the person typed it; until they do, the field follows the suggestion.
+  const [typedName, setTypedName] = useState(null);
   const [discarding, setDiscarding] = useState(false);
   const [announced, setAnnounced] = useState("");
   const saveRef = useRef(null);
   const focusSave = useRef(false);
 
   const changes = review?.changes || [];
+  const name = typedName ?? suggestedName(changes);
   const kept = keptChanges(changes);
   const nameTooLong = name.trim().length > NAME_LIMIT;
   const names = recheckedKeys(changes);
-  const line = saveLine(changes, versions);
+  const line = saveLine(changes);
   const counts = reviewCounts(changes);
   const piece = pieceOf(changes);
   const savedLabel = versions?.defaults?.[piece]?.label || "";
@@ -104,14 +107,13 @@ export default function ReviewChangesDrawer({
     focusSave.current = false;
     saveRef.current?.focus();
   }, [counts.undecided]);
-  // Once Save is ready and the changes have loaded, suggest a name from them; the person can change it.
+  // Saved or discarded, here or elsewhere: the next set of changes gets its own name.
   useEffect(() => {
-    if (ready && !name && changes.length) setName(suggestedName(changes));
-    // Only when Save first becomes ready, or the changes first load.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, changes.length > 0]);
+    if (!flow.open) setTypedName(null);
+  }, [flow.open]);
 
-  const sendDecisions = (decisions) =>
+  const sendDecisions = (decisions) => {
+    flow.clearRefusals();
     decide.mutate(
       {
         expectedRevisions: Object.fromEntries(
@@ -135,6 +137,7 @@ export default function ReviewChangesDrawer({
         },
       },
     );
+  };
 
   const decideChange = (change, decision) => {
     const restored = change.decision === "rejected" && decision === "accepted";
@@ -170,6 +173,7 @@ export default function ReviewChangesDrawer({
       ? COPY.validateFirst(names.length)
       : flow.validationNote;
 
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const coversChat = useMediaQuery(useTheme().breakpoints.down("lg"));
   const openLink = (link, tab) => {
     if (link.kind !== "chat") {
@@ -192,7 +196,7 @@ export default function ReviewChangesDrawer({
         enqueueSnackbar(notActive ? COPY.notActive(notActive) : COPY.saved, {
           variant: notActive ? "warning" : "success",
         });
-        setName("");
+        setTypedName(null);
         onSaved?.({ name: name.trim() });
         onClose?.();
       },
@@ -225,7 +229,7 @@ export default function ReviewChangesDrawer({
         disabled={flow.pending}
         onClick={save}
       >
-        {COPY.save(kept.length ? line.next : null)}
+        {COPY.save}
       </HeldButton>
     );
   } else {
@@ -338,44 +342,54 @@ export default function ReviewChangesDrawer({
               flexShrink: 0,
             }}
           >
-            {ready && (
-              <TextField
-                size="small"
-                fullWidth
-                label={COPY.nameLabel(direct)}
-                placeholder={COPY.namePlaceholder}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                error={nameTooLong}
-                helperText={
-                  nameTooLong ? COPY.nameTooLong(NAME_LIMIT) : undefined
-                }
-                inputProps={{ maxLength: NAME_LIMIT + 1 }}
-              />
-            )}
-            <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: counts.undecided ? "text.secondary" : "text.tertiary",
-                  fontVariantNumeric: "tabular-nums",
-                }}
+            <Box>
+              <Collapse
+                in={ready}
+                timeout={reduceMotion ? 0 : undefined}
+                unmountOnExit
               >
-                {COPY.progress(counts)}
-              </Typography>
-              {counts.undecided > 0 && canEdit && (
-                <Button
-                  size="small"
-                  color="inherit"
-                  onClick={acceptRemaining}
-                  sx={{ color: "text.secondary" }}
+                <Box sx={{ pb: 1 }}>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    label={COPY.nameLabel(direct)}
+                    placeholder={COPY.namePlaceholder}
+                    value={name}
+                    onChange={(event) => setTypedName(event.target.value)}
+                    error={nameTooLong}
+                    helperText={
+                      nameTooLong ? COPY.nameTooLong(NAME_LIMIT) : undefined
+                    }
+                    inputProps={{ maxLength: NAME_LIMIT + 1 }}
+                  />
+                </Box>
+              </Collapse>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: counts.undecided
+                      ? "text.secondary"
+                      : "text.tertiary",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
                 >
-                  {counts.undecided === counts.total
-                    ? COPY.acceptAll
-                    : COPY.acceptRemaining}
-                </Button>
-              )}
-            </Stack>
+                  {COPY.progress(counts)}
+                </Typography>
+                {counts.undecided > 0 && canEdit && (
+                  <Button
+                    size="small"
+                    color="inherit"
+                    onClick={acceptRemaining}
+                    sx={{ color: "text.secondary" }}
+                  >
+                    {counts.undecided === counts.total
+                      ? COPY.acceptAll
+                      : COPY.acceptRemaining}
+                  </Button>
+                )}
+              </Stack>
+            </Box>
             {(note || flow.error) && (
               <Typography
                 role={flow.error ? "alert" : "status"}

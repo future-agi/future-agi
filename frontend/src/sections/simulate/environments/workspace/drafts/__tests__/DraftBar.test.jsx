@@ -37,6 +37,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     useDraftReview: vi.fn(() => ({ data: undefined })),
     useValidateDrafts: vi.fn(() => ({
       mutate: vi.fn(),
+      reset: vi.fn(),
       isPending: false,
       error: null,
     })),

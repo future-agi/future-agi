@@ -61,6 +61,7 @@ const setFlow = (changes, overrides = {}) => {
     onSave: vi.fn(),
     onSaveValidated: vi.fn(),
     onDiscard: vi.fn(),
+    clearRefusals: vi.fn(),
     ...overrides,
   });
 };
@@ -68,16 +69,17 @@ const setFlow = (changes, overrides = {}) => {
 const renderDrawer = (props = {}) => {
   const onSaved = vi.fn();
   const onClose = vi.fn();
-  const { unmount } = render(
+  const drawer = () => (
     <ReviewChangesDrawer
       open
       env={{ id: "env-1", versioning: { enabled: true } }}
       onClose={onClose}
       onSaved={onSaved}
       {...props}
-    />,
+    />
   );
-  return { onSaved, onClose, unmount };
+  const { unmount, rerender } = render(drawer());
+  return { onSaved, onClose, unmount, rerender: () => rerender(drawer()) };
 };
 
 beforeEach(() => {
@@ -180,6 +182,51 @@ describe("ReviewChangesDrawer", () => {
       "1 scenario won't run yet. Their reasons are on the Scenarios tab.",
       { variant: "warning" },
     );
+  });
+
+  it("follows the decisions with the suggested name until the person types one", async () => {
+    const user = userEvent.setup();
+    const ready = { canSaveValidated: true };
+    const refund = { id: "tool:a", summary: "Refunds in 14 days" };
+    const hours = { id: "tool:b", summary: "Open at 9", decision: "accepted" };
+    setFlow(
+      [change({ ...refund, decision: "accepted" }), change(hours)],
+      ready,
+    );
+    const { rerender } = renderDrawer();
+    const field = () => screen.getByLabelText(/Name this version/);
+    expect(field()).toHaveValue("Refunds in 14 days");
+
+    setFlow(
+      [change({ ...refund, decision: "rejected" }), change(hours)],
+      ready,
+    );
+    rerender();
+    expect(field()).toHaveValue("Open at 9");
+
+    await user.clear(field());
+    await user.type(field(), "Mine");
+    setFlow(
+      [change({ ...refund, decision: "accepted" }), change(hours)],
+      ready,
+    );
+    rerender();
+    expect(field()).toHaveValue("Mine");
+
+    // Discarded: the next set of changes starts from its own name.
+    setFlow([], { open: false });
+    rerender();
+    setFlow([change(hours)], ready);
+    rerender();
+    expect(field()).toHaveValue("Open at 9");
+  });
+
+  it("drops an earlier refusal when the person decides", async () => {
+    const user = userEvent.setup();
+    setFlow([change()], { error: "Refused" });
+    renderDrawer();
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+    expect(flow.clearRefusals).toHaveBeenCalled();
   });
 
   it("saves without Validate when the server doesn't ask for it", async () => {

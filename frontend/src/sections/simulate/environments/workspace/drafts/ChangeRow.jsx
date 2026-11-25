@@ -7,6 +7,7 @@ import {
   IconButton,
   Stack,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
@@ -127,6 +128,7 @@ export default function ChangeRow({
   onDecide,
   onOpen,
 }) {
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [expanded, setExpanded] = useState(false);
   const lines = diffLines(change);
   const source = change.sources?.[0];
@@ -154,13 +156,16 @@ export default function ChangeRow({
           sx={{ flexShrink: 0, ml: -0.5 }}
         >
           <Iconify
-            icon={
-              expanded
-                ? "solar:alt-arrow-down-linear"
-                : "solar:alt-arrow-right-linear"
-            }
+            icon="solar:alt-arrow-right-linear"
             width={14}
-            sx={{ color: "text.tertiary" }}
+            sx={{
+              color: "text.tertiary",
+              transition: (theme) => theme.transitions.create("transform"),
+              transform: expanded ? "rotate(90deg)" : "none",
+              "@media (prefers-reduced-motion: reduce)": {
+                transition: "none",
+              },
+            }}
           />
         </IconButton>
         <Box flex={1} minWidth={0}>
@@ -221,7 +226,11 @@ export default function ChangeRow({
           />
         )}
       </Stack>
-      <Collapse in={expanded} unmountOnExit>
+      <Collapse
+        in={expanded}
+        timeout={reduceMotion ? 0 : undefined}
+        unmountOnExit
+      >
         <Stack spacing={0.25} sx={{ px: 1.5, pb: 1.25, pl: 5.5 }}>
           {lines.slice(0, DIFF_LINES_SHOWN).map((line, index) => (
             // eslint-disable-next-line react/no-array-index-key

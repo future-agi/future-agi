@@ -239,36 +239,15 @@ describe("sources", () => {
 });
 
 describe("saveLine", () => {
-  const versions = (environment, suite) => ({
-    defaults: {
-      environment: { label: environment },
-      suite: { label: suite },
-    },
-  });
-
-  it("names the next environment version and the recheck count", () => {
-    const line = saveLine(
-      [change({ kind: "rule", revalidate: ["s1", "s2"] })],
-      versions("v3", "v1"),
-    );
-    expect(line).toEqual({
-      kind: "spec",
-      piece: "environment",
-      next: "v4",
-      rechecked: 2,
-    });
-  });
-
-  it("names the scenario version when only scenarios changed", () => {
+  it("names the edit and the recheck count", () => {
     expect(
-      saveLine(
-        [change({ piece: "suite", kind: "scenario" })],
-        versions("v3", "v1"),
-      ),
-    ).toMatchObject({ kind: "scenarios", piece: "suite", next: "v2" });
+      saveLine([change({ kind: "rule", revalidate: ["s1", "s2"] })]),
+    ).toEqual({ kind: "spec", rechecked: 2 });
   });
 
-  it("has no number to promise before a numbered version exists", () => {
-    expect(saveLine([change()], versions(null, null)).next).toBeNull();
+  it("is a scenario edit when only scenarios changed", () => {
+    expect(saveLine([change({ piece: "suite", kind: "scenario" })]).kind).toBe(
+      "scenarios",
+    );
   });
 });

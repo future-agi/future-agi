@@ -1,6 +1,13 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Collapse,
+  Stack,
+  Typography,
+  useMediaQuery,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
 
@@ -8,6 +15,7 @@ const NAMES_SHOWN = 20;
 
 /** The scenarios a save rechecks, because the changes alter what's graded. */
 export default function RecheckCard({ names }) {
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [showNames, setShowNames] = useState(false);
   return (
     <Box
@@ -38,7 +46,11 @@ export default function RecheckCard({ names }) {
           {showNames ? COPY.hide : COPY.showWhich}
         </Button>
       </Stack>
-      <Collapse in={showNames} unmountOnExit>
+      <Collapse
+        in={showNames}
+        timeout={reduceMotion ? 0 : undefined}
+        unmountOnExit
+      >
         <Stack component="ul" sx={{ m: 0, mt: 0.5, pl: 3.5 }}>
           {names.slice(0, NAMES_SHOWN).map((name) => (
             <Typography

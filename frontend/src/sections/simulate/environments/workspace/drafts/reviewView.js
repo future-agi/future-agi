@@ -184,28 +184,18 @@ export const sourceLink = (source = {}) => {
     : { kind: "tab" };
 };
 
-const nextVersion = (version) => {
-  const match = /^v(\d+)$/.exec(version?.label || "");
-  return match ? `v${Number(match[1]) + 1}` : null;
-};
-
-/** What Save makes: the footer's and the bar's one line and its button. */
-export const saveLine = (changes = [], versions) => {
+/**
+ * What Save makes: the footer's one line. No version number: the server counts versions the page isn't sent, and can
+ * reuse one.
+ */
+export const saveLine = (changes = []) => {
   const kept = keptChanges(changes);
-  const piece = kept.some((one) => one.piece === "environment")
-    ? "environment"
-    : "suite";
   const spec = kept.some((one) =>
     ["rule", "contract_field", "sub_goal"].includes(one.kind),
   );
   let kind = "scenarios";
-  if (piece === "environment") kind = spec ? "spec" : "environment";
-  return {
-    kind,
-    piece,
-    next: nextVersion(versions?.defaults?.[piece]),
-    rechecked: recheckedKeys(kept).length,
-  };
+  if (pieceOf(kept) === "environment") kind = spec ? "spec" : "environment";
+  return { kind, rechecked: recheckedKeys(kept).length };
 };
 
 // The server keeps a version name of at most 80 characters.
