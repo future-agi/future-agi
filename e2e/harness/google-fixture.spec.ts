@@ -1,11 +1,11 @@
-import { test, expect, request } from '@playwright/test';
+import { test, expect, newBackendRequest } from '../lib/backend-request';
 import { E2E } from '../lib/env';
 import { googleFixture } from '../lib/google-fixture';
 import { validateGoogleFixtureMounts } from '../lib/managed-mock';
 
 test('Google fixture changes visibility only for its synthetic browser', async () => {
-  const ordinary = await request.newContext({ baseURL: E2E.apiUrl });
-  const synthetic = await request.newContext({ baseURL: E2E.apiUrl,
+  const ordinary = await newBackendRequest({ baseURL: E2E.apiUrl });
+  const synthetic = await newBackendRequest({ baseURL: E2E.apiUrl,
     userAgent: 'FutureAGI-E2E-Google-Fixture' });
   try {
     const normal = await ordinary.get('/api/deployment-info/');

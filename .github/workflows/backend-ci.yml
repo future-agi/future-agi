@@ -323,6 +323,12 @@ jobs:
             test-durations-
       - name: Test CI asset verification and failure paths
         run: python3 -I -m unittest discover -s futureagi/.ci -p 'test_*.py' -v
+      - name: Raise known long tests to their weight floors (raise only)
+        # The saved timings keep each test's last time, and pytest-split runs a
+        # test alone in its group only while its weight is high enough. One
+        # fast sample of a bimodal test would fill its group with other tests.
+        # Applied once, here, so every shard plans from the same bytes.
+        run: python3 -I futureagi/.ci/duration_floors.py apply futureagi/.ci/test_duration_floors.json futureagi/.test_durations
       - name: Restore pinned Temporal archive
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -419,6 +425,14 @@ jobs:
       - uses: ./.github/actions/backend-test-packages/environment
         with:
           profile: ${{ inputs.backend_setup || 'baseline' }}
+
+      - name: Record the running service containers (observation only)
+        # Which image each service runs, read from the running containers by
+        # their own image IDs: no pull, no registry. It rides the collected-ids
+        # artifact and no verdict reads it. The script bounds all its reads to
+        # 60 s, so this timeout is only a backstop.
+        timeout-minutes: 2
+        run: python3 -I .ci/service_receipt.py "$RUNNER_TEMP/shard-receipt/services.json"
 
       - name: Fetch this run's pinned Temporal archive
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -678,6 +692,15 @@ jobs:
         if: needs.plan.outputs.cold_control != 'success'
         with:
           profile: ${{ inputs.backend_setup || 'baseline' }}
+      - name: Upload the files the fresh migrate touched (observation only)
+        if: ${{ !cancelled() && needs.plan.outputs.cold_control != 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: migrate-inputs
+          path: ${{ runner.temp }}/migrate-inputs/
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 7
       - name: Dump test service logs on failure
         if: failure()
         working-directory: futureagi
@@ -953,6 +976,9 @@ jobs:
         run: |
           python3 -I futureagi/.ci/check_collected_ids.py "$(jq '.include | length' <<<"$SHARDS")" \
             "$RUNNER_TEMP"/collected/*/collected-ids.txt
+      - name: Name weight floors whose test no shard collected (warns only)
+        if: ${{ !cancelled() }}
+        run: python3 -I futureagi/.ci/duration_floors.py check futureagi/.ci/test_duration_floors.json "$RUNNER_TEMP"/collected/*/collected-ids.txt
 
   terminal-parity:
     # Verify the unsharded eligible inventory against terminal outcomes. Use
