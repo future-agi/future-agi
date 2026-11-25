@@ -27,6 +27,7 @@ from tracer.services.clickhouse.server_readonly import (
     ensure_read_statement,
     without_query_settings,
 )
+from tracer.services.clickhouse.skill_bounds import bind_outer_skill_bounds
 
 _TOO_MANY_SIMULTANEOUS_QUERIES_CODE = 202
 _READ_ADMISSION_RETRY_DELAYS_SECONDS = tuple(
@@ -306,7 +307,7 @@ class ClickHouseClient:
             logger.debug("Executing ClickHouse query", query=query[:200])
             result = client.execute(
                 query,
-                params or {},
+                bind_outer_skill_bounds(query, params or {}),
                 with_column_types=with_column_types,
                 settings=settings,
             )
@@ -497,13 +498,14 @@ class ClickHouseClient:
                 query=query[:200],
                 timeout_ms=timeout_ms,
             )
+            params = bind_outer_skill_bounds(query, params or {})
             retry_attempt = 0
             while True:
                 try:
                     result = self._execute_native_read_with_remaining_timeout(
                         client,
                         query,
-                        params or {},
+                        params,
                         query_settings=query_settings,
                         started_at=t_start,
                         timeout_ms=timeout_ms,
@@ -725,7 +727,7 @@ class ClickHouseClient:
         return _ManagedNativeReadStream(
             self,
             query,
-            params or {},
+            bind_outer_skill_bounds(query, params or {}),
             timeout_ms=(
                 None
                 if application_read
@@ -759,7 +761,9 @@ class ClickHouseClient:
         client = self._get_client()
 
         try:
-            return client.execute_iter(query, params or {})
+            return client.execute_iter(
+                query, bind_outer_skill_bounds(query, params or {})
+            )
 
         except CHError as e:
             logger.error("ClickHouse query failed", error=str(e), query=query[:200])

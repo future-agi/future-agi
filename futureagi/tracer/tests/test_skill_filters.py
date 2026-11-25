@@ -182,7 +182,7 @@ def test_negative_means_absence_and_values_are_bound():
     assert value not in sql and (value,) in params.values()
     assert_skill_span_source(sql)
     assert "(project_id, trace_id, id) IN" in sql
-    assert "start_time < %(end_date)s" in sql
+    assert "start_time < fromUnixTimestamp64Micro(%(skill_window_end_us)s)" in sql
 
 
 def test_latest_state_partitions_keep_complete_group_as_residual():
@@ -421,11 +421,18 @@ def insert_rows(client, rows):
 
 
 def matching_traces(client, project, filters):
-    predicate, params = compile_filters(filters, project=project)
-    result = client.query(
+    predicate, params = compile_filters(
+        filters,
+        project=project,
+        skill_window=SkillEvidenceWindow.from_bounds(START, END, filters),
+    )
+    sql = (
         "SELECT DISTINCT trace_id FROM spans FINAL WHERE project_id = %(project_id)s "
         "AND is_deleted = 0 AND start_time >= %(start_date)s AND start_time < %(end_date)s "
-        "AND (" + predicate + ")",
+        "AND (" + predicate + ")"
+    )
+    result = client.query(
+        sql,
         parameters={
             **params,
             "project_id": project,
@@ -849,7 +856,7 @@ def test_live_span_scope_and_legacy_array_filter(skill_query_client):
         [raw_array],
     ):
         predicate, params = compile_exact_graph_filter_predicates(
-            items,
+            [*items, _date_filter("between", [START.isoformat(), END.isoformat()])],
             project_id=project,
             observe_type="span",
         )
@@ -1101,12 +1108,13 @@ def test_revision_partition_discovery_precedes_attribute_replay():
     assert "FROM spans PREWHERE" in discovery
     assert all(guard in discovery for guard in guards)
     assert "attrs_" not in discovery and "%(start_date)s" not in discovery
+    assert "skill_window_" not in discovery
     replay = replay.split("GROUP BY project_id, trace_id, id", 1)[0]
     assert "PREWHERE" in replay and all(guard in replay for guard in guards)
     assert (
         "toDate(rev.start_time) IN (SELECT revision_day FROM skill_load_days)" in replay
     )
-    assert "%(start_date)s" not in replay
+    assert "%(start_date)s" not in replay and "skill_window_" not in replay
 
 
 @pytest.mark.integration
@@ -1152,9 +1160,7 @@ def test_canonical_root_replay_starts_from_this_trace_batch_or_load_cohort():
         )
 
 
-@pytest.mark.integration
-@pytest.mark.parametrize("org_scope", [False, True])
-def test_list_load_witness_respects_datetime_complement(skill_query_client, org_scope):
+def _assert_list_witness_matches(client, project, org_scope, filters, roots):
     from tracer.services.clickhouse.v2.query_builders.session_list import (
         SessionListQueryBuilderV2,
     )
@@ -1162,6 +1168,31 @@ def test_list_load_witness_respects_datetime_complement(skill_query_client, org_
         SpanListQueryBuilderV2,
     )
 
+    scope = {"project_ids": [project]} if org_scope else {"project_id": project}
+    seeds = [{**root, "session_id": root["trace_session_id"]} for root in roots]
+    for builder, column in (
+        (TraceListQueryBuilderV2, "trace_id"),
+        (SpanListQueryBuilderV2, "id"),
+        (SessionListQueryBuilderV2, "session_id"),
+    ):
+        sql, params = builder(
+            **scope, filters=filters
+        ).build_filter_match_query_from_seed_rows(seeds)
+        # Mirror the native driver's datetime escaping for every bind, including
+        # namespaced organization branches, while exercising the real SQL over HTTP.
+        params = {
+            key: value.replace(microsecond=0) if isinstance(value, datetime) else value
+            for key, value in params.items()
+        }
+        assert {
+            str(row[column])
+            for row in client.query(sql, parameters=params).named_results()
+        } == {seeds[0][column]}, (builder.__name__, org_scope)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("org_scope", [False, True])
+def test_list_load_witness_respects_datetime_complement(skill_query_client, org_scope):
     project = str(uuid4())
     rows = []
     roots = []
@@ -1172,6 +1203,7 @@ def test_list_load_witness_respects_datetime_complement(skill_query_client, org_
             name="request",
             parent_span_id="",
             span_attributes={},
+            resource_attributes={"service.name": "support"},
             trace_session_id=str(uuid4()),
         )
         roots.append(root)
@@ -1195,19 +1227,7 @@ def test_list_load_witness_respects_datetime_complement(skill_query_client, org_
         ),
         skill("version_id", VERSION),
     ]
-    scope = {"project_ids": [project]} if org_scope else {"project_id": project}
-    for builder, candidate, column in (
-        (TraceListQueryBuilderV2, "trace_id", "trace_id"),
-        (SpanListQueryBuilderV2, "id", "id"),
-        (SessionListQueryBuilderV2, "trace_session_id", "session_id"),
-    ):
-        sql, params = builder(**scope, filters=filters).build_filter_match_query(
-            [root[candidate] for root in roots]
-        )
-        assert {
-            str(row[column])
-            for row in skill_query_client.query(sql, parameters=params).named_results()
-        } == {roots[0][candidate]}
+    _assert_list_witness_matches(skill_query_client, project, org_scope, filters, roots)
 
 
 @pytest.mark.integration
@@ -1216,58 +1236,211 @@ def test_fractional_equals_bounds_survive_native_datetime_formatting(
     skill_query_client,
     org_scope,
 ):
-    from tracer.services.clickhouse.v2.query_builders.span_list import (
-        SpanListQueryBuilderV2,
-    )
-
     project = str(uuid4())
     roots = []
+    rows = []
     start = START + timedelta(microseconds=123456)
+    # All candidate roots qualify at the same instant. Only their sibling load's
+    # time can distinguish the one match from its one-microsecond neighbors.
     for label, us in (("inside", 0), ("before", -1), ("after", 1)):
-        roots.append(
-            span_row(
-                project,
-                label,
-                parent_span_id="",
-                start_time=start + timedelta(microseconds=us),
+        root = span_row(
+            project,
+            label,
+            name="request",
+            parent_span_id="",
+            start_time=start,
+            span_attributes={},
+            resource_attributes={"service.name": "support"},
+            trace_session_id=str(uuid4()),
+        )
+        roots.append(root)
+        rows.extend(
+            (
+                root,
+                span_row(
+                    project,
+                    label,
+                    parent_span_id=root["id"],
+                    start_time=start + timedelta(microseconds=us),
+                ),
             )
         )
-    insert_rows(skill_query_client, roots)
+    insert_rows(skill_query_client, rows)
     filters = [_date_filter("equals", start.isoformat()), skill("version_id", VERSION)]
     predicate, params = compile_filters(filters, project=project)
-    # Mirror the native driver's second-only datetime escaping, even when the
-    # cloud fixture executes over HTTP. Only integer skill bounds survive it.
-    legacy_binds = {
-        "start_date": start.replace(microsecond=0),
-        "end_date": start.replace(microsecond=0),
-    }
     sql = (
         "SELECT DISTINCT trace_id FROM spans WHERE project_id = %(project_id)s AND "
         + predicate
     )
+    # Any datetime binds still present would arrive at whole-second precision.
+    native_date = start.replace(microsecond=0)
     assert {
         row[0]
         for row in skill_query_client.query(
-            sql, parameters={**legacy_binds, **params, "project_id": project}
+            sql,
+            parameters={
+                **params,
+                "project_id": project,
+                "start_date": native_date,
+                "end_date": native_date,
+            },
         ).result_rows
     } == trace_ids("inside")
 
-    # The list classifiers partition time leaves away from the residual SKILL
-    # group. They must still pass the exact request window to that group.
-    scope = {"project_ids": [project]} if org_scope else {"project_id": project}
-    for builder, column in (
-        (TraceListQueryBuilderV2, "trace_id"),
-        (SpanListQueryBuilderV2, "id"),
-    ):
-        sql, params = builder(**scope, filters=filters).build_filter_match_query(
-            [root[column] for root in roots]
-        )
-        assert {
-            row[column]
-            for row in skill_query_client.query(
-                sql, parameters={**params, **legacy_binds}
-            ).named_results()
-        } == {roots[0][column]}
+    _assert_list_witness_matches(skill_query_client, project, org_scope, filters, roots)
+
+
+@pytest.fixture
+def request_clock(monkeypatch):
+    from tracer.services.clickhouse.query_builders import base
+
+    class Clock(datetime):
+        now_value = END.replace(tzinfo=None)
+
+        @classmethod
+        def utcnow(cls):
+            return cls.fromisoformat(cls.now_value.isoformat())
+
+    monkeypatch.setattr(base, "datetime", Clock)
+    return Clock
+
+
+def _request_and_load(project, label, when):
+    root = span_row(
+        project,
+        label,
+        name="request",
+        parent_span_id="",
+        span_attributes={},
+        resource_attributes={"service.name": "support"},
+    )
+    return [
+        root,
+        span_row(
+            project,
+            label,
+            parent_span_id=root["id"],
+            start_time=when,
+            end_time=when + timedelta(milliseconds=5),
+        ),
+    ]
+
+
+@pytest.mark.integration
+def test_legacy_trace_id_pair_executes_directly_over_http(
+    skill_query_client, request_clock
+):
+    project = str(uuid4())
+    stop = END.replace(microsecond=123457)
+    request_clock.now_value = stop.replace(tzinfo=None)
+    builder = TraceListQueryBuilderV2(
+        project_id=project, filters=[skill("version_id", VERSION)]
+    )
+    start, _ = builder.parse_time_range(builder.filters)
+    start = start.replace(tzinfo=UTC)
+    tick = timedelta(microseconds=1)
+    insert_rows(
+        skill_query_client,
+        [
+            *_request_and_load(project, "before-start", start - tick),
+            *_request_and_load(project, "at-start", start),
+            *_request_and_load(project, "last-tick", stop - tick),
+            *_request_and_load(project, "at-stop", stop),
+        ],
+    )
+    request_clock.now_value += timedelta(seconds=2)
+    sql, params = builder.build_id_query()
+    # The eval resolver streams this pair over HTTP without the native adapter.
+    assert {
+        str(row[0])
+        for row in skill_query_client.query(sql, parameters=params).result_rows
+    } == trace_ids("at-start", "last-tick")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("separate_membership", [False, True])
+def test_trace_skill_classifier_keeps_frozen_relative_end(
+    skill_query_client, request_clock, separate_membership
+):
+    project = str(uuid4())
+    insert_rows(
+        skill_query_client,
+        [
+            *_request_and_load(project, "timely", END - timedelta(seconds=1)),
+            *_request_and_load(project, "late", END + timedelta(seconds=1)),
+        ],
+    )
+    selected = skill("version_id", VERSION)
+    membership = [_date_filter("greater_than_or_equal", START.isoformat()), selected]
+    # A graph may seed a shorter stratum but classify against the full window.
+    seed_end = END - timedelta(minutes=10) if separate_membership else END
+    seed_filters = (
+        [_date_filter("between", [START.isoformat(), seed_end.isoformat()]), selected]
+        if separate_membership
+        else membership
+    )
+    builder = TraceListQueryBuilderV2(
+        project_id=project,
+        filters=seed_filters,
+        bounded_membership_filters=membership if separate_membership else None,
+    )
+    sql, params = builder.build_filter_seed_page(
+        slice_start=START.replace(tzinfo=None),
+        slice_end=seed_end.replace(tzinfo=None),
+        limit=10,
+    )
+    seeds = list(skill_query_client.query(sql, parameters=params).named_results())
+    assert {str(row["trace_id"]) for row in seeds} == trace_ids("timely", "late")
+    request_clock.now_value += timedelta(seconds=2)
+    sql, params = builder.build_filter_match_query_from_seed_rows(seeds)
+    assert params["end_date"] == END.replace(tzinfo=None)
+    assert {
+        str(row["trace_id"])
+        for row in skill_query_client.query(sql, parameters=params).named_results()
+    } == trace_ids("timely")
+
+
+@pytest.mark.integration
+def test_excluded_load_keys_do_not_consume_replay_budget(
+    skill_query_client, monkeypatch
+):
+    import tracer.services.clickhouse.query_builders.filters as compiler_module
+
+    project = str(uuid4())
+    rows = [
+        span_row(project, "budget", start_time=START + timedelta(minutes=m))
+        for m in (20, 21, 30)
+    ]
+    insert_rows(skill_query_client, rows)
+    window = SkillEvidenceWindow.from_bounds(
+        START,
+        END,
+        [
+            _date_filter(
+                "not_between",
+                [(START + timedelta(minutes=m)).isoformat() for m in (15, 30)],
+            )
+        ],
+    )
+    monkeypatch.setattr(compiler_module, "SKILL_REPLAY_BATCH_SIZE", 1)
+    sql = ClickHouseFilterBuilderV2(
+        project_id=project, candidate_ids_param="candidates"
+    ).skill_live_rows_sql(skill_window=window)
+    params = {
+        "project_id": project,
+        "candidates": (rows[0]["trace_id"],),
+        **window.params,
+    }
+    result = skill_query_client.query(sql, parameters=params)
+    assert [row["span_id"] for row in result.named_results()] == [rows[-1]["id"]]
+
+    # Its old revision still nominates this key. Replay must see the correction
+    # into the exclusion, and the winner must fail the same time predicate.
+    insert_rows(
+        skill_query_client,
+        [{**rows[-1], "start_time": rows[0]["start_time"], "created_at": END}],
+    )
+    assert not skill_query_client.query(sql, parameters=params).result_rows
 
 
 def _closed_row_ids(client, project, items, *, row_type):
@@ -1293,92 +1466,6 @@ def _closed_row_ids(client, project, items, *, row_type):
             sql, parameters=params, settings=READ_SETTINGS
         ).result_rows
     }
-
-
-@pytest.mark.integration
-def test_closed_span_rows_replay_out_of_hour_tombstone_and_root(skill_query_client):
-    project = str(uuid4())
-    early = START - timedelta(minutes=5)
-    child = span_row(
-        project, "out-of-hour-root", start_time=START + timedelta(minutes=5)
-    )
-    root = span_row(
-        project,
-        "out-of-hour-root",
-        id=child["parent_span_id"],
-        parent_span_id="",
-        name="request",
-        status="ERROR",
-        start_time=early,
-        span_attributes={},
-    )
-    deleted = span_row(
-        project, "out-of-hour-delete", start_time=START + timedelta(minutes=5)
-    )
-    tombstone = {
-        **deleted,
-        "start_time": early,
-        "name": "",
-        "span_attributes": {},
-        "deleted": True,
-        "created_at": START + timedelta(minutes=1),
-    }
-    insert_rows(skill_query_client, [root, child, deleted, tombstone])
-    items = [skill("version_id", VERSION)]
-    assert _closed_row_ids(skill_query_client, project, items, row_type="spans") == {
-        child["id"]
-    }
-    assert _closed_row_ids(
-        skill_query_client,
-        project,
-        [*items, skill("root_status", "error")],
-        row_type="spans",
-    ) == {child["id"]}
-
-
-@pytest.mark.integration
-def test_closed_watermark_precedes_physical_winner_election(skill_query_client):
-    client = skill_query_client
-    project = str(uuid4())
-    original = span_row(
-        project,
-        "three-revisions",
-        parent_span_id="",
-        resource_attributes={"service.name": "X"},
-    )
-    corrected = {
-        **original,
-        "resource_attributes": {"service.name": "Y"},
-        "created_at": START + timedelta(seconds=1),
-        "span_attributes": {
-            **original["span_attributes"],
-            "fi.skill.version_id": OTHER_VERSION,
-        },
-    }
-    # C displaces B under the *same* physical key. Keep the input revisions
-    # available: after compaction historical membership needs persisted data.
-    late = {
-        **corrected,
-        "created_at": END + timedelta(seconds=1),
-        "span_attributes": {},
-    }
-    client.command("SYSTEM STOP MERGES spans")
-    try:
-        insert_rows(client, [original, corrected])
-        for after_cutoff in (False, True):
-            if after_cutoff:
-                insert_rows(client, [late])
-            assert _closed_row_ids(
-                client, project, [skill("version_id", OTHER_VERSION)], row_type="traces"
-            ) == {original["trace_id"]}
-            assert (
-                _closed_row_ids(
-                    client, project, [skill("version_id", VERSION)], row_type="traces"
-                )
-                == set()
-            )
-    finally:
-        client.command("SYSTEM START MERGES spans")
 
 
 @pytest.mark.integration

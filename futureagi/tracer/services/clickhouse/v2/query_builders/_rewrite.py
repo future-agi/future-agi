@@ -42,6 +42,7 @@ from __future__ import annotations
 import functools
 from collections.abc import Callable
 
+from tracer.services.clickhouse.skill_bounds import bind_outer_skill_bounds
 from tracer.services.clickhouse.v2.query_builders.filters import (
     _append_v2_settings,
     rewrite_v1_sql_to_v2,
@@ -66,7 +67,7 @@ def _rewrite_sql_in(result: object) -> object:
     """Apply the v1→v2 rewrite to whatever SQL a builder method returned.
 
     Shape-aware — covers the three real return shapes across the v1 builders:
-      • ``(sql, params)``              → rewrite ``sql``, keep ``params``
+      • ``(sql, params)``              → rewrite ``sql``, complete its binds
       • ``[(sql, params, meta), ...]`` → rewrite each element's ``sql``
         (only ``dashboard.build_all_queries``)
       • anything else                  → returned unchanged (defensive)
@@ -88,6 +89,7 @@ def _rewrite_sql_in(result: object) -> object:
         rewritten = rewrite_v1_sql_to_v2(sql)
         if _is_statement(sql):
             rewritten = _append_v2_settings(rewritten)
+            params = bind_outer_skill_bounds(rewritten, params)
         return rewritten, params
 
     # [(sql, params, meta), ...] — dashboard.build_all_queries.
@@ -101,14 +103,16 @@ def _rewrite_sql_in(result: object) -> object:
     ):
         rewritten = []
         for el in result:
-            sql = el[0]
+            sql, *tail = el
             if sql:
                 new_sql = rewrite_v1_sql_to_v2(sql)
                 if _is_statement(sql):
                     new_sql = _append_v2_settings(new_sql)
+                    if tail and isinstance(tail[0], dict):
+                        tail[0] = bind_outer_skill_bounds(new_sql, tail[0])
             else:
                 new_sql = sql
-            rewritten.append((new_sql, *el[1:]))
+            rewritten.append((new_sql, *tail))
         return rewritten
 
     return result

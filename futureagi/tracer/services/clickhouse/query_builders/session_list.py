@@ -34,8 +34,10 @@ from tracer.services.clickhouse.query_builders.filter_seed_witness import (
 from tracer.services.clickhouse.query_builders.filters import (
     BooleanMetaFilterShapeError,
     ClickHouseFilterBuilder,
+    SkillEvidenceWindow,
     boolean_meta_presence_condition,
     build_numeric_filter_predicate,
+    is_skill_filter,
     parse_boolean_meta_filter,
     resolve_boolean_meta_value,
 )
@@ -618,7 +620,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         needs_session_score_cte = False
         org_scope = self.project_ids is not None
         branch_projects = self.project_ids if org_scope else [self.project_id]
-        from tracer.services.clickhouse.query_builders.filters import is_skill_filter
 
         # All SKILL groups must be witnessed by one trace in the session, and
         # all positive leaves of a group by one load within that trace.
@@ -626,6 +627,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         filter_batches = [
             [item] for item in relational_filters if not is_skill_filter(item)
         ]
+        window = (
+            SkillEvidenceWindow.from_bounds(*self._bounded_request_window, self.filters)
+            if skill_items
+            else None
+        )
         if skill_items:
             filter_batches.append(skill_items)
         predicates_by_leaf: list[list[str]] = [[] for _ in filter_batches]
@@ -649,6 +655,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             for leaf_index, batch in enumerate(filter_batches):
                 item = batch[0]
                 filter_builder = self._FILTER_BUILDER_CLS(
+                    skill_window=window,
                     table=self.TABLE,
                     annotation_label_ids=branch_label_ids,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,

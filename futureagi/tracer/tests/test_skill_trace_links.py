@@ -17,7 +17,10 @@ from conftest import (
     _ch_test_owned_database,
     _open_ch_test_http_client,
 )
-from tracer.services.clickhouse.query_builders.filters import SKILL_VERSION_IDS_SQL
+from tracer.services.clickhouse.query_builders.filters import (
+    SKILL_VERSION_IDS_SQL,
+    SkillEvidenceWindow,
+)
 from tracer.services.clickhouse.v2.adapter import CH_INSERT_COLUMNS, adapt, row_to_tuple
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -116,17 +119,17 @@ def insert_span(client, span, writer="python"):
 
 def evidence_rows(client, span, *, failed=False):
     project = span["project_id"]
+    window = SkillEvidenceWindow.from_bounds(START, START + timedelta(hours=1))
     source = ClickHouseFilterBuilderV2(
         project_id=project, candidate_ids_param="traces"
-    ).skill_live_rows_sql(failed=failed)
+    ).skill_live_rows_sql(failed=failed, skill_window=window)
     return list(
         client.query(
             source,
             parameters={
                 "project_id": project,
                 "traces": (span["trace_id"],),
-                "start_date": START,
-                "end_date": START + timedelta(hours=1),
+                **window.params,
             },
         ).named_results()
     )

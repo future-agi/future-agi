@@ -36,6 +36,8 @@ from tracer.services.clickhouse.query_builders.eval_status import (
 )
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
+    SkillEvidenceWindow,
+    is_skill_filter,
     normalize_filter_op,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
@@ -1555,6 +1557,13 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
         residual_predicate = "1 = 1"
         if residual_filters:
+            window = (
+                SkillEvidenceWindow.from_bounds(
+                    request_start, request_end, self.filters
+                )
+                if any(is_skill_filter(item) for item in residual_filters)
+                else None
+            )
             org_scope = self.project_ids is not None
             if org_scope:
                 requires_project_label_sets = any(
@@ -1615,6 +1624,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                         ]
                         branch_label_set_known = True
                     branch_builder = self._FILTER_BUILDER_CLS(
+                        skill_window=window,
                         eval_count_mode=self.eval_count_mode,
                         table=self.TABLE,
                         query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
@@ -1679,6 +1689,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     for item in residual_filters
                 )
                 residual_builder = self._FILTER_BUILDER_CLS(
+                    skill_window=window,
                     eval_count_mode=self.eval_count_mode,
                     table=self.TABLE,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,

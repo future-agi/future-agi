@@ -1856,11 +1856,9 @@ class ClickHouseFilterBuilder:
     # ------------------------------------------------------------------
 
     def _skill_window_bounds(self, window: SkillEvidenceWindow | None = None) -> str:
-        return (
-            window.bounds
-            if window
-            else "start_time >= %(start_date)s AND start_time < %(end_date)s"
-        )
+        # A fragment without its own window is late-bound to the enclosing
+        # query's dates by bind_outer_skill_bounds, not a fresh default range.
+        return window.bounds if window else SkillEvidenceWindow.bounds
 
     def _skill_candidate_filter(self) -> str:
         """Select candidate *traces* even when Observe is classifying spans."""
@@ -1912,8 +1910,11 @@ class ClickHouseFilterBuilder:
                 " AND has(attrs_string.keys, 'fi.skill.version_id')"
             )
         )
+        # A winning load must itself have an admissible revision. Nominate
+        # only such keys before charging the cap; replay every revision of them.
+        admission = window.condition if window else self._skill_window_bounds()
         return (
-            f"{self._project_scope_predicate()} AND {self._skill_window_bounds(window)}"
+            f"{self._project_scope_predicate()} AND {admission}"
             f"{self._skill_candidate_filter()}{witness} AND name = 'skill.load'"
         )
 
@@ -1988,7 +1989,8 @@ class ClickHouseFilterBuilder:
 
         Raw SQL callers bind ``skill_window.params`` on the containing query.
         ``translate`` binds them itself. Only legacy callers with no window
-        object use the outer query's ``start_date``/``end_date`` parameters.
+        object defer the integer bounds to the enclosing statement, where
+        ``bind_outer_skill_bounds`` can use its frozen dates.
         """
         if not self.project_ids:
             raise _unsupported_filter_shape("SKILL filters require a project scope")
@@ -1998,8 +2000,7 @@ class ClickHouseFilterBuilder:
 
         project = self._project_scope_predicate()
         skill_window = skill_window or self.skill_window
-        bounds = self._skill_window_bounds(skill_window)
-        window = skill_window.condition if skill_window else bounds
+        window = skill_window.condition if skill_window else self._skill_window_bounds()
         admitted_version = ""
         if self.table == ResolvedSpanSource.SAMPLING.value:
             # SamplingQuery's dependency_source has already applied its arrival
@@ -2014,7 +2015,7 @@ class ClickHouseFilterBuilder:
             # being sampled; sampling_source defines candidate row admission.
             keys_sql = (
                 "SELECT project_id, trace_id, id FROM sampling_source WHERE "
-                f"{project} AND {bounds}{self._skill_candidate_filter()} AND name = 'skill.load'"
+                f"{project} AND {window}{self._skill_candidate_filter()} AND name = 'skill.load'"
             )
             replay = (
                 f"FROM dependency_source WHERE {project} "

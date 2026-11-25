@@ -31,6 +31,8 @@ from tracer.services.clickhouse.query_builders.eval_status import (
 )
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
+    SkillEvidenceWindow,
+    is_skill_filter,
     normalize_filter_op,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
@@ -337,13 +339,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self._bounded_request_window = BaseQueryBuilder.parse_time_range(
             self.filters, strict=True
         )
+        self._bounded_membership_window = self._bounded_request_window
         if self._bounded_membership_filters is not None:
-            membership_window = BaseQueryBuilder.parse_time_range(
+            self._bounded_membership_window = BaseQueryBuilder.parse_time_range(
                 self._bounded_membership_filters,
                 strict=True,
             )
             seed_start, seed_end = self._bounded_request_window
-            membership_start, membership_end = membership_window
+            membership_start, membership_end = self._bounded_membership_window
             if not (membership_start <= seed_start < seed_end <= membership_end):
                 raise ValueError(
                     "bounded membership window must contain the seed window"
@@ -4288,9 +4291,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             raise ValueError("unsupported bounded trace filter scan")
 
         match_filters = self._bounded_match_filters()
-        request_start, request_end = BaseQueryBuilder.parse_time_range(
-            match_filters, strict=True
-        )
+        request_start, request_end = self._bounded_membership_window
         self.start_date, self.end_date = request_start, request_end
         self.params.update({"start_date": request_start, "end_date": request_end})
         has_explicit_time_filter = any(
@@ -4546,6 +4547,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         residual_predicate = "1 = 1"
         if residual_filters:
+            window = (
+                SkillEvidenceWindow.from_bounds(
+                    request_start, request_end, match_filters
+                )
+                if any(is_skill_filter(item) for item in residual_filters)
+                else None
+            )
             has_eval_residual = any(
                 (item.get("column_id") or item.get("columnId")) == "has_eval"
                 for item in residual_filters
@@ -4594,6 +4602,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                         ]
                         branch_label_set_known = True
                     residual_builder = self._FILTER_BUILDER_CLS(
+                        skill_window=window,
                         eval_count_mode=self.eval_count_mode,
                         table=self.TABLE,
                         query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
@@ -4644,6 +4653,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 residual_predicate = " OR ".join(residual_branches) or "0 = 1"
             else:
                 residual_builder = self._FILTER_BUILDER_CLS(
+                    skill_window=window,
                     eval_count_mode=self.eval_count_mode,
                     table=self.TABLE,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
