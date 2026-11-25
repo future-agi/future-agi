@@ -34,7 +34,7 @@ export const BUILD_STATUS = {
 export const STATUS_META = {
   building: { label: "Building", role: "info" },
   not_run: { label: "Not run yet", role: "neutral" },
-  running: { label: "Running…", role: "info" },
+  running: { label: "Running", role: "info" },
   finalizing: { label: "Finalizing", role: "info" },
   cancelling: { label: "Cancelling", role: "neutral" },
   cancelled: { label: "Cancelled", role: "neutral" },
@@ -64,6 +64,10 @@ export const DELETE_DIALOG_COPY = {
   cancel: "Cancel",
   confirm: "Delete",
 };
+
+// A field the list API doesn't send at all (not even as null). Cells draw a
+// "Coming soon" chip for it; a field sent as null draws a dash instead.
+export const NOT_PROVIDED = Symbol("not provided");
 
 export const EMPTY_MESSAGE = "No environments yet";
 export { ROW_HEIGHT } from "src/theme/sizes";

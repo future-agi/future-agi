@@ -125,6 +125,11 @@ export default function DataTable({
         muiCol.flex = 1;
       }
 
+      if (col.meta?.align) {
+        muiCol.align = col.meta.align;
+        muiCol.headerAlign = col.meta.align;
+      }
+
       // Cell renderer
       if (col.cell) {
         const CellFn = col.cell;
