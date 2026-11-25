@@ -77,6 +77,28 @@ def test_a_list_edit_that_shifts_indexes_tests_each_value_where_its_op_meets_it(
         jsonpatch.apply_patch({**before, "examples": ["f", "b"]}, change["patch"])
 
 
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # jsonpatch's diff here fails to apply: its replace lands on a string after the add shifts the list.
+        (["a", {"k": "a"}], ["b", {"k": "b"}, "a"]),
+        # Here its diff applies but builds another value than the draft's.
+        (["a", {"k": "a"}, "b", "a"], ["b", {"k": "b"}]),
+    ],
+)
+def test_a_dict_moved_and_edited_in_a_list_gives_a_patch_that_builds_the_draft(was, now):
+    before = {**TOOLS[1], "examples": was}
+    after = {**TOOLS[1], "examples": now}
+
+    [change] = compute_changes(
+        _tree({"tools": [TOOLS[0], before]}), _tree({"tools": [TOOLS[0], after]})
+    )
+
+    assert jsonpatch.apply_patch(before, change["patch"]) == after
+    with pytest.raises(jsonpatch.JsonPatchTestFailed):
+        jsonpatch.apply_patch({**before, "examples": ["c"]}, change["patch"])
+
+
 def test_reordering_items_is_not_a_change_and_an_unchanged_draft_has_none():
     default = _tree({"tools": TOOLS, "hard_constraints": ["a", "b"]})
     assert (
