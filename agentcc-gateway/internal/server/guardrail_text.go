@@ -22,10 +22,49 @@ func guardrailRequest(dialect string, body []byte) *models.ChatCompletionRequest
 		return nil
 	}
 	req, _, err := t.RequestToCanonical(body)
-	if err != nil {
+	if err == nil {
+		return req
+	}
+	// The translator refuses bodies carrying blocks it cannot translate
+	// (Anthropic document/container_upload/server-tool results), but on the
+	// native route those bodies are still forwarded and their text still
+	// needs checking. Fall back to the text fields alone; a body whose text
+	// cannot even be read gives nil.
+	if dialect != "anthropic" {
 		return nil
 	}
-	return req
+	return lenientAnthropicRequest(body)
+}
+
+// lenientAnthropicRequest extracts just the text of an Anthropic Messages body
+// — the system field and the text-bearing parts of each message — ignoring the
+// block types a strict translation would reject. Guardrail coverage for the
+// readable text must not depend on the whole body being translatable.
+func lenientAnthropicRequest(body []byte) *models.ChatCompletionRequest {
+	var parsed struct {
+		Model    string          `json:"model"`
+		System   json.RawMessage `json:"system"`
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(body, &parsed) != nil {
+		return nil
+	}
+	out := &models.ChatCompletionRequest{Model: parsed.Model}
+	if text := contentText(parsed.System); text != "" {
+		out.Messages = append(out.Messages, textMessage("system", text))
+	}
+	for _, m := range parsed.Messages {
+		if text := contentText(m.Content); text != "" {
+			out.Messages = append(out.Messages, textMessage(m.Role, text))
+		}
+	}
+	if len(out.Messages) == 0 {
+		return nil
+	}
+	return out
 }
 
 // responsesGuardrailRequest is the text of a Responses request: its
