@@ -18,15 +18,22 @@ Its rules:
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from simulate.models.agent_setup import AgentVersionSetup
 from simulate.models.chat_message import ChatMessageModel
-from simulate.models.hosted_harness import HostedHarnessArtifact, HostedHarnessExecution
+from simulate.models.hosted_harness import (
+    HostedHarnessArtifact,
+    HostedHarnessExecution,
+    HostedHarnessManifest,
+)
 from simulate.models.test_execution import CallExecution, CallTranscript
 from simulate.selectors.call_transcripts import with_speakers
+from simulate.services.agent_contracts import stored_version_contract
 from simulate.services.canonical_json import canonical_digest
 from simulate.services.run_traces_v3 import read_run_traces, run_traces_source
 from simulate.utils.speaker_roles import SpeakerRoleResolver
@@ -81,7 +88,7 @@ class RunKind(StrEnum):
 
 
 # Marks a present record carries.
-MAY_BE_FROM_ANOTHER_ATTEMPT = "may_be_from_another_attempt"
+MAY_BE_FROM_ANOTHER_ATTEMPT_OR_TRIAL = "may_be_from_another_attempt_or_trial"
 CUT_AT_INGESTION = "cut_at_ingestion"
 
 # What each artifact level lets a hosted run upload (the ingestion's own table).
@@ -91,6 +98,9 @@ _LEVEL_ALLOWS = {
         {"build", "result", "log", "trace", "tool_trace", "transcript", "world_state"}
     ),
 }
+# The kit's mark on a contract whose prompt its save copied by code: from the source as
+# written, or a provider's whole prompt. Without it the excerpt is a quote.
+SYSTEM_PROMPT_COPIED = "system_prompt_copied"
 # Hosted connectors whose stored prompt may be the contract's excerpt, not the whole prompt.
 _EXCERPT_CONNECTORS = frozenset({"vapi", "retell", "retell_chat"})
 _RETELL_TOOL_ROLES = frozenset({"tool_call_invocation", "tool_call_result"})
@@ -133,6 +143,9 @@ class HostedTrial:
     attempts: int
     trials: int
     environment_version_id: Any = None
+    execution_key: str | None = None
+    scenario_key: str | None = None
+    contract: Mapping[str, Any] | None = None
 
     def allows(self, artifact_kind: str) -> bool:
         allowed = _LEVEL_ALLOWS.get(self.artifact_level)
@@ -207,7 +220,7 @@ def hosted_trial(call: CallExecution) -> HostedTrial | None:
     """The hosted job this call was a trial of, or ``None`` for a call no job made."""
     execution = (
         HostedHarnessExecution.objects.filter(call_execution_id=call.id)
-        .select_related("job")
+        .select_related("job", "source_scenario")
         .first()
     )
     if execution is None:
@@ -224,7 +237,35 @@ def hosted_trial(call: CallExecution) -> HostedTrial | None:
             job_id=job.id, source_scenario_id=execution.source_scenario_id
         ).count(),
         environment_version_id=job.environment_version_id,
+        execution_key=execution.execution_key,
+        scenario_key=execution.source_scenario.scenario_key,
+        contract=_job_contract(job.stage_outputs),
     )
+
+
+def manifest_lists(
+    job_id: Any, attempt_id: Any, digest: str, scenario_keys: set[str]
+) -> bool:
+    """Whether an upload manifest of that attempt of the job lists the tool trace with
+    that digest under one of those scenario keys."""
+    try:
+        attempt_id = uuid.UUID(str(attempt_id))
+    except ValueError:
+        return False
+    bodies = HostedHarnessManifest.objects.filter(
+        attempt_id=attempt_id, attempt__job_id=job_id
+    ).values_list("body", flat=True)
+    for body in bodies:
+        for entry in _mapping(body).get("entries") or []:
+            if (
+                isinstance(entry, dict)
+                and entry.get("kind") == "tool_trace"
+                and str(entry.get("artifact_id") or "").removeprefix("sha256:")
+                == digest
+                and entry.get("scenario_key") in scenario_keys
+            ):
+                return True
+    return False
 
 
 def environment_files(environment_version_id: Any) -> dict[str, bytes] | None:
@@ -301,16 +342,17 @@ def _transcript(read: _Read) -> Evidence:
 
 
 def _agent_instructions(read: _Read) -> Evidence:
-    text = _whole_instructions(read)
-    if not text:
+    whole = _whole_instructions(read)
+    if whole is None:
         return _missing(Kind.AGENT_INSTRUCTIONS, Cause.NO_WHOLE_INSTRUCTIONS)
+    text, source = whole
     if read.max_chars is not None and len(text) > read.max_chars:
         return _missing(
             Kind.AGENT_INSTRUCTIONS,
             Cause.TOO_LARGE,
             note=f"{len(text)} characters; instructions are never cut.",
         )
-    return _present(Kind.AGENT_INSTRUCTIONS, "agent_version", text)
+    return _present(Kind.AGENT_INSTRUCTIONS, source, text)
 
 
 def _scenario(read: _Read) -> Evidence:
@@ -366,7 +408,7 @@ def _tool_calls(read: _Read) -> Evidence:
                 "hosted_tool_trace",
                 trace,
                 read.max_chars,
-                marks=_tool_record_marks(read.trial),
+                marks=_tool_record_marks(read),
             )
         if read.run_kind == RunKind.HOSTED_CHAT and read.chat_messages():
             return _tool_record(
@@ -403,6 +445,9 @@ def _world_state_end(read: _Read) -> Evidence:
     kind = Kind.WORLD_STATE_END
     if read.trial is None:
         return _not_applicable(kind)
+    if read.trial_state.get("recorded") is False:
+        # A world that keeps no records may still upload a file; it is not read.
+        return _missing(kind, Cause.WORLD_NOT_RECORDED)
     digest = read.trial_state.get("end_state_artifact")
     if not isinstance(digest, str) or not digest.startswith("sha256:"):
         cause = _hosted_cause(read.trial, "world_state")
@@ -499,23 +544,77 @@ _READERS = {
 # --- the two choices a ruling may change -------------------------------------------
 
 
-def _tool_record_marks(trial: HostedTrial | None) -> tuple[str, ...]:
-    """The receipt names no tool trace, so on a run with another attempt or trial the
-    stored trace may be another one's: it is marked, not withheld."""
-    if trial is not None and (trial.attempts > 1 or trial.trials > 1):
-        return (MAY_BE_FROM_ANOTHER_ATTEMPT,)
-    return ()
+def _tool_record_marks(read: _Read) -> tuple[str, ...]:
+    """The trace ingestion attached is the newest for the trial's key, and the receipt
+    does not name it. It is unmarked only on a run with one attempt and one trial, or
+    when a manifest of the receipt's own attempt lists it for this trial: under the
+    trial's own key, or under the scenario's key when the scenario had one trial."""
+    trial = read.trial
+    if trial is None or (trial.attempts <= 1 and trial.trials <= 1):
+        return ()
+    artifacts = _mapping(read.metadata.get("hosted_harness_artifacts"))
+    digest = _mapping(artifacts.get("tool_trace")).get("sha256")
+    attempt_id = _mapping(read.metadata.get("hosted_harness_receipt")).get("attempt_id")
+    keys = {trial.execution_key} if trial.execution_key else set()
+    if trial.trials <= 1 and trial.scenario_key:
+        keys.add(trial.scenario_key)
+    if (
+        isinstance(digest, str)
+        and digest
+        and attempt_id
+        and keys
+        and manifest_lists(
+            trial.job_id, str(attempt_id), digest.removeprefix("sha256:"), keys
+        )
+    ):
+        return ()
+    return (MAY_BE_FROM_ANOTHER_ATTEMPT_OR_TRIAL,)
 
 
-def _whole_instructions(read: _Read) -> str | None:
-    """The agent's instructions where the run is known to have kept them whole."""
+def _whole_instructions(read: _Read) -> tuple[str, str] | None:
+    """The agent's instructions and where they came from, only where stored data shows
+    an origin that keeps them whole."""
+    version = read.call.agent_version or read.call.test_execution.agent_version
+    copied = _copied_prompt(read.trial.contract if read.trial else None)
+    if copied is None and version is not None:
+        copied = _copied_prompt(stored_version_contract(version.id))
+    if copied is not None:
+        return copied
     if read.trial is not None and read.trial.connector in _EXCERPT_CONNECTORS:
         return None
-    version = read.call.agent_version or read.call.test_execution.agent_version
     if version is None:
         return None
+    # Its prompt may be the reading's excerpt, and nothing stored tells that apart
+    # from one a person set.
+    if AgentVersionSetup.no_workspace_objects.filter(
+        agent_version_id=version.id, agent_kind="source"
+    ).exists():
+        return None
     text = _mapping(version.configuration_snapshot).get("description")
-    return text if isinstance(text, str) and text.strip() else None
+    if isinstance(text, str) and text.strip():
+        return text, "stated_by_the_user"
+    return None
+
+
+def _copied_prompt(contract: Mapping[str, Any] | None) -> tuple[str, str] | None:
+    contract = _mapping(contract)
+    text = contract.get("system_prompt_excerpt")
+    if contract.get(SYSTEM_PROMPT_COPIED) is not True or not (
+        isinstance(text, str) and text.strip()
+    ):
+        return None
+    if contract.get("system_prompt_from"):
+        return text, "copied_from_the_code"
+    return text, "taken_from_the_provider"
+
+
+def _job_contract(stage_outputs: Any) -> Mapping[str, Any] | None:
+    """The contract the job's contract stage authored, as stored."""
+    for output in stage_outputs if isinstance(stage_outputs, list) else []:
+        if isinstance(output, dict) and output.get("kind") == "contract":
+            data = output.get("data")
+            return data if isinstance(data, dict) else None
+    return None
 
 
 # --- helpers ----------------------------------------------------------------------

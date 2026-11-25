@@ -12,14 +12,22 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import replace
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
 
 from model_hub.models.choices import DatasetSourceChoices, StatusType
 from model_hub.models.develop_dataset import Dataset
 from simulate.models import AgentDefinition, Scenarios
+from simulate.models.agent_setup import AgentVersionSetup
 from simulate.models.chat_message import ChatMessageModel
+from simulate.models.hosted_harness import (
+    HostedHarnessAttempt,
+    HostedHarnessJob,
+    HostedHarnessManifest,
+)
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, CallTranscript, TestExecution
@@ -200,6 +208,9 @@ HOSTED = reader.HostedTrial(
     attempts=1,
     trials=1,
     environment_version_id=None,
+    execution_key="exec-key-trial-0",
+    scenario_key="refund-over-limit",
+    contract=None,
 )
 
 
@@ -344,7 +355,7 @@ def test_instructions_come_whole_from_the_agent_version(voice_call, agent_versio
     evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
 
     assert evidence.state == State.PRESENT
-    assert evidence.source == "agent_version"
+    assert evidence.source == "stated_by_the_user"
     assert evidence.content == "You are a refunds agent. Never refund over 100."
 
 
@@ -375,6 +386,102 @@ def test_no_whole_instructions_is_said_and_nothing_else_is_read(
 def test_a_hosted_provider_agent_has_no_whole_instructions(voice_call, connector):
     """Its stored prompt may be the contract's excerpt."""
     with _hosted(connector=connector):
+        evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert evidence.cause == Cause.NO_WHOLE_INSTRUCTIONS
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("connector", ["phone", "livekit"])
+def test_a_hosted_phone_or_livekit_prompt_is_stated_by_the_user(voice_call, connector):
+    with _hosted(connector=connector):
+        evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert (evidence.state, evidence.source) == (State.PRESENT, "stated_by_the_user")
+
+
+def _source_agent(agent_version, kind="source"):
+    AgentVersionSetup.objects.create(
+        agent_version=agent_version,
+        status=AgentVersionSetup.Status.STORED,
+        agent_kind=kind,
+    )
+
+
+@pytest.mark.django_db
+def test_a_configured_agents_stored_setup_does_not_make_it_a_source_agent(
+    voice_call, agent_version
+):
+    """A phone or LiveKit version gets a stored setup too, as its configured agent."""
+    _source_agent(agent_version, kind="phone")
+
+    evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert (evidence.state, evidence.source) == (State.PRESENT, "stated_by_the_user")
+
+
+@pytest.mark.django_db
+def test_a_mark_in_the_versions_own_contract_is_read_too(voice_call, agent_version):
+    _source_agent(agent_version)
+    contract = {
+        reader.SYSTEM_PROMPT_COPIED: True,
+        "system_prompt_from": [{"path": "agent.py", "lines": [1, 4]}],
+        "system_prompt_excerpt": "Copied from agent.py.",
+    }
+    with patch.object(
+        reader, "stored_version_contract", return_value=contract
+    ) as stored:
+        evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    stored.assert_called_once_with(agent_version.id)
+    assert (evidence.source, evidence.content) == (
+        "copied_from_the_code",
+        "Copied from agent.py.",
+    )
+
+
+@pytest.mark.django_db
+def test_a_source_code_agent_prompt_filled_from_its_reading_is_not_whole(
+    voice_call, agent_version
+):
+    """Nothing stored tells a prompt filled from the setup document apart from one
+    a person set, so it is read as filled from the document."""
+    _source_agent(agent_version)
+
+    evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert evidence.cause == Cause.NO_WHOLE_INSTRUCTIONS
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("connector", "copied_from", "source"),
+    [
+        ("vapi", [], "taken_from_the_provider"),
+        ("retell", [], "taken_from_the_provider"),
+        (None, [{"path": "agent.py", "lines": [3, 9]}], "copied_from_the_code"),
+    ],
+)
+def test_a_prompt_the_save_copied_is_read_from_the_runs_contract(
+    voice_call, agent_version, connector, copied_from, source
+):
+    _source_agent(agent_version)
+    contract = {
+        reader.SYSTEM_PROMPT_COPIED: True,
+        "system_prompt_from": copied_from,
+        "system_prompt_excerpt": "The whole prompt, as copied.",
+    }
+    with _hosted(connector=connector, contract=contract):
+        evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert (evidence.state, evidence.source) == (State.PRESENT, source)
+    assert evidence.content == "The whole prompt, as copied."
+
+
+@pytest.mark.django_db
+def test_a_contract_without_the_mark_holds_only_an_excerpt(voice_call):
+    contract = {"system_prompt_excerpt": "A quote that may leave text out."}
+    with _hosted(connector="vapi", contract=contract):
         evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
 
     assert evidence.cause == Cause.NO_WHOLE_INSTRUCTIONS
@@ -562,21 +669,143 @@ def test_hosted_without_a_tool_trace_says_why(execution, scenario, level, cause)
         assert _one(call, Kind.TOOL_CALLS).cause == cause
 
 
-@pytest.mark.django_db
-@pytest.mark.parametrize(("attempts", "trials"), [(2, 1), (1, 3)])
-def test_a_hosted_tool_record_may_be_from_another_attempt(
-    execution, scenario, attempts, trials
-):
-    call = _call(
+TRACE = "b" * 64
+ATTEMPT = uuid.uuid4()
+
+
+def _traced_call(execution, scenario, *, receipt=True, digest=True):
+    metadata = {}
+    if digest:
+        metadata["hosted_harness_artifacts"] = {"tool_trace": {"sha256": TRACE}}
+    if receipt:
+        metadata["hosted_harness_receipt"] = {"attempt_id": str(ATTEMPT)}
+    return _call(
         execution,
         scenario,
         provider_call_data={"livekit": {"tool_calls": [{"name": "lookup_order"}]}},
+        call_metadata=metadata,
     )
-    with _hosted(attempts=attempts, trials=trials):
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(("attempts", "trials"), [(2, 1), (1, 3)])
+def test_a_hosted_tool_record_not_tied_to_this_trial_is_marked(
+    execution, scenario, attempts, trials
+):
+    call = _traced_call(execution, scenario)
+    with (
+        _hosted(attempts=attempts, trials=trials),
+        patch.object(reader, "manifest_lists", return_value=False),
+    ):
         evidence = _one(call, Kind.TOOL_CALLS)
 
     assert evidence.state == State.PRESENT
-    assert "may_be_from_another_attempt" in evidence.marks
+    assert evidence.marks == ("may_be_from_another_attempt_or_trial",)
+
+
+@pytest.mark.django_db
+def test_a_tool_record_the_receipts_attempt_lists_for_this_trial_is_not_marked(
+    execution, scenario
+):
+    call = _traced_call(execution, scenario)
+    with (
+        _hosted(attempts=2, trials=3),
+        patch.object(reader, "manifest_lists", return_value=True) as lists,
+    ):
+        evidence = _one(call, Kind.TOOL_CALLS)
+
+    assert evidence.marks == ()
+    lists.assert_called_once_with(
+        HOSTED.job_id, str(ATTEMPT), TRACE, {"exec-key-trial-0"}
+    )
+
+
+@pytest.mark.django_db
+def test_the_scenarios_own_key_ties_a_trace_only_when_it_had_one_trial(
+    execution, scenario
+):
+    call = _traced_call(execution, scenario)
+    with (
+        _hosted(attempts=2, trials=1),
+        patch.object(reader, "manifest_lists", return_value=True) as lists,
+    ):
+        _one(call, Kind.TOOL_CALLS)
+
+    lists.assert_called_once_with(
+        HOSTED.job_id, str(ATTEMPT), TRACE, {"exec-key-trial-0", "refund-over-limit"}
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(("receipt", "digest"), [(False, True), (True, False)])
+def test_with_no_receipt_attempt_or_trace_digest_the_mark_stays(
+    execution, scenario, receipt, digest
+):
+    call = _traced_call(execution, scenario, receipt=receipt, digest=digest)
+    with (
+        _hosted(attempts=2),
+        patch.object(reader, "manifest_lists", return_value=True),
+    ):
+        evidence = _one(call, Kind.TOOL_CALLS)
+
+    assert evidence.marks == ("may_be_from_another_attempt_or_trial",)
+
+
+def _attempt(organization, workspace):
+    job = HostedHarnessJob.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        run_id=uuid.uuid4(),
+        idempotency_key=uuid.uuid4().hex,
+        request_digest="digest",
+        schema_version="1.6",
+        seed=1,
+        artifact_level="traces",
+        max_artifact_bytes=1024,
+        deadline_at=timezone.now() + timedelta(hours=1),
+        scenario_count=1,
+        payload={},
+    )
+    return HostedHarnessAttempt.objects.create(
+        job=job,
+        attempt_number=1,
+        token_hash="t" * 64,
+        fence_hash="f" * 64,
+        expires_at=timezone.now() + timedelta(hours=1),
+        state=HostedHarnessAttempt.State.COMPLETED,
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("entry", "listed"),
+    [
+        ({"artifact_id": f"sha256:{TRACE}", "scenario_key": "k1"}, True),
+        ({"artifact_id": TRACE, "scenario_key": "k1"}, True),
+        ({"artifact_id": f"sha256:{TRACE}", "scenario_key": "k2"}, False),
+        ({"artifact_id": f"sha256:{TRACE}"}, False),
+        ({"artifact_id": "sha256:" + "c" * 64, "scenario_key": "k1"}, False),
+        (
+            {"artifact_id": f"sha256:{TRACE}", "scenario_key": "k1", "kind": "log"},
+            False,
+        ),
+    ],
+)
+def test_a_manifest_lists_the_trace_by_digest_kind_and_key(
+    organization, workspace, entry, listed
+):
+    attempt = _attempt(organization, workspace)
+    HostedHarnessManifest.objects.create(
+        attempt=attempt,
+        digest="sha256:" + "d" * 64,
+        complete=True,
+        body={"entries": [{"kind": "tool_trace", "size": 10, **entry}]},
+    )
+
+    assert (
+        reader.manifest_lists(attempt.job_id, str(attempt.id), TRACE, {"k1"}) is listed
+    )
+    assert reader.manifest_lists(uuid.uuid4(), str(attempt.id), TRACE, {"k1"}) is False
 
 
 @pytest.mark.django_db
@@ -675,6 +904,22 @@ def test_world_end_with_no_file_for_the_trial_quotes_the_runs_notice(
         Cause.NOT_UPLOADED,
     )
     assert evidence.note == "2 pieces of evidence were not uploaded"
+
+
+@pytest.mark.django_db
+def test_world_end_of_a_world_that_keeps_no_records_is_not_read(execution, scenario):
+    call = _call(
+        execution,
+        scenario,
+        call_metadata={
+            "harness_trial_state": {"recorded": False, "end_state_artifact": END}
+        },
+    )
+    with _hosted(), patch.object(reader, "stored_artifact") as stored:
+        evidence = _one(call, Kind.WORLD_STATE_END)
+
+    assert evidence.cause == Cause.WORLD_NOT_RECORDED
+    stored.assert_not_called()
 
 
 @pytest.mark.django_db
