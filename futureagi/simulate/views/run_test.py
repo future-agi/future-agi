@@ -5,7 +5,6 @@ import math
 import os
 import re
 import traceback
-import uuid
 from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from functools import wraps
@@ -148,6 +147,8 @@ from simulate.services.call_rerun import (
     clear_call_for_rerun,
     closed_attempt_metadata,
     eval_snapshot,
+    reread_under_lock,
+    restore_eval_only_rerun_state,
 )
 from simulate.services.eval_config_edit import (
     EvalConfigEditRefused,
@@ -156,10 +157,8 @@ from simulate.services.eval_config_edit import (
 )
 from simulate.services.eval_result_store import (
     ClearedVerdicts,
-    forget_replacement,
-    keep_replaced_verdicts,
+    Replacement,
     question_definition,
-    replaced_verdict_rows,
 )
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
@@ -179,6 +178,7 @@ from simulate.services.run_regrade import (
     RegradeNoCompletedCall,
     RegradeRefused,
     RegradeStillFinishing,
+    pend_evals,
     regrade_run_evals,
     regrade_still_finishing,
 )
@@ -5442,8 +5442,10 @@ class UpdateEvalConfigView(APIView):
             )
 
             run = validated.get("run", False)
-            # A verdict this edit's rerun replaces was graded by the config as
-            # it stands now, before the edit.
+            # The config as it stands before this edit, kept beside a verdict
+            # the rerun replaces. It need not be what graded that verdict: an
+            # earlier edit saved without run changed the config and kept the
+            # old verdicts. The stored definition says so (not_the_grader).
             definition_before_edit = question_definition(eval_config)
 
             try:
@@ -5499,68 +5501,21 @@ class UpdateEvalConfigView(APIView):
                 call_execution_ids = [str(ce.id) for ce in call_executions]
                 eval_config_ids_str = [str(eval_config.id)]
 
-                # Bulk update eval_started flag and initialize eval_outputs for all call executions
-                call_executions_to_update = CallExecution.objects.filter(
-                    id__in=call_execution_ids
+                # Every call's slot for this eval goes pending, each verdict it
+                # replaces kept with the definition from before the edit.
+                with transaction.atomic():
+                    pended = pend_evals(
+                        call_execution_ids,
+                        [eval_config],
+                        organization_id=run_test.organization_id,
+                        workspace_id=run_test.workspace_id,
+                        replaced_by=request.user,
+                        definitions={str(eval_config.id): definition_before_edit},
+                    )
+                logger.info(
+                    f"Bulk updated eval_started flag and initialized eval_outputs for "
+                    f"{len(pended.calls)} call executions with eval config {eval_config.id}"
                 )
-                call_executions_list = []
-                stamped_at = timezone.now()
-                # Each verdict the placeholder replaces is kept as the run's
-                # own score, replaced.
-                replaced_rows = []
-                replacement_id = uuid.uuid4()
-                config_key = str(eval_config.id)
-                for call_execution in call_executions_to_update:
-                    # Provider-agnostic eval flags live in call_metadata
-                    call_execution.call_metadata = call_execution.call_metadata or {}
-                    call_execution.call_metadata["eval_started"] = True
-                    call_execution.call_metadata["eval_completed"] = False
-                    # The placeholder's scoring clock starts at this dispatch,
-                    # not at the call's own, possibly old, completion.
-                    stamp_eval_queued(
-                        call_execution.call_metadata,
-                        eval_config_ids_str,
-                        now=stamped_at,
-                    )
-
-                    # Initialize eval_outputs for the updated eval config
-                    if not call_execution.eval_outputs:
-                        call_execution.eval_outputs = {}
-
-                    if config_key in call_execution.eval_outputs:
-                        replaced_rows.extend(
-                            replaced_verdict_rows(
-                                call_execution=call_execution,
-                                slots={
-                                    config_key: call_execution.eval_outputs[config_key]
-                                },
-                                eval_configs={config_key: eval_config},
-                                organization_id=run_test.organization_id,
-                                workspace_id=run_test.workspace_id,
-                                replacement_id=replacement_id,
-                                replaced_at=stamped_at,
-                                replaced_by=request.user,
-                                definitions={config_key: definition_before_edit},
-                            )
-                        )
-
-                    # Set placeholder values for the eval config that will be rerun
-                    call_execution.eval_outputs[str(eval_config.id)] = {
-                        "status": "pending"
-                    }
-
-                    call_executions_list.append(call_execution)
-
-                if call_executions_list:
-                    with transaction.atomic():
-                        CallExecution.objects.bulk_update(
-                            call_executions_list, ["call_metadata", "eval_outputs"]
-                        )
-                        keep_replaced_verdicts(replaced_rows)
-                    logger.info(
-                        f"Bulk updated eval_started flag and initialized eval_outputs for "
-                        f"{len(call_executions_list)} call executions with eval config {eval_config.id}"
-                    )
 
                 # Update test execution status to EVALUATING
                 test_execution.status = TestExecution.ExecutionStatus.EVALUATING
@@ -6718,60 +6673,6 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
             )
 
 
-def _restore_eval_only_rerun_state(
-    call_execution_ids, dispatch_error_message, replacement_id=None
-):
-    """Restore eval outputs after eval-only rerun dispatch fails before work starts.
-
-    The verdicts the rerun kept as replaced are back on the calls restored
-    from a snapshot, so the rows keeping them (``replacement_id``) go in the
-    same transaction. A call with no snapshot keeps its rows: nothing was
-    put back on it.
-    """
-    with transaction.atomic():
-        restored = _put_back_eval_only_rerun_state(
-            call_execution_ids, dispatch_error_message
-        )
-        if replacement_id is not None and restored:
-            forget_replacement(replacement_id, restored)
-
-
-def _put_back_eval_only_rerun_state(call_execution_ids, dispatch_error_message):
-    """Put each call back from its latest eval-only snapshot; the ids restored."""
-    restored = []
-    for call_execution in CallExecution.objects.filter(id__in=call_execution_ids):
-        snapshot = (
-            CallExecutionSnapshot.objects.filter(
-                call_execution=call_execution,
-                rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
-            )
-            .order_by("-created_at")
-            .first()
-        )
-        if snapshot:
-            call_execution.eval_outputs = snapshot.eval_outputs or {}
-            call_execution.provider_call_data = snapshot.provider_call_data
-            call_execution.overall_score = snapshot.overall_score
-            call_execution.tool_outputs = snapshot.tool_outputs
-            restored.append(call_execution.id)
-
-        call_execution.call_metadata = call_execution.call_metadata or {}
-        has_eval_outputs = bool(call_execution.eval_outputs)
-        call_execution.call_metadata["eval_started"] = has_eval_outputs
-        call_execution.call_metadata["eval_completed"] = has_eval_outputs
-        call_execution.call_metadata["rerun_dispatch_failed"] = dispatch_error_message
-        call_execution.save(
-            update_fields=[
-                "eval_outputs",
-                "provider_call_data",
-                "overall_score",
-                "tool_outputs",
-                "call_metadata",
-            ]
-        )
-    return restored
-
-
 def _create_rerun_call_execution(call_execution):
     """Create new CreateCallExecution for rerun"""
 
@@ -7234,26 +7135,29 @@ class CallExecutionRerunView(APIView):
             for call_execution in call_executions:
                 try:
                     if rerun_type == "eval_only":
-                        # Save eval-only snapshot before clearing
-                        self._save_eval_snapshot(call_execution)
-
-                        # Rerun evaluations only - clear eval data and reset status
-                        cleared_slots = call_execution.eval_outputs
-                        call_execution.eval_outputs = {}
-
-                        call_execution.call_metadata = (
-                            call_execution.call_metadata or {}
-                        )
-                        call_execution.call_metadata["eval_started"] = False
-                        call_execution.call_metadata["eval_completed"] = False
-                        # Its scoring clock starts here, not at the call's old
-                        # completion, so the coordinator's wait is not a timeout.
-                        stamp_eval_queued(
-                            call_execution.call_metadata,
-                            rerun_eval_ids,
-                            now=timezone.now(),
-                        )
                         with transaction.atomic():
+                            # Under the lock, so a verdict a grader stored since
+                            # the call was loaded is snapshotted and kept.
+                            reread_under_lock([call_execution])
+                            # Save eval-only snapshot before clearing
+                            self._save_eval_snapshot(call_execution)
+
+                            # Rerun evaluations only - clear eval data and reset status
+                            cleared_slots = call_execution.eval_outputs
+                            call_execution.eval_outputs = {}
+
+                            call_execution.call_metadata = (
+                                call_execution.call_metadata or {}
+                            )
+                            call_execution.call_metadata["eval_started"] = False
+                            call_execution.call_metadata["eval_completed"] = False
+                            # Its scoring clock starts here, not at the call's old
+                            # completion, so the coordinator's wait is not a timeout.
+                            stamp_eval_queued(
+                                call_execution.call_metadata,
+                                rerun_eval_ids,
+                                now=timezone.now(),
+                            )
                             cleared.add(call_execution, slots=cleared_slots)
                             cleared.keep()
                             call_execution.save()
@@ -7345,7 +7249,7 @@ class CallExecutionRerunView(APIView):
                         test_execution.execution_metadata = {}
 
                     if dispatch_error_message:
-                        _restore_eval_only_rerun_state(
+                        restore_eval_only_rerun_state(
                             successful_reruns,
                             dispatch_error_message,
                             replacement_id=cleared.replacement_id,
@@ -7520,24 +7424,8 @@ class TestExecutionRerunView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
-    def _cleared_verdicts(self) -> ClearedVerdicts:
-        """A fresh collector per run, sharing one replacement id per request.
-
-        Only the id is shared: rows a failed run collected never reach the
-        next run's write.
-        """
-        if getattr(self, "_replacement", None) is None:
-            self._replacement = (uuid.uuid4(), timezone.now())
-        replacement_id, replaced_at = self._replacement
-        request = getattr(self, "request", None)
-        return ClearedVerdicts(
-            replaced_by=getattr(request, "user", None),
-            replacement_id=replacement_id,
-            replaced_at=replaced_at,
-        )
-
     def _prepare_call_executions_for_rerun_bulk(
-        self, call_executions, rerun_type: str
+        self, call_executions, rerun_type: str, replacement: Replacement | None = None
     ) -> tuple[list[str], list[dict]]:
         """
         Prepare call executions for rerun using bulk operations.
@@ -7567,33 +7455,25 @@ class TestExecutionRerunView(APIView):
         # First pass: prepare all objects in memory
         rerun_eval_ids = {}
         stamped_at = timezone.now()
-        # Each verdict cleared here is kept as the run's own score, replaced.
-        cleared = self._cleared_verdicts()
+        # Each verdict cleared here is kept as the run's own score, replaced:
+        # a fresh collector per run, one replacement per request.
+        replacement = replacement or Replacement.new()
+        cleared = ClearedVerdicts(
+            replaced_by=replacement.by,
+            replacement_id=replacement.id,
+            replaced_at=replacement.at,
+        )
         for call_execution in call_executions:
             try:
                 if rerun_type == "eval_only":
-                    # Prepare eval-only snapshot
-                    snapshots_to_create.append(eval_snapshot(call_execution))
-                    # Prepare call execution updates
+                    # Snapshotted and cleared in the transaction below, once
+                    # the rows are locked and read again.
                     if call_execution.test_execution_id not in rerun_eval_ids:
                         rerun_eval_ids[call_execution.test_execution_id] = (
                             runnable_eval_config_ids(
                                 call_execution.test_execution.run_test_id
                             )
                         )
-                    cleared_slots = call_execution.eval_outputs
-                    call_execution.eval_outputs = {}
-                    call_execution.call_metadata = call_execution.call_metadata or {}
-                    call_execution.call_metadata["eval_started"] = False
-                    call_execution.call_metadata["eval_completed"] = False
-                    # The rerun child grades every runnable config; its scoring
-                    # clock starts here, not at the call's old completion.
-                    stamp_eval_queued(
-                        call_execution.call_metadata,
-                        rerun_eval_ids[call_execution.test_execution_id],
-                        now=stamped_at,
-                    )
-                    cleared.add(call_execution, slots=cleared_slots)
                     call_executions_to_update.append(call_execution)
                 else:
                     # call_and_eval: the same snapshot every rerun keeps, before the transcripts go
@@ -7627,6 +7507,28 @@ class TestExecutionRerunView(APIView):
         # Second pass: bulk database operations in a single transaction
         if snapshots_to_create or call_executions_to_update:
             with transaction.atomic():
+                if rerun_type == "eval_only":
+                    # Under the lock, so a verdict a grader stored since the
+                    # calls were loaded is snapshotted and kept, never lost.
+                    reread_under_lock(call_executions_to_update)
+                    for call_execution in call_executions_to_update:
+                        snapshots_to_create.append(eval_snapshot(call_execution))
+                        cleared_slots = call_execution.eval_outputs
+                        call_execution.eval_outputs = {}
+                        call_execution.call_metadata = (
+                            call_execution.call_metadata or {}
+                        )
+                        call_execution.call_metadata["eval_started"] = False
+                        call_execution.call_metadata["eval_completed"] = False
+                        # The rerun child grades every runnable config; its
+                        # scoring clock starts here, not at the call's old
+                        # completion.
+                        stamp_eval_queued(
+                            call_execution.call_metadata,
+                            rerun_eval_ids[call_execution.test_execution_id],
+                            now=stamped_at,
+                        )
+                        cleared.add(call_execution, slots=cleared_slots)
                 # Bulk delete transcripts for call_and_eval mode
                 if call_ids_to_delete_transcripts:
                     CallTranscript.objects.filter(
@@ -7695,6 +7597,8 @@ class TestExecutionRerunView(APIView):
         Args:
             run_test_id: UUID of the RunTest containing the test executions to rerun
         """
+        # One replacement for every verdict this request clears.
+        replacement = Replacement.new(request.user)
         try:
             user_organization = (
                 getattr(request, "organization", None) or request.user.organization
@@ -7884,7 +7788,7 @@ class TestExecutionRerunView(APIView):
                     # Prepare call executions (DB snapshot + reset) using bulk operations
                     successful_reruns, failed_reruns = (
                         self._prepare_call_executions_for_rerun_bulk(
-                            call_executions, rerun_type
+                            call_executions, rerun_type, replacement=replacement
                         )
                     )
                 dispatch_error_message = None
@@ -7934,10 +7838,10 @@ class TestExecutionRerunView(APIView):
 
                     if dispatch_error_message:
                         if eval_only:
-                            _restore_eval_only_rerun_state(
+                            restore_eval_only_rerun_state(
                                 successful_reruns,
                                 dispatch_error_message,
-                                replacement_id=self._cleared_verdicts().replacement_id,
+                                replacement_id=replacement.id,
                             )
                             test_execution.status = pre_rerun_status
                         else:

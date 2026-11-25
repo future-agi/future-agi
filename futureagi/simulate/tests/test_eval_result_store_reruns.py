@@ -10,8 +10,12 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from django.db import connection, transaction
+from django.test.utils import CaptureQueriesContext
 
-from simulate.models import SimulateEvalResult, TestExecution
+from simulate.models import CallExecution, SimulateEvalResult, TestExecution
+from simulate.services import call_rerun
+from simulate.services.call_rerun import restore_eval_only_rerun_state
 from simulate.tests import test_scoring_status as scoring
 from simulate.tests.test_scoring_status import CLOSED, _call, _config, _run
 
@@ -343,7 +347,7 @@ def test_a_put_back_forgets_only_the_rows_of_calls_it_restored(run_test, eval_te
         call.save(update_fields=["eval_outputs"])
     cleared.keep()
 
-    views._restore_eval_only_rerun_state(
+    restore_eval_only_rerun_state(
         [str(restored.id), str(no_snapshot.id)],
         "temporal is down",
         replacement_id=cleared.replacement_id,
@@ -357,3 +361,145 @@ def test_a_put_back_forgets_only_the_rows_of_calls_it_restored(run_test, eval_te
     assert no_snapshot.eval_outputs == {}
     [row] = _kept_rows(no_snapshot)
     assert row.replaced_verdict == VERDICT
+
+
+# --- a verdict a grader stores after the calls were loaded ---------------------
+
+LATE = {"name": "Politeness", "output": "Failed", "reason": "stored meanwhile"}
+
+
+def _grader_stores_meanwhile(call, key):
+    """Wrap the lock-and-reread so a grader's verdict lands just before it."""
+    real = call_rerun.reread_under_lock
+    seen = []
+
+    def wrapped(calls):
+        calls = list(calls)
+        CallExecution.objects.filter(id=call.id).update(eval_outputs={key: LATE})
+        seen.append(True)
+        return real(calls)
+
+    return wrapped, seen
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("route", ["chosen-calls", "whole-runs"])
+def test_a_verdict_stored_after_the_calls_were_loaded_is_kept_not_lost(
+    auth_client, run_test, eval_template, route
+):
+    config, _, execution, call = _graded_call(run_test, eval_template)
+    key = str(config.id)
+    wrapped, seen = _grader_stores_meanwhile(call, key)
+    if route == "chosen-calls":
+        url = f"/simulate/test-executions/{execution.id}/rerun-calls/"
+        body = {"rerun_type": "eval_only", "select_all": True}
+    else:
+        url = f"/simulate/run-tests/{run_test.id}/rerun-test-executions/"
+        body = {"rerun_type": "eval_only", "test_execution_ids": [str(execution.id)]}
+
+    with (
+        patch("simulate.views.run_test.reread_under_lock", wrapped),
+        patch(
+            "simulate.temporal.client.rerun_call_executions",
+            return_value={"workflow_id": "kept-rerun", "merged": False},
+        ),
+    ):
+        response = auth_client.post(url, body, format="json")
+
+    assert response.status_code == 200, response.content
+    assert seen
+    call.refresh_from_db()
+    assert call.eval_outputs == {}
+    [row] = _kept_rows(call)
+    assert row.replaced_verdict == LATE
+
+
+@pytest.mark.django_db
+def test_grading_again_reads_the_calls_under_their_lock(run_test, eval_template):
+    from simulate.services.run_regrade import pend_evals
+
+    config, _, _, call = _graded_call(run_test, eval_template)
+
+    with CaptureQueriesContext(connection) as queries, transaction.atomic():
+        pended = pend_evals(
+            [call.id],
+            [config],
+            organization_id=run_test.organization_id,
+            workspace_id=run_test.workspace_id,
+        )
+
+    locked = [
+        query["sql"]
+        for query in queries.captured_queries
+        if "simulate_call_execution" in query["sql"] and "FOR UPDATE" in query["sql"]
+    ]
+    assert locked
+    assert [one.id for one in pended.calls] == [call.id]
+    [row] = [row for row in _kept_rows(call) if row.question_key == str(config.id)]
+    assert row.replaced_verdict == VERDICT
+
+
+@pytest.mark.django_db
+def test_a_rerun_of_two_graded_calls_keeps_each_calls_own_rows_once(
+    auth_client, run_test, eval_template
+):
+    config, other, execution, first = _graded_call(run_test, eval_template)
+    second = _call(
+        execution,
+        metadata=dict(CLOSED),
+        eval_outputs={str(config.id): dict(VERDICT, reason="second call")},
+    )
+
+    with patch(
+        "simulate.temporal.client.rerun_call_executions",
+        return_value={"workflow_id": "kept-rerun", "merged": False},
+    ):
+        response = auth_client.post(
+            f"/simulate/test-executions/{execution.id}/rerun-calls/",
+            {"rerun_type": "eval_only", "select_all": True},
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    assert len(_kept_rows(first)) == 3
+    [row] = _kept_rows(second)
+    assert row.replaced_verdict["reason"] == "second call"
+
+
+@pytest.mark.django_db
+def test_a_harness_put_back_of_one_eval_keeps_the_rows_of_the_other(
+    run_test, eval_template
+):
+    from simulate.services.eval_result_store import ClearedVerdicts
+    from simulate.services.harness_run_evals import (
+        _ABSENT,
+        EVAL_QUEUED_KEY,
+        _clear_queued_stamps,
+    )
+
+    config, other, execution, call = _graded_call(run_test, eval_template)
+    put_back, kept = str(config.id), str(other.id)
+    cleared = ClearedVerdicts()
+    cleared.add(call, slots={key: call.eval_outputs[key] for key in (put_back, kept)})
+    cleared.keep()
+    CallExecution.objects.filter(id=call.id).update(
+        eval_outputs={put_back: {"status": "pending"}, kept: {"status": "pending"}},
+        call_metadata={
+            **CLOSED,
+            EVAL_QUEUED_KEY: {
+                put_back: "2026-11-25T00:00:00Z",
+                kept: "2026-11-25T00:00:00Z",
+            },
+        },
+    )
+    before = {
+        "entry": dict(VERDICT),
+        "eval_completed": _ABSENT,
+        "eval_started": _ABSENT,
+        "stamp": _ABSENT,
+        "replacement_id": cleared.replacement_id,
+    }
+
+    _clear_queued_stamps([str(call.id)], put_back, {str(call.id): before})
+
+    assert [row.question_key for row in _kept_rows(call)] == [kept]

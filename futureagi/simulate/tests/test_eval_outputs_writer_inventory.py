@@ -9,17 +9,29 @@ the code where the code can show it. A writer nobody filed fails the first
 case, and so does an entry whose function no longer writes, so a new writer
 cannot ship until someone has decided.
 
-A writer is the innermost function (or method) whose own code assigns to
-``.eval_outputs`` or one of its keys, deletes a key, calls a mutating method on
-it, passes ``eval_outputs=`` to a manager, or saves the field by name
-(``update_fields`` or ``bulk_update``). The last form also catches a function
-that edits a copy of the slots and saves it. Test files and migrations are not
+A writer is the innermost function (or method) whose own code does one of:
+
+- assigns to ``.eval_outputs`` or one of its keys, deletes a key, or calls a
+  mutating method on it, directly or through a name bound to it
+  (``outputs = call.eval_outputs or {}``), including from a closure;
+- passes ``eval_outputs=`` to a manager, or ``**{"eval_outputs": ...}``;
+- saves the field by name: a list naming it given to ``update_fields`` or
+  ``bulk_update``, written out or bound to a name in the function or module,
+  or grown with ``.append("eval_outputs")``;
+- calls ``setattr(..., "eval_outputs", ...)``;
+- holds SQL that sets the column (``SET ... eval_outputs =``).
+
+Saving the field by name also catches a function that edits a copy of the
+slots and saves it. These are the forms the code uses; a write the scan
+cannot see is one whose field name or SQL is built at run time, or one made
+through a helper that is passed the dict. Test files and migrations are not
 scanned. The scan only reads source files.
 """
 
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -38,6 +50,7 @@ _NEVER_WALKED = {
 MUTATORS = {"pop", "update", "clear", "setdefault", "popitem", "__setitem__"}
 MANAGER_WRITES = {"update", "update_or_create", "create", "get_or_create"}
 FIELD_SAVES = {"save", "bulk_update", "asave"}
+LIST_GROWERS = {"append", "add", "extend", "insert"}
 
 # ---------------------------------------------------------------------------
 # The categories
@@ -56,7 +69,6 @@ KEEPING_NAMES = frozenset(
         "replaced_verdict_rows",
         "keep_replaced_verdicts",
         "ClearedVerdicts",
-        "_cleared_verdicts",
     }
 )
 
@@ -78,11 +90,10 @@ WRITERS = {
         "never queued), but sets a failed, denied, skipped or timed-out slot "
         "pending; each caller states whether that is kept (QUEUE_CALLERS)",
     ),
-    "simulate/services/run_regrade.py::regrade_run_evals": Filed(
-        KEEPS, "run-new-evals: sets each chosen eval's slot pending to grade it again"
-    ),
-    f"{_VIEWS}::UpdateEvalConfigView.post": Filed(
-        KEEPS, "editing an eval with run set: its slot goes pending on every call"
+    "simulate/services/run_regrade.py::pend_evals": Filed(
+        KEEPS,
+        "sets each chosen eval's slot pending to grade it again, under the "
+        "calls' lock: run-new-evals and editing an eval with run set",
     ),
     f"{_VIEWS}::CallExecutionRerunView.post": Filed(
         KEEPS, "eval-only rerun of chosen calls: empties each call's slots"
@@ -91,10 +102,15 @@ WRITERS = {
         KEEPS, "eval-only rerun of whole runs: empties each call's slots"
     ),
     # --- putting back ---------------------------------------------------------
-    f"{_VIEWS}::_put_back_eval_only_rerun_state": Filed(
+    "simulate/services/call_rerun.py::restore_eval_only_rerun_state": Filed(
         PUTS_BACK,
-        "a failed eval-only dispatch: the snapshot's slots go back, and "
-        "_restore_eval_only_rerun_state forgets the request's rows with them",
+        "a failed eval-only dispatch: the snapshot's slots go back, and the "
+        "request's rows for them are forgotten in the same transaction",
+    ),
+    "simulate/services/run_regrade.py::regrade_run_evals": Filed(
+        PUTS_BACK,
+        "a failed run-new-evals dispatch: puts back what pend_evals replaced, "
+        "and forgets the request's rows in the same transaction",
     ),
     "simulate/services/harness_run_evals.py::_clear_queued_stamps": Filed(
         PUTS_BACK,
@@ -125,13 +141,18 @@ WRITERS = {
     "simulate/services/alk_simulate_ingestion.py::_apply_harness_evaluation_outputs": Filed(
         GRADES, "the harness's own verdicts, arriving with the call's result"
     ),
+    "simulate/services/hosted_harness_ingestion.py::_apply_receipt_to_call": Filed(
+        GRADES,
+        "saves the harness's own verdicts that _apply_harness_evaluation_outputs "
+        "wrote into the slots, with the rest of the hosted call's receipt",
+    ),
     "simulate/temporal/activities/small.py::persist_processing_skip_state": Filed(
         GRADES,
         "the call workflow's failure step: overwrites only what the current "
         "attempt wrote, and the verdicts the rerun replaced were kept by its "
         "route. Known loss: verdicts that attempt wrote before failing. A "
         "failure step does as little as it can, so it gets no write; the later "
-        "fix is to mark only slots that hold no verdict",
+        "fix is to mark only slots that hold no verdict (TH-10785)",
     ),
     # --- placeholders -------------------------------------------------------------
     "simulate/services/scoring_status.py::close_due_scoring": Filed(
@@ -159,66 +180,152 @@ def _is_field(node) -> bool:
     return isinstance(node, ast.Attribute) and node.attr == FIELD
 
 
+def _is_field_name(node) -> bool:
+    return isinstance(node, ast.Constant) and node.value == FIELD
+
+
 def _names_field_in_a_list(node) -> bool:
     return isinstance(node, (ast.List, ast.Tuple, ast.Set)) and any(
-        isinstance(item, ast.Constant) and item.value == FIELD for item in node.elts
+        _is_field_name(item) for item in node.elts
     )
 
 
-def writes(node) -> bool:
+def _own_nodes(scope):
+    """Every node in this scope's own code, not inside a nested def or class."""
+    for child in ast.iter_child_nodes(scope):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        yield child
+        yield from _own_nodes(child)
+
+
+class Names(NamedTuple):
+    """Names a scope binds to the field's own dict, or to a list naming it."""
+
+    aliases: frozenset = frozenset()
+    field_lists: frozenset = frozenset()
+
+
+def _names_in(scope, outer: Names = Names()) -> Names:
+    aliases, field_lists = set(outer.aliases), set(outer.field_lists)
+    for node in _own_nodes(scope):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        names = {t.id for t in targets if isinstance(t, ast.Name)}
+        value = node.value
+        # ``x = call.eval_outputs`` and ``x = call.eval_outputs or {}`` are the
+        # call's own dict: editing ``x`` edits the slots.
+        if _is_field(value) or (
+            isinstance(value, ast.BoolOp) and any(_is_field(v) for v in value.values)
+        ):
+            aliases |= names
+        if _names_field_in_a_list(value):
+            field_lists |= names
+    return Names(frozenset(aliases), frozenset(field_lists))
+
+
+def _is_slots(node, names: Names) -> bool:
+    return _is_field(node) or (isinstance(node, ast.Name) and node.id in names.aliases)
+
+
+def _names_the_field(node, names: Names) -> bool:
+    if _names_field_in_a_list(node):
+        return True
+    if isinstance(node, ast.Name) and node.id in names.field_lists:
+        return True
+    return isinstance(node, (ast.List, ast.Tuple, ast.Set)) and any(
+        isinstance(item, ast.Starred) and _names_the_field(item.value, names)
+        for item in node.elts
+    )
+
+
+_SQL_SET = re.compile(r"\bset\b[^;]*?\b" + FIELD + r"\b\"?\s*=", re.IGNORECASE)
+
+
+def _sql_sets_the_field(node) -> bool:
+    """A string of SQL that sets the column: ``UPDATE ... SET eval_outputs = ...``."""
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and bool(_SQL_SET.search(node.value))
+    )
+
+
+def writes(node, names: Names = Names()) -> bool:
     """Whether this one statement or call writes the field."""
     if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for target in targets:
             for part in ast.walk(target):
                 if _is_field(part) or (
-                    isinstance(part, ast.Subscript) and _is_field(part.value)
+                    isinstance(part, ast.Subscript) and _is_slots(part.value, names)
                 ):
                     return True
     if isinstance(node, ast.Delete):
         return any(
-            isinstance(target, ast.Subscript) and _is_field(target.value)
+            isinstance(target, ast.Subscript) and _is_slots(target.value, names)
             for target in node.targets
         )
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-        method = node.func.attr
-        if method in MUTATORS and _is_field(node.func.value):
-            return True
-        if method in MANAGER_WRITES and any(k.arg == FIELD for k in node.keywords):
-            return True
-        if method in MANAGER_WRITES and any(
-            k.arg == "defaults"
-            and isinstance(k.value, ast.Dict)
-            and any(
-                isinstance(key, ast.Constant) and key.value == FIELD
-                for key in k.value.keys
-            )
-            for k in node.keywords
-        ):
-            return True
-        if method in FIELD_SAVES and (
-            any(_names_field_in_a_list(arg) for arg in node.args)
-            or any(_names_field_in_a_list(k.value) for k in node.keywords)
-        ):
-            return True
-    return False
+    if _sql_sets_the_field(node):
+        return True
+    if not isinstance(node, ast.Call):
+        return False
+    if (
+        isinstance(node.func, ast.Name)
+        and node.func.id == "setattr"
+        and len(node.args) > 1
+        and _is_field_name(node.args[1])
+    ):
+        return True
+    if not isinstance(node.func, ast.Attribute):
+        return False
+    method = node.func.attr
+    if method in MUTATORS and _is_slots(node.func.value, names):
+        return True
+    if method in MANAGER_WRITES and any(k.arg == FIELD for k in node.keywords):
+        return True
+    if method in MANAGER_WRITES and any(
+        k.arg in ("defaults", None)
+        and isinstance(k.value, ast.Dict)
+        and any(_is_field_name(key) for key in k.value.keys)
+        for k in node.keywords
+    ):
+        return True
+    if method in FIELD_SAVES and (
+        any(_names_the_field(arg, names) for arg in node.args)
+        or any(_names_the_field(k.value, names) for k in node.keywords)
+    ):
+        return True
+    # A field list built up and then saved: ``fields.append("eval_outputs")``.
+    return method in LIST_GROWERS and any(
+        _is_field_name(arg) or _names_field_in_a_list(arg) for arg in node.args
+    )
 
 
 def writers_in(source: str, relative: str) -> dict[str, int]:
     """Each writer in one file, by ``path::qualname``, with its first write's line."""
     found: dict[str, int] = {}
+    tree = ast.parse(source)
+    module = _names_in(tree)
+    # Only a field list is shared with the functions below; an alias at module
+    # level is not a call's slots.
+    shared = Names(field_lists=module.field_lists)
 
-    def walk(node, stack):
+    def walk(node, stack, names):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                walk(child, [*stack, child.name])
+                # A closure sees its enclosing function's names; a top-level
+                # function or class sees only the module's field lists.
+                outer = names if stack else shared
+                walk(child, [*stack, child.name], _names_in(child, outer))
                 continue
-            if writes(child):
+            if stack and writes(child, names) or not stack and writes(child, shared):
                 key = f"{relative}::{'.'.join(stack) or '<module>'}"
                 found.setdefault(key, child.lineno)
-            walk(child, stack)
+            walk(child, stack, names)
 
-    walk(ast.parse(source), [])
+    walk(tree, [], shared)
     return found
 
 
@@ -327,6 +434,49 @@ class Holder:
 
 def only_reads(call):
     return call.eval_outputs.get("a")
+
+FIELDS = ["eval_outputs", "call_metadata"]
+
+def saves_a_named_list(call):
+    call.save(update_fields=FIELDS)
+
+def edits_an_alias(call):
+    outputs = call.eval_outputs or {}
+    outputs["a"] = 1
+    call.save()
+
+def removes_through_an_alias(call):
+    outputs = call.eval_outputs
+    outputs.pop("a", None)
+
+def unpacks_the_field(qs):
+    qs.update(**{"eval_outputs": {}})
+
+def raw_sql(cursor):
+    cursor.execute("UPDATE simulate_call_execution SET eval_outputs = %s WHERE id = %s")
+
+def sets_it_by_name(call):
+    setattr(call, "eval_outputs", {})
+
+def builds_the_field_list(call):
+    fields = ["status"]
+    fields.append("eval_outputs")
+    call.save(update_fields=fields)
+
+def closure(call):
+    outputs = call.eval_outputs
+    def inner():
+        outputs["b"] = 2
+    return inner
+
+def copies_and_reads(call):
+    outputs = dict(call.eval_outputs)
+    outputs["a"] = 1
+    return outputs
+
+def names_the_column_in_prose():
+    '''Set eval_outputs in prose; the column is read here, not written.'''
+    return Model.objects.values("id", "eval_outputs")
 """
 
 
@@ -341,6 +491,14 @@ def test_the_scan_finds_every_form_of_write():
         "sample.py::saves_a_copy",
         "sample.py::bulk",
         "sample.py::Holder.method.inner",
+        "sample.py::saves_a_named_list",
+        "sample.py::edits_an_alias",
+        "sample.py::removes_through_an_alias",
+        "sample.py::unpacks_the_field",
+        "sample.py::raw_sql",
+        "sample.py::sets_it_by_name",
+        "sample.py::builds_the_field_list",
+        "sample.py::closure.inner",
     }
 
 
@@ -370,9 +528,13 @@ def test_every_path_that_replaces_a_verdict_keeps_it_through_the_one_function():
         if not _names_used(_function(relative, qualname)) & KEEPING_NAMES:
             missing.append(key)
     assert not missing, f"Filed as keeping, but names no keeping function: {missing}"
-    # The bulk route reaches ClearedVerdicts through its own accessor.
-    accessor = _function(_VIEWS, "TestExecutionRerunView._cleared_verdicts")
-    assert "ClearedVerdicts" in _names_used(accessor)
+
+
+def test_both_routes_that_grade_again_go_through_the_one_pending_step():
+    assert _callers_of("pend_evals") == {
+        "simulate/services/run_regrade.py::regrade_run_evals",
+        f"{_VIEWS}::UpdateEvalConfigView.post",
+    }
 
 
 def test_only_the_store_makes_a_replaced_verdict_row():
@@ -401,10 +563,12 @@ def test_every_put_back_forgets_the_rows_of_what_it_puts_back():
 
 
 def test_the_eval_only_put_back_forgets_the_rows_in_the_same_place():
-    callers = _callers_of("_put_back_eval_only_rerun_state")
-    assert callers == {f"{_VIEWS}::_restore_eval_only_rerun_state"}
-    restore = _function(_VIEWS, "_restore_eval_only_rerun_state")
+    restore = _function(
+        "simulate/services/call_rerun.py", "restore_eval_only_rerun_state"
+    )
     assert {"forget_replacement", "atomic"} <= _names_used(restore)
+    regrade = _function("simulate/services/run_regrade.py", "regrade_run_evals")
+    assert {"forget_replacement", "atomic"} <= _names_used(regrade)
 
 
 # Whether each caller of the harness queue keeps the slots it sets pending.

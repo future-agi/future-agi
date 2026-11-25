@@ -8,6 +8,8 @@ raises a typed exception for every refusal.
 """
 
 import uuid
+from dataclasses import dataclass, field
+from typing import Any
 
 import structlog
 from django.db import transaction
@@ -29,6 +31,94 @@ from simulate.services.harness_run_evals import EVAL_QUEUED_KEY, stamp_eval_queu
 from simulate.services.test_executor import run_new_evals_on_call_executions_task
 
 logger = structlog.get_logger(__name__)
+
+# What a slot held before its placeholder when it held nothing.
+NO_OUTPUT = object()
+
+
+@dataclass
+class Pended:
+    """The calls set pending, and what each held before, for a put-back."""
+
+    calls: list = field(default_factory=list)
+    previous_outputs: dict[Any, dict[str, Any]] = field(default_factory=dict)
+    previous_eval_completed: dict[Any, Any] = field(default_factory=dict)
+    previous_eval_queued: dict[Any, Any] = field(default_factory=dict)
+    replacement_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    kept_any: bool = False
+
+
+def pend_evals(
+    call_execution_ids,
+    eval_configs,
+    *,
+    organization_id,
+    workspace_id,
+    replaced_by=None,
+    definitions=None,
+) -> Pended:
+    """Set each call's slot for these evals pending, keeping what it replaces.
+
+    The one place a placeholder goes over a verdict to grade it again. The
+    calls are locked and read under the lock, so a verdict a grader stored
+    since the caller looked is kept, never written over. Each verdict a
+    placeholder replaces is kept in ``SimulateEvalResult`` in the same
+    transaction; ``definitions`` overrides the definition read from a config,
+    for a caller that edited the config first. Call inside a transaction.
+    """
+    pended = Pended()
+    configs_by_key = {str(config.id): config for config in eval_configs}
+    keys = list(configs_by_key)
+    stamped_at = timezone.now()
+    replaced_rows = []
+    for call_execution in (
+        CallExecution.objects.select_for_update()
+        .filter(id__in=list(call_execution_ids))
+        .order_by("id")
+    ):
+        # Provider-agnostic eval flags live in call_metadata
+        call_execution.call_metadata = call_execution.call_metadata or {}
+        pended.previous_eval_completed[call_execution.id] = (
+            call_execution.call_metadata.get("eval_completed", NO_OUTPUT)
+        )
+        pended.previous_eval_queued[call_execution.id] = (
+            call_execution.call_metadata.get(EVAL_QUEUED_KEY, NO_OUTPUT)
+        )
+        call_execution.call_metadata["eval_started"] = True
+        call_execution.call_metadata["eval_completed"] = False
+        # The placeholders' scoring clock starts at this dispatch, not at the
+        # call's own, possibly old, completion.
+        stamp_eval_queued(call_execution.call_metadata, keys, now=stamped_at)
+        call_execution.eval_outputs = call_execution.eval_outputs or {}
+        previous = {
+            key: call_execution.eval_outputs.get(key, NO_OUTPUT) for key in keys
+        }
+        pended.previous_outputs[call_execution.id] = previous
+        replaced_rows.extend(
+            replaced_verdict_rows(
+                call_execution=call_execution,
+                slots={
+                    key: slot for key, slot in previous.items() if slot is not NO_OUTPUT
+                },
+                eval_configs=configs_by_key,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                replacement_id=pended.replacement_id,
+                replaced_at=stamped_at,
+                replaced_by=replaced_by,
+                definitions=definitions,
+            )
+        )
+        for key in keys:
+            call_execution.eval_outputs[key] = {"status": "pending"}
+        pended.calls.append(call_execution)
+    if pended.calls:
+        CallExecution.objects.bulk_update(
+            pended.calls, ["call_metadata", "eval_outputs"]
+        )
+    keep_replaced_verdicts(replaced_rows)
+    pended.kept_any = bool(replaced_rows)
+    return pended
 
 
 class RegradeStillFinishing(Exception):
@@ -311,88 +401,19 @@ def regrade_run_evals(
         # Convert eval_config_ids to strings
         eval_config_ids_str = [str(ec_id) for ec_id in eval_config_ids]
 
-        # Bulk update eval_started flag and initialize eval_outputs for all call executions before triggering tasks
-        call_executions_to_update = CallExecution.objects.filter(
-            id__in=call_execution_ids
+        # Every call's slots go pending, each verdict they replace kept, in
+        # this transaction. What each held before is kept for a put-back.
+        pended = pend_evals(
+            call_execution_ids,
+            eval_configs,
+            organization_id=run_test.organization_id,
+            workspace_id=run_test.workspace_id,
+            replaced_by=replaced_by,
         )
-        call_executions_list = []
-        # What each call held for these evals before the placeholders, so
-        # a failed dispatch can put back a score (a harness one included)
-        # instead of leaving it pending until a retry succeeds.
-        no_output = object()
-        previous_outputs = {}
-        # And whether its own evaluations had finished: adding an eval to
-        # the run later queues only calls that say so.
-        previous_eval_completed = {}
-        # And its dispatch stamps, so a failed dispatch leaves no stamp that
-        # would read a restored call as still scoring.
-        previous_eval_queued = {}
-        # The verdicts the placeholders replace, kept as the run's own score.
-        replaced_rows = []
-        replacement_id = uuid.uuid4()
-        eval_configs_by_key = {
-            str(eval_config.id): eval_config for eval_config in eval_configs
-        }
-        stamped_at = timezone.now()
-        for call_execution in call_executions_to_update:
-            # Provider-agnostic eval flags live in call_metadata
-            call_execution.call_metadata = call_execution.call_metadata or {}
-            previous_eval_completed[call_execution.id] = (
-                call_execution.call_metadata.get("eval_completed", no_output)
-            )
-            previous_eval_queued[call_execution.id] = call_execution.call_metadata.get(
-                EVAL_QUEUED_KEY, no_output
-            )
-            call_execution.call_metadata["eval_started"] = True
-            call_execution.call_metadata["eval_completed"] = False
-            # The placeholders' scoring clock starts at this dispatch, not
-            # at the call's own, possibly old, completion.
-            stamp_eval_queued(
-                call_execution.call_metadata, eval_config_ids_str, now=stamped_at
-            )
-
-            # Initialize eval_outputs for the new eval configs
-            if not call_execution.eval_outputs:
-                call_execution.eval_outputs = {}
-
-            previous_outputs[call_execution.id] = {
-                str(eval_config.id): call_execution.eval_outputs.get(
-                    str(eval_config.id), no_output
-                )
-                for eval_config in eval_configs
-            }
-            replaced_rows.extend(
-                replaced_verdict_rows(
-                    call_execution=call_execution,
-                    slots={
-                        key: previous
-                        for key, previous in previous_outputs[call_execution.id].items()
-                        if previous is not no_output
-                    },
-                    eval_configs=eval_configs_by_key,
-                    organization_id=run_test.organization_id,
-                    workspace_id=run_test.workspace_id,
-                    replacement_id=replacement_id,
-                    replaced_at=stamped_at,
-                    replaced_by=replaced_by,
-                )
-            )
-
-            # Set placeholder values for each eval config that will be run
-            for eval_config in eval_configs:
-                call_execution.eval_outputs[str(eval_config.id)] = {"status": "pending"}
-
-            call_executions_list.append(call_execution)
-
-        if call_executions_list:
-            CallExecution.objects.bulk_update(
-                call_executions_list, ["call_metadata", "eval_outputs"]
-            )
-            logger.info(
-                f"Bulk updated eval_started flag and initialized eval_outputs for "
-                f"{len(call_executions_list)} call executions with {len(eval_configs)} eval configs"
-            )
-        keep_replaced_verdicts(replaced_rows)
+        logger.info(
+            f"Bulk updated eval_started flag and initialized eval_outputs for "
+            f"{len(pended.calls)} call executions with {len(eval_configs)} eval configs"
+        )
 
     # Trigger the async task to run evaluations. If the async backend is
     # unavailable, put every call and run back and let the caller say so.
@@ -407,34 +428,36 @@ def regrade_run_evals(
             f"Individual tasks will be spawned for parallel processing."
         )
     except Exception as dispatch_error:
-        for call_execution in call_executions_list:
+        for call_execution in pended.calls:
             call_execution.call_metadata = call_execution.call_metadata or {}
             call_execution.call_metadata["eval_started"] = False
             call_execution.call_metadata["eval_dispatch_failed"] = str(dispatch_error)
-            eval_completed = previous_eval_completed[call_execution.id]
-            if eval_completed is no_output:
+            eval_completed = pended.previous_eval_completed[call_execution.id]
+            if eval_completed is NO_OUTPUT:
                 call_execution.call_metadata.pop("eval_completed", None)
             else:
                 call_execution.call_metadata["eval_completed"] = eval_completed
-            eval_queued = previous_eval_queued[call_execution.id]
-            if eval_queued is no_output:
+            eval_queued = pended.previous_eval_queued[call_execution.id]
+            if eval_queued is NO_OUTPUT:
                 call_execution.call_metadata.pop(EVAL_QUEUED_KEY, None)
             else:
                 call_execution.call_metadata[EVAL_QUEUED_KEY] = eval_queued
-            for config_id, previous in previous_outputs[call_execution.id].items():
-                if previous is no_output:
+            for config_id, previous in pended.previous_outputs[
+                call_execution.id
+            ].items():
+                if previous is NO_OUTPUT:
                     call_execution.eval_outputs.pop(config_id, None)
                 else:
                     call_execution.eval_outputs[config_id] = previous
         # The verdicts go back on their calls and this request's kept copies
         # go, together: nothing was replaced.
         with transaction.atomic():
-            if call_executions_list:
+            if pended.calls:
                 CallExecution.objects.bulk_update(
-                    call_executions_list, ["call_metadata", "eval_outputs"]
+                    pended.calls, ["call_metadata", "eval_outputs"]
                 )
-            if replaced_rows:
-                forget_replacement(replacement_id)
+            if pended.kept_any:
+                forget_replacement(pended.replacement_id)
         failed_test_executions = list(
             TestExecution.objects.filter(id__in=updated_test_executions)
         )

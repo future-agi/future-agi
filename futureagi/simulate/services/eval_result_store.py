@@ -15,7 +15,7 @@ from __future__ import annotations
 import copy
 import uuid
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, NamedTuple
 
 from django.db.models import QuerySet
 from django.utils import timezone
@@ -171,6 +171,18 @@ def keep_replaced_verdicts(rows: list[SimulateEvalResult]) -> None:
     """Write the rows that keep replaced verdicts. The only writer of such rows."""
     if rows:
         SimulateEvalResult.objects.bulk_create(rows, batch_size=500)
+
+
+class Replacement(NamedTuple):
+    """One request that replaces verdicts: its id, when, and who asked."""
+
+    id: uuid.UUID
+    at: Any
+    by: Any = None
+
+    @classmethod
+    def new(cls, by=None) -> Replacement:
+        return cls(uuid.uuid4(), timezone.now(), by)
 
 
 class ClearedVerdicts:
