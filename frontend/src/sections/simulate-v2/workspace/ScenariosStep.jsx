@@ -12,8 +12,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useSnackbar } from "notistack";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { paths } from "src/routes/paths";
+import { useSearchParams } from "react-router-dom";
+import NewImprovement from "../improvements/NewImprovement";
 import { agentIdOf, envAgentKey } from "../_mock/agentRegistry";
 import {
   Box,
@@ -416,7 +416,8 @@ export default function ScenariosStep({
   /* The review of scenarios improvements wrote (opened from Needs review). */
   const [improvOpen, setImprovOpen] = useState(false);
   const [traceReview, setTraceReview] = useState(null);
-  const navigate = useNavigate();
+  /* Add N and run Epoch: the agent the New epoch drawer opens with ("" = pick one). */
+  const [epochFor, setEpochFor] = useState(null);
   /* Row-level facet filter — same shape the rest of the product uses
      (Runs list, Improvements list). Four dimensions, each a multi-select. */
   const [filters, setFilters] = useState({});
@@ -3050,6 +3051,11 @@ export default function ScenariosStep({
           closes first, then the chat opens with the request pinned (a
           closing drawer hands focus back to its opener, which would pull
           the cursor out of the chat). */}
+      <NewImprovement
+        open={epochFor != null}
+        initialAgentId={epochFor || null}
+        onClose={() => setEpochFor(null)}
+      />
       <TraceReviewDrawer
         open={!!traceReview}
         onClose={() => setTraceReview(null)}
@@ -3066,11 +3072,12 @@ export default function ScenariosStep({
                 setTraceReview(null);
                 /* The Epoch measures first, so the new scenarios run as its
                    first step — no separate run before it. */
-                const agentId = envState?.agent
-                  ? agentIdOf(envAgentKey(envState.agent, env.id))
-                  : null;
-                navigate(
-                  `${paths.dashboard.simulate.environmentDetail(env.id)}/improvements?new=1${agentId ? `&agent=${agentId}` : ""}`,
+                /* Setup opens here, over Scenarios — no jump to the Epochs
+                   tab; starting it goes to the Epoch's own page. */
+                setEpochFor(
+                  envState?.agent
+                    ? agentIdOf(envAgentKey(envState.agent, env.id))
+                    : "",
                 );
               }
         }
