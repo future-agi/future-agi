@@ -230,12 +230,12 @@ class TestThreadIsolation:
 
         assert not errors, f"Thread errors: {errors}"
         for i in range(num_threads):
-            assert (
-                results[i]["workspace"] == f"ws-{i}"
-            ), f"Thread {i} got workspace {results[i]['workspace']}"
-            assert (
-                results[i]["organization"] == f"org-{i}"
-            ), f"Thread {i} got org {results[i]['organization']}"
+            assert results[i]["workspace"] == f"ws-{i}", (
+                f"Thread {i} got workspace {results[i]['workspace']}"
+            )
+            assert results[i]["organization"] == f"org-{i}", (
+                f"Thread {i} got org {results[i]['organization']}"
+            )
 
     def test_main_thread_not_affected_by_child(self):
         """Setting context in child thread doesn't affect main thread."""

@@ -23,7 +23,11 @@ describe.each([
   ],
 ])("generated %s sub-goal contract", (_name, schema) => {
   it.each([true, false, null])("preserves verdict %s", (passed) => {
-    const results = [{ name: "Verify the caller's PIN", passed }];
+    const name = "Verify the caller's PIN";
+    // Every result says what the results show (`display_name`) and whose check it is (`subject_kind`).
+    const results = [
+      { name, display_name: name, subject_kind: "task", passed },
+    ];
 
     expect(schema.parse(results)).toEqual(results);
   });

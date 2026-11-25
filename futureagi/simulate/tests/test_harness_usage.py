@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4, uuid5
 
 import pytest
@@ -15,6 +17,8 @@ from simulate.services.hosted_harness import (
     record_cleanup,
     register_attempt,
 )
+from simulate.services.hosted_harness_gateway import _read_harness_spend
+from simulate.services.hosted_sandbox import SandboxFileNotFoundError
 from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
 from tfc.ee_loader import has_ee
 
@@ -297,6 +301,50 @@ def test_unpriceable_live_authoring_is_unavailable_not_zero(metered_attempt):
     consumption = harness_usage.harness_consumption(job)
     assert consumption["ai_credits"] is None
     assert events == []
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_build_run_as_a_chat_turn_bills_the_chats_ledger_at_cleanup(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    ledger = {
+        "schema": "futureagi.harness-spend.v1",
+        "total_usd": 0.42,
+        "unpriced_turns": 0,
+        "stages": [
+            {
+                "stage": "builder",
+                "usd": 0.42,
+                "turns": 3,
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 800_000,
+            }
+        ],
+    }
+    files = {"/work/builder-cost.json": json.dumps(ledger).encode()}
+
+    def download_file(path, timeout=None):
+        if path not in files:
+            raise SandboxFileNotFoundError(path)
+        return files[path]
+
+    # A build runs as a chat turn: its sandbox holds the chat's ledger and no cost.json.
+    _read_harness_spend(
+        attempt, SimpleNamespace(fs=SimpleNamespace(download_file=download_file))
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(attempt.id, provider_ref="", verified_absent=True)
+
+    assert [(event.event_type, event.properties["model"]) for event in events] == [
+        ("harness_authoring", "gemini-3.7-flash")
+    ]
+    assert events[0].amount == pytest.approx(70.2)
 
 
 @pytest.mark.django_db
@@ -795,3 +843,156 @@ def test_oss_call_and_source_usage_checks_never_refuse(hosted_attempt, monkeypat
     assert harness_usage.check_harness_action(organization_id, "voice_call") == {
         "allowed": True
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+@pytest.mark.parametrize("complete", [True, False, None])
+def test_a_reading_bill_says_whether_it_holds_every_turn(
+    monkeypatch, settings, complete
+):
+    from ee.usage.services import emitter
+
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    spend = {
+        "stages": [
+            {
+                "stage": "understanding-agent",
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 0,
+            }
+        ]
+    }
+    if complete is not None:
+        spend["complete"] = complete
+
+    harness_usage.record_agent_reading_usage(
+        organization_id=uuid4(),
+        workspace_id=None,
+        subject_id=uuid4(),
+        run_id=uuid4(),
+        purpose="agent",
+        spend=spend,
+    )
+
+    assert len(events) == 1
+    assert events[0].properties["source"] == "agent_reading"
+    assert events[0].properties["complete"] is complete
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_every_attempt_at_one_reading_is_one_charge(monkeypatch, settings):
+    from ee.usage.services import emitter
+
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    spend = {
+        "stages": [
+            {
+                "stage": "understanding-agent",
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 0,
+            }
+        ]
+    }
+    subject_id, first_run, retried_run = uuid4(), uuid4(), uuid4()
+
+    for run_id in (first_run, first_run, retried_run):
+        harness_usage.record_agent_reading_usage(
+            organization_id=uuid4(),
+            workspace_id=None,
+            subject_id=subject_id,
+            run_id=str(run_id),
+            purpose="agent",
+            spend=spend,
+        )
+
+    # The run id is new on each attempt; the charge's key is not. The ledger keeps
+    # one charge per key, so the replay and the retry add nothing.
+    key = str(uuid5(subject_id, "reading:agent:understanding-agent"))
+    assert [event.event_id for event in events] == [key, key, key]
+    assert {event.properties["source_id"] for event in events} == {str(subject_id)}
+    assert [event.properties["reading_run_id"] for event in events] == [
+        str(first_run),
+        str(first_run),
+        str(retried_run),
+    ]
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_scan_and_an_agent_reading_of_one_subject_are_two_charges(
+    monkeypatch, settings
+):
+    from ee.usage.services import emitter
+
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    stage = {
+        "stage": "understanding-agent",
+        "models": ["gemini-3.7-flash"],
+        "tokens_in": 1_000,
+        "tokens_out": 100,
+        "tokens_cached": 0,
+    }
+    subject_id = uuid4()
+
+    for purpose in ("agent", "scan"):
+        harness_usage.record_agent_reading_usage(
+            organization_id=uuid4(),
+            workspace_id=None,
+            subject_id=subject_id,
+            run_id=str(uuid4()),
+            purpose=purpose,
+            spend={"stages": [dict(stage)]},
+        )
+
+    assert len({event.event_id for event in events}) == 2
+    assert [event.properties["reading_purpose"] for event in events] == [
+        "agent",
+        "scan",
+    ]
+
+
+def test_a_reading_that_reports_a_stage_twice_is_refused(monkeypatch, settings):
+    from ee.usage.services import emitter
+
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    stage = {
+        "stage": "understanding-agent",
+        "models": ["gemini-3.7-flash"],
+        "tokens_in": 1_000,
+        "tokens_out": 100,
+        "tokens_cached": 0,
+    }
+
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_usage.record_agent_reading_usage(
+            organization_id=uuid4(),
+            workspace_id=None,
+            subject_id=uuid4(),
+            run_id=str(uuid4()),
+            purpose="agent",
+            spend={"stages": [stage, dict(stage)]},
+        )
+
+    assert refused.value.code == "reading_usage_invalid"
+    assert events == []

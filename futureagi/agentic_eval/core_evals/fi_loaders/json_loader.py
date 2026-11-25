@@ -30,7 +30,7 @@ class JsonLoader(BaseLoader):
         self._processed_dataset: list[DataPoint] = []
 
     def process(self) -> None:  # type: ignore[override]
-        """  # type: ignore[override]
+        """# type: ignore[override]
         Transforms the raw data into a structured format. Processes each entry from the raw dataset, and extracts attributes.
 
         Raises:
@@ -43,10 +43,16 @@ class JsonLoader(BaseLoader):
             # Create a processed instance with mandatory fields
             processed_instance = {
                 # if self.col_actual_json is string then do a json load
-                "actual_json": json.loads(raw_instance[self.col_actual_json]) if isinstance(raw_instance[self.col_actual_json], str) else raw_instance[self.col_actual_json]
+                "actual_json": json.loads(raw_instance[self.col_actual_json])
+                if isinstance(raw_instance[self.col_actual_json], str)
+                else raw_instance[self.col_actual_json]
             }
             if self.col_expected_json in raw_instance:
-                processed_instance["expected_json"] = json.loads(raw_instance[self.col_expected_json]) if isinstance(raw_instance[self.col_expected_json], str) else raw_instance[self.col_expected_json]
+                processed_instance["expected_json"] = (
+                    json.loads(raw_instance[self.col_expected_json])
+                    if isinstance(raw_instance[self.col_expected_json], str)
+                    else raw_instance[self.col_expected_json]
+                )
             # removing keys with None values
             processed_instance = {
                 k: v for k, v in processed_instance.items() if v is not None
@@ -62,4 +68,6 @@ class JsonLoader(BaseLoader):
         """
         Load data from FI API.
         """
-        raise NotImplementedError("This loader does not support loading data from FI API.")
+        raise NotImplementedError(
+            "This loader does not support loading data from FI API."
+        )

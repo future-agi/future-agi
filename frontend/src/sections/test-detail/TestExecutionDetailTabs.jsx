@@ -50,7 +50,11 @@ const TestExecutionDetailTabsComponent = ({
         alignItems: "center",
       }}
     >
-      <Tabs sx={{ boxShadow: "none" }} value={currentTab?.id || tabs[0]?.id} onChange={handleTabChange}>
+      <Tabs
+        sx={{ boxShadow: "none" }}
+        value={currentTab?.id || tabs[0]?.id}
+        onChange={handleTabChange}
+      >
         {tabs.map((tab) => {
           return (
             <Tab
@@ -85,7 +89,7 @@ const TestExecutionDetailTabsComponent = ({
             }}
             disabled={disabled}
           >
-            Fix My Agent
+            Debug failures
           </Button>
         </Box>
       </CustomTooltip>

@@ -247,8 +247,6 @@ export default function AddToQueueDialog({
               width: 320,
               mt: 0.5,
               borderRadius: "6px",
-              border: 1,
-              borderColor: "divider",
             },
           },
         }}
@@ -289,7 +287,7 @@ export default function AddToQueueDialog({
                   />
                 </InputAdornment>
               ),
-              sx: { fontSize: 13, height: 32 },
+              sx: { fontSize: 12, height: 32 },
             }}
           />
 
@@ -302,7 +300,7 @@ export default function AddToQueueDialog({
             <Typography
               variant="body2"
               color="text.secondary"
-              sx={{ py: 2, textAlign: "center", fontSize: 13 }}
+              sx={{ py: 2, textAlign: "center", fontSize: 12 }}
             >
               {searchQuery ? "No queues match" : "No queues found"}
             </Typography>

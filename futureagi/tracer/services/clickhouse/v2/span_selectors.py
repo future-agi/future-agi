@@ -91,8 +91,18 @@ def flatten_span_attributes_into_entry(
         row.get("attrs_bool"),
         row.get("attributes_extra", "{}"),
     )
+    # Span-list rows use canonical identity keys. Their optional detail aliases
+    # must not be fabricated from custom attributes: a conflicting `id`, for
+    # example, makes the client's exact physical reference unverifiable.
+    reserved_aliases = (
+        {"id", "project", "trace", "start_hour"} if "span_id" in entry else set()
+    )
     for key, value in attrs.items():
-        if key in entry or key.startswith(SKIP_ATTR_PREFIXES):
+        if (
+            key in entry
+            or key in reserved_aliases
+            or key.startswith(SKIP_ATTR_PREFIXES)
+        ):
             continue
         if isinstance(value, str) and len(value) > 500:
             entry[key] = value[:500] + "..."

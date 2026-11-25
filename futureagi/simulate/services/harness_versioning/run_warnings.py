@@ -206,8 +206,7 @@ def run_warnings(
         warnings.append(
             _warning(
                 "bundle_cache_failed",
-                "The last preparation of this combination failed and will be"
-                " retried",
+                "The last preparation of this combination failed and will be retried",
                 None,
             )
         )
@@ -232,10 +231,17 @@ def _versions(pins: ResolvedPins | None) -> dict[str, Any]:
 
 
 def preview_run(
-    environment: HostedHarnessJob, picks: VersionPicks | None = None
+    environment: HostedHarnessJob,
+    picks: VersionPicks | None = None,
+    *,
+    scenario_keys: list[str] | None = None,
+    hidden: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """The versions a run of ``picks`` would use, its warnings and whether its bundle
-    is cached; ``bundle_cached`` is ``None`` when the run is not assembled."""
+    """The versions a run of ``picks`` would use, its warnings, whether its bundle
+    is cached (``None`` when the run is not assembled) and ``run_verdict`` for
+    ``scenario_keys``; without versioning only the verdict is filled."""
+    from simulate.services.harness_tool_reach import run_verdict
+
     pins = resolve_run_pins(environment, picks=picks)
     return {
         "versions": _versions(pins),
@@ -243,6 +249,7 @@ def preview_run(
         "bundle_cached": (
             pins.cached if pins is not None and _assembles(pins) else None
         ),
+        **run_verdict(environment, pins, scenario_keys=scenario_keys, hidden=hidden),
     }
 
 

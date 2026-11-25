@@ -185,7 +185,7 @@ class VoiceCategoryEvaluator:
         errors_detected = raw.get("errors_detected", [])
         if not isinstance(errors_detected, list):
             return []
-        
+
         span_id = voice_data.span_id
 
         # Normalize to DB schema
@@ -288,7 +288,9 @@ class VoiceCompassAgent:
         all_errors: list[dict[str, Any]] = []
         for cat_name in selected_categories:
             if cat_name not in VOICE_ERROR_TAXONOMY:
-                logger.warning("Unknown category from preplanner, skipping", category=cat_name)
+                logger.warning(
+                    "Unknown category from preplanner, skipping", category=cat_name
+                )
                 continue
             hint = plan.get("per_category_hints", {}).get(cat_name, "")
             errors = evaluator.run(cat_name, voice_data, call_summary, hint)
@@ -533,7 +535,11 @@ def _group_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups = []
     for group_name, group_errors in buckets.items():
         impacts = [e.get("impact", "MEDIUM") for e in group_errors]
-        combined_impact = "HIGH" if "HIGH" in impacts else ("MEDIUM" if "MEDIUM" in impacts else "LOW")
+        combined_impact = (
+            "HIGH"
+            if "HIGH" in impacts
+            else ("MEDIUM" if "MEDIUM" in impacts else "LOW")
+        )
         groups.append(
             {
                 "cluster_id": f"G-{uuid.uuid4().hex[:8]}",

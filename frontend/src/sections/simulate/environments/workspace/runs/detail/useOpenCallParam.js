@@ -7,6 +7,7 @@ import {
   useRunCalls,
 } from "src/api/simulate-environments/runCalls";
 import { useCallExecutionV3Detail } from "src/api/simulate-environments/runDetail";
+import { STEP_PARAM } from "./participants/stepLink";
 
 const ROW_PARAM = "rowId";
 const NOT_FOUND = new Set([400, 403, 404]);
@@ -32,7 +33,8 @@ const detailOptions = {
  *   reads; `tableShown` says the table is (or is about to be) mounted, so its
  *   page is worth waiting for.
  * @returns {{ openCall: ?{ task: Object, source: string, page: ?number },
- *   showCall: (next: ?{ task: Object, source: string, page: ?number }) => void }}
+ *   showCall: (next: ?{ task: Object, source: string, page: ?number }) => void,
+ *   openById: (id: string, stepKey?: ?number) => void }}
  */
 export default function useOpenCallParam({
   executionId,
@@ -53,6 +55,8 @@ export default function useOpenCallParam({
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
+          // A step link belongs to its own call: gone once another call opens, or none.
+          if (prev.get(ROW_PARAM) !== id) next.delete(STEP_PARAM);
           if (id) next.set(ROW_PARAM, id);
           else next.delete(ROW_PARAM);
           return next;
@@ -69,6 +73,22 @@ export default function useOpenCallParam({
       writeRowId(next?.task?.id ?? null);
     },
     [writeRowId],
+  );
+
+  // Opens a call by id the way a link does (the table's page, else its detail), on a step of its record if given.
+  const openById = useCallback(
+    (id, stepKey = null) =>
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set(ROW_PARAM, id);
+          if (stepKey != null) next.set(STEP_PARAM, String(stepKey));
+          else next.delete(STEP_PARAM);
+          return next;
+        },
+        { replace: true },
+      ),
+    [setSearchParams],
   );
 
   const pending = rowId && rowId !== written.current ? rowId : null;
@@ -108,7 +128,8 @@ export default function useOpenCallParam({
           : "Couldn't load the row",
         { variant: "error" },
       );
-      writeRowId(null);
+      // A call already open (the link came from inside it) stays open; otherwise the bad link is dropped.
+      writeRowId(openCall?.task?.id ?? null);
     }
   }, [
     pending,
@@ -118,6 +139,7 @@ export default function useOpenCallParam({
     detail.error,
     showCall,
     writeRowId,
+    openCall,
   ]);
 
   // The param went away without the page closing the call (e.g. navigation).
@@ -130,5 +152,5 @@ export default function useOpenCallParam({
     }
   }, [rowId]);
 
-  return { openCall, showCall };
+  return { openCall, showCall, openById };
 }
