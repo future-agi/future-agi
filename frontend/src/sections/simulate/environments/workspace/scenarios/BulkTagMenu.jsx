@@ -17,6 +17,7 @@ import {
   useEnvironmentTags,
 } from "src/api/simulate-environments/scenarioTags";
 import { SCENARIO_TAGS_COPY as C } from "./scenarios.constants";
+import { tagRefusal } from "./tagRefusal";
 
 export default function BulkTagMenu({
   envId,
@@ -62,7 +63,8 @@ export default function BulkTagMenu({
           setNewTag("");
           onDone?.();
         },
-        onError: () => enqueueSnackbar(C.failed, { variant: "error" }),
+        onError: (error) =>
+          enqueueSnackbar(tagRefusal(error), { variant: "error" }),
       },
     );
   };

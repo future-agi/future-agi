@@ -34,6 +34,7 @@ export const SCENARIO_TAGS_COPY = {
   added: (tag, n) => `Added ${tag} to ${n} scenario${n === 1 ? "" : "s"}`,
   removed: (tag, n) => `Removed ${tag} from ${n} scenario${n === 1 ? "" : "s"}`,
   failed: "Couldn't change the tags. Try again",
+  refused: "Those tags can't be saved",
 };
 
 export const SCENARIOS_COPY = {
@@ -44,6 +45,8 @@ export const SCENARIOS_COPY = {
   editLabel: "Edit scenario",
   openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
+  editNamed: (name) => `Edit ${name || "scenario"}`,
+  removeNamed: (name) => `Remove ${name || "scenario"} from this environment`,
   filterLabel: "Filter",
   filterTitle: "Filter by use case",
   clearLabel: "Clear",

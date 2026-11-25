@@ -204,6 +204,31 @@ class TestApi:
         assert only.json()["cells"] == [{"row": "refund", "column": "none", "count": 1}]
         assert without.json()["rows"] == ["booking"]
 
+    @pytest.mark.parametrize(
+        ("tags", "message"),
+        [
+            (["x" * 65], "A tag can be at most 64 characters"),
+            ([f"tag-{n}" for n in range(21)], "A scenario can have at most 20 tags"),
+        ],
+    )
+    def test_a_refused_tag_says_why_in_words(self, user, environment, tags, message):
+        client = _client(user, environment)
+        first, _ = _keys(environment)
+
+        put = client.put(
+            f"{_base(environment)}scenarios/{first}/", {"tags": tags}, format="json"
+        )
+        post = client.post(
+            f"{_base(environment)}change/",
+            {"scenario_keys": [first], "add": tags},
+            format="json",
+        )
+
+        for response in (put, post):
+            assert response.status_code == 400, response.content
+            assert response.json()["error"] == "scenario_tags_invalid"
+            assert response.json()["message"] == message
+
     def test_an_empty_change_is_refused(self, user, environment):
         response = _client(user, environment).post(
             f"{_base(environment)}change/",

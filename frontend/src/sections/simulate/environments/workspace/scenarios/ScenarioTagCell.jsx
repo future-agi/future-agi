@@ -6,7 +6,7 @@ import {
   useEnvironmentTags,
   useSetScenarioTags,
 } from "src/api/simulate-environments/scenarioTags";
-import { SCENARIO_TAGS_COPY as C } from "./scenarios.constants";
+import { tagRefusal } from "./tagRefusal";
 
 const NO_TAGS = [];
 
@@ -32,9 +32,9 @@ export default function ScenarioTagCell({
     save.mutate(
       { scenarioKey, tags: next },
       {
-        onError: () => {
+        onError: (error) => {
           setShown(before);
-          enqueueSnackbar(C.failed, { variant: "error" });
+          enqueueSnackbar(tagRefusal(error), { variant: "error" });
         },
       },
     );

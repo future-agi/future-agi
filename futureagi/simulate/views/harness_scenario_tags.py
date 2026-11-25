@@ -16,9 +16,30 @@ from simulate.serializers.harness_scenario_tags import (
 )
 from simulate.services import harness_scenario_tags
 from simulate.services.harness_provider import request_organization, scope_jobs
+from simulate.services.harness_scenario_tags import (
+    MAX_SCENARIOS_PER_CHANGE,
+    MAX_TAG_LENGTH,
+    MAX_TAGS_PER_SCENARIO,
+)
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
+
+
+def _tags_refused(errors: dict) -> Response:
+    message = "Those tags can't be saved"
+    if "scenario_keys" in errors:
+        message = f"Tag at most {MAX_SCENARIOS_PER_CHANGE} scenarios in one change"
+    for field in ("tags", "add", "remove"):
+        problem = errors.get(field)
+        if isinstance(problem, dict):
+            message = f"A tag can be at most {MAX_TAG_LENGTH} characters"
+            break
+        if problem:
+            message = f"A scenario can have at most {MAX_TAGS_PER_SCENARIO} tags"
+            break
+    refusal = HostedHarnessError("scenario_tags_invalid", message, status_code=400)
+    return Response(refusal.as_dict(), status=refusal.status_code)
 
 
 class HarnessScenarioTagViewSet(viewsets.ViewSet):
@@ -76,6 +97,7 @@ class HarnessScenarioTagViewSet(viewsets.ViewSet):
         responses={200: HarnessScenarioTagsChangeResultSerializer},
         request_methods=["POST"],
         reject_unknown_fields=True,
+        validation_error_response=_tags_refused,
         operation_id="simulate_api_harness-environments_scenario_tags_change",
     )
     @action(detail=False, methods=["post"], url_path="change")
@@ -106,6 +128,7 @@ class HarnessScenarioTagViewSet(viewsets.ViewSet):
         responses={200: HarnessScenarioTagsResultSerializer},
         request_methods=["PUT"],
         reject_unknown_fields=True,
+        validation_error_response=_tags_refused,
         operation_id="simulate_api_harness-environments_scenario_tags_set",
     )
     @action(

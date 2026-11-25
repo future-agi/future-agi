@@ -79,6 +79,28 @@ describe("ScenarioTagCell", () => {
     });
   });
 
+  it("says why the server refused the tags, without suggesting Try again", async () => {
+    const message = "A tag can be at most 64 characters";
+    setTags.mutate.mockImplementationOnce((_body, { onError }) =>
+      onError({ statusCode: 400, error: "scenario_tags_invalid", message }),
+    );
+    render(<ScenarioTagCell envId="e1" scenarioKey="s1" tags={["vip"]} />);
+    await userEvent.click(screen.getByText("add billing"));
+    expect(screen.getByTestId("shown-tags")).toHaveTextContent(/^vip$/);
+    expect(enqueueSnackbar).toHaveBeenCalledWith(message, { variant: "error" });
+  });
+
+  it("keeps Try again for a server error", async () => {
+    setTags.mutate.mockImplementationOnce((_body, { onError }) =>
+      onError({ statusCode: 503, message: "Service unavailable" }),
+    );
+    render(<ScenarioTagCell envId="e1" scenarioKey="s1" tags={["vip"]} />);
+    await userEvent.click(screen.getByText("add billing"));
+    expect(enqueueSnackbar).toHaveBeenCalledWith(C.failed, {
+      variant: "error",
+    });
+  });
+
   it("cannot be edited without a scenario key or while locked", () => {
     const { rerender } = render(
       <ScenarioTagCell envId="e1" scenarioKey="" tags={[]} />,
@@ -119,6 +141,21 @@ describe("BulkTagMenu", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
   });
 
+  it("says why the server refused a change to many scenarios", async () => {
+    known = { data: ["vip"], isLoading: false, isError: false };
+    const message = "A scenario can have at most 20 tags";
+    changeTags.mutate.mockImplementationOnce((_body, { onError }) =>
+      onError({ statusCode: 400, error: "scenario_tags_invalid", message }),
+    );
+    renderMenu(() => Promise.resolve(["s1"]));
+    await userEvent.click(screen.getByRole("button", { name: C.add }));
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(message, {
+        variant: "error",
+      }),
+    );
+  });
+
   it("adds a known tag to every selected scenario that has a key", async () => {
     known = { data: ["vip", "refunds"], isLoading: false, isError: false };
     renderMenu(() => Promise.resolve(["s1", null, "s2"]));
@@ -145,7 +182,10 @@ describe("BulkTagMenu", () => {
 
   it("adds a new tag typed into the box on Enter", async () => {
     renderMenu(() => Promise.resolve(["s1"]));
-    await userEvent.type(screen.getByPlaceholderText(C.newTag), " urgent {enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(C.newTag),
+      " urgent {enter}",
+    );
     await waitFor(() =>
       expect(changeTags.mutate).toHaveBeenCalledWith(
         { scenarioKeys: ["s1"], add: ["urgent"], remove: [] },
