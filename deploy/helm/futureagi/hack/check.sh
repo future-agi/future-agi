@@ -81,6 +81,9 @@ value_sets=(
   "tls-openshift|examples/bundled.yaml ci/tls.yaml ci/openshift.yaml"
 )
 
+bash "$chart/hack/check-compare-preflight.sh"
+bash "$chart/hack/check-compare-default.sh"
+
 echo "== chart defaults: refuse to render, with guidance"
 if "$helm" template futureagi "$chart" >"$out/default.txt" 2>&1; then
   fail "the chart rendered without any datastore configured"

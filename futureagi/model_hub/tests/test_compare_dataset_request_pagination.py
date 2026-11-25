@@ -44,8 +44,31 @@ def page_store(monkeypatch, tmp_path):
     monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
     monkeypatch.setattr(develop_dataset, "start_local_sweeper", Mock())
     store = _PageStore()
-    monkeypatch.setattr(develop_dataset, "upload_compare_json_to_s3", store.upload)
-    monkeypatch.setattr(develop_dataset, "download_json_from_s3", store.download)
+    manifests = {}
+
+    def write(compare_id, name, data):
+        if name == develop_dataset.COMPARE_METADATA_OBJECT:
+            manifests[str(compare_id)] = copy.deepcopy(data)
+        else:
+            store.upload(compare_id=compare_id, page_name=name, compare_json=data)
+
+    def read(compare_id, name):
+        if name != develop_dataset.COMPARE_METADATA_OBJECT:
+            return store.download(f"compare/{compare_id}/{name}")
+        if str(compare_id) not in manifests:
+            # The cached cases seed a completed comparison via the local file.
+            # Seed its private manifest too, separate from physical page reads.
+            path = Path(get_compare_metadata_path(compare_id))
+            if not path.exists():
+                raise develop_dataset.CompareObjectUnavailable(name)
+            manifests[str(compare_id)] = {
+                **json.loads(path.read_text()),
+                "created_at": develop_dataset.created_at_now(),
+            }
+        return copy.deepcopy(manifests[str(compare_id)])
+
+    monkeypatch.setattr(develop_dataset, "write_compare_json", write)
+    monkeypatch.setattr(develop_dataset, "read_compare_json", read)
     return store
 
 

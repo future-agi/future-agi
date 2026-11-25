@@ -158,6 +158,7 @@ is only port-forwarded). */ -}}
       "STORAGE_BACKEND" $storage
       "MINIO_URL" (include "futureagi.url.objects" $root)
       "UPLOAD_BUCKET_NAME" $v.objectStorage.bucket
+      "COMPARE_BUCKET_NAME" $v.objectStorage.compareBucket
       "S3_REGION" $v.objectStorage.region
       "AWS_DEFAULT_REGION" $v.objectStorage.region
       "TEMPORAL_HOST" (include "futureagi.temporal.address" $root)
@@ -215,6 +216,9 @@ the direct server: the outbox CDC's advisory lock needs a session. */ -}}
 variables (_enterprise.tpl); every extraEnv wins over them. */ -}}
 {{- $plain = mergeOverwrite $plain (include "futureagi.env.enterprisePlain" $root | fromYaml) (include "futureagi.env.platform" (dict "root" $root "kind" "python") | fromYaml) -}}
 {{- $plain = mergeOverwrite $plain $v.config.extraEnv (.component | default dict) (.overrides | default dict) -}}
+{{- if not $plain.COMPARE_BUCKET_NAME -}}
+{{- $_ := set $plain "COMPARE_BUCKET_NAME" (printf "%s-compare" ($plain.UPLOAD_BUCKET_NAME | toString)) -}}
+{{- end -}}
 {{- $_ := unset $plain "REDIS_PASSWORD" -}}
 {{- $_ := unset $plain "POD_IP" -}}
 {{- range $name := keys $plain | sortAlpha }}

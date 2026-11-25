@@ -41,14 +41,14 @@ export const CustomCompareColumnHeader = (props) => {
           </Typography>
         </Box>
       );
-    } else if (col.originType === "run_prompt") {
+    } else if (col.origin_type === "run_prompt") {
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
           sx={{ width: 20, height: 20, color: "info.main" }}
         />
       );
-    } else if (col.originType === "evaluation") {
+    } else if (col.origin_type === "evaluation") {
       return (
         <Iconify
           icon="solar:check-circle-linear"
@@ -56,8 +56,8 @@ export const CustomCompareColumnHeader = (props) => {
         />
       );
     } else if (
-      col.originType === "optimisation" ||
-      col.originType === "optimisation_evaluation"
+      col.origin_type === "optimisation" ||
+      col.origin_type === "optimisation_evaluation"
     ) {
       return (
         <SvgColor
@@ -65,32 +65,32 @@ export const CustomCompareColumnHeader = (props) => {
           sx={{ width: 20, height: 20, color: "primary.main" }}
         />
       );
-    } else if (col.originType === "annotation_label") {
+    } else if (col.origin_type === "annotation_label") {
       return <Iconify icon="solar:pen-linear" sx={iconStyle} />;
-    } else if (col.dataType === "text") {
+    } else if (col.data_type === "text") {
       return <Iconify icon="solar:notes-linear" sx={iconStyle} />;
-    } else if (col.dataType === "array") {
+    } else if (col.data_type === "array") {
       return <Iconify icon="solar:brackets-linear" sx={iconStyle} />;
-    } else if (col.dataType === "integer") {
+    } else if (col.data_type === "integer") {
       return <Iconify icon="solar:hashtag-linear" sx={iconStyle} />;
-    } else if (col.dataType === "float") {
+    } else if (col.data_type === "float") {
       return <Iconify icon="tabler:decimal" sx={iconStyle} />;
-    } else if (col.dataType === "boolean") {
+    } else if (col.data_type === "boolean") {
       return (
         <Iconify icon="material-symbols:toggle-on-outline" sx={iconStyle} />
       );
-    } else if (col.dataType === "datetime") {
+    } else if (col.data_type === "datetime") {
       return <Iconify icon="solar:calendar-linear" sx={iconStyle} />;
-    } else if (col.dataType === "json") {
+    } else if (col.data_type === "json") {
       return <Iconify icon="solar:braces-linear" sx={iconStyle} />;
-    } else if (col.dataType === "image") {
+    } else if (col.data_type === "image") {
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_image.svg`}
           sx={{ width: 20, height: 20, color: "text.secondary" }}
         />
       );
-    } else if (col.dataType === "audio") {
+    } else if (col.data_type === "audio") {
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_audio.svg`}

@@ -60,6 +60,8 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "seed_system_evals",
         "purge_sql_results",
         "erase_metric_data",
+        # One-off rollout step for the private compare bucket; safe to rerun.
+        "sweep_compare_objects",
     }
 )
 # Developer tools that only the explicit local mode (./bin/dev manage) may run:

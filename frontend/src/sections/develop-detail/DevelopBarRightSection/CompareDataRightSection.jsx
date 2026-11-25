@@ -1,6 +1,7 @@
 import {
   Box,
   Button,
+  CircularProgress,
   Divider,
   IconButton,
   Typography,
@@ -9,9 +10,7 @@ import {
 import React, { useState, useRef, useEffect } from "react";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
-import { useMutation } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
-import { enqueueSnackbar } from "src/components/snackbar";
+import { useDownloadCompare } from "src/api/develop/dataset-compare";
 import CustomTooltip from "src/components/tooltip";
 import ColumnMenu from "./ColumnMenu";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
@@ -22,11 +21,14 @@ const CompareDataRightSection = ({
   columns = [],
   setSelectedColumn,
   baseColumn,
-  selectedDatasetsValues,
+  selectedDatasetsValues = [],
   onRunEvaluation,
   compareId,
   setColumns,
   selectedColumns,
+  onComparisonExpired,
+  emptyCompareId,
+  hideScenarioFeatures = false,
 }) => {
   const [columnPopoverOpen, setColumnPopoverOpen] = useState(false);
   // const [selectedColumns, setSelectedColumns] = useState([]);
@@ -63,31 +65,31 @@ const CompareDataRightSection = ({
     setColumnPopoverOpen(false);
   };
 
-  const { mutate: handleDownloadCompareDataset } = useMutation({
-    mutationFn: () =>
-      axios.post(
-        endpoints.dataset.getCompareDatasetDownload(selectedDatasetsValues[0]),
-        {
-          dataset_ids: selectedDatasetsValues.slice(1),
-          base_column_name: baseColumn,
-          compare_id: compareId?.current,
-        },
-      ),
-    onSuccess: (response) => {
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `dataset-${selectedDatasetsValues[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-
-      enqueueSnackbar("Dataset downloaded successfully", {
-        variant: "success",
-      });
-    },
-  });
+  const [recovery, setRecovery] = useState(null);
+  const { mutate: handleDownloadCompareDataset, isPending: isDownloading } =
+    useDownloadCompare({
+      compareId,
+      selectedDatasetsValues,
+      baseColumn,
+      onComparisonExpired: () => {
+        setRecovery({
+          id: compareId.current,
+          baseColumn,
+          selectedDatasetsValues,
+        });
+        onComparisonExpired?.();
+      },
+    });
+  // Empty snapshots have no stored CSV. Allow normal expiry recovery once;
+  // if the fresh response also has zero rows, another attempt cannot succeed.
+  const confirmedEmpty =
+    Boolean(emptyCompareId) &&
+    emptyCompareId === compareId?.current &&
+    recovery?.baseColumn === baseColumn &&
+    recovery?.selectedDatasetsValues === selectedDatasetsValues &&
+    recovery?.id !== emptyCompareId;
+  const canDownload =
+    Boolean(baseColumn) && selectedDatasetsValues.length > 1 && !confirmedEmpty;
 
   const handleColumnSelect = (column, parentId) => {
     let copy = [...selectedColumns];
@@ -175,6 +177,11 @@ const CompareDataRightSection = ({
     >
       <IconButton
         size="small"
+        ref={columnButtonRef}
+        onClick={handleColumnClick}
+        aria-label="Columns"
+        aria-expanded={columnPopoverOpen}
+        disabled={columns.length === 0}
         sx={{
           color: "text.secondary",
         }}
@@ -183,11 +190,8 @@ const CompareDataRightSection = ({
           style={{
             height: "20px",
             width: "20px",
-            cursor: "pointer",
           }}
-          ref={columnButtonRef}
-          onClick={handleColumnClick}
-          alt="?"
+          alt=""
           src="/icons/datasets/flowbite_column-outline .svg"
         />
       </IconButton>
@@ -200,6 +204,7 @@ const CompareDataRightSection = ({
         <Switch
           size="small"
           color="success"
+          disabled={columns.length === 0}
           checked={diffMode}
           onChange={() => {
             handleToggleDiffMode();
@@ -231,9 +236,6 @@ const CompareDataRightSection = ({
         variant="contained"
         color="primary"
         size="small"
-        sx={{
-          color: "common.white",
-        }}
         startIcon={<Iconify width={16} icon="solar:check-circle-linear" />}
         onClick={() =>
           onRunEvaluation({
@@ -241,7 +243,11 @@ const CompareDataRightSection = ({
             unselectedColumns,
           })
         }
-        disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
+        disabled={
+          hideScenarioFeatures ||
+          columns.length === 0 ||
+          !RolePermission.DATASETS[PERMISSIONS.UPDATE][role]
+        }
       >
         Evaluate
       </Button>
@@ -257,9 +263,17 @@ const CompareDataRightSection = ({
         sx={{
           color: "text.secondary",
         }}
-        onClick={handleDownloadCompareDataset}
+        onClick={() => handleDownloadCompareDataset()}
+        disabled={!canDownload || isDownloading}
+        aria-label="Download comparison CSV"
+        title={confirmedEmpty ? "No rows to download" : undefined}
+        aria-busy={isDownloading}
       >
-        <Iconify icon="solar:download-minimalistic-linear" />
+        {isDownloading ? (
+          <CircularProgress size={16} color="inherit" />
+        ) : (
+          <Iconify icon="solar:download-minimalistic-linear" />
+        )}
       </IconButton>
 
       {/* Column Selector Popover */}
@@ -286,8 +300,11 @@ CompareDataRightSection.propTypes = {
   onRunEvaluation: PropTypes.func,
   selectedDatasetsValues: PropTypes.array,
   baseColumn: PropTypes.string,
-  columns: PropTypes.arrayOf(PropTypes.string),
+  columns: PropTypes.arrayOf(PropTypes.object),
   compareId: PropTypes.any,
+  onComparisonExpired: PropTypes.func,
+  emptyCompareId: PropTypes.string,
+  hideScenarioFeatures: PropTypes.bool,
   setColumns: PropTypes.func,
   selectedColumns: PropTypes.array,
 };

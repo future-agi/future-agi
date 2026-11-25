@@ -39,6 +39,7 @@ objectStorage:
   mode: external
   backend: s3
   bucket: futureagi-uploads
+  compareBucket: futureagi-uploads-compare  # Create this private bucket before installing.
   region: us-east-1
   existingSecret: futureagi-s3
   external:

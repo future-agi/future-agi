@@ -49,6 +49,8 @@ const TabOptions = [
   { label: "Summary", value: "summary" },
 ];
 
+const EMPTY_COLUMNS = [];
+
 const DevelopDetailView = () => {
   const { dataset } = useParams();
   const location = useLocation();
@@ -76,7 +78,7 @@ const DevelopDetailView = () => {
   const [openRunCompareEvaluation, setOpenRunCompareEvaluation] =
     useState(false);
   const [rowSelected, setRowSelected] = useState([]);
-  const [columns, setColumns] = useState([]);
+  const [loadedColumns, setLoadedColumns] = useState(null);
   const [selectedColumns, setSelectedColumns] = useState([]);
   const [evalsData, setEvalsData] = useState([]);
   const [isCommonColumn, setIsCommonColumn] = useState(
@@ -94,6 +96,19 @@ const DevelopDetailView = () => {
   const [selectedDatasets, setSelectedDatasets] = useState(
     location?.state?.selectedDatasets || [],
   );
+  // Render controls only for the selection that supplied their columns,
+  // including the render before the grid's selection-change effect runs.
+  const columns =
+    loadedColumns?.baseColumn === baseColumn &&
+    loadedColumns?.datasets === selectedDatasets
+      ? loadedColumns.columns
+      : EMPTY_COLUMNS;
+  const setColumns = useCallback(
+    (next) => {
+      setLoadedColumns({ baseColumn, datasets: selectedDatasets, columns: next });
+    },
+    [baseColumn, selectedDatasets],
+  );
   const [selectedDatasetData, setSelectedDatasetData] = useState(
     location?.state?.selectedDatasetsValues || [],
   );
@@ -108,6 +123,7 @@ const DevelopDetailView = () => {
   const { refreshGrid } = useDevelopDetailContext();
 
   const compareId = useRef(null);
+  const [emptyCompareId, setEmptyCompareId] = useState(null);
   const { mutate: deleteCompare } = useDeleteCompare();
 
   const shouldHideDevelopBar = pathname.includes("/preview/");
@@ -286,8 +302,15 @@ const DevelopDetailView = () => {
     if (isCompareDataset && currentTab === "data") {
       return (
         <CompareDataRightSection
+          hideScenarioFeatures={hideScenarioFeatures}
           compareId={compareId}
+          emptyCompareId={emptyCompareId}
           refreshGrid={refreshGrid}
+          onComparisonExpired={() => {
+            // Build a fresh comparison for the same selection.
+            compareId.current = null;
+            compareGridApiRef.current?.api?.refreshServerSide({ purge: true });
+          }}
           onRunEvaluation={() =>
             !hideScenarioFeatures && setOpenRunCompareEvaluation(true)
           }
@@ -408,6 +431,7 @@ const DevelopDetailView = () => {
               setDatasetInfo={setDatasetInfo}
               selectedColumns={selectedColumns}
               setCompareColumnDefs={setCompareColumnDefs}
+              onEmptyComparison={setEmptyCompareId}
               columns={columns}
             />
           </ShowComponent>

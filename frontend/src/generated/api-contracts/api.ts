@@ -31949,9 +31949,14 @@ export type modelHubDatasetsDeleteCompareReadResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetsDeleteCompareReadResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDatasetsDeleteCompareReadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetsDeleteCompareReadResponseSuccess =
@@ -31964,6 +31969,7 @@ export type modelHubDatasetsDeleteCompareReadResponseError = (
   | modelHubDatasetsDeleteCompareReadResponse404
   | modelHubDatasetsDeleteCompareReadResponse409
   | modelHubDatasetsDeleteCompareReadResponse500
+  | modelHubDatasetsDeleteCompareReadResponse503
   | modelHubDatasetsDeleteCompareReadResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -32020,9 +32026,14 @@ export type modelHubDatasetsDeleteCompareDeleteResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetsDeleteCompareDeleteResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDatasetsDeleteCompareDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetsDeleteCompareDeleteResponseSuccess =
@@ -32035,6 +32046,7 @@ export type modelHubDatasetsDeleteCompareDeleteResponseError = (
   | modelHubDatasetsDeleteCompareDeleteResponse404
   | modelHubDatasetsDeleteCompareDeleteResponse409
   | modelHubDatasetsDeleteCompareDeleteResponse500
+  | modelHubDatasetsDeleteCompareDeleteResponse503
   | modelHubDatasetsDeleteCompareDeleteResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -32312,9 +32324,14 @@ export type modelHubDatasetsGetCompareRowReadResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetsGetCompareRowReadResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDatasetsGetCompareRowReadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetsGetCompareRowReadResponseSuccess =
@@ -32327,6 +32344,7 @@ export type modelHubDatasetsGetCompareRowReadResponseError = (
   | modelHubDatasetsGetCompareRowReadResponse404
   | modelHubDatasetsGetCompareRowReadResponse409
   | modelHubDatasetsGetCompareRowReadResponse500
+  | modelHubDatasetsGetCompareRowReadResponse503
   | modelHubDatasetsGetCompareRowReadResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -32387,9 +32405,14 @@ export type modelHubDatasetsGetCompareRowDeleteResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetsGetCompareRowDeleteResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDatasetsGetCompareRowDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetsGetCompareRowDeleteResponseSuccess =
@@ -32402,6 +32425,7 @@ export type modelHubDatasetsGetCompareRowDeleteResponseError = (
   | modelHubDatasetsGetCompareRowDeleteResponse404
   | modelHubDatasetsGetCompareRowDeleteResponse409
   | modelHubDatasetsGetCompareRowDeleteResponse500
+  | modelHubDatasetsGetCompareRowDeleteResponse503
   | modelHubDatasetsGetCompareRowDeleteResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -32834,9 +32858,14 @@ export type modelHubDatasetsCompareDatasetsCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetsCompareDatasetsCreateResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDatasetsCompareDatasetsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetsCompareDatasetsCreateResponseSuccess =
@@ -32849,6 +32878,7 @@ export type modelHubDatasetsCompareDatasetsCreateResponseError = (
   | modelHubDatasetsCompareDatasetsCreateResponse404
   | modelHubDatasetsCompareDatasetsCreateResponse409
   | modelHubDatasetsCompareDatasetsCreateResponse500
+  | modelHubDatasetsCompareDatasetsCreateResponse503
   | modelHubDatasetsCompareDatasetsCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -32986,9 +33016,14 @@ export type modelHubDatasetsCompareDatasetsDownloadCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetsCompareDatasetsDownloadCreateResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDatasetsCompareDatasetsDownloadCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetsCompareDatasetsDownloadCreateResponseSuccess =
@@ -33001,6 +33036,7 @@ export type modelHubDatasetsCompareDatasetsDownloadCreateResponseError = (
   | modelHubDatasetsCompareDatasetsDownloadCreateResponse404
   | modelHubDatasetsCompareDatasetsDownloadCreateResponse409
   | modelHubDatasetsCompareDatasetsDownloadCreateResponse500
+  | modelHubDatasetsCompareDatasetsDownloadCreateResponse503
   | modelHubDatasetsCompareDatasetsDownloadCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;

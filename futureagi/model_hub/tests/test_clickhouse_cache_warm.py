@@ -77,6 +77,7 @@ def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monke
         "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
+        "sweep_compare_objects",
     ],
 )
 def test_mutation_guard_rejects_unsafe_management_commands(command):
@@ -102,6 +103,7 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
         "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
+        "sweep_compare_objects",
     ],
 )
 def test_operator_bootstrap_authorizes_only_explicit_commands(monkeypatch, command):
@@ -178,6 +180,27 @@ def test_hosted_backend_cannot_use_local_explicit_database_mode(monkeypatch, env
     monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "false")
 
     assert explicit_management_mutation_authorized(["manage.py", "migrate"]) is False
+
+
+@pytest.mark.parametrize(
+    ("environment", "authorized"),
+    [
+        ({"SERVICE_TYPE": "bootstrap", "STARTUP_DB_MUTATION_MODE": "operator"}, True),
+        ({"SERVICE_TYPE": "backend", "STARTUP_DB_MUTATION_MODE": "operator"}, False),
+        ({"SERVICE_TYPE": "bootstrap"}, False),
+        ({"SERVICE_TYPE": "backend", "NO_STARTUP_DB_MUTATIONS": "true"}, False),
+        ({"ENV_TYPE": "prod", "NO_STARTUP_DB_MUTATIONS": "false"}, False),
+    ],
+)
+def test_compare_sweep_runs_only_in_an_operator_job(
+    monkeypatch, environment, authorized
+):
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    argv = ["manage.py", "sweep_compare_objects"]
+
+    assert guarded_management_command(argv) == "sweep_compare_objects"
+    assert explicit_management_mutation_authorized(argv) is authorized
 
 
 def test_local_migrate_registers_only_post_migrate_seed(monkeypatch):

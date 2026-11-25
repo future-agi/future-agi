@@ -23,7 +23,7 @@ import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
 import { getUniqueColorPalette } from "src/utils/utils";
 import ExperimentDescriptionCell from "src/sections/experiment-detail/ExperimentData/ExperimentDescriptionCell";
 import ViewDetailsModal from "src/sections/experiment-detail/ExperimentData/ViewEvalDetailsModal";
-import { getLabel, getStatusColor } from "../common";
+import { getLabel, getStatusColor, parsePythonReprIfNeeded } from "../common";
 import CompareDatasetEvalsAddFeedbackForm from "./CompareDatasetEvalsAddFeedbackForm";
 import { LoadingButton } from "@mui/lab";
 
@@ -43,7 +43,7 @@ const SkeletonLoader = () => (
 export const StatusCellRenderer = (props) => {
   const theme = useTheme();
   const { value } = props;
-  let cellValue = value?.cellValue;
+  const cellValue = parsePythonReprIfNeeded(value?.cell_value);
   const status = value?.status;
 
   if (status === "running") return <SkeletonLoader />;
@@ -61,10 +61,8 @@ export const StatusCellRenderer = (props) => {
     );
   }
 
-  if (cellValue?.startsWith("['") && cellValue?.endsWith("']")) {
-    cellValue = JSON.parse(cellValue.replace(/'/g, '"'));
-  }
   if (
+    (Array.isArray(cellValue) && cellValue.length === 0) ||
     !cellValue ||
     cellValue === "[]" ||
     cellValue === undefined ||
@@ -109,7 +107,7 @@ export const StatusCellRenderer = (props) => {
 };
 
 StatusCellRenderer.propTypes = {
-  value: PropTypes.string,
+  value: PropTypes.object,
   data: PropTypes.any,
 };
 
@@ -163,10 +161,10 @@ export default function CompareDatasetDetailContent({
     const indColsHash = {};
     if (individualCols && individualCols?.length > 0) {
       for (const col of individualCols) {
-        if (indColsHash[col?.datasetId]) {
-          indColsHash[col?.datasetId].push(col);
+        if (indColsHash[col?.dataset_id]) {
+          indColsHash[col?.dataset_id].push(col);
         } else {
-          indColsHash[col?.datasetId] = [col];
+          indColsHash[col?.dataset_id] = [col];
         }
       }
     }
@@ -175,10 +173,10 @@ export default function CompareDatasetDetailContent({
     const cols = [];
     if (datasets && datasets?.length > 0) {
       for (const dataset of datasets) {
-        if (datasetValueHash[dataset?.datasetId]) {
+        if (datasetValueHash[dataset?.dataset_id]) {
           cols.push(dataset);
         } else {
-          datasetValueHash[dataset?.datasetId] = dataset;
+          datasetValueHash[dataset?.dataset_id] = dataset;
         }
       }
     }
@@ -222,14 +220,14 @@ export default function CompareDatasetDetailContent({
   const evalsData = useMemo(() => {
     const datasetEvaludations = {};
     const evaluations = columnConfig?.filter(
-      (i) => i?.originType == "evaluation",
+      (i) => i?.origin_type == "evaluation",
     );
     if (evaluations && evaluations?.length > 0) {
       for (const item of evaluations) {
-        if (datasetEvaludations[item?.datasetId]) {
-          datasetEvaludations[item?.datasetId].push(item);
+        if (datasetEvaludations[item?.dataset_id]) {
+          datasetEvaludations[item?.dataset_id].push(item);
         } else {
-          datasetEvaludations[item?.datasetId] = [item];
+          datasetEvaludations[item?.dataset_id] = [item];
         }
       }
     }
@@ -242,10 +240,10 @@ export default function CompareDatasetDetailContent({
       const diffTracker = {};
 
       for (const datasetCol of datasetCols) {
-        for (const indCOls of indColsHash?.[datasetCol?.datasetId] ?? []) {
+        for (const indCOls of indColsHash?.[datasetCol?.dataset_id] ?? []) {
           if (
-            row?.[indCOls?.id]?.cellDiffValue &&
-            row?.[indCOls?.id]?.cellDiffValue?.length > 0
+            row?.[indCOls?.id]?.cell_diff_value &&
+            row?.[indCOls?.id]?.cell_diff_value?.length > 0
           ) {
             diffTracker[indCOls?.id] = showDiff;
           }
@@ -582,21 +580,27 @@ export default function CompareDatasetDetailContent({
                         suppressContextMenu={true}
                         columnDefs={TabColumnDefs}
                         defaultColDef={defaultColDef}
-                        rowData={evalsData?.[col?.datasetId] ?? []}
+                        rowData={evalsData?.[col?.dataset_id] ?? []}
                         domLayout="normal"
                         suppressCellFocus={true}
                         suppressRowClickSelection={true}
                         suppressRowDrag={true}
                         onCellClicked={(event) => {
                           if (event.colDef.headerName === "Description") {
+                            const cell = row?.[event?.data?.id];
                             setOpenEvalDetailDrawer(true);
+                            // The eval detail modal and feedback form read
+                            // camelCase fields; the compare API is snake_case.
                             setSelectedEvalDetail({
-                              ...row?.[event?.data?.id],
+                              ...cell,
+                              cellValue: cell?.cell_value,
+                              valueInfos: cell?.value_infos,
+                              cellRowId: cell?.cell_row_id,
                               headerName: `${col?.name}-${event?.data?.group?.name}`,
                               evalName: event?.data?.group?.name,
                               evalId: event?.data?.id,
-                              rowId: row?.[event?.data?.id]?.cellRowId,
-                              sourceId: event?.data?.sourceId,
+                              rowId: cell?.cell_row_id,
+                              sourceId: event?.data?.source_id,
                             });
                           }
                         }}
@@ -683,33 +687,38 @@ export default function CompareDatasetDetailContent({
                       >
                         Dataset Details
                       </Typography>
-                      {indColsHash?.[col?.datasetId]?.map((eachCol) => {
+                      {indColsHash?.[col?.dataset_id]?.map((eachCol) => {
                         const value = row?.[eachCol?.id];
-                        return eachCol?.dataType === "audio" ? (
+                        return eachCol?.data_type === "audio" ? (
                           <AudioDatapointCard
                             key={eachCol?.id}
                             value={value}
                             column={{
-                              dataType: eachCol?.dataType,
+                              dataType: eachCol?.data_type,
                               headerName: eachCol?.group?.name,
                             }}
                           />
-                        ) : eachCol?.dataType === "images" ? (
+                        ) : eachCol?.data_type === "images" ? (
                           <ImagesDatapointCard
                             key={eachCol?.id}
                             value={value}
                             column={{
-                              dataType: eachCol?.dataType,
+                              dataType: eachCol?.data_type,
                               headerName: eachCol?.group?.name,
                             }}
                           />
                         ) : (
                           <DatapointCard
                             key={eachCol?.id}
-                            showDiff={value?.cellDiffValue}
-                            value={value}
+                            showDiff={value?.cell_diff_value}
+                            // GetCompareDatasetRow cells are snake_case; the
+                            // Difference tab reads DatapointCard's cellDiffValue.
+                            value={{
+                              ...value,
+                              cellDiffValue: value?.cell_diff_value,
+                            }}
                             column={{
-                              dataType: eachCol?.dataType,
+                              dataType: eachCol?.data_type,
                               headerName: eachCol?.group?.name,
                             }}
                             onDiffClick={(tabValue) =>
@@ -725,6 +734,7 @@ export default function CompareDatasetDetailContent({
                                   ? activeTab
                                   : ""
                             }
+                            indColsDifTracker={indColsDifTracker}
                           />
                         );
                       })}

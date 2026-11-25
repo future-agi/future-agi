@@ -42,6 +42,12 @@ Renders nothing when the values are consistent.
 {{- $errors = append $errors "temporal.external.address is required: the Temporal frontend host:port (or set temporal.mode=bundled)" -}}
 {{- end -}}
 {{- if eq $v.objectStorage.mode "external" -}}
+{{- if has $v.objectStorage.backend (list "s3" "gcs") -}}
+{{- $compare := (get $v.config.extraEnv "COMPARE_BUCKET_NAME" | default $v.objectStorage.compareBucket | trim) -}}
+{{- if not $compare -}}
+{{- $errors = append $errors "Create a private comparison bucket and set objectStorage.compareBucket (COMPARE_BUCKET_NAME) for external S3 or GCS" -}}
+{{- end -}}
+{{- end -}}
 {{- if not (has $v.objectStorage.backend (list "s3" "gcs" "minio")) -}}
 {{- $errors = append $errors (printf "objectStorage.backend must be s3, gcs or minio (got %q)" $v.objectStorage.backend) -}}
 {{- end -}}

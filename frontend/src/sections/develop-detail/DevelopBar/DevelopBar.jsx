@@ -35,7 +35,7 @@ const DevelopBar = ({
   setCurrentTab,
   rowSelected,
   setRowSelected,
-  rightSection: _rightSection,
+  rightSection,
   tabRef,
   hideScenarioFeatures,
 }) => {
@@ -225,9 +225,8 @@ const DevelopBar = ({
             ))}
           </Box>
         )} */}
-        {/* <ShowComponent condition={currentTab !== "data" || isCompareDataset}>
-          {rightSection}
-        </ShowComponent> */}
+        {/* Other tabs keep their dedicated toolbars outside this bar. */}
+        {isCompareDataset && currentTab === "data" && rightSection}
 
         {/* Delete Confirmation Dialog */}
         {/* <CustomDialog
