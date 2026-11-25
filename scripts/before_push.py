@@ -48,6 +48,7 @@ def run_item(command, root, timeout):
             ["bash", "-c", command],
             cwd=root,
             text=True,
+            check=False,
             timeout=timeout,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

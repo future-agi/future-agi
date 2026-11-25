@@ -133,12 +133,16 @@ def pytest_folders(text):
         for at, word in enumerate(words):
             before = words[at - 1] if at else ""
             word = clean(word.split("::")[0])
-            if word and re.fullmatch(r"[\w./-]+", word) and not word.startswith("-"):
-                if before not in PYTEST_OPTIONS_WITH_VALUE and not word.endswith(".py"):
-                    if not re.search(
-                        r"\.\w+$", word
-                    ):  # a file of another kind is not a folder
-                        folders.append(word)
+            if (
+                word
+                and re.fullmatch(r"[\w./-]+", word)
+                and not word.startswith("-")
+                and before not in PYTEST_OPTIONS_WITH_VALUE
+                and not word.endswith(".py")
+                # a file of another kind is not a folder
+                and not re.search(r"\.\w+$", word)
+            ):
+                folders.append(word)
     return folders
 
 
@@ -188,7 +192,9 @@ def collected(f, root, trees):
 
 
 def git(root, *args):
-    done = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+    done = subprocess.run(
+        ["git", "-C", root, *args], capture_output=True, text=True, check=False
+    )
     if done.returncode != 0:
         print(
             "could not decide: git {} failed: {}".format(
