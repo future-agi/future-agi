@@ -160,7 +160,9 @@ def _detail_tables(ch_client, monkeypatch, *, legacy_evals=False):
             created_at DateTime64(3, 'UTC'),
             is_deleted UInt8,
             _version UInt64
-        ) ENGINE = MergeTree ORDER BY (id, _version)
+        ) ENGINE = MergeTree
+        PARTITION BY toYYYYMM(created_at)
+        ORDER BY (custom_eval_config_id, created_at, id)
         """
     )
     ch_client.execute(
@@ -207,14 +209,6 @@ def shaped_detail_tables(request, ch_client, monkeypatch):
     with _detail_tables(
         ch_client, monkeypatch, legacy_evals=request.param == "legacy"
     ) as tables:
-        yield tables
-
-
-@pytest.fixture()
-def legacy_detail_tables(ch_client, monkeypatch):
-    """``detail_tables`` with a legacy PeerDB-shaped ``tracer_eval_logger``."""
-
-    with _detail_tables(ch_client, monkeypatch, legacy_evals=True) as tables:
         yield tables
 
 
@@ -1146,9 +1140,9 @@ def _served_evals(read):
 
 
 def test_trace_detail_serves_eval_only_when_latest_version_is_on_a_live_span(
-    ch_client, legacy_detail_tables
+    ch_client, shaped_detail_tables
 ):
-    tables = legacy_detail_tables
+    tables = shaped_detail_tables
     project = "00000000-0000-4000-8000-0000000000a1"
     foreign = "00000000-0000-4000-8000-0000000000a2"
     trace = "00000000-0000-4000-8000-0000000000a3"
@@ -1240,9 +1234,9 @@ def test_trace_detail_serves_eval_only_when_latest_version_is_on_a_live_span(
 
 
 def test_trace_detail_eval_residual_cases_against_the_prior_statement(
-    ch_client, legacy_detail_tables
+    ch_client, shaped_detail_tables
 ):
-    tables = legacy_detail_tables
+    tables = shaped_detail_tables
     project = "00000000-0000-4000-8000-0000000000b4"
     foreign = "00000000-0000-4000-8000-0000000000b5"
     trace = "00000000-0000-4000-8000-0000000000b6"
@@ -1320,15 +1314,21 @@ def test_trace_detail_eval_residual_cases_against_the_prior_statement(
     assert prior == {ids[name]: ("root", config, f"{name}-v1") for name in names}
     # An id-only tombstone has no trace, so no trace-scoped read sees it.
     assert served[ids["E16-id-only-tombstone"]] == prior[ids["E16-id-only-tombstone"]]
-    # tracer_eval_logger reads every version of the trace in one scan, so a
-    # key change that also leaves the live spans is hidden.
-    assert set(served) == {ids["E16-id-only-tombstone"]}
+    if tables.legacy_evals:
+        # tracer_eval_logger reads every version of the trace in one scan, so
+        # a key change that also leaves the live spans is hidden.
+        assert set(served) == {ids["E16-id-only-tombstone"]}
+    else:
+        # tracer_eval_logger_v2 reads every version of the candidates' sort
+        # keys. A newer version under another key is not one of them, so
+        # these records stay as the prior statement served them.
+        assert served == prior
 
 
 def test_trace_detail_eval_read_past_the_row_limit_returns_only_live_rows(
-    ch_client, legacy_detail_tables
+    ch_client, shaped_detail_tables
 ):
-    tables = legacy_detail_tables
+    tables = shaped_detail_tables
     project = "00000000-0000-4000-8000-0000000000e1"
     foreign = "00000000-0000-4000-8000-0000000000e2"
     trace = "00000000-0000-4000-8000-0000000000e3"

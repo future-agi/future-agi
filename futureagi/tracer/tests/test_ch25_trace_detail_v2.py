@@ -179,9 +179,10 @@ def test_trace_detail_eval_query_writes_each_list_into_the_sql_once(table):
         ),
         (
             "tracer_eval_logger_v2",
-            "WITH %(detail_eval_config_ids)s AS detail_eval_config_set",
-            {"detail_eval_config_set": 3},
-            {"detail_eval_config_ids": 2, "detail_eval_span_ids": 1},
+            "WITH %(detail_eval_config_ids)s AS detail_eval_config_set, "
+            "%(detail_eval_span_ids)s AS detail_eval_span_set",
+            {"detail_eval_config_set": 4, "detail_eval_span_set": 3},
+            {"detail_eval_config_ids": 3, "detail_eval_span_ids": 2},
         ),
     ],
 )
@@ -283,7 +284,10 @@ def _eval_table_ddl():
 def test_trace_detail_eval_aliases_are_not_columns_or_select_aliases():
     from tracer.models.observation_span import EvalLogger
 
-    aliases = (TraceDetailReadBuilder._EVAL_CONFIG_SET,)
+    aliases = (
+        TraceDetailReadBuilder._EVAL_CONFIG_SET,
+        TraceDetailReadBuilder._EVAL_SPAN_SET,
+    )
     ddl = _eval_table_ddl()
     # The legacy table is a CDC mirror of the Postgres model.
     model_columns = {
@@ -357,53 +361,6 @@ WHERE latest_is_deleted = 0
 ORDER BY span_id ASC, eval_config_id ASC
 LIMIT 5001
 """
-# The eval read on tracer_eval_logger_v2: still scoped to the trace/span
-# candidates in PREWHERE, with the config list bound once.
-_V2_CANDIDATE_EVAL_SQL = """
-WITH %(detail_eval_config_ids)s AS detail_eval_config_set
-SELECT
-    latest_span_id AS span_id,
-    toString(latest_eval_config_id) AS eval_config_id,
-    latest_output_float AS output_float,
-    latest_output_bool AS output_bool,
-    latest_output_str AS output_str,
-    latest_output_str_list AS output_str_list,
-    latest_eval_explanation AS eval_explanation,
-    latest_error AS error,
-    latest_error_message AS error_message,
-    latest_status AS status,
-    latest_skipped_reason AS skipped_reason,
-    latest_created_at AS created_at,
-    latest_target_type AS target_type,
-    toString(grouped_eval_id) AS log_id
-FROM (
-    SELECT
-        id AS grouped_eval_id,
-        argMax(observation_span_id, _version) AS latest_span_id,
-        argMax(custom_eval_config_id, _version) AS latest_eval_config_id,
-        argMax(tuple(output_float), _version).1 AS latest_output_float,
-        argMax(tuple(output_bool), _version).1 AS latest_output_bool,
-        argMax(tuple(output_str), _version).1 AS latest_output_str,
-        argMax(tuple(output_str_list), _version).1 AS latest_output_str_list,
-        argMax(tuple(eval_explanation), _version).1 AS latest_eval_explanation,
-        argMax(error, _version) AS latest_error,
-        argMax(tuple(error_message), _version).1 AS latest_error_message,
-        'completed' AS latest_status,
-        CAST(NULL AS Nullable(String)) AS latest_skipped_reason,
-        argMax(created_at, _version) AS latest_created_at,
-        argMax(target_type, _version) AS latest_target_type,
-        argMax(is_deleted, _version) AS latest_is_deleted
-    FROM tracer_eval_logger_v2
-    PREWHERE trace_id = %(detail_eval_trace_id)s
-      AND observation_span_id IN %(detail_eval_span_ids)s
-      AND toString(custom_eval_config_id) IN detail_eval_config_set
-    GROUP BY id
-) AS latest_trace_evals
-WHERE latest_is_deleted = 0
-  AND toString(latest_eval_config_id) IN detail_eval_config_set
-ORDER BY span_id ASC, eval_config_id ASC
-LIMIT 5001
-"""
 
 
 @pytest.mark.unit
@@ -414,14 +371,54 @@ def test_trace_detail_v1_eval_query_is_the_latest_first_statement():
 
 
 @pytest.mark.unit
-def test_trace_detail_v2_eval_query_keeps_the_candidate_scoped_statement():
+def test_trace_detail_v2_eval_query_picks_latest_version_before_span_check():
     query, _params = _eval_query("tracer_eval_logger_v2", configs=2, spans=2)
+    collapsed = " ".join(query.split())
+    keys = "custom_eval_config_id, created_at, id"
+    candidates = f"({keys}) IN ( SELECT {keys} FROM tracer_eval_logger_v2 PREWHERE"
 
-    assert " ".join(query.split()) == " ".join(_V2_CANDIDATE_EVAL_SQL.split())
+    outer_from = collapsed.index("FROM tracer_eval_logger_v2 PREWHERE")
+    candidates_at = collapsed.index(candidates)
+    group_at = collapsed.index(") GROUP BY id")
+    outer_prewhere = collapsed[outer_from:candidates_at]
+    subquery = collapsed[candidates_at:group_at]
+    after_collapse = collapsed[group_at:]
+    # The outer read is addressed by the candidates' sort keys, not by span.
+    assert outer_from < candidates_at < group_at
+    assert "observation_span_id" not in outer_prewhere
+    assert "trace_id = %(detail_eval_trace_id)s" in outer_prewhere
+    assert "toString(custom_eval_config_id) IN detail_eval_config_set" in (
+        outer_prewhere
+    )
+    # The candidates keep the trace, span and config predicates.
+    assert "trace_id = %(detail_eval_trace_id)s" in subquery
+    assert "observation_span_id IN detail_eval_span_set" in subquery
+    assert "toString(custom_eval_config_id) IN detail_eval_config_set" in subquery
+    assert collapsed.count("observation_span_id IN") == 1
+    assert "argMax(tuple(observation_span_id), _version).1 AS latest_span_id" in (
+        collapsed
+    )
+    assert "argMax(observation_span_id," not in collapsed
+    assert "latest_span_id IN detail_eval_span_set" in after_collapse
+    assert "toString(latest_eval_config_id) IN detail_eval_config_set" in (
+        after_collapse
+    )
+    assert "ORDER BY span_id ASC, eval_config_id ASC LIMIT 5001" in after_collapse
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("table", ["tracer_eval_logger"])
+def test_trace_detail_v2_eval_key_tuple_is_the_table_order_by():
+    statement = _eval_table_ddl()["tracer_eval_logger_v2"]
+    order_by = re.search(r"ORDER BY\s*\(([^)]*)\)", statement)
+
+    assert order_by is not None
+    assert (
+        " ".join(order_by.group(1).split()) == TraceDetailReadBuilder._V2_EVAL_SORT_KEY
+    )
+
+
+@pytest.mark.unit
+@_EVAL_TABLES
 def test_trace_detail_eval_plain_argmax_columns_are_not_nullable(table):
     # argMax skips NULL, so a plain argMax over a Nullable column could take its
     # value from an older version than the rest of the row. Nullable columns
