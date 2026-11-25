@@ -385,7 +385,7 @@ describe("finished trial presentation", () => {
       return dot.getAttribute("fill") === dot.getAttribute("stroke");
     });
     expect(filled).toHaveLength(1);
-    expect(within(filled[0]).getByText(String(kept.attempt))).toBeVisible();
+    expect(filled[0].textContent).toBe(String(kept.attempt));
   });
 });
 
